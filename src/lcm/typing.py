@@ -49,7 +49,7 @@ type RegimeStates = MappingProxyType[StateName, Array]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 
 
-type _ParamsLeaf = bool | float | Array | pd.Series | MappingLeaf | SequenceLeaf
+type _ParamsLeaf = bool | int | float | Array | pd.Series | MappingLeaf | SequenceLeaf
 type UserParams = Mapping[
     str,
     _ParamsLeaf | Mapping[str, _ParamsLeaf | Mapping[str, _ParamsLeaf]],

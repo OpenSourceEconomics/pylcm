@@ -151,20 +151,19 @@ def validate_model_inputs(
     regime_id_class: type,
     n_subjects: int | None = None,
 ) -> None:
-    """Validate model constructor inputs."""
-    _fail_if_invalid_n_subjects(n_subjects=n_subjects)
+    """Validate model constructor inputs.
 
-    # Early exit if regimes are not lcm.Regime instances
-    if not all(isinstance(regime, Regime) for regime in regimes.values()):
-        raise ModelInitializationError(
-            "All items in regimes must be instances of lcm.Regime."
-        )
+    `n_periods` is derived from `Model.__init__`'s `ages: AgeGrid` and
+    `regimes` is typed via beartype on `Model.__init__`; both reach this
+    function with their declared types. This function focuses on value and
+    cross-field rules.
+
+    """
+    _fail_if_invalid_n_subjects(n_subjects=n_subjects)
 
     error_messages: list[str] = []
 
-    if not isinstance(n_periods, int):
-        error_messages.append("n_periods must be an integer.")
-    elif n_periods <= 1:
+    if n_periods <= 1:
         error_messages.append("n_periods must be at least 2.")
 
     if not regimes:

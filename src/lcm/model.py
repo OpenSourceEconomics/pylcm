@@ -8,8 +8,10 @@ from pathlib import Path
 from types import MappingProxyType
 
 import pandas as pd
+from beartype import beartype
 from jax import Array
 
+from lcm._beartype_conf import MODEL_CONF
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.grids import DiscreteGrid
@@ -128,6 +130,7 @@ class Model:
     simulate() calls don't serialise on logging I/O.
     """
 
+    @beartype(conf=MODEL_CONF)
     def __init__(
         self,
         *,
