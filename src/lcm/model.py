@@ -11,7 +11,7 @@ import pandas as pd
 from beartype import beartype
 from jax import Array
 
-from lcm._beartype_conf import MODEL_CONF
+from lcm._beartype_conf import MODEL_CONF, PARAMS_CONF
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.grids import DiscreteGrid
@@ -242,6 +242,7 @@ class Model:
             for regime, funcs in mutable.items()
         }
 
+    @beartype(conf=PARAMS_CONF)
     def solve(
         self,
         *,
@@ -371,6 +372,7 @@ class Model:
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[self.n_subjects]
 
+    @beartype(conf=PARAMS_CONF)
     def simulate(
         self,
         *,
