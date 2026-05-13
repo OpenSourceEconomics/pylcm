@@ -290,6 +290,29 @@ def test_normal_gauss_hermite_n_std_not_in_params():
     assert "n_std" not in grid.params_to_pass_at_runtime
 
 
+@pytest.mark.parametrize(
+    "grid",
+    [
+        lcm.shocks.iid.Normal(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0),
+        lcm.shocks.iid.LogNormal(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0),
+        lcm.shocks.iid.Uniform(n_points=5, start=0.0, stop=1.0),
+        lcm.shocks.ar1.Tauchen(
+            n_points=5, gauss_hermite=True, rho=0.9, sigma=0.5, mu=0.0
+        ),
+    ],
+    ids=["normal", "lognormal", "uniform", "tauchen"],
+)
+def test_shock_grid_params_excludes_distributed(grid):
+    """`distributed` is a placement flag, not a distribution parameter.
+
+    `ContinuousGrid` exposes `distributed` as a field, but it must not leak
+    into `params` (the mapping of distribution-specific parameter names to
+    their values used by `compute_gridpoints`).
+    """
+    assert "distributed" not in grid.params
+    assert "distributed" not in grid.params_to_pass_at_runtime
+
+
 def test_tauchen_gauss_hermite_transition_probs_rows_sum_to_one():
     """Each row of the GH Tauchen transition matrix sums to 1."""
     grid = lcm.shocks.ar1.Tauchen(

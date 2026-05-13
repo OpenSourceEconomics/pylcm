@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import overload
+from typing import ClassVar, overload
 
 import jax.numpy as jnp
 import numpy as np
@@ -42,11 +42,20 @@ class _ShockGrid(ContinuousGrid):
     n_points: int
     """The number of points for the discretization of the shock."""
 
+    _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"n_points", "batch_size", "distributed"}
+    )
+    """Dataclass field names that are not distribution parameters.
+
+    Subclasses extend this via `cls._NON_PARAM_FIELDS | {...}` when they
+    introduce further non-parameter fields (e.g. `gauss_hermite`).
+    """
+
     @property
     def _param_field_names(self) -> tuple[str, ...]:
         """Names of distribution-specific parameters."""
         return tuple(
-            f.name for f in fields(self) if f.name not in {"n_points", "batch_size"}
+            f.name for f in fields(self) if f.name not in self._NON_PARAM_FIELDS
         )
 
     @property
