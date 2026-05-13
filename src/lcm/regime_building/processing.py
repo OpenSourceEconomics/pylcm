@@ -6,8 +6,7 @@ from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import jax
-from dags import concatenate_functions, get_annotations, with_signature
-from dags.signature import rename_arguments
+from dags import concatenate_functions, get_annotations
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
@@ -45,6 +44,7 @@ from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Float1D,
+    FloatND,
     FunctionsMapping,
     Int1D,
     InternalUserFunction,
@@ -63,6 +63,7 @@ from lcm.typing import (
     UserFunction,
     VmappedRegimeTransitionFunction,
 )
+from lcm.utils._dags_forwarders import rename_arguments, with_signature
 from lcm.utils.containers import ensure_containers_are_immutable
 from lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
@@ -888,7 +889,11 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
 
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
         def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-            shock_kw: dict[str, float] = {  # ty: ignore[invalid-assignment]
+            # `float` here covers Python floats from fixed_params; under
+            # JIT tracing, the runtime values forwarded through `kwargs`
+            # arrive as JAX tracers (`FloatND`), which are accepted by the
+            # shock grid's `compute_gridpoints` / `compute_transition_probs`.
+            shock_kw: dict[str, float | FloatND] = {
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }

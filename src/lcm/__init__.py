@@ -38,11 +38,12 @@ with contextlib.suppress(ImportError):
 # exception most natural to that subpackage (see `lcm._beartype_conf`).
 from beartype.claw import beartype_package
 
-from lcm._beartype_conf import GRID_CONF, PARAMS_CONF
+from lcm._beartype_conf import GRID_CONF, PARAMS_CONF, REGIME_BUILDING_CONF
 
 beartype_package("lcm.grids", conf=GRID_CONF)
 beartype_package("lcm.shocks", conf=GRID_CONF)
 beartype_package("lcm.params", conf=PARAMS_CONF)
+beartype_package("lcm.regime_building", conf=REGIME_BUILDING_CONF)
 
 from lcm import shocks  # noqa: E402
 from lcm._version import __version__  # noqa: E402

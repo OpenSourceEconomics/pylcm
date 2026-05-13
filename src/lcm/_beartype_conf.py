@@ -66,3 +66,7 @@ CATEGORICAL_CONF = _conf(CategoricalDefinitionError)
 
 # Used on `Model.solve` and `Model.simulate`.
 PARAMS_CONF = _conf(InvalidParamsError)
+
+# Used by the claw on `lcm.regime_building` (regime compilation pipeline,
+# part of model construction).
+REGIME_BUILDING_CONF = _conf(ModelInitializationError)

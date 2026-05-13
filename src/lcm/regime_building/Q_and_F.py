@@ -3,7 +3,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import jax.numpy as jnp
-from dags import concatenate_functions, with_signature
+from dags import concatenate_functions
 from jax import Array
 
 from lcm.regime_building.h_dag import _get_build_H_kwargs
@@ -24,6 +24,7 @@ from lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
+from lcm.utils._dags_forwarders import with_signature
 from lcm.utils.dispatchers import productmap
 from lcm.utils.functools import get_union_of_args
 

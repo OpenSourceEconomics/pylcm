@@ -102,7 +102,7 @@ def test_get_next_state_function_with_simulate_target():
 
 
 def test_create_stochastic_next_func():
-    labels = jnp.arange(2)
+    labels = jnp.arange(2, dtype=jnp.int32)
     got_func = _create_discrete_stochastic_next_func(
         target="t", next_state_name="next_a", labels=labels
     )

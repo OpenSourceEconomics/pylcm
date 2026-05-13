@@ -25,7 +25,7 @@ from jax import Array, jit, lax
 @jit
 def map_coordinates(
     input: Array,  # noqa: A002
-    coordinates: Sequence[Array],
+    coordinates: Sequence[Array] | Array,
 ) -> Array:
     """Map the input array to new coordinates using linear interpolation.
 

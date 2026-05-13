@@ -241,7 +241,7 @@ def _find_function_output_grid_indexing(
 
 
 def collect_state_transitions(
-    states: Mapping[StateName, Grid],
+    states: Mapping[StateName, Grid | None],
     state_transitions: Mapping[
         StateName,
         UserFunction | Callable | None | Mapping[RegimeName, UserFunction | Callable],
