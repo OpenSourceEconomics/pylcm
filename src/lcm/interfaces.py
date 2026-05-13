@@ -322,7 +322,7 @@ class _RegimeSharding:
 
     The mesh has one axis per distributed state, named after the state.
     `state_sharding` produces the 1-D sharding for a single state grid (or
-    array of subjects); `v_array_sharding` produces the multi-axis sharding
+    array of subjects); `V_arr_sharding` produces the multi-axis sharding
     for the V-array given the order of states in the state-action space.
     """
 
@@ -336,7 +336,7 @@ class _RegimeSharding:
         """Return the sharding for a single state's 1-D grid array."""
         return jax.NamedSharding(mesh=self.mesh, spec=jax.P(state_name))
 
-    def v_array_sharding(self, state_order: tuple[StateName, ...]) -> jax.NamedSharding:
+    def V_arr_sharding(self, state_order: tuple[StateName, ...]) -> jax.NamedSharding:
         """Return the sharding for a V-array whose axes are `state_order`."""
         spec = jax.P(
             *(

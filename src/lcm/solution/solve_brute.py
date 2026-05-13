@@ -57,7 +57,7 @@ def solve(
 
     next_regime_to_V_arr = MappingProxyType(
         {
-            regime_name: _build_zero_v_array(topology=topology)
+            regime_name: _build_zero_V_arr(topology=topology)
             for regime_name, topology in regime_V_topology.items()
         }
     )
@@ -428,7 +428,7 @@ def _get_regime_V_shapes_and_shardings(
         shape = tuple(len(v) for v in state_action_space.states.values())
         sharding_plan = _build_regime_sharding(grids=regime.grids, n_devices=n_devices)
         sharding = (
-            sharding_plan.v_array_sharding(state_order)
+            sharding_plan.V_arr_sharding(state_order)
             if sharding_plan is not None
             else None
         )
@@ -436,7 +436,7 @@ def _get_regime_V_shapes_and_shardings(
     return topology
 
 
-def _build_zero_v_array(*, topology: _RegimeVTopology) -> jax.Array:
+def _build_zero_V_arr(*, topology: _RegimeVTopology) -> jax.Array:
     """Build the zero V-array template for a regime, sharded where requested."""
     zeros = jnp.zeros(topology.shape)
     if topology.sharding is None:
@@ -606,7 +606,7 @@ def _reconstruct_next_regime_to_V_arr(
                 rolled = solution[q][regime_name]
                 break
         result[regime_name] = (
-            rolled if rolled is not None else _build_zero_v_array(topology=topology)
+            rolled if rolled is not None else _build_zero_V_arr(topology=topology)
         )
     return MappingProxyType(result)
 
