@@ -33,6 +33,7 @@ from lcm.typing import (
     RegimeNamesToIds,
     ScalarFloat,
     ScalarInt,
+    StatesPerRegime,
 )
 from lcm.utils.containers import invert_regime_ids
 from lcm.utils.error_handling import validate_V
@@ -205,7 +206,7 @@ def _simulate_regime_in_period(
     internal_regime: InternalRegime,
     period: int,
     age: ScalarInt | ScalarFloat,
-    states: MappingProxyType[str, Array],
+    states: StatesPerRegime,
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
     period_to_regime_to_V_arr: MappingProxyType[
@@ -215,7 +216,7 @@ def _simulate_regime_in_period(
     regime_names_to_ids: RegimeNamesToIds,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
-) -> tuple[PeriodRegimeSimulationData, MappingProxyType[str, Array], Int1D, Array]:
+) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Array]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -226,7 +227,8 @@ def _simulate_regime_in_period(
         internal_regime: Internal representation of the regime.
         period: Current period (0-indexed).
         age: Age corresponding to current period.
-        states: Current states for all subjects (namespaced by regime).
+        states: Carrier of current-period state arrays for every regime and
+            state.
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
@@ -238,7 +240,7 @@ def _simulate_regime_in_period(
     Returns:
         Tuple containing:
         - PeriodRegimeSimulationData for this regime-period
-        - Updated states dictionary
+        - Updated state carrier
         - Updated new_subject_regime_ids array
         - Updated JAX random key
 
@@ -250,7 +252,7 @@ def _simulate_regime_in_period(
 
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
-        states=states,
+        current_states_per_regime=states,
         regime_params=internal_params[regime_name],
     )
     # Compute optimal actions
@@ -290,16 +292,10 @@ def _simulate_regime_in_period(
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_subjects,))
 
-    res = {
-        state_name.removeprefix(f"{regime_name}__"): state
-        for state_name, state in states.items()
-        if state_name.startswith(f"{regime_name}__")
-    }
-
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
-        states=MappingProxyType(res),
+        states=states[regime_name],
         in_regime=subject_ids_in_regime,
     )
 
@@ -313,7 +309,7 @@ def _simulate_regime_in_period(
             period=period,
             age=age,
             regime_params=internal_params[regime_name],
-            states=states,
+            current_states_per_regime=states,
             state_action_space=state_action_space,
             key=next_states_key,
             subjects_in_regime=subject_ids_in_regime,

@@ -31,6 +31,7 @@ from lcm.typing import (
     RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
+    StatesPerRegime,
 )
 from lcm.utils.containers import invert_regime_ids
 from lcm.utils.functools import get_union_of_args
@@ -45,8 +46,8 @@ def build_initial_states(
     *,
     initial_states: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-) -> MappingProxyType[str, Array]:
-    """Build flat regime-namespaced state dict from user-provided initial states.
+) -> StatesPerRegime:
+    """Build the regime-keyed state carrier from user-provided initial states.
 
     For each regime, copies provided states and fills missing ones with
     `jnp.nan` (continuous) or `MISSING_CAT_CODE` (discrete).
@@ -57,16 +58,15 @@ def build_initial_states(
             instances.
 
     Returns:
-        Immutable mapping of regime-namespaced state names to arrays.
-        Example: `{"work__wealth": arr, "work__health": arr, ...}`
+        Nested immutable mapping `{regime_name: {state_name: array}}`.
 
     """
-    flat: dict[str, Array] = {}
     n_subjects = len(next(iter(initial_states.values())))
+    nested: dict[RegimeName, MappingProxyType[str, Array]] = {}
 
     for regime_name, internal_regime in internal_regimes.items():
+        regime_states: dict[str, Array] = {}
         for state_name in _get_regime_state_names(internal_regime):
-            key = f"{regime_name}__{state_name}"
             grid = internal_regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
                 # Cast user-supplied discrete states to the grid's index
@@ -74,22 +74,27 @@ def build_initial_states(
                 # for that state.
                 target_dtype = grid.to_jax().dtype
                 if state_name in initial_states:
-                    flat[key] = initial_states[state_name].astype(target_dtype)
+                    regime_states[state_name] = initial_states[state_name].astype(
+                        target_dtype
+                    )
                 else:
-                    flat[key] = jnp.full(
+                    regime_states[state_name] = jnp.full(
                         n_subjects, MISSING_CAT_CODE, dtype=target_dtype
                     )
             elif state_name in initial_states:
                 # Cast user-supplied continuous states to the canonical float
                 # dtype so the simulate state pool has one signature across
                 # periods regardless of the user-supplied dtype.
-                flat[key] = safe_to_float_dtype(
+                regime_states[state_name] = safe_to_float_dtype(
                     initial_states[state_name], name=f"initial_states.{state_name}"
                 )
             else:
-                flat[key] = jnp.full(n_subjects, jnp.nan, dtype=canonical_float_dtype())
+                regime_states[state_name] = jnp.full(
+                    n_subjects, jnp.nan, dtype=canonical_float_dtype()
+                )
+        nested[regime_name] = MappingProxyType(regime_states)
 
-    return MappingProxyType(flat)
+    return MappingProxyType(nested)
 
 
 def validate_initial_conditions(

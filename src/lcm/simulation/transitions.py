@@ -19,14 +19,13 @@ from lcm.state_action_space import _validate_all_states_present
 from lcm.typing import (
     ActionName,
     Bool1D,
-    ContinuousState,
-    DiscreteState,
     FlatRegimeParams,
     Int1D,
     RegimeName,
     RegimeNamesToIds,
     ScalarFloat,
     ScalarInt,
+    StatesPerRegime,
 )
 from lcm.utils.namespace import flatten_regime_namespace
 
@@ -34,7 +33,7 @@ from lcm.utils.namespace import flatten_regime_namespace
 def create_regime_state_action_space(
     *,
     internal_regime: InternalRegime,
-    states: MappingProxyType[str, Array],
+    current_states_per_regime: StatesPerRegime,
     regime_params: FlatRegimeParams,
 ) -> StateActionSpace:
     """Create the state-action space containing only the relevant subjects in a regime.
@@ -45,7 +44,8 @@ def create_regime_state_action_space(
 
     Args:
         internal_regime: The internal regime instance.
-        states: The current states of all subjects.
+        current_states_per_regime: Carrier of state arrays for every regime and
+            state, indexed by regime name then state name.
         regime_params: Flat regime parameters supplied at runtime, used to
             substitute runtime-supplied action gridpoints.
 
@@ -56,8 +56,9 @@ def create_regime_state_action_space(
     base = internal_regime.state_action_space(regime_params=regime_params)
 
     relevant_state_names = internal_regime.variable_info.query("is_state").index
+    regime_states = current_states_per_regime[internal_regime.name]
     states_for_state_action_space = {
-        sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_state_names
+        sn: regime_states[sn] for sn in relevant_state_names
     }
     _validate_all_states_present(
         provided_states=states_for_state_action_space,
@@ -74,11 +75,11 @@ def calculate_next_states(
     period: int,
     age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
-    states: MappingProxyType[str, Array],
+    current_states_per_regime: StatesPerRegime,
     state_action_space: StateActionSpace,
     key: Array,
     subjects_in_regime: Bool1D,
-) -> MappingProxyType[str, Array]:
+) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
 
     Args:
@@ -88,14 +89,14 @@ def calculate_next_states(
         period: Current period.
         age: Age corresponding to current period.
         regime_params: Flat regime parameters.
-        states: Current states for all subjects (all regimes).
+        current_states_per_regime: Carrier of current-period state arrays for
+            every regime and state, indexed by regime name then state name.
         state_action_space: State-action space for subjects in this regime.
         key: JAX random key.
 
     Returns:
-        Updated states dictionary with next period states for subjects in this regime.
-        Immutable mapping of updated states for all subjects, with updates only for
-        those in the current regime.
+        Updated carrier with next-period state values for subjects in this regime;
+        entries for other subjects are left untouched.
 
     """
     # Identify stochastic transitions and generate random keys
@@ -133,13 +134,25 @@ def calculate_next_states(
         **regime_params,
     )
 
-    # Update global states array with computed next states for subjects in regime
-    # ---------------------------------------------------------------------------------
-    # The transition function adds a 'next_' prefix to all state names. We remove
-    # this prefix and update only the entries corresponding to subjects in this regime.
-    return _update_states_for_subjects(
-        all_states=states,
-        computed_next_states=states_with_next_prefix,
+    # Transition functions are DAG-named `next_<state>` to distinguish them from
+    # the current-period state values they consume. Strip the prefix here so
+    # `_advance_states_for_subjects` sees keys that line up with the carrier's
+    # `StateName` keys directly.
+    next_states_per_regime = MappingProxyType(
+        {
+            target: MappingProxyType(
+                {
+                    name.removeprefix("next_"): value
+                    for name, value in target_next_states.items()
+                }
+            )
+            for target, target_next_states in states_with_next_prefix.items()
+        }
+    )
+
+    return _advance_states_for_subjects(
+        current_states_per_regime=current_states_per_regime,
+        next_states_per_regime=next_states_per_regime,
         subject_indices=subjects_in_regime,
     )
 
@@ -259,37 +272,42 @@ def draw_key_from_dict(
     return random_ids(keys, regime_transition_probs)
 
 
-def _update_states_for_subjects(
+def _advance_states_for_subjects(
     *,
-    all_states: MappingProxyType[str, Array],
-    computed_next_states: MappingProxyType[
-        RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
-    ],
+    current_states_per_regime: StatesPerRegime,
+    next_states_per_regime: StatesPerRegime,
     subject_indices: Bool1D,
-) -> MappingProxyType[str, Array]:
-    """Update the global states dictionary with next states for specific subjects.
+) -> StatesPerRegime:
+    """Merge next-period state values into the carrier for selected subjects.
 
-    Outputs from `get_next_state_function_for_simulation` are nested by target
-    regime, with inner keys carrying the `next_` prefix
-    (`{target: {next_<state>: array}}`). Strip the prefix and combine with the
-    target name into the flat `<target>__<state>` key used in `all_states`,
-    updating only the entries corresponding to the specified subjects.
+    The carrier and the per-regime update share the `StatesPerRegime` shape: an
+    outer mapping by regime name, an inner mapping by state name. Where
+    `subject_indices` is true, the corresponding slot is replaced with the
+    matching entry from `next_states_per_regime`; otherwise the carrier value
+    is left untouched. Regimes that don't appear in `next_states_per_regime`
+    are passed through unchanged.
 
     Args:
-        all_states: Current states for all subjects across all regimes.
-        computed_next_states: Newly computed states, nested by target regime
-            and keyed by `next_<state>`, for specific subjects.
-        subject_indices: Indices of subjects whose states should be updated.
+        current_states_per_regime: Carrier of state arrays prior to this advance,
+            indexed by regime name then state name.
+        next_states_per_regime: Per-regime next-period state values to merge in,
+            indexed by regime name then state name (no `next_` prefix — the
+            caller in `calculate_next_states` strips it before invoking).
+        subject_indices: Boolean mask selecting which subjects' values are
+            overwritten by the next-period entries.
 
     Returns:
-        Updated states dictionary with next states for the specified subjects.
+        Updated carrier with next-period values written in for selected subjects.
 
     """
-    updated_states = dict(all_states)
-    for target, target_next_states in computed_next_states.items():
-        for next_state_name, next_state_values in target_next_states.items():
-            state_name = f"{target}__{next_state_name.removeprefix('next_')}"
-            target_dtype = all_states[state_name].dtype
+    updated: dict[RegimeName, dict[str, Array]] = {
+        regime_name: dict(regime_states)
+        for regime_name, regime_states in current_states_per_regime.items()
+    }
+    for target, target_next_states in next_states_per_regime.items():
+        for state_name, next_state_values in target_next_states.items():
+            current_arr = current_states_per_regime[target][state_name]
+            target_dtype = current_arr.dtype
             # Preserve storage dtype only when the transition output is the
             # same numeric kind. Across kinds (e.g. int storage + float
             # transition output) leave JAX's promotion in place; the
@@ -299,10 +317,15 @@ def _update_states_for_subjects(
                 if next_state_values.dtype.kind == target_dtype.kind
                 else next_state_values
             )
-            updated_states[state_name] = jnp.where(
+            updated[target][state_name] = jnp.where(
                 subject_indices,
                 new_values,
-                all_states[state_name],
+                current_arr,
             )
 
-    return MappingProxyType(updated_states)
+    return MappingProxyType(
+        {
+            regime_name: MappingProxyType(regime_states)
+            for regime_name, regime_states in updated.items()
+        }
+    )

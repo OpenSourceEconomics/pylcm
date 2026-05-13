@@ -39,7 +39,7 @@ def test_build_initial_states_casts_user_float64_to_canonical(x64_disabled: None
         initial_states=initial_states,  # ty: ignore[invalid-argument-type]
         internal_regimes=model.internal_regimes,
     )
-    assert flat["working_life__wealth"].dtype == canonical_float_dtype()
+    assert flat["working_life"]["wealth"].dtype == canonical_float_dtype()
 
 
 def test_build_initial_states_casts_user_int_to_canonical(x64_disabled: None):
@@ -53,7 +53,7 @@ def test_build_initial_states_casts_user_int_to_canonical(x64_disabled: None):
         initial_states=initial_states,
         internal_regimes=model.internal_regimes,
     )
-    assert flat["working_life__wealth"].dtype == canonical_float_dtype()
+    assert flat["working_life"]["wealth"].dtype == canonical_float_dtype()
 
 
 def test_build_initial_states_missing_continuous_fallback_dtype_is_canonical(
@@ -66,7 +66,7 @@ def test_build_initial_states_missing_continuous_fallback_dtype_is_canonical(
         initial_states={"placeholder": jnp.asarray([0.0, 0.0])},
         internal_regimes=model.internal_regimes,
     )
-    assert flat["working_life__wealth"].dtype == canonical_float_dtype()
+    assert flat["working_life"]["wealth"].dtype == canonical_float_dtype()
 
 
 def test_build_initial_states_missing_continuous_fallback_values_are_nan(
@@ -82,7 +82,7 @@ def test_build_initial_states_missing_continuous_fallback_values_are_nan(
         initial_states={"placeholder": jnp.asarray([0.0, 0.0])},
         internal_regimes=model.internal_regimes,
     )
-    assert bool(jnp.all(jnp.isnan(flat["working_life__wealth"])))
+    assert bool(jnp.all(jnp.isnan(flat["working_life"]["wealth"])))
 
 
 def test_process_params_casts_float64_array_to_canonical_under_no_x64(
