@@ -23,8 +23,10 @@ from lcm.typing import (
     Int1D,
     RegimeName,
     RegimeNamesToIds,
+    RegimeStates,
     ScalarFloat,
     ScalarInt,
+    StateName,
     StatesPerRegime,
 )
 
@@ -32,7 +34,7 @@ from lcm.typing import (
 def create_regime_state_action_space(
     *,
     internal_regime: InternalRegime,
-    current_states_per_regime: StatesPerRegime,
+    regime_states: RegimeStates,
     regime_params: FlatRegimeParams,
 ) -> StateActionSpace:
     """Create the state-action space containing only the relevant subjects in a regime.
@@ -43,8 +45,7 @@ def create_regime_state_action_space(
 
     Args:
         internal_regime: The internal regime instance.
-        current_states_per_regime: Carrier of state arrays for every regime and
-            state, indexed by regime name then state name.
+        regime_states: State arrays for this regime, keyed by state name.
         regime_params: Flat regime parameters supplied at runtime, used to
             substitute runtime-supplied action gridpoints.
 
@@ -55,7 +56,6 @@ def create_regime_state_action_space(
     base = internal_regime.state_action_space(regime_params=regime_params)
 
     relevant_state_names = internal_regime.variable_info.query("is_state").index
-    regime_states = current_states_per_regime[internal_regime.name]
     states_for_state_action_space = {
         sn: regime_states[sn] for sn in relevant_state_names
     }
@@ -74,7 +74,7 @@ def calculate_next_states(
     period: int,
     age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
-    current_states_per_regime: StatesPerRegime,
+    states_per_regime: StatesPerRegime,
     state_action_space: StateActionSpace,
     key: Array,
     subjects_in_regime: Bool1D,
@@ -88,7 +88,7 @@ def calculate_next_states(
         period: Current period.
         age: Age corresponding to current period.
         regime_params: Flat regime parameters.
-        current_states_per_regime: Carrier of current-period state arrays for
+        states_per_regime: Carrier of current-period state arrays for
             every regime and state, indexed by regime name then state name.
         state_action_space: State-action space for subjects in this regime.
         key: JAX random key.
@@ -150,7 +150,7 @@ def calculate_next_states(
     )
 
     return _advance_states_for_subjects(
-        current_states_per_regime=current_states_per_regime,
+        states_per_regime=states_per_regime,
         next_states_per_regime=next_states_per_regime,
         subject_indices=subjects_in_regime,
     )
@@ -273,7 +273,7 @@ def draw_key_from_dict(
 
 def _advance_states_for_subjects(
     *,
-    current_states_per_regime: StatesPerRegime,
+    states_per_regime: StatesPerRegime,
     next_states_per_regime: StatesPerRegime,
     subject_indices: Bool1D,
 ) -> StatesPerRegime:
@@ -287,7 +287,7 @@ def _advance_states_for_subjects(
     are passed through unchanged.
 
     Args:
-        current_states_per_regime: Carrier of state arrays prior to this advance,
+        states_per_regime: Carrier of state arrays prior to this advance,
             indexed by regime name then state name.
         next_states_per_regime: Per-regime next-period state values to merge in,
             indexed by regime name then state name (no `next_` prefix — the
@@ -299,13 +299,13 @@ def _advance_states_for_subjects(
         Updated carrier with next-period values written in for selected subjects.
 
     """
-    updated: dict[RegimeName, dict[str, Array]] = {
+    updated: dict[RegimeName, dict[StateName, Array]] = {
         regime_name: dict(regime_states)
-        for regime_name, regime_states in current_states_per_regime.items()
+        for regime_name, regime_states in states_per_regime.items()
     }
     for target, target_next_states in next_states_per_regime.items():
         for state_name, next_state_values in target_next_states.items():
-            current_arr = current_states_per_regime[target][state_name]
+            current_arr = states_per_regime[target][state_name]
             target_dtype = current_arr.dtype
             # Preserve storage dtype only when the transition output is the
             # same numeric kind. Across kinds (e.g. int storage + float

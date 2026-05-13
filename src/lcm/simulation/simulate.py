@@ -252,7 +252,7 @@ def _simulate_regime_in_period(
 
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
-        current_states_per_regime=states,
+        regime_states=states[regime_name],
         regime_params=internal_params[regime_name],
     )
     # Compute optimal actions
@@ -309,7 +309,7 @@ def _simulate_regime_in_period(
             period=period,
             age=age,
             regime_params=internal_params[regime_name],
-            current_states_per_regime=states,
+            states_per_regime=states,
             state_action_space=state_action_space,
             key=next_states_key,
             subjects_in_regime=subject_ids_in_regime,

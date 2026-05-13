@@ -45,9 +45,6 @@ type TransitionFunctionsMapping = MappingProxyType[
     RegimeName, MappingProxyType[TransitionFunctionName, InternalUserFunction]
 ]
 
-# Nested state carrier threading through the simulation loop.
-# `RegimeStates`: one regime's state arrays, keyed by state name.
-# `StatesPerRegime`: every regime's `RegimeStates` bundle, keyed by regime name.
 type RegimeStates = MappingProxyType[StateName, Array]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 
