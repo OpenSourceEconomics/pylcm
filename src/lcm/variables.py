@@ -188,9 +188,7 @@ class Variables(Mapping[StateOrActionName, VariableInfo]):
         )
 
 
-def get_grids(
-    regime: Regime,
-) -> MappingProxyType[StateOrActionName, Grid]:
+def get_grids(regime: Regime) -> MappingProxyType[StateOrActionName, Grid]:
     """Create a mapping of grid objects for each variable in the regime.
 
     Args:
@@ -207,9 +205,7 @@ def get_grids(
     return MappingProxyType({name: raw_variables[name] for name in variables})
 
 
-def _raw_variable_info(
-    regime: Regime,
-) -> dict[StateOrActionName, VariableInfo]:
+def _raw_variable_info(regime: Regime) -> dict[StateOrActionName, VariableInfo]:
     """Derive `VariableInfo` for every state and action variable."""
     variables = dict(regime.states) | dict(regime.actions)
     info: dict[StateOrActionName, VariableInfo] = {}

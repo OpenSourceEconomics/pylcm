@@ -67,7 +67,7 @@ def build_initial_states(
 
     for regime_name, internal_regime in internal_regimes.items():
         regime_states: dict[StateName, Array] = {}
-        for state_name in _get_regime_state_names(internal_regime):
+        for state_name in internal_regime.variables.state_names:
             grid = internal_regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
                 # Cast user-supplied discrete states to the grid's index
@@ -189,21 +189,6 @@ def validate_initial_conditions(
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
 
 
-def _get_regime_state_names(
-    internal_regime: InternalRegime,
-) -> set[str]:
-    """Get state names from an internal regime's variable info.
-
-    Args:
-        internal_regime: The internal regime instance.
-
-    Returns:
-        Set of state variable names.
-
-    """
-    return set(internal_regime.variables.state_names)
-
-
 def _format_missing_states_message(missing: set[str], required: set[str]) -> str:
     """Format an error message for missing initial states.
 
@@ -262,7 +247,7 @@ def _collect_state_name_errors(
     # All known states (union across all regimes) — used for the "extra" check
     all_known_states: set[str] = set(PSEUDO_STATE_NAMES)
     for internal_regime in internal_regimes.values():
-        all_known_states.update(_get_regime_state_names(internal_regime))
+        all_known_states.update(internal_regime.variables.state_names)
 
     # Required states — only from regimes subjects actually start in
     required_states: set[str] = set(PSEUDO_STATE_NAMES)
@@ -271,7 +256,7 @@ def _collect_state_name_errors(
         regime_ids_to_names[int(i)] for i in used_ids if int(i) in regime_ids_to_names
     } & valid_regime_names
     for regime_name in used_regime_names:
-        required_states.update(_get_regime_state_names(internal_regimes[regime_name]))
+        required_states.update(internal_regimes[regime_name].variables.state_names)
 
     provided_states = set(initial_states.keys())
 

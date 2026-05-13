@@ -561,9 +561,10 @@ def _validate_no_reachable_incomplete_targets(
 
     for target_regime_name in active_regimes_next_period:
         target_regime = internal_regimes[target_regime_name]
-        target_state_names = target_regime.variables.state_names
         needs = {
-            f"next_{s}" for s in target_state_names if f"next_{s}" in stochastic_names
+            f"next_{s}"
+            for s in target_regime.variables.state_names
+            if f"next_{s}" in stochastic_names
         }
         if not needs:
             continue
@@ -575,7 +576,7 @@ def _validate_no_reachable_incomplete_targets(
             continue
         missing = sorted(needs - set(transitions.get(target_regime_name, {})))
         if target_regime_name not in transitions:
-            missing = sorted(f"next_{s}" for s in target_state_names)
+            missing = sorted(f"next_{s}" for s in target_regime.variables.state_names)
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Regime '{regime_name}' at age {age} has positive transition "
             f"probability to '{target_regime_name}', but '{regime_name}' "
