@@ -99,11 +99,13 @@ def test_get_next_state_function_with_simulate_target():
 
 def test_create_stochastic_next_func():
     labels = jnp.arange(2)
-    got_func = _create_discrete_stochastic_next_func(name="a", labels=labels)
+    got_func = _create_discrete_stochastic_next_func(
+        target="t", next_state_name="next_a", labels=labels
+    )
 
     key = jnp.arange(2, dtype="uint32")  # PRNG dtype
     weights = jnp.array([0.0, 1])
 
-    got = got_func(key_a=key, weight_a=weights)
+    got = got_func(key_t__next_a=key, weight_t__next_a=weights)
 
     assert jnp.array_equal(got, jnp.array(1))
