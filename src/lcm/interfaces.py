@@ -1,9 +1,8 @@
 import dataclasses
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
-import pandas as pd
 from jax import Array
 
 from lcm.grids import Grid, IrregSpacedGrid
@@ -207,6 +206,30 @@ class SimulateFunctions:
     """Compiled function to compute next-period states."""
 
 
+@dataclasses.dataclass(frozen=True)
+class VariableInfo:
+    """Kind/topology/shock tags for one state or action variable."""
+
+    kind: Literal["state", "action"]
+    """Whether the variable is a state or an action."""
+
+    topology: Literal["continuous", "discrete"]
+    """Topology as treated by pylcm's solve/simulate machinery.
+
+    Shocks have topology `"discrete"` because their value space is
+    approximated by a finite grid of nodes, even though the underlying
+    random variable is mathematically continuous. Combine with `is_shock`
+    when the distinction matters.
+
+    """
+
+    is_shock: bool
+    """Whether the variable is a shock (always a state)."""
+
+
+type VariableInfoMapping = MappingProxyType[StateOrActionName, VariableInfo]
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class InternalRegime:
     """Internal representation of a user regime."""
@@ -220,8 +243,8 @@ class InternalRegime:
     grids: MappingProxyType[StateOrActionName, Grid]
     """Immutable mapping of variable names to grid objects."""
 
-    variable_info: pd.DataFrame
-    """DataFrame with variable metadata (is_state, is_action, etc.)."""
+    variable_info: VariableInfoMapping
+    """Immutable mapping of variable names to their kind/topology/shock tags."""
 
     active_periods: tuple[int, ...]
     """Period indices during which this regime is active."""

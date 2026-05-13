@@ -53,7 +53,7 @@ def create_v_interpolation_info(regime: Regime) -> VInterpolationInfo:
     vi = get_variable_info(regime)
     grids = get_grids(regime)
 
-    state_names = vi.query("is_state").index.tolist()
+    state_names = [name for name, info in vi.items() if info.kind == "state"]
 
     discrete_states = {
         name: grid_spec

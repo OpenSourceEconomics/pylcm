@@ -314,8 +314,8 @@ def _compute_metadata(
 
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
-        states = tuple(vi.query("is_state").index.tolist())
-        actions = tuple(vi.query("is_action").index.tolist())
+        states = tuple(name for name, info in vi.items() if info.kind == "state")
+        actions = tuple(name for name, info in vi.items() if info.kind == "action")
         regime_to_states[regime_name] = states
         regime_to_actions[regime_name] = actions
         all_states.update(states)

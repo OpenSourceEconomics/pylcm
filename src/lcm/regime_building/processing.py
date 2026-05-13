@@ -6,7 +6,6 @@ from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import jax
-import pandas as pd
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
@@ -23,6 +22,7 @@ from lcm.interfaces import (
     SolveFunctions,
     SolveSimulateFunctionPair,
     StateActionSpace,
+    VariableInfoMapping,
 )
 from lcm.params.processing import get_flat_param_names
 from lcm.params.regime_template import create_regime_params_template
@@ -210,7 +210,7 @@ def _build_solve_functions(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
-    variable_info: pd.DataFrame,
+    variable_info: VariableInfoMapping,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
@@ -325,7 +325,7 @@ def _build_simulate_functions(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
-    variable_info: pd.DataFrame,
+    variable_info: VariableInfoMapping,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
@@ -477,7 +477,7 @@ def _process_regime_core(
     ],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
-    variable_info: pd.DataFrame,
+    variable_info: VariableInfoMapping,
     phase: Literal["solve", "simulate"],
 ) -> _CoreResult:
     """Process regime functions and transitions for a single phase.
@@ -582,7 +582,7 @@ def _process_regime_core(
     # next functions for reachable target regimes from each target's grid.
     # Scope to targets already present in non-shock transitions to avoid
     # spurious entries for unreachable regimes.
-    shock_names = variable_info.query("is_shock").index.tolist()
+    shock_names = [name for name, info in variable_info.items() if info.is_shock]
     reachable_targets = {
         tree_path_from_qname(k)[0]
         for k in flat_nested_transitions
@@ -776,7 +776,7 @@ def _wrap_transitions(
 def _get_stochastic_transition_names(
     *,
     regime: Regime,
-    variable_info: pd.DataFrame,
+    variable_info: VariableInfoMapping,
 ) -> frozenset[TransitionFunctionName]:
     """Compute stochastic transition names from regime state transitions and shocks.
 
@@ -796,9 +796,9 @@ def _get_stochastic_transition_names(
             and any(isinstance(v, MarkovTransition) for v in raw.values())
         ):
             markov_state_names.add(name)
-    shock_state_names: set[ShockName] = set(
-        variable_info.query("is_shock").index.tolist()
-    )
+    shock_state_names: set[ShockName] = {
+        name for name, info in variable_info.items() if info.is_shock
+    }
     return frozenset(f"next_{name}" for name in markov_state_names | shock_state_names)
 
 
@@ -1477,7 +1477,7 @@ def _build_next_state_vmapped(
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    variable_info: pd.DataFrame,
+    variable_info: VariableInfoMapping,
     regime_params_template: RegimeParamsTemplate,
     enable_jit: bool,
 ) -> NextStateSimulationFunction:

@@ -1,10 +1,10 @@
 from types import MappingProxyType
 
 import jax.numpy as jnp
-import pandas as pd
 
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, categorical
+from lcm.interfaces import VariableInfo
 from lcm.regime_building import process_regimes
 from lcm.regime_building.next_state import (
     _create_discrete_stochastic_next_func,
@@ -76,7 +76,9 @@ def test_get_next_state_function_with_simulate_target():
     all_grids = MappingProxyType(
         {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
     )
-    variable_info = pd.DataFrame({"is_shock": [False]}, index=["b"])
+    variable_info = MappingProxyType(
+        {"b": VariableInfo(kind="state", topology="discrete", is_shock=False)}
+    )
     transitions = MappingProxyType(
         {"mock": MappingProxyType({"next_a": f_a, "next_b": f_b})}
     )

@@ -4,12 +4,12 @@ from collections.abc import Callable
 from types import MappingProxyType
 
 import jax
-import pandas as pd
 from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 from jax import Array
 
 from lcm.grids import Grid
+from lcm.interfaces import VariableInfoMapping
 from lcm.shocks import _ShockGrid
 from lcm.shocks.ar1 import _ShockGridAR1
 from lcm.shocks.iid import _ShockGridIID
@@ -63,7 +63,7 @@ def get_next_state_function_for_simulation(
     transitions: TransitionFunctionsMapping,
     functions: FunctionsMapping,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    variable_info: pd.DataFrame,
+    variable_info: VariableInfoMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
@@ -157,7 +157,7 @@ def _extend_target_transitions_for_simulation(
     target: RegimeName,
     target_transitions: MappingProxyType[TransitionFunctionName, Callable[..., Array]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    variable_info: pd.DataFrame,
+    variable_info: VariableInfoMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
 ) -> dict[TransitionFunctionName, Callable[..., Array]]:
     """Replace stochastic transitions for one target with realisation wrappers.
@@ -183,7 +183,9 @@ def _extend_target_transitions_for_simulation(
         Extended transitions dictionary keyed by unqualified `next_<state>` names.
 
     """
-    shock_names: set[ShockName] = set(variable_info.query("is_shock").index.to_list())
+    shock_names: set[ShockName] = {
+        name for name, info in variable_info.items() if info.is_shock
+    }
     extended: dict[TransitionFunctionName, Callable[..., Array]] = dict(
         target_transitions
     )

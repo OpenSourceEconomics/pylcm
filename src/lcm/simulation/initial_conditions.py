@@ -201,7 +201,11 @@ def _get_regime_state_names(
         Set of state variable names.
 
     """
-    return set(internal_regime.variable_info.query("is_state").index)
+    return {
+        name
+        for name, info in internal_regime.variable_info.items()
+        if info.kind == "state"
+    }
 
 
 def _format_missing_states_message(missing: set[str], required: set[str]) -> str:
@@ -468,9 +472,9 @@ def _validate_discrete_state_values(
     discrete_info: dict[str, tuple[set[int], set[int]]] = {}
     for regime_name, internal_regime in internal_regimes.items():
         regime_id = int(regime_names_to_ids[regime_name])
-        for state_name in internal_regime.variable_info.query(
-            "is_state and is_discrete"
-        ).index:
+        for state_name, info in internal_regime.variable_info.items():
+            if not (info.kind == "state" and info.topology == "discrete"):
+                continue
             grid = internal_regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
                 codes, regime_ids = discrete_info.get(state_name, (set(), set()))
@@ -602,7 +606,11 @@ def _check_regime_feasibility(  # noqa: C901
     )
     accepted = get_union_of_args([feasibility_func])
 
-    action_names = list(internal_regime.variable_info.query("is_action").index)
+    action_names = [
+        name
+        for name, info in internal_regime.variable_info.items()
+        if info.kind == "action"
+    ]
     if not action_names:
         return None
 
@@ -623,7 +631,11 @@ def _check_regime_feasibility(  # noqa: C901
     )
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
-    state_names = list(internal_regime.variable_info.query("is_state").index)
+    state_names = [
+        name
+        for name, info in internal_regime.variable_info.items()
+        if info.kind == "state"
+    ]
     needs_age = "age" in accepted
     needs_period = "period" in accepted
 

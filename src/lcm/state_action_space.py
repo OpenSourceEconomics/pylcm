@@ -1,17 +1,16 @@
 from types import MappingProxyType
 
 import jax.numpy as jnp
-import pandas as pd
 from jax import Array
 
 from lcm.grids import Grid, IrregSpacedGrid
-from lcm.interfaces import StateActionSpace
+from lcm.interfaces import StateActionSpace, VariableInfoMapping
 from lcm.typing import StateName, StateOrActionName
 
 
 def create_state_action_space(
     *,
-    variable_info: pd.DataFrame,
+    variable_info: VariableInfoMapping,
     grids: MappingProxyType[StateOrActionName, Grid],
     states: dict[StateName, Array] | None = None,
 ) -> StateActionSpace:
@@ -21,7 +20,8 @@ def create_state_action_space(
     simulation, states must be provided.
 
     Args:
-        variable_info: The variable info table as returned by get_variable_info.
+        variable_info: Variable kind/topology/shock tags, as returned by
+            `get_variable_info`.
         grids: Immutable mapping of variable names to Grid spec objects.
         states: A dictionary of states. If None, the grids as specified in the regime
             are used.
@@ -29,31 +29,33 @@ def create_state_action_space(
     Returns:
         A state-action-space. Contains the grids of the discrete and continuous actions,
         the states, and the names of the state and action variables in the order they
-        appear in the variable info table.
+        appear in the variable info mapping.
 
     """
+    state_names = [name for name, info in variable_info.items() if info.kind == "state"]
     if states is None:
-        _states = {
-            sn: _grid_to_jax_or_placeholder(grids[sn])
-            for sn in variable_info.query("is_state").index
-        }
+        _states = {sn: _grid_to_jax_or_placeholder(grids[sn]) for sn in state_names}
     else:
         _validate_all_states_present(
             provided_states=states,
-            required_state_names=set(variable_info.query("is_state").index),
+            required_state_names=set(state_names),
         )
         _states = states
 
     discrete_actions = {
         name: grids[name].to_jax()
-        for name in variable_info.query("is_action & is_discrete").index
+        for name, info in variable_info.items()
+        if info.kind == "action" and info.topology == "discrete"
     }
     continuous_actions = {
         name: _grid_to_jax_or_placeholder(grids[name])
-        for name in variable_info.query("is_action & is_continuous").index
+        for name, info in variable_info.items()
+        if info.kind == "action" and info.topology == "continuous"
     }
     state_and_discrete_action_names = tuple(
-        variable_info.query("is_state | is_discrete").index
+        name
+        for name, info in variable_info.items()
+        if info.kind == "state" or info.topology == "discrete"
     )
 
     return StateActionSpace(
