@@ -5,7 +5,6 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from jax import Array
 from jax.scipy.stats.norm import cdf
 
 from lcm._beartype_conf import GRID_CONF, beartype_init
@@ -15,7 +14,7 @@ from lcm.shocks._base import (
     _ShockGrid,
     _validate_gauss_hermite_grid,
 )
-from lcm.typing import Float1D, FloatND, ScalarFloat
+from lcm.typing import Float1D, FloatND, KeyArray, ScalarFloat
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -26,7 +25,7 @@ class _ShockGridAR1(_ShockGrid):
     def draw_shock(
         self,
         params: MappingProxyType[str, float | FloatND],
-        key: Array,
+        key: KeyArray,
         current_value: ScalarFloat,
     ) -> ScalarFloat: ...
 
@@ -121,7 +120,7 @@ class Tauchen(_ShockGridAR1):
     def draw_shock(
         self,
         params: MappingProxyType[str, float | FloatND],
-        key: Array,
+        key: KeyArray,
         current_value: ScalarFloat,
     ) -> ScalarFloat:
         return (
@@ -190,7 +189,7 @@ class Rouwenhorst(_ShockGridAR1):
     def draw_shock(
         self,
         params: MappingProxyType[str, float | FloatND],
-        key: Array,
+        key: KeyArray,
         current_value: ScalarFloat,
     ) -> ScalarFloat:
         return (
@@ -304,7 +303,7 @@ class TauchenNormalMixture(_ShockGridAR1):
     def draw_shock(
         self,
         params: MappingProxyType[str, float | FloatND],
-        key: Array,
+        key: KeyArray,
         current_value: ScalarFloat,
     ) -> ScalarFloat:
         key1, key2 = jax.random.split(key)

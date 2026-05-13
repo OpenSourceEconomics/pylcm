@@ -27,6 +27,11 @@ type ScalarInt = Int32[Scalar, ""]
 type ScalarFloat = Float[Scalar, ""]
 type ScalarBool = Bool[Scalar, ""]
 
+# JAX PRNG keys (jax.random) have dtype `key<fry>` and are not float-typed,
+# so they don't match `FloatND`. `KeyArray` keeps the perimeter check on shock
+# samplers explicit about what kind of array they expect.
+type KeyArray = Array
+
 type Period = ScalarInt
 type Age = ScalarInt | ScalarFloat
 type RegimeName = str
