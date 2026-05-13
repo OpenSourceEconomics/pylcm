@@ -7,6 +7,7 @@ from typing import overload
 import jax.numpy as jnp
 from jax import Array
 
+from lcm._beartype_conf import GRID_CONF, beartype_init
 from lcm.dtypes import canonical_float_dtype
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.grids import coordinates as grid_coordinates
@@ -104,6 +105,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
             ) from e
 
 
+@beartype_init(GRID_CONF)
 class LinSpacedGrid(UniformContinuousGrid):
     """A linearly spaced grid of continuous values.
 
@@ -133,6 +135,7 @@ class LinSpacedGrid(UniformContinuousGrid):
         )
 
 
+@beartype_init(GRID_CONF)
 class LogSpacedGrid(UniformContinuousGrid):
     """A logarithmically spaced grid of continuous values.
 
@@ -215,6 +218,7 @@ def _init_uniform_grid(
     object.__setattr__(grid, "batch_size", batch_size)
 
 
+@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True, init=False)
 class IrregSpacedGrid(ContinuousGrid):
     """A grid of continuous values at irregular (user-specified) points.

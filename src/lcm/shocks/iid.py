@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
+from lcm._beartype_conf import GRID_CONF, beartype_init
 from lcm.shocks._base import (
     _gauss_hermite_normal,
     _mixture_cdf,
@@ -27,6 +28,7 @@ class _ShockGridIID(_ShockGrid):
     ) -> Float1D: ...
 
 
+@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Uniform(_ShockGridIID):
     r"""Discretized iid uniform shock: $U(\text{start}, \text{stop})$.
@@ -36,10 +38,10 @@ class Uniform(_ShockGridIID):
 
     """
 
-    start: float | None = None
+    start: float | int | None = None
     """Lower bound of the uniform distribution."""
 
-    stop: float | None = None
+    stop: float | int | None = None
     """Upper bound of the uniform distribution."""
 
     def compute_gridpoints(self, **kwargs: float) -> Float1D:
@@ -61,6 +63,7 @@ class Uniform(_ShockGridIID):
         )
 
 
+@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Normal(_ShockGridIID):
     r"""Discretized iid normal shock: $N(\mu_\varepsilon, \sigma_\varepsilon^2)$.
@@ -75,13 +78,13 @@ class Normal(_ShockGridIID):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Mean of the shock distribution."""
 
-    sigma: float | None = None
+    sigma: float | int | None = None
     """Standard deviation of the shock distribution."""
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of standard deviations from the mean to the grid boundary."""
 
     def __post_init__(self) -> None:
@@ -135,6 +138,7 @@ class Normal(_ShockGridIID):
         return params["mu"] + params["sigma"] * jax.random.normal(key=key)
 
 
+@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class LogNormal(_ShockGridIID):
     r"""Discretized iid log-normal shock: $\ln X \sim N(\mu, \sigma^2)$."""
@@ -142,13 +146,13 @@ class LogNormal(_ShockGridIID):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Mean of the underlying normal distribution ($E[\\ln X]$)."""
 
-    sigma: float | None = None
+    sigma: float | int | None = None
     """Standard deviation of the underlying normal distribution."""
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of standard deviations in log-space for the grid boundary."""
 
     def __post_init__(self) -> None:
@@ -200,6 +204,7 @@ class LogNormal(_ShockGridIID):
         return jnp.exp(params["mu"] + params["sigma"] * jax.random.normal(key=key))
 
 
+@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class NormalMixture(_ShockGridIID):
     r"""Discretized IID normal-mixture shock.
@@ -215,22 +220,22 @@ class NormalMixture(_ShockGridIID):
 
     """
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of mixture standard deviations for the grid boundary."""
 
-    p1: float | None = None
+    p1: float | int | None = None
     """Probability of the first mixture component."""
 
-    mu1: float | None = None
+    mu1: float | int | None = None
     """Mean of the first mixture component."""
 
-    sigma1: float | None = None
+    sigma1: float | int | None = None
     """Standard deviation of the first mixture component."""
 
-    mu2: float | None = None
+    mu2: float | int | None = None
     """Mean of the second mixture component."""
 
-    sigma2: float | None = None
+    sigma2: float | int | None = None
     """Standard deviation of the second mixture component."""
 
     def compute_gridpoints(self, **kwargs: float) -> Float1D:

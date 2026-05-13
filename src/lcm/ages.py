@@ -8,7 +8,9 @@ from types import MappingProxyType
 from typing import overload
 
 import jax.numpy as jnp
+from beartype import beartype
 
+from lcm._beartype_conf import GRID_CONF
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.typing import Float1D, Int1D
 
@@ -50,6 +52,7 @@ class AgeGrid:
         exact_values: Iterable[int | Fraction],
     ) -> None: ...
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,

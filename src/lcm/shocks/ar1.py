@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
+from lcm._beartype_conf import GRID_CONF, beartype_init
 from lcm.shocks._base import (
     _gauss_hermite_normal,
     _mixture_cdf,
@@ -29,6 +30,7 @@ class _ShockGridAR1(_ShockGrid):
     ) -> Float1D: ...
 
 
+@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Tauchen(_ShockGridAR1):
     r"""AR(1) shock discretized via Tauchen (1986).
@@ -49,16 +51,16 @@ class Tauchen(_ShockGridAR1):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    rho: float | None = None
+    rho: float | int | None = None
     """Persistence parameter of the AR(1) process."""
 
-    sigma: float | None = None
+    sigma: float | int | None = None
     """Standard deviation of the innovation."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of standard deviations for the grid boundary."""
 
     def __post_init__(self) -> None:
@@ -128,6 +130,7 @@ class Tauchen(_ShockGridAR1):
         )
 
 
+@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Rouwenhorst(_ShockGridAR1):
     r"""AR(1) shock discretized via Rouwenhorst (1995).
@@ -140,13 +143,13 @@ class Rouwenhorst(_ShockGridAR1):
 
     """
 
-    rho: float | None = None
+    rho: float | int | None = None
     """Persistence parameter of the AR(1) process."""
 
-    sigma: float | None = None
+    sigma: float | int | None = None
     """Standard deviation of the innovation."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
 
     def compute_gridpoints(self, **kwargs: float) -> Float1D:
@@ -196,6 +199,7 @@ class Rouwenhorst(_ShockGridAR1):
         )
 
 
+@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class TauchenNormalMixture(_ShockGridAR1):
     r"""AR(1) shock with mixture-of-normals innovations, discretized via Tauchen.
@@ -211,28 +215,28 @@ class TauchenNormalMixture(_ShockGridAR1):
 
     """
 
-    rho: float | None = None
+    rho: float | int | None = None
     """Persistence parameter of the AR(1) process."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of unconditional standard deviations for the grid boundary."""
 
-    p1: float | None = None
+    p1: float | int | None = None
     """Probability of the first mixture component."""
 
-    mu1: float | None = None
+    mu1: float | int | None = None
     """Mean of the first mixture component."""
 
-    sigma1: float | None = None
+    sigma1: float | int | None = None
     """Standard deviation of the first mixture component."""
 
-    mu2: float | None = None
+    mu2: float | int | None = None
     """Mean of the second mixture component."""
 
-    sigma2: float | None = None
+    sigma2: float | int | None = None
     """Standard deviation of the second mixture component."""
 
     @staticmethod

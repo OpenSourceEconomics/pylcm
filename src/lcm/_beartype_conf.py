@@ -6,7 +6,9 @@ preserving the documented exception hierarchy.
 
 """
 
-from beartype import BeartypeConf, BeartypeStrategy
+from collections.abc import Callable
+
+from beartype import BeartypeConf, BeartypeStrategy, beartype
 
 from lcm.exceptions import (
     CategoricalDefinitionError,
@@ -18,11 +20,36 @@ from lcm.exceptions import (
 
 
 def _conf(exc: type[Exception]) -> BeartypeConf:
-    # Full O(n) container validation so every bad entry in a mapping/sequence
-    # gets reported, not just one sampled element. The decorated entry points
-    # are called rarely (construction, solve, simulate), so per-call cost is
-    # invisible.
-    return BeartypeConf(violation_param_type=exc, strategy=BeartypeStrategy.On)
+    # `On` strategy: full O(n) container validation so every bad entry in a
+    # mapping/sequence is reported, not just one sampled element. The
+    # decorated entry points are called rarely (construction, solve,
+    # simulate), so per-call cost is invisible.
+    # `is_pep484_tower=True`: respect the PEP-484 numeric tower so `int`
+    # satisfies `float`-typed parameters (matches the implicit numeric
+    # conversion that Python and ruff's PYI041 both assume).
+    return BeartypeConf(
+        violation_param_type=exc,
+        strategy=BeartypeStrategy.On,
+        is_pep484_tower=True,
+    )
+
+
+def beartype_init[C](conf: BeartypeConf) -> Callable[[type[C]], type[C]]:
+    """Class decorator that beartype-checks `__init__` only.
+
+    Bare `@beartype` on a class wraps every method, which surfaces
+    annotation drift in helpers like `compute_gridpoints(**kwargs: float)`
+    where runtime kwargs are actually JAX arrays. Restricting decoration
+    to `__init__` keeps the perimeter check (parameter types at
+    construction) without policing every method's runtime types.
+
+    """
+
+    def deco(cls: type[C]) -> type[C]:
+        cls.__init__ = beartype(conf=conf)(cls.__init__)  # ty: ignore[invalid-assignment]
+        return cls
+
+    return deco
 
 
 # Used on `Regime` and `MarkovTransition`.
