@@ -12,7 +12,6 @@ import cloudpickle
 import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
-from dags.tree import qname_from_tree_path
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -429,7 +428,7 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
     """
     stochastic_transition_names = regime.simulate_functions.stochastic_transition_names
     return {
-        f"weight_{qname_from_tree_path((target_regime, transition_name))}"
+        f"weight_{target_regime}__{transition_name}"
         for target_regime, target_transitions in (
             regime.simulate_functions.transitions.items()
         )

@@ -596,20 +596,19 @@ def _process_regime_core(
         if isinstance(grid := grids.get(shock), _ShockGrid)
     }
     functions |= {
-        f"weight_{qname_from_tree_path((regime, f'next_{shock}'))}": (
-            _get_weights_func_for_shock(name=shock, grid=grid)
+        f"weight_{regime}__next_{shock}": _get_weights_func_for_shock(
+            name=shock, grid=grid
         )
         for (regime, shock), grid in target_shock_grids.items()
     } | {
-        qname_from_tree_path((regime, f"next_{shock}")): (
-            _get_stochastic_next_function_for_shock(name=shock, grid=grid.to_jax())
+        f"{regime}__next_{shock}": _get_stochastic_next_function_for_shock(
+            name=shock, grid=grid.to_jax()
         )
         for (regime, shock), grid in target_shock_grids.items()
     }
 
     shock_transition_keys = {
-        qname_from_tree_path((regime, f"next_{shock}"))
-        for regime, shock in target_shock_grids
+        f"{regime}__next_{shock}" for regime, shock in target_shock_grids
     }
     internal_transition = {
         func_name: functions[func_name]
