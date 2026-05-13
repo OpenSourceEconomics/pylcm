@@ -1,11 +1,25 @@
-from collections.abc import Iterator
-from dataclasses import make_dataclass
+# Beartype claw must instrument `lcm.grids`, `lcm.shocks`, and `lcm.params`
+# before any submodule of those packages is imported. The registrations below
+# install an import hook on `sys.meta_path` that transforms each matching
+# module's AST at first import. Subsequent imports in this file must come
+# after the registration, hence the `# noqa: E402` markers on them.
 
-import jax.numpy as jnp
-import pytest
-from jax import config as jax_config
+from beartype.claw import beartype_package
 
-from lcm.typing import ScalarInt
+from lcm._beartype_conf import GRID_CONF, PARAMS_CONF
+
+beartype_package("lcm.grids", conf=GRID_CONF)
+beartype_package("lcm.shocks", conf=GRID_CONF)
+beartype_package("lcm.params", conf=PARAMS_CONF)
+
+from collections.abc import Iterator  # noqa: E402
+from dataclasses import make_dataclass  # noqa: E402
+
+import jax.numpy as jnp  # noqa: E402
+import pytest  # noqa: E402
+from jax import config as jax_config  # noqa: E402
+
+from lcm.typing import ScalarInt  # noqa: E402
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
 X64_ENABLED: bool = True

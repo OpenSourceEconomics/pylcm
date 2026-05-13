@@ -4,7 +4,6 @@ from typing import overload
 
 import jax.numpy as jnp
 import portion
-from jax import Array
 
 from lcm._beartype_conf import GRID_CONF, beartype_init
 from lcm.exceptions import GridInitializationError, format_messages
@@ -12,6 +11,7 @@ from lcm.grids import coordinates as grid_coordinates
 from lcm.grids.continuous import ContinuousGrid
 from lcm.typing import (
     Float1D,
+    FloatND,
     Int1D,
     ScalarFloat,
     ScalarInt,
@@ -98,10 +98,12 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
         return jnp.concatenate(piece_arrays)
 
     @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
     @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND: ...
+    def get_coordinate(
+        self, value: float | ScalarFloat | FloatND
+    ) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_linspace_coordinate(
@@ -170,10 +172,12 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
         return jnp.concatenate(piece_arrays)
 
     @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
     @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND: ...
+    def get_coordinate(
+        self, value: float | ScalarFloat | FloatND
+    ) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_logspace_coordinate(

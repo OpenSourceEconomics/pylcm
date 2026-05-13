@@ -5,7 +5,6 @@ from typing import overload
 
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
 from jax.scipy.stats.norm import cdf
 
 from lcm.exceptions import GridInitializationError
@@ -76,11 +75,11 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | FloatND) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(self, **kwargs: float) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float | FloatND) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:
@@ -112,8 +111,8 @@ class _ShockGrid(ContinuousGrid):
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND: ...
+    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         if not self.is_fully_specified:
             raise GridInitializationError(
@@ -144,11 +143,11 @@ def _validate_gauss_hermite_grid(
 def _mixture_cdf(
     *,
     x: FloatND,
-    p1: float,
-    mu1: float,
-    sigma1: float,
-    mu2: float,
-    sigma2: float,
+    p1: float | FloatND,
+    mu1: float | FloatND,
+    sigma1: float | FloatND,
+    mu2: float | FloatND,
+    sigma2: float | FloatND,
 ) -> FloatND:
     """Evaluate the CDF of a two-component normal mixture.
 

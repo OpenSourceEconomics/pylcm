@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import overload
 
 import jax.numpy as jnp
-from jax import Array
 
 from lcm._beartype_conf import GRID_CONF, beartype_init
 from lcm.dtypes import canonical_float_dtype
@@ -14,6 +13,7 @@ from lcm.grids import coordinates as grid_coordinates
 from lcm.grids.base import Grid
 from lcm.typing import (
     Float1D,
+    FloatND,
     ScalarFloat,
     ScalarInt,
 )
@@ -34,9 +34,9 @@ class ContinuousGrid(Grid):
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
-    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: FloatND) -> FloatND: ...
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
 
 
@@ -82,9 +82,9 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
-    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: FloatND) -> FloatND: ...
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
 
     def replace(self, **kwargs: float) -> UniformContinuousGrid:
@@ -124,8 +124,8 @@ class LinSpacedGrid(UniformContinuousGrid):
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND: ...
+    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_linspace_coordinate(
             value=value,
@@ -173,8 +173,8 @@ class LogSpacedGrid(UniformContinuousGrid):
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND: ...
+    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_logspace_coordinate(
             value=value,
@@ -305,8 +305,8 @@ class IrregSpacedGrid(ContinuousGrid):
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND: ...
+    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         if self.points is None:
             raise GridInitializationError(
