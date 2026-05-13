@@ -5,6 +5,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.stats.norm import cdf
 
 from lcm._beartype_conf import GRID_CONF, beartype_init
@@ -25,7 +26,7 @@ class _ShockGridAR1(_ShockGrid):
     def draw_shock(
         self,
         params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
+        key: Array,
         current_value: Float1D,
     ) -> Float1D: ...
 
@@ -120,7 +121,7 @@ class Tauchen(_ShockGridAR1):
     def draw_shock(
         self,
         params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
+        key: Array,
         current_value: Float1D,
     ) -> Float1D:
         return (
@@ -189,7 +190,7 @@ class Rouwenhorst(_ShockGridAR1):
     def draw_shock(
         self,
         params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
+        key: Array,
         current_value: Float1D,
     ) -> Float1D:
         return (
@@ -303,7 +304,7 @@ class TauchenNormalMixture(_ShockGridAR1):
     def draw_shock(
         self,
         params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
+        key: Array,
         current_value: Float1D,
     ) -> Float1D:
         key1, key2 = jax.random.split(key)

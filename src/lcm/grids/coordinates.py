@@ -33,23 +33,23 @@ def linspace(
 def get_linspace_coordinate(
     *,
     value: ScalarFloat,
-    start: ScalarFloat,
-    stop: ScalarFloat,
+    start: ScalarFloat | Array,
+    stop: ScalarFloat | Array,
     n_points: ScalarInt,
 ) -> ScalarFloat: ...
 @overload
 def get_linspace_coordinate(
     *,
     value: Array,
-    start: ScalarFloat,
-    stop: ScalarFloat,
+    start: ScalarFloat | Array,
+    stop: ScalarFloat | Array,
     n_points: ScalarInt,
 ) -> Array: ...
 def get_linspace_coordinate(
     *,
     value: ScalarFloat | Array,
-    start: ScalarFloat,
-    stop: ScalarFloat,
+    start: ScalarFloat | Array,
+    stop: ScalarFloat | Array,
     n_points: ScalarInt,
 ) -> ScalarFloat | Array:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
@@ -87,23 +87,23 @@ def logspace(
 def get_logspace_coordinate(
     *,
     value: ScalarFloat,
-    start: ScalarFloat,
-    stop: ScalarFloat,
+    start: ScalarFloat | Array,
+    stop: ScalarFloat | Array,
     n_points: ScalarInt,
 ) -> ScalarFloat: ...
 @overload
 def get_logspace_coordinate(
     *,
     value: Array,
-    start: ScalarFloat,
-    stop: ScalarFloat,
+    start: ScalarFloat | Array,
+    stop: ScalarFloat | Array,
     n_points: ScalarInt,
 ) -> Array: ...
 def get_logspace_coordinate(
     *,
     value: ScalarFloat | Array,
-    start: ScalarFloat,
-    stop: ScalarFloat,
+    start: ScalarFloat | Array,
+    stop: ScalarFloat | Array,
     n_points: ScalarInt,
 ) -> ScalarFloat | Array:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""

@@ -1,6 +1,6 @@
 """A Mapping wrapper that is a JAX pytree but not itself a Mapping."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import jax
@@ -41,7 +41,7 @@ def _flatten(nmp: MappingLeaf) -> tuple[list[Any], tuple[str, ...]]:
     return values, keys
 
 
-def _unflatten(keys: tuple[str, ...], values: list[Any]) -> MappingLeaf:
+def _unflatten(keys: tuple[str, ...], values: Sequence[Any]) -> MappingLeaf:
     return MappingLeaf(dict(zip(keys, values, strict=True)))
 
 

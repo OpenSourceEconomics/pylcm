@@ -38,7 +38,7 @@ def _flatten(sl: SequenceLeaf) -> tuple[list[Any], None]:
     return list(sl.data), None
 
 
-def _unflatten(_aux: None, values: list[Any]) -> SequenceLeaf:
+def _unflatten(_aux: None, values: Sequence[Any]) -> SequenceLeaf:
     return SequenceLeaf(values)
 
 

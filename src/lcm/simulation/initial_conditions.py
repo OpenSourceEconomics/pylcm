@@ -7,7 +7,7 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Never, cast
+from typing import NoReturn, cast
 
 import jax
 import numpy as np
@@ -769,7 +769,7 @@ def _raise_feasibility_type_error(
     regime_name: RegimeName,
     internal_regime: InternalRegime,
     subject_states: dict[StateName, Array],
-) -> Never:
+) -> NoReturn:
     """Re-raise a TypeError from feasibility checking with diagnostic context.
 
     Args:

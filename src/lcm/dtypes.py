@@ -18,12 +18,14 @@ _INT32_MAX = int(np.iinfo(np.int32).max)
 _FLOAT32_MAX = float(np.finfo(np.float32).max)
 
 
-def canonical_float_dtype() -> jnp.dtype:
+def canonical_float_dtype() -> type:
     """Return pylcm's canonical float dtype, derived from `jax_enable_x64`.
 
     Returns `jnp.float64` if `jax.config.jax_enable_x64` is True,
-    otherwise `jnp.float32`. The value is read at call time, not at
-    import, so toggling the JAX config (e.g. between tests) is honoured.
+    otherwise `jnp.float32`. The return is a JAX scalar type, passable
+    wherever JAX/NumPy accept a dtype-like specifier. The value is read
+    at call time, not at import, so toggling the JAX config (e.g.
+    between tests) is honoured.
     """
     return jnp.float64 if jax.config.read("jax_enable_x64") else jnp.float32
 

@@ -27,6 +27,18 @@ if TYPE_CHECKING:
     from lcm.model import Model
     from lcm.simulation.result import SimulationResult
 
+    # Type-checker view: full precision.
+    _ModelOrNone = Model | None
+    _SimulationResultOrNone = SimulationResult | None
+else:
+    # Runtime view used by beartype's annotation evaluator. `Model` and
+    # `SimulationResult` cannot be imported here (circular), so collapse
+    # to `Any`. The snapshot dataclasses are serialization carriers; the
+    # API surface that needs strict checking is the `save_*_snapshot`
+    # callers, which beartype still polices via their own parameters.
+    _ModelOrNone = Any
+    _SimulationResultOrNone = Any
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,7 +46,7 @@ logger = logging.getLogger(__name__)
 class SolveSnapshot:
     """Snapshot of a solve run for offline reconstruction."""
 
-    model: Model | None
+    model: _ModelOrNone
     """The Model instance."""
 
     params: UserParams | None
@@ -51,7 +63,7 @@ class SolveSnapshot:
 class SimulateSnapshot:
     """Snapshot of a simulate run for offline reconstruction."""
 
-    model: Model | None
+    model: _ModelOrNone
     """The Model instance."""
 
     params: UserParams | None
@@ -63,7 +75,7 @@ class SimulateSnapshot:
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
 
-    result: SimulationResult | None
+    result: _SimulationResultOrNone
     """SimulationResult object."""
 
     platform: str

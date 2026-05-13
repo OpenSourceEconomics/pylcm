@@ -52,7 +52,7 @@ _NUM_PARTS_FUNCTION_PARAM = 3
 def process_params(
     *,
     params: UserParams,
-    params_template: ParamsTemplate,
+    params_template: Mapping[RegimeName, RegimeParamsTemplate],
 ) -> InternalParams:
     """Process user-provided params into internal params.
 
@@ -298,7 +298,7 @@ def _find_candidates(
 
 
 def create_params_template(  # noqa: C901
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    internal_regimes: Mapping[RegimeName, InternalRegime],
 ) -> ParamsTemplate:
     """Create params_template from internal regimes and validate name uniqueness.
 

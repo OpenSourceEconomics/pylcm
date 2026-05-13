@@ -68,11 +68,11 @@ def find_duplicates(*containers: Iterable[T]) -> set[T]:
     return {v for v, count in counts.items() if count > 1}
 
 
-def get_field_names_and_values(dc: type) -> MappingProxyType[str, Any]:
+def get_field_names_and_values(dc: object) -> MappingProxyType[str, Any]:
     """Return the fields of a dataclass.
 
     Args:
-        dc: The dataclass to get the fields of.
+        dc: The dataclass class or instance to get the fields of.
 
     Returns:
         An immutable mapping with the field names as keys and the field values as
@@ -80,7 +80,10 @@ def get_field_names_and_values(dc: type) -> MappingProxyType[str, Any]:
 
     """
     return MappingProxyType(
-        {field.name: getattr(dc, field.name, None) for field in fields(dc)}
+        {
+            field.name: getattr(dc, field.name, None)
+            for field in fields(dc)  # ty: ignore[invalid-argument-type]
+        }
     )
 
 
