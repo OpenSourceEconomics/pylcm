@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
+from dags.tree import qname_from_tree_path
 from jax import Array
 
 from lcm.regime_building.h_dag import _get_build_H_kwargs
@@ -513,7 +514,7 @@ def _get_joint_weights_function(
 
     """
     arg_names = [
-        f"weight_{regime_name}__{key}"
+        f"weight_{qname_from_tree_path((regime_name, key))}"
         for key in transitions
         if key in stochastic_transition_names
     ]

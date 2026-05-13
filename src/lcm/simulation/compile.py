@@ -20,7 +20,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from dags.tree import tree_path_from_qname
+from dags.tree import qname_from_tree_path
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -36,7 +36,6 @@ from lcm.typing import (
     RegimeName,
 )
 from lcm.utils.logging import format_duration
-from lcm.utils.namespace import flatten_regime_namespace
 
 
 def compile_all_simulate_functions(
@@ -374,11 +373,12 @@ def _build_next_state_args(
         internal_regime.simulate_functions.stochastic_transition_names
     )
     stoch_next_func_names = sorted(
-        next_func_name
-        for next_func_name in flatten_regime_namespace(
-            internal_regime.simulate_functions.transitions
+        qname_from_tree_path((target_regime, transition_name))
+        for target_regime, target_transitions in (
+            internal_regime.simulate_functions.transitions.items()
         )
-        if tree_path_from_qname(next_func_name)[-1] in stoch_transition_names
+        for transition_name in target_transitions
+        if transition_name in stoch_transition_names
     )
     _, stoch_keys = generate_simulation_keys(
         key=jax.random.key(0),

@@ -27,7 +27,6 @@ from lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
-from lcm.utils.namespace import flatten_regime_namespace
 
 
 def get_next_state_function_for_solution(
@@ -140,7 +139,7 @@ def get_next_stochastic_weights_function(
 
     """
     targets = [
-        f"weight_{regime_name}__{func_name}"
+        f"weight_{qname_from_tree_path((regime_name, func_name))}"
         for func_name in transitions
         if func_name in stochastic_transition_names
     ]
@@ -185,47 +184,53 @@ def _extend_target_transitions_for_simulation(
 
     """
     shock_names: set[ShockName] = set(variable_info.query("is_shock").index.to_list())
-    flat_grids = flatten_regime_namespace(all_grids)
     extended: dict[TransitionFunctionName, Callable[..., Array]] = dict(
         target_transitions
     )
     for next_state_name in target_transitions:
         if next_state_name not in stochastic_transition_names:
             continue
-        qname = qname_from_tree_path((target, next_state_name))
         raw_state_name = next_state_name.removeprefix("next_")
         if raw_state_name in shock_names:
             extended[next_state_name] = _create_continuous_stochastic_next_func(
-                name=qname, flat_grids=flat_grids
+                target=target,
+                next_state_name=next_state_name,
+                all_grids=all_grids,
             )
         else:
             extended[next_state_name] = _create_discrete_stochastic_next_func(
-                name=qname,
-                labels=flat_grids[
-                    qname_from_tree_path((target, raw_state_name))
-                ].to_jax(),
+                target=target,
+                next_state_name=next_state_name,
+                labels=all_grids[target][raw_state_name].to_jax(),
             )
     return extended
 
 
 def _create_discrete_stochastic_next_func(
-    *, name: str, labels: DiscreteState
+    *,
+    target: RegimeName,
+    next_state_name: TransitionFunctionName,
+    labels: DiscreteState,
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
     Args:
-        name: Name of the stochastic variable.
+        target: Target regime name.
+        next_state_name: Transition function name with the `next_` prefix
+            (e.g. `next_health`).
         labels: 1d array of labels.
 
     Returns:
         A function that simulates the next state of the stochastic variable. The
         function must be called with keyword arguments:
-        - weight_{name}: 2d array of weights. The first dimension corresponds to the
+        - weight_{qname}: 2d array of weights. The first dimension corresponds to the
           number of simulation units. The second dimension corresponds to the number of
           grid points (labels).
-        - key_{name}: PRNG key for the stochastic next function, e.g. 'next_health'.
+        - key_{qname}: PRNG key for the stochastic next function. `qname` is the
+          dags-qualified `<target>__<next_state>`.
 
     """
+    name = qname_from_tree_path((target, next_state_name))
 
     @with_signature(
         args={f"weight_{name}": "FloatND", f"key_{name}": "dict[str, Array]"},
@@ -242,7 +247,10 @@ def _create_discrete_stochastic_next_func(
 
 
 def _create_continuous_stochastic_next_func(
-    *, name: str, flat_grids: MappingProxyType[str, Grid]
+    *,
+    target: RegimeName,
+    next_state_name: TransitionFunctionName,
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
@@ -251,17 +259,18 @@ def _create_continuous_stochastic_next_func(
     before calling the shock calculation function.
 
     Args:
-        name: Name of the stochastic variable (e.g. `"regime__next_shock"`).
-        flat_grids: Flattened immutable mapping of regime-qualified names to Grid spec
-            objects.
+        target: Target regime name.
+        next_state_name: Transition function name with the `next_` prefix
+            (e.g. `next_shock`).
+        all_grids: Immutable mapping of regime names to Grid spec objects.
 
     Returns:
         A function that simulates the next state of the stochastic variable.
 
     """
-    prev_state_name = name.split("next_")[1]
-    flat_key = name.replace("next_", "")
-    grid: _ShockGrid = flat_grids[flat_key]  # ty: ignore [invalid-assignment]
+    prev_state_name = next_state_name.removeprefix("next_")
+    grid: _ShockGrid = all_grids[target][prev_state_name]  # ty: ignore [invalid-assignment]
+    name = qname_from_tree_path((target, next_state_name))
 
     if isinstance(grid, _ShockGridAR1):
         return _create_ar1_next_func(
