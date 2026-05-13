@@ -58,7 +58,7 @@ def test_function_evaluator_with_one_continuous_variable():
     func = partial(evaluator, next_V_arr=next_V_arr)
 
     # test the evaluator
-    got = func(next_wealth=0.5)
+    got = func(next_wealth=jnp.asarray(0.5))
     expected = 0.5 * jnp.pi + 2
     assert jnp.allclose(got, expected)
 
@@ -146,8 +146,8 @@ def test_function_evaluator(binary_discrete_grid):
     out = evaluator(
         next_retired=1,
         next_insured=0,
-        next_wealth=600,
-        next_human_capital=1.5,
+        next_wealth=jnp.asarray(600.0),
+        next_human_capital=jnp.asarray(1.5),
         next_V_arr=next_V_arr,
     )
 
@@ -169,7 +169,7 @@ def test_get_coordinate_finder():
         grid=LinSpacedGrid(start=0, stop=10, n_points=21),
     )
     find_coordinate = partial(find_coordinate)
-    calculated = find_coordinate(wealth=5.75)
+    calculated = find_coordinate(wealth=jnp.asarray(5.75))
     assert calculated == 11.5
 
 
@@ -224,7 +224,7 @@ def test_get_function_evaluator_illustrative():
     # partial the function values into the evaluator
     f = partial(evaluator, values_name=values)
 
-    got = f(prefix_a=0.25)
+    got = f(prefix_a=jnp.asarray(0.25))
     expected = jnp.pi * 0.25 + 2
 
     assert jnp.allclose(got, expected)
@@ -245,10 +245,10 @@ def test_get_coordinate_finder_illustrative():
         in_name="a",
         grid=LinSpacedGrid(start=0, stop=1, n_points=3),
     )
-    assert find_coordinate(a=0) == 0
-    assert find_coordinate(a=0.5) == 1
-    assert find_coordinate(a=1) == 2
-    assert find_coordinate(a=0.25) == 0.5
+    assert find_coordinate(a=jnp.asarray(0.0)) == 0
+    assert find_coordinate(a=jnp.asarray(0.5)) == 1
+    assert find_coordinate(a=jnp.asarray(1.0)) == 2
+    assert find_coordinate(a=jnp.asarray(0.25)) == 0.5
 
 
 @pytest.mark.illustrative
@@ -349,9 +349,9 @@ def test_function_evaluator_performs_linear_extrapolation():
     func = partial(evaluator, next_V_arr=next_V_arr)
 
     # test the evaluator on values outside the grid
-    wealth_outside_of_grid = [-0.5, 3.5, 10]
+    wealth_outside_of_grid = [-0.5, 3.5, 10.0]
     # We expect linear extrapolation
     expected = jnp.pi * jnp.array(wealth_outside_of_grid) + 2
 
-    got = jnp.array([func(next_wealth=w) for w in wealth_outside_of_grid])
+    got = jnp.array([func(next_wealth=jnp.asarray(w)) for w in wealth_outside_of_grid])
     assert jnp.allclose(got, expected)

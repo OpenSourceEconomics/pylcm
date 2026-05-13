@@ -2,7 +2,7 @@ import functools
 import logging
 import os
 import time
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Hashable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -25,7 +25,7 @@ def solve(
     *,
     internal_params: InternalParams,
     ages: AgeGrid,
-    internal_regimes: Mapping[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     logger: logging.Logger,
     enable_jit: bool,
     max_compilation_workers: int | None = None,
@@ -235,7 +235,7 @@ def solve(
 
 def _compile_all_functions(
     *,
-    internal_regimes: Mapping[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
@@ -400,7 +400,7 @@ class _RegimeVTopology:
 
 def _get_regime_V_shapes_and_shardings(
     *,
-    internal_regimes: Mapping[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
 ) -> dict[RegimeName, _RegimeVTopology]:
     """Compute V-array shapes and shardings for every regime.
@@ -469,7 +469,7 @@ def _emit_post_loop_diagnostics(
     logger: logging.Logger,
     diagnostic_rows: list[_DiagnosticRow],
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    internal_regimes: Mapping[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
     running_any_nan: FloatND,
     running_any_inf: FloatND,
@@ -511,7 +511,7 @@ def _raise_first_nan_row(
     *,
     diagnostic_rows: list[_DiagnosticRow],
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    internal_regimes: Mapping[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
 ) -> None:
     """Find the first NaN-bearing (regime, period) and raise.
@@ -535,7 +535,7 @@ def _raise_at(
     *,
     row: _DiagnosticRow,
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    internal_regimes: Mapping[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
 ) -> None:
     """Run the enriched NaN diagnostic on a single offending row and raise."""
@@ -577,7 +577,7 @@ def _raise_at(
 def _reconstruct_next_regime_to_V_arr(
     *,
     period: int,
-    internal_regimes: Mapping[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
 ) -> MappingProxyType[RegimeName, FloatND]:

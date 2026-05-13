@@ -33,9 +33,11 @@ from jax import Array
 
 from lcm.dtypes import safe_to_float_dtype, safe_to_int_dtype
 from lcm.exceptions import InvalidNameError, InvalidParamsError
+from lcm.interfaces import InternalRegime
 from lcm.params.mapping_leaf import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.typing import (
+    FunctionName,
     InternalParams,
     ParamsTemplate,
     RegimeName,
@@ -51,7 +53,7 @@ _NUM_PARTS_FUNCTION_PARAM = 3
 def process_params(
     *,
     params: UserParams,
-    params_template: Mapping[RegimeName, Mapping[str, object]],
+    params_template: Mapping[RegimeName, Mapping[FunctionName, object]],
 ) -> InternalParams:
     """Process user-provided params into internal params.
 
@@ -297,7 +299,7 @@ def _find_candidates(
 
 
 def create_params_template(  # noqa: C901
-    internal_regimes: Mapping[RegimeName, Any],
+    internal_regimes: Mapping[RegimeName, InternalRegime],
 ) -> ParamsTemplate:
     """Create params_template from internal regimes and validate name uniqueness.
 
@@ -305,9 +307,7 @@ def create_params_template(  # noqa: C901
     are disjoint sets to enable unambiguous parameter propagation.
 
     Args:
-        internal_regimes: Mapping of regime names to `InternalRegime` instances
-            (or any object exposing a `regime_params_template` attribute —
-            internal helpers and test mocks both qualify).
+        internal_regimes: Mapping of regime names to InternalRegime instances.
 
     Returns:
         The parameter template.
