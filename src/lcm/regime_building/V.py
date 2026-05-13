@@ -49,26 +49,15 @@ def create_v_interpolation_info(regime: Regime) -> VInterpolationInfo:
     variables = Variables.from_regime(regime)
     grids = get_grids(regime)
 
-    state_names_set = set(variables.state_names)
-    discrete_states = {
-        name: grid_spec
-        for name, grid_spec in grids.items()
-        if (name in state_names_set and isinstance(grid_spec, DiscreteGrid))
-        or isinstance(grid_spec, _ShockGrid)
-    }
-
-    continuous_states = {
-        name: grid_spec
-        for name, grid_spec in grids.items()
-        if name in state_names_set
-        and isinstance(grid_spec, ContinuousGrid)
-        and not isinstance(grid_spec, _ShockGrid)
-    }
+    discrete_states = {name: grids[name] for name in variables.discrete_state_names}
+    continuous_states = {name: grids[name] for name in variables.continuous_state_names}
 
     return VInterpolationInfo(
         state_names=variables.state_names,
-        discrete_states=MappingProxyType(discrete_states),
-        continuous_states=MappingProxyType(continuous_states),
+        # `variables.{discrete,continuous}_state_names` filter on
+        # topology/shock; ty can't see through that to narrow grid types.
+        discrete_states=MappingProxyType(discrete_states),  # ty: ignore[invalid-argument-type]
+        continuous_states=MappingProxyType(continuous_states),  # ty: ignore[invalid-argument-type]
     )
 
 
