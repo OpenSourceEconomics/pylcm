@@ -129,6 +129,7 @@ def validate_logical_consistency(regime: Regime) -> None:
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_validate_state_transitions(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
+    error_messages.extend(_validate_distributed_grids(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -140,6 +141,27 @@ def validate_logical_consistency(regime: Regime) -> None:
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
+
+
+def _validate_distributed_grids(regime: Regime) -> list[str]:
+    """Reject `distributed=True` on action grids.
+
+    Distribution shards the V-array along state axes; an action grid has no
+    corresponding V-array axis, so marking one as distributed has no
+    consistent meaning. To shard an axis a user cares about, set
+    `distributed=True` on the matching state.
+    """
+    offending_actions = [
+        name for name, grid in regime.actions.items() if grid.distributed
+    ]
+    if not offending_actions:
+        return []
+    return [
+        "Action grids cannot be marked `distributed=True` — distribution "
+        "shards V-array axes, which come from states. Move `distributed=True` "
+        "to the corresponding state grid. Offending actions: "
+        f"{offending_actions}.",
+    ]
 
 
 def _validate_function_output_grid_indexing(regime: Regime) -> list[str]:
