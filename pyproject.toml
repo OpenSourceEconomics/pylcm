@@ -29,6 +29,7 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
+  "beartype>=0.21",
   "cloudpickle>=3.1.2",
   "dags>=0.5.1",
   "h5py>=3.12",
