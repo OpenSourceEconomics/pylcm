@@ -16,6 +16,16 @@ class Grid(ABC):
 
         """
 
+    @property
+    @abstractmethod
+    def distributed(self) -> bool:
+        """Whether to shard the grid's state axis across available devices.
+
+        `ContinuousGrid` exposes this as a dataclass field; `DiscreteGrid`
+        exposes it as a property over a private field.
+
+        """
+
     @abstractmethod
     def to_jax(self) -> Int1D | Float1D:
         """Convert the grid to a Jax array."""
