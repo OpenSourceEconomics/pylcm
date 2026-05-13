@@ -94,9 +94,9 @@ class Normal(_ShockGridIID):
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
-        exclude = {"n_points", "batch_size", "gauss_hermite"}
+        exclude = self._NON_PARAM_FIELDS | {"gauss_hermite"}
         if self.gauss_hermite:
-            exclude.add("n_std")
+            exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
     def compute_gridpoints(self, **kwargs: float | FloatND) -> Float1D:
@@ -162,9 +162,9 @@ class LogNormal(_ShockGridIID):
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
-        exclude = {"n_points", "batch_size", "gauss_hermite"}
+        exclude = self._NON_PARAM_FIELDS | {"gauss_hermite"}
         if self.gauss_hermite:
-            exclude.add("n_std")
+            exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
     def compute_gridpoints(self, **kwargs: float | FloatND) -> Float1D:

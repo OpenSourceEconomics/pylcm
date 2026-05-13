@@ -21,7 +21,9 @@ class DiscreteGrid(Grid):
 
     """
 
-    def __init__(self, category_class: type, batch_size: int = 0) -> None:
+    def __init__(
+        self, category_class: type, batch_size: int = 0, *, distributed: bool = False
+    ) -> None:
         _validate_discrete_grid(category_class)
         names_and_values = get_field_names_and_values(category_class)
         self.__categories = tuple(names_and_values.keys())
@@ -32,6 +34,7 @@ class DiscreteGrid(Grid):
         self.__codes = tuple(int(v) for v in names_and_values.values())
         self.__ordered: bool = getattr(category_class, "_ordered", False)
         self.__batch_size: int = batch_size
+        self.__distributed: bool = distributed
 
     @property
     def categories(self) -> tuple[str, ...]:
@@ -52,6 +55,11 @@ class DiscreteGrid(Grid):
     def batch_size(self) -> int:
         """Return batch size during solution."""
         return self.__batch_size
+
+    @property
+    def distributed(self) -> bool:
+        """Return whether the grid is sharded across available devices."""
+        return self.__distributed
 
     def to_jax(self) -> Int1D:
         """Convert the grid to a Jax array.
