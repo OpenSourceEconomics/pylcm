@@ -13,7 +13,7 @@ from lcm.shocks._base import (
     _ShockGrid,
     _validate_gauss_hermite_grid,
 )
-from lcm.typing import Float1D, FloatND, KeyArray, ScalarFloat
+from lcm.typing import Float1D, FloatND, IntND, KeyArray, ScalarFloat
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -44,12 +44,12 @@ class Uniform(_ShockGridIID):
     stop: float | int | None = None
     """Upper bound of the uniform distribution."""
 
-    def compute_gridpoints(self, **kwargs: float | FloatND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | FloatND | IntND) -> Float1D:
         return jnp.linspace(
             start=kwargs["start"], stop=kwargs["stop"], num=self.n_points
         )
 
-    def compute_transition_probs(self, **kwargs: float | FloatND) -> FloatND:  # noqa: ARG002
+    def compute_transition_probs(self, **kwargs: float | FloatND | IntND) -> FloatND:  # noqa: ARG002
         n_points = self.n_points
         return jnp.full((n_points, n_points), fill_value=1 / n_points)
 
@@ -99,7 +99,7 @@ class Normal(_ShockGridIID):
             exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: float | FloatND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | FloatND | IntND) -> Float1D:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -112,7 +112,7 @@ class Normal(_ShockGridIID):
         x_max = mu + n_std * sigma
         return jnp.linspace(start=x_min, stop=x_max, num=n_points)
 
-    def compute_transition_probs(self, **kwargs: float | FloatND) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float | FloatND | IntND) -> FloatND:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -167,7 +167,7 @@ class LogNormal(_ShockGridIID):
             exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: float | FloatND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | FloatND | IntND) -> Float1D:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -178,7 +178,7 @@ class LogNormal(_ShockGridIID):
         n_std = kwargs["n_std"]
         return jnp.exp(jnp.linspace(mu - n_std * sigma, mu + n_std * sigma, n_points))
 
-    def compute_transition_probs(self, **kwargs: float | FloatND) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float | FloatND | IntND) -> FloatND:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -238,7 +238,7 @@ class NormalMixture(_ShockGridIID):
     sigma2: float | int | None = None
     """Standard deviation of the second mixture component."""
 
-    def compute_gridpoints(self, **kwargs: float | FloatND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | FloatND | IntND) -> Float1D:
         n_points = self.n_points
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
@@ -253,7 +253,7 @@ class NormalMixture(_ShockGridIID):
             mean_eps - n_std * std_eps, mean_eps + n_std * std_eps, n_points
         )
 
-    def compute_transition_probs(self, **kwargs: float | FloatND) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float | FloatND | IntND) -> FloatND:
         n_points = self.n_points
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]

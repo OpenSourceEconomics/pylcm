@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from lcm.exceptions import InvalidParamsError
 from lcm.params import MappingLeaf, SequenceLeaf, as_leaf
 from lcm.utils.containers import (
     ensure_containers_are_immutable,
@@ -175,5 +176,5 @@ def test_as_leaf_tuple():
 
 
 def test_as_leaf_rejects_int():
-    with pytest.raises(TypeError, match="as_leaf"):
+    with pytest.raises(InvalidParamsError, match="as_leaf"):
         as_leaf(42)  # ty: ignore[no-matching-overload]

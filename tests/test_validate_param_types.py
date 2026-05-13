@@ -60,7 +60,7 @@ def test_numpy_array_param_normalised_to_canonical_jax_array() -> None:
     """A numpy array param is cast to a JAX array at `canonical_float_dtype()`."""
     model = _make_model()
     internal = model._process_params(
-        params={"bonus": np.asarray(1.0, dtype=np.float64), "discount_factor": 0.95}  # ty: ignore[invalid-argument-type]
+        params={"bonus": np.asarray(1.0, dtype=np.float64), "discount_factor": 0.95}
     )
     bonus = internal["working"]["utility__bonus"]
     assert isinstance(bonus, Array)

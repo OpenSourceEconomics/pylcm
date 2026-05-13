@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
+import numpy as np
 import pandas as pd
 from jax import Array
 from jaxtyping import Bool, Float, Int32, Scalar
@@ -54,7 +55,9 @@ type RegimeStates = MappingProxyType[StateName, Array]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 
 
-type _ParamsLeaf = bool | int | float | Array | pd.Series | MappingLeaf | SequenceLeaf
+type _ParamsLeaf = (
+    bool | int | float | Array | np.ndarray | pd.Series | MappingLeaf | SequenceLeaf
+)
 type UserParams = Mapping[
     str,
     _ParamsLeaf | Mapping[str, _ParamsLeaf | Mapping[str, _ParamsLeaf]],

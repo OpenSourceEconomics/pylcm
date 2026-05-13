@@ -19,7 +19,7 @@ def test_create_params_without_shocks(binary_category_class):
         transition=lambda: 0,
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
             "H": {"discount_factor": "float"},
@@ -45,7 +45,7 @@ def test_create_params_with_custom_H_no_extra_params():
         },
         functions={"utility": lambda a, b, c: None, "H": custom_H},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {"H": {}, "utility": {"c": "no_annotation_found"}}
     )
@@ -67,7 +67,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
         functions={"utility": lambda a, discount_factor: None},  # noqa: ARG005
         transition=lambda discount_factor: discount_factor,
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
             "H": {},
@@ -95,7 +95,7 @@ def test_custom_H_shadowing_state_is_allowed():
         states={"wealth": None},
         functions={"utility": lambda a, wealth: None, "H": custom_H},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable({"H": {}, "utility": {}})
 
 
@@ -124,7 +124,7 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
             "H": SolveSimulateFunctionPair(solve=exponential_h, simulate=beta_delta_h),
         },
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)
     assert set(got["H"]) == {"discount_factor", "beta", "delta"}
 
 
@@ -141,7 +141,7 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
         transition=lambda: 0,
         functions={"utility": lambda a, wealth, risk_aversion: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
             "H": {"discount_factor": "float"},
@@ -180,7 +180,7 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
         transition=lambda: 0,
         functions={"utility": lambda a, wealth, aime: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
             "H": {"discount_factor": "float"},

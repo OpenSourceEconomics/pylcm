@@ -110,7 +110,7 @@ def test_process_params_casts_python_int_to_int32() -> None:
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     final_age = out["regime_a"]["final_age"]
@@ -125,7 +125,7 @@ def test_process_params_casts_int64_array_to_int32() -> None:
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     schedule = out["regime_a"]["schedule"]
@@ -141,8 +141,8 @@ def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
 
     with pytest.raises(ValueError, match="big_param"):
         process_params(
-            params=user_params,  # ty: ignore[invalid-argument-type]
-            params_template=template,  # ty: ignore[invalid-argument-type]
+            params=user_params,
+            params_template=template,
         )
 
 
@@ -165,7 +165,7 @@ def test_process_params_casts_int_array_inside_mapping_leaf_to_int32(key: str) -
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     assert (
@@ -195,7 +195,7 @@ def test_process_params_casts_int_array_inside_sequence_leaf_to_int32(
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     assert (

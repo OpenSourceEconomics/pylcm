@@ -100,8 +100,8 @@ def test_process_params_casts_float64_array_to_canonical_under_no_x64(
     }
 
     out = process_params(
-        params=user_params,  # ty: ignore[invalid-argument-type]
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params=user_params,
+        params_template=template,
     )
 
     schedule = out["regime_a"]["schedule"]
@@ -117,7 +117,7 @@ def test_process_params_casts_python_float_to_canonical(x64_disabled: None):
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     discount_factor = out["regime_a"]["discount_factor"]
@@ -134,8 +134,8 @@ def test_process_params_float_array_overflow_raises_with_qualified_name(
 
     with pytest.raises(OverflowError, match="schedule"):
         process_params(
-            params=user_params,  # ty: ignore[invalid-argument-type]
-            params_template=template,  # ty: ignore[invalid-argument-type]
+            params=user_params,
+            params_template=template,
         )
 
 
@@ -250,7 +250,7 @@ def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     assert (
@@ -280,7 +280,7 @@ def test_process_params_casts_float_array_inside_sequence_leaf_to_canonical(
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     assert (

@@ -87,7 +87,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     @property
     def n_points(self) -> ScalarInt:
         """Return the total number of points in the grid."""
-        return self._piece_n_points.sum()
+        return self._piece_n_points.sum(dtype=jnp.int32)
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -157,7 +157,7 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     @property
     def n_points(self) -> ScalarInt:
         """Return the total number of points in the grid."""
-        return self._piece_n_points.sum()
+        return self._piece_n_points.sum(dtype=jnp.int32)
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -243,8 +243,10 @@ def _init_piecewise_grid_cache(
     # Breakpoints are the effective starts of pieces 1..k-1
     breakpoints = starts[1:] if len(starts) > 1 else jnp.array([])
 
-    n_points = jnp.array([p.n_points for p in grid.pieces])
-    cumulative = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_points[:-1])])
+    n_points = jnp.array([p.n_points for p in grid.pieces], dtype=jnp.int32)
+    cumulative = jnp.concatenate(
+        [jnp.array([0], dtype=jnp.int32), jnp.cumsum(n_points[:-1])]
+    )
 
     object.__setattr__(grid, "_breakpoints", breakpoints)
     object.__setattr__(grid, "_piece_starts", starts)

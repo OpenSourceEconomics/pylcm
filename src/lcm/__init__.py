@@ -28,10 +28,26 @@ import jax
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
-from lcm import shocks
-from lcm._version import __version__
-from lcm.ages import AgeGrid
-from lcm.grids import (
+# Install beartype's AST-rewriting claw on `lcm.grids`, `lcm.shocks`,
+# and `lcm.params` before any submodule of those packages is imported.
+# The claw transforms each matching module's AST at first import to
+# insert runtime type checks; if it isn't registered before the import
+# happens, the affected module loads uninstrumented and `sys.modules`
+# caches the unchecked version for the rest of the process. The
+# per-package `BeartypeConf` maps type violations to the project
+# exception most natural to that subpackage (see `lcm._beartype_conf`).
+from beartype.claw import beartype_package
+
+from lcm._beartype_conf import GRID_CONF, PARAMS_CONF
+
+beartype_package("lcm.grids", conf=GRID_CONF)
+beartype_package("lcm.shocks", conf=GRID_CONF)
+beartype_package("lcm.params", conf=PARAMS_CONF)
+
+from lcm import shocks  # noqa: E402
+from lcm._version import __version__  # noqa: E402
+from lcm.ages import AgeGrid  # noqa: E402
+from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -41,19 +57,19 @@ from lcm.grids import (
     PiecewiseLogSpacedGrid,
     categorical,
 )
-from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.model import Model
-from lcm.persistence import (
+from lcm.interfaces import SolveSimulateFunctionPair  # noqa: E402
+from lcm.model import Model  # noqa: E402
+from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
     SolveSnapshot,
     load_snapshot,
     load_solution,
     save_solution,
 )
-from lcm.regime import MarkovTransition, Regime
-from lcm.simulation.result import SimulationResult
-from lcm.utils.containers import invert_regime_ids
-from lcm.utils.error_handling import validate_transition_probs
+from lcm.regime import MarkovTransition, Regime  # noqa: E402
+from lcm.simulation.result import SimulationResult  # noqa: E402
+from lcm.utils.containers import invert_regime_ids  # noqa: E402
+from lcm.utils.error_handling import validate_transition_probs  # noqa: E402
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
 # This allows regime transition probabilities to use immutable mappings.

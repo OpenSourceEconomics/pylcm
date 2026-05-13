@@ -145,7 +145,7 @@ def get_logspace_coordinate(
 @overload
 def get_irreg_coordinate(
     *,
-    value: ScalarFloat,
+    value: float | ScalarFloat,
     points: Float1D,
 ) -> ScalarFloat: ...
 @overload
@@ -156,7 +156,7 @@ def get_irreg_coordinate(
 ) -> FloatND: ...
 def get_irreg_coordinate(
     *,
-    value: ScalarFloat | FloatND,
+    value: float | ScalarFloat | FloatND,
     points: Float1D,
 ) -> ScalarFloat | FloatND:
     """Return the generalized coordinate of a value in an irregularly spaced grid.

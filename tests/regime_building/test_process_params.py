@@ -184,7 +184,7 @@ def test_function_params_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(internal_regimes)
 
 
 def test_regime_name_no_qname_separator():
@@ -195,7 +195,7 @@ def test_regime_name_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(internal_regimes)
 
 
 def test_function_name_no_qname_separator():
@@ -206,7 +206,7 @@ def test_function_name_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(internal_regimes)
 
 
 def test_regime_function_names_disjoint():
@@ -218,7 +218,7 @@ def test_regime_function_names_disjoint():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(internal_regimes)
 
 
 def test_regime_argument_names_disjoint():
@@ -230,7 +230,7 @@ def test_regime_argument_names_disjoint():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(internal_regimes)
 
 
 def test_missing_parameter_raises_error(params_template):
@@ -303,7 +303,7 @@ def test_passing_same_params_to_regimes_with_different_templates():
     # InvalidParamsError is raised because dead__cons_util__*, dead__utility__*,
     # etc. are not in the template
     with pytest.raises(InvalidParamsError, match="Unknown keys"):
-        process_params(params=params, params_template=params_template)  # ty: ignore[invalid-argument-type]
+        process_params(params=params, params_template=params_template)
 
 
 def test_shock_params_via_regular_params():
@@ -332,6 +332,6 @@ def test_shock_params_via_regular_params():
         },
     }
 
-    result = process_params(params=params, params_template=params_template)  # ty: ignore[invalid-argument-type]
+    result = process_params(params=params, params_template=params_template)
     assert result["working_life"]["adjustment_cost__start"] == 0
     assert result["working_life"]["adjustment_cost__stop"] == 1

@@ -10,7 +10,7 @@ from jax.scipy.stats.norm import cdf
 from lcm.exceptions import GridInitializationError
 from lcm.grids import ContinuousGrid
 from lcm.grids import coordinates as grid_coordinates
-from lcm.typing import Float1D, FloatND, ScalarFloat
+from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
 
 
 def _gauss_hermite_normal(
@@ -84,11 +84,11 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, **kwargs: float | FloatND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | FloatND | IntND) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(self, **kwargs: float | FloatND) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float | FloatND | IntND) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:
@@ -118,10 +118,12 @@ class _ShockGrid(ContinuousGrid):
         return self.get_gridpoints()
 
     @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: FloatND) -> FloatND: ...
-    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
+    def get_coordinate(
+        self, value: float | ScalarFloat | FloatND
+    ) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         if not self.is_fully_specified:
             raise GridInitializationError(
