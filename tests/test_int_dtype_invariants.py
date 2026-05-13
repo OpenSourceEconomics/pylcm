@@ -53,11 +53,11 @@ def test_build_initial_states_discrete_dtype_is_int32() -> None:
         "wealth": jnp.array([20.0, 50.0]),
         "age": jnp.array([18.0, 18.0]),
     }
-    nested = build_initial_states(
+    states_per_regime = build_initial_states(
         initial_states=initial_states,
         internal_regimes=model.internal_regimes,
     )
-    for regime_name, regime_states in nested.items():
+    for regime_name, regime_states in states_per_regime.items():
         for state_name, arr in regime_states.items():
             if arr.dtype.kind == "i":
                 assert arr.dtype == jnp.int32, (
@@ -81,7 +81,7 @@ def test_advance_states_for_subjects_keeps_same_dtype_round_trip() -> None:
     function does not defend against transitions that violate the canonical-
     dtype invariant.
     """
-    current_states_per_regime = MappingProxyType(
+    states_per_regime = MappingProxyType(
         {
             "work": MappingProxyType(
                 {"health": jnp.asarray([0, 1, 0, 1], dtype=jnp.int32)}
@@ -94,13 +94,13 @@ def test_advance_states_for_subjects_keeps_same_dtype_round_trip() -> None:
     )
     subjects = jnp.asarray([True, False, True, False])
 
-    updated = _advance_states_for_subjects(
-        current_states_per_regime=current_states_per_regime,
+    next_states = _advance_states_for_subjects(
+        states_per_regime=states_per_regime,
         next_states_per_regime=next_states_per_regime,
         subject_indices=subjects,
     )
 
-    assert updated["work"]["health"].dtype == jnp.int32
+    assert next_states["work"]["health"].dtype == jnp.int32
 
 
 def test_process_params_casts_python_int_to_int32() -> None:

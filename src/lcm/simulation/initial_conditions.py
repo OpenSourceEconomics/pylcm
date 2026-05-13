@@ -31,6 +31,7 @@ from lcm.typing import (
     RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
+    StateName,
     StatesPerRegime,
 )
 from lcm.utils.containers import invert_regime_ids
@@ -44,7 +45,7 @@ MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 def build_initial_states(
     *,
-    initial_states: Mapping[str, Array],
+    initial_states: Mapping[StateName, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> StatesPerRegime:
     """Build the regime-keyed state carrier from user-provided initial states.
@@ -62,10 +63,10 @@ def build_initial_states(
 
     """
     n_subjects = len(next(iter(initial_states.values())))
-    nested: dict[RegimeName, MappingProxyType[str, Array]] = {}
+    states_per_regime: dict[RegimeName, MappingProxyType[StateName, Array]] = {}
 
     for regime_name, internal_regime in internal_regimes.items():
-        regime_states: dict[str, Array] = {}
+        regime_states: dict[StateName, Array] = {}
         for state_name in _get_regime_state_names(internal_regime):
             grid = internal_regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
@@ -92,9 +93,9 @@ def build_initial_states(
                 regime_states[state_name] = jnp.full(
                     n_subjects, jnp.nan, dtype=canonical_float_dtype()
                 )
-        nested[regime_name] = MappingProxyType(regime_states)
+        states_per_regime[regime_name] = MappingProxyType(regime_states)
 
-    return MappingProxyType(nested)
+    return MappingProxyType(states_per_regime)
 
 
 def validate_initial_conditions(
@@ -232,7 +233,7 @@ def _format_missing_states_message(missing: set[str], required: set[str]) -> str
 
 def _collect_state_name_errors(
     *,
-    initial_states: Mapping[str, Array],
+    initial_states: Mapping[StateName, Array],
     regime_id_arr: Array,
     regime_ids_to_names: RegimeIdsToNames,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -290,7 +291,7 @@ def _collect_state_name_errors(
 
 def _collect_structural_errors(
     *,
-    initial_states: Mapping[str, Array],
+    initial_states: Mapping[StateName, Array],
     regime_id_arr: Array,
     regime_ids_to_names: RegimeIdsToNames,
     regime_names_to_ids: RegimeNamesToIds,
@@ -390,7 +391,7 @@ def _collect_structural_errors(
 
 def _collect_feasibility_errors(
     *,
-    initial_states: Mapping[str, Array],
+    initial_states: Mapping[StateName, Array],
     regime_id_arr: Array,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -441,7 +442,7 @@ def _collect_feasibility_errors(
 
 def _validate_discrete_state_values(
     *,
-    initial_states: Mapping[str, Array],
+    initial_states: Mapping[StateName, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_id_arr: Array,
     regime_names_to_ids: RegimeNamesToIds,
@@ -508,7 +509,7 @@ _BYTES_PER_ACTION_ELEMENT = 4
 def _batched_feasibility_check(
     *,
     feasibility_func: Callable[..., Array],
-    subject_states: Mapping[str, Array],
+    subject_states: Mapping[StateName, Array],
     action_kwargs: Mapping[str, Array],
     filtered_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, Array],
@@ -576,7 +577,7 @@ def _check_regime_feasibility(  # noqa: C901
     *,
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: Mapping[str, Array],
+    initial_states: Mapping[StateName, Array],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
     ages: AgeGrid,
@@ -628,7 +629,7 @@ def _check_regime_feasibility(  # noqa: C901
 
     # Build per-subject state arrays
     idx_arr = jnp.array(subject_indices)
-    subject_states: dict[str, Array] = {}
+    subject_states: dict[StateName, Array] = {}
     for sn in state_names:
         if sn in accepted:
             subject_states[sn] = initial_states[sn][idx_arr]
@@ -717,7 +718,7 @@ def _admits_any_action(
 def _per_constraint_feasibility(
     *,
     internal_regime: InternalRegime,
-    subject_states: Mapping[str, Array],
+    subject_states: Mapping[StateName, Array],
     regime_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, Array],
     idx_arr: Array,
@@ -784,7 +785,7 @@ def _raise_feasibility_type_error(
     exc: TypeError,
     regime_name: RegimeName,
     internal_regime: InternalRegime,
-    subject_states: dict[str, Array],
+    subject_states: dict[StateName, Array],
 ) -> Never:
     """Re-raise a TypeError from feasibility checking with diagnostic context.
 
@@ -830,7 +831,7 @@ def _format_infeasibility_message(
     infeasible_indices: Sequence[int],
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: Mapping[str, Array],
+    initial_states: Mapping[StateName, Array],
     state_names: Sequence[str],
     per_constraint_admits_any: Mapping[str, np.ndarray],
 ) -> str:
