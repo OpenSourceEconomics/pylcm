@@ -4,7 +4,6 @@ import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, categorical
-from lcm.interfaces import VariableInfo
 from lcm.regime_building import process_regimes
 from lcm.regime_building.next_state import (
     _create_discrete_stochastic_next_func,
@@ -12,6 +11,7 @@ from lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
 )
 from lcm.typing import ContinuousState, ScalarInt
+from lcm.variables import VariableInfo, Variables
 from tests.test_models.deterministic.regression import dead, working_life
 
 
@@ -76,8 +76,10 @@ def test_get_next_state_function_with_simulate_target():
     all_grids = MappingProxyType(
         {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
     )
-    variable_info = MappingProxyType(
-        {"b": VariableInfo(kind="state", topology="discrete", is_shock=False)}
+    variables = Variables(
+        info=MappingProxyType(
+            {"b": VariableInfo(kind="state", topology="discrete", is_shock=False)}
+        )
     )
     transitions = MappingProxyType(
         {"mock": MappingProxyType({"next_a": f_a, "next_b": f_b})}
@@ -88,7 +90,7 @@ def test_get_next_state_function_with_simulate_target():
         transitions=transitions,  # ty: ignore[invalid-argument-type]
         functions=functions,  # ty: ignore[invalid-argument-type]
         all_grids=all_grids,
-        variable_info=variable_info,
+        variables=variables,
     )
 
     got = got_func(state=jnp.array([1.0, 2.0]))

@@ -55,11 +55,7 @@ def create_regime_state_action_space(
     """
     base = internal_regime.state_action_space(regime_params=regime_params)
 
-    relevant_state_names = [
-        name
-        for name, info in internal_regime.variable_info.items()
-        if info.kind == "state"
-    ]
+    relevant_state_names = internal_regime.variables.state_names
     states_for_state_action_space = {
         sn: regime_states[sn] for sn in relevant_state_names
     }

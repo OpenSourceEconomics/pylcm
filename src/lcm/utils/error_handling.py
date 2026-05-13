@@ -561,11 +561,7 @@ def _validate_no_reachable_incomplete_targets(
 
     for target_regime_name in active_regimes_next_period:
         target_regime = internal_regimes[target_regime_name]
-        target_state_names = tuple(
-            name
-            for name, info in target_regime.variable_info.items()
-            if info.kind == "state"
-        )
+        target_state_names = target_regime.variables.state_names
         needs = {
             f"next_{s}" for s in target_state_names if f"next_{s}" in stochastic_names
         }

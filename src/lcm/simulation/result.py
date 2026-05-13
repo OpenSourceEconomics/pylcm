@@ -313,9 +313,8 @@ def _compute_metadata(
     regime_to_actions: dict[RegimeName, tuple[ActionName, ...]] = {}
 
     for regime_name, regime in internal_regimes.items():
-        vi = regime.variable_info
-        states = tuple(name for name, info in vi.items() if info.kind == "state")
-        actions = tuple(name for name, info in vi.items() if info.kind == "action")
+        states = regime.variables.state_names
+        actions = regime.variables.action_names
         regime_to_states[regime_name] = states
         regime_to_actions[regime_name] = actions
         all_states.update(states)

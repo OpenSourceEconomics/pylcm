@@ -14,6 +14,7 @@ from lcm.regime_building.ndimage import map_coordinates
 from lcm.shocks import _ShockGrid
 from lcm.typing import FloatND, ScalarFloat, StateName
 from lcm.utils.functools import all_as_kwargs
+from lcm.variables import Variables, get_grids
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -45,33 +46,27 @@ def create_v_interpolation_info(regime: Regime) -> VInterpolationInfo:
         State space information for the regime.
 
     """
-    from lcm.regime_building.variable_info import (  # noqa: PLC0415
-        get_grids,
-        get_variable_info,
-    )
-
-    vi = get_variable_info(regime)
+    variables = Variables.from_regime(regime)
     grids = get_grids(regime)
 
-    state_names = [name for name, info in vi.items() if info.kind == "state"]
-
+    state_names_set = set(variables.state_names)
     discrete_states = {
         name: grid_spec
         for name, grid_spec in grids.items()
-        if (name in state_names and isinstance(grid_spec, DiscreteGrid))
+        if (name in state_names_set and isinstance(grid_spec, DiscreteGrid))
         or isinstance(grid_spec, _ShockGrid)
     }
 
     continuous_states = {
         name: grid_spec
         for name, grid_spec in grids.items()
-        if name in state_names
+        if name in state_names_set
         and isinstance(grid_spec, ContinuousGrid)
         and not isinstance(grid_spec, _ShockGrid)
     }
 
     return VInterpolationInfo(
-        state_names=tuple(state_names),
+        state_names=variables.state_names,
         discrete_states=MappingProxyType(discrete_states),
         continuous_states=MappingProxyType(continuous_states),
     )

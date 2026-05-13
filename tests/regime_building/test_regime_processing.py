@@ -8,18 +8,18 @@ from numpy.testing import assert_array_equal
 from lcm import Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, LinSpacedGrid
-from lcm.interfaces import InternalRegime, VariableInfo
+from lcm.interfaces import InternalRegime
 from lcm.regime_building.processing import (
     _rename_params_to_qnames,
     process_regimes,
 )
-from lcm.regime_building.variable_info import get_grids, get_variable_info
 from lcm.typing import ScalarInt
+from lcm.variables import VariableInfo, Variables, get_grids
 from tests.regime_mock import RegimeMock
 from tests.test_models.deterministic.base import dead, working_life
 
 
-def test_get_variable_info(binary_category_class):
+def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
     def utility(c):
         pass
 
@@ -37,9 +37,9 @@ def test_get_variable_info(binary_category_class):
         functions={"utility": utility},
     )
 
-    got = get_variable_info(regime_mock)  # ty: ignore[invalid-argument-type]
+    got = Variables.from_regime(regime_mock)  # ty: ignore[invalid-argument-type]
 
-    assert isinstance(got, MappingProxyType)
+    assert isinstance(got, Variables)
     assert set(got) == {"a", "c"}
     assert got["a"] == VariableInfo(kind="action", topology="discrete", is_shock=False)
     assert got["c"] == VariableInfo(kind="state", topology="discrete", is_shock=False)
@@ -114,14 +114,14 @@ def test_process_regimes():
     internal_working_regime = internal_regimes["working_life"]
 
     # Variable Info
-    vi = internal_working_regime.variable_info
-    assert vi["wealth"] == VariableInfo(
+    variables = internal_working_regime.variables
+    assert variables["wealth"] == VariableInfo(
         kind="state", topology="continuous", is_shock=False
     )
-    assert vi["labor_supply"] == VariableInfo(
+    assert variables["labor_supply"] == VariableInfo(
         kind="action", topology="discrete", is_shock=False
     )
-    assert vi["consumption"] == VariableInfo(
+    assert variables["consumption"] == VariableInfo(
         kind="action", topology="continuous", is_shock=False
     )
 
@@ -159,8 +159,8 @@ def test_process_regimes():
     assert "utility" in internal_working_regime.solve_functions.functions
 
 
-def test_variable_info_excludes_constraint_names():
-    """Constraint functions do not appear as variables in variable_info."""
+def test_variables_excludes_constraint_names():
+    """Constraint functions do not appear as variables in the Variables container."""
 
     def wealth_constraint(wealth):
         return wealth > 200
@@ -170,7 +170,7 @@ def test_variable_info_excludes_constraint_names():
         | {"wealth_constraint": wealth_constraint}
     )
 
-    got = get_variable_info(working_copy)
+    got = Variables.from_regime(working_copy)
     assert "wealth_constraint" not in got
 
 

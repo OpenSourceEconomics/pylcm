@@ -9,7 +9,6 @@ from dags.tree import qname_from_tree_path
 from jax import Array
 
 from lcm.grids import Grid
-from lcm.interfaces import VariableInfoMapping
 from lcm.shocks import _ShockGrid
 from lcm.shocks.ar1 import _ShockGridAR1
 from lcm.shocks.iid import _ShockGridIID
@@ -27,6 +26,7 @@ from lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
+from lcm.variables import Variables
 
 
 def get_next_state_function_for_solution(
@@ -63,7 +63,7 @@ def get_next_state_function_for_simulation(
     transitions: TransitionFunctionsMapping,
     functions: FunctionsMapping,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    variable_info: VariableInfoMapping,
+    variables: Variables,
     stochastic_transition_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
@@ -83,7 +83,7 @@ def get_next_state_function_for_simulation(
         transitions: Nested mapping of target regime names to transition functions.
         functions: Immutable mapping of auxiliary functions of a regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        variable_info: Variable info of a regime.
+        variables: States and actions of the regime with kind/topology/shock tags.
         stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
@@ -99,7 +99,7 @@ def get_next_state_function_for_simulation(
             target=target,
             target_transitions=target_transitions,
             all_grids=all_grids,
-            variable_info=variable_info,
+            variables=variables,
             stochastic_transition_names=stochastic_transition_names,
         )
         per_target_funcs[target] = concatenate_functions(
@@ -157,7 +157,7 @@ def _extend_target_transitions_for_simulation(
     target: RegimeName,
     target_transitions: MappingProxyType[TransitionFunctionName, Callable[..., Array]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    variable_info: VariableInfoMapping,
+    variables: Variables,
     stochastic_transition_names: frozenset[TransitionFunctionName],
 ) -> dict[TransitionFunctionName, Callable[..., Array]]:
     """Replace stochastic transitions for one target with realisation wrappers.
@@ -176,16 +176,15 @@ def _extend_target_transitions_for_simulation(
         target_transitions: Mapping of unqualified `next_<state>` transition names
             to functions, restricted to one target regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        variable_info: Variable info of the current regime.
+        variables: States and actions of the current regime with
+            kind/topology/shock tags.
         stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
         Extended transitions dictionary keyed by unqualified `next_<state>` names.
 
     """
-    shock_names: set[ShockName] = {
-        name for name, info in variable_info.items() if info.is_shock
-    }
+    shock_names: frozenset[ShockName] = frozenset(variables.shock_names)
     extended: dict[TransitionFunctionName, Callable[..., Array]] = dict(
         target_transitions
     )
