@@ -146,7 +146,7 @@ def wrong_distributed_model():
 
 @_skip_pytest_parallel
 def test_solution_running_on_multiple_cpus(correct_distributed_model):
-    """Test that distribution over multiple CPU's works."""
+    """Test that distribution over multiple CPU's works for solution."""
 
     period_to_regime_to_V_arr = correct_distributed_model.solve(
         params={"discount_factor": 0.95},
@@ -157,7 +157,7 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
 
 @_skip_pytest_parallel
 def test_simulation_running_on_multiple_cpus(correct_distributed_model):
-    """Test that distribution over multiple CPU's works."""
+    """Test that distribution over multiple CPU's works for simulation."""
 
     res = correct_distributed_model.simulate(
         params={"discount_factor": 0.95},
@@ -181,7 +181,7 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
 
 @_skip_pytest_parallel
 def test_solution_error_if_not_multiple(wrong_distributed_model):
-    """Test that distribution over multiple CPU's works."""
+    """Test that solution throws error if too many states for num cpus."""
 
     with pytest.raises(PyLCMError, match="smaller than the number"):
         wrong_distributed_model.solve(
@@ -191,7 +191,7 @@ def test_solution_error_if_not_multiple(wrong_distributed_model):
 
 @_skip_pytest_parallel
 def test_simulation_error_if_not_multiple(correct_distributed_model):
-    """Test that distribution over multiple CPU's works."""
+    """Test that simulation throws error if too many subjects for num cpus."""
 
     with pytest.raises(PyLCMError, match="multiple"):
         correct_distributed_model.simulate(

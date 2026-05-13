@@ -49,15 +49,24 @@ def solve(
     # Compute V array shapes and build a consistent next_regime_to_V_arr
     # template.  Using the same pytree structure (keys and shapes) across
     # all periods avoids JIT re-compilation from pytree mismatches.
-    regime_V_shapes = _get_regime_V_shapes_and_shardings(
+    regime_V_shapes = _get_regime_V_shapes(
+        internal_regimes=internal_regimes,
+        internal_params=internal_params,
+    )
+
+    regime_V_shardings = _get_regime_V_shardings(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
     )
 
     next_regime_to_V_arr = MappingProxyType(
         {
-            regime_name: jax.device_put(jnp.zeros(shape), sharding)
-            for regime_name, (shape, sharding) in regime_V_shapes.items()
+            regime_name: jax.device_put(
+                jnp.zeros(shape), regime_V_shardings[regime_name]
+            )
+            if regime_V_shardings
+            else jnp.zeros(shape)
+            for regime_name, shape in regime_V_shapes.items()
         }
     )
 
@@ -386,11 +395,11 @@ def _func_dedup_key(*, func: Callable) -> Hashable:
     return id(func)
 
 
-def _get_regime_V_shapes_and_shardings(
+def _get_regime_V_shapes(
     *,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
-) -> dict[RegimeName, tuple[tuple[int, ...], jax.NamedSharding]]:
+) -> dict[RegimeName, tuple[int, ...]]:
     """Compute value function array shapes for all regimes.
 
     The V array has one dimension per state variable, with size equal to
@@ -404,35 +413,59 @@ def _get_regime_V_shapes_and_shardings(
         Dict of regime names to V array shapes.
 
     """
-    shapes_and_shardings: dict[
-        RegimeName, tuple[tuple[int, ...], jax.NamedSharding]
-    ] = {}
-    avail_devices = jax.devices()
+    shapes: dict[RegimeName, tuple[int, ...]] = {}
     for regime_name, regime in internal_regimes.items():
         state_action_space = regime.state_action_space(
             regime_params=internal_params[regime_name],
         )
-        spec = []
-        for name in state_action_space.states:
-            if name in state_action_space.distributed_states:
-                spec.append(name)
-            else:
-                spec.append(None)
-        shape = tuple(len(v) for v in state_action_space.states.values())
-        dist_shape = tuple(
-            len(v) for v in state_action_space.distributed_states.values()
-        )
-        mesh = jax.make_mesh(
-            dist_shape,
-            tuple(name for name in spec if name is not None),
-            axis_types=tuple(
-                jax.sharding.AxisType.Auto for i in range(len(dist_shape))
-            ),
-            devices=avail_devices,
-        )
-        sharding = jax.sharding.NamedSharding(mesh=mesh, spec=jax.P(*spec))
-        shapes_and_shardings[regime_name] = (shape, sharding)
-    return shapes_and_shardings
+        shapes[regime_name] = tuple(len(v) for v in state_action_space.states.values())
+    return shapes
+
+
+def _get_regime_V_shardings(
+    *,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    internal_params: InternalParams,
+) -> dict[RegimeName, jax.NamedSharding]:
+    """Compute value function array shardings for all regimes.
+
+    The V-Array is distributed over all axes that belong to a distributed state.
+
+    Args:
+        internal_regimes: The internal regimes.
+        internal_params: Regime parameters (needed for runtime grid shapes).
+
+    Returns:
+        Dict of regime names to V array shardings. Empty if no state is distributed.
+
+    """
+    shardings: dict[RegimeName, jax.NamedSharding] = {}
+    avail_devices = jax.devices()
+    for regime_name, regime in internal_regimes.items():
+        if any(grid.distributed for grid in regime.grids.values()):
+            state_action_space = regime.state_action_space(
+                regime_params=internal_params[regime_name],
+            )
+            spec = []
+            for name in state_action_space.states:
+                if name in state_action_space.distributed_states:
+                    spec.append(name)
+                else:
+                    spec.append(None)
+            dist_shape = tuple(
+                len(v) for v in state_action_space.distributed_states.values()
+            )
+            mesh = jax.make_mesh(
+                dist_shape,
+                tuple(name for name in spec if name is not None),
+                axis_types=tuple(
+                    jax.sharding.AxisType.Auto for i in range(len(dist_shape))
+                ),
+                devices=avail_devices,
+            )
+            sharding = jax.sharding.NamedSharding(mesh=mesh, spec=jax.P(*spec))
+            shardings[regime_name] = sharding
+    return shardings
 
 
 @dataclass(frozen=True)
@@ -583,13 +616,13 @@ def _reconstruct_next_regime_to_V_arr(
     the regime's state-action space at the supplied params — identical to what
     `_get_regime_V_shapes_and_shardings` saw during solve setup.
     """
-    regime_V_shapes_and_shardings = _get_regime_V_shapes_and_shardings(
+    regime_V_shapes_and_shardings = _get_regime_V_shapes(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
     )
     later_periods = sorted(p for p in solution if p > period)
     result: dict[RegimeName, FloatND] = {}
-    for regime_name, (shape, _sharding) in regime_V_shapes_and_shardings.items():
+    for regime_name, shape in regime_V_shapes_and_shardings.items():
         rolled: FloatND | None = None
         for q in later_periods:
             if regime_name in solution[q]:
