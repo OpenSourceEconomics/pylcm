@@ -19,10 +19,10 @@ class Grid(ABC):
     @property
     @abstractmethod
     def distributed(self) -> bool:
-        """Whether to distribute the grid over the available devices.
+        """Whether to shard the grid's state axis across available devices.
 
-        `ContinuousGrid` overrides this via its dataclass field.
-        `DiscreteGrid` overrides this via its own property.
+        `ContinuousGrid` exposes this as a dataclass field; `DiscreteGrid`
+        exposes it as a property over a private field.
 
         """
 

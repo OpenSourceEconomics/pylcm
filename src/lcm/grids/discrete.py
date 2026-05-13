@@ -56,7 +56,7 @@ class DiscreteGrid(Grid):
 
     @property
     def distributed(self) -> bool:
-        """Return batch size during solution."""
+        """Return whether the grid is sharded across available devices."""
         return self.__distributed
 
     def to_jax(self) -> Int1D:
