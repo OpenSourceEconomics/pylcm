@@ -9,7 +9,7 @@ transition functions from user-defined regimes; this module executes them.
 from types import MappingProxyType
 
 import jax
-from dags.tree import tree_path_from_qname
+from dags.tree import qname_from_tree_path
 from jax import Array, vmap
 from jax import numpy as jnp
 
@@ -29,7 +29,6 @@ from lcm.typing import (
     StateName,
     StatesPerRegime,
 )
-from lcm.utils.namespace import flatten_regime_namespace
 
 
 def create_regime_state_action_space(
@@ -104,16 +103,16 @@ def calculate_next_states(
     stochastic_transition_names = (
         internal_regime.simulate_functions.stochastic_transition_names
     )
-    stochastic_next_function_names = [
-        next_func_name
-        for next_func_name in flatten_regime_namespace(
-            internal_regime.simulate_functions.transitions
+    # Sorted to fix a downstream-ordering bug when the nested iteration
+    # yields names in a non-deterministic order.
+    stochastic_next_function_names = sorted(
+        qname_from_tree_path((target_regime, transition_name))
+        for target_regime, target_transitions in (
+            internal_regime.simulate_functions.transitions.items()
         )
-        if tree_path_from_qname(next_func_name)[-1] in stochastic_transition_names
-    ]
-    # There is a bug that sometimes changes the order of the names,
-    # sorting fixes this
-    stochastic_next_function_names.sort()
+        for transition_name in target_transitions
+        if transition_name in stochastic_transition_names
+    )
 
     key, stochastic_variables_keys = generate_simulation_keys(
         key=key,
