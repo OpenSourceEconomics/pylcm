@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 import pandas as pd
 from jax import Array
@@ -72,16 +72,19 @@ type UserFacingParamsTemplate = dict[RegimeName, dict[FunctionName, dict[str, st
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
 
 
+@runtime_checkable
 class UserFunction(Protocol):
     """A function provided by the user.
 
-    Only used for type checking.
+    Used for both type checking and beartype runtime checks on perimeter
+    constructors. Any callable satisfies this protocol structurally.
 
     """
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...  # noqa: ANN401
 
 
+@runtime_checkable
 class InternalUserFunction(Protocol):
     """The internal representation of a function provided by the user.
 
@@ -96,6 +99,7 @@ class InternalUserFunction(Protocol):
     ) -> Array: ...
 
 
+@runtime_checkable
 class RegimeTransitionFunction(Protocol):
     """The regime transition function provided by the user.
 
@@ -112,6 +116,7 @@ class RegimeTransitionFunction(Protocol):
     ) -> Float1D: ...
 
 
+@runtime_checkable
 class VmappedRegimeTransitionFunction(Protocol):
     """The vmapped regime transition function.
 
@@ -128,6 +133,7 @@ class VmappedRegimeTransitionFunction(Protocol):
     ) -> FloatND: ...
 
 
+@runtime_checkable
 class QAndFFunction(Protocol):
     """The function that computes Q and F.
 
@@ -145,6 +151,7 @@ class QAndFFunction(Protocol):
     ) -> tuple[FloatND, BoolND]: ...
 
 
+@runtime_checkable
 class MaxQOverAFunction(Protocol):
     """The function that maximizes Q over all actions.
 
@@ -162,6 +169,7 @@ class MaxQOverAFunction(Protocol):
     ) -> Array: ...
 
 
+@runtime_checkable
 class ArgmaxQOverAFunction(Protocol):
     """The function that finds the argmax of Q over all actions.
 
@@ -179,6 +187,7 @@ class ArgmaxQOverAFunction(Protocol):
     ) -> tuple[Array, Array]: ...
 
 
+@runtime_checkable
 class StochasticNextFunction(Protocol):
     """The function that simulates the next state of a stochastic variable.
 
@@ -189,6 +198,7 @@ class StochasticNextFunction(Protocol):
     def __call__(self, **kwargs: Array) -> Array: ...
 
 
+@runtime_checkable
 class NextStateSimulationFunction(Protocol):
     """The function that computes the next states during the simulation.
 
@@ -205,6 +215,7 @@ class NextStateSimulationFunction(Protocol):
     ]: ...
 
 
+@runtime_checkable
 class ActiveFunction(Protocol):
     """Function that determines if a regime is active at a given age.
 

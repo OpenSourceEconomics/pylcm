@@ -6,7 +6,7 @@ preserving the documented exception hierarchy.
 
 """
 
-from beartype import BeartypeConf
+from beartype import BeartypeConf, BeartypeStrategy
 
 from lcm.exceptions import (
     CategoricalDefinitionError,
@@ -18,7 +18,11 @@ from lcm.exceptions import (
 
 
 def _conf(exc: type[Exception]) -> BeartypeConf:
-    return BeartypeConf(violation_param_type=exc)
+    # Full O(n) container validation so every bad entry in a mapping/sequence
+    # gets reported, not just one sampled element. The decorated entry points
+    # are called rarely (construction, solve, simulate), so per-call cost is
+    # invisible.
+    return BeartypeConf(violation_param_type=exc, strategy=BeartypeStrategy.On)
 
 
 # Used on `Regime` and `MarkovTransition`.

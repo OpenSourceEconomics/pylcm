@@ -30,53 +30,32 @@ from lcm.typing import (
 )
 
 
-def validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
-    """Validate the types of the regime attributes."""
-    error_messages = []
+def validate_mapping_contents(regime: Regime) -> None:
+    """Exhaustively check key/value types of `regime`'s mapping fields.
 
-    # Validate types of states and actions
-    for attr_name in ("actions", "states"):
-        attr = getattr(regime, attr_name)
-        if isinstance(attr, Mapping):
-            for k, v in attr.items():
-                if not isinstance(k, str):
-                    error_messages.append(f"{attr_name} key {k} must be a string.")
-                if not isinstance(v, Grid):
-                    error_messages.append(f"{attr_name} value {v} must be an LCM grid.")
-        else:
-            error_messages.append(f"{attr_name} must be a mapping.")
+    Beartype on `Regime` catches top-level type mismatches and a sampled
+    Mapping entry, but does not deep-check every key/value of a Mapping
+    parameter — especially when the value type is a `Callable`/`Protocol`,
+    which beartype skips entirely. This function fills that gap by
+    iterating each entry and reporting all type violations together via
+    the standard `error_messages` aggregator.
 
-    # Validate types of function mappings (constraints and functions)
-    function_collections = [
-        regime.constraints,
-        regime.functions,
-    ]
-    for func_collection in function_collections:
-        if isinstance(func_collection, Mapping):
-            for k, v in func_collection.items():
-                if not isinstance(k, str):
-                    error_messages.append(
-                        f"function keys must be a strings, but is {k}."
-                    )
-                if not callable(v) and not isinstance(v, SolveSimulateFunctionPair):
-                    error_messages.append(
-                        f"function values must be a callable, but is {v}."
-                    )
-        else:
-            error_messages.append(
-                "constraints and functions must each be a mapping of callables."
-            )
+    """
+    error_messages: list[str] = []
 
-    # Validate state_transitions is a mapping
-    if not isinstance(regime.state_transitions, Mapping):
-        error_messages.append("state_transitions must be a mapping.")
+    for attr_name in ("states", "actions"):
+        for k, v in getattr(regime, attr_name).items():
+            if not isinstance(k, str):
+                error_messages.append(f"{attr_name} key {k!r} must be a string.")
+            if not isinstance(v, Grid):
+                error_messages.append(f"{attr_name} value {v!r} must be an LCM grid.")
 
-    # Validate regime transition is callable or None
-    if not regime.terminal and not callable(regime.transition):
-        error_messages.append(
-            "transition must be callable or None, "
-            f"but is {type(regime.transition).__name__}."
-        )
+    for attr_name in ("functions", "constraints"):
+        for k, v in getattr(regime, attr_name).items():
+            if not isinstance(k, str):
+                error_messages.append(f"{attr_name} key {k!r} must be a string.")
+            if not callable(v) and not isinstance(v, SolveSimulateFunctionPair):
+                error_messages.append(f"{attr_name} value {v!r} must be a callable.")
 
     if error_messages:
         msg = format_messages(error_messages)

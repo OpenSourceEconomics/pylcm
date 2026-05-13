@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal, TypeAliasType, cast, overload
 
+from beartype import beartype
+
+from lcm._beartype_conf import REGIME_CONF
 from lcm.exceptions import RegimeInitializationError
 from lcm.grids import DiscreteGrid, Grid
 from lcm.interfaces import SolveSimulateFunctionPair
@@ -24,6 +27,7 @@ from lcm.utils.containers import (
 )
 
 
+@beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
 class MarkovTransition:
     """Wrapper marking a transition function as stochastic (Markov).
@@ -48,11 +52,6 @@ class MarkovTransition:
     """The transition function returning a probability distribution."""
 
     def __post_init__(self) -> None:
-        if not callable(self.func):
-            raise RegimeInitializationError(
-                f"MarkovTransition requires a callable, "
-                f"but got {type(self.func).__name__}: {self.func!r}"
-            )
         # Copy __wrapped__ and __annotations__ from the wrapped function so
         # that inspect.signature and dags see the original signature. We use
         # object.__setattr__ because the dataclass is frozen.
@@ -104,6 +103,7 @@ class _IdentityTransition:
         return kwargs[self._state_name]
 
 
+@beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Regime:
     """A user regime which can be processed into an internal regime.
@@ -184,11 +184,11 @@ class Regime:
 
     def __post_init__(self) -> None:
         from lcm.regime_building.validation import (  # noqa: PLC0415
-            validate_attribute_types,
             validate_logical_consistency,
+            validate_mapping_contents,
         )
 
-        validate_attribute_types(self)
+        validate_mapping_contents(self)
         validate_logical_consistency(self)
 
         def make_immutable(name: str) -> None:

@@ -23,7 +23,7 @@ from lcm.typing import (
 
 def test_regime_invalid_states():
     """Regime rejects non-dict states argument."""
-    with pytest.raises(RegimeInitializationError, match="states must be a mapping"):
+    with pytest.raises(RegimeInitializationError, match="states"):
         Regime(
             transition=lambda: 0,
             states="health",  # ty: ignore[invalid-argument-type]
@@ -35,7 +35,7 @@ def test_regime_invalid_states():
 
 def test_regime_invalid_actions():
     """Regime rejects non-dict actions argument."""
-    with pytest.raises(RegimeInitializationError, match="actions must be a mapping"):
+    with pytest.raises(RegimeInitializationError, match="actions"):
         Regime(
             transition=lambda: 0,
             states={},
@@ -47,9 +47,7 @@ def test_regime_invalid_actions():
 
 def test_regime_invalid_functions():
     """Regime rejects non-dict functions argument."""
-    with pytest.raises(
-        RegimeInitializationError, match="functions must each be a mapping"
-    ):
+    with pytest.raises(RegimeInitializationError, match="functions"):
         Regime(
             transition=lambda: 0,
             states={},
@@ -61,10 +59,7 @@ def test_regime_invalid_functions():
 
 def test_regime_invalid_functions_values():
     """Regime rejects non-callable function values."""
-    with pytest.raises(
-        RegimeInitializationError,
-        match=r"function values must be a callable, but is 0.",
-    ):
+    with pytest.raises(RegimeInitializationError, match="functions"):
         Regime(
             states={},
             actions={},
@@ -76,9 +71,7 @@ def test_regime_invalid_functions_values():
 
 def test_regime_invalid_functions_keys():
     """Regime rejects non-string function keys."""
-    with pytest.raises(
-        RegimeInitializationError, match=r"function keys must be a strings, but is 0."
-    ):
+    with pytest.raises(RegimeInitializationError, match="functions"):
         Regime(
             states={},
             actions={},
@@ -90,9 +83,7 @@ def test_regime_invalid_functions_keys():
 
 def test_regime_invalid_actions_values():
     """Regime rejects non-grid action values."""
-    with pytest.raises(
-        RegimeInitializationError, match=r"actions value 0 must be an LCM grid."
-    ):
+    with pytest.raises(RegimeInitializationError, match="actions"):
         Regime(
             states={},
             actions={"exercise": 0},  # ty: ignore[invalid-argument-type]
@@ -104,9 +95,7 @@ def test_regime_invalid_actions_values():
 
 def test_regime_invalid_states_values():
     """Regime rejects non-grid state values."""
-    with pytest.raises(
-        RegimeInitializationError, match=r"states value 0 must be an LCM grid."
-    ):
+    with pytest.raises(RegimeInitializationError, match="states"):
         Regime(
             states={"health": 0},  # ty: ignore[invalid-argument-type]
             actions={},
@@ -118,10 +107,7 @@ def test_regime_invalid_states_values():
 
 def test_regime_invalid_utility():
     """Regime rejects non-callable utility argument."""
-    with pytest.raises(
-        RegimeInitializationError,
-        match=(r"function values must be a callable, but is 0"),
-    ):
+    with pytest.raises(RegimeInitializationError, match="functions"):
         Regime(
             states={},
             actions={},
@@ -151,10 +137,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
 
 def test_regime_transition_must_be_callable():
     """Regime rejects non-callable transition."""
-    with pytest.raises(
-        RegimeInitializationError,
-        match="transition must be callable or None",
-    ):
+    with pytest.raises(RegimeInitializationError, match="transition"):
         Regime(
             states={},
             actions={},
