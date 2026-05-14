@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import portion
 
-from lcm._beartype_conf import GRID_CONF, beartype_init
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.grids import coordinates as grid_coordinates
 from lcm.grids.continuous import ContinuousGrid
@@ -44,7 +43,6 @@ class Piece:
         object.__setattr__(self, "n_points", jnp.int32(n_points))
 
 
-@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class PiecewiseLinSpacedGrid(ContinuousGrid):
     """A piecewise linearly spaced grid with multiple segments.
@@ -108,7 +106,6 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
         return self._cumulative_offsets[piece_idx] + local_coord
 
 
-@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class PiecewiseLogSpacedGrid(ContinuousGrid):
     """A piecewise logarithmically spaced grid with multiple segments.

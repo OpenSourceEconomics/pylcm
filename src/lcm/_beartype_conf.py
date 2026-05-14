@@ -6,9 +6,7 @@ preserving the documented exception hierarchy.
 
 """
 
-from collections.abc import Callable
-
-from beartype import BeartypeConf, BeartypeStrategy, beartype
+from beartype import BeartypeConf, BeartypeStrategy
 
 from lcm.exceptions import (
     CategoricalDefinitionError,
@@ -32,24 +30,6 @@ def _conf(exc: type[Exception]) -> BeartypeConf:
         strategy=BeartypeStrategy.On,
         is_pep484_tower=True,
     )
-
-
-def beartype_init[C](conf: BeartypeConf) -> Callable[[type[C]], type[C]]:
-    """Class decorator that beartype-checks `__init__` only.
-
-    Bare `@beartype` on a class wraps every method, which surfaces
-    annotation drift in helpers like `compute_gridpoints(**kwargs: float)`
-    where runtime kwargs are actually JAX arrays. Restricting decoration
-    to `__init__` keeps the perimeter check (parameter types at
-    construction) without policing every method's runtime types.
-
-    """
-
-    def deco(cls: type[C]) -> type[C]:
-        cls.__init__ = beartype(conf=conf)(cls.__init__)  # ty: ignore[invalid-assignment]
-        return cls
-
-    return deco
 
 
 # Used on `Regime` and `MarkovTransition`.
