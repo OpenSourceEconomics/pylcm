@@ -19,6 +19,7 @@ from beartype.roar import BeartypeCallHintViolation
 from lcm import AgeGrid
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats
+from lcm.state_action_space import _validate_all_states_present
 from lcm.utils.error_handling import validate_regime_transition_probs
 
 
@@ -68,4 +69,20 @@ def test_claw_checks_lcm_utils_error_handling() -> None:
             regime_name="working",
             age=50.0,
             next_age=51.0,
+        )
+
+
+def test_claw_checks_lcm_state_action_space() -> None:
+    """An ill-typed argument to an `lcm.state_action_space` function is rejected.
+
+    `_validate_all_states_present` annotates `provided_states` as a
+    `dict[StateName, FloatND | IntND]`. An empty `str` `provided_states`
+    yields an empty `set(provided_states)`, which equals an empty
+    `required_state_names`, so an un-instrumented call would return cleanly;
+    the claw turns the wrong container type into a violation.
+    """
+    with pytest.raises(BeartypeCallHintViolation):
+        _validate_all_states_present(
+            provided_states="",  # ty: ignore[invalid-argument-type]
+            required_state_names=set(),
         )

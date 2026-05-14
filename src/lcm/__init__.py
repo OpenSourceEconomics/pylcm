@@ -58,6 +58,7 @@ beartype_package("lcm.regime_building", conf=REGIME_BUILDING_CONF)
 beartype_package("lcm.solution", conf=INTERNAL_CONF)
 beartype_package("lcm.simulation", conf=INTERNAL_CONF)
 beartype_package("lcm.utils.error_handling", conf=INTERNAL_CONF)
+beartype_package("lcm.state_action_space", conf=INTERNAL_CONF)
 
 from lcm import shocks  # noqa: E402
 from lcm._version import __version__  # noqa: E402
