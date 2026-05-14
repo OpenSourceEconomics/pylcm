@@ -12,8 +12,11 @@ from lcm.regime_building.ndimage import (
 
 
 def test_map_coordinates_wrong_input_dimensions():
-    values = jnp.arange(2)  # ndim = 1
-    coordinates = [jnp.array([0]), jnp.array([1])]  # len = 2
+    values = jnp.arange(2, dtype=jnp.int32)  # ndim = 1
+    coordinates = [
+        jnp.array([0], dtype=jnp.int32),
+        jnp.array([1], dtype=jnp.int32),
+    ]  # len = 2
     with pytest.raises(ValueError, match="coordinates must be a sequence of length"):
         map_coordinates(values, coordinates)
 
@@ -29,7 +32,7 @@ def test_map_coordinates_extrapolation():
 
 
 def test_nonempty_sum():
-    a = jnp.arange(3)
+    a = jnp.arange(3, dtype=jnp.int32)
 
     expected = a + a + a
     got = _sum_all([a, a, a])
@@ -38,7 +41,7 @@ def test_nonempty_sum():
 
 
 def test_nonempty_prod():
-    a = jnp.arange(3)
+    a = jnp.arange(3, dtype=jnp.int32)
 
     expected = a * a * a
     got = _multiply_all([a, a, a])
@@ -75,7 +78,7 @@ def test_linear_indices_and_weights_inside_domain():
 
 
 def test_linear_indices_and_weights_outside_domain():
-    coordinates = jnp.array([-1, 2])
+    coordinates = jnp.array([-1.0, 2.0])
 
     (idx_low, weight_low), (idx_high, weight_high) = _compute_indices_and_weights(
         coordinates, input_size=2

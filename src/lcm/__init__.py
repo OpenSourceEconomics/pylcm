@@ -25,6 +25,10 @@ if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
 
 import jax
 
+# Patch jaxtyping's `"..."` sentinel to survive pickling before any
+# `jaxtyping`-subscripted type is created (see the module docstring).
+from lcm import _jaxtyping_patch  # noqa: F401
+
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
