@@ -30,7 +30,7 @@ from lcm.typing import (
     Int1D,
     InternalParams,
     IntND,
-    KeyArray,
+    PRNGKeyND,
     RegimeName,
     RegimeNamesToIds,
     ScalarFloat,
@@ -217,8 +217,8 @@ def _simulate_regime_in_period(
     internal_params: InternalParams,
     regime_names_to_ids: RegimeNamesToIds,
     active_regimes_next_period: tuple[RegimeName, ...],
-    key: KeyArray,
-) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, KeyArray]:
+    key: PRNGKeyND,
+) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,

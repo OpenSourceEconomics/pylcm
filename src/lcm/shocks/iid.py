@@ -13,7 +13,7 @@ from lcm.shocks._base import (
     _ShockGrid,
     _validate_gauss_hermite_grid,
 )
-from lcm.typing import Float1D, FloatND, KeyArray, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, PRNGKeyND, ScalarFloat, ScalarInt
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -24,7 +24,7 @@ class _ShockGridIID(_ShockGrid):
     def draw_shock(
         self,
         params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: KeyArray,
+        key: PRNGKeyND,
     ) -> ScalarFloat: ...
 
 
@@ -56,7 +56,7 @@ class Uniform(_ShockGridIID):
     def draw_shock(
         self,
         params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: KeyArray,
+        key: PRNGKeyND,
     ) -> ScalarFloat:
         return jax.random.uniform(
             key=key, minval=params["start"], maxval=params["stop"]
@@ -133,7 +133,7 @@ class Normal(_ShockGridIID):
     def draw_shock(
         self,
         params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: KeyArray,
+        key: PRNGKeyND,
     ) -> ScalarFloat:
         return params["mu"] + params["sigma"] * jax.random.normal(key=key)
 
@@ -199,7 +199,7 @@ class LogNormal(_ShockGridIID):
     def draw_shock(
         self,
         params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: KeyArray,
+        key: PRNGKeyND,
     ) -> ScalarFloat:
         return jnp.exp(params["mu"] + params["sigma"] * jax.random.normal(key=key))
 
@@ -284,7 +284,7 @@ class NormalMixture(_ShockGridIID):
     def draw_shock(
         self,
         params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: KeyArray,
+        key: PRNGKeyND,
     ) -> ScalarFloat:
         key1, key2 = jax.random.split(key)
         component = jax.random.bernoulli(key1, params["p1"])
