@@ -1,14 +1,14 @@
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, IntND, RealND
+from lcm.typing import BoolND, FloatND, IntND
 
 
 def argmax_and_max(
-    a: RealND,
+    a: FloatND | IntND,
     axis: int | tuple[int, ...] | None = None,
     initial: float | None = None,
     where: BoolND | None = None,
-) -> tuple[IntND, RealND]:
+) -> tuple[IntND, FloatND | IntND]:
     """Compute the argmax of an n-dim array along axis.
 
     If multiple maxima exist, the first index will be selected.
@@ -69,7 +69,9 @@ def argmax_and_max(
     return _argmax, _max.reshape(_argmax.shape)
 
 
-def _move_axes_to_back(a: RealND | BoolND, axes: tuple[int, ...]) -> RealND | BoolND:
+def _move_axes_to_back(
+    a: FloatND | IntND | BoolND, axes: tuple[int, ...]
+) -> FloatND | IntND | BoolND:
     """Move specified axes to the back of the array.
 
     Args:
@@ -84,7 +86,9 @@ def _move_axes_to_back(a: RealND | BoolND, axes: tuple[int, ...]) -> RealND | Bo
     return a.transpose((*front_axes, *axes))
 
 
-def _flatten_last_n_axes(a: RealND | BoolND, n: int) -> RealND | BoolND:
+def _flatten_last_n_axes(
+    a: FloatND | IntND | BoolND, n: int
+) -> FloatND | IntND | BoolND:
     """Flatten the last n axes of a to 1 dimension.
 
     Args:

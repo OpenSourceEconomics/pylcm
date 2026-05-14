@@ -5,7 +5,7 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 from jax import Array
-from jaxtyping import Bool, Float, Int32, Real, Scalar
+from jaxtyping import Bool, Float, Int32, Scalar
 
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
@@ -18,12 +18,6 @@ type DiscreteAction = Int32[Array, "..."]
 type FloatND = Float[Array, "..."]
 type IntND = Int32[Array, "..."]
 type BoolND = Bool[Array, "..."]
-
-# Dtype-generic real array (any-width float or int, no complex/bool). For
-# low-level numeric primitives (`ndimage`, `argmax`) that operate *below*
-# pylcm's canonical-dtype invariant — they are exercised across dtypes
-# (e.g. int64) and so cannot pin the int side to `IntND` (int32-only).
-type RealND = Real[Array, "..."]
 
 type Float1D = Float[Array, "_"]  # noqa: F821
 type Int1D = Int32[Array, "_"]  # noqa: F821
