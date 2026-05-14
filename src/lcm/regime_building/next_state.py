@@ -239,7 +239,7 @@ def _create_discrete_stochastic_next_func(
     qname = qname_from_tree_path((target, next_state_name))
 
     @with_signature(
-        args={f"weight_{qname}": "FloatND", f"key_{qname}": "dict[str, KeyArray]"},
+        args={f"weight_{qname}": "FloatND", f"key_{qname}": "PRNGKeyND"},
         return_annotation="DiscreteState",
     )
     def next_stochastic_state(**kwargs: FloatND) -> DiscreteState:
@@ -295,7 +295,7 @@ def _create_ar1_next_func(
         qname_from_tree_path((state_name, p)): p for p in grid.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
-        f"key_{qname}": "dict[str, KeyArray]",
+        f"key_{qname}": "PRNGKeyND",
         state_name: "ContinuousState",
         **dict.fromkeys(runtime_param_names, "float"),
     }
@@ -328,7 +328,7 @@ def _create_iid_next_func(
         qname_from_tree_path((state_name, p)): p for p in grid.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
-        f"key_{qname}": "dict[str, KeyArray]",
+        f"key_{qname}": "PRNGKeyND",
         **dict.fromkeys(runtime_param_names, "float"),
     }
     _draw_shock = grid.draw_shock

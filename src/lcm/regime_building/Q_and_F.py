@@ -149,7 +149,7 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        regime_transition_probs: MappingProxyType[str, FloatND] = (  # ty: ignore[invalid-assignment]
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (  # ty: ignore[invalid-assignment]
             compute_regime_transition_probs(**states_actions_params)
         )
         U_arr, F_arr = U_and_F(**states_actions_params)
@@ -319,7 +319,7 @@ def get_compute_intermediates(
         FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
     ]:
         """Compute all Q_and_F intermediates."""
-        regime_transition_probs: MappingProxyType[str, FloatND] = (  # ty: ignore[invalid-assignment]
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (  # ty: ignore[invalid-assignment]
             compute_regime_transition_probs(**states_actions_params)
         )
         U_arr, F_arr = U_and_F(**states_actions_params)
