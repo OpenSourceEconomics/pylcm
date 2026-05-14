@@ -32,22 +32,31 @@ from lcm import _jaxtyping_patch  # noqa: F401
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
-# Install beartype's AST-rewriting claw on `lcm.grids`, `lcm.shocks`,
-# and `lcm.params` before any submodule of those packages is imported.
-# The claw transforms each matching module's AST at first import to
-# insert runtime type checks; if it isn't registered before the import
+# Install beartype's AST-rewriting claw on the instrumented `lcm`
+# subpackages before any of their submodules is imported. The claw
+# transforms each matching module's AST at first import to insert
+# runtime type checks; if it isn't registered before the import
 # happens, the affected module loads uninstrumented and `sys.modules`
-# caches the unchecked version for the rest of the process. The
-# per-package `BeartypeConf` maps type violations to the project
-# exception most natural to that subpackage (see `lcm._beartype_conf`).
+# caches the unchecked version for the rest of the process. Perimeter
+# packages use a `BeartypeConf` mapping violations to the project
+# exception most natural to that subpackage; `lcm.solution` and
+# `lcm.simulation` run behind the perimeter and use `INTERNAL_CONF`
+# (see `lcm._beartype_conf`).
 from beartype.claw import beartype_package
 
-from lcm._beartype_conf import GRID_CONF, PARAMS_CONF, REGIME_BUILDING_CONF
+from lcm._beartype_conf import (
+    GRID_CONF,
+    INTERNAL_CONF,
+    PARAMS_CONF,
+    REGIME_BUILDING_CONF,
+)
 
 beartype_package("lcm.grids", conf=GRID_CONF)
 beartype_package("lcm.shocks", conf=GRID_CONF)
 beartype_package("lcm.params", conf=PARAMS_CONF)
 beartype_package("lcm.regime_building", conf=REGIME_BUILDING_CONF)
+beartype_package("lcm.solution", conf=INTERNAL_CONF)
+beartype_package("lcm.simulation", conf=INTERNAL_CONF)
 
 from lcm import shocks  # noqa: E402
 from lcm._version import __version__  # noqa: E402

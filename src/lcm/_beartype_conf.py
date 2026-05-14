@@ -1,8 +1,10 @@
-"""Per-exception `BeartypeConf` instances used at the pylcm perimeter.
+"""`BeartypeConf` instances for pylcm's perimeter and internal claws.
 
-Decorators at user-facing entry points configure beartype to raise
-the existing project exception class on parameter-type violations,
-preserving the documented exception hierarchy.
+Perimeter confs map type violations to the existing project exception
+class, preserving the documented exception hierarchy at user-facing
+entry points. `INTERNAL_CONF` covers packages that run behind the
+perimeter, where a violation is an internal bug rather than user error
+and so surfaces as beartype's own `BeartypeCallHintViolation`.
 
 """
 
@@ -50,3 +52,14 @@ PARAMS_CONF = _conf(InvalidParamsError)
 # Used by the claw on `lcm.regime_building` (regime compilation pipeline,
 # part of model construction).
 REGIME_BUILDING_CONF = _conf(ModelInitializationError)
+
+# Used by the claw on `lcm.solution` and `lcm.simulation`. These packages run
+# behind the construction perimeter — their inputs are already validated by
+# `Model.solve` / `Model.simulate` and `validate_initial_conditions` — so a
+# type violation there is an internal pylcm bug, not user error. It surfaces
+# as beartype's own `BeartypeCallHintViolation` rather than a project
+# exception, which would mislabel it as a user-facing error.
+INTERNAL_CONF = BeartypeConf(
+    strategy=BeartypeStrategy.On,
+    is_pep484_tower=True,
+)

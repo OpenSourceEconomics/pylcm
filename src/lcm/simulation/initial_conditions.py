@@ -15,7 +15,11 @@ import pandas as pd
 from jax import numpy as jnp
 
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
-from lcm.dtypes import canonical_float_dtype, safe_to_float_dtype
+from lcm.dtypes import (
+    canonical_float_dtype,
+    safe_to_float_dtype,
+    safe_to_int_dtype,
+)
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     PyLCMError,
@@ -45,6 +49,54 @@ from lcm.utils.functools import get_union_of_args
 # instead of -1 so that JAX indexing produces obviously wrong values rather than
 # silently returning the last element.
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
+
+
+def canonicalize_initial_conditions(
+    *,
+    initial_conditions: Mapping[str, object],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+) -> dict[str, FloatND | IntND]:
+    """Cast every initial-conditions array to its canonical pylcm dtype.
+
+    This is pylcm's simulation input boundary: `"regime"` and discrete states
+    cast to `int32`; `"age"` and continuous states cast to the canonical float
+    dtype. Keys that match no model state are cast by their array kind (integer
+    arrays to `int32`, otherwise to canonical float) and left for
+    `validate_initial_conditions` to report. Downstream validation and the
+    simulate stack receive canonical-dtype arrays and do not re-cast.
+
+    Args:
+        initial_conditions: Mapping of state names (plus `"regime"`) to
+            user-supplied arrays of any integer or floating dtype.
+        internal_regimes: Immutable mapping of regime names to internal regime
+            instances, used to classify each state as discrete or continuous.
+
+    Returns:
+        Mapping of the same keys to JAX arrays at their canonical dtype.
+
+    """
+    discrete_state_names = {
+        state_name
+        for internal_regime in internal_regimes.values()
+        for state_name, grid in internal_regime.grids.items()
+        if isinstance(grid, DiscreteGrid)
+    }
+    known_state_names = {
+        state_name
+        for internal_regime in internal_regimes.values()
+        for state_name in internal_regime.grids
+    }
+    canonical: dict[str, FloatND | IntND] = {}
+    for name, value in initial_conditions.items():
+        if name == "regime" or name in discrete_state_names:
+            canonical[name] = safe_to_int_dtype(value, name=name)
+        elif name == "age" or name in known_state_names:
+            canonical[name] = safe_to_float_dtype(value, name=name)
+        elif np.asarray(value).dtype.kind in "iu":
+            canonical[name] = safe_to_int_dtype(value, name=name)
+        else:
+            canonical[name] = safe_to_float_dtype(value, name=name)
+    return canonical
 
 
 def build_initial_states(
@@ -641,7 +693,7 @@ def _check_regime_feasibility(  # noqa: C901
     needs_period = "period" in accepted
 
     # Build per-subject state arrays
-    idx_arr = jnp.array(subject_indices)
+    idx_arr = jnp.array(subject_indices, dtype=jnp.int32)
     subject_states: dict[StateName, FloatND | IntND] = {}
     for sn in state_names:
         if sn in accepted:

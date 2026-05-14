@@ -35,7 +35,10 @@ from lcm.persistence import (
 from lcm.regime import Regime
 from lcm.regime_building.processing import InternalRegime
 from lcm.simulation.compile import compile_all_simulate_functions
-from lcm.simulation.initial_conditions import validate_initial_conditions
+from lcm.simulation.initial_conditions import (
+    canonicalize_initial_conditions,
+    validate_initial_conditions,
+)
 from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
@@ -438,6 +441,10 @@ class Model:
                 regimes=self.regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
+        initial_conditions = canonicalize_initial_conditions(
+            initial_conditions=initial_conditions,
+            internal_regimes=self.internal_regimes,
+        )
         internal_params = self._process_params(params)
         if check_initial_conditions:
             validate_initial_conditions(

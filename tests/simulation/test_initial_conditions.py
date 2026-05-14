@@ -21,8 +21,10 @@ from lcm.typing import (
     ScalarInt,
 )
 
-_ACTIVE = 0
-_TERMINAL = 1
+# Regime-id codes are canonical `int32`; `validate_initial_conditions` is an
+# internal function that receives already-canonicalized initial conditions.
+_ACTIVE = jnp.int32(0)
+_TERMINAL = jnp.int32(1)
 
 
 @pytest.fixture

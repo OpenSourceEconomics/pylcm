@@ -262,7 +262,7 @@ def draw_key_from_dict(
     def random_id(
         key: PRNGKeyND,
         p: Float1D,
-    ) -> Int1D:
+    ) -> ScalarInt:
         return jax.random.choice(
             key,
             regime_ids,

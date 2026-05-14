@@ -527,7 +527,7 @@ def _extract_period_data(
 ) -> dict[str, FloatND | IntND | BoolND]:
     """Extract data from a single period's simulation results."""
     data: dict[str, FloatND | IntND | BoolND] = {
-        "subject_id": jnp.arange(len(result.in_regime)),
+        "subject_id": jnp.arange(len(result.in_regime), dtype=jnp.int32),
         "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "_in_regime": result.in_regime,
         "value": result.V_arr,

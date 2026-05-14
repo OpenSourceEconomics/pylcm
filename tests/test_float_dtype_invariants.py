@@ -12,7 +12,10 @@ from lcm.grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
 from lcm.params import MappingLeaf
 from lcm.params.processing import process_params
 from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.simulation.initial_conditions import build_initial_states
+from lcm.simulation.initial_conditions import (
+    build_initial_states,
+    canonicalize_initial_conditions,
+)
 from lcm.typing import ParamsTemplate
 from lcm.utils.containers import ensure_containers_are_immutable
 from tests.test_models.deterministic.regression import (
@@ -36,18 +39,25 @@ pytestmark = pytest.mark.filterwarnings(
 )
 
 
-def test_build_initial_states_casts_user_float64_to_canonical(x64_disabled: None):
-    """A float64 continuous initial state lands at `canonical_float_dtype()`."""
+def test_canonicalize_initial_conditions_casts_user_float64_to_canonical(
+    x64_disabled: None,
+):
+    """A float64 continuous initial state lands at `canonical_float_dtype()`.
+
+    `canonicalize_initial_conditions` is pylcm's simulation input boundary:
+    user arrays of any dtype are cast to their canonical pylcm dtype before
+    validation and the simulate stack see them.
+    """
     model = get_model(n_periods=3)
-    initial_states = {
+    initial_conditions = {
         "wealth": np.asarray([20.0, 50.0], dtype=np.float64),
         "age": np.asarray([18.0, 18.0], dtype=np.float64),
     }
-    states_per_regime = build_initial_states(
-        initial_states=initial_states,  # ty: ignore[invalid-argument-type]
+    canonical = canonicalize_initial_conditions(
+        initial_conditions=initial_conditions,
         internal_regimes=model.internal_regimes,
     )
-    assert states_per_regime["working_life"]["wealth"].dtype == canonical_float_dtype()
+    assert canonical["wealth"].dtype == canonical_float_dtype()
 
 
 def test_build_initial_states_casts_user_int_to_canonical(x64_disabled: None):

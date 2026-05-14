@@ -7,7 +7,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.ages import AgeGrid
 from lcm.grids import Grid
-from lcm.interfaces import StateActionSpace
+from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
@@ -23,21 +23,30 @@ class SolveFunctionsMock:
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
 
 
-@dataclasses.dataclass(frozen=True)
-class InternalRegimeMock:
+class InternalRegimeMock(InternalRegime):
     """Mock InternalRegime with only the attributes required by solve().
 
-    The solve() function only accesses:
-    - _base_state_action_space: StateActionSpace object
-    - state_action_space(): method returning the state-action space
-    - solve_functions.max_Q_over_a: dict mapping period to max_Q_over_a function
-    - active_periods: list of periods the regime is active
+    Inherits from `InternalRegime` so `isinstance(x, InternalRegime)` holds at
+    the beartype-checked perimeter of `solve()`, but bypasses the dataclass
+    `__init__` so tests can supply only the attributes `solve()` reads:
+    - `_base_state_action_space`: StateActionSpace object
+    - `state_action_space()`: method returning the state-action space
+    - `solve_functions.max_Q_over_a`: dict mapping period to max_Q_over_a function
+    - `active_periods`: list of periods the regime is active
     """
 
-    _base_state_action_space: StateActionSpace
-    solve_functions: SolveFunctionsMock
-    active_periods: list[int]
-    grids: MappingProxyType[StateOrActionName, Grid]
+    def __init__(
+        self,
+        *,
+        _base_state_action_space: StateActionSpace,
+        solve_functions: SolveFunctionsMock,
+        active_periods: list[int],
+        grids: MappingProxyType[StateOrActionName, Grid],
+    ) -> None:
+        object.__setattr__(self, "_base_state_action_space", _base_state_action_space)
+        object.__setattr__(self, "solve_functions", solve_functions)
+        object.__setattr__(self, "active_periods", active_periods)
+        object.__setattr__(self, "grids", grids)
 
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space
@@ -134,7 +143,7 @@ def test_solve_brute():
     solution = solve(
         internal_params=MappingProxyType({"default": internal_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
-        internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
+        internal_regimes=MappingProxyType({"default": internal_regime}),
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
@@ -195,7 +204,7 @@ def test_solve_brute_single_period_Qc_arr():
     got = solve(
         internal_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
-        internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
+        internal_regimes=MappingProxyType({"default": internal_regime}),
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )

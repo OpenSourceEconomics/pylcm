@@ -468,7 +468,7 @@ def test_additional_targets_all_with_stochastic_transitions():
 
 def test_retrieve_actions():
     got = _lookup_values_from_indices(
-        flat_indices=jnp.array([0, 3, 7]),
+        flat_indices=jnp.array([0, 3, 7], dtype=jnp.int32),
         grids=MappingProxyType(
             {"a": jnp.linspace(0, 1, 5), "b": jnp.linspace(10, 20, 6)}
         ),
