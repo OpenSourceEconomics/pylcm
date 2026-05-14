@@ -48,6 +48,7 @@ from lcm.typing import (
     InternalParams,
     IntND,
     ParamsTemplate,
+    PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
     UserFacingParamsTemplate,
@@ -254,7 +255,7 @@ class Model:
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
-    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+    ) -> PeriodToRegimeToVArr:
         """Solve the model using the pre-computed functions.
 
         Args:
@@ -308,7 +309,7 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
-    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+    ) -> PeriodToRegimeToVArr:
         """Run backward induction, persisting a snapshot on debug or NaN failure."""
         try:
             period_to_regime_to_V_arr = solve(
@@ -381,10 +382,7 @@ class Model:
         *,
         params: UserParams,
         initial_conditions: Mapping[str, FloatND | IntND] | pd.DataFrame,
-        period_to_regime_to_V_arr: MappingProxyType[
-            int, MappingProxyType[RegimeName, FloatND]
-        ]
-        | None,
+        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         check_initial_conditions: bool = True,
         seed: int | None = None,
         log_level: LogLevel = "progress",

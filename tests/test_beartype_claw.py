@@ -18,9 +18,10 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
-from lcm import AgeGrid, LinSpacedGrid, Regime
-from lcm.exceptions import RegimeInitializationError
+from lcm import AgeGrid, LinSpacedGrid, Model, Regime
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.interfaces import _build_regime_sharding
+from lcm.model import _validate_log_args
 from lcm.regime import _default_H
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats
@@ -138,4 +139,36 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
             transition=None,
             states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
             functions="not a mapping",  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_claw_checks_lcm_model() -> None:
+    """An ill-typed argument to an `lcm.model` function is rejected.
+
+    `_validate_log_args` annotates `log_path` as `str | Path | None`. With
+    `log_level="progress"` the function returns before `log_path` is ever
+    inspected, so an un-instrumented call would return cleanly; the claw turns
+    the wrong `log_path` type into a violation.
+    """
+    with pytest.raises(BeartypeCallHintViolation):
+        _validate_log_args(
+            log_level="progress",
+            log_path=123,  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_model_with_bad_arg_raises_project_exception() -> None:
+    """A bad `Model` argument still raises `ModelInitializationError`.
+
+    The package claw instruments `lcm.model`'s private helpers with
+    `INTERNAL_CONF`, but the explicit `@beartype(conf=MODEL_CONF)` decorator on
+    `Model.__init__` still wins: a type violation at construction surfaces as
+    the project's `ModelInitializationError`, not beartype's own
+    `BeartypeCallHintViolation`.
+    """
+    with pytest.raises(ModelInitializationError):
+        Model(
+            ages=AgeGrid(start=25, stop=75, step="Y"),
+            regimes="not a mapping",  # ty: ignore[invalid-argument-type]
+            regime_id_class=int,
         )
