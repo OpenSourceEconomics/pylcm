@@ -11,12 +11,15 @@ chosen so the call would return cleanly if the function were *not*
 instrumented — the violation is what proves the claw is installed.
 """
 
+from types import MappingProxyType
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
 from lcm import AgeGrid
+from lcm.interfaces import _build_regime_sharding
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats
 from lcm.state_action_space import _validate_all_states_present
@@ -85,4 +88,19 @@ def test_claw_checks_lcm_state_action_space() -> None:
         _validate_all_states_present(
             provided_states="",  # ty: ignore[invalid-argument-type]
             required_state_names=set(),
+        )
+
+
+def test_claw_checks_lcm_interfaces() -> None:
+    """An ill-typed argument to an `lcm.interfaces` function is rejected.
+
+    `_build_regime_sharding` annotates `n_devices` as `int`. With an empty
+    `grids` mapping the function returns `None` before `n_devices` is ever
+    used, so an un-instrumented call would return cleanly; the claw turns the
+    wrong `n_devices` type into a violation.
+    """
+    with pytest.raises(BeartypeCallHintViolation):
+        _build_regime_sharding(
+            grids=MappingProxyType({}),
+            n_devices="not an int",  # ty: ignore[invalid-argument-type]
         )

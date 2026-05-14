@@ -25,6 +25,7 @@ from lcm.typing import (
     IntND,
     MaxQOverAFunction,
     NextStateSimulationFunction,
+    RegimeName,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
     StateName,
@@ -217,7 +218,7 @@ class SimulateFunctions:
 class InternalRegime:
     """Internal representation of a user regime."""
 
-    name: str
+    name: RegimeName
     """Regime name (key in the regimes dict)."""
 
     terminal: bool
