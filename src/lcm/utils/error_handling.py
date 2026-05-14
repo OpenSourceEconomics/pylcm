@@ -510,7 +510,7 @@ def _validate_regime_transition_single(
         )(*flat_arrays)
         point = dict(zip(grid_var_names, flat_arrays, strict=True))
     else:
-        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (  # ty: ignore[invalid-assignment]
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             regime_transition_func(  # ty: ignore[call-non-callable]
                 **filtered_params,
                 period=period,

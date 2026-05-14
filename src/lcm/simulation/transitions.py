@@ -200,7 +200,7 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
-    regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (  # ty: ignore[invalid-assignment]
+    regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
         internal_regime.simulate_functions.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
             **state_action_space.states,
             **optimal_actions,
