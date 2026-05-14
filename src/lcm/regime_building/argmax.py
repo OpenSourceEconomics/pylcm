@@ -1,14 +1,14 @@
 import jax.numpy as jnp
 from jax import Array
 
-from lcm.typing import IntND
+from lcm.typing import BoolND, IntND
 
 
 def argmax_and_max(
     a: Array,
     axis: int | tuple[int, ...] | None = None,
     initial: float | None = None,
-    where: Array | None = None,
+    where: BoolND | None = None,
 ) -> tuple[IntND, Array]:
     """Compute the argmax of an n-dim array along axis.
 

@@ -27,7 +27,9 @@ from lcm.interfaces import InternalRegime
 from lcm.regime_building.Q_and_F import _get_feasibility
 from lcm.typing import (
     ActionName,
+    BoolND,
     FlatRegimeParams,
+    Int1D,
     InternalParams,
     RegimeIdsToNames,
     RegimeName,
@@ -240,7 +242,7 @@ def _format_missing_states_message(missing: set[str], required: set[str]) -> str
 def _collect_state_name_errors(
     *,
     initial_states: Mapping[StateName, Array],
-    regime_id_arr: Array,
+    regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     valid_regime_names: set[RegimeName],
@@ -298,7 +300,7 @@ def _collect_state_name_errors(
 def _collect_structural_errors(
     *,
     initial_states: Mapping[StateName, Array],
-    regime_id_arr: Array,
+    regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -398,7 +400,7 @@ def _collect_structural_errors(
 def _collect_feasibility_errors(
     *,
     initial_states: Mapping[StateName, Array],
-    regime_id_arr: Array,
+    regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
@@ -450,7 +452,7 @@ def _validate_discrete_state_values(
     *,
     initial_states: Mapping[StateName, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    regime_id_arr: Array,
+    regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
 ) -> None:
     """Validate that discrete state values are valid codes.
@@ -512,12 +514,12 @@ _BYTES_PER_ACTION_ELEMENT = 4
 
 def _batched_feasibility_check(
     *,
-    feasibility_func: Callable[..., Array],
+    feasibility_func: Callable[..., BoolND],
     subject_states: Mapping[StateName, Array],
     action_kwargs: Mapping[str, Array],
     filtered_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, Array],
-) -> Array:
+) -> BoolND:
     """Check feasibility for all subjects, batching to avoid OOM.
 
     Vmaps over action combos individually (like solve/simulate do) so each
@@ -542,10 +544,10 @@ def _batched_feasibility_check(
         def _is_combo_feasible(
             action_kw: dict[str, Array],
             subject_kw: dict[str, Array],
-        ) -> Array:
+        ) -> BoolND:
             return feasibility_func(**action_kw, **subject_kw, **filtered_params)
 
-        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> Array:
+        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> BoolND:
             per_combo = jax.vmap(_is_combo_feasible, in_axes=(0, None))(
                 action_kwargs,
                 per_subject_kwargs,
@@ -554,7 +556,7 @@ def _batched_feasibility_check(
 
     else:
 
-        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> Array:
+        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> BoolND:
             return jnp.any(feasibility_func(**per_subject_kwargs, **filtered_params))
 
     vmapped_check = jax.vmap(_is_any_action_feasible)
@@ -569,7 +571,7 @@ def _batched_feasibility_check(
     if n_subjects <= batch_size:
         return vmapped_check(subject_states)
 
-    results: list[Array] = []
+    results: list[BoolND] = []
     for start in range(0, n_subjects, batch_size):
         end = min(start + batch_size, n_subjects)
         batch = {k: v[start:end] for k, v in subject_states.items()}
@@ -672,7 +674,7 @@ def _check_regime_feasibility(  # noqa: C901
         # No per-subject varying states: feasibility is identical for all subjects.
         if action_kwargs:
 
-            def _check_combo(action_kw: dict[str, Array]) -> Array:
+            def _check_combo(action_kw: dict[str, Array]) -> BoolND:
                 return feasibility_func(**action_kw, **filtered_params)  # ty: ignore[invalid-argument-type]
 
             result = jax.vmap(_check_combo)(action_kwargs)
@@ -704,14 +706,14 @@ def _check_regime_feasibility(  # noqa: C901
 
 def _admits_any_action(
     *,
-    feasibility_func: Callable[..., Array],
+    feasibility_func: Callable[..., BoolND],
     action_kwargs: Mapping[str, Array],
     params: Mapping[str, object],
 ) -> bool:
     """Return True iff the feasibility function admits ≥ 1 action under params."""
     if action_kwargs:
 
-        def _check_combo(action_kw: dict[str, Array]) -> Array:
+        def _check_combo(action_kw: dict[str, Array]) -> BoolND:
             return feasibility_func(**action_kw, **params)
 
         per_combo = jax.vmap(_check_combo)(action_kwargs)
@@ -725,7 +727,7 @@ def _per_constraint_feasibility(
     subject_states: Mapping[StateName, Array],
     regime_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, Array],
-    idx_arr: Array,
+    idx_arr: Int1D,
     infeasible_indices: Sequence[int],
 ) -> dict[str, np.ndarray]:
     """Per-constraint feasibility for the infeasible subjects.

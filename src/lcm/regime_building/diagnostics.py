@@ -24,6 +24,7 @@ from lcm.regime_building.Q_and_F import get_complete_targets, get_compute_interm
 from lcm.regime_building.V import VInterpolationInfo
 from lcm.typing import (
     ActionName,
+    FloatND,
     FunctionsMapping,
     RegimeName,
     RegimeTransitionFunction,
@@ -174,7 +175,7 @@ def _wrap_with_reduction(
         # contribute to numerators. Infeasible cells are zeroed out because
         # the solver masks them before the max, so a NaN there never
         # propagates to V_arr — reporting it would conflate causes.
-        nan_arrays: dict[str, Array] = {
+        nan_arrays: dict[str, FloatND] = {
             "U_nan": jnp.isnan(U_arr).astype(float) * F_float,
             "E_nan": jnp.isnan(E_next_V).astype(float) * F_float,
             "Q_nan": jnp.isnan(Q_arr).astype(float) * F_float,

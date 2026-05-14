@@ -527,11 +527,16 @@ Code structure should be self-evident from function names and ordering.
 - **Helper function names follow `{verb}_{qualifier}_noun` patterns.** E.g.,
   `get_irreg_coordinate`, `find_irreg_coordinate`, `get_linspace_coordinate` — not
   `get_coordinate_irreg`.
-- **Use `@overload` when a function accepts both scalar and array inputs.** When a
-  function works with both `ScalarFloat` and `Array`, add overload declarations so the
-  type checker can track `(ScalarFloat) -> ScalarFloat` and `(Array) -> Array`
-  separately. Concrete subclass methods need their own overloads too (not just the
-  abstract base).
+- **Pick the single narrowest jaxtyping alias — never scalar/array `@overload` pairs,
+  never `ScalarX | XND` unions.** ty erases jaxtyping shape annotations: `ScalarFloat`,
+  `Float1D`, and `FloatND` all reveal as `Array`, so scalar/array `@overload` pairs and
+  `ScalarFloat | FloatND`-style unions add zero static precision — they are pure noise.
+  At runtime, beartype treats a 0-d float array as satisfying both `ScalarFloat` and
+  `FloatND`, so `ScalarFloat ⊆ FloatND` and the union is redundant. Annotate each slot
+  with the one alias that matches its genuine rank: `ScalarFloat`/`ScalarInt` for
+  fixed-0-d, `Float1D`/`Int1D` for fixed-1-d, `FloatND`/`IntND` for genuinely rank-
+  polymorphic. Never use a bare `Array` annotation — always reach for the narrowest
+  `lcm.typing` alias.
 - **`func` for callable abbreviations** — use `func`, `func_name`, `func_params` (never
   `fn`). Full word `function(s)` in dataclass field names and public method names.
 - **Singular `state_names` / `action_names`** — not `states_names` / `actions_names`.

@@ -5,7 +5,7 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 from jax import Array
-from jaxtyping import Bool, Float, Int32, Scalar
+from jaxtyping import Bool, Float, Int, Int32, Scalar
 
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
@@ -55,8 +55,21 @@ type RegimeStates = MappingProxyType[StateName, Array]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 
 
+# User-supplied param leaf, checked by beartype at the `process_params`
+# boundary. The int slot is dtype-generic `Int[Array, "..."]` rather than
+# `IntND` (int32-only): users legitimately pass int64 arrays, which the
+# boundary downcasts. `FloatND`/`BoolND` are already dtype-generic.
 type _ParamsLeaf = (
-    bool | int | float | Array | np.ndarray | pd.Series | MappingLeaf | SequenceLeaf
+    bool
+    | int
+    | float
+    | FloatND
+    | Int[Array, "..."]
+    | BoolND
+    | np.ndarray
+    | pd.Series
+    | MappingLeaf
+    | SequenceLeaf
 )
 type UserParams = Mapping[
     str,
@@ -172,9 +185,9 @@ class MaxQOverAFunction(Protocol):
 
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, Array],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: Any,  # noqa: ANN401
-    ) -> Array: ...
+    ) -> FloatND: ...
 
 
 @runtime_checkable
@@ -190,9 +203,9 @@ class ArgmaxQOverAFunction(Protocol):
 
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, Array],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: Any,  # noqa: ANN401
-    ) -> tuple[Array, Array]: ...
+    ) -> tuple[IntND, FloatND]: ...
 
 
 @runtime_checkable

@@ -159,7 +159,7 @@ def _get_lookup_function(
     *,
     array_name: str,
     axis_names: list[str],
-) -> Callable[..., Array]:
+) -> Callable[..., FloatND]:
     """Create a function that emulates indexing into an array via named axes.
 
     Args:
@@ -174,7 +174,7 @@ def _get_lookup_function(
     arg_names = [*axis_names, array_name]
 
     @with_signature(args=dict.fromkeys(arg_names, "Array"), return_annotation="Array")
-    def lookup_wrapper(*args: Array, **kwargs: Array) -> Array:
+    def lookup_wrapper(*args: Array, **kwargs: Array) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
         positions = tuple(kwargs[var] for var in axis_names)
         return kwargs[array_name][positions]
@@ -186,7 +186,7 @@ def _get_coordinate_finder(
     *,
     in_name: str,
     grid: ContinuousGrid,
-) -> Callable[..., Array]:
+) -> Callable[..., FloatND]:
     """Create a function that translates a value into coordinates on a grid.
 
     The resulting coordinates can be used to do linear interpolation via
@@ -212,7 +212,7 @@ def _get_coordinate_finder(
             @with_signature(
                 args=dict.fromkeys(arg_names, "Array"), return_annotation="Array"
             )
-            def find_irreg_coordinate(*args: Array, **kwargs: Array) -> Array:
+            def find_irreg_coordinate(*args: Array, **kwargs: Array) -> FloatND:
                 kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
                 return get_irreg_coordinate(
                     value=kwargs[in_name], points=kwargs[points_param]
@@ -226,7 +226,7 @@ def _get_coordinate_finder(
         @with_signature(
             args=dict.fromkeys([in_name], "Array"), return_annotation="Array"
         )
-        def find_irreg_coordinate(*args: Array, **kwargs: Array) -> Array:
+        def find_irreg_coordinate(*args: Array, **kwargs: Array) -> FloatND:
             kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
             return get_irreg_coordinate(value=kwargs[in_name], points=points_jax)
 
@@ -234,7 +234,7 @@ def _get_coordinate_finder(
 
     # All other grid types (LinSpaced, LogSpaced, Piecewise*, ShockGrid)
     @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
-    def find_coordinate(*args: Array, **kwargs: Array) -> Array:
+    def find_coordinate(*args: Array, **kwargs: Array) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
         return grid.get_coordinate(kwargs[in_name])
 
@@ -245,7 +245,7 @@ def _get_interpolator(
     *,
     name_of_values_on_grid: str,
     axis_names: list[str],
-) -> Callable[..., Array]:
+) -> Callable[..., FloatND]:
     """Create a function interpolator via named axes.
 
     Args:
@@ -261,7 +261,7 @@ def _get_interpolator(
     arg_names = [name_of_values_on_grid, *axis_names]
 
     @with_signature(args=dict.fromkeys(arg_names, "Array"), return_annotation="Array")
-    def interpolate(*args: Array, **kwargs: Array) -> Array:
+    def interpolate(*args: Array, **kwargs: Array) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
         coordinates = jnp.array([kwargs[var] for var in axis_names])
         return map_coordinates(

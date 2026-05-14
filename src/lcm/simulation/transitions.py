@@ -20,7 +20,10 @@ from lcm.typing import (
     ActionName,
     Bool1D,
     FlatRegimeParams,
+    Float1D,
+    FloatND,
     Int1D,
+    KeyArray,
     RegimeName,
     RegimeNamesToIds,
     RegimeStates,
@@ -75,7 +78,7 @@ def calculate_next_states(
     regime_params: FlatRegimeParams,
     states_per_regime: StatesPerRegime,
     state_action_space: StateActionSpace,
-    key: Array,
+    key: KeyArray,
     subjects_in_regime: Bool1D,
 ) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
@@ -166,7 +169,7 @@ def calculate_next_regime_membership(
     regime_names_to_ids: RegimeNamesToIds,
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
-    key: Array,
+    key: KeyArray,
     subjects_in_regime: Bool1D,
 ) -> Int1D:
     """Calculate next period regime membership for subjects in a regime.
@@ -196,7 +199,7 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
-    regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+    regime_transition_probs: MappingProxyType[str, FloatND] = (  # ty: ignore[invalid-assignment]
         internal_regime.simulate_functions.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
             **state_action_space.states,
             **optimal_actions,
@@ -230,9 +233,9 @@ def calculate_next_regime_membership(
 
 def draw_key_from_dict(
     *,
-    d: MappingProxyType[RegimeName, Array],
+    d: MappingProxyType[RegimeName, Float1D],
     regime_names_to_ids: RegimeNamesToIds,
-    keys: Array,
+    keys: KeyArray,
 ) -> Int1D:
     """Draw a random key from a dictionary of arrays.
 
@@ -256,8 +259,8 @@ def draw_key_from_dict(
     )
 
     def random_id(
-        key: Array,
-        p: Array,
+        key: KeyArray,
+        p: Float1D,
     ) -> Int1D:
         return jax.random.choice(
             key,

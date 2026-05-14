@@ -25,10 +25,12 @@ from lcm.simulation.transitions import (
     create_regime_state_action_space,
 )
 from lcm.typing import (
+    Float1D,
     FloatND,
     Int1D,
     InternalParams,
     IntND,
+    KeyArray,
     RegimeName,
     RegimeNamesToIds,
     ScalarFloat,
@@ -215,8 +217,8 @@ def _simulate_regime_in_period(
     internal_params: InternalParams,
     regime_names_to_ids: RegimeNamesToIds,
     active_regimes_next_period: tuple[RegimeName, ...],
-    key: Array,
-) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Array]:
+    key: KeyArray,
+) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, KeyArray]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -369,7 +371,7 @@ vmapped_unravel_index = vmap(jnp.unravel_index, in_axes=(0, None))
 
 def _compute_starting_periods(
     *,
-    initial_ages: Array,
+    initial_ages: Float1D,
     ages: AgeGrid,
 ) -> Int1D:
     """Convert per-subject initial ages to starting period indices.
