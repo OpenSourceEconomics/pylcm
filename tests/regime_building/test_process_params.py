@@ -5,6 +5,7 @@ from types import MappingProxyType
 import pytest
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
+from lcm.interfaces import InternalRegime
 from lcm.params.processing import (
     create_params_template,
     process_params,
@@ -164,16 +165,22 @@ def test_ambiguous_model_regime_level(params_template):
         process_params(params=params, params_template=params_template)
 
 
-class MockRegime:
-    """Mock regime with regime_params_template for testing create_params_template."""
+class MockRegime(InternalRegime):
+    """Mock InternalRegime exposing only `regime_params_template`.
+
+    Inherits from `InternalRegime` so `isinstance(x, InternalRegime)`
+    holds at `create_params_template`'s beartype-checked perimeter, but
+    bypasses `InternalRegime.__init__` to keep test fixtures minimal —
+    `create_params_template` only reads `regime_params_template`.
+
+    """
 
     def __init__(self, regime_params_template: dict) -> None:
-        self._regime_params_template = regime_params_template
-
-    @property
-    def regime_params_template(self) -> MappingProxyType:
-        """Return regime_params_template as MappingProxyType."""
-        return MappingProxyType(self._regime_params_template)
+        object.__setattr__(
+            self,
+            "regime_params_template",
+            MappingProxyType(regime_params_template),
+        )
 
 
 def test_function_params_no_qname_separator():

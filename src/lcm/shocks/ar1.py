@@ -24,7 +24,7 @@ class _ShockGridAR1(_ShockGrid):
     @abstractmethod
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
+        params: MappingProxyType[str, FloatND | IntND],
         key: KeyArray,
         current_value: ScalarFloat,
     ) -> ScalarFloat: ...
@@ -77,7 +77,7 @@ class Tauchen(_ShockGridAR1):
             exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: float | FloatND | IntND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: FloatND | IntND) -> Float1D:
         n_points = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
@@ -90,14 +90,14 @@ class Tauchen(_ShockGridAR1):
         x = jnp.linspace(-x_max, x_max, n_points)
         return x + mu / (1 - rho)
 
-    def compute_transition_probs(self, **kwargs: float | FloatND | IntND) -> FloatND:
+    def compute_transition_probs(self, **kwargs: FloatND | IntND) -> FloatND:
         n_points = self.n_points
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
 
         if self.gauss_hermite:
             nodes, _weights = _gauss_hermite_normal(
-                n_points=n_points, mu=0.0, sigma=std_y
+                n_points=n_points, mu=jnp.asarray(0.0), sigma=std_y
             )
         else:
             n_std = kwargs["n_std"]
@@ -119,7 +119,7 @@ class Tauchen(_ShockGridAR1):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
+        params: MappingProxyType[str, FloatND | IntND],
         key: KeyArray,
         current_value: ScalarFloat,
     ) -> ScalarFloat:
@@ -152,14 +152,14 @@ class Rouwenhorst(_ShockGridAR1):
     mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    def compute_gridpoints(self, **kwargs: float | FloatND | IntND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: FloatND | IntND) -> Float1D:
         n_points = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma
         long_run_mean = mu / (1.0 - rho)
         return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)
 
-    def compute_transition_probs(self, **kwargs: float | FloatND | IntND) -> FloatND:
+    def compute_transition_probs(self, **kwargs: FloatND | IntND) -> FloatND:
         n_points = self.n_points
         rho = kwargs["rho"]
         q = (rho + 1) / 2
@@ -188,7 +188,7 @@ class Rouwenhorst(_ShockGridAR1):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
+        params: MappingProxyType[str, FloatND | IntND],
         key: KeyArray,
         current_value: ScalarFloat,
     ) -> ScalarFloat:
@@ -242,17 +242,17 @@ class TauchenNormalMixture(_ShockGridAR1):
     @staticmethod
     def _innovation_variance(
         *,
-        p1: float | FloatND,
-        mu1: float | FloatND,
-        sigma1: float | FloatND,
-        mu2: float | FloatND,
-        sigma2: float | FloatND,
-    ) -> float | FloatND:
+        p1: ScalarFloat | FloatND,
+        mu1: ScalarFloat | FloatND,
+        sigma1: ScalarFloat | FloatND,
+        mu2: ScalarFloat | FloatND,
+        sigma2: ScalarFloat | FloatND,
+    ) -> ScalarFloat | FloatND:
         """Compute the variance of the mixture innovation."""
         mean_eps = p1 * mu1 + (1 - p1) * mu2
         return p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean_eps**2
 
-    def compute_gridpoints(self, **kwargs: float | FloatND | IntND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: FloatND | IntND) -> Float1D:
         n_points = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
@@ -268,7 +268,7 @@ class TauchenNormalMixture(_ShockGridAR1):
         x_max = n_std * std_y
         return jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n_points)
 
-    def compute_transition_probs(self, **kwargs: float | FloatND | IntND) -> FloatND:
+    def compute_transition_probs(self, **kwargs: FloatND | IntND) -> FloatND:
         n_points = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
@@ -302,7 +302,7 @@ class TauchenNormalMixture(_ShockGridAR1):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
+        params: MappingProxyType[str, FloatND | IntND],
         key: KeyArray,
         current_value: ScalarFloat,
     ) -> ScalarFloat:

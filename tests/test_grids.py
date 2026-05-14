@@ -753,15 +753,15 @@ def test_piecewise_boundary_conditions(grid_cls, boundary_style: str):
         expected_coord_at = 5.0 if is_lin else 2.0
 
     # Test value just below boundary -> piece 0
-    coord_below = float(grid.get_coordinate(below_boundary))
+    coord_below = float(grid.get_coordinate(jnp.asarray(below_boundary)))
     assert coord_below < expected_coord_at
 
     # Test value exactly at boundary
-    coord_at = float(grid.get_coordinate(boundary))
+    coord_at = float(grid.get_coordinate(jnp.asarray(boundary)))
     assert coord_at == pytest.approx(expected_coord_at)
 
     # Test value just above boundary -> piece 1
-    coord_above = float(grid.get_coordinate(above_boundary))
+    coord_above = float(grid.get_coordinate(jnp.asarray(above_boundary)))
     assert coord_above > expected_coord_at
 
 

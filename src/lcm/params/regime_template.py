@@ -1,5 +1,4 @@
 from types import MappingProxyType
-from typing import Any
 
 import dags.tree as dt
 from dags.tree import tree_path_from_qname
@@ -7,6 +6,7 @@ from dags.tree import tree_path_from_qname
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
 from lcm.interfaces import SolveSimulateFunctionPair
+from lcm.regime import Regime
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
@@ -17,7 +17,7 @@ from lcm.typing import (
 )
 
 
-def create_regime_params_template(regime: Any) -> RegimeParamsTemplate:  # noqa: ANN401
+def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
     Discover parameters from function signatures via `dags.tree`. Parameters
@@ -33,10 +33,7 @@ def create_regime_params_template(regime: Any) -> RegimeParamsTemplate:  # noqa:
     pseudo-function keys matching the state or action name.
 
     Args:
-        regime: A `Regime` instance, or any object with the same
-            `states` / `actions` / `functions` / `constraints` /
-            `transition` / `state_transitions` interface (e.g., test mocks
-            that bypass `Regime`'s constructor validation).
+        regime: The regime as provided by the user.
 
     Returns:
         The regime parameter template with type annotations as values.
@@ -87,7 +84,7 @@ def create_regime_params_template(regime: Any) -> RegimeParamsTemplate:  # noqa:
 
 def _add_runtime_grid_params(
     function_params: dict[FunctionName, dict[str, str]],
-    regime: Any,  # noqa: ANN401
+    regime: Regime,
 ) -> None:
     """Add runtime-supplied state/action grid params to the template in place."""
     for state_name, grid in regime.states.items():
@@ -145,7 +142,7 @@ def _fail_if_runtime_grid_shadows_function(
 
 
 def _collect_all_functions_for_template(
-    regime: Any,  # noqa: ANN401
+    regime: Regime,
 ) -> dict[
     FunctionName | TransitionFunctionName, UserFunction | SolveSimulateFunctionPair
 ]:
@@ -168,7 +165,7 @@ def _collect_all_functions_for_template(
 
 def _validate_no_shadowing(
     function_params: dict[FunctionName, dict[str, str]],
-    regime: Any,  # noqa: ANN401
+    regime: Regime,
 ) -> None:
     """Raise if any discovered parameter shadows a state or action name."""
     state_action_names = set(regime.states) | set(regime.actions)

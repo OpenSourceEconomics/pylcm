@@ -40,6 +40,7 @@ from lcm.regime_building.Q_and_F import (
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.shocks import _ShockGrid
+from lcm.shocks._base import _params_to_jax
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ArgmaxQOverAFunction,
@@ -897,8 +898,9 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
-            gridpoints = grid.compute_gridpoints(**shock_kw)
-            transition_probs = grid.compute_transition_probs(**shock_kw)
+            shock_kw_jax = _params_to_jax(MappingProxyType(shock_kw))
+            gridpoints = grid.compute_gridpoints(**shock_kw_jax)
+            transition_probs = grid.compute_transition_probs(**shock_kw_jax)
             coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
             return map_coordinates(
                 input=transition_probs,

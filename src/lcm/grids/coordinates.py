@@ -31,7 +31,7 @@ def linspace(
 @overload
 def get_linspace_coordinate(
     *,
-    value: float | ScalarFloat,
+    value: ScalarFloat,
     start: ScalarFloat | FloatND,
     stop: ScalarFloat | FloatND,
     n_points: ScalarInt | IntND,
@@ -46,7 +46,7 @@ def get_linspace_coordinate(
 ) -> FloatND: ...
 def get_linspace_coordinate(
     *,
-    value: float | ScalarFloat | FloatND,
+    value: ScalarFloat | FloatND,
     start: ScalarFloat | FloatND,
     stop: ScalarFloat | FloatND,
     n_points: ScalarInt | IntND,
@@ -85,7 +85,7 @@ def logspace(
 @overload
 def get_logspace_coordinate(
     *,
-    value: float | ScalarFloat,
+    value: ScalarFloat,
     start: ScalarFloat | FloatND,
     stop: ScalarFloat | FloatND,
     n_points: ScalarInt | IntND,
@@ -100,7 +100,7 @@ def get_logspace_coordinate(
 ) -> FloatND: ...
 def get_logspace_coordinate(
     *,
-    value: float | ScalarFloat | FloatND,
+    value: ScalarFloat | FloatND,
     start: ScalarFloat | FloatND,
     stop: ScalarFloat | FloatND,
     n_points: ScalarInt | IntND,
@@ -145,7 +145,7 @@ def get_logspace_coordinate(
 @overload
 def get_irreg_coordinate(
     *,
-    value: float | ScalarFloat,
+    value: ScalarFloat,
     points: Float1D,
 ) -> ScalarFloat: ...
 @overload
@@ -156,7 +156,7 @@ def get_irreg_coordinate(
 ) -> FloatND: ...
 def get_irreg_coordinate(
     *,
-    value: float | ScalarFloat | FloatND,
+    value: ScalarFloat | FloatND,
     points: Float1D,
 ) -> ScalarFloat | FloatND:
     """Return the generalized coordinate of a value in an irregularly spaced grid.

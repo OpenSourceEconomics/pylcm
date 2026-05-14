@@ -98,12 +98,10 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
         return jnp.concatenate(piece_arrays)
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: FloatND) -> FloatND: ...
-    def get_coordinate(
-        self, value: float | ScalarFloat | FloatND
-    ) -> ScalarFloat | FloatND:
+    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_linspace_coordinate(
@@ -172,12 +170,10 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
         return jnp.concatenate(piece_arrays)
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: FloatND) -> FloatND: ...
-    def get_coordinate(
-        self, value: float | ScalarFloat | FloatND
-    ) -> ScalarFloat | FloatND:
+    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_logspace_coordinate(

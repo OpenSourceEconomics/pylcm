@@ -1,7 +1,8 @@
 from abc import abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import ClassVar, overload
+from typing import Any, ClassVar, overload
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,11 +14,35 @@ from lcm.grids import coordinates as grid_coordinates
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
 
 
+def _params_to_jax(
+    params: Mapping[str, Any],
+) -> MappingProxyType[str, FloatND | IntND]:
+    """Cast Python `int` / `float` shock params to JAX scalars.
+
+    `self.params` on a shock grid mixes dataclass-default literals (Python
+    `int` / `float`) with runtime-substituted values (already JAX scalars).
+    The downstream `compute_gridpoints` / `compute_transition_probs` and
+    `draw_shock` slots take `FloatND | IntND`-valued mappings, so the
+    boundary cast happens here rather than widening every kwarg signature
+    to admit Python scalars.
+
+    """
+    out: dict[str, FloatND | IntND] = {}
+    for name, value in params.items():
+        if isinstance(value, bool | int):
+            out[name] = jnp.int32(value)
+        elif isinstance(value, float):
+            out[name] = jnp.asarray(value)
+        else:
+            out[name] = value
+    return MappingProxyType(out)
+
+
 def _gauss_hermite_normal(
     *,
     n_points: int,
-    mu: float | ScalarFloat | Float1D,
-    sigma: float | ScalarFloat | Float1D,
+    mu: ScalarFloat | Float1D,
+    sigma: ScalarFloat | Float1D,
 ) -> tuple[Float1D, Float1D]:
     """Compute Gauss-Hermite quadrature nodes and weights for $N(\\mu, \\sigma^2)$.
 
@@ -84,11 +109,11 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, **kwargs: float | FloatND | IntND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: FloatND | IntND) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(self, **kwargs: float | FloatND | IntND) -> FloatND:
+    def compute_transition_probs(self, **kwargs: FloatND | IntND) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:
@@ -100,7 +125,7 @@ class _ShockGrid(ContinuousGrid):
         """
         if not self.is_fully_specified:
             return jnp.full(self.n_points, jnp.nan)
-        return self.compute_gridpoints(**self.params)
+        return self.compute_gridpoints(**_params_to_jax(self.params))
 
     def get_transition_probs(self) -> FloatND:
         """Get the transition probabilities at the gridpoints.
@@ -111,19 +136,17 @@ class _ShockGrid(ContinuousGrid):
         """
         if not self.is_fully_specified:
             return jnp.full((self.n_points, self.n_points), jnp.nan)
-        return self.compute_transition_probs(**self.params)
+        return self.compute_transition_probs(**_params_to_jax(self.params))
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         return self.get_gridpoints()
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: FloatND) -> FloatND: ...
-    def get_coordinate(
-        self, value: float | ScalarFloat | FloatND
-    ) -> ScalarFloat | FloatND:
+    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
         """Return the generalized coordinate of a value in the grid."""
         if not self.is_fully_specified:
             raise GridInitializationError(
@@ -154,11 +177,11 @@ def _validate_gauss_hermite_grid(
 def _mixture_cdf(
     *,
     x: FloatND,
-    p1: float | FloatND,
-    mu1: float | FloatND,
-    sigma1: float | FloatND,
-    mu2: float | FloatND,
-    sigma2: float | FloatND,
+    p1: ScalarFloat | FloatND,
+    mu1: ScalarFloat | FloatND,
+    sigma1: ScalarFloat | FloatND,
+    mu2: ScalarFloat | FloatND,
+    sigma2: ScalarFloat | FloatND,
 ) -> FloatND:
     """Evaluate the CDF of a two-component normal mixture.
 

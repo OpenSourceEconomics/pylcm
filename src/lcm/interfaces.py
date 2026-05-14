@@ -10,6 +10,7 @@ from jax import Array
 from lcm.exceptions import PyLCMError
 from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
+from lcm.shocks._base import _params_to_jax
 from lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -295,7 +296,9 @@ class InternalRegime:
                 shock_kw: dict[str, float] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
                     shock_kw[p] = cast("float", all_params[f"{name}__{p}"])
-                state_replacements[name] = spec.compute_gridpoints(**shock_kw)
+                state_replacements[name] = spec.compute_gridpoints(
+                    **_params_to_jax(MappingProxyType(shock_kw))
+                )
 
         new_states = (
             dict(self._base_state_action_space.states) | state_replacements
