@@ -377,7 +377,7 @@ class Model:
         self,
         *,
         params: UserParams,
-        initial_conditions: Mapping[str, FloatND | IntND],
+        initial_conditions: Mapping[str, FloatND | IntND] | pd.DataFrame,
         period_to_regime_to_V_arr: MappingProxyType[
             int, MappingProxyType[RegimeName, FloatND]
         ]
