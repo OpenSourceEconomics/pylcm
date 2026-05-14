@@ -3,7 +3,7 @@ from collections.abc import Callable
 from types import MappingProxyType
 
 import jax.numpy as jnp
-from dags import concatenate_functions
+from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 from jax import Array
 
@@ -13,7 +13,6 @@ from lcm.regime import Regime
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.shocks import _ShockGrid
 from lcm.typing import FloatND, ScalarFloat, StateName
-from lcm.utils._dags_forwarders import with_signature
 from lcm.utils.functools import all_as_kwargs
 from lcm.variables import Variables, get_grids
 

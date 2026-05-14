@@ -150,10 +150,11 @@ jax = ">=0.9"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 # Pin dags to the feat/no-type-check-flag branch (PR
-# OpenSourceEconomics/dags#82): adds the `forwarder=True` flag we need
-# to make `with_signature` cooperate with beartype's import claw.
-# Will be replaced with a released version once that PR lands.
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", rev = "d415d10" }
+# OpenSourceEconomics/dags#82): its wrappers advertise the `*args,
+# **kwargs` forwarder shape on `__annotations__`, so beartype's import
+# claw treats them as permissive forwarders. Replace with `dags>=0.6`
+# once that PR is released.
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", rev = "cf59c04" }
 [tool.pixi.tasks]
 asv-compare = "asv compare"
 asv-preview = "asv preview"

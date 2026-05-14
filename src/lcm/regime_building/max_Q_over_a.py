@@ -3,6 +3,7 @@ from collections.abc import Callable
 from types import MappingProxyType
 
 import jax.numpy as jnp
+from dags import with_signature
 from jax import Array
 
 from lcm.regime_building.argmax import argmax_and_max
@@ -16,7 +17,6 @@ from lcm.typing import (
     RegimeName,
     StateName,
 )
-from lcm.utils._dags_forwarders import with_signature
 from lcm.utils.dispatchers import productmap
 
 

@@ -6,7 +6,8 @@ from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import jax
-from dags import concatenate_functions, get_annotations
+from dags import concatenate_functions, get_annotations, with_signature
+from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
@@ -64,7 +65,6 @@ from lcm.typing import (
     UserFunction,
     VmappedRegimeTransitionFunction,
 )
-from lcm.utils._dags_forwarders import rename_arguments, with_signature
 from lcm.utils.containers import ensure_containers_are_immutable
 from lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace

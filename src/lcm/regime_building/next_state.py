@@ -4,7 +4,7 @@ from collections.abc import Callable
 from types import MappingProxyType
 
 import jax
-from dags import concatenate_functions
+from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 from jax import Array
 
@@ -27,7 +27,6 @@ from lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
-from lcm.utils._dags_forwarders import with_signature
 from lcm.variables import Variables
 
 
