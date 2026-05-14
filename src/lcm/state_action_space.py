@@ -43,7 +43,6 @@ def create_state_action_space(
             required_state_names=set(variable_info.query("is_state").index),
         )
         _states = states
-
     discrete_actions = {
         name: grids[name].to_jax()
         for name in variable_info.query("is_action & is_discrete").index

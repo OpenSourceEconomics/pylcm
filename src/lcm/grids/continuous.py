@@ -29,6 +29,8 @@ class ContinuousGrid(Grid):
 
     batch_size: int = 0
     """Size of the batches that are looped over during the solution."""
+    distributed: bool = False
+    """Whether to distribute the grid over the available devices."""
 
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
@@ -64,6 +66,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
         stop: float | ScalarFloat,
         n_points: int | ScalarInt,
         batch_size: int = 0,
+        distributed: bool = False,
     ) -> None:
         _init_uniform_grid(
             self,
@@ -71,6 +74,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
             stop=stop,
             n_points=n_points,
             batch_size=batch_size,
+            distributed=distributed,
             requires_positive_start=False,
         )
 
@@ -151,6 +155,7 @@ class LogSpacedGrid(UniformContinuousGrid):
         stop: float | ScalarFloat,
         n_points: int | ScalarInt,
         batch_size: int = 0,
+        distributed: bool = False,
     ) -> None:
         _init_uniform_grid(
             self,
@@ -158,6 +163,7 @@ class LogSpacedGrid(UniformContinuousGrid):
             stop=stop,
             n_points=n_points,
             batch_size=batch_size,
+            distributed=distributed,
             requires_positive_start=True,
         )
 
@@ -188,6 +194,7 @@ def _init_uniform_grid(
     stop: float | ScalarFloat,
     n_points: int | ScalarInt,
     batch_size: int,
+    distributed: bool,
     requires_positive_start: bool,
 ) -> None:
     """Cast `start` / `stop` / `n_points` to canonical JAX scalars, validate, store.
@@ -213,6 +220,7 @@ def _init_uniform_grid(
     object.__setattr__(grid, "stop", stop_jax)
     object.__setattr__(grid, "n_points", n_points_jax)
     object.__setattr__(grid, "batch_size", batch_size)
+    object.__setattr__(grid, "distributed", distributed)
 
 
 @dataclass(frozen=True, kw_only=True, init=False)
@@ -246,6 +254,7 @@ class IrregSpacedGrid(ContinuousGrid):
         points: Sequence[float] | Float1D | None = None,
         n_points: int | None = None,
         batch_size: int = 0,
+        distributed: bool = False,
     ) -> None:
         if points is not None:
             _validate_irreg_spaced_grid(points)
@@ -272,6 +281,7 @@ class IrregSpacedGrid(ContinuousGrid):
         object.__setattr__(self, "points", stored_points)
         object.__setattr__(self, "n_points", n_points)
         object.__setattr__(self, "batch_size", batch_size)
+        object.__setattr__(self, "distributed", distributed)
 
     @property
     def pass_points_at_runtime(self) -> bool:

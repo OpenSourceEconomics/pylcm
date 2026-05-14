@@ -19,6 +19,7 @@ from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.dtypes import canonical_float_dtype, safe_to_float_dtype
 from lcm.exceptions import (
     InvalidInitialConditionsError,
+    PyLCMError,
     format_messages,
 )
 from lcm.grids import DiscreteGrid
@@ -51,7 +52,9 @@ def build_initial_states(
     """Build the regime-keyed state carrier from user-provided initial states.
 
     For each regime, copies provided states and fills missing ones with
-    `jnp.nan` (continuous) or `MISSING_CAT_CODE` (discrete).
+    `jnp.nan` (continuous) or `MISSING_CAT_CODE` (discrete). If a state has been
+    declared as distributed, the initial states will also be distributed over the
+    available devices.
 
     Args:
         initial_states: Mapping of state names to arrays.
@@ -67,6 +70,20 @@ def build_initial_states(
 
     for regime_name, internal_regime in internal_regimes.items():
         regime_states: dict[StateName, Array] = {}
+        # Logic for distribution of subjects over devices
+        distributed = any(grid.distributed for grid in internal_regime.grids.values())
+        devices = jax.devices()
+        if distributed:
+            if n_subjects % len(devices) != 0:
+                raise PyLCMError(
+                    "When using distributed grids, the number of subjects during the"
+                    " simulation needs to be a multiple of the available devices. "
+                    f"Subjects: {n_subjects} Available Devices: {len(devices)}"
+                )
+            mesh = jax.make_mesh(
+                (len(devices),), ("X"), (jax.sharding.AxisType.Auto,), devices=devices
+            )
+            sharding = jax.NamedSharding(mesh=mesh, spec=jax.P("X"))
         for state_name in _get_regime_state_names(internal_regime):
             grid = internal_regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
@@ -92,6 +109,10 @@ def build_initial_states(
             else:
                 regime_states[state_name] = jnp.full(
                     n_subjects, jnp.nan, dtype=canonical_float_dtype()
+                )
+            if distributed:
+                regime_states[state_name] = jax.device_put(
+                    regime_states[state_name], device=sharding
                 )
         states_per_regime[regime_name] = MappingProxyType(regime_states)
 

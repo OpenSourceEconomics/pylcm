@@ -6,11 +6,12 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.ages import AgeGrid
+from lcm.grids import Grid
 from lcm.interfaces import StateActionSpace
 from lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
-from lcm.typing import MaxQOverAFunction
+from lcm.typing import MaxQOverAFunction, StateOrActionName
 from lcm.utils.logging import get_logger
 
 
@@ -36,6 +37,7 @@ class InternalRegimeMock:
     _base_state_action_space: StateActionSpace
     solve_functions: SolveFunctionsMock
     active_periods: list[int]
+    grids: MappingProxyType[StateOrActionName, Grid]
 
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space
@@ -126,6 +128,7 @@ def test_solve_brute():
             max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
         ),
         active_periods=[0, 1],
+        grids=MappingProxyType({}),
     )
 
     solution = solve(
@@ -186,6 +189,7 @@ def test_solve_brute_single_period_Qc_arr():
             max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
         ),
         active_periods=[0, 1],
+        grids=MappingProxyType({}),
     )
 
     got = solve(
