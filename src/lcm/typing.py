@@ -5,7 +5,7 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 from jax import Array
-from jaxtyping import Bool, Float, Int32, Scalar
+from jaxtyping import Bool, Float, Int32, Key, Scalar
 
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
@@ -28,10 +28,10 @@ type ScalarInt = Int32[Scalar, ""]
 type ScalarFloat = Float[Scalar, ""]
 type ScalarBool = Bool[Scalar, ""]
 
-# JAX PRNG keys (jax.random) have dtype `key<fry>` and are not float-typed,
-# so they don't match `FloatND`. `PRNGKeyND` keeps the perimeter check on shock
-# samplers explicit about what kind of array they expect.
-type PRNGKeyND = Array
+# JAX PRNG keys (`jax.random`) carry the dedicated `key<fry>` dtype, which
+# jaxtyping matches via `Key` — distinct from `FloatND`/`IntND`. Covers both a
+# single 0-d key and a batched 1-d array of keys.
+type PRNGKeyND = Key[Array, "..."]
 
 type Period = ScalarInt
 type Age = ScalarInt | ScalarFloat
@@ -118,9 +118,11 @@ class InternalUserFunction(Protocol):
 
 @runtime_checkable
 class RegimeTransitionFunction(Protocol):
-    """The regime transition function provided by the user.
+    """The processed regime transition function for the solve phase.
 
-    Returns an array of transition probabilities indexed by regime ID.
+    Wraps the user's `next_regime` function so its output is a mapping of
+    target regime name to a transition-probability array, rather than a
+    raw array indexed by regime id.
 
     Only used for type checking.
 
@@ -130,14 +132,16 @@ class RegimeTransitionFunction(Protocol):
         self,
         *args: FloatND | IntND | BoolND | float,
         **kwargs: FloatND | IntND | BoolND | float,
-    ) -> Float1D: ...
+    ) -> MappingProxyType[RegimeName, FloatND]: ...
 
 
 @runtime_checkable
 class VmappedRegimeTransitionFunction(Protocol):
-    """The vmapped regime transition function.
+    """The processed regime transition function for the simulate phase.
 
-    Returns a 2D array of transition probabilities with shape [n_regimes, n_subjects].
+    The `vmap`-over-subjects counterpart of `RegimeTransitionFunction`:
+    same mapping output, with each probability array carrying a leading
+    per-subject axis.
 
     Only used for type checking.
 
@@ -147,7 +151,7 @@ class VmappedRegimeTransitionFunction(Protocol):
         self,
         *args: FloatND | IntND | BoolND | float,
         **kwargs: FloatND | IntND | BoolND | float,
-    ) -> FloatND: ...
+    ) -> MappingProxyType[RegimeName, FloatND]: ...
 
 
 @runtime_checkable
