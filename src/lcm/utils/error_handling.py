@@ -30,10 +30,13 @@ from lcm.typing import (
 )
 
 # Genuine circular import: model.py imports from this module at module level.
-# Safe because Model is only used at runtime in validate_transition_probs,
-# which is never called during module initialisation.
+# The `model` parameter of `validate_transition_probs` is annotated with the
+# fully-qualified string `"lcm.model.Model"` so the beartype claw resolves it
+# by importing `lcm.model` at first call — long after the import cycle settles
+# — rather than at module-init time. Importing `lcm.model` here keeps `lcm` a
+# bound name for the type checker.
 if TYPE_CHECKING:
-    from lcm.model import Model
+    import lcm.model
 
 
 def validate_V(
@@ -44,8 +47,8 @@ def validate_V(
     partial_solution: object = None,
     compute_intermediates: Callable | None = None,
     state_action_space: StateActionSpace | None = None,
-    next_regime_to_V_arr: MappingProxyType | None = None,
-    internal_params: Mapping | None = None,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None = None,
+    internal_params: FlatRegimeParams | None = None,
     period: int | None = None,
 ) -> None:
     """Validate the value function array for NaN values.
@@ -128,8 +131,8 @@ def _enrich_with_diagnostics(
     exc: InvalidValueFunctionError,
     compute_intermediates: Callable,
     state_action_space: StateActionSpace,
-    next_regime_to_V_arr: MappingProxyType | None,
-    internal_params: Mapping | None,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None,
+    internal_params: FlatRegimeParams | None,
     regime_name: RegimeName,
     age: float,
     period: int | None,
@@ -744,7 +747,7 @@ def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
 def validate_transition_probs(
     *,
     probs: FloatND,
-    model: Model,
+    model: lcm.model.Model,
     regime_name: RegimeName,
     state_name: StateName,
 ) -> None: ...
@@ -754,7 +757,7 @@ def validate_transition_probs(
 def validate_transition_probs(
     *,
     probs: FloatND,
-    model: Model,
+    model: lcm.model.Model,
     regime_name: RegimeName,
     state_name: StateName,
     target_regime_name: RegimeName,
@@ -765,7 +768,7 @@ def validate_transition_probs(
 def validate_transition_probs(
     *,
     probs: FloatND,
-    model: Model,
+    model: lcm.model.Model,
     regime_name: RegimeName,
 ) -> None: ...
 
@@ -773,7 +776,7 @@ def validate_transition_probs(
 def validate_transition_probs(
     *,
     probs: FloatND,
-    model: Model,
+    model: lcm.model.Model,
     regime_name: RegimeName,
     state_name: StateName | None = None,
     target_regime_name: RegimeName | None = None,
@@ -922,7 +925,7 @@ def _build_expected_shape(
     indexing_params: list[str],
     n_outcomes: int,
     grids: dict[str, DiscreteGrid],
-    model: Model,
+    model: lcm.model.Model,
 ) -> tuple[int, ...]:
     """Compute expected shape for a transition probability array."""
     shape: list[int] = []

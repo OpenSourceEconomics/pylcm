@@ -19,6 +19,7 @@ from beartype.roar import BeartypeCallHintViolation
 from lcm import AgeGrid
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats
+from lcm.utils.error_handling import validate_regime_transition_probs
 
 
 def test_claw_checks_lcm_simulation() -> None:
@@ -49,4 +50,22 @@ def test_claw_checks_lcm_solution() -> None:
             mins=jnp.array([]),
             maxs=jnp.array([]),
             means=jnp.array([]),
+        )
+
+
+def test_claw_checks_lcm_utils_error_handling() -> None:
+    """An ill-typed argument to an `lcm.utils.error_handling` function is rejected.
+
+    `validate_regime_transition_probs` annotates `regime_transition_probs` as
+    `MappingProxyType[RegimeName, FloatND]`. A plain `dict` whose values are JAX
+    arrays would be accepted by `jnp.stack(list(...))` and the body would run to
+    completion; the claw turns the wrong container type into a violation.
+    """
+    with pytest.raises(BeartypeCallHintViolation):
+        validate_regime_transition_probs(
+            regime_transition_probs={"working": jnp.array([1.0])},  # ty: ignore[invalid-argument-type]
+            active_regimes_next_period=("working",),
+            regime_name="working",
+            age=50.0,
+            next_age=51.0,
         )
