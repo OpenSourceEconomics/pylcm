@@ -20,6 +20,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FlatRegimeParams,
+    Float1D,
     FunctionsMapping,
     MaxQOverAFunction,
     NextStateSimulationFunction,
@@ -454,14 +455,24 @@ def _distribute_states_to_devices(
 class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
 
-    V_arr: Array
+    V_arr: Float1D
     """Value function array for all subjects at this period."""
 
     actions: MappingProxyType[ActionName, Array]
-    """Immutable mapping of action names to optimal action arrays for all subjects."""
+    """Immutable mapping of action names to optimal action arrays for all subjects.
+
+    Action arrays carry the dtype of their grid — discrete actions are int,
+    continuous actions are float — so the value type stays the dtype-agnostic
+    `Array`.
+    """
 
     states: MappingProxyType[StateName, Array]
-    """Immutable mapping of state names to state value arrays for all subjects."""
+    """Immutable mapping of state names to state value arrays for all subjects.
+
+    State arrays carry the dtype of their grid — discrete states are int,
+    continuous states are float — so the value type stays the dtype-agnostic
+    `Array`.
+    """
 
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""

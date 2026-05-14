@@ -20,6 +20,7 @@ from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from lcm.typing import (
+    FloatND,
     FunctionName,
     InternalParams,
     RegimeName,
@@ -336,7 +337,7 @@ def array_from_series(
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None = None,
-) -> Array:
+) -> FloatND:
     """Convert a pandas Series to a JAX array.
 
     Inspect `func` to determine indexing dimensions (states, actions,
@@ -683,7 +684,7 @@ def _scatter_series(
     series: pd.Series,
     level_mappings: tuple[_LevelMapping, ...],
     fill_value: float = np.nan,
-) -> Array:
+) -> FloatND:
     """Scatter a MultiIndex Series into an N-dimensional JAX array.
 
     Each `_LevelMapping` defines one axis: its size, and how to map labels from

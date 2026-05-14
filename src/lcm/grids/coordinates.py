@@ -1,12 +1,11 @@
 """Functions to generate and work with different kinds of grids.
 
-These helpers operate on JAX scalars (`ScalarFloat` for endpoints/values,
-`ScalarInt` or Python `int` for `n_points`) — every production caller is
-either a `Grid` method that has already converted user input to a JAX
-scalar, or a piecewise dispatch that selects pieces via `searchsorted`.
+The `get_*_coordinate` helpers take JAX arrays of any rank: a `Grid`
+method passes a 0-d value, while a piecewise dispatch selects pieces via
+`searchsorted` and passes `start` / `stop` / `n_points` indexed by an
+N-d `piece_idx`. `linspace` / `logspace` build a grid and take JAX
+scalars.
 """
-
-from typing import overload
 
 import jax.numpy as jnp
 
@@ -28,29 +27,13 @@ def linspace(
     return jnp.linspace(start, stop, n_points)  # ty: ignore[no-matching-overload]
 
 
-@overload
-def get_linspace_coordinate(
-    *,
-    value: ScalarFloat,
-    start: ScalarFloat | FloatND,
-    stop: ScalarFloat | FloatND,
-    n_points: ScalarInt | IntND,
-) -> ScalarFloat: ...
-@overload
 def get_linspace_coordinate(
     *,
     value: FloatND,
-    start: ScalarFloat | FloatND,
-    stop: ScalarFloat | FloatND,
-    n_points: ScalarInt | IntND,
-) -> FloatND: ...
-def get_linspace_coordinate(
-    *,
-    value: ScalarFloat | FloatND,
-    start: ScalarFloat | FloatND,
-    stop: ScalarFloat | FloatND,
-    n_points: ScalarInt | IntND,
-) -> ScalarFloat | FloatND:
+    start: FloatND,
+    stop: FloatND,
+    n_points: IntND,
+) -> FloatND:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
     step_length = (stop - start) / (n_points - 1)
     return (value - start) / step_length
@@ -82,29 +65,13 @@ def logspace(
     return grid.at[0].set(start).at[-1].set(stop)
 
 
-@overload
-def get_logspace_coordinate(
-    *,
-    value: ScalarFloat,
-    start: ScalarFloat | FloatND,
-    stop: ScalarFloat | FloatND,
-    n_points: ScalarInt | IntND,
-) -> ScalarFloat: ...
-@overload
 def get_logspace_coordinate(
     *,
     value: FloatND,
-    start: ScalarFloat | FloatND,
-    stop: ScalarFloat | FloatND,
-    n_points: ScalarInt | IntND,
-) -> FloatND: ...
-def get_logspace_coordinate(
-    *,
-    value: ScalarFloat | FloatND,
-    start: ScalarFloat | FloatND,
-    stop: ScalarFloat | FloatND,
-    n_points: ScalarInt | IntND,
-) -> ScalarFloat | FloatND:
+    start: FloatND,
+    stop: FloatND,
+    n_points: IntND,
+) -> FloatND:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
     # Transform start, stop, and value to linear scale
     start_linear = jnp.log(start)
@@ -142,23 +109,11 @@ def get_logspace_coordinate(
     return rank_lower_gridpoint + decimal_part
 
 
-@overload
-def get_irreg_coordinate(
-    *,
-    value: ScalarFloat,
-    points: Float1D,
-) -> ScalarFloat: ...
-@overload
 def get_irreg_coordinate(
     *,
     value: FloatND,
     points: Float1D,
-) -> FloatND: ...
-def get_irreg_coordinate(
-    *,
-    value: ScalarFloat | FloatND,
-    points: Float1D,
-) -> ScalarFloat | FloatND:
+) -> FloatND:
     """Return the generalized coordinate of a value in an irregularly spaced grid.
 
     Uses binary search (jnp.searchsorted) to find the position of the value among

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 def validate_V(
     *,
-    V_arr: Array,
+    V_arr: FloatND,
     age: float | ScalarInt | ScalarFloat,
     regime_name: RegimeName | None = None,
     partial_solution: object = None,
@@ -284,7 +284,7 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
 
 def validate_regime_transition_probs(
     *,
-    regime_transition_probs: MappingProxyType[str, Array],
+    regime_transition_probs: MappingProxyType[str, FloatND],
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
@@ -352,7 +352,7 @@ def validate_regime_transition_probs(
 
 def _format_sum_violation(
     *,
-    sum_all: Array,
+    sum_all: FloatND,
     state_action_values: MappingProxyType[str, Array] | None = None,
 ) -> str:
     """Format a human-readable description of probability sum violations.
@@ -499,18 +499,18 @@ def _validate_regime_transition_single(
             _func: object = regime_transition_func,
             _period: int = period,
             _age: ScalarInt | ScalarFloat = ages.values[period],  # noqa: PD011
-        ) -> MappingProxyType[str, Array]:
+        ) -> MappingProxyType[str, FloatND]:
             kwargs = dict(zip(_names, args, strict=True))
             return _func(  # ty: ignore[call-non-callable]
                 **kwargs, **_params, period=_period, age=_age
             )
 
-        regime_transition_probs: MappingProxyType[str, Array] = jax.vmap(_call)(
+        regime_transition_probs: MappingProxyType[str, FloatND] = jax.vmap(_call)(
             *flat_arrays
         )
         point = dict(zip(grid_var_names, flat_arrays, strict=True))
     else:
-        regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+        regime_transition_probs: MappingProxyType[str, FloatND] = (  # ty: ignore[invalid-assignment]
             regime_transition_func(  # ty: ignore[call-non-callable]
                 **filtered_params,
                 period=period,
@@ -540,7 +540,7 @@ def _validate_regime_transition_single(
 def _validate_no_reachable_incomplete_targets(
     *,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    regime_transition_probs: MappingProxyType[str, Array],
+    regime_transition_probs: MappingProxyType[str, FloatND],
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,

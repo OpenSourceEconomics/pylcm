@@ -46,6 +46,7 @@ from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Float1D,
+    FloatND,
     FunctionsMapping,
     Int1D,
     InternalUserFunction,
@@ -1314,12 +1315,12 @@ def _wrap_deterministic_regime_transition(
     # Preserve original annotations but update return type
     annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
 
-    @with_signature(args=annotations, return_annotation="Array")
+    @with_signature(args=annotations, return_annotation="FloatND")
     @functools.wraps(func)
     def wrapped(
         *args: Array | int,
         **kwargs: Array | int,
-    ) -> Array:
+    ) -> FloatND:
         regime_idx = func(*args, **kwargs)
         return jax.nn.one_hot(regime_idx, n_regimes)
 

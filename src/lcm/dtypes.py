@@ -11,7 +11,8 @@ stack; downstream code does not re-cast.
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+
+from lcm.typing import FloatND, IntND
 
 _INT32_MIN = int(np.iinfo(np.int32).min)
 _INT32_MAX = int(np.iinfo(np.int32).max)
@@ -30,7 +31,7 @@ def canonical_float_dtype() -> type:
     return jnp.float64 if jax.config.read("jax_enable_x64") else jnp.float32
 
 
-def safe_to_int_dtype(value: object, *, name: str) -> Array:
+def safe_to_int_dtype(value: object, *, name: str) -> IntND:
     """Cast a scalar, sequence, or array to `jnp.int32`, checking int32 range.
 
     Args:
@@ -60,7 +61,7 @@ def safe_to_int_dtype(value: object, *, name: str) -> Array:
     return jnp.asarray(np_value, dtype=jnp.int32)
 
 
-def safe_to_float_dtype(value: object, *, name: str) -> Array:
+def safe_to_float_dtype(value: object, *, name: str) -> FloatND:
     """Cast a scalar, sequence, or array to the canonical float dtype.
 
     Range check fires only on a down-cast:

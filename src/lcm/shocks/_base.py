@@ -1,8 +1,7 @@
 from abc import abstractmethod
-from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import Any, ClassVar, overload
+from typing import Any, ClassVar
 
 import jax.numpy as jnp
 import numpy as np
@@ -11,11 +10,11 @@ from jax.scipy.stats.norm import cdf
 from lcm.exceptions import GridInitializationError
 from lcm.grids import ContinuousGrid
 from lcm.grids import coordinates as grid_coordinates
-from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
+from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
 
 def _params_to_jax(
-    params: Mapping[str, Any],
+    params: MappingProxyType[str, Any],
 ) -> MappingProxyType[str, FloatND | IntND]:
     """Cast Python `int` / `float` shock params to JAX scalars.
 
@@ -41,8 +40,8 @@ def _params_to_jax(
 def _gauss_hermite_normal(
     *,
     n_points: int,
-    mu: ScalarFloat | Float1D,
-    sigma: ScalarFloat | Float1D,
+    mu: ScalarFloat,
+    sigma: ScalarFloat,
 ) -> tuple[Float1D, Float1D]:
     """Compute Gauss-Hermite quadrature nodes and weights for $N(\\mu, \\sigma^2)$.
 
@@ -109,11 +108,11 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, **kwargs: FloatND | IntND) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(self, **kwargs: FloatND | IntND) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:
@@ -142,11 +141,7 @@ class _ShockGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return self.get_gridpoints()
 
-    @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
-    @overload
-    def get_coordinate(self, value: FloatND) -> FloatND: ...
-    def get_coordinate(self, value: ScalarFloat | FloatND) -> ScalarFloat | FloatND:
+    def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
         if not self.is_fully_specified:
             raise GridInitializationError(
@@ -177,11 +172,11 @@ def _validate_gauss_hermite_grid(
 def _mixture_cdf(
     *,
     x: FloatND,
-    p1: ScalarFloat | FloatND,
-    mu1: ScalarFloat | FloatND,
-    sigma1: ScalarFloat | FloatND,
-    mu2: ScalarFloat | FloatND,
-    sigma2: ScalarFloat | FloatND,
+    p1: ScalarFloat,
+    mu1: ScalarFloat,
+    sigma1: ScalarFloat,
+    mu2: ScalarFloat,
+    sigma2: ScalarFloat,
 ) -> FloatND:
     """Evaluate the CDF of a two-component normal mixture.
 

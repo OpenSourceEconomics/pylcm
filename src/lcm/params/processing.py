@@ -37,7 +37,6 @@ from lcm.interfaces import InternalRegime
 from lcm.params.mapping_leaf import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.typing import (
-    FunctionName,
     InternalParams,
     ParamsTemplate,
     RegimeName,
@@ -53,7 +52,7 @@ _NUM_PARTS_FUNCTION_PARAM = 3
 def process_params(
     *,
     params: UserParams,
-    params_template: Mapping[RegimeName, Mapping[FunctionName, object]],
+    params_template: ParamsTemplate,
 ) -> InternalParams:
     """Process user-provided params into internal params.
 

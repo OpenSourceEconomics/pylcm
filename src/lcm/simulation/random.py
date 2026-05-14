@@ -1,12 +1,13 @@
 import os
 
 import jax
-from jax import Array
+
+from lcm.typing import KeyArray
 
 
 def generate_simulation_keys(
-    *, key: Array, names: list[str], n_initial_states: int
-) -> tuple[Array, dict[str, Array]]:
+    *, key: KeyArray, names: list[str], n_initial_states: int
+) -> tuple[KeyArray, dict[str, KeyArray]]:
     """Generate pseudo-random number generator keys (PRNG keys) for simulation.
 
     PRNG keys in JAX are immutable objects used to control random number generation.
