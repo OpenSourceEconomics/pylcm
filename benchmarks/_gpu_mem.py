@@ -26,6 +26,11 @@ from pathlib import Path
 # Project root: the directory containing the benchmarks/ package.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# Marks the peak-memory line on the subprocess's stdout. The subprocess imports
+# lcm, whose beartype claw can emit diagnostics to stdout, so the parent locates
+# this line instead of parsing stdout wholesale.
+_PEAK_MARKER = "__PEAK_BYTES_IN_USE__"
+
 
 def measure_gpu_peak(bench_module: str, bench_class: str) -> int:
     """Run a benchmark in a subprocess and return peak GPU bytes.
@@ -58,7 +63,15 @@ def measure_gpu_peak(bench_module: str, bench_class: str) -> int:
             f"stderr: {result.stderr!r}"
         )
         raise RuntimeError(msg)
-    return int(result.stdout.strip())
+    for line in result.stdout.splitlines():
+        if line.startswith(_PEAK_MARKER):
+            return int(line.removeprefix(_PEAK_MARKER).strip())
+    msg = (
+        "GPU memory subprocess produced no peak-bytes line.\n"
+        f"stdout: {result.stdout!r}\n"
+        f"stderr: {result.stderr!r}"
+    )
+    raise RuntimeError(msg)
 
 
 def _track_gpu_peak_mem(self):
@@ -104,4 +117,4 @@ if __name__ == "__main__":
     import jax
 
     stats = jax.local_devices()[0].memory_stats()
-    print(stats["peak_bytes_in_use"])
+    print(f"{_PEAK_MARKER} {stats['peak_bytes_in_use']}")
