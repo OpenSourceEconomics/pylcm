@@ -488,6 +488,10 @@ def _validate_regime_transition_single(
     grid_var_names = list(grids.keys())
     grid_arrays = list(grids.values())
 
+    # Pin to int32: a Python-int `period` traced through `jax.vmap` becomes
+    # int64 under x64, breaking any int32 `period` contract downstream.
+    period_int32 = jnp.int32(period)
+
     if grid_arrays:
         mesh = jnp.meshgrid(*grid_arrays, indexing="ij")
         flat_arrays = [m.ravel() for m in mesh]
@@ -497,7 +501,7 @@ def _validate_regime_transition_single(
             _names: list[str] = grid_var_names,
             _params: dict = filtered_params,
             _func: object = regime_transition_func,
-            _period: int = period,
+            _period: ScalarInt = period_int32,
             _age: ScalarInt | ScalarFloat = ages.values[period],  # noqa: PD011
         ) -> MappingProxyType[RegimeName, FloatND]:
             kwargs = dict(zip(_names, args, strict=True))
@@ -513,7 +517,7 @@ def _validate_regime_transition_single(
         regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             regime_transition_func(  # ty: ignore[call-non-callable]
                 **filtered_params,
-                period=period,
+                period=period_int32,
                 age=ages.values[period],  # noqa: PD011
             )
         )
