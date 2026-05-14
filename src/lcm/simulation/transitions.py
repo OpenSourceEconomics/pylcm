@@ -55,13 +55,12 @@ def create_regime_state_action_space(
     """
     base = internal_regime.state_action_space(regime_params=regime_params)
 
-    relevant_state_names = internal_regime.variable_info.query("is_state").index
     states_for_state_action_space = {
-        sn: regime_states[sn] for sn in relevant_state_names
+        sn: regime_states[sn] for sn in internal_regime.variables.state_names
     }
     _validate_all_states_present(
         provided_states=states_for_state_action_space,
-        required_state_names=set(relevant_state_names),
+        required_state_names=set(internal_regime.variables.state_names),
     )
 
     return base.replace(states=MappingProxyType(states_for_state_action_space))

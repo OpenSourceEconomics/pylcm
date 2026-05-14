@@ -313,13 +313,10 @@ def _compute_metadata(
     regime_to_actions: dict[RegimeName, tuple[ActionName, ...]] = {}
 
     for regime_name, regime in internal_regimes.items():
-        vi = regime.variable_info
-        states = tuple(vi.query("is_state").index.tolist())
-        actions = tuple(vi.query("is_action").index.tolist())
-        regime_to_states[regime_name] = states
-        regime_to_actions[regime_name] = actions
-        all_states.update(states)
-        all_actions.update(actions)
+        regime_to_states[regime_name] = regime.variables.state_names
+        regime_to_actions[regime_name] = regime.variables.action_names
+        all_states.update(regime.variables.state_names)
+        all_actions.update(regime.variables.action_names)
 
     # Extract categories and ordered flags from simulation_output_dtypes
     discrete_categories: dict[str, tuple[str, ...]] = {}

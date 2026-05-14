@@ -5,7 +5,6 @@ from types import MappingProxyType
 from typing import cast
 
 import jax
-import pandas as pd
 from jax import Array
 
 from lcm.exceptions import PyLCMError
@@ -32,6 +31,7 @@ from lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils.containers import first_non_none
+from lcm.variables import Variables
 
 
 @dataclasses.dataclass(frozen=True)
@@ -223,8 +223,8 @@ class InternalRegime:
     grids: MappingProxyType[StateOrActionName, Grid]
     """Immutable mapping of variable names to grid objects."""
 
-    variable_info: pd.DataFrame
-    """DataFrame with variable metadata (is_state, is_action, etc.)."""
+    variables: Variables
+    """States and actions of the regime, with kind/topology/shock tags."""
 
     active_periods: tuple[int, ...]
     """Period indices during which this regime is active."""

@@ -2,11 +2,8 @@ import functools
 from types import MappingProxyType
 
 import jax.numpy as jnp
-import numpy as np
-import pandas as pd
 import pytest
 from numpy.testing import assert_array_equal
-from pandas.testing import assert_frame_equal
 
 from lcm import Regime, categorical
 from lcm.ages import AgeGrid
@@ -16,13 +13,13 @@ from lcm.regime_building.processing import (
     _rename_params_to_qnames,
     process_regimes,
 )
-from lcm.regime_building.variable_info import get_grids, get_variable_info
 from lcm.typing import ScalarInt
+from lcm.variables import VariableInfo, Variables, get_grids
 from tests.regime_mock import RegimeMock
 from tests.test_models.deterministic.base import dead, working_life
 
 
-def test_get_variable_info(binary_category_class):
+def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
     def utility(c):
         pass
 
@@ -40,19 +37,12 @@ def test_get_variable_info(binary_category_class):
         functions={"utility": utility},
     )
 
-    got = get_variable_info(regime_mock)  # ty: ignore[invalid-argument-type]
-    exp = pd.DataFrame(
-        {
-            "is_state": [False, True],
-            "is_shock": [False, False],
-            "is_action": [True, False],
-            "is_continuous": [False, False],
-            "is_discrete": [True, True],
-        },
-        index=pd.Index(["a", "c"]),
-    )
+    got = Variables.from_regime(regime_mock)  # ty: ignore[invalid-argument-type]
 
-    assert_frame_equal(got.loc[exp.index], exp)  # we don't care about the id order here
+    assert isinstance(got, Variables)
+    assert set(got) == {"a", "c"}
+    assert got["a"] == VariableInfo(kind="action", topology="discrete", is_shock=False)
+    assert got["c"] == VariableInfo(kind="state", topology="discrete", is_shock=False)
 
 
 def test_get_grids(binary_category_class):
@@ -124,15 +114,16 @@ def test_process_regimes():
     internal_working_regime = internal_regimes["working_life"]
 
     # Variable Info
-    assert (
-        internal_working_regime.variable_info["is_state"].to_numpy()
-        == np.array([True, False, False])
-    ).all()
-
-    assert (
-        internal_working_regime.variable_info["is_continuous"].to_numpy()
-        == np.array([True, False, True])
-    ).all()
+    variables = internal_working_regime.variables
+    assert variables["wealth"] == VariableInfo(
+        kind="state", topology="continuous", is_shock=False
+    )
+    assert variables["labor_supply"] == VariableInfo(
+        kind="action", topology="discrete", is_shock=False
+    )
+    assert variables["consumption"] == VariableInfo(
+        kind="action", topology="continuous", is_shock=False
+    )
 
     # Grids — compare the grid objects (which now include transition attributes)
     assert internal_working_regime.grids["wealth"] == working_life.states["wealth"]
@@ -168,7 +159,9 @@ def test_process_regimes():
     assert "utility" in internal_working_regime.solve_functions.functions
 
 
-def test_variable_info_with_continuous_constraint_has_unique_index():
+def test_variables_excludes_constraint_names():
+    """Constraint functions do not appear as variables in the Variables container."""
+
     def wealth_constraint(wealth):
         return wealth > 200
 
@@ -177,8 +170,8 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
         | {"wealth_constraint": wealth_constraint}
     )
 
-    got = get_variable_info(working_copy)
-    assert got.index.is_unique
+    got = Variables.from_regime(working_copy)
+    assert "wealth_constraint" not in got
 
 
 @pytest.fixture(name="two_non_terminal_internal_regimes")

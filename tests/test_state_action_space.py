@@ -1,7 +1,6 @@
 from types import MappingProxyType
 
 import jax.numpy as jnp
-import pandas as pd
 from numpy.testing import assert_array_equal
 
 from lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
@@ -10,23 +9,28 @@ from lcm.regime import Regime
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import ScalarInt
+from lcm.variables import VariableInfo, Variables
 
 
-def _create_variable_info(
+def _create_variables(
     discrete_states: list[str],
     continuous_states: list[str],
     discrete_actions: list[str],
     continuous_actions: list[str],
-) -> pd.DataFrame:
-    ordered_vars = (
-        discrete_states + discrete_actions + continuous_states + continuous_actions
-    )
-    info = pd.DataFrame(index=pd.Index(ordered_vars))
-    info["is_state"] = info.index.isin(discrete_states + continuous_states)
-    info["is_action"] = ~info["is_state"]
-    info["is_discrete"] = info.index.isin(discrete_states + discrete_actions)
-    info["is_continuous"] = ~info["is_discrete"]
-    return info
+) -> Variables:
+    info: dict[str, VariableInfo] = {}
+    # Order matches Variables.from_regime ordering: discrete states, continuous
+    # states, then actions (discrete then continuous within actions in original
+    # declaration order).
+    for name in discrete_states:
+        info[name] = VariableInfo(kind="state", topology="discrete", is_shock=False)
+    for name in continuous_states:
+        info[name] = VariableInfo(kind="state", topology="continuous", is_shock=False)
+    for name in discrete_actions:
+        info[name] = VariableInfo(kind="action", topology="discrete", is_shock=False)
+    for name in continuous_actions:
+        info[name] = VariableInfo(kind="action", topology="continuous", is_shock=False)
+    return Variables(info=MappingProxyType(info))
 
 
 def test_create_state_action_space_solution_discrete_action_continuous_state():
@@ -35,7 +39,7 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
         no_work: ScalarInt
         work: ScalarInt
 
-    variable_info = _create_variable_info(
+    variables = _create_variables(
         continuous_states=["wealth"],
         discrete_actions=["work"],
         discrete_states=[],
@@ -49,7 +53,7 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
     )
 
     space = create_state_action_space(
-        variable_info=variable_info,
+        variables=variables,
         grids=grids,
     )
 
@@ -57,11 +61,11 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
     assert_array_equal(space.states["wealth"], grids["wealth"].to_jax())
     assert_array_equal(space.discrete_actions["work"], grids["work"].to_jax())
     assert space.continuous_actions == {}
-    assert space.state_and_discrete_action_names == ("work", "wealth")
+    assert space.state_and_discrete_action_names == ("wealth", "work")
 
 
 def test_create_state_action_space_solution_continuous_action():
-    variable_info = _create_variable_info(
+    variables = _create_variables(
         continuous_states=["wealth"],
         continuous_actions=["consumption"],
         discrete_states=[],
@@ -75,7 +79,7 @@ def test_create_state_action_space_solution_continuous_action():
     )
 
     space = create_state_action_space(
-        variable_info=variable_info,
+        variables=variables,
         grids=grids,
     )
 
@@ -94,7 +98,7 @@ def test_state_action_space_replace_method():
         no_work: ScalarInt
         work: ScalarInt
 
-    variable_info = _create_variable_info(
+    variables = _create_variables(
         continuous_states=["wealth"],
         discrete_actions=["work"],
         discrete_states=[],
@@ -108,7 +112,7 @@ def test_state_action_space_replace_method():
     )
 
     space = create_state_action_space(
-        variable_info=variable_info,
+        variables=variables,
         grids=grids,
         states={"wealth": jnp.array([10.0, 20.0])},
     )
