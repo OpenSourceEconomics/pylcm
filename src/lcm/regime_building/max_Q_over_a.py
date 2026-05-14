@@ -4,7 +4,6 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 from dags import with_signature
-from jax import Array
 
 from lcm.regime_building.argmax import argmax_and_max
 from lcm.typing import (
@@ -80,7 +79,7 @@ def get_max_Q_over_a(
     )
     def max_Q_over_a(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: Array,
+        **states_actions_params: FloatND | IntND | BoolND,
     ) -> FloatND:
         Q_arr, F_arr = Q_and_F(
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -153,7 +152,7 @@ def get_argmax_and_max_Q_over_a(
     )
     def argmax_and_max_Q_over_a(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: Array,
+        **states_actions_params: FloatND | IntND | BoolND,
     ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(
             next_regime_to_V_arr=next_regime_to_V_arr,

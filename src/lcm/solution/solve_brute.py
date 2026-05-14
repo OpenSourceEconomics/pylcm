@@ -436,7 +436,7 @@ def _get_regime_V_shapes_and_shardings(
     return topology
 
 
-def _build_zero_V_arr(*, topology: _RegimeVTopology) -> jax.Array:
+def _build_zero_V_arr(*, topology: _RegimeVTopology) -> FloatND:
     """Build the zero V-array template for a regime, sharded where requested."""
     zeros = jnp.zeros(topology.shape)
     if topology.sharding is None:

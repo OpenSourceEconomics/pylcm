@@ -41,8 +41,8 @@ def test_model_simulate_with_stochastic_model():
     result = model.simulate(
         params=params,
         initial_conditions={
-            "health": jnp.array([1, 1, 0, 0]),
-            "partner": jnp.array([0, 0, 1, 0]),
+            "health": jnp.array([1, 1, 0, 0], dtype=jnp.int32),
+            "partner": jnp.array([0, 0, 1, 0], dtype=jnp.int32),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
             "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
             "regime": jnp.array([RegimeId.working_life] * 4),
@@ -190,8 +190,8 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     # Compare simulation results
     # ==================================================================================
     initial_conditions = {
-        "health": jnp.array([1, 1, 0, 0]),
-        "partner": jnp.array([0, 0, 0, 0]),
+        "health": jnp.array([1, 1, 0, 0], dtype=jnp.int32),
+        "partner": jnp.array([0, 0, 0, 0], dtype=jnp.int32),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
         "regime": jnp.array([RegimeId.working_life] * 4),

@@ -9,13 +9,12 @@ The fused output is consumed by `_enrich_with_diagnostics` in
 `lcm.utils.error_handling`.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.grids import Grid
@@ -24,8 +23,10 @@ from lcm.regime_building.Q_and_F import get_complete_targets, get_compute_interm
 from lcm.regime_building.V import VInterpolationInfo
 from lcm.typing import (
     ActionName,
+    BoolND,
     FloatND,
     FunctionsMapping,
+    IntND,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -165,10 +166,12 @@ def _wrap_with_reduction(
 
     """
 
-    # `kwargs` carries the wrapped function's full input map, which may
-    # include the `next_regime_to_V_arr` mapping alongside the Array-valued
-    # state/action inputs — so the kwarg-value type is `Array | Mapping`.
-    def reduced(**kwargs: Array | Mapping[str, Array]) -> dict[str, Any]:
+    # `kwargs` carries the wrapped function's full input map: the
+    # `next_regime_to_V_arr` mapping alongside the Float/Int/Bool-valued
+    # state/action inputs.
+    def reduced(
+        **kwargs: MappingProxyType[RegimeName, FloatND] | FloatND | IntND | BoolND,
+    ) -> dict[str, Any]:
         U_arr, F_arr, E_next_V, Q_arr, regime_probs = func(**kwargs)
         F_float = F_arr.astype(float)
         # NaN-count arrays are masked by feasibility: only feasible cells

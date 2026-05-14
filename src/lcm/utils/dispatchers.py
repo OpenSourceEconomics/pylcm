@@ -6,10 +6,10 @@ from typing import Literal, TypeVar, cast
 
 import jax
 import jax.numpy as jnp
-from jax import Array, vmap
+from jax import vmap
 
 from lcm.exceptions import FunctionDispatchError
-from lcm.typing import ActionName, FloatND, StateName
+from lcm.typing import ActionName, BoolND, FloatND, IntND, StateName
 from lcm.utils.containers import find_duplicates
 from lcm.utils.functools import allow_args, allow_only_kwargs
 
@@ -17,10 +17,12 @@ FunctionWithArrayReturn = TypeVar(
     "FunctionWithArrayReturn",
     bound=Callable[
         ...,
-        Array
-        | tuple[Array, Array]
-        | MappingProxyType[str, Array]
-        | MappingProxyType[str, MappingProxyType[str, Array]],
+        FloatND
+        | IntND
+        | BoolND
+        | tuple[FloatND | IntND | BoolND, FloatND | IntND | BoolND]
+        | MappingProxyType[str, FloatND | IntND]
+        | MappingProxyType[str, MappingProxyType[str, FloatND | IntND]],
     ],
 )
 
@@ -246,7 +248,7 @@ def _base_productmap_batched(
                 "is POSITIONAL_ONLY."
             )
 
-    def batched_vmap(**kwargs: Array) -> Array:
+    def batched_vmap(**kwargs: FloatND | IntND | BoolND) -> FloatND:
         non_array_kwargs = {
             key: val for key, val in kwargs.items() if key not in product_axes
         }
@@ -259,8 +261,9 @@ def _base_productmap_batched(
             loop_func: FunctionWithArrayReturn, axis: str
         ) -> FunctionWithArrayReturn:
             def func_mapped_over_one_more_axis(
-                *already_mapped_args: Array, **already_mapped_kwargs: Array
-            ) -> Array:
+                *already_mapped_args: FloatND | IntND | BoolND,
+                **already_mapped_kwargs: FloatND | IntND | BoolND,
+            ) -> FloatND | IntND | BoolND:
                 return jax.lax.map(
                     lambda axis_i: loop_func(
                         *already_mapped_args, **{axis: axis_i}, **already_mapped_kwargs

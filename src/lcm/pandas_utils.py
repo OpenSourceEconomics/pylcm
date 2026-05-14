@@ -9,7 +9,6 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
-from jax import Array
 
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.dtypes import canonical_float_dtype
@@ -23,6 +22,7 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     InternalParams,
+    IntND,
     RegimeName,
     RegimeNamesToIds,
     StateName,
@@ -53,7 +53,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     df: pd.DataFrame,
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
-) -> dict[str, Array]:
+) -> dict[str, FloatND | IntND]:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
     Args:
@@ -148,7 +148,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
             nan_mask = np.isnan(result_arrays[col])
             result_arrays[col][nan_mask] = MISSING_CAT_CODE
 
-    initial_conditions: dict[str, Array] = {
+    initial_conditions: dict[str, FloatND | IntND] = {
         col: jnp.array(arr, dtype=jnp.int32)
         if col in discrete_state_names
         else jnp.array(arr, dtype=canonical_float_dtype())

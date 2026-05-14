@@ -5,7 +5,6 @@ from types import MappingProxyType
 from typing import cast
 
 import jax
-from jax import Array
 
 from lcm.exceptions import PyLCMError
 from lcm.grids import Grid, IrregSpacedGrid
@@ -21,7 +20,9 @@ from lcm.typing import (
     DiscreteState,
     FlatRegimeParams,
     Float1D,
+    FloatND,
     FunctionsMapping,
+    IntND,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     RegimeParamsTemplate,
@@ -421,9 +422,9 @@ def _build_regime_sharding(
 
 def _distribute_states_to_devices(
     *,
-    states: MappingProxyType[StateName, Array],
+    states: MappingProxyType[StateName, FloatND | IntND],
     grids: MappingProxyType[StateOrActionName, Grid],
-) -> MappingProxyType[StateName, Array]:
+) -> MappingProxyType[StateName, FloatND | IntND]:
     """Place each distributed state's array on its device mesh.
 
     States whose grid carries `distributed=True` are placed via
@@ -458,20 +459,18 @@ class PeriodRegimeSimulationData:
     V_arr: Float1D
     """Value function array for all subjects at this period."""
 
-    actions: MappingProxyType[ActionName, Array]
+    actions: MappingProxyType[ActionName, FloatND | IntND]
     """Immutable mapping of action names to optimal action arrays for all subjects.
 
     Action arrays carry the dtype of their grid — discrete actions are int,
-    continuous actions are float — so the value type stays the dtype-agnostic
-    `Array`.
+    continuous actions are float — hence the `FloatND | IntND` value type.
     """
 
-    states: MappingProxyType[StateName, Array]
+    states: MappingProxyType[StateName, FloatND | IntND]
     """Immutable mapping of state names to state value arrays for all subjects.
 
     State arrays carry the dtype of their grid — discrete states are int,
-    continuous states are float — so the value type stays the dtype-agnostic
-    `Array`.
+    continuous states are float — hence the `FloatND | IntND` value type.
     """
 
     in_regime: Bool1D

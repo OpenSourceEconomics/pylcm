@@ -10,8 +10,8 @@ from types import MappingProxyType
 
 import jax
 from dags.tree import qname_from_tree_path
-from jax import Array, vmap
 from jax import numpy as jnp
+from jax import vmap
 
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.simulation.random import generate_simulation_keys
@@ -23,6 +23,7 @@ from lcm.typing import (
     Float1D,
     FloatND,
     Int1D,
+    IntND,
     KeyArray,
     RegimeName,
     RegimeNamesToIds,
@@ -72,7 +73,7 @@ def create_regime_state_action_space(
 def calculate_next_states(
     *,
     internal_regime: InternalRegime,
-    optimal_actions: MappingProxyType[ActionName, Array],
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     period: int,
     age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
@@ -162,7 +163,7 @@ def calculate_next_regime_membership(
     *,
     internal_regime: InternalRegime,
     state_action_space: StateActionSpace,
-    optimal_actions: MappingProxyType[ActionName, Array],
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     period: int,
     age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
@@ -301,7 +302,7 @@ def _advance_states_for_subjects(
         Updated carrier with next-period values written in for selected subjects.
 
     """
-    updated: dict[RegimeName, dict[StateName, Array]] = {
+    updated: dict[RegimeName, dict[StateName, FloatND | IntND]] = {
         regime_name: dict(regime_states)
         for regime_name, regime_states in states_per_regime.items()
     }

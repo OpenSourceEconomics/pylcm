@@ -21,7 +21,6 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 from dags.tree import qname_from_tree_path
-from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import InternalRegime
@@ -32,7 +31,9 @@ from lcm.solution.solve_brute import (
 )
 from lcm.typing import (
     FlatRegimeParams,
+    FloatND,
     InternalParams,
+    IntND,
     RegimeName,
 )
 from lcm.utils.logging import format_duration
@@ -340,7 +341,7 @@ def _build_argmax_args(
     ages: AgeGrid,
     period: int,
     n_subjects: int,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, Array],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
 ) -> dict[str, object]:
     base = internal_regime.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
@@ -419,10 +420,10 @@ def _build_crtp_args(
 
 
 def _subject_shape_arrays(
-    base_arrays: Mapping[str, Array],
+    base_arrays: Mapping[str, FloatND | IntND],
     *,
     n_subjects: int,
-) -> dict[str, Array]:
+) -> dict[str, FloatND | IntND]:
     """Return zeros of shape `(n_subjects,)` mirroring each base array's dtype.
 
     With `build_initial_states` casting discrete states to the grid dtype,

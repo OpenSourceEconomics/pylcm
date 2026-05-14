@@ -35,9 +35,9 @@ def test_model_with_shock(distribution_type):
     got_simulate = model.simulate(
         params=params,
         initial_conditions={
-            "health": jnp.asarray([0, 0]),
-            "income": jnp.asarray([0, 0]),
-            "wealth": jnp.asarray([1, 1]),
+            "health": jnp.asarray([0, 0], dtype=jnp.int32),
+            "income": jnp.asarray([0.0, 0.0]),
+            "wealth": jnp.asarray([1.0, 1.0]),
             "age": jnp.asarray([0.0, 0.0]),
             "regime": jnp.array([RegimeId.alive] * 2),
         },
@@ -84,11 +84,11 @@ def test_model_with_cross_regime_shocks(distribution_type: str) -> None:
     result = model.simulate(
         params=params,
         initial_conditions={
-            "health": jnp.zeros(2, dtype=int),
+            "health": jnp.zeros(2, dtype=jnp.int32),
             "income": jnp.zeros(2),
             "wealth": jnp.ones(2),
             "age": jnp.zeros(2),
-            "regime": jnp.full(2, MultiRegimeId.work, dtype=int),
+            "regime": jnp.full(2, MultiRegimeId.work, dtype=jnp.int32),
         },
         period_to_regime_to_V_arr=None,
         seed=42,

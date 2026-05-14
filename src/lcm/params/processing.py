@@ -298,7 +298,7 @@ def _find_candidates(
 
 
 def create_params_template(  # noqa: C901
-    internal_regimes: Mapping[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> ParamsTemplate:
     """Create params_template from internal regimes and validate name uniqueness.
 
@@ -306,7 +306,8 @@ def create_params_template(  # noqa: C901
     are disjoint sets to enable unambiguous parameter propagation.
 
     Args:
-        internal_regimes: Mapping of regime names to InternalRegime instances.
+        internal_regimes: Immutable mapping of regime names to InternalRegime
+            instances.
 
     Returns:
         The parameter template.

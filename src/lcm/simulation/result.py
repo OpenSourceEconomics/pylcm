@@ -12,7 +12,6 @@ import cloudpickle
 import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
-from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidAdditionalTargetsError
@@ -23,9 +22,11 @@ from lcm.regime import Regime
 from lcm.regime_building.processing import compute_merged_discrete_categories
 from lcm.typing import (
     ActionName,
+    BoolND,
     FlatRegimeParams,
     FloatND,
     InternalParams,
+    IntND,
     RegimeName,
     RegimeNamesToIds,
     StateName,
@@ -490,7 +491,9 @@ def _process_regime(
     ]
 
     # Concatenate and filter to in-regime subjects
-    data: dict[str, Array | Sequence[str]] = _concatenate_and_filter(period_dicts)  # ty: ignore[invalid-assignment]
+    data: dict[str, FloatND | IntND | BoolND | Sequence[str]] = _concatenate_and_filter(
+        period_dicts
+    )  # ty: ignore[invalid-assignment]
 
     # Add age column (computed from period using ages grid)
     data["age"] = ages.values[data["period"]]  # noqa: PD011
@@ -521,9 +524,9 @@ def _extract_period_data(
     period: int,
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
-) -> dict[str, Array]:
+) -> dict[str, FloatND | IntND | BoolND]:
     """Extract data from a single period's simulation results."""
-    data: dict[str, Array] = {
+    data: dict[str, FloatND | IntND | BoolND] = {
         "subject_id": jnp.arange(len(result.in_regime)),
         "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "_in_regime": result.in_regime,
@@ -541,7 +544,9 @@ def _extract_period_data(
     return data
 
 
-def _concatenate_and_filter(period_dicts: list[dict[str, Array]]) -> dict[str, Array]:
+def _concatenate_and_filter(
+    period_dicts: list[dict[str, FloatND | IntND | BoolND]],
+) -> dict[str, FloatND | IntND | BoolND]:
     """Concatenate period data and filter to in-regime subjects."""
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
@@ -745,11 +750,11 @@ def _codes_to_categorical(
 
 def _compute_targets(
     *,
-    data: dict[str, Array | Sequence[str]],
+    data: dict[str, FloatND | IntND | BoolND | Sequence[str]],
     targets: list[str],
     internal_regime: InternalRegime,
     regime_params: FlatRegimeParams,
-) -> dict[str, Array]:
+) -> dict[str, FloatND | IntND | BoolND]:
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)
     target_func = _create_target_function(

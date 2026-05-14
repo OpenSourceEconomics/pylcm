@@ -199,7 +199,7 @@ def test_simulate_with_only_discrete_actions():
     result = model.simulate(
         params=params,
         initial_conditions={
-            "wealth": jnp.array([0, 2]),
+            "wealth": jnp.array([0.0, 2.0]),
             "age": jnp.array([50.0, 50.0]),
             "regime": jnp.array([DiscreteRegimeId.working_life] * 2),
         },

@@ -19,9 +19,14 @@ import cloudpickle
 import h5py
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
 
-from lcm.typing import FloatND, PeriodToRegimeToVArr, RegimeName, UserParams
+from lcm.typing import (
+    FloatND,
+    IntND,
+    PeriodToRegimeToVArr,
+    RegimeName,
+    UserParams,
+)
 
 if TYPE_CHECKING:
     from lcm.model import Model
@@ -69,7 +74,7 @@ class SimulateSnapshot:
     params: UserParams | None
     """User parameters passed to simulate."""
 
-    initial_conditions: Mapping[str, Array] | None
+    initial_conditions: Mapping[str, FloatND | IntND] | None
     """Mapping of state names and "regime" to arrays."""
 
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
@@ -201,7 +206,7 @@ def save_simulate_snapshot(
     *,
     model: Model,
     params: UserParams,
-    initial_conditions: Mapping[str, Array],
+    initial_conditions: Mapping[str, FloatND | IntND],
     period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     result: SimulationResult,
     log_path: Path,

@@ -26,7 +26,7 @@ import lcm.regime_building.ndimage as lcm_ndimage
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 # Use 64-bit dtypes when x64 is enabled, 32-bit otherwise
-TEST_DTYPES = [np.int64, np.float64] if X64_ENABLED else [np.int32, np.float32]
+TEST_DTYPES = [np.int32, np.float64] if X64_ENABLED else [np.int32, np.float32]
 
 jax_map_coordinates = partial(jax.scipy.ndimage.map_coordinates, order=1, cval=0)
 scipy_map_coordinates = partial(scipy.ndimage.map_coordinates, order=1, cval=0)
