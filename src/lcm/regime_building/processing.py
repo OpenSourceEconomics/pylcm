@@ -9,7 +9,6 @@ import jax
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
-from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
@@ -50,6 +49,7 @@ from lcm.typing import (
     FunctionsMapping,
     Int1D,
     InternalUserFunction,
+    IntND,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     QAndFFunction,
@@ -889,7 +889,7 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
         args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
-        def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
+        def weights_func_runtime(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
             shock_kw: dict[str, float] = {  # ty: ignore[invalid-assignment]
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
@@ -916,7 +916,7 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
         return_annotation="FloatND",
         enforce=False,
     )
-    def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
+    def weights_func(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
         coordinate = get_irreg_coordinate(value=kwargs[f"{name}"], points=gridpoints)
         return map_coordinates(
             input=transition_probs,
@@ -1259,7 +1259,8 @@ def _wrap_regime_transition_probs(
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
 
     Returns:
-        A wrapped function that returns MappingProxyType[str, float|Array].
+        A wrapped function that returns an immutable mapping of regime
+        names to probability scalars.
 
     """
     # Get regime names in index order from regime_names_to_ids. Coerce
@@ -1279,8 +1280,8 @@ def _wrap_regime_transition_probs(
     )
     @functools.wraps(func)
     def wrapped(
-        *args: Array | int,
-        **kwargs: Array | int,
+        *args: FloatND | IntND | int,
+        **kwargs: FloatND | IntND | int,
     ) -> MappingProxyType[str, Any]:
         result = func(*args, **kwargs)
         # Convert array to dict using ordering by regime id
@@ -1318,8 +1319,8 @@ def _wrap_deterministic_regime_transition(
     @with_signature(args=annotations, return_annotation="FloatND")
     @functools.wraps(func)
     def wrapped(
-        *args: Array | int,
-        **kwargs: Array | int,
+        *args: FloatND | IntND | int,
+        **kwargs: FloatND | IntND | int,
     ) -> FloatND:
         regime_idx = func(*args, **kwargs)
         return jax.nn.one_hot(regime_idx, n_regimes)

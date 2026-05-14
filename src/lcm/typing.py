@@ -51,8 +51,14 @@ type TransitionFunctionsMapping = MappingProxyType[
     RegimeName, MappingProxyType[TransitionFunctionName, InternalUserFunction]
 ]
 
-type RegimeStates = MappingProxyType[StateName, Array]
+type RegimeStates = MappingProxyType[StateName, FloatND | IntND]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
+
+# User-supplied initial conditions / states, checked by beartype at the
+# `Model.simulate` boundary. The int slot is dtype-generic `Int[Array, "..."]`
+# rather than `IntND` (int32-only): users pass int64 arrays, which
+# `build_initial_states` downcasts. Parallels `_ParamsLeaf`.
+type UserInitialConditions = Mapping[str, FloatND | Int[Array, "..."]]
 
 
 # User-supplied param leaf, checked by beartype at the `process_params`
@@ -78,8 +84,8 @@ type UserParams = Mapping[
 
 # Internal regime parameters: A flat mapping with function-qualified names.
 # Keys are always function-qualified (e.g., "utility__risk_aversion",
-# "H__discount_factor"). Values are scalars or arrays.
-type FlatRegimeParams = MappingProxyType[str, Array]
+# "H__discount_factor"). Values are canonical-dtype scalars or arrays.
+type FlatRegimeParams = MappingProxyType[str, FloatND | IntND | BoolND]
 type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
@@ -115,9 +121,9 @@ class InternalUserFunction(Protocol):
 
     def __call__(
         self,
-        *args: Array | float,
-        **kwargs: Array | float,
-    ) -> Array: ...
+        *args: FloatND | IntND | BoolND | float,
+        **kwargs: FloatND | IntND | BoolND | float,
+    ) -> FloatND | IntND | BoolND: ...
 
 
 @runtime_checkable
@@ -132,8 +138,8 @@ class RegimeTransitionFunction(Protocol):
 
     def __call__(
         self,
-        *args: Array | float,
-        **kwargs: Array | float,
+        *args: FloatND | IntND | BoolND | float,
+        **kwargs: FloatND | IntND | BoolND | float,
     ) -> Float1D: ...
 
 
@@ -149,8 +155,8 @@ class VmappedRegimeTransitionFunction(Protocol):
 
     def __call__(
         self,
-        *args: Array | float,
-        **kwargs: Array | float,
+        *args: FloatND | IntND | BoolND | float,
+        **kwargs: FloatND | IntND | BoolND | float,
     ) -> FloatND: ...
 
 
@@ -216,7 +222,7 @@ class StochasticNextFunction(Protocol):
 
     """
 
-    def __call__(self, **kwargs: Array) -> Array: ...
+    def __call__(self, **kwargs: FloatND | IntND) -> FloatND | IntND: ...
 
 
 @runtime_checkable
@@ -230,7 +236,7 @@ class NextStateSimulationFunction(Protocol):
 
     def __call__(
         self,
-        **kwargs: Array | Period | Age,
+        **kwargs: FloatND | IntND | Period | Age,
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
     ]: ...

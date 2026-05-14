@@ -12,7 +12,6 @@ from typing import NoReturn, cast
 import jax
 import numpy as np
 import pandas as pd
-from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
@@ -29,13 +28,16 @@ from lcm.typing import (
     ActionName,
     BoolND,
     FlatRegimeParams,
+    FloatND,
     Int1D,
     InternalParams,
+    IntND,
     RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
     StateName,
     StatesPerRegime,
+    UserInitialConditions,
 )
 from lcm.utils.containers import invert_regime_ids
 from lcm.utils.functools import get_union_of_args
@@ -48,7 +50,7 @@ MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 def build_initial_states(
     *,
-    initial_states: Mapping[StateName, Array],
+    initial_states: UserInitialConditions,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> StatesPerRegime:
     """Build the regime-keyed state carrier from user-provided initial states.
@@ -68,10 +70,12 @@ def build_initial_states(
 
     """
     n_subjects = len(next(iter(initial_states.values())))
-    states_per_regime: dict[RegimeName, MappingProxyType[StateName, Array]] = {}
+    states_per_regime: dict[
+        RegimeName, MappingProxyType[StateName, FloatND | IntND]
+    ] = {}
 
     for regime_name, internal_regime in internal_regimes.items():
-        regime_states: dict[StateName, Array] = {}
+        regime_states: dict[StateName, FloatND | IntND] = {}
         # Logic for distribution of subjects over devices
         distributed = any(grid.distributed for grid in internal_regime.grids.values())
         devices = jax.devices()
@@ -123,7 +127,7 @@ def build_initial_states(
 
 def validate_initial_conditions(
     *,
-    initial_conditions: Mapping[str, Array],
+    initial_conditions: UserInitialConditions,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     internal_params: InternalParams,
@@ -241,7 +245,7 @@ def _format_missing_states_message(missing: set[str], required: set[str]) -> str
 
 def _collect_state_name_errors(
     *,
-    initial_states: Mapping[StateName, Array],
+    initial_states: UserInitialConditions,
     regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -299,7 +303,7 @@ def _collect_state_name_errors(
 
 def _collect_structural_errors(
     *,
-    initial_states: Mapping[StateName, Array],
+    initial_states: UserInitialConditions,
     regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     regime_names_to_ids: RegimeNamesToIds,
@@ -399,7 +403,7 @@ def _collect_structural_errors(
 
 def _collect_feasibility_errors(
     *,
-    initial_states: Mapping[StateName, Array],
+    initial_states: UserInitialConditions,
     regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -450,7 +454,7 @@ def _collect_feasibility_errors(
 
 def _validate_discrete_state_values(
     *,
-    initial_states: Mapping[StateName, Array],
+    initial_states: UserInitialConditions,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
@@ -515,10 +519,10 @@ _BYTES_PER_ACTION_ELEMENT = 4
 def _batched_feasibility_check(
     *,
     feasibility_func: Callable[..., BoolND],
-    subject_states: Mapping[StateName, Array],
-    action_kwargs: Mapping[str, Array],
+    subject_states: UserInitialConditions,
+    action_kwargs: Mapping[str, FloatND | IntND],
     filtered_params: Mapping[str, object],
-    flat_actions: Mapping[ActionName, Array],
+    flat_actions: Mapping[ActionName, FloatND | IntND],
 ) -> BoolND:
     """Check feasibility for all subjects, batching to avoid OOM.
 
@@ -542,12 +546,14 @@ def _batched_feasibility_check(
     if action_kwargs:
 
         def _is_combo_feasible(
-            action_kw: dict[str, Array],
-            subject_kw: dict[str, Array],
+            action_kw: dict[str, FloatND | IntND],
+            subject_kw: dict[str, FloatND | IntND],
         ) -> BoolND:
             return feasibility_func(**action_kw, **subject_kw, **filtered_params)
 
-        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> BoolND:
+        def _is_any_action_feasible(
+            per_subject_kwargs: dict[str, FloatND | IntND],
+        ) -> BoolND:
             per_combo = jax.vmap(_is_combo_feasible, in_axes=(0, None))(
                 action_kwargs,
                 per_subject_kwargs,
@@ -556,7 +562,9 @@ def _batched_feasibility_check(
 
     else:
 
-        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> BoolND:
+        def _is_any_action_feasible(
+            per_subject_kwargs: dict[str, FloatND | IntND],
+        ) -> BoolND:
             return jnp.any(feasibility_func(**per_subject_kwargs, **filtered_params))
 
     vmapped_check = jax.vmap(_is_any_action_feasible)
@@ -583,7 +591,7 @@ def _check_regime_feasibility(  # noqa: C901
     *,
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: Mapping[StateName, Array],
+    initial_states: UserInitialConditions,
     subject_indices: list[int],
     regime_params: Mapping[str, object],
     ages: AgeGrid,
@@ -619,7 +627,7 @@ def _check_regime_feasibility(  # noqa: C901
     state_action_space = internal_regime.state_action_space(
         regime_params=cast("FlatRegimeParams", MappingProxyType(dict(regime_params))),
     )
-    action_grids: dict[str, Array] = {
+    action_grids: dict[str, FloatND | IntND] = {
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
     }
@@ -635,7 +643,7 @@ def _check_regime_feasibility(  # noqa: C901
 
     # Build per-subject state arrays
     idx_arr = jnp.array(subject_indices)
-    subject_states: dict[StateName, Array] = {}
+    subject_states: dict[StateName, FloatND | IntND] = {}
     for sn in state_names:
         if sn in accepted:
             subject_states[sn] = initial_states[sn][idx_arr]
@@ -648,7 +656,7 @@ def _check_regime_feasibility(  # noqa: C901
         )
 
     # Split actions and params — actions are vmapped over, params are not
-    action_kwargs: dict[str, Array] = {
+    action_kwargs: dict[str, FloatND | IntND] = {
         k: v for k, v in flat_actions.items() if k in accepted
     }
 
@@ -674,7 +682,7 @@ def _check_regime_feasibility(  # noqa: C901
         # No per-subject varying states: feasibility is identical for all subjects.
         if action_kwargs:
 
-            def _check_combo(action_kw: dict[str, Array]) -> BoolND:
+            def _check_combo(action_kw: dict[str, FloatND | IntND]) -> BoolND:
                 return feasibility_func(**action_kw, **filtered_params)  # ty: ignore[invalid-argument-type]
 
             result = jax.vmap(_check_combo)(action_kwargs)
@@ -707,13 +715,13 @@ def _check_regime_feasibility(  # noqa: C901
 def _admits_any_action(
     *,
     feasibility_func: Callable[..., BoolND],
-    action_kwargs: Mapping[str, Array],
+    action_kwargs: Mapping[str, FloatND | IntND],
     params: Mapping[str, object],
 ) -> bool:
     """Return True iff the feasibility function admits ≥ 1 action under params."""
     if action_kwargs:
 
-        def _check_combo(action_kw: dict[str, Array]) -> BoolND:
+        def _check_combo(action_kw: dict[str, FloatND | IntND]) -> BoolND:
             return feasibility_func(**action_kw, **params)
 
         per_combo = jax.vmap(_check_combo)(action_kwargs)
@@ -724,9 +732,9 @@ def _admits_any_action(
 def _per_constraint_feasibility(
     *,
     internal_regime: InternalRegime,
-    subject_states: Mapping[StateName, Array],
+    subject_states: UserInitialConditions,
     regime_params: Mapping[str, object],
-    flat_actions: Mapping[ActionName, Array],
+    flat_actions: Mapping[ActionName, FloatND | IntND],
     idx_arr: Int1D,
     infeasible_indices: Sequence[int],
 ) -> dict[str, np.ndarray]:
@@ -791,7 +799,7 @@ def _raise_feasibility_type_error(
     exc: TypeError,
     regime_name: RegimeName,
     internal_regime: InternalRegime,
-    subject_states: dict[StateName, Array],
+    subject_states: dict[StateName, FloatND | IntND],
 ) -> NoReturn:
     """Re-raise a TypeError from feasibility checking with diagnostic context.
 
@@ -837,7 +845,7 @@ def _format_infeasibility_message(
     infeasible_indices: Sequence[int],
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: Mapping[StateName, Array],
+    initial_states: UserInitialConditions,
     state_names: Sequence[str],
     per_constraint_admits_any: Mapping[str, np.ndarray],
 ) -> str:
@@ -904,8 +912,8 @@ def _format_infeasibility_message(
 def _build_flat_action_grid(
     *,
     action_names: list[ActionName],
-    grids: MappingProxyType[str, Array],
-) -> dict[str, Array]:
+    grids: MappingProxyType[str, FloatND | IntND],
+) -> dict[str, FloatND | IntND]:
     """Build a flat array of all action combinations from action grids.
 
     Args:

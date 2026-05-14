@@ -15,7 +15,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.grids import Grid
@@ -24,8 +23,10 @@ from lcm.regime_building.Q_and_F import get_complete_targets, get_compute_interm
 from lcm.regime_building.V import VInterpolationInfo
 from lcm.typing import (
     ActionName,
+    BoolND,
     FloatND,
     FunctionsMapping,
+    IntND,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -165,7 +166,9 @@ def _wrap_with_reduction(
 
     """
 
-    def reduced(**kwargs: Array) -> dict[str, Any]:
+    def reduced(
+        **kwargs: MappingProxyType[RegimeName, FloatND] | FloatND | IntND | BoolND,
+    ) -> dict[str, Any]:
         U_arr, F_arr, E_next_V, Q_arr, regime_probs = func(**kwargs)
         F_float = F_arr.astype(float)
         # NaN-count arrays are masked by feasibility: only feasible cells

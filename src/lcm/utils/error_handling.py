@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, overload
 import jax
 import jax.numpy as jnp
 import pandas as pd
-from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
@@ -23,6 +22,7 @@ from lcm.typing import (
     FlatRegimeParams,
     FloatND,
     InternalParams,
+    IntND,
     RegimeName,
     ScalarFloat,
     ScalarInt,
@@ -289,7 +289,7 @@ def validate_regime_transition_probs(
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
     next_age: float | ScalarInt | ScalarFloat,
-    state_action_values: MappingProxyType[str, Array] | None = None,
+    state_action_values: MappingProxyType[str, FloatND | IntND] | None = None,
 ) -> None:
     """Validate regime transition probabilities.
 
@@ -353,7 +353,7 @@ def validate_regime_transition_probs(
 def _format_sum_violation(
     *,
     sum_all: FloatND,
-    state_action_values: MappingProxyType[str, Array] | None = None,
+    state_action_values: MappingProxyType[str, FloatND | IntND] | None = None,
 ) -> str:
     """Format a human-readable description of probability sum violations.
 
@@ -480,7 +480,7 @@ def _validate_regime_transition_single(
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted_params}
 
     # Collect only grid variables the transition function accepts
-    grids: dict[str, Array] = {
+    grids: dict[str, FloatND | IntND] = {
         k: v for k, v in state_action_space.states.items() if k in accepted_params
     } | {k: v for k, v in state_action_space.actions.items() if k in accepted_params}
 
@@ -493,7 +493,7 @@ def _validate_regime_transition_single(
         flat_arrays = [m.ravel() for m in mesh]
 
         def _call(
-            *args: Array,
+            *args: FloatND | IntND,
             _names: list[str] = grid_var_names,
             _params: dict = filtered_params,
             _func: object = regime_transition_func,
@@ -517,7 +517,7 @@ def _validate_regime_transition_single(
                 age=ages.values[period],  # noqa: PD011
             )
         )
-        point: dict[str, Array] = {}
+        point: dict[str, FloatND | IntND] = {}
 
     validate_regime_transition_probs(
         regime_transition_probs=regime_transition_probs,

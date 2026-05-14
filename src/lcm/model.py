@@ -9,7 +9,6 @@ from types import MappingProxyType
 
 import pandas as pd
 from beartype import beartype
-from jax import Array
 
 from lcm._beartype_conf import MODEL_CONF, PARAMS_CONF
 from lcm.ages import AgeGrid
@@ -48,6 +47,7 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
     UserFacingParamsTemplate,
+    UserInitialConditions,
     UserParams,
 )
 from lcm.utils.containers import (
@@ -377,7 +377,7 @@ class Model:
         self,
         *,
         params: UserParams,
-        initial_conditions: Mapping[str, Array],
+        initial_conditions: UserInitialConditions,
         period_to_regime_to_V_arr: MappingProxyType[
             int, MappingProxyType[RegimeName, FloatND]
         ]

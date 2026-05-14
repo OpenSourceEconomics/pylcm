@@ -6,7 +6,6 @@ from types import MappingProxyType
 import jax
 from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
-from jax import Array
 
 from lcm.grids import Grid
 from lcm.shocks import _ShockGrid
@@ -18,6 +17,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     FunctionsMapping,
+    IntND,
     NextStateSimulationFunction,
     RegimeName,
     ShockName,
@@ -94,7 +94,7 @@ def get_next_state_function_for_simulation(
         Returns `{target_regime_name: {next_<state>: array}}`.
 
     """
-    per_target_funcs: dict[RegimeName, Callable[..., dict[str, Array]]] = {}
+    per_target_funcs: dict[RegimeName, Callable[..., dict[str, FloatND | IntND]]] = {}
     for target, target_transitions in transitions.items():
         extended = _extend_target_transitions_for_simulation(
             target=target,
@@ -126,7 +126,7 @@ def get_next_stochastic_weights_function(
     functions: FunctionsMapping,
     transitions: FunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
-) -> Callable[..., dict[str, Array]]:
+) -> Callable[..., dict[str, FloatND | IntND]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
@@ -156,11 +156,13 @@ def get_next_stochastic_weights_function(
 def _extend_target_transitions_for_simulation(
     *,
     target: RegimeName,
-    target_transitions: MappingProxyType[TransitionFunctionName, Callable[..., Array]],
+    target_transitions: MappingProxyType[
+        TransitionFunctionName, Callable[..., FloatND | IntND]
+    ],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variables: Variables,
     stochastic_transition_names: frozenset[TransitionFunctionName],
-) -> dict[TransitionFunctionName, Callable[..., Array]]:
+) -> dict[TransitionFunctionName, Callable[..., FloatND | IntND]]:
     """Replace stochastic transitions for one target with realisation wrappers.
 
     Deterministic transitions are passed through unchanged. Stochastic transitions
@@ -186,7 +188,7 @@ def _extend_target_transitions_for_simulation(
 
     """
     shock_names: frozenset[ShockName] = frozenset(variables.shock_names)
-    extended: dict[TransitionFunctionName, Callable[..., Array]] = dict(
+    extended: dict[TransitionFunctionName, Callable[..., FloatND | IntND]] = dict(
         target_transitions
     )
     for next_state_name in target_transitions:
@@ -237,7 +239,7 @@ def _create_discrete_stochastic_next_func(
     qname = qname_from_tree_path((target, next_state_name))
 
     @with_signature(
-        args={f"weight_{qname}": "FloatND", f"key_{qname}": "dict[str, Array]"},
+        args={f"weight_{qname}": "FloatND", f"key_{qname}": "dict[str, KeyArray]"},
         return_annotation="DiscreteState",
     )
     def next_stochastic_state(**kwargs: FloatND) -> DiscreteState:
@@ -293,7 +295,7 @@ def _create_ar1_next_func(
         qname_from_tree_path((state_name, p)): p for p in grid.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
-        f"key_{qname}": "dict[str, Array]",
+        f"key_{qname}": "dict[str, KeyArray]",
         state_name: "ContinuousState",
         **dict.fromkeys(runtime_param_names, "float"),
     }
@@ -326,7 +328,7 @@ def _create_iid_next_func(
         qname_from_tree_path((state_name, p)): p for p in grid.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
-        f"key_{qname}": "dict[str, Array]",
+        f"key_{qname}": "dict[str, KeyArray]",
         **dict.fromkeys(runtime_param_names, "float"),
     }
     _draw_shock = grid.draw_shock

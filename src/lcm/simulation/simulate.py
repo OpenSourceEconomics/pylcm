@@ -6,7 +6,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pandas as pd
-from jax import Array, vmap
+from jax import vmap
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import (
@@ -36,6 +36,7 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
     StatesPerRegime,
+    UserInitialConditions,
 )
 from lcm.utils.containers import invert_regime_ids
 from lcm.utils.error_handling import validate_V
@@ -51,7 +52,7 @@ from lcm.utils.logging import (
 def simulate(
     *,
     internal_params: InternalParams,
-    initial_conditions: Mapping[str, Array],
+    initial_conditions: UserInitialConditions,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
@@ -337,8 +338,8 @@ def _simulate_regime_in_period(
 def _lookup_values_from_indices(
     *,
     flat_indices: IntND,
-    grids: MappingProxyType[str, Array],
-) -> MappingProxyType[str, Array]:
+    grids: MappingProxyType[str, FloatND | IntND],
+) -> MappingProxyType[str, FloatND | IntND]:
     """Retrieve values from indices.
 
     Args:

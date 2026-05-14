@@ -1,15 +1,14 @@
 import jax.numpy as jnp
-from jax import Array
 
-from lcm.typing import BoolND, IntND
+from lcm.typing import BoolND, FloatND, IntND
 
 
 def argmax_and_max(
-    a: Array,
+    a: FloatND,
     axis: int | tuple[int, ...] | None = None,
     initial: float | None = None,
     where: BoolND | None = None,
-) -> tuple[IntND, Array]:
+) -> tuple[IntND, FloatND]:
     """Compute the argmax of an n-dim array along axis.
 
     If multiple maxima exist, the first index will be selected.
@@ -70,7 +69,7 @@ def argmax_and_max(
     return _argmax, _max.reshape(_argmax.shape)
 
 
-def _move_axes_to_back(a: Array, axes: tuple[int, ...]) -> Array:
+def _move_axes_to_back(a: FloatND | BoolND, axes: tuple[int, ...]) -> FloatND | BoolND:
     """Move specified axes to the back of the array.
 
     Args:
@@ -85,7 +84,7 @@ def _move_axes_to_back(a: Array, axes: tuple[int, ...]) -> Array:
     return a.transpose((*front_axes, *axes))
 
 
-def _flatten_last_n_axes(a: Array, n: int) -> Array:
+def _flatten_last_n_axes(a: FloatND | BoolND, n: int) -> FloatND | BoolND:
     """Flatten the last n axes of a to 1 dimension.
 
     Args:
