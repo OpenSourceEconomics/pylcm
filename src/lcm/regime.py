@@ -18,6 +18,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     FunctionName,
+    NumericND,
     RegimeName,
     StateName,
     UserFunction,
@@ -64,7 +65,9 @@ class MarkovTransition:
         return self.func(*args, **kwargs)
 
 
-def _default_H(utility: float, E_next_V: float, discount_factor: float) -> float:
+def _default_H(
+    utility: NumericND, E_next_V: NumericND, discount_factor: NumericND
+) -> NumericND:
     return utility + discount_factor * E_next_V
 
 

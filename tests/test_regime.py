@@ -193,8 +193,8 @@ def test_identity_transition_call():
 def test_identity_transition_discrete():
     """Identity transition works for discrete states."""
     identity = _IdentityTransition("education", annotation=DiscreteState)
-    result = identity(education=jnp.array(1))
-    assert result == jnp.array(1)
+    result = identity(education=jnp.array(1, dtype=jnp.int32))
+    assert result == jnp.array(1, dtype=jnp.int32)
 
 
 def test_identity_transition_name():

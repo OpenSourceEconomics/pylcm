@@ -18,8 +18,10 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
-from lcm import AgeGrid
+from lcm import AgeGrid, LinSpacedGrid, Regime
+from lcm.exceptions import RegimeInitializationError
 from lcm.interfaces import _build_regime_sharding
+from lcm.regime import _default_H
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats
 from lcm.state_action_space import _validate_all_states_present
@@ -103,4 +105,37 @@ def test_claw_checks_lcm_interfaces() -> None:
         _build_regime_sharding(
             grids=MappingProxyType({}),
             n_devices="not an int",  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_claw_checks_lcm_regime() -> None:
+    """An ill-typed argument to an `lcm.regime` function is rejected.
+
+    `_default_H` annotates `utility` as `FloatND` (a JAX array). A NumPy array
+    would otherwise flow through `utility + discount_factor * E_next_V` and the
+    call would return a NumPy array cleanly; the claw turns the wrong array
+    library into a violation.
+    """
+    with pytest.raises(BeartypeCallHintViolation):
+        _default_H(
+            utility=np.array([1.0]),  # ty: ignore[invalid-argument-type]
+            E_next_V=jnp.array([1.0]),
+            discount_factor=jnp.array([0.95]),
+        )
+
+
+def test_regime_with_bad_arg_raises_project_exception() -> None:
+    """A bad `Regime` argument still raises `RegimeInitializationError`.
+
+    The package claw instruments `lcm.regime`'s private helpers with
+    `INTERNAL_CONF`, but the explicit `@beartype(conf=REGIME_CONF)` decorator
+    on the `Regime` constructor still wins: a type violation at construction
+    surfaces as the project's `RegimeInitializationError`, not beartype's own
+    `BeartypeCallHintViolation`.
+    """
+    with pytest.raises(RegimeInitializationError):
+        Regime(
+            transition=None,
+            states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
+            functions="not a mapping",  # ty: ignore[invalid-argument-type]
         )

@@ -22,7 +22,7 @@ def test_create_params_without_shocks(binary_category_class):
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {"discount_factor": "float"},
+            "H": {"discount_factor": "NumericND"},
             "utility": {"c": "no_annotation_found"},
             "next_b": {},
             "next_regime": {},
@@ -144,7 +144,7 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {"discount_factor": "float"},
+            "H": {"discount_factor": "NumericND"},
             "utility": {"risk_aversion": "no_annotation_found"},
             "next_wealth": {},
             "next_regime": {},
@@ -183,7 +183,7 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {"discount_factor": "float"},
+            "H": {"discount_factor": "NumericND"},
             "utility": {},
             "next_wealth": {},
             "next_aime": {},
