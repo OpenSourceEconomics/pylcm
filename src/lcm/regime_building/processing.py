@@ -1293,6 +1293,11 @@ def _wrap_regime_transition_probs(
             {name: result[idx] for idx, name in enumerate(regime_names)}
         )
 
+    # Pin `__annotations__` on the final wrapper: `concatenate_functions`
+    # reads `__annotations__` (not `__signature__`) to reconcile the DAG, and
+    # the decorator stack can drop them when `func` carries deferred (PEP 649)
+    # annotations through `functools.wraps`.
+    wrapped.__annotations__ = {**annotations, "return": return_annotation}
     return wrapped
 
 
@@ -1329,6 +1334,11 @@ def _wrap_deterministic_regime_transition(
         regime_idx = func(*args, **kwargs)
         return jax.nn.one_hot(regime_idx, n_regimes)
 
+    # Pin `__annotations__` on the final wrapper: `concatenate_functions`
+    # reads `__annotations__` (not `__signature__`) to reconcile the DAG, and
+    # the decorator stack can drop them when `func` carries deferred (PEP 649)
+    # annotations through `functools.wraps`.
+    wrapped.__annotations__ = {**annotations, "return": "FloatND"}
     return wrapped
 
 
