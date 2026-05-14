@@ -43,11 +43,11 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     InternalParams,
+    IntND,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
     UserFacingParamsTemplate,
-    UserInitialConditions,
     UserParams,
 )
 from lcm.utils.containers import (
@@ -377,7 +377,7 @@ class Model:
         self,
         *,
         params: UserParams,
-        initial_conditions: UserInitialConditions,
+        initial_conditions: Mapping[str, FloatND | IntND],
         period_to_regime_to_V_arr: MappingProxyType[
             int, MappingProxyType[RegimeName, FloatND]
         ]

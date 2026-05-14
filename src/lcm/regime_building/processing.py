@@ -868,7 +868,7 @@ def _get_stochastic_next_function_for_shock(
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
     def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
-        return jnp.arange(grid.shape[0])
+        return jnp.arange(grid.shape[0], dtype=jnp.int32)
 
     return next_func
 
@@ -902,7 +902,7 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
                 input=transition_probs,
                 coordinates=[
                     jnp.full(n_points, fill_value=coord),
-                    jnp.arange(n_points),
+                    jnp.arange(n_points, dtype=jnp.int32),
                 ],
             )
 
@@ -922,7 +922,7 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
             input=transition_probs,
             coordinates=[
                 jnp.full(grid.n_points, fill_value=coordinate),
-                jnp.arange(grid.n_points),
+                jnp.arange(grid.n_points, dtype=jnp.int32),
             ],
         )
 

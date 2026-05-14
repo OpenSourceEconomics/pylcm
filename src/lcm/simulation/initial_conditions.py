@@ -37,7 +37,6 @@ from lcm.typing import (
     RegimeNamesToIds,
     StateName,
     StatesPerRegime,
-    UserInitialConditions,
 )
 from lcm.utils.containers import invert_regime_ids
 from lcm.utils.functools import get_union_of_args
@@ -50,7 +49,7 @@ MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 def build_initial_states(
     *,
-    initial_states: UserInitialConditions,
+    initial_states: Mapping[str, FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> StatesPerRegime:
     """Build the regime-keyed state carrier from user-provided initial states.
@@ -127,7 +126,7 @@ def build_initial_states(
 
 def validate_initial_conditions(
     *,
-    initial_conditions: UserInitialConditions,
+    initial_conditions: Mapping[str, FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     internal_params: InternalParams,
@@ -245,7 +244,7 @@ def _format_missing_states_message(missing: set[str], required: set[str]) -> str
 
 def _collect_state_name_errors(
     *,
-    initial_states: UserInitialConditions,
+    initial_states: Mapping[str, FloatND | IntND],
     regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -303,7 +302,7 @@ def _collect_state_name_errors(
 
 def _collect_structural_errors(
     *,
-    initial_states: UserInitialConditions,
+    initial_states: Mapping[str, FloatND | IntND],
     regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     regime_names_to_ids: RegimeNamesToIds,
@@ -403,7 +402,7 @@ def _collect_structural_errors(
 
 def _collect_feasibility_errors(
     *,
-    initial_states: UserInitialConditions,
+    initial_states: Mapping[str, FloatND | IntND],
     regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -454,7 +453,7 @@ def _collect_feasibility_errors(
 
 def _validate_discrete_state_values(
     *,
-    initial_states: UserInitialConditions,
+    initial_states: Mapping[str, FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
@@ -519,7 +518,7 @@ _BYTES_PER_ACTION_ELEMENT = 4
 def _batched_feasibility_check(
     *,
     feasibility_func: Callable[..., BoolND],
-    subject_states: UserInitialConditions,
+    subject_states: Mapping[str, FloatND | IntND],
     action_kwargs: Mapping[str, FloatND | IntND],
     filtered_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, FloatND | IntND],
@@ -591,7 +590,7 @@ def _check_regime_feasibility(  # noqa: C901
     *,
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: UserInitialConditions,
+    initial_states: Mapping[str, FloatND | IntND],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
     ages: AgeGrid,
@@ -732,7 +731,7 @@ def _admits_any_action(
 def _per_constraint_feasibility(
     *,
     internal_regime: InternalRegime,
-    subject_states: UserInitialConditions,
+    subject_states: Mapping[str, FloatND | IntND],
     regime_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, FloatND | IntND],
     idx_arr: Int1D,
@@ -845,7 +844,7 @@ def _format_infeasibility_message(
     infeasible_indices: Sequence[int],
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: UserInitialConditions,
+    initial_states: Mapping[str, FloatND | IntND],
     state_names: Sequence[str],
     per_constraint_admits_any: Mapping[str, np.ndarray],
 ) -> str:

@@ -5,7 +5,7 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 from jax import Array
-from jaxtyping import Bool, Float, Int, Int32, Scalar
+from jaxtyping import Bool, Float, Int32, Real, Scalar
 
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
@@ -18,6 +18,12 @@ type DiscreteAction = Int32[Array, "..."]
 type FloatND = Float[Array, "..."]
 type IntND = Int32[Array, "..."]
 type BoolND = Bool[Array, "..."]
+
+# Dtype-generic real array (any-width float or int, no complex/bool). For
+# low-level numeric primitives (`ndimage`, `argmax`) that operate *below*
+# pylcm's canonical-dtype invariant — they are exercised across dtypes
+# (e.g. int64) and so cannot pin the int side to `IntND` (int32-only).
+type RealND = Real[Array, "..."]
 
 type Float1D = Float[Array, "_"]  # noqa: F821
 type Int1D = Int32[Array, "_"]  # noqa: F821
@@ -54,23 +60,13 @@ type TransitionFunctionsMapping = MappingProxyType[
 type RegimeStates = MappingProxyType[StateName, FloatND | IntND]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 
-# User-supplied initial conditions / states, checked by beartype at the
-# `Model.simulate` boundary. The int slot is dtype-generic `Int[Array, "..."]`
-# rather than `IntND` (int32-only): users pass int64 arrays, which
-# `build_initial_states` downcasts. Parallels `_ParamsLeaf`.
-type UserInitialConditions = Mapping[str, FloatND | Int[Array, "..."]]
 
-
-# User-supplied param leaf, checked by beartype at the `process_params`
-# boundary. The int slot is dtype-generic `Int[Array, "..."]` rather than
-# `IntND` (int32-only): users legitimately pass int64 arrays, which the
-# boundary downcasts. `FloatND`/`BoolND` are already dtype-generic.
 type _ParamsLeaf = (
     bool
     | int
     | float
     | FloatND
-    | Int[Array, "..."]
+    | IntND
     | BoolND
     | np.ndarray
     | pd.Series

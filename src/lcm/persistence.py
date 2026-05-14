@@ -9,7 +9,7 @@ import platform
 import shutil
 import tempfile
 import textwrap
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -22,9 +22,9 @@ import numpy as np
 
 from lcm.typing import (
     FloatND,
+    IntND,
     PeriodToRegimeToVArr,
     RegimeName,
-    UserInitialConditions,
     UserParams,
 )
 
@@ -74,7 +74,7 @@ class SimulateSnapshot:
     params: UserParams | None
     """User parameters passed to simulate."""
 
-    initial_conditions: UserInitialConditions | None
+    initial_conditions: Mapping[str, FloatND | IntND] | None
     """Mapping of state names and "regime" to arrays."""
 
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
@@ -206,7 +206,7 @@ def save_simulate_snapshot(
     *,
     model: Model,
     params: UserParams,
-    initial_conditions: UserInitialConditions,
+    initial_conditions: Mapping[str, FloatND | IntND],
     period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     result: SimulationResult,
     log_path: Path,

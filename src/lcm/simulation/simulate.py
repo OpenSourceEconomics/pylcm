@@ -36,7 +36,6 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
     StatesPerRegime,
-    UserInitialConditions,
 )
 from lcm.utils.containers import invert_regime_ids
 from lcm.utils.error_handling import validate_V
@@ -52,7 +51,7 @@ from lcm.utils.logging import (
 def simulate(
     *,
     internal_params: InternalParams,
-    initial_conditions: UserInitialConditions,
+    initial_conditions: Mapping[str, FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
