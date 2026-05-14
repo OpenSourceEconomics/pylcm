@@ -1,13 +1,11 @@
 import jax.numpy as jnp
 
-from lcm._beartype_conf import GRID_CONF, beartype_init
 from lcm.grids.base import Grid
 from lcm.grids.categorical import _validate_discrete_grid
 from lcm.typing import Int1D
 from lcm.utils.containers import get_field_names_and_values
 
 
-@beartype_init(GRID_CONF)
 class DiscreteGrid(Grid):
     """A discrete grid defining the outcome space of a categorical variable.
 

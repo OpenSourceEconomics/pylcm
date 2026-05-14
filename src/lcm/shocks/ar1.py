@@ -7,7 +7,6 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-from lcm._beartype_conf import GRID_CONF, beartype_init
 from lcm.shocks._base import (
     _gauss_hermite_normal,
     _mixture_cdf,
@@ -30,7 +29,6 @@ class _ShockGridAR1(_ShockGrid):
     ) -> ScalarFloat: ...
 
 
-@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Tauchen(_ShockGridAR1):
     r"""AR(1) shock discretized via Tauchen (1986).
@@ -130,7 +128,6 @@ class Tauchen(_ShockGridAR1):
         )
 
 
-@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Rouwenhorst(_ShockGridAR1):
     r"""AR(1) shock discretized via Rouwenhorst (1995).
@@ -199,7 +196,6 @@ class Rouwenhorst(_ShockGridAR1):
         )
 
 
-@beartype_init(GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class TauchenNormalMixture(_ShockGridAR1):
     r"""AR(1) shock with mixture-of-normals innovations, discretized via Tauchen.
