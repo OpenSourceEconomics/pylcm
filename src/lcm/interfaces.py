@@ -468,18 +468,10 @@ class PeriodRegimeSimulationData:
     """Value function array for all subjects at this period."""
 
     actions: MappingProxyType[ActionName, FloatND | IntND]
-    """Immutable mapping of action names to optimal action arrays for all subjects.
-
-    Action arrays carry the dtype of their grid — discrete actions are int,
-    continuous actions are float — hence the `FloatND | IntND` value type.
-    """
+    """Immutable mapping of action names to optimal action arrays for all subjects."""
 
     states: MappingProxyType[StateName, FloatND | IntND]
-    """Immutable mapping of state names to state value arrays for all subjects.
-
-    State arrays carry the dtype of their grid — discrete states are int,
-    continuous states are float — hence the `FloatND | IntND` value type.
-    """
+    """Immutable mapping of state names to state value arrays for all subjects."""
 
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
