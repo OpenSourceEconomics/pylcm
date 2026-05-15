@@ -40,12 +40,7 @@ from lcm.utils.error_handling import validate_regime_transition_probs
 
 
 def test_claw_checks_lcm_simulation() -> None:
-    """An ill-typed argument to an `lcm.simulation` function is rejected.
-
-    `_compute_starting_periods` annotates `initial_ages` as `Float1D` (a JAX
-    array). A NumPy array would otherwise be accepted by `jnp.searchsorted`
-    and the call would return cleanly; the claw turns it into a violation.
-    """
+    """Type-violating arguments to internal `lcm.simulation` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _compute_starting_periods(
             initial_ages=np.array([25.0]),  # ty: ignore[invalid-argument-type]
@@ -54,12 +49,7 @@ def test_claw_checks_lcm_simulation() -> None:
 
 
 def test_claw_checks_lcm_solution() -> None:
-    """An ill-typed argument to an `lcm.solution` function is rejected.
-
-    `_log_per_period_stats` annotates `logger` as `logging.Logger`. With an
-    empty `diagnostic_rows` the body never runs, so an un-instrumented call
-    would return `None`; the claw turns the bad `logger` into a violation.
-    """
+    """Type-violating arguments to internal `lcm.solution` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _log_per_period_stats(
             logger="not a logger",  # ty: ignore[invalid-argument-type]
@@ -71,13 +61,7 @@ def test_claw_checks_lcm_solution() -> None:
 
 
 def test_claw_checks_lcm_utils_error_handling() -> None:
-    """An ill-typed argument to an `lcm.utils.error_handling` function is rejected.
-
-    `validate_regime_transition_probs` annotates `regime_transition_probs` as
-    `MappingProxyType[RegimeName, FloatND]`. A plain `dict` whose values are JAX
-    arrays would be accepted by `jnp.stack(list(...))` and the body would run to
-    completion; the claw turns the wrong container type into a violation.
-    """
+    """Type-violating arguments to `lcm.utils.error_handling` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         validate_regime_transition_probs(
             regime_transition_probs={"working": jnp.array([1.0])},  # ty: ignore[invalid-argument-type]
@@ -89,14 +73,7 @@ def test_claw_checks_lcm_utils_error_handling() -> None:
 
 
 def test_claw_checks_lcm_state_action_space() -> None:
-    """An ill-typed argument to an `lcm.state_action_space` function is rejected.
-
-    `_validate_all_states_present` annotates `provided_states` as a
-    `dict[StateName, FloatND | IntND]`. An empty `str` `provided_states`
-    yields an empty `set(provided_states)`, which equals an empty
-    `required_state_names`, so an un-instrumented call would return cleanly;
-    the claw turns the wrong container type into a violation.
-    """
+    """Type-violating arguments to `lcm.state_action_space` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _validate_all_states_present(
             provided_states="",  # ty: ignore[invalid-argument-type]
@@ -105,13 +82,7 @@ def test_claw_checks_lcm_state_action_space() -> None:
 
 
 def test_claw_checks_lcm_interfaces() -> None:
-    """An ill-typed argument to an `lcm.interfaces` function is rejected.
-
-    `_build_regime_sharding` annotates `n_devices` as `int`. With an empty
-    `grids` mapping the function returns `None` before `n_devices` is ever
-    used, so an un-instrumented call would return cleanly; the claw turns the
-    wrong `n_devices` type into a violation.
-    """
+    """Type-violating arguments to `lcm.interfaces` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _build_regime_sharding(
             grids=MappingProxyType({}),
@@ -120,13 +91,7 @@ def test_claw_checks_lcm_interfaces() -> None:
 
 
 def test_claw_checks_lcm_regime() -> None:
-    """An ill-typed argument to an `lcm.regime` function is rejected.
-
-    `_default_H` annotates `utility` as `FloatND` (a JAX array). A NumPy array
-    would otherwise flow through `utility + discount_factor * E_next_V` and the
-    call would return a NumPy array cleanly; the claw turns the wrong array
-    library into a violation.
-    """
+    """Type-violating arguments to `lcm.regime` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _default_H(
             utility=np.array([1.0]),  # ty: ignore[invalid-argument-type]
@@ -136,14 +101,7 @@ def test_claw_checks_lcm_regime() -> None:
 
 
 def test_regime_with_bad_arg_raises_project_exception() -> None:
-    """A bad `Regime` argument still raises `RegimeInitializationError`.
-
-    The package claw instruments `lcm.regime`'s private helpers with
-    `INTERNAL_CONF`, but the explicit `@beartype(conf=REGIME_CONF)` decorator
-    on the `Regime` constructor still wins: a type violation at construction
-    surfaces as the project's `RegimeInitializationError`, not beartype's own
-    `BeartypeCallHintViolation`.
-    """
+    """A bad `Regime` argument surfaces as `RegimeInitializationError`."""
     with pytest.raises(RegimeInitializationError):
         Regime(
             transition=None,
@@ -153,13 +111,7 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
 
 
 def test_claw_checks_lcm_model() -> None:
-    """An ill-typed argument to an `lcm.model` function is rejected.
-
-    `_validate_log_args` annotates `log_path` as `str | Path | None`. With
-    `log_level="progress"` the function returns before `log_path` is ever
-    inspected, so an un-instrumented call would return cleanly; the claw turns
-    the wrong `log_path` type into a violation.
-    """
+    """Type-violating arguments to internal `lcm.model` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _validate_log_args(
             log_level="progress",
@@ -168,14 +120,7 @@ def test_claw_checks_lcm_model() -> None:
 
 
 def test_model_with_bad_arg_raises_project_exception() -> None:
-    """A bad `Model` argument still raises `ModelInitializationError`.
-
-    The package claw instruments `lcm.model`'s private helpers with
-    `INTERNAL_CONF`, but the explicit `@beartype(conf=MODEL_CONF)` decorator on
-    `Model.__init__` still wins: a type violation at construction surfaces as
-    the project's `ModelInitializationError`, not beartype's own
-    `BeartypeCallHintViolation`.
-    """
+    """A bad `Model` argument surfaces as `ModelInitializationError`."""
     with pytest.raises(ModelInitializationError):
         Model(
             ages=AgeGrid(start=25, stop=75, step="Y"),
@@ -185,14 +130,7 @@ def test_model_with_bad_arg_raises_project_exception() -> None:
 
 
 def test_linspaced_grid_with_bad_arg_raises_project_exception() -> None:
-    """A bad `LinSpacedGrid` argument still raises `GridInitializationError`.
-
-    The package claw instruments `lcm.grids`'s private helpers with
-    `INTERNAL_CONF`, but the explicit `@beartype(conf=GRID_CONF)` decorator on
-    `LinSpacedGrid.__init__` still wins: a type violation at construction
-    surfaces as the project's `GridInitializationError`, not beartype's own
-    `BeartypeCallHintViolation`.
-    """
+    """A bad `LinSpacedGrid` argument surfaces as `GridInitializationError`."""
     with pytest.raises(GridInitializationError):
         LinSpacedGrid(
             start="not a number",  # ty: ignore[invalid-argument-type]

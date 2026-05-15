@@ -5,6 +5,7 @@ from unittest.mock import patch
 import jax.numpy as jnp
 import pytest
 
+import lcm
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -15,8 +16,24 @@ from lcm import (
     categorical,
     load_snapshot,
 )
+from lcm import persistence as _persistence
+from lcm import variables as _variables
 from lcm.persistence import _get_platform, load_solution, save_solution
+from lcm.simulation.result import SimulationResult as _PublicSimulationResult
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+
+
+def test_forward_refs_bound_after_import() -> None:
+    """`Model` and `SimulationResult` are present in `lcm.persistence`'s globals.
+
+    The package claw rewrites their string annotations on `save_simulate_snapshot`
+    into runtime forward references resolved against this module's globals at
+    call time. Missing the binding leaves those calls failing with
+    `BeartypeCallHintForwardRefException`.
+    """
+    assert _persistence.Model is lcm.Model
+    assert _persistence.SimulationResult is _PublicSimulationResult
+    assert _variables.Regime is lcm.Regime
 
 
 @categorical(ordered=False)

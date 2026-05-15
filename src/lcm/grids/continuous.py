@@ -127,7 +127,6 @@ class LinSpacedGrid(UniformContinuousGrid):
         )
 
 
-@beartype(conf=GRID_CONF)
 class LogSpacedGrid(UniformContinuousGrid):
     """A logarithmically spaced grid of continuous values.
 

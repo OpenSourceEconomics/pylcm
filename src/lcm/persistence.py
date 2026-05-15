@@ -44,6 +44,25 @@ else:
     _ModelOrNone = Any
     _SimulationResultOrNone = Any
 
+
+def _bind_forward_refs(
+    *,
+    model_cls: type,
+    simulation_result_cls: type,
+) -> None:
+    """Bind `Model` and `SimulationResult` into this module's globals.
+
+    The package claw rewrites string annotations in `save_*_snapshot` into
+    runtime forward references resolved against this module's globals.
+    `lcm.__init__` calls this helper once both classes are loaded so the
+    refs resolve at call time without depending on an ad-hoc assignment
+    from outside the module.
+    """
+    global Model, SimulationResult  # noqa: PLW0603
+    Model = model_cls  # ty: ignore[invalid-assignment]
+    SimulationResult = simulation_result_cls  # ty: ignore[invalid-assignment]
+
+
 logger = logging.getLogger(__name__)
 
 

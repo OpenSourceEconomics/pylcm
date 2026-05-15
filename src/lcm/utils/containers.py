@@ -5,6 +5,8 @@ from itertools import chain
 from types import MappingProxyType
 from typing import Any, TypeVar, cast
 
+from lcm.params import UserMappingLeaf, UserSequenceLeaf
+
 T = TypeVar("T")
 
 
@@ -121,8 +123,6 @@ def first_non_none(*args: T | None) -> T:
 
 def _make_immutable(value: Any) -> Any:  # noqa: ANN401
     """Recursively convert a value to its immutable equivalent."""
-    from lcm.params import UserMappingLeaf, UserSequenceLeaf  # noqa: PLC0415
-
     if isinstance(value, (UserMappingLeaf, UserSequenceLeaf)):
         return value  # already immutable by construction
     if isinstance(value, (MappingProxyType, tuple, frozenset)):
@@ -138,8 +138,6 @@ def _make_immutable(value: Any) -> Any:  # noqa: ANN401
 
 def _make_mutable(value: Any) -> Any:  # noqa: ANN401, PLR0911
     """Recursively convert a value to its mutable equivalent."""
-    from lcm.params import UserMappingLeaf, UserSequenceLeaf  # noqa: PLC0415
-
     if isinstance(value, UserMappingLeaf):
         return {k: _make_mutable(v) for k, v in value.data.items()}
     if isinstance(value, UserSequenceLeaf):

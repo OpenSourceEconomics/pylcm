@@ -12,7 +12,7 @@ from beartype import beartype
 
 from lcm._beartype_conf import GRID_CONF
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Float1D, Int1D
+from lcm.typing import Float1D, Int1D, UserAge
 
 STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
     {
@@ -40,8 +40,8 @@ class AgeGrid:
     def __init__(
         self,
         *,
-        start: int | Fraction,
-        stop: int | Fraction,
+        start: UserAge,
+        stop: UserAge,
         step: str,
     ) -> None: ...
 
@@ -49,17 +49,17 @@ class AgeGrid:
     def __init__(
         self,
         *,
-        exact_values: Iterable[int | Fraction],
+        exact_values: Iterable[UserAge],
     ) -> None: ...
 
     @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
-        start: int | Fraction | None = None,
-        stop: int | Fraction | None = None,
+        start: UserAge | None = None,
+        stop: UserAge | None = None,
         step: str | None = None,
-        exact_values: Iterable[int | Fraction] | None = None,
+        exact_values: Iterable[UserAge] | None = None,
     ) -> None:
         _validate_age_grid(start=start, stop=stop, step=step, exact_values=exact_values)
 
@@ -100,7 +100,7 @@ class AgeGrid:
         return self._values
 
     @property
-    def exact_values(self) -> tuple[int | Fraction, ...]:
+    def exact_values(self) -> tuple[UserAge, ...]:
         """Exact ages; indexed by period.
 
         Could be:
@@ -224,10 +224,10 @@ def _is_integer_valued(value: int | Fraction) -> bool:
 
 def _validate_age_grid(
     *,
-    start: int | Fraction | None,
-    stop: int | Fraction | None,
+    start: UserAge | None,
+    stop: UserAge | None,
     step: str | None,
-    exact_values: Iterable[int | Fraction] | None,
+    exact_values: Iterable[UserAge] | None,
 ) -> None:
     error_messages: list[str] = []
 
@@ -252,9 +252,7 @@ def _validate_age_grid(
         raise GridInitializationError(format_messages(error_messages))
 
 
-def _validate_range(
-    *, start: int | Fraction, stop: int | Fraction, step: str
-) -> list[str]:
+def _validate_range(*, start: UserAge, stop: UserAge, step: str) -> list[str]:
     errors: list[str] = []
 
     if start >= stop:
@@ -285,7 +283,7 @@ def _validate_range(
     return errors
 
 
-def _validate_values(values: Iterable[int | Fraction]) -> list[str]:
+def _validate_values(values: Iterable[UserAge]) -> list[str]:
     errors: list[str] = []
 
     try:

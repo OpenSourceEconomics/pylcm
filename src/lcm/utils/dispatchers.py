@@ -151,13 +151,8 @@ def vmap_1d(
 
     if callable_with == "only_kwargs":
         out = allow_only_kwargs(vmapped, enforce=False)
-    elif callable_with == "only_args":
-        out = vmapped
     else:
-        raise ValueError(
-            f"Invalid callable_with option: {callable_with}. Possible options are "
-            "('only_args', 'only_kwargs')",
-        )
+        out = vmapped
 
     return cast("FunctionWithArrayReturn", out)
 

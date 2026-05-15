@@ -18,8 +18,10 @@ class UserMappingLeaf:
     `UserSequenceLeaf`).
 
     Prevents `flatten_regime_namespace` from recursing into contents while
-    allowing JAX to trace through array values. Data is frozen to
-    immutable containers on construction.
+    allowing JAX to trace through array values. The `data` attribute is
+    deep-converted to immutable containers (`MappingProxyType`, `tuple`,
+    `frozenset`) on construction; instances themselves are not hashable
+    (`__hash__ = None`), since `MappingProxyType` isn't.
 
     The constructor accepts `Mapping[str, Any]` at runtime so beartype's
     O(n) per-leaf check doesn't fire on user-supplied scalars or arrays;

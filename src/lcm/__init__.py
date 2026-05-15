@@ -32,35 +32,21 @@ from lcm import _jaxtyping_patch  # noqa: F401
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
-# Install beartype's AST-rewriting claw on the entire `lcm` package
-# before any of its submodules is imported. The claw transforms each
-# matching module's AST at first import to insert runtime type checks;
-# if it isn't registered before the import happens, the affected module
-# loads uninstrumented and `sys.modules` caches the unchecked version
-# for the rest of the process. The claw uses `INTERNAL_CONF`, which
-# surfaces violations as beartype's own `BeartypeCallHintViolation`.
-# User-facing constructors (`Model`, `Regime`, `MarkovTransition`,
-# every grid and shock class, `@categorical`) carry their own explicit
-# `@beartype(conf=...)` decorators that map violations to the relevant
-# project exception (`ModelInitializationError`,
-# `RegimeInitializationError`, `GridInitializationError`, etc.); those
-# decorators stack on top of the claw and win at the user boundary.
-# See `lcm._beartype_conf`.
+# Register beartype's package claw before any submodule import so every
+# `lcm.*` module loads with runtime type checks installed via
+# `INTERNAL_CONF`. User-facing constructors stack an explicit
+# `@beartype(conf=...)` decorator that maps violations to the relevant
+# project exception (see `lcm._beartype_conf`).
 from beartype.claw import beartype_package
 
 from lcm._beartype_conf import INTERNAL_CONF
 
 beartype_package("lcm", conf=INTERNAL_CONF)
 
-# Several modules annotate signatures with forward references that are
-# `TYPE_CHECKING`-only at definition time (to break import cycles). The
-# package claw rewrites those annotations into runtime forward references
-# resolved against the module's globals at call time. Inject the resolved
-# names here, after every involved module is loaded, so beartype can
-# resolve them.
-from lcm import persistence as _persistence  # noqa: E402
+# Modules with TYPE_CHECKING-only forward references expose a
+# `_bind_forward_refs` helper; calling it here makes the claw's
+# rewritten string annotations resolve at call time.
 from lcm import shocks  # noqa: E402
-from lcm import variables as _variables  # noqa: E402
 from lcm._version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.grids import (  # noqa: E402
@@ -82,15 +68,20 @@ from lcm.persistence import (  # noqa: E402
     load_solution,
     save_solution,
 )
+from lcm.persistence import (  # noqa: E402
+    _bind_forward_refs as _bind_persistence_forward_refs,
+)
 from lcm.regime import MarkovTransition, Regime  # noqa: E402
 from lcm.simulation.result import SimulationResult  # noqa: E402
 from lcm.utils.containers import invert_regime_ids  # noqa: E402
 from lcm.utils.error_handling import validate_transition_probs  # noqa: E402
+from lcm.variables import (  # noqa: E402
+    _bind_forward_refs as _bind_variables_forward_refs,
+)
 
-_variables.Regime = Regime
-_persistence.Model = Model
-_persistence.SimulationResult = SimulationResult
-del _persistence, _variables
+_bind_variables_forward_refs(regime_cls=Regime)
+_bind_persistence_forward_refs(model_cls=Model, simulation_result_cls=SimulationResult)
+del _bind_persistence_forward_refs, _bind_variables_forward_refs
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
 # This allows regime transition probabilities to use immutable mappings.

@@ -479,10 +479,9 @@ def _emit_post_loop_diagnostics(
 ) -> None:
     """Flush async diagnostics: raise on NaN, warn on Inf, log debug stats.
 
-    The two `.item()` calls on the running scalars decide whether to
-    enter the per-row failure-path localisation. On a healthy solve
-    neither inner walk runs and no per-row scalar is materialised, so
-    device memory stays bounded by the V templates currently in flight.
+    Only enters the per-row failure path when the running NaN or Inf
+    accumulators are set, so a healthy solve incurs no host-side scalar
+    materialisation here.
     """
     if running_any_nan.item():
         _raise_first_nan_row(
@@ -516,9 +515,7 @@ def _raise_first_nan_row(
 ) -> None:
     """Find the first NaN-bearing (regime, period) and raise.
 
-    Only invoked on the failure path (`running_any_nan` was True).
-    Materialises one host-side bool per row until the first hit; on
-    a healthy solve this function is never called.
+    Failure-path only — walks rows until the first NaN hit.
     """
     for row in diagnostic_rows:
         V_arr = solution[row.period][row.regime_name]

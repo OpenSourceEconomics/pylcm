@@ -435,7 +435,10 @@ def _collect_structural_errors(
         active_mask = jnp.ones(regime_id_arr.size, dtype=bool)
         for regime_name, internal_regime in internal_regimes.items():
             in_regime = regime_id_arr == regime_names_to_ids[regime_name]
-            period_active = jnp.isin(periods, jnp.array(internal_regime.active_periods))
+            period_active = jnp.isin(
+                periods,
+                jnp.array(internal_regime.active_periods, dtype=jnp.int32),
+            )
             active_mask = active_mask & (~in_regime | period_active)
 
         if not jnp.all(active_mask):

@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from fractions import Fraction
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -35,6 +36,9 @@ type PRNGKeyND = Key[Array, "..."]
 
 type Period = ScalarInt
 type Age = ScalarInt | ScalarFloat
+# Boundary form accepted by `AgeGrid.__init__` for `start`, `stop`, and
+# `exact_values` entries — converted to canonical JAX scalars internally.
+type UserAge = int | Fraction
 type RegimeName = str
 type StateName = str
 type ActionName = str
