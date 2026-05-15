@@ -54,7 +54,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     df: pd.DataFrame,
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
-) -> dict[str, FloatND | IntND]:
+) -> dict[StateName | Literal["regime_id"], FloatND | IntND]:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
     Args:
