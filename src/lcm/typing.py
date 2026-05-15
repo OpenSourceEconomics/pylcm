@@ -7,8 +7,8 @@ import pandas as pd
 from jax import Array
 from jaxtyping import Bool, Float, Int32, Key, Scalar
 
-from lcm.params import MappingLeaf
-from lcm.params.sequence_leaf import SequenceLeaf
+from lcm.params import MappingLeaf, UserMappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -55,7 +55,9 @@ type RegimeStates = MappingProxyType[StateName, FloatND | IntND]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 
 
-type _ParamsLeaf = (
+# Boundary leaf type — accepted by `Model.__init__` / `Model.solve` /
+# `Model.simulate` and canonicalized by `cast_params_to_canonical_dtypes`.
+type _UserParamsLeaf = (
     bool
     | int
     | float
@@ -64,10 +66,19 @@ type _ParamsLeaf = (
     | BoolND
     | np.ndarray
     | pd.Series
-    | MappingLeaf
-    | SequenceLeaf
+    | UserMappingLeaf
+    | UserSequenceLeaf
 )
 type UserParams = Mapping[
+    str,
+    _UserParamsLeaf | Mapping[str, _UserParamsLeaf | Mapping[str, _UserParamsLeaf]],
+]
+
+# Post-canonicalization leaf type — output of
+# `cast_params_to_canonical_dtypes`. Only canonical-dtype JAX arrays and
+# canonical-narrow `MappingLeaf` / `SequenceLeaf` instances survive.
+type _ParamsLeaf = FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
+type Params = Mapping[
     str,
     _ParamsLeaf | Mapping[str, _ParamsLeaf | Mapping[str, _ParamsLeaf]],
 ]

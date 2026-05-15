@@ -38,7 +38,7 @@ def _aggregate_with_ids(
     """
     data = jnp.array([consumption])  # shape-(1,) when scalar
     ids = invariant_array.data["ids"]  # shape-(1,) always
-    result = jax.ops.segment_sum(data, ids, num_segments=1)
+    result = jax.ops.segment_sum(data, ids, num_segments=1)  # ty: ignore[invalid-argument-type]
     return result.squeeze()
 
 

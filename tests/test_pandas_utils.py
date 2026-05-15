@@ -1520,12 +1520,12 @@ def test_convert_series_mixed_dict() -> None:
 
 
 def test_convert_series_mapping_leaf() -> None:
-    """Series inside a MappingLeaf is converted."""
-    from lcm.params import MappingLeaf  # noqa: PLC0415
+    """Series inside a `UserMappingLeaf` is converted in place."""
+    from lcm.params import UserMappingLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
-    leaf = MappingLeaf({"sub_key": series})
+    leaf = UserMappingLeaf({"sub_key": series})
     params = {
         "working_life": {
             "next_partner": {"probs_array": leaf},
@@ -1541,19 +1541,19 @@ def test_convert_series_mapping_leaf() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     converted_leaf = result["working_life"]["next_partner__probs_array"]
-    assert isinstance(converted_leaf, MappingLeaf)
+    assert isinstance(converted_leaf, UserMappingLeaf)
     arr = converted_leaf.data["sub_key"]
-    assert arr.shape == (3, 2, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_nested_mapping_leaf() -> None:
-    """Series inside nested MappingLeaf is recursively converted."""
-    from lcm.params import MappingLeaf  # noqa: PLC0415
+    """Series inside nested `UserMappingLeaf` is recursively converted."""
+    from lcm.params import UserMappingLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
-    inner = MappingLeaf({"sub": series})
-    outer = MappingLeaf({"inner_leaf": inner})
+    inner = UserMappingLeaf({"sub": series})
+    outer = UserMappingLeaf({"inner_leaf": inner})
     params = {
         "working_life": {
             "next_partner": {"probs_array": outer},
@@ -1569,11 +1569,11 @@ def test_convert_series_nested_mapping_leaf() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     converted = result["working_life"]["next_partner__probs_array"]
-    assert isinstance(converted, MappingLeaf)
+    assert isinstance(converted, UserMappingLeaf)
     inner_converted = converted.data["inner_leaf"]
-    assert isinstance(inner_converted, MappingLeaf)
+    assert isinstance(inner_converted, UserMappingLeaf)
     assert not isinstance(inner_converted.data["sub"], pd.Series)
-    assert inner_converted.data["sub"].shape == (3, 2, 2, 2)
+    assert inner_converted.data["sub"].shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_unknown_param_raises() -> None:
@@ -1880,12 +1880,12 @@ def test_convert_series_runtime_grid_param() -> None:
 
 
 def test_convert_series_sequence_leaf_traversal() -> None:
-    """Series inside a SequenceLeaf should be converted to JAX arrays."""
-    from lcm.params.sequence_leaf import SequenceLeaf  # noqa: PLC0415
+    """Series inside a `UserSequenceLeaf` should be converted to JAX arrays."""
+    from lcm.params.sequence_leaf import UserSequenceLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     sr = pd.Series([10.0])
-    leaf = SequenceLeaf((sr, 42))
+    leaf = UserSequenceLeaf((sr, 42))
     params = {"working_life": {"labor_income": {"wage": leaf}}}
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
@@ -1897,9 +1897,9 @@ def test_convert_series_sequence_leaf_traversal() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     converted = result["working_life"]["labor_income__wage"]
-    assert isinstance(converted, SequenceLeaf)
+    assert isinstance(converted, UserSequenceLeaf)
     assert not isinstance(converted.data[0], pd.Series)
-    np.testing.assert_allclose(converted.data[0], jnp.array([10.0]))
+    np.testing.assert_allclose(converted.data[0], jnp.array([10.0]))  # ty: ignore[no-matching-overload]
 
 
 def test_resolve_categoricals_conflict_raises() -> None:

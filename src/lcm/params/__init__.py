@@ -1,24 +1,33 @@
 from collections.abc import Mapping, Sequence
 from typing import Any, overload
 
-from lcm.params.mapping_leaf import MappingLeaf
-from lcm.params.sequence_leaf import SequenceLeaf
+from lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 
 
 @overload
-def as_leaf(data: Mapping[str, Any]) -> MappingLeaf: ...
+def as_leaf(data: Mapping[str, Any]) -> UserMappingLeaf: ...
 
 
 @overload
-def as_leaf(data: Sequence[Any]) -> SequenceLeaf: ...
+def as_leaf(data: Sequence[Any]) -> UserSequenceLeaf: ...
 
 
-def as_leaf(data: Mapping[str, Any] | Sequence[Any]) -> MappingLeaf | SequenceLeaf:
-    """Wrap a Mapping or Sequence as a JAX-pytree leaf."""
+def as_leaf(
+    data: Mapping[str, Any] | Sequence[Any],
+) -> UserMappingLeaf | UserSequenceLeaf:
+    """Wrap a Mapping or Sequence as a JAX-pytree leaf.
+
+    Returns the boundary (`User...Leaf`) variant — accepts Python scalars,
+    numpy arrays, `pd.Series`, JAX arrays, and nested leaves. The
+    canonical narrowed variants (`MappingLeaf` / `SequenceLeaf`) are the
+    output of `cast_params_to_canonical_dtypes`.
+
+    """
     if isinstance(data, Mapping):
-        return MappingLeaf(dict(data))
+        return UserMappingLeaf(dict(data))
     if isinstance(data, Sequence):
-        return SequenceLeaf(data)
+        return UserSequenceLeaf(data)
     msg = f"as_leaf() expects a Mapping or Sequence, got {type(data).__name__}"
     raise TypeError(msg)
 
@@ -32,4 +41,11 @@ def __getattr__(name: str) -> object:
     raise AttributeError(msg)
 
 
-__all__ = ["MappingLeaf", "SequenceLeaf", "as_leaf", "process_params"]
+__all__ = [
+    "MappingLeaf",
+    "SequenceLeaf",
+    "UserMappingLeaf",
+    "UserSequenceLeaf",
+    "as_leaf",
+    "process_params",
+]

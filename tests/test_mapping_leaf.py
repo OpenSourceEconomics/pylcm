@@ -6,7 +6,13 @@ import jax.numpy as jnp
 import pytest
 
 from lcm.exceptions import InvalidParamsError
-from lcm.params import MappingLeaf, SequenceLeaf, as_leaf
+from lcm.params import (
+    MappingLeaf,
+    SequenceLeaf,
+    UserMappingLeaf,
+    UserSequenceLeaf,
+    as_leaf,
+)
 from lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
@@ -153,25 +159,33 @@ def test_flatten_regime_namespace_treats_mapping_leaf_as_leaf():
 
 
 def test_as_leaf_mapping():
+    """`as_leaf` of a Mapping returns the boundary `UserMappingLeaf` variant."""
     result = as_leaf({"a": 1})
-    assert isinstance(result, MappingLeaf)
+    assert isinstance(result, UserMappingLeaf)
+    assert not isinstance(result, MappingLeaf)
     assert result.data == {"a": 1}
 
 
 def test_as_leaf_mapping_proxy():
+    """`as_leaf` of a `MappingProxyType` returns the boundary `UserMappingLeaf`."""
     result = as_leaf(MappingProxyType({"a": 1}))
-    assert isinstance(result, MappingLeaf)
+    assert isinstance(result, UserMappingLeaf)
+    assert not isinstance(result, MappingLeaf)
 
 
 def test_as_leaf_list():
+    """`as_leaf` of a list returns the boundary `UserSequenceLeaf` variant."""
     result = as_leaf([1, 2, 3])
-    assert isinstance(result, SequenceLeaf)
+    assert isinstance(result, UserSequenceLeaf)
+    assert not isinstance(result, SequenceLeaf)
     assert result.data == (1, 2, 3)
 
 
 def test_as_leaf_tuple():
+    """`as_leaf` of a tuple returns the boundary `UserSequenceLeaf` variant."""
     result = as_leaf((1, 2))
-    assert isinstance(result, SequenceLeaf)
+    assert isinstance(result, UserSequenceLeaf)
+    assert not isinstance(result, SequenceLeaf)
     assert result.data == (1, 2)
 
 

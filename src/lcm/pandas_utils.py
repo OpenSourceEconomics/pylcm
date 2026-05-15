@@ -13,8 +13,7 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.dtypes import canonical_float_dtype
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
-from lcm.params import MappingLeaf
-from lcm.params.sequence_leaf import SequenceLeaf
+from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.simulation.initial_conditions import MISSING_CAT_CODE
@@ -39,9 +38,11 @@ def has_series(params: Mapping) -> bool:
             return True
         if isinstance(value, Mapping) and has_series(value):
             return True
-        if isinstance(value, (MappingLeaf, SequenceLeaf)):
+        if isinstance(value, (UserMappingLeaf, UserSequenceLeaf)):
             items = (
-                value.data.values() if isinstance(value, MappingLeaf) else value.data
+                value.data.values()
+                if isinstance(value, UserMappingLeaf)
+                else value.data
             )
             if any(isinstance(v, pd.Series) for v in items):
                 return True
@@ -197,7 +198,8 @@ def convert_series_in_params(
 
     Iterate over the template-shaped `internal_params` (produced by
     `process_params`) and convert any `pd.Series` leaf values via
-    `array_from_series`. `MappingLeaf` and `SequenceLeaf` values are
+    `array_from_series`. `UserMappingLeaf` and `UserSequenceLeaf` values
+    (and their canonical `MappingLeaf` / `SequenceLeaf` subclasses) are
     traversed and any Series inside are converted. Other values (scalars,
     existing arrays) pass through unchanged.
 
@@ -280,7 +282,8 @@ def _convert_param_value(
     """Convert a single param value, dispatching on type.
 
     Args:
-        value: The parameter value (Series, MappingLeaf, or passthrough).
+        value: The parameter value (Series, `UserMappingLeaf` /
+            `UserSequenceLeaf`, or passthrough).
         func: The function that uses this parameter (`None` for runtime
             grid params — triggers scalar passthrough).
         param_name: Parameter name in the function.
@@ -292,8 +295,9 @@ def _convert_param_value(
         regime_name: Regime name for action grid lookup.
 
     Returns:
-        Converted value: JAX array for Series, MappingLeaf with converted
-        Series entries, or the original value unchanged.
+        Converted value: JAX array for Series, a `UserMappingLeaf` /
+        `UserSequenceLeaf` with converted Series entries, or the original
+        value unchanged.
 
     """
 
@@ -320,10 +324,13 @@ def _convert_param_value(
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
         )
-    if isinstance(value, MappingLeaf):
-        return MappingLeaf({k: _recurse(v) for k, v in value.data.items()})
-    if isinstance(value, SequenceLeaf):
-        return SequenceLeaf(tuple(_recurse(v) for v in value.data))
+    # `convert_series_in_params` runs between broadcast and canonicalization,
+    # so leaves are still in user form. Preserve that user form on output:
+    # canonicalization happens downstream in `cast_params_to_canonical_dtypes`.
+    if isinstance(value, UserMappingLeaf):
+        return UserMappingLeaf({k: _recurse(v) for k, v in value.data.items()})
+    if isinstance(value, UserSequenceLeaf):
+        return UserSequenceLeaf(tuple(_recurse(v) for v in value.data))
     return value
 
 
