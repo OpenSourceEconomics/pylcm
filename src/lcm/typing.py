@@ -85,8 +85,11 @@ type Params = Mapping[
 
 # Internal regime parameters: A flat mapping with function-qualified names.
 # Keys are always function-qualified (e.g., "utility__risk_aversion",
-# "H__discount_factor"). Values are canonical-dtype scalars or arrays.
-type FlatRegimeParams = MappingProxyType[str, FloatND | IntND | BoolND]
+# "H__discount_factor"). Values are canonical-dtype JAX arrays or
+# canonical-narrow container leaves.
+type FlatRegimeParams = MappingProxyType[
+    str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
+]
 type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
@@ -122,8 +125,8 @@ class InternalUserFunction(Protocol):
 
     def __call__(
         self,
-        *args: FloatND | IntND | BoolND | float,
-        **kwargs: FloatND | IntND | BoolND | float,
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
     ) -> FloatND | IntND | BoolND: ...
 
 
@@ -141,8 +144,8 @@ class RegimeTransitionFunction(Protocol):
 
     def __call__(
         self,
-        *args: FloatND | IntND | BoolND | float,
-        **kwargs: FloatND | IntND | BoolND | float,
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
     ) -> MappingProxyType[RegimeName, FloatND]: ...
 
 
@@ -160,8 +163,8 @@ class VmappedRegimeTransitionFunction(Protocol):
 
     def __call__(
         self,
-        *args: FloatND | IntND | BoolND | float,
-        **kwargs: FloatND | IntND | BoolND | float,
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
     ) -> MappingProxyType[RegimeName, FloatND]: ...
 
 
@@ -241,7 +244,7 @@ class NextStateSimulationFunction(Protocol):
 
     def __call__(
         self,
-        **kwargs: FloatND | IntND | Period | Age,
+        **kwargs: FloatND | IntND | Period | Age | MappingLeaf | SequenceLeaf,
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
     ]: ...

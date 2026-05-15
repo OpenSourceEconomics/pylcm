@@ -2,8 +2,10 @@ import dataclasses
 from collections.abc import Callable
 from math import prod as math_prod
 from types import MappingProxyType
+from typing import cast
 
 import jax
+from jax import Array
 
 from lcm.exceptions import PyLCMError
 from lcm.grids import Grid, IrregSpacedGrid
@@ -277,10 +279,13 @@ class InternalRegime:
                 points_key = f"{name}__points"
                 if points_key not in all_params:
                     continue
+                # Runtime grid-point params are flat JAX arrays — never a
+                # `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
+                points = cast("Array", all_params[points_key])
                 if in_states:
-                    state_replacements[name] = all_params[points_key]
+                    state_replacements[name] = points
                 else:
-                    action_replacements[name] = all_params[points_key]
+                    action_replacements[name] = points
             # `_ShockGrid` is state-only by construction (intrinsic
             # transitions, forbidden as actions per AGENTS.md). The
             # `in_states` gate makes that invariant explicit — a
@@ -298,7 +303,11 @@ class InternalRegime:
                     continue
                 shock_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    shock_kw[p] = all_params[f"{name}__{p}"]
+                    # Runtime shock-grid params are flat JAX scalars — never
+                    # a `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
+                    shock_kw[p] = cast(
+                        "ScalarFloat | ScalarInt", all_params[f"{name}__{p}"]
+                    )
                 state_replacements[name] = spec.compute_gridpoints(**shock_kw)
 
         new_states = (

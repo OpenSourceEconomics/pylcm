@@ -1444,8 +1444,8 @@ def test_convert_series_function_level_series() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     arr = result["working_life"]["next_partner__probs_array"]
-    assert arr.shape == (3, 2, 2, 2)
-    assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
+    assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)  # ty: ignore[not-subscriptable]
 
 
 def test_convert_series_model_level_scalar_passthrough() -> None:
@@ -1485,7 +1485,7 @@ def test_convert_series_regime_level_series() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     arr = result["working_life"]["next_partner__probs_array"]
-    assert arr.shape == (3, 2, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_mixed_dict() -> None:
@@ -1512,9 +1512,9 @@ def test_convert_series_mixed_dict() -> None:
     )
     assert result["working_life"]["H__discount_factor"] == 0.95
     assert result["working_life"]["utility__disutility_of_work"] == 0.5
-    assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)
+    assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
     assert result["working_life"]["next_wealth__interest_rate"] == 0.05
-    np.testing.assert_allclose(
+    np.testing.assert_allclose(  # ty: ignore[no-matching-overload]
         result["working_life"]["labor_income__wage"], jnp.array([10.0])
     )
 
@@ -1656,7 +1656,7 @@ def test_convert_series_with_derived_categoricals() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     arr = result["retirement"]["next_partner__probs_array"]
-    assert arr.shape == (3, 2, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_per_target_transition() -> None:
@@ -1736,7 +1736,7 @@ def test_convert_series_per_target_transition() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     arr = result["working"]["to_working_next_health__probs_array"]
-    assert arr.shape == (3, 2, 2)
+    assert arr.shape == (3, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_build_outcome_mapping_qualified_func_name() -> None:
@@ -1834,8 +1834,8 @@ def test_convert_series_structured_derived_categoricals() -> None:
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
-    assert result_both["regime_a"]["utility__rates"].shape == (2,)
-    assert result_both["regime_b"]["utility__rates"].shape == (3,)
+    assert result_both["regime_a"]["utility__rates"].shape == (2,)  # ty: ignore[unresolved-attribute]
+    assert result_both["regime_b"]["utility__rates"].shape == (3,)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_runtime_grid_param() -> None:
@@ -1876,7 +1876,7 @@ def test_convert_series_runtime_grid_param() -> None:
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
-    np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())
+    np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())  # ty: ignore[no-matching-overload]
 
 
 def test_convert_series_sequence_leaf_traversal() -> None:
@@ -2022,7 +2022,7 @@ def test_convert_series_cross_grid_transition() -> None:
     arr = result["pre65"]["to_post65_next_health__health_trans_probs_cross"]
     # Shape: (n_ages=2, n_source_health=3, n_target_health=2)
     # n_ages=2 because AgeGrid has ages [0, 1]; missing age 1 is NaN-filled.
-    assert arr.shape == (2, 3, 2)
+    assert arr.shape == (2, 3, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:

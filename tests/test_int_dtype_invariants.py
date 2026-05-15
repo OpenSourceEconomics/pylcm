@@ -123,8 +123,8 @@ def test_process_params_casts_python_int_to_int32() -> None:
     )
 
     final_age = out["regime_a"]["fun__final_age"]
-    assert int(final_age) == 65
-    assert final_age.dtype == jnp.int32
+    assert int(final_age) == 65  # ty: ignore[invalid-argument-type]
+    assert final_age.dtype == jnp.int32  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_casts_int64_array_to_int32() -> None:
@@ -145,7 +145,7 @@ def test_process_params_casts_int64_array_to_int32() -> None:
     )
 
     schedule = out["regime_a"]["fun__schedule"]
-    assert schedule.dtype == jnp.int32
+    assert schedule.dtype == jnp.int32  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
@@ -187,7 +187,7 @@ def test_process_params_casts_int_array_inside_mapping_leaf_to_int32(key: str) -
     )
 
     assert (
-        out["regime_a"]["fun__sched"].data[key].dtype  # ty: ignore[unresolved-attribute]
+        out["regime_a"]["fun__sched"].data[key].dtype  # ty: ignore[unresolved-attribute, invalid-argument-type]
         == jnp.int32
     )
 
@@ -217,7 +217,7 @@ def test_process_params_casts_int_array_inside_sequence_leaf_to_int32(
     )
 
     assert (
-        out["regime_a"]["fun__sched"].data[index].dtype  # ty: ignore[unresolved-attribute]
+        out["regime_a"]["fun__sched"].data[index].dtype  # ty: ignore[unresolved-attribute, invalid-argument-type]
         == jnp.int32
     )
 

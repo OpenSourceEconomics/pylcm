@@ -123,7 +123,7 @@ def test_process_params_casts_float64_array_to_canonical_under_no_x64(
     )
 
     schedule = out["regime_a"]["fun__schedule"]
-    assert schedule.dtype == jnp.float32
+    assert schedule.dtype == jnp.float32  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_casts_python_float_to_canonical(x64_disabled: None):
@@ -137,8 +137,8 @@ def test_process_params_casts_python_float_to_canonical(x64_disabled: None):
     )
 
     discount_factor = out["regime_a"]["fun__discount_factor"]
-    np.testing.assert_allclose(float(discount_factor), 0.95, rtol=1e-6)
-    assert discount_factor.dtype == canonical_float_dtype()
+    np.testing.assert_allclose(float(discount_factor), 0.95, rtol=1e-6)  # ty: ignore[invalid-argument-type]
+    assert discount_factor.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_float_array_overflow_raises_with_qualified_name(
@@ -272,7 +272,7 @@ def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
     )
 
     assert (
-        out["regime_a"]["fun__sched"].data[key].dtype  # ty: ignore[unresolved-attribute]
+        out["regime_a"]["fun__sched"].data[key].dtype  # ty: ignore[unresolved-attribute, invalid-argument-type]
         == jnp.float32
     )
 
@@ -302,6 +302,6 @@ def test_process_params_casts_float_array_inside_sequence_leaf_to_canonical(
     )
 
     assert (
-        out["regime_a"]["fun__sched"].data[index].dtype  # ty: ignore[unresolved-attribute]
+        out["regime_a"]["fun__sched"].data[index].dtype  # ty: ignore[unresolved-attribute, invalid-argument-type]
         == jnp.float32
     )
