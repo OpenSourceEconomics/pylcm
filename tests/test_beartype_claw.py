@@ -1,14 +1,20 @@
-"""The beartype claw is live on `lcm.solution` and `lcm.simulation`.
+"""The beartype claw is live on the entire `lcm` package.
 
-These packages sit *behind* the construction perimeter: by the time their
-functions run, user input has already been validated by `Model.solve` /
-`Model.simulate` and `validate_initial_conditions`. A type violation here
-therefore signals an internal pylcm bug, so the claw is configured to raise
-beartype's own `BeartypeCallHintViolation` rather than a project exception.
+The claw uses `INTERNAL_CONF`, so type violations in internal helpers
+surface as beartype's own `BeartypeCallHintViolation`. User-facing
+constructors (`Model`, `Regime`, `MarkovTransition`, every grid and shock,
+`@categorical`, `as_leaf`) carry their own explicit `@beartype(conf=...)`
+decorators that map violations to the relevant project exception
+(`ModelInitializationError`, `RegimeInitializationError`,
+`GridInitializationError`, `InvalidParamsError`); those decorators stack
+on top of the claw and win at the user boundary.
 
-Each test calls an internal function with one argument of the wrong type,
-chosen so the call would return cleanly if the function were *not*
-instrumented — the violation is what proves the claw is installed.
+Each `test_claw_checks_*` test calls an internal function with one argument
+of the wrong type, chosen so the call would return cleanly if the function
+were *not* instrumented — the violation is what proves the claw is
+installed. Each `test_*_with_bad_arg_raises_project_exception` test
+confirms that an ill-typed argument to a public constructor surfaces as
+the project exception, not as `BeartypeCallHintViolation`.
 """
 
 from types import MappingProxyType

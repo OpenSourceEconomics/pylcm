@@ -1,10 +1,17 @@
 """`BeartypeConf` instances for pylcm's perimeter and internal claws.
 
-Perimeter confs map type violations to the existing project exception
-class, preserving the documented exception hierarchy at user-facing
-entry points. `INTERNAL_CONF` covers packages that run behind the
-perimeter, where a violation is an internal bug rather than user error
-and so surfaces as beartype's own `BeartypeCallHintViolation`.
+`INTERNAL_CONF` is the default conf for the `lcm` package-wide claw
+registered in `lcm/__init__.py`. Violations under that claw surface as
+beartype's own `BeartypeCallHintViolation`, marking them as internal
+pylcm bugs rather than user error.
+
+The remaining confs (`MODEL_CONF`, `REGIME_CONF`, `GRID_CONF`,
+`PARAMS_CONF`, `CATEGORICAL_CONF`) are used by explicit
+`@beartype(conf=...)` decorators on user-facing constructors and entry
+points. They map type violations to the existing project exception
+class, preserving the documented exception hierarchy at the user
+boundary. The decorators stack on top of the package claw and take
+precedence at the call sites they cover.
 
 """
 
@@ -46,19 +53,16 @@ GRID_CONF = _conf(GridInitializationError)
 # Used on the `categorical` decorator factory.
 CATEGORICAL_CONF = _conf(CategoricalDefinitionError)
 
-# Used on `Model.solve` and `Model.simulate`.
+# Used on `Model.solve`, `Model.simulate`, and the `as_leaf` factory.
 PARAMS_CONF = _conf(InvalidParamsError)
 
-# Used by the claw on `lcm.regime_building` (regime compilation pipeline,
-# part of model construction).
-REGIME_BUILDING_CONF = _conf(ModelInitializationError)
-
-# Used by the claw on `lcm.solution` and `lcm.simulation`. These packages run
-# behind the construction perimeter — their inputs are already validated by
-# `Model.solve` / `Model.simulate` and `validate_initial_conditions` — so a
-# type violation there is an internal pylcm bug, not user error. It surfaces
-# as beartype's own `BeartypeCallHintViolation` rather than a project
-# exception, which would mislabel it as a user-facing error.
+# Default conf for the package-wide claw on `lcm` registered in
+# `lcm/__init__.py`. A type violation in any internal helper surfaces as
+# beartype's own `BeartypeCallHintViolation` rather than a project
+# exception. User-facing constructors layer their own
+# `@beartype(conf=...)` decorators on top to map violations to project
+# exceptions; those decorators take precedence at the call sites they
+# cover.
 INTERNAL_CONF = BeartypeConf(
     strategy=BeartypeStrategy.On,
     is_pep484_tower=True,
