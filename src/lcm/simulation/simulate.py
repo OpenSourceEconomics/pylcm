@@ -37,6 +37,7 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
     StateName,
+    StateOrActionName,
     StatesPerRegime,
 )
 from lcm.utils.containers import invert_regime_ids
@@ -339,8 +340,8 @@ def _simulate_regime_in_period(
 def _lookup_values_from_indices(
     *,
     flat_indices: IntND,
-    grids: MappingProxyType[str, FloatND | IntND],
-) -> MappingProxyType[str, FloatND | IntND]:
+    grids: MappingProxyType[StateOrActionName, FloatND | IntND],
+) -> MappingProxyType[StateOrActionName, FloatND | IntND]:
     """Retrieve values from indices.
 
     Args:

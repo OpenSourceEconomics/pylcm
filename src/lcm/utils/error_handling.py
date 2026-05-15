@@ -27,6 +27,7 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
     StateName,
+    StateOrActionName,
 )
 
 # Genuine circular import: model.py imports from this module at module level.
@@ -292,7 +293,8 @@ def validate_regime_transition_probs(
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
     next_age: float | ScalarInt | ScalarFloat,
-    state_action_values: MappingProxyType[str, FloatND | IntND] | None = None,
+    state_action_values: MappingProxyType[StateOrActionName, FloatND | IntND]
+    | None = None,
 ) -> None:
     """Validate regime transition probabilities.
 
@@ -356,7 +358,8 @@ def validate_regime_transition_probs(
 def _format_sum_violation(
     *,
     sum_all: FloatND,
-    state_action_values: MappingProxyType[str, FloatND | IntND] | None = None,
+    state_action_values: MappingProxyType[StateOrActionName, FloatND | IntND]
+    | None = None,
 ) -> str:
     """Format a human-readable description of probability sum violations.
 
@@ -483,7 +486,7 @@ def _validate_regime_transition_single(
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted_params}
 
     # Collect only grid variables the transition function accepts
-    grids: dict[str, FloatND | IntND] = {
+    grids: dict[StateOrActionName, FloatND | IntND] = {
         k: v for k, v in state_action_space.states.items() if k in accepted_params
     } | {k: v for k, v in state_action_space.actions.items() if k in accepted_params}
 
@@ -524,7 +527,7 @@ def _validate_regime_transition_single(
                 age=ages.values[period],  # noqa: PD011
             )
         )
-        point: dict[str, FloatND | IntND] = {}
+        point: dict[StateOrActionName, FloatND | IntND] = {}
 
     validate_regime_transition_probs(
         regime_transition_probs=regime_transition_probs,

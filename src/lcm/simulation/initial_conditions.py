@@ -681,7 +681,7 @@ def _check_regime_feasibility(  # noqa: C901
     state_action_space = internal_regime.state_action_space(
         regime_params=cast("FlatRegimeParams", MappingProxyType(dict(regime_params))),
     )
-    action_grids: dict[str, FloatND | IntND] = {
+    action_grids: dict[ActionName, FloatND | IntND] = {
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
     }
