@@ -318,7 +318,7 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
     initial_conditions = {
         "age": jnp.array([40.0]),
         "wealth": jnp.array([10.0]),
-        "regime": jnp.array([MortalityRegimeId.working_life]),
+        "regime_id": jnp.array([MortalityRegimeId.working_life]),
     }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.simulate(
@@ -335,7 +335,7 @@ def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
     initial_conditions = {
         "age": jnp.array([40.0]),
         "wealth": jnp.array([10.0]),
-        "regime": jnp.array([MortalityRegimeId.working_life]),
+        "regime_id": jnp.array([MortalityRegimeId.working_life]),
     }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.simulate(

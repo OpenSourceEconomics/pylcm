@@ -300,7 +300,7 @@ def test_simulate_with_runtime_action_grid_no_nan() -> None:
         "alive": {"consumption": {"points": jnp.linspace(0.1, 5.0, 5)}},
     }
     initial_conditions = {
-        "regime": jnp.array([RegimeId.alive, RegimeId.alive, RegimeId.alive]),
+        "regime_id": jnp.array([RegimeId.alive, RegimeId.alive, RegimeId.alive]),
         "age": jnp.array([0.0, 0.0, 0.0]),
         "wealth": jnp.array([2.0, 5.0, 9.0]),
     }

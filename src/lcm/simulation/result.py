@@ -239,7 +239,7 @@ def get_simulation_output_dtypes(
 
     Returns:
         Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
-        all discrete state/action variables plus the `"regime"` column.
+        all discrete state/action variables plus the `"regime_name"` column.
 
     """
     merged_categories, ordered_flags = compute_merged_discrete_categories(regimes)
@@ -251,7 +251,7 @@ def get_simulation_output_dtypes(
             ordered=ordered_flags[var_name],
         )
 
-    dtypes["regime"] = pd.CategoricalDtype(
+    dtypes["regime_name"] = pd.CategoricalDtype(
         categories=list(regime_names_to_ids.keys()),
         ordered=False,
     )
@@ -323,7 +323,7 @@ def _compute_metadata(
     discrete_categories: dict[str, tuple[str, ...]] = {}
     discrete_ordered: dict[str, bool] = {}
     for var_name, dtype in simulation_output_dtypes.items():
-        if var_name == "regime":
+        if var_name == "regime_name":
             continue
         discrete_categories[var_name] = tuple(dtype.categories)
         discrete_ordered[var_name] = bool(dtype.ordered)
@@ -499,7 +499,7 @@ def _process_regime(
     data["age"] = ages.values[data["period"]]  # noqa: PD011
 
     # Add regime name
-    data["regime"] = [internal_regime.name] * len(data["period"])
+    data["regime_name"] = [internal_regime.name] * len(data["period"])
 
     # Compute additional targets
     if additional_targets:
@@ -590,7 +590,7 @@ def _empty_dataframe(
     action_names: list[ActionName],
 ) -> pd.DataFrame:
     """Create empty DataFrame with correct columns."""
-    columns = ["subject_id", "period", "regime", "value"]
+    columns = ["subject_id", "period", "regime_name", "value"]
     columns.extend(state_names)
     columns.extend(action_names)
     return pd.DataFrame(columns=pd.Index(columns))
@@ -618,8 +618,8 @@ def _reorder_columns(
     state_names: list[StateName],
     action_names: list[ActionName],
 ) -> pd.DataFrame:
-    """Reorder columns: subject_id, period, regime, value, states, actions, rest."""
-    base = ["subject_id", "period", "regime", "value"]
+    """Reorder columns: id, period, regime_name, value, states, actions, rest."""
+    base = ["subject_id", "period", "regime_name", "value"]
     known = set(base) | set(state_names) | set(action_names)
     rest = [c for c in df.columns if c not in known]
     return df[base + state_names + action_names + rest]
@@ -633,14 +633,16 @@ def _convert_to_categorical(
     """Convert discrete columns to pandas Categorical dtype with string labels.
 
     Converts:
-    - regime column: uses regime_names as categories
+    - regime_name column: uses regime_names as categories
     - discrete state/action columns: uses categories from simulation metadata
 
     """
     df = df.copy()
 
-    # Convert regime column
-    df["regime"] = pd.Categorical(df["regime"], categories=metadata.regime_names)
+    # Convert regime name column
+    df["regime_name"] = pd.Categorical(
+        df["regime_name"], categories=metadata.regime_names
+    )
 
     # Convert discrete state and action columns
     for var_name, merged_categories in metadata.discrete_categories.items():
@@ -695,7 +697,7 @@ def _remap_codes_per_regime(
         if regime_cats is None:
             continue
 
-        mask = df["regime"] == regime_name
+        mask = df["regime_name"] == regime_name
         if not mask.any():
             continue
 

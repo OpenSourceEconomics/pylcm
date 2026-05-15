@@ -71,7 +71,7 @@ def _initial_conditions():
     return {
         "wealth": jnp.array([2.0, 3.0]),
         "age": jnp.array([0.0, 0.0]),
-        "regime": jnp.array([_RegimeId.working] * 2),
+        "regime_id": jnp.array([_RegimeId.working] * 2),
     }
 
 

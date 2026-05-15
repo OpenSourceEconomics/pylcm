@@ -170,7 +170,7 @@ def test_simulate_state_pool_dtype_stable_across_periods(x64_disabled: None):
     initial = {
         "wealth": jnp.asarray([20.0, 50.0, 80.0]),
         "age": jnp.asarray([18.0, 18.0, 18.0]),
-        "regime": jnp.asarray([RegimeId.working_life] * 3),
+        "regime_id": jnp.asarray([RegimeId.working_life] * 3),
     }
 
     result = model.simulate(

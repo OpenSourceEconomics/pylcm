@@ -39,7 +39,7 @@ def test_model_with_shock(distribution_type):
             "income": jnp.asarray([0.0, 0.0]),
             "wealth": jnp.asarray([1.0, 1.0]),
             "age": jnp.asarray([0.0, 0.0]),
-            "regime": jnp.array([RegimeId.alive] * 2),
+            "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=got_solve,
         seed=42,
@@ -88,12 +88,12 @@ def test_model_with_cross_regime_shocks(distribution_type: str) -> None:
             "income": jnp.zeros(2),
             "wealth": jnp.ones(2),
             "age": jnp.zeros(2),
-            "regime": jnp.full(2, MultiRegimeId.work, dtype=jnp.int32),
+            "regime_id": jnp.full(2, MultiRegimeId.work, dtype=jnp.int32),
         },
         period_to_regime_to_V_arr=None,
         seed=42,
     ).to_dataframe()
-    assert set(result["regime"]) >= {"work", "retire"}
+    assert set(result["regime_name"]) >= {"work", "retire"}
 
 
 _GRID_CLASSES_WITH_GH_KWARG = [

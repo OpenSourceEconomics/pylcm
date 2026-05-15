@@ -59,7 +59,7 @@ def test_regression_test():
         initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
-            "regime": jnp.array([RegimeId.working_life] * 4),
+            "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
         period_to_regime_to_V_arr=None,
     ).to_dataframe()
@@ -101,7 +101,7 @@ def test_regression_precautionary_savings():
             "age": jnp.full(n_subjects, 20.0),
             "wealth": jnp.full(n_subjects, 5.0),
             "income": jnp.full(n_subjects, 0.0),
-            "regime": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
         },
         period_to_regime_to_V_arr=None,
         seed=12345,
@@ -134,7 +134,7 @@ def test_regression_mortality():
         initial_conditions={
             "age": jnp.full(n_subjects, 40.0),
             "wealth": jnp.full(n_subjects, 100.0),
-            "regime": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
         },
         period_to_regime_to_V_arr=None,
         seed=12345,
@@ -176,7 +176,7 @@ def test_regression_mahler_yum():
     params = {"alive": common_params}
     initial_conditions = {
         **initial_states,
-        "regime": jnp.full(
+        "regime_id": jnp.full(
             n_subjects,
             model.regime_names_to_ids["alive"],
             dtype=jnp.int32,
@@ -283,7 +283,7 @@ def test_model_with_different_grid_types(grid_type: str):
         initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
-            "regime": jnp.array([RegimeId.working_life] * 4),
+            "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
         period_to_regime_to_V_arr=None,
     )

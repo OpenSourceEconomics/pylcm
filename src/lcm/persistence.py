@@ -75,8 +75,8 @@ class SimulateSnapshot:
     params: UserParams | None
     """User parameters passed to simulate."""
 
-    initial_conditions: Mapping[StateName | Literal["regime"], Array] | None
-    """Mapping of state names and "regime" to arrays."""
+    initial_conditions: Mapping[StateName | Literal["regime_id"], Array] | None
+    """Mapping of state names and "regime_id" to arrays."""
 
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
@@ -207,7 +207,7 @@ def save_simulate_snapshot(
     *,
     model: Model,
     params: UserParams,
-    initial_conditions: Mapping[StateName | Literal["regime"], Array],
+    initial_conditions: Mapping[StateName | Literal["regime_id"], Array],
     period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     result: SimulationResult,
     log_path: Path,
@@ -218,7 +218,7 @@ def save_simulate_snapshot(
     Args:
         model: The Model instance.
         params: User parameters passed to simulate.
-        initial_conditions: Mapping of state names and "regime" to arrays.
+        initial_conditions: Mapping of state names and "regime_id" to arrays.
         period_to_regime_to_V_arr: Value function arrays.
         result: SimulationResult object.
         log_path: Parent directory for snapshot directories.

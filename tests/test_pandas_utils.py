@@ -132,7 +132,7 @@ def test_continuous_states_and_age():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "working_life"],
+            "regime_id": ["working_life", "working_life"],
             "health": ["bad", "good"],
             "wealth": [10.0, 50.0],
             "age": [25.0, 35.0],
@@ -144,7 +144,7 @@ def test_continuous_states_and_age():
         regime_names_to_ids=model.regime_names_to_ids,
     )
     assert jnp.array_equal(
-        conditions["regime"],
+        conditions["regime_id"],
         jnp.array([BasicRegimeId.working_life, BasicRegimeId.working_life]),
     )
     assert jnp.allclose(conditions["wealth"], jnp.array([10.0, 50.0]))
@@ -155,7 +155,7 @@ def test_categorical_string_labels():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "retirement"],
+            "regime_id": ["working_life", "retirement"],
             "health": ["bad", "good"],
             "wealth": [10.0, 50.0],
             "age": [25.0, 25.0],
@@ -167,7 +167,7 @@ def test_categorical_string_labels():
         regime_names_to_ids=model.regime_names_to_ids,
     )
     assert jnp.array_equal(
-        conditions["regime"],
+        conditions["regime_id"],
         jnp.array([BasicRegimeId.working_life, BasicRegimeId.retirement]),
     )
     assert jnp.array_equal(conditions["health"], jnp.array([Health.bad, Health.good]))
@@ -178,7 +178,7 @@ def test_categorical_pd_categorical_column():
     health_dtype = Health.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "working_life"],
+            "regime_id": ["working_life", "working_life"],
             "health": pd.Categorical(["good", "bad"], dtype=health_dtype),
             "wealth": [10.0, 50.0],
             "age": [25.0, 25.0],
@@ -196,7 +196,7 @@ def test_multi_regime():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "retirement", "working_life"],
+            "regime_id": ["working_life", "retirement", "working_life"],
             "health": ["good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0],
             "age": [25.0, 25.0, 25.0],
@@ -208,7 +208,7 @@ def test_multi_regime():
         regime_names_to_ids=model.regime_names_to_ids,
     )
     assert jnp.array_equal(
-        conditions["regime"],
+        conditions["regime_id"],
         jnp.array(
             [
                 BasicRegimeId.working_life,
@@ -223,7 +223,7 @@ def test_multi_regime():
 def test_missing_regime_column_raises():
     model = get_basic_model()
     df = pd.DataFrame({"wealth": [10.0]})
-    with pytest.raises(ValueError, match="'regime' column"):
+    with pytest.raises(ValueError, match="'regime_id' column"):
         initial_conditions_from_dataframe(
             df=df,
             regimes=model.regimes,
@@ -235,7 +235,7 @@ def test_invalid_regime_name_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "nonexistent"],
+            "regime_id": ["working_life", "nonexistent"],
             "wealth": [10.0, 50.0],
         }
     )
@@ -251,7 +251,7 @@ def test_invalid_category_label_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life"],
+            "regime_id": ["working_life"],
             "health": ["excellent"],
             "wealth": [10.0],
             "age": [25.0],
@@ -268,7 +268,7 @@ def test_invalid_category_label_raises():
 def test_empty_dataframe_raises():
     model = get_basic_model()
     df = pd.DataFrame(
-        {"regime": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
+        {"regime_id": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
     )
     with pytest.raises(ValueError, match="empty"):
         initial_conditions_from_dataframe(
@@ -282,7 +282,7 @@ def test_unknown_column_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life"],
+            "regime_id": ["working_life"],
             "health": ["bad"],
             "wealth": [10.0],
             "age": [25.0],
@@ -301,7 +301,7 @@ def test_missing_state_column_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life"],
+            "regime_id": ["working_life"],
             "age": [25.0],
             # missing "health" and "wealth"
         }
@@ -319,7 +319,7 @@ def test_shock_state_columns_accepted():
     model = get_shock_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
-            "regime": ["alive", "alive"],
+            "regime_id": ["alive", "alive"],
             "wealth": [2.0, 4.0],
             "health": ["bad", "good"],
             "income": [0.3, 0.7],
@@ -333,7 +333,7 @@ def test_shock_state_columns_accepted():
     )
     assert jnp.allclose(conditions["income"], jnp.array([0.3, 0.7]))
     assert jnp.allclose(conditions["wealth"], jnp.array([2.0, 4.0]))
-    assert "regime" in conditions
+    assert "regime_id" in conditions
 
 
 def test_shock_state_columns_required():
@@ -341,7 +341,7 @@ def test_shock_state_columns_required():
     model = get_shock_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
-            "regime": ["alive", "alive"],
+            "regime_id": ["alive", "alive"],
             "wealth": [2.0, 4.0],
             "health": ["bad", "good"],
             "age": [0.0, 0.0],
@@ -372,7 +372,7 @@ def test_round_trip_with_discrete_model():
     raw_conditions = {
         "wealth": jnp.array([DiscreteWealth.low, DiscreteWealth.high]),
         "age": jnp.array([50.0, 50.0]),
-        "regime": jnp.array([RegimeId.working_life, RegimeId.working_life]),
+        "regime_id": jnp.array([RegimeId.working_life, RegimeId.working_life]),
     }
     result_raw = model.simulate(
         params=params,
@@ -383,7 +383,7 @@ def test_round_trip_with_discrete_model():
     # DataFrame approach
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "working_life"],
+            "regime_id": ["working_life", "working_life"],
             "wealth": ["low", "high"],
             "age": [50.0, 50.0],
         }
@@ -472,7 +472,7 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
     model = _get_heterogeneous_health_model()
     df = pd.DataFrame(
         {
-            "regime": ["pre65", "pre65", "post65", "post65"],
+            "regime_id": ["pre65", "pre65", "post65", "post65"],
             "health": ["disabled", "good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0, 70.0],
             "age": [50.0, 50.0, 70.0, 70.0],
@@ -488,7 +488,7 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
     assert jnp.array_equal(result["health"], jnp.array([0, 2, 0, 1]))
     assert jnp.allclose(result["wealth"], jnp.array([10.0, 50.0, 30.0, 70.0]))
     assert jnp.array_equal(
-        result["regime"],
+        result["regime_id"],
         jnp.array(
             [
                 _HetRegimeId.pre65,
@@ -552,7 +552,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
 
     df = pd.DataFrame(
         {
-            "regime": ["with_status", "with_status", "without_status"],
+            "regime_id": ["with_status", "with_status", "without_status"],
             "wealth": [10.0, 20.0, 30.0],
             "status": ["low", "high", pd.NA],
             "age": [50.0, 51.0, 50.0],
@@ -616,7 +616,7 @@ def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
 
     df = pd.DataFrame(
         {
-            "regime": ["earner", "earner", "retiree"],
+            "regime_id": ["earner", "earner", "retiree"],
             "wealth": [10.0, 20.0, 30.0],
             "income": [0.3, 0.7, float("nan")],
             "age": [50.0, 51.0, 50.0],
@@ -704,7 +704,7 @@ def test_heterogeneous_health_solve_simulate() -> None:
     model = _get_heterogeneous_health_model()
     df = pd.DataFrame(
         {
-            "regime": ["pre65", "pre65", "post65", "post65"],
+            "regime_id": ["pre65", "pre65", "post65", "post65"],
             "health": ["disabled", "good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0, 70.0],
             "age": [50.0, 50.0, 70.0, 70.0],
@@ -732,7 +732,9 @@ def test_heterogeneous_health_solve_simulate() -> None:
     assert list(period_0["health"]) == ["disabled", "good"]
 
     # Period 2: post65 subjects have correct health labels
-    period_2 = out.query("period == 2 and regime == 'post65'").sort_values("subject_id")
+    period_2 = out.query("period == 2 and regime_name == 'post65'").sort_values(
+        "subject_id"
+    )
     assert list(period_2["health"]) == ["bad", "good"]
 
 
@@ -741,7 +743,7 @@ def test_heterogeneous_health_simulate_use_labels_false() -> None:
     model = _get_heterogeneous_health_model()
     df = pd.DataFrame(
         {
-            "regime": ["pre65", "post65"],
+            "regime_id": ["pre65", "post65"],
             "health": ["disabled", "good"],
             "wealth": [10.0, 70.0],
             "age": [50.0, 70.0],

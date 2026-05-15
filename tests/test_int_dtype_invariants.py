@@ -244,11 +244,11 @@ def test_simulate_accepts_int64_regime_initial_condition_and_round_trips() -> No
     }
     initial_conditions_int32 = {
         **common,
-        "regime": jnp.asarray([RegimeId.working_life] * 4, dtype=jnp.int32),
+        "regime_id": jnp.asarray([RegimeId.working_life] * 4, dtype=jnp.int32),
     }
     initial_conditions_int64 = {
         **common,
-        "regime": jnp.asarray([RegimeId.working_life] * 4, dtype=jnp.int64),
+        "regime_id": jnp.asarray([RegimeId.working_life] * 4, dtype=jnp.int64),
     }
 
     df_int32 = model.simulate(

@@ -129,7 +129,7 @@ class TimeMyModel:
         self.model_params = my_model.get_params()
         self.initial_conditions = {
             "wealth": jnp.full(1_000, 5.0),
-            "regime": jnp.zeros(1_000, dtype=jnp.int32),
+            "regime_id": jnp.zeros(1_000, dtype=jnp.int32),
         }
 
         # JIT warmup (timed separately)

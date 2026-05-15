@@ -383,7 +383,9 @@ class Model:
         self,
         *,
         params: UserParams,
-        initial_conditions: Mapping[StateName | Literal["regime"], Array | np.ndarray]
+        initial_conditions: Mapping[
+            StateName | Literal["regime_id"], Array | np.ndarray
+        ]
         | pd.DataFrame,
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         check_initial_conditions: bool = True,
@@ -410,11 +412,11 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
-            initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
+            initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
                 All arrays must have the same length (number of subjects). The
-                `"regime"` entry must contain integer regime codes (from
+                `"regime_id"` entry must contain integer regime codes (from
                 `model.regime_names_to_ids`). May also be a `pd.DataFrame`
-                with a `"regime"` column (auto-converted).
+                with a `"regime_id"` column (auto-converted).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
             check_initial_conditions: Whether to validate initial conditions.

@@ -150,7 +150,7 @@ def test_model_with_quarterly_steps():
         initial_conditions={
             "wealth": jnp.array([50.0, 100.0, 150.0]),
             "age": jnp.array([18.0, 18.0, 18.0]),
-            "regime": jnp.array([RegimeId.working_life] * 3),
+            "regime_id": jnp.array([RegimeId.working_life] * 3),
         },
         period_to_regime_to_V_arr=None,
     )
@@ -161,7 +161,7 @@ def test_model_with_quarterly_steps():
     assert set(df["age"].unique()) == {18.0, 18.25, 18.5, 18.75, 19.0}
 
     # Check working/retired regimes only have ages < 19
-    non_dead_df = df.query('regime != "dead"')
+    non_dead_df = df.query('regime_name != "dead"')
     assert all(non_dead_df["age"] < 19)
 
 
@@ -293,7 +293,7 @@ def test_model_with_integer_ages():
         initial_conditions={
             "wealth": jnp.array([50.0, 100.0, 150.0]),
             "age": jnp.array([40, 40, 40]),
-            "regime": jnp.array([RegimeId.working_life] * 3),
+            "regime_id": jnp.array([RegimeId.working_life] * 3),
         },
         period_to_regime_to_V_arr=None,
     )

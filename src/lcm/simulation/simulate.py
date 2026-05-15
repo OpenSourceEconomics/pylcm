@@ -54,7 +54,7 @@ from lcm.utils.logging import (
 def simulate(
     *,
     internal_params: InternalParams,
-    initial_conditions: Mapping[StateName | Literal["regime"], FloatND | IntND],
+    initial_conditions: Mapping[StateName | Literal["regime_id"], FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
@@ -69,10 +69,11 @@ def simulate(
 
     Args:
         internal_params: Immutable mapping of regime names to flat parameter mappings.
-        initial_conditions: Flat mapping of state names (plus `"regime"`) to arrays.
-            All arrays must have the same length (number of subjects). The `"regime"`
-            entry must contain integer regime codes.
-            Example: {"wealth": jnp.array([10.0, 50.0]), "regime": jnp.array([0, 0])}
+        initial_conditions: Flat mapping of state names (plus `"regime_id"`) to
+            arrays. All arrays must have the same length (number of subjects).
+            The `"regime_id"` entry must contain integer regime codes.
+            Example:
+            {"wealth": jnp.array([10.0, 50.0]), "regime_id": jnp.array([0, 0])}
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
@@ -96,7 +97,7 @@ def simulate(
     total_start = time.monotonic()
 
     # Extract state arrays from initial conditions, which include the regime on top.
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
 
     # Preparations
     key = jax.random.key(seed=seed)
@@ -109,7 +110,7 @@ def simulate(
         initial_ages=initial_states["age"], ages=ages
     )
     subject_regime_ids = jnp.full_like(
-        initial_conditions["regime"], MISSING_CAT_CODE, dtype=jnp.int32
+        initial_conditions["regime_id"], MISSING_CAT_CODE, dtype=jnp.int32
     )
 
     # Forward simulation
@@ -127,7 +128,7 @@ def simulate(
         # Activate subjects whose starting period matches the current period
         subject_regime_ids = jnp.where(
             starting_periods == period,
-            initial_conditions["regime"],
+            initial_conditions["regime_id"],
             subject_regime_ids,
         )
 

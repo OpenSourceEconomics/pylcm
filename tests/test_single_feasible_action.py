@@ -232,7 +232,7 @@ def test_simulate_with_constrained_action_grid(wealth_lo, consumption_lo, label)
     initial_conditions = {
         "age": jnp.array([0.0, 0.0, 0.0]),
         "wealth": jnp.array([wealth_lo, 5.0, 20.0]),
-        "regime": jnp.array(
+        "regime_id": jnp.array(
             [RegimeId.alive, RegimeId.alive, RegimeId.alive], dtype=jnp.int32
         ),
     }
@@ -500,7 +500,7 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
     initial_conditions = {
         "age": jnp.array([0.0, 0.0, 0.0]),
         "wealth": jnp.array([2.0, 5.0, 9.0]),
-        "regime": jnp.array(
+        "regime_id": jnp.array(
             [RuntimeRegimeId.alive, RuntimeRegimeId.alive, RuntimeRegimeId.alive],
             dtype=jnp.int32,
         ),
@@ -524,7 +524,7 @@ def test_runtime_action_grid_passes_initial_conditions_validation():
     initial_conditions = {
         "age": jnp.array([0.0, 0.0, 0.0]),
         "wealth": jnp.array([10.0, 15.0, 20.0]),
-        "regime": jnp.array(
+        "regime_id": jnp.array(
             [RegimeId.alive, RegimeId.alive, RegimeId.alive], dtype=jnp.int32
         ),
     }

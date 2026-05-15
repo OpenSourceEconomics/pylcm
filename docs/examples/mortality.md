@@ -26,7 +26,7 @@ result = model.simulate(
     initial_conditions={
         "age": jnp.full(100, model.ages.values[0]),
         "wealth": jnp.linspace(1, 100, 100),
-        "regime": jnp.full(100, model.regime_names_to_ids["working_life"]),
+        "regime_id": jnp.full(100, model.regime_names_to_ids["working_life"]),
     },
     period_to_regime_to_V_arr=None,
     seed=1234,

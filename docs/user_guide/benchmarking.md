@@ -91,7 +91,7 @@ class TimeSolveSimulate:
         self.initial_conditions = {
             "age": jnp.full(500, 25.0),
             "wealth": jnp.full(500, 5.0),
-            "regime": jnp.zeros(500, dtype=jnp.int32),
+            "regime_id": jnp.zeros(500, dtype=jnp.int32),
         }
 
         # --- JAX warmup --------------------------------------------------

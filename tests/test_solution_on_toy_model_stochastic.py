@@ -144,8 +144,8 @@ def analytical_solve_stochastic(wealth_grid, health_grid, params):
 def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, params):
     """Compute analytical simulation results in the same format as to_dataframe().
 
-    Returns DataFrame with columns: period, subject_id, regime, value, health, wealth,
-    consumption, working. Sorted by (subject_id, period).
+    Returns DataFrame with columns: period, subject_id, regime_name, value,
+    health, wealth, consumption, working. Sorted by (subject_id, period).
     Uses categorical dtypes for discrete variables to match to_dataframe() output.
     """
     n_subjects = len(initial_wealth)
@@ -179,7 +179,7 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
                 [np.zeros(n_subjects), np.ones(n_subjects)]
             ).astype(int),
             "subject_id": np.tile(np.arange(n_subjects), 2),
-            "regime": pd.Categorical(
+            "regime_name": pd.Categorical(
                 ["alive"] * (2 * n_subjects), categories=["alive", "dead"]
             ),
             "value": np.concatenate([V_arr_0, V_arr_1]),
@@ -296,7 +296,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
         "age": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0]),
-        "regime": jnp.array([RegimeId.alive] * 5),
+        "regime_id": jnp.array([RegimeId.alive] * 5),
     }
     result = model.simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},
@@ -304,7 +304,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
         period_to_regime_to_V_arr=None,
     )
     # Filter to alive regime only (dead regime has trivial values)
-    got = result.to_dataframe().query('regime == "alive"').reset_index(drop=True)
+    got = result.to_dataframe().query('regime_name == "alive"').reset_index(drop=True)
 
     # Need to use health of second period from LCM output, to assure that the same
     # stochastic draws are used in the analytical simulation.

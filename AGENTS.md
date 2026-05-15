@@ -275,13 +275,13 @@ loaded = SimulationResult.from_pickle("path/to/file.pkl")
 
 ### Initial Conditions Format
 
-Initial conditions use a flat dictionary with state names plus `"regime"`:
+Initial conditions use a flat dictionary with state names plus `"regime_id"`:
 
 ```python
 initial_conditions = {
     "wealth": jnp.array([1.0, 2.0, 3.0]),
     "health": jnp.array([0.5, 0.8, 0.3]),
-    "regime": jnp.array([RegimeId.working, RegimeId.working, RegimeId.retired]),
+    "regime_id": jnp.array([RegimeId.working, RegimeId.working, RegimeId.retired]),
 }
 ```
 

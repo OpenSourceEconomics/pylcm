@@ -74,7 +74,7 @@ import pandas as pd
 
 df = pd.DataFrame(
     {
-        "regime": ["working_life", "working_life", "retirement", "working_life"],
+        "regime_id": ["working_life", "working_life", "retirement", "working_life"],
         "age": [25.0, 25.0, 25.0, 25.0],
         "wealth": [1.0, 5.0, 10.0, 20.0],
         "health": ["good", "bad", "bad", "good"],  # string labels, auto-converted
@@ -102,7 +102,7 @@ initial_conditions = {
     "age": jnp.array([25.0, 25.0, 25.0, 25.0]),
     "wealth": jnp.array([1.0, 5.0, 10.0, 20.0]),
     "health": jnp.array([0, 1, 1, 0]),  # integer codes for discrete states
-    "regime": jnp.array(
+    "regime_id": jnp.array(
         [
             RegimeId.working_life,
             RegimeId.working_life,
@@ -114,7 +114,7 @@ initial_conditions = {
 ```
 
 - Every non-shock state must have an entry.
-- `"regime"` must be included, with integer codes from the `regime_id_class`.
+- `"regime_id"` must be included, with integer codes from the `regime_id_class`.
 - All arrays must have the same length (= number of agents).
 - Shock states are drawn automatically.
 
@@ -140,7 +140,7 @@ Subjects can start at different ages:
 initial_conditions = {
     "age": jnp.array([40.0, 60.0]),
     "wealth": jnp.array([50.0, 50.0]),
-    "regime": jnp.array(
+    "regime_id": jnp.array(
         [
             model.regime_names_to_ids["working_life"],
             model.regime_names_to_ids["working_life"],
@@ -160,7 +160,7 @@ earlier periods are omitted, not filled with placeholders.
 df = result.to_dataframe()
 ```
 
-Returns a pandas DataFrame with columns: `subject_id`, `period`, `age`, `regime`,
+Returns a pandas DataFrame with columns: `subject_id`, `period`, `age`, `regime_name`,
 `value`, plus all states and actions. Discrete variables are pandas Categorical with
 string labels.
 
@@ -240,7 +240,7 @@ params = {
 
 # 3. Prepare initial conditions as a DataFrame
 initial_df = pd.DataFrame({
-    "regime": "working_life",
+    "regime_id": "working_life",
     "age": model.ages.values[0],
     "wealth": np.linspace(1, 50, 100),
 })

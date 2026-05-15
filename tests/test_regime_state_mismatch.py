@@ -190,12 +190,12 @@ def test_deterministic_target_only_state() -> None:
         initial_conditions={
             "age": jnp.array([0.0, 0.0]),
             "wealth": jnp.array([20.0, 80.0]),
-            "regime": jnp.array([_RegimeId.alive] * 2),
+            "regime_id": jnp.array([_RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
     )
     df = result.to_dataframe(use_labels=False)
-    dead_rows = df[df["regime"] == "dead"]
+    dead_rows = df[df["regime_name"] == "dead"]
     valid_codes = {float(HeirPresent.no), float(HeirPresent.yes)}
     assert not dead_rows.empty, "Expected some rows in the dead regime"
     assert dead_rows["heir_present"].isin(valid_codes).all()
@@ -282,12 +282,12 @@ def test_stochastic_target_only_state() -> None:
         initial_conditions={
             "age": jnp.array([0.0, 0.0]),
             "wealth": jnp.array([20.0, 80.0]),
-            "regime": jnp.array([_RegimeId.alive] * 2),
+            "regime_id": jnp.array([_RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
     )
     df = result.to_dataframe(use_labels=False)
-    dead_rows = df[df["regime"] == "dead"]
+    dead_rows = df[df["regime_name"] == "dead"]
     valid_codes = {float(HeirPresent.no), float(HeirPresent.yes)}
     assert not dead_rows.empty, "Expected some rows in the dead regime"
     assert dead_rows["heir_present"].isin(valid_codes).all()
@@ -369,13 +369,13 @@ def test_per_target_dict_transitions():
         initial_conditions={
             "age": jnp.zeros(n_subjects),
             "health": initial_health,
-            "regime": jnp.array([RegimeId.working_life] * n_subjects),
+            "regime_id": jnp.array([RegimeId.working_life] * n_subjects),
         },
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
     )
     df = result.to_dataframe(use_labels=False)
 
-    retired_rows = df[df["regime"] == "retirement"]
+    retired_rows = df[df["regime_name"] == "retirement"]
     valid_retired_codes = {float(HealthRetirement.bad), float(HealthRetirement.good)}
     assert not retired_rows.empty, "Expected some rows in the retired regime"
     assert retired_rows["health"].isin(valid_retired_codes).all(), (

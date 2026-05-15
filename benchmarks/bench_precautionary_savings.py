@@ -33,7 +33,7 @@ def _make_initial_conditions(n_subjects):
         "age": jnp.full(n_subjects, 20.0),
         "wealth": jnp.full(n_subjects, 5.0),
         "income": jnp.full(n_subjects, 0.0),
-        "regime": jnp.zeros(n_subjects, dtype=jnp.int32),
+        "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
     }
 
 

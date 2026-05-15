@@ -52,7 +52,7 @@ def _build_initial_conditions(*, n_subjects: int) -> dict[str, Array]:
     return {
         "wealth": wealths,
         "age": jnp.full((n_subjects,), 18.0),
-        "regime": jnp.array([RegimeId.working_life] * n_subjects),
+        "regime_id": jnp.array([RegimeId.working_life] * n_subjects),
     }
 
 

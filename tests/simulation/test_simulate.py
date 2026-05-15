@@ -89,14 +89,14 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         initial_conditions={
             "wealth": jnp.array([1.0, 50.400803]),
             "age": jnp.array([0.0, 0.0]),
-            "regime": jnp.array(
+            "regime_id": jnp.array(
                 [simulate_inputs["regime_names_to_ids"]["working_life"]] * 2
             ),
         },
         logger=get_logger(log_level="off"),
         **simulate_inputs,
     )
-    got = result.to_dataframe().query('regime == "working_life"')
+    got = result.to_dataframe().query('regime_name == "working_life"')
 
     assert (got["labor_supply"] == "retire").all()
     assert_array_almost_equal(got["consumption"], [1.0, 50.400803])
@@ -148,12 +148,12 @@ def test_simulate_using_model_methods(
         initial_conditions={
             "wealth": jnp.array([20.0, 150, 250, 320]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
-            "regime": jnp.array([RegimeId.working_life] * 4),
+            "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
     )
     df = result.to_dataframe(
         additional_targets=["utility", "borrowing_constraint"]
-    ).query('regime == "working_life"')
+    ).query('regime_name == "working_life"')
 
     # Check expected columns
     expected_cols = {
@@ -166,7 +166,7 @@ def test_simulate_using_model_methods(
         "utility",
         "borrowing_constraint",
         "subject_id",
-        "regime",
+        "regime_name",
     }
     assert expected_cols == set(df.columns)
 
@@ -201,11 +201,11 @@ def test_simulate_with_only_discrete_actions():
         initial_conditions={
             "wealth": jnp.array([0.0, 2.0]),
             "age": jnp.array([50.0, 50.0]),
-            "regime": jnp.array([DiscreteRegimeId.working_life] * 2),
+            "regime_id": jnp.array([DiscreteRegimeId.working_life] * 2),
         },
         period_to_regime_to_V_arr=None,
     )
-    got = result.to_dataframe().query('regime == "working_life"')
+    got = result.to_dataframe().query('regime_name == "working_life"')
 
     # Expected: sorted by (subject_id, period)
     # Subject 0: wealth=low -> works, low consumption; wealth=high -> retires, high
@@ -265,12 +265,12 @@ def test_effect_of_discount_factor_on_last_period():
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
-                "regime": jnp.array([RegimeId.working_life] * 3),
+                "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
             period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
-        .query('regime == "working_life"')
+        .query('regime_name == "working_life"')
     )
 
     df_high = (
@@ -279,12 +279,12 @@ def test_effect_of_discount_factor_on_last_period():
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
-                "regime": jnp.array([RegimeId.working_life] * 3),
+                "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
             period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
-        .query('regime == "working_life"')
+        .query('regime_name == "working_life"')
     )
 
     # Higher beta (more patient) should lead to higher value in later periods
@@ -330,12 +330,12 @@ def test_effect_of_disutility_of_work():
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
-                "regime": jnp.array([RegimeId.working_life] * 3),
+                "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
             period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
-        .query('regime == "working_life"')
+        .query('regime_name == "working_life"')
     )
 
     df_high = (
@@ -344,12 +344,12 @@ def test_effect_of_disutility_of_work():
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
-                "regime": jnp.array([RegimeId.working_life] * 3),
+                "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
             period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
-        .query('regime == "working_life"')
+        .query('regime_name == "working_life"')
     )
 
     # Merge results for easy comparison
@@ -377,14 +377,14 @@ def test_to_dataframe_use_labels_parameter():
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
-            "regime": jnp.array([RegimeId.working_life] * 2),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
         period_to_regime_to_V_arr=None,
     )
 
     # use_labels=True (default): discrete columns are Categorical with string labels
     df_labels = result.to_dataframe()
-    for col in ["regime", "labor_supply"]:
+    for col in ["regime_name", "labor_supply"]:
         assert df_labels[col].dtype.name == "category", f"{col} should be categorical"
     assert set(df_labels["labor_supply"].cat.categories) == {"work", "retire"}
 
@@ -405,7 +405,7 @@ def regression_simulation_result():
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
-            "regime": jnp.array([RegimeId.working_life] * 2),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
         period_to_regime_to_V_arr=None,
     )
@@ -450,7 +450,7 @@ def test_additional_targets_all_with_stochastic_transitions():
             "health": jnp.array([Health.good, Health.bad]),
             "partner": jnp.array([PartnerStatus.single, PartnerStatus.partnered]),
             "age": jnp.array([40.0, 40.0]),
-            "regime": jnp.array([StochasticRegimeId.working_life] * 2),
+            "regime_id": jnp.array([StochasticRegimeId.working_life] * 2),
         },
         period_to_regime_to_V_arr=None,
     )
@@ -488,7 +488,7 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
-            "regime": jnp.array([RegimeId.working_life] * 2),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
         period_to_regime_to_V_arr=None,
     )

@@ -32,7 +32,7 @@ result = model.simulate(
         "age": jnp.full(1_000, model.ages.values[0]),
         "wealth": jnp.full(1_000, 1.0),
         "health": jnp.full(1_000, 1.0),
-        "regime": jnp.full(1_000, model.regime_names_to_ids["working_life"]),
+        "regime_id": jnp.full(1_000, model.regime_names_to_ids["working_life"]),
     },
     period_to_regime_to_V_arr=None,
 )

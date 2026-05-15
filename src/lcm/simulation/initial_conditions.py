@@ -54,20 +54,20 @@ MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 def canonicalize_initial_conditions(
     *,
-    initial_conditions: Mapping[StateName | Literal["regime"], Array | np.ndarray],
+    initial_conditions: Mapping[StateName | Literal["regime_id"], Array | np.ndarray],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> dict[str, FloatND | IntND]:
     """Cast every initial-conditions array to its canonical pylcm dtype.
 
-    This is pylcm's simulation input boundary: `"regime"` and discrete states
-    cast to `int32`; `"age"` and continuous states cast to the canonical float
-    dtype. Keys that match no model state are cast by their array kind (integer
-    arrays to `int32`, otherwise to canonical float) and left for
+    This is pylcm's simulation input boundary: `"regime_id"` and discrete
+    states cast to `int32`; `"age"` and continuous states cast to the canonical
+    float dtype. Keys that match no model state are cast by their array kind
+    (integer arrays to `int32`, otherwise to canonical float) and left for
     `validate_initial_conditions` to report. Downstream validation and the
     simulate stack receive canonical-dtype arrays and do not re-cast.
 
     Args:
-        initial_conditions: Mapping of state names (plus `"regime"`) to
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to
             user-supplied arrays of any integer or floating dtype.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances, used to classify each state as discrete or continuous.
@@ -89,7 +89,7 @@ def canonicalize_initial_conditions(
     }
     canonical: dict[str, FloatND | IntND] = {}
     for name, value in initial_conditions.items():
-        if name == "regime" or name in discrete_state_names:
+        if name == "regime_id" or name in discrete_state_names:
             canonical[name] = safe_to_int_dtype(value, name=name)
         elif name == "age" or name in known_state_names:
             canonical[name] = safe_to_float_dtype(value, name=name)
@@ -179,7 +179,7 @@ def build_initial_states(
 
 def validate_initial_conditions(
     *,
-    initial_conditions: Mapping[StateName | Literal["regime"], FloatND | IntND],
+    initial_conditions: Mapping[StateName | Literal["regime_id"], FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     internal_params: InternalParams,
@@ -188,14 +188,14 @@ def validate_initial_conditions(
     """Validate initial conditions (regimes, states, and feasibility).
 
     Checks that:
-    1. `"regime"` is present, non-empty, and contains only valid regime IDs
+    1. `"regime_id"` is present, non-empty, and contains only valid regime IDs
     2. All required state names (across all regimes) are provided, with no extras
     3. All arrays have the same length
     4. Discrete state values are valid codes
     5. Each subject has at least one feasible action combination
 
     Args:
-        initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer IDs.
@@ -212,10 +212,10 @@ def validate_initial_conditions(
     regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
     # Extract regime array
-    regime_arr = initial_conditions.get("regime")
+    regime_arr = initial_conditions.get("regime_id")
     if regime_arr is None:
         raise InvalidInitialConditionsError(
-            format_messages(["'regime' must be provided in initial_conditions."])
+            format_messages(["'regime_id' must be provided in initial_conditions."])
         )
 
     # Vectorized regime ID validity check
@@ -232,7 +232,7 @@ def validate_initial_conditions(
             )
         )
 
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
 
     # Validate regime names and state names/shapes first; early-exit on errors so that
     # downstream checks (discrete codes, feasibility) can assume correct names.
