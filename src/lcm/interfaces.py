@@ -2,14 +2,12 @@ import dataclasses
 from collections.abc import Callable
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import cast
 
 import jax
 
 from lcm.exceptions import PyLCMError
 from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
-from lcm.shocks._base import _params_to_jax
 from lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -28,6 +26,8 @@ from lcm.typing import (
     RegimeName,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    ScalarFloat,
+    ScalarInt,
     StateName,
     StateOrActionName,
     TransitionFunctionName,
@@ -296,12 +296,10 @@ class InternalRegime:
                 )
                 if not all_present:
                     continue
-                shock_kw: dict[str, float] = dict(spec.params)
+                shock_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    shock_kw[p] = cast("float", all_params[f"{name}__{p}"])
-                state_replacements[name] = spec.compute_gridpoints(
-                    **_params_to_jax(MappingProxyType(shock_kw))
-                )
+                    shock_kw[p] = all_params[f"{name}__{p}"]
+                state_replacements[name] = spec.compute_gridpoints(**shock_kw)
 
         new_states = (
             dict(self._base_state_action_space.states) | state_replacements

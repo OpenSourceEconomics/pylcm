@@ -40,7 +40,6 @@ from lcm.regime_building.Q_and_F import (
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.shocks import _ShockGrid
-from lcm.shocks._base import _params_to_jax
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ArgmaxQOverAFunction,
@@ -886,21 +885,21 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
         runtime_param_names = {
             qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
         }
-        args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
+        args = {
+            name: "ContinuousState",
+            **dict.fromkeys(runtime_param_names, "FloatND"),
+        }
 
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
         def weights_func_runtime(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
-            # `float` here covers Python floats from fixed_params; under
-            # JIT tracing, the runtime values forwarded through `kwargs`
-            # arrive as JAX tracers (`FloatND`), which are accepted by the
-            # shock grid's `compute_gridpoints` / `compute_transition_probs`.
-            shock_kw: dict[str, float | FloatND] = {
+            # `grid.params` is canonical (0-d JAX scalars) from its own
+            # boundary cast; `kwargs` arrive as JAX tracers from JIT.
+            shock_kw: dict[str, FloatND | IntND] = {
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
-            shock_kw_jax = _params_to_jax(MappingProxyType(shock_kw))
-            gridpoints = grid.compute_gridpoints(**shock_kw_jax)
-            transition_probs = grid.compute_transition_probs(**shock_kw_jax)
+            gridpoints = grid.compute_gridpoints(**shock_kw)
+            transition_probs = grid.compute_transition_probs(**shock_kw)
             coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
             return map_coordinates(
                 input=transition_probs,

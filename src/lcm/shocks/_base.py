@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import Any, ClassVar
+from typing import ClassVar
 
 import jax.numpy as jnp
 import numpy as np
@@ -10,31 +10,7 @@ from jax.scipy.stats.norm import cdf
 from lcm.exceptions import GridInitializationError
 from lcm.grids import ContinuousGrid
 from lcm.grids import coordinates as grid_coordinates
-from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
-
-
-def _params_to_jax(
-    params: MappingProxyType[str, Any],
-) -> MappingProxyType[str, FloatND | IntND]:
-    """Cast Python `int` / `float` shock params to JAX scalars.
-
-    `self.params` on a shock grid mixes dataclass-default literals (Python
-    `int` / `float`) with runtime-substituted values (already JAX scalars).
-    The downstream `compute_gridpoints` / `compute_transition_probs` and
-    `draw_shock` slots take `FloatND | IntND`-valued mappings, so the
-    boundary cast happens here rather than widening every kwarg signature
-    to admit Python scalars.
-
-    """
-    out: dict[str, FloatND | IntND] = {}
-    for name, value in params.items():
-        if isinstance(value, bool | int):
-            out[name] = jnp.int32(value)
-        elif isinstance(value, float):
-            out[name] = jnp.asarray(value)
-        else:
-            out[name] = value
-    return MappingProxyType(out)
+from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
 
 def _gauss_hermite_normal(
@@ -85,15 +61,27 @@ class _ShockGrid(ContinuousGrid):
         )
 
     @property
-    def params(self) -> MappingProxyType[str, float]:
-        """Mapping of the distribution's parameters' names to their specified values."""
-        return MappingProxyType(
-            {
-                name: getattr(self, name)
-                for name in self._param_field_names
-                if getattr(self, name) is not None
-            }
-        )
+    def params(self) -> MappingProxyType[str, ScalarFloat | ScalarInt]:
+        """Distribution parameters as canonical 0-d JAX scalars.
+
+        Boundary cast: dataclass fields supplied by the user as Python
+        `bool` / `int` / `float` are returned as `ScalarInt` / `ScalarFloat`
+        so every consumer downstream — `compute_gridpoints`,
+        `compute_transition_probs`, the regime-building runtime closures —
+        sees the canonical dtype.
+
+        """
+        out: dict[str, ScalarFloat | ScalarInt] = {}
+        for name in self._param_field_names:
+            value = getattr(self, name)
+            if value is None:
+                continue
+            # `bool` before `int` — `True` is a Python `int` subclass.
+            if isinstance(value, bool | int):
+                out[name] = jnp.int32(value)
+            else:
+                out[name] = jnp.asarray(value)
+        return MappingProxyType(out)
 
     @property
     def params_to_pass_at_runtime(self) -> tuple[str, ...]:
@@ -124,7 +112,7 @@ class _ShockGrid(ContinuousGrid):
         """
         if not self.is_fully_specified:
             return jnp.full(self.n_points, jnp.nan)
-        return self.compute_gridpoints(**_params_to_jax(self.params))
+        return self.compute_gridpoints(**self.params)
 
     def get_transition_probs(self) -> FloatND:
         """Get the transition probabilities at the gridpoints.
@@ -135,7 +123,7 @@ class _ShockGrid(ContinuousGrid):
         """
         if not self.is_fully_specified:
             return jnp.full((self.n_points, self.n_points), jnp.nan)
-        return self.compute_transition_probs(**_params_to_jax(self.params))
+        return self.compute_transition_probs(**self.params)
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""

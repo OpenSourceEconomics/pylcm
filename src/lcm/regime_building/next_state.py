@@ -9,7 +9,6 @@ from dags.tree import qname_from_tree_path
 
 from lcm.grids import Grid
 from lcm.shocks import _ShockGrid
-from lcm.shocks._base import _params_to_jax
 from lcm.shocks.ar1 import _ShockGridAR1
 from lcm.shocks.iid import _ShockGridIID
 from lcm.typing import (
@@ -297,19 +296,17 @@ def _create_ar1_next_func(
     args: dict[str, str] = {
         f"key_{qname}": "PRNGKeyND",
         state_name: "ContinuousState",
-        **dict.fromkeys(runtime_param_names, "float"),
+        **dict.fromkeys(runtime_param_names, "FloatND"),
     }
     _draw_shock = grid.draw_shock
 
     @with_signature(args=args, return_annotation="ContinuousState")
     def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:
-        params = _params_to_jax(
-            MappingProxyType(
-                {
-                    **fixed_params,
-                    **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
-                }
-            )
+        params = MappingProxyType(
+            {
+                **fixed_params,
+                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+            }
         )
         return _draw_shock(
             params=params,
@@ -329,19 +326,17 @@ def _create_iid_next_func(
     }
     args: dict[str, str] = {
         f"key_{qname}": "PRNGKeyND",
-        **dict.fromkeys(runtime_param_names, "float"),
+        **dict.fromkeys(runtime_param_names, "FloatND"),
     }
     _draw_shock = grid.draw_shock
 
     @with_signature(args=args, return_annotation="ContinuousState")
     def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:
-        params = _params_to_jax(
-            MappingProxyType(
-                {
-                    **fixed_params,
-                    **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
-                }
-            )
+        params = MappingProxyType(
+            {
+                **fixed_params,
+                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+            }
         )
         return _draw_shock(
             params=params,
