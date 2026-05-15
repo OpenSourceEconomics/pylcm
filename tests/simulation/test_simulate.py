@@ -194,7 +194,7 @@ def test_simulate_with_only_discrete_actions():
     )
 
     model = get_model(n_periods=3)
-    params = get_params(n_periods=3, wage=1.5, discount_factor=1, interest_rate=0)
+    params = get_params(n_periods=3, wage=1.5, discount_factor=1.0, interest_rate=0.0)
 
     result = model.simulate(
         params=params,

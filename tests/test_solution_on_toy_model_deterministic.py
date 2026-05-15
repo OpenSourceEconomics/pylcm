@@ -216,7 +216,7 @@ def dict_of_vectors_to_matrix(d):
     return np.column_stack(list(d.values()))
 
 
-@pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
+@pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 def test_deterministic_solve(discount_factor, n_wealth_points):
     n_periods = 3
@@ -263,7 +263,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     aaae(got[1]["alive"], expected[1], decimal=DECIMAL_PRECISION)
 
 
-@pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
+@pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 def test_deterministic_simulate(discount_factor, n_wealth_points):
     n_periods = 3

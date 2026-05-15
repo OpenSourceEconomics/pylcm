@@ -19,13 +19,6 @@ type FloatND = Float[Array, "..."]
 type IntND = Int32[Array, "..."]
 type BoolND = Bool[Array, "..."]
 
-# Int-or-float JAX array of any rank. Use for slots whose dtype depends on
-# user input — e.g. a `discount_factor` param the user may supply as `1`
-# (int) or `0.95` (float). A named alias instead of the inline
-# `FloatND | IntND` union so signature-rendering tools (e.g. `dags.tree`'s
-# params-template extraction) print `NumericND` rather than a bare `Union`.
-type NumericND = FloatND | IntND
-
 type Float1D = Float[Array, "_"]  # noqa: F821
 type Int1D = Int32[Array, "_"]  # noqa: F821
 type Bool1D = Bool[Array, "_"]  # noqa: F821
