@@ -9,23 +9,22 @@ import platform
 import shutil
 import tempfile
 import textwrap
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import cloudpickle
 import h5py
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
 
 from lcm.typing import (
     FloatND,
+    InitialConditions,
     PeriodToRegimeToVArr,
     RegimeName,
-    StateName,
     UserParams,
 )
 
@@ -75,8 +74,8 @@ class SimulateSnapshot:
     params: UserParams | None
     """User parameters passed to simulate."""
 
-    initial_conditions: Mapping[StateName | Literal["regime_id"], Array] | None
-    """Mapping of state names and "regime_id" to arrays."""
+    initial_conditions: InitialConditions | None
+    """Immutable mapping of state names and `"regime_id"` to canonical-dtype arrays."""
 
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
@@ -207,7 +206,7 @@ def save_simulate_snapshot(
     *,
     model: Model,
     params: UserParams,
-    initial_conditions: Mapping[StateName | Literal["regime_id"], Array],
+    initial_conditions: InitialConditions,
     period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     result: SimulationResult,
     log_path: Path,

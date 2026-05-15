@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -53,6 +53,19 @@ type TransitionFunctionsMapping = MappingProxyType[
 
 type RegimeStates = MappingProxyType[StateName, FloatND | IntND]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
+
+# Boundary form of initial conditions — accepted by `Model.simulate` and
+# canonicalized by `canonicalize_initial_conditions`.
+type UserInitialConditions = Mapping[
+    StateName | Literal["regime_id"], Array | np.ndarray
+]
+
+# Post-canonicalization form — emitted by `canonicalize_initial_conditions`
+# and consumed by `validate_initial_conditions`, `simulate`, and persistence.
+# Read-protocol typing so callers don't have to wrap a dict in
+# `MappingProxyType` before passing it in; pylcm producers still wrap on
+# the way out to preserve immutability at runtime.
+type InitialConditions = Mapping[StateName | Literal["regime_id"], FloatND | IntND]
 
 
 # Boundary leaf type — accepted by `Model.__init__` / `Model.solve` /

@@ -6,12 +6,9 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal
 
-import numpy as np
 import pandas as pd
 from beartype import beartype
-from jax import Array
 
 from lcm._beartype_conf import MODEL_CONF, PARAMS_CONF
 from lcm.ages import AgeGrid
@@ -52,8 +49,8 @@ from lcm.typing import (
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
-    StateName,
     UserFacingParamsTemplate,
+    UserInitialConditions,
     UserParams,
 )
 from lcm.utils.containers import (
@@ -383,10 +380,7 @@ class Model:
         self,
         *,
         params: UserParams,
-        initial_conditions: Mapping[
-            StateName | Literal["regime_id"], Array | np.ndarray
-        ]
-        | pd.DataFrame,
+        initial_conditions: UserInitialConditions | pd.DataFrame,
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         check_initial_conditions: bool = True,
         seed: int | None = None,

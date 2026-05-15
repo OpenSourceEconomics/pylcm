@@ -20,6 +20,7 @@ from lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from lcm.typing import (
     FloatND,
     FunctionName,
+    InitialConditions,
     InternalParams,
     IntND,
     RegimeName,
@@ -54,7 +55,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     df: pd.DataFrame,
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
-) -> dict[StateName | Literal["regime_id"], FloatND | IntND]:
+) -> InitialConditions:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
     Args:
@@ -65,9 +66,9 @@ def initial_conditions_from_dataframe(  # noqa: C901
             indices.
 
     Returns:
-        Dict mapping state names (plus `"regime_id"`) to JAX arrays. The
-        `"regime_id"` entry contains integer codes derived from the
-        `"regime_name"` column via `regime_names_to_ids`.
+        Immutable mapping of state names (plus `"regime_id"`) to JAX
+        arrays. The `"regime_id"` entry contains integer codes derived
+        from the `"regime_name"` column via `regime_names_to_ids`.
 
     Raises:
         ValueError: If the DataFrame is empty, the "regime_name" column is
@@ -163,7 +164,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
         dtype=jnp.int32,
     )
 
-    return initial_conditions
+    return MappingProxyType(initial_conditions)
 
 
 def _map_discrete_labels(

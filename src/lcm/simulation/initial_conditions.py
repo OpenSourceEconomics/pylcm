@@ -7,12 +7,11 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Literal, NoReturn, cast
+from typing import NoReturn, cast
 
 import jax
 import numpy as np
 import pandas as pd
-from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
@@ -34,6 +33,7 @@ from lcm.typing import (
     BoolND,
     FlatRegimeParams,
     FloatND,
+    InitialConditions,
     Int1D,
     InternalParams,
     IntND,
@@ -42,6 +42,7 @@ from lcm.typing import (
     RegimeNamesToIds,
     StateName,
     StatesPerRegime,
+    UserInitialConditions,
 )
 from lcm.utils.containers import invert_regime_ids
 from lcm.utils.functools import get_union_of_args
@@ -54,9 +55,9 @@ MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 def canonicalize_initial_conditions(
     *,
-    initial_conditions: Mapping[StateName | Literal["regime_id"], Array | np.ndarray],
+    initial_conditions: UserInitialConditions,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-) -> dict[str, FloatND | IntND]:
+) -> InitialConditions:
     """Cast every initial-conditions array to its canonical pylcm dtype.
 
     This is pylcm's simulation input boundary: `"regime_id"` and discrete
@@ -97,7 +98,7 @@ def canonicalize_initial_conditions(
             canonical[name] = safe_to_int_dtype(value, name=name)
         else:
             canonical[name] = safe_to_float_dtype(value, name=name)
-    return canonical
+    return MappingProxyType(canonical)
 
 
 def build_initial_states(
@@ -179,7 +180,7 @@ def build_initial_states(
 
 def validate_initial_conditions(
     *,
-    initial_conditions: Mapping[StateName | Literal["regime_id"], FloatND | IntND],
+    initial_conditions: InitialConditions,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     internal_params: InternalParams,

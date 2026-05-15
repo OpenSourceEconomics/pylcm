@@ -2,7 +2,6 @@ import logging
 import time
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -28,6 +27,7 @@ from lcm.simulation.transitions import (
 from lcm.typing import (
     Float1D,
     FloatND,
+    InitialConditions,
     Int1D,
     InternalParams,
     IntND,
@@ -36,7 +36,6 @@ from lcm.typing import (
     RegimeNamesToIds,
     ScalarFloat,
     ScalarInt,
-    StateName,
     StateOrActionName,
     StatesPerRegime,
 )
@@ -54,7 +53,7 @@ from lcm.utils.logging import (
 def simulate(
     *,
     internal_params: InternalParams,
-    initial_conditions: Mapping[StateName | Literal["regime_id"], FloatND | IntND],
+    initial_conditions: InitialConditions,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
