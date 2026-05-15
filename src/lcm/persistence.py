@@ -13,18 +13,19 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import cloudpickle
 import h5py
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 from lcm.typing import (
     FloatND,
-    IntND,
     PeriodToRegimeToVArr,
     RegimeName,
+    StateName,
     UserParams,
 )
 
@@ -74,7 +75,7 @@ class SimulateSnapshot:
     params: UserParams | None
     """User parameters passed to simulate."""
 
-    initial_conditions: Mapping[str, FloatND | IntND] | None
+    initial_conditions: Mapping[StateName | Literal["regime"], Array] | None
     """Mapping of state names and "regime" to arrays."""
 
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
@@ -206,7 +207,7 @@ def save_simulate_snapshot(
     *,
     model: Model,
     params: UserParams,
-    initial_conditions: Mapping[str, FloatND | IntND],
+    initial_conditions: Mapping[StateName | Literal["regime"], Array],
     period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     result: SimulationResult,
     log_path: Path,

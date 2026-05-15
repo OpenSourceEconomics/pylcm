@@ -7,11 +7,12 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import NoReturn, cast
+from typing import Literal, NoReturn, cast
 
 import jax
 import numpy as np
 import pandas as pd
+from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
@@ -53,7 +54,7 @@ MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 def canonicalize_initial_conditions(
     *,
-    initial_conditions: Mapping[str, object],
+    initial_conditions: Mapping[StateName | Literal["regime"], Array | np.ndarray],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> dict[str, FloatND | IntND]:
     """Cast every initial-conditions array to its canonical pylcm dtype.
@@ -101,7 +102,7 @@ def canonicalize_initial_conditions(
 
 def build_initial_states(
     *,
-    initial_states: Mapping[str, FloatND | IntND],
+    initial_states: Mapping[StateName, FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> StatesPerRegime:
     """Build the regime-keyed state carrier from user-provided initial states.
@@ -178,7 +179,7 @@ def build_initial_states(
 
 def validate_initial_conditions(
     *,
-    initial_conditions: Mapping[str, FloatND | IntND],
+    initial_conditions: Mapping[StateName | Literal["regime"], FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     internal_params: InternalParams,
@@ -296,7 +297,7 @@ def _format_missing_states_message(missing: set[str], required: set[str]) -> str
 
 def _collect_state_name_errors(
     *,
-    initial_states: Mapping[str, FloatND | IntND],
+    initial_states: Mapping[StateName, FloatND | IntND],
     regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -354,7 +355,7 @@ def _collect_state_name_errors(
 
 def _collect_structural_errors(
     *,
-    initial_states: Mapping[str, FloatND | IntND],
+    initial_states: Mapping[StateName, FloatND | IntND],
     regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     regime_names_to_ids: RegimeNamesToIds,
@@ -456,7 +457,7 @@ def _collect_structural_errors(
 
 def _collect_feasibility_errors(
     *,
-    initial_states: Mapping[str, FloatND | IntND],
+    initial_states: Mapping[StateName, FloatND | IntND],
     regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -507,7 +508,7 @@ def _collect_feasibility_errors(
 
 def _validate_discrete_state_values(
     *,
-    initial_states: Mapping[str, FloatND | IntND],
+    initial_states: Mapping[StateName, FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
@@ -644,7 +645,7 @@ def _check_regime_feasibility(  # noqa: C901
     *,
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: Mapping[str, FloatND | IntND],
+    initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
     ages: AgeGrid,
@@ -899,7 +900,7 @@ def _format_infeasibility_message(
     infeasible_indices: Sequence[int],
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: Mapping[str, FloatND | IntND],
+    initial_states: Mapping[StateName, FloatND | IntND],
     state_names: Sequence[str],
     per_constraint_admits_any: Mapping[str, np.ndarray],
 ) -> str:

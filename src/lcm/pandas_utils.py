@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -149,7 +149,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
             nan_mask = np.isnan(result_arrays[col])
             result_arrays[col][nan_mask] = MISSING_CAT_CODE
 
-    initial_conditions: dict[str, FloatND | IntND] = {
+    initial_conditions: dict[StateName | Literal["regime"], FloatND | IntND] = {
         col: jnp.array(arr, dtype=jnp.int32)
         if col in discrete_state_names
         else jnp.array(arr, dtype=canonical_float_dtype())
