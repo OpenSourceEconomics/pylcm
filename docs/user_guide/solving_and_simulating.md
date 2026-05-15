@@ -74,7 +74,7 @@ import pandas as pd
 
 df = pd.DataFrame(
     {
-        "regime_id": ["working_life", "working_life", "retirement", "working_life"],
+        "regime_name": ["working_life", "working_life", "retirement", "working_life"],
         "age": [25.0, 25.0, 25.0, 25.0],
         "wealth": [1.0, 5.0, 10.0, 20.0],
         "health": ["good", "bad", "bad", "good"],  # string labels, auto-converted
@@ -240,7 +240,7 @@ params = {
 
 # 3. Prepare initial conditions as a DataFrame
 initial_df = pd.DataFrame({
-    "regime_id": "working_life",
+    "regime_name": "working_life",
     "age": model.ages.values[0],
     "wealth": np.linspace(1, 50, 100),
 })

@@ -416,7 +416,8 @@ class Model:
                 All arrays must have the same length (number of subjects). The
                 `"regime_id"` entry must contain integer regime codes (from
                 `model.regime_names_to_ids`). May also be a `pd.DataFrame`
-                with a `"regime_id"` column (auto-converted).
+                with a `"regime_name"` column carrying regime label strings
+                (auto-converted via `initial_conditions_from_dataframe`).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
             check_initial_conditions: Whether to validate initial conditions.

@@ -25,7 +25,7 @@ params = get_params()
 
 initial_df = pd.DataFrame(
     {
-        "regime_id": "working_life",
+        "regime_name": "working_life",
         "age": model.ages.values[0],
         "wealth": np.linspace(1, 20, 100),
     }

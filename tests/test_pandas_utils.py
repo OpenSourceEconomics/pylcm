@@ -128,11 +128,34 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
         _build_discrete_grid_lookup(regimes)
 
 
+def test_regime_name_column_maps_to_regime_id_codes():
+    """`regime_name` column (strings) yields a `regime_id` dict entry of int codes."""
+    model = get_basic_model()
+    df = pd.DataFrame(
+        {
+            "regime_name": ["working_life", "retirement"],
+            "health": ["bad", "good"],
+            "wealth": [10.0, 50.0],
+            "age": [25.0, 25.0],
+        }
+    )
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
+    assert jnp.array_equal(
+        conditions["regime_id"],
+        jnp.array([BasicRegimeId.working_life, BasicRegimeId.retirement]),
+    )
+    assert "regime_name" not in conditions
+
+
 def test_continuous_states_and_age():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["working_life", "working_life"],
+            "regime_name": ["working_life", "working_life"],
             "health": ["bad", "good"],
             "wealth": [10.0, 50.0],
             "age": [25.0, 35.0],
@@ -155,7 +178,7 @@ def test_categorical_string_labels():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["working_life", "retirement"],
+            "regime_name": ["working_life", "retirement"],
             "health": ["bad", "good"],
             "wealth": [10.0, 50.0],
             "age": [25.0, 25.0],
@@ -178,7 +201,7 @@ def test_categorical_pd_categorical_column():
     health_dtype = Health.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     df = pd.DataFrame(
         {
-            "regime_id": ["working_life", "working_life"],
+            "regime_name": ["working_life", "working_life"],
             "health": pd.Categorical(["good", "bad"], dtype=health_dtype),
             "wealth": [10.0, 50.0],
             "age": [25.0, 25.0],
@@ -196,7 +219,7 @@ def test_multi_regime():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["working_life", "retirement", "working_life"],
+            "regime_name": ["working_life", "retirement", "working_life"],
             "health": ["good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0],
             "age": [25.0, 25.0, 25.0],
@@ -223,7 +246,7 @@ def test_multi_regime():
 def test_missing_regime_column_raises():
     model = get_basic_model()
     df = pd.DataFrame({"wealth": [10.0]})
-    with pytest.raises(ValueError, match="'regime_id' column"):
+    with pytest.raises(ValueError, match="'regime_name' column"):
         initial_conditions_from_dataframe(
             df=df,
             regimes=model.regimes,
@@ -235,7 +258,7 @@ def test_invalid_regime_name_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["working_life", "nonexistent"],
+            "regime_name": ["working_life", "nonexistent"],
             "wealth": [10.0, 50.0],
         }
     )
@@ -251,7 +274,7 @@ def test_invalid_category_label_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["working_life"],
+            "regime_name": ["working_life"],
             "health": ["excellent"],
             "wealth": [10.0],
             "age": [25.0],
@@ -268,7 +291,7 @@ def test_invalid_category_label_raises():
 def test_empty_dataframe_raises():
     model = get_basic_model()
     df = pd.DataFrame(
-        {"regime_id": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
+        {"regime_name": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
     )
     with pytest.raises(ValueError, match="empty"):
         initial_conditions_from_dataframe(
@@ -282,7 +305,7 @@ def test_unknown_column_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["working_life"],
+            "regime_name": ["working_life"],
             "health": ["bad"],
             "wealth": [10.0],
             "age": [25.0],
@@ -301,7 +324,7 @@ def test_missing_state_column_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["working_life"],
+            "regime_name": ["working_life"],
             "age": [25.0],
             # missing "health" and "wealth"
         }
@@ -319,7 +342,7 @@ def test_shock_state_columns_accepted():
     model = get_shock_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
-            "regime_id": ["alive", "alive"],
+            "regime_name": ["alive", "alive"],
             "wealth": [2.0, 4.0],
             "health": ["bad", "good"],
             "income": [0.3, 0.7],
@@ -341,7 +364,7 @@ def test_shock_state_columns_required():
     model = get_shock_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
-            "regime_id": ["alive", "alive"],
+            "regime_name": ["alive", "alive"],
             "wealth": [2.0, 4.0],
             "health": ["bad", "good"],
             "age": [0.0, 0.0],
@@ -383,7 +406,7 @@ def test_round_trip_with_discrete_model():
     # DataFrame approach
     df = pd.DataFrame(
         {
-            "regime_id": ["working_life", "working_life"],
+            "regime_name": ["working_life", "working_life"],
             "wealth": ["low", "high"],
             "age": [50.0, 50.0],
         }
@@ -472,7 +495,7 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
     model = _get_heterogeneous_health_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["pre65", "pre65", "post65", "post65"],
+            "regime_name": ["pre65", "pre65", "post65", "post65"],
             "health": ["disabled", "good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0, 70.0],
             "age": [50.0, 50.0, 70.0, 70.0],
@@ -552,7 +575,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
 
     df = pd.DataFrame(
         {
-            "regime_id": ["with_status", "with_status", "without_status"],
+            "regime_name": ["with_status", "with_status", "without_status"],
             "wealth": [10.0, 20.0, 30.0],
             "status": ["low", "high", pd.NA],
             "age": [50.0, 51.0, 50.0],
@@ -616,7 +639,7 @@ def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
 
     df = pd.DataFrame(
         {
-            "regime_id": ["earner", "earner", "retiree"],
+            "regime_name": ["earner", "earner", "retiree"],
             "wealth": [10.0, 20.0, 30.0],
             "income": [0.3, 0.7, float("nan")],
             "age": [50.0, 51.0, 50.0],
@@ -704,7 +727,7 @@ def test_heterogeneous_health_solve_simulate() -> None:
     model = _get_heterogeneous_health_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["pre65", "pre65", "post65", "post65"],
+            "regime_name": ["pre65", "pre65", "post65", "post65"],
             "health": ["disabled", "good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0, 70.0],
             "age": [50.0, 50.0, 70.0, 70.0],
@@ -743,7 +766,7 @@ def test_heterogeneous_health_simulate_use_labels_false() -> None:
     model = _get_heterogeneous_health_model()
     df = pd.DataFrame(
         {
-            "regime_id": ["pre65", "post65"],
+            "regime_name": ["pre65", "post65"],
             "health": ["disabled", "good"],
             "wealth": [10.0, 70.0],
             "age": [50.0, 70.0],

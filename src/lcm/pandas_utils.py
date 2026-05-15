@@ -58,7 +58,8 @@ def initial_conditions_from_dataframe(  # noqa: C901
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
     Args:
-        df: DataFrame with columns for states and a "regime_id" column.
+        df: DataFrame with columns for states and a "regime_name" column
+            carrying the regime label strings.
         regimes: Mapping of regime names to user Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
@@ -66,16 +67,17 @@ def initial_conditions_from_dataframe(  # noqa: C901
     Returns:
         Dict mapping state names (plus `"regime_id"`) to JAX arrays. The
         `"regime_id"` entry contains integer codes derived from the
-        `"regime_id"` column via `regime_names_to_ids`.
+        `"regime_name"` column via `regime_names_to_ids`.
 
     Raises:
-        ValueError: If the DataFrame is empty, the "regime_id" column is missing,
-            contains invalid regime names, has unknown columns, is missing required
-            states, or categorical columns contain invalid labels.
+        ValueError: If the DataFrame is empty, the "regime_name" column is
+            missing, contains invalid regime names, has unknown columns, is
+            missing required states, or categorical columns contain invalid
+            labels.
 
     """
-    if "regime_id" not in df.columns:
-        msg = "DataFrame must contain a 'regime_id' column."
+    if "regime_name" not in df.columns:
+        msg = "DataFrame must contain a 'regime_name' column."
         raise ValueError(msg)
 
     if len(df) == 0:
@@ -84,24 +86,24 @@ def initial_conditions_from_dataframe(  # noqa: C901
 
     # Validate regime names
     valid_regimes = set(regime_names_to_ids.keys())
-    invalid_regimes = set(df["regime_id"]) - valid_regimes
+    invalid_regimes = set(df["regime_name"]) - valid_regimes
     if invalid_regimes:
         msg = (
-            f"Invalid regime names in 'regime_id' column: "
+            f"Invalid regime names in 'regime_name' column: "
             f"{sorted(invalid_regimes)}. "
             f"Valid regimes: {sorted(valid_regimes)}."
         )
         raise ValueError(msg)
 
-    state_columns = {col for col in df.columns if col != "regime_id"}
+    state_columns = {col for col in df.columns if col != "regime_name"}
     _validate_state_columns(
         state_columns=state_columns,
         regimes=regimes,
-        initial_regimes=df["regime_id"].tolist(),
+        initial_regimes=df["regime_name"].tolist(),
     )
 
     n_subjects = len(df)
-    state_cols = [col for col in df.columns if col != "regime_id"]
+    state_cols = [col for col in df.columns if col != "regime_name"]
 
     # Pre-allocate result arrays (NaN default surfaces bugs for missing states)
     result_arrays: dict[str, np.ndarray] = {
@@ -110,7 +112,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     discrete_state_names: set[StateName] = set()
 
     # Process per regime group (vectorised .map() within each group)
-    for regime_name, group in df.groupby("regime_id"):
+    for regime_name, group in df.groupby("regime_name"):
         regime = regimes[str(regime_name)]
         idx = group.index
         discrete_grids = {
@@ -157,7 +159,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
         for col, arr in result_arrays.items()
     }
     initial_conditions["regime_id"] = jnp.array(
-        df["regime_id"].map(dict(regime_names_to_ids)).to_numpy(),
+        df["regime_name"].map(dict(regime_names_to_ids)).to_numpy(),
         dtype=jnp.int32,
     )
 
