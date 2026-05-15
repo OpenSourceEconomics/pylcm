@@ -4,8 +4,10 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from beartype import beartype
 from jax.scipy.stats.norm import cdf
 
+from lcm._beartype_conf import GRID_CONF
 from lcm.shocks._base import (
     _gauss_hermite_normal,
     _mixture_cdf,
@@ -27,6 +29,7 @@ class _ShockGridIID(_ShockGrid):
     ) -> ScalarFloat: ...
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Uniform(_ShockGridIID):
     r"""Discretized iid uniform shock: $U(\text{start}, \text{stop})$.
@@ -61,6 +64,7 @@ class Uniform(_ShockGridIID):
         )
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Normal(_ShockGridIID):
     r"""Discretized iid normal shock: $N(\mu_\varepsilon, \sigma_\varepsilon^2)$.
@@ -135,6 +139,7 @@ class Normal(_ShockGridIID):
         return params["mu"] + params["sigma"] * jax.random.normal(key=key)
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class LogNormal(_ShockGridIID):
     r"""Discretized iid log-normal shock: $\ln X \sim N(\mu, \sigma^2)$."""
@@ -200,6 +205,7 @@ class LogNormal(_ShockGridIID):
         return jnp.exp(params["mu"] + params["sigma"] * jax.random.normal(key=key))
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class NormalMixture(_ShockGridIID):
     r"""Discretized IID normal-mixture shock.

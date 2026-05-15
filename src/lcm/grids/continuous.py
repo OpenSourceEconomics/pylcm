@@ -4,7 +4,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import jax.numpy as jnp
+from beartype import beartype
 
+from lcm._beartype_conf import GRID_CONF
 from lcm.dtypes import canonical_float_dtype
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.grids import coordinates as grid_coordinates
@@ -54,6 +56,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     n_points: ScalarInt
     """The number of points in the grid (`jnp.int32` JAX scalar)."""
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
@@ -124,6 +127,7 @@ class LinSpacedGrid(UniformContinuousGrid):
         )
 
 
+@beartype(conf=GRID_CONF)
 class LogSpacedGrid(UniformContinuousGrid):
     """A logarithmically spaced grid of continuous values.
 
@@ -135,6 +139,7 @@ class LogSpacedGrid(UniformContinuousGrid):
 
     """
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
@@ -231,6 +236,7 @@ class IrregSpacedGrid(ContinuousGrid):
     n_points: int
     """Number of points. Derived from `len(points)` when points are given."""
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
