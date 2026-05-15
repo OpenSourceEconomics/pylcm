@@ -5,6 +5,18 @@ from typing import Any, TypeVar, cast
 
 ReturnType = TypeVar("ReturnType")
 
+# `functools.wraps` copies `__annotate__` (PEP 649), which would push the
+# wrapped function's per-parameter annotations onto the generic
+# `(*args: Any, **kwargs: Any)` wrappers below. Beartype claws those
+# wrappers as part of the `lcm` package, sees the inherited annotations,
+# and starts enforcing user-model types on a forwarding wrapper that has
+# no business policing them. Use a reduced assignment set to keep
+# `__name__` / `__qualname__` / `__doc__` for debugging while leaving the
+# wrappers' own `(*args: Any, **kwargs: Any)` annotations intact.
+_WRAPPER_ASSIGNMENTS_NO_ANNOTATIONS: tuple[str, ...] = tuple(
+    name for name in functools.WRAPPER_ASSIGNMENTS if name != "__annotate__"
+)
+
 
 def allow_only_kwargs(
     func: Callable[..., ReturnType], *, enforce: bool = True
@@ -34,7 +46,7 @@ def allow_only_kwargs(
     ]
     new_signature = signature.replace(parameters=new_parameters)
 
-    @functools.wraps(func)
+    @functools.wraps(func, assigned=_WRAPPER_ASSIGNMENTS_NO_ANNOTATIONS)
     def func_with_only_kwargs(*args: Any, **kwargs: Any) -> ReturnType:
         if args:
             raise ValueError(
@@ -119,7 +131,7 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
     ]
     new_signature = signature.replace(parameters=new_parameters)
 
-    @functools.wraps(func)
+    @functools.wraps(func, assigned=_WRAPPER_ASSIGNMENTS_NO_ANNOTATIONS)
     def allow_args_wrapper(*args: Any, **kwargs: Any) -> ReturnType:
         # Check if the total number of arguments matches the function signature
         if len(args) + len(kwargs) != len(parameters):

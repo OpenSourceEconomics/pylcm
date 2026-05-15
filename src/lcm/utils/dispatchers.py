@@ -2,7 +2,7 @@ import inspect
 from collections.abc import Callable
 from functools import partial
 from types import MappingProxyType
-from typing import Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 import jax
 import jax.numpy as jnp
@@ -248,7 +248,14 @@ def _base_productmap_batched(
                 "is POSITIONAL_ONLY."
             )
 
-    def batched_vmap(**kwargs: FloatND | IntND | BoolND) -> FloatND:
+    def batched_vmap(**kwargs: Any) -> Any:  # noqa: ANN401
+        # `batched_vmap` is a generic helper: it accepts whatever values the
+        # composed `func` expects (canonical JAX arrays in the production
+        # pipeline, but also Python scalars, non-canonical-dtype arrays, or
+        # `MappingProxyType` containers in callers that wrap their own pytrees)
+        # and returns whatever `func` returns. Beartype shouldn't constrain
+        # the shape here — the wrapped `func` is responsible for its own
+        # contract.
         non_array_kwargs = {
             key: val for key, val in kwargs.items() if key not in product_axes
         }
@@ -261,9 +268,9 @@ def _base_productmap_batched(
             loop_func: FunctionWithArrayReturn, axis: str
         ) -> FunctionWithArrayReturn:
             def func_mapped_over_one_more_axis(
-                *already_mapped_args: FloatND | IntND | BoolND,
-                **already_mapped_kwargs: FloatND | IntND | BoolND,
-            ) -> FloatND | IntND | BoolND:
+                *already_mapped_args: Any,  # noqa: ANN401
+                **already_mapped_kwargs: Any,  # noqa: ANN401
+            ) -> Any:  # noqa: ANN401
                 return jax.lax.map(
                     lambda axis_i: loop_func(
                         *already_mapped_args, **{axis: axis_i}, **already_mapped_kwargs

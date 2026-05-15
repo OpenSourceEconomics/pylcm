@@ -2,6 +2,7 @@ import itertools
 
 import jax.numpy as jnp
 import pytest
+from beartype.roar import BeartypeCallHintViolation
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.exceptions import FunctionDispatchError
@@ -216,13 +217,13 @@ def test_spacemap_all_arguments_mapped(
     [
         (
             "Same argument provided more than once in actions or states variables",
-            ["a", "b"],
-            ["a", "c", "d"],
+            ("a", "b"),
+            ("a", "c", "d"),
         ),
         (
             "Same argument provided more than once in actions or states variables",
-            ["a", "a", "b"],
-            ["c", "d"],
+            ("a", "a", "b"),
+            ("c", "d"),
         ),
     ],
 )
@@ -246,15 +247,18 @@ def test_vmap_1d():
 
 
 def test_vmap_1d_error():
+    def func(a):
+        return a
+
     with pytest.raises(ValueError, match=r"Same argument provided more than once."):
-        vmap_1d(func=None, variables=["a", "a"])  # ty: ignore[invalid-argument-type]
+        vmap_1d(func=func, variables=("a", "a"))
 
 
 def test_vmap_1d_callable_with_only_args():
     def func(a):
         return a
 
-    vmapped = vmap_1d(func=func, variables=["a"], callable_with="only_args")  # ty: ignore[invalid-argument-type]
+    vmapped = vmap_1d(func=func, variables=("a",), callable_with="only_args")
     a = jnp.array([1, 2])
     # check that the function works with positional arguments
     aaae(vmapped(a), a)
@@ -270,7 +274,7 @@ def test_vmap_1d_callable_with_only_kwargs():
     def func(a):
         return a
 
-    vmapped = vmap_1d(func=func, variables=["a"], callable_with="only_kwargs")  # ty: ignore[invalid-argument-type]
+    vmapped = vmap_1d(func=func, variables=("a",), callable_with="only_kwargs")
     a = jnp.array([1, 2])
     # check that the function works with keyword arguments
     aaae(vmapped(a=a), a)
@@ -283,11 +287,10 @@ def test_vmap_1d_callable_with_only_kwargs():
 
 
 def test_vmap_1d_callable_with_invalid():
+    """`callable_with` rejects anything outside the documented literal options."""
+
     def func(a):
         return a
 
-    with pytest.raises(
-        ValueError,
-        match=r"Invalid callable_with option: invalid. Possible options are",
-    ):
-        vmap_1d(func=func, variables=["a"], callable_with="invalid")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(BeartypeCallHintViolation):
+        vmap_1d(func=func, variables=("a",), callable_with="invalid")  # ty: ignore[invalid-argument-type]

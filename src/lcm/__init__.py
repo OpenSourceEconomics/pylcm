@@ -32,38 +32,35 @@ from lcm import _jaxtyping_patch  # noqa: F401
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
-# Install beartype's AST-rewriting claw on the instrumented `lcm`
-# subpackages before any of their submodules is imported. The claw
-# transforms each matching module's AST at first import to insert
-# runtime type checks; if it isn't registered before the import
-# happens, the affected module loads uninstrumented and `sys.modules`
-# caches the unchecked version for the rest of the process. Perimeter
-# packages use a `BeartypeConf` mapping violations to the project
-# exception most natural to that subpackage; `lcm.solution` and
-# `lcm.simulation` run behind the perimeter and use `INTERNAL_CONF`
-# (see `lcm._beartype_conf`).
+# Install beartype's AST-rewriting claw on the entire `lcm` package
+# before any of its submodules is imported. The claw transforms each
+# matching module's AST at first import to insert runtime type checks;
+# if it isn't registered before the import happens, the affected module
+# loads uninstrumented and `sys.modules` caches the unchecked version
+# for the rest of the process. The claw uses `INTERNAL_CONF`, which
+# surfaces violations as beartype's own `BeartypeCallHintViolation`.
+# User-facing constructors (`Model`, `Regime`, `MarkovTransition`,
+# every grid and shock class, `@categorical`) carry their own explicit
+# `@beartype(conf=...)` decorators that map violations to the relevant
+# project exception (`ModelInitializationError`,
+# `RegimeInitializationError`, `GridInitializationError`, etc.); those
+# decorators stack on top of the claw and win at the user boundary.
+# See `lcm._beartype_conf`.
 from beartype.claw import beartype_package
 
-from lcm._beartype_conf import (
-    GRID_CONF,
-    INTERNAL_CONF,
-    PARAMS_CONF,
-    REGIME_BUILDING_CONF,
-)
+from lcm._beartype_conf import INTERNAL_CONF
 
-beartype_package("lcm.grids", conf=GRID_CONF)
-beartype_package("lcm.shocks", conf=GRID_CONF)
-beartype_package("lcm.params", conf=PARAMS_CONF)
-beartype_package("lcm.regime_building", conf=REGIME_BUILDING_CONF)
-beartype_package("lcm.solution", conf=INTERNAL_CONF)
-beartype_package("lcm.simulation", conf=INTERNAL_CONF)
-beartype_package("lcm.utils.error_handling", conf=INTERNAL_CONF)
-beartype_package("lcm.state_action_space", conf=INTERNAL_CONF)
-beartype_package("lcm.interfaces", conf=INTERNAL_CONF)
-beartype_package("lcm.regime", conf=INTERNAL_CONF)
-beartype_package("lcm.model", conf=INTERNAL_CONF)
+beartype_package("lcm", conf=INTERNAL_CONF)
 
+# Several modules annotate signatures with forward references that are
+# `TYPE_CHECKING`-only at definition time (to break import cycles). The
+# package claw rewrites those annotations into runtime forward references
+# resolved against the module's globals at call time. Inject the resolved
+# names here, after every involved module is loaded, so beartype can
+# resolve them.
+from lcm import persistence as _persistence  # noqa: E402
 from lcm import shocks  # noqa: E402
+from lcm import variables as _variables  # noqa: E402
 from lcm._version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.grids import (  # noqa: E402
@@ -89,6 +86,11 @@ from lcm.regime import MarkovTransition, Regime  # noqa: E402
 from lcm.simulation.result import SimulationResult  # noqa: E402
 from lcm.utils.containers import invert_regime_ids  # noqa: E402
 from lcm.utils.error_handling import validate_transition_probs  # noqa: E402
+
+_variables.Regime = Regime
+_persistence.Model = Model
+_persistence.SimulationResult = SimulationResult
+del _persistence, _variables
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
 # This allows regime transition probabilities to use immutable mappings.

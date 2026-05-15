@@ -19,7 +19,11 @@ import pytest
 from beartype.roar import BeartypeCallHintViolation
 
 from lcm import AgeGrid, LinSpacedGrid, Model, Regime
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    GridInitializationError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.interfaces import _build_regime_sharding
 from lcm.model import _validate_log_args
 from lcm.regime import _default_H
@@ -171,4 +175,21 @@ def test_model_with_bad_arg_raises_project_exception() -> None:
             ages=AgeGrid(start=25, stop=75, step="Y"),
             regimes="not a mapping",  # ty: ignore[invalid-argument-type]
             regime_id_class=int,
+        )
+
+
+def test_linspaced_grid_with_bad_arg_raises_project_exception() -> None:
+    """A bad `LinSpacedGrid` argument still raises `GridInitializationError`.
+
+    The package claw instruments `lcm.grids`'s private helpers with
+    `INTERNAL_CONF`, but the explicit `@beartype(conf=GRID_CONF)` decorator on
+    `LinSpacedGrid.__init__` still wins: a type violation at construction
+    surfaces as the project's `GridInitializationError`, not beartype's own
+    `BeartypeCallHintViolation`.
+    """
+    with pytest.raises(GridInitializationError):
+        LinSpacedGrid(
+            start="not a number",  # ty: ignore[invalid-argument-type]
+            stop=10.0,
+            n_points=3,
         )

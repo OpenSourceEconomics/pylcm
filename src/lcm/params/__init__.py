@@ -1,6 +1,9 @@
 from collections.abc import Mapping, Sequence
 from typing import Any, overload
 
+from beartype import beartype
+
+from lcm._beartype_conf import PARAMS_CONF
 from lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 
@@ -13,6 +16,7 @@ def as_leaf(data: Mapping[str, Any]) -> UserMappingLeaf: ...
 def as_leaf(data: Sequence[Any]) -> UserSequenceLeaf: ...
 
 
+@beartype(conf=PARAMS_CONF)
 def as_leaf(
     data: Mapping[str, Any] | Sequence[Any],
 ) -> UserMappingLeaf | UserSequenceLeaf:
