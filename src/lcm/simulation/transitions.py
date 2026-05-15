@@ -302,7 +302,7 @@ def _advance_states_for_subjects(
         Updated carrier with next-period values written in for selected subjects.
 
     """
-    updated: dict[RegimeName, dict[StateName, FloatND | IntND]] = {
+    updated: dict[RegimeName, dict[StateName, Float1D | Int1D]] = {
         regime_name: dict(regime_states)
         for regime_name, regime_states in states_per_regime.items()
     }

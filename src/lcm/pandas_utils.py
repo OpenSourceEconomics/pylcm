@@ -18,11 +18,12 @@ from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from lcm.typing import (
+    Float1D,
     FloatND,
     FunctionName,
     InitialConditions,
+    Int1D,
     InternalParams,
-    IntND,
     RegimeName,
     RegimeNamesToIds,
     StateName,
@@ -153,7 +154,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
             nan_mask = np.isnan(result_arrays[col])
             result_arrays[col][nan_mask] = MISSING_CAT_CODE
 
-    initial_conditions: dict[StateName | Literal["regime_id"], FloatND | IntND] = {
+    initial_conditions: dict[StateName | Literal["regime_id"], Float1D | Int1D] = {
         col: jnp.array(arr, dtype=jnp.int32)
         if col in discrete_state_names
         else jnp.array(arr, dtype=canonical_float_dtype())

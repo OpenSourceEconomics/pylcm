@@ -32,6 +32,7 @@ from lcm.typing import (
     ActionName,
     BoolND,
     FlatRegimeParams,
+    Float1D,
     FloatND,
     InitialConditions,
     Int1D,
@@ -103,7 +104,7 @@ def canonicalize_initial_conditions(
 
 def build_initial_states(
     *,
-    initial_states: Mapping[StateName, FloatND | IntND],
+    initial_states: Mapping[StateName, Float1D | Int1D],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> StatesPerRegime:
     """Build the regime-keyed state carrier from user-provided initial states.
@@ -124,11 +125,11 @@ def build_initial_states(
     """
     n_subjects = len(next(iter(initial_states.values())))
     states_per_regime: dict[
-        RegimeName, MappingProxyType[StateName, FloatND | IntND]
+        RegimeName, MappingProxyType[StateName, Float1D | Int1D]
     ] = {}
 
     for regime_name, internal_regime in internal_regimes.items():
-        regime_states: dict[StateName, FloatND | IntND] = {}
+        regime_states: dict[StateName, Float1D | Int1D] = {}
         # Logic for distribution of subjects over devices
         distributed = any(grid.distributed for grid in internal_regime.grids.values())
         devices = jax.devices()

@@ -55,7 +55,7 @@ type TransitionFunctionsMapping = MappingProxyType[
     RegimeName, MappingProxyType[TransitionFunctionName, InternalUserFunction]
 ]
 
-type RegimeStates = MappingProxyType[StateName, FloatND | IntND]
+type RegimeStates = MappingProxyType[StateName, Float1D | Int1D]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 
 # Boundary form of initial conditions — accepted by `Model.simulate` and
@@ -68,8 +68,9 @@ type UserInitialConditions = Mapping[
 # and consumed by `validate_initial_conditions`, `simulate`, and persistence.
 # Read-protocol typing so callers don't have to wrap a dict in
 # `MappingProxyType` before passing it in; pylcm producers still wrap on
-# the way out to preserve immutability at runtime.
-type InitialConditions = Mapping[StateName | Literal["regime_id"], FloatND | IntND]
+# the way out to preserve immutability at runtime. Values are 1-D arrays
+# of length `n_subjects`; the validator checks the rank-1 invariant.
+type InitialConditions = Mapping[StateName | Literal["regime_id"], Float1D | Int1D]
 
 
 # Boundary leaf type — accepted by `Model.__init__` / `Model.solve` /
