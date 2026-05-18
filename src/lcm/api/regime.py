@@ -35,12 +35,12 @@ from lcm.utils.containers import (
 
 # Genuine circular import: model.py imports from this module at module level.
 # The `model` parameter of `validate_transition_probs` is annotated with the
-# fully-qualified `lcm.model.Model` so the beartype claw resolves it by
+# fully-qualified `lcm.api.model.Model` so the beartype claw resolves it by
 # importing `lcm.model` at first call — long after the import cycle settles —
 # rather than at module-init time. Importing `lcm.model` here keeps `lcm` a
 # bound name for the type checker.
 if TYPE_CHECKING:
-    import lcm.model
+    import lcm.api.model
 
 
 class SolveSimulateFunctionPair[S, T]:
@@ -604,7 +604,7 @@ def _validate_per_target_dict(
 def validate_transition_probs(
     *,
     probs: FloatND,
-    model: lcm.model.Model,
+    model: lcm.api.model.Model,
     regime_name: RegimeName,
     state_name: StateName,
     target_regime_name: RegimeName | None = None,
@@ -761,7 +761,7 @@ def _build_expected_shape(
     indexing_params: list[str],
     n_outcomes: int,
     grids: dict[str, DiscreteGrid],
-    model: lcm.model.Model,
+    model: lcm.api.model.Model,
 ) -> tuple[int, ...]:
     """Compute expected shape for a transition probability array."""
     shape: list[int] = []

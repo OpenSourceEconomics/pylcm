@@ -25,6 +25,7 @@ import pytest
 from beartype.roar import BeartypeCallHintViolation
 
 from lcm import AgeGrid, LinSpacedGrid, Model
+from lcm.api.model import _validate_log_args
 from lcm.api.regime import Regime as UserRegime
 from lcm.api.regime import _default_H
 from lcm.engine import _build_regime_sharding
@@ -33,7 +34,6 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.model import _validate_log_args
 from lcm.regime_building.runtime_checks import _validate_regime_transition_probs
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats

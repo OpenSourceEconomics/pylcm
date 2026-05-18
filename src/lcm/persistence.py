@@ -29,7 +29,7 @@ from lcm.typing import (
 )
 
 if TYPE_CHECKING:
-    from lcm.model import Model
+    from lcm.api.model import Model
     from lcm.simulation.result import SimulationResult
 
     # Type-checker view: full precision.

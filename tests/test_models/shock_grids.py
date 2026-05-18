@@ -5,10 +5,10 @@ from jax import numpy as jnp
 
 import lcm
 from lcm.ages import AgeGrid
+from lcm.api.model import Model
 from lcm.api.regime import MarkovTransition
 from lcm.api.regime import Regime as UserRegime
 from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
-from lcm.model import Model
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,

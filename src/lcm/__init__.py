@@ -49,6 +49,7 @@ beartype_package("lcm", conf=INTERNAL_CONF)
 from lcm import shocks  # noqa: E402
 from lcm._version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.api.model import Model  # noqa: E402
 from lcm.api.regime import (  # noqa: E402
     MarkovTransition,
     Regime,
@@ -65,7 +66,6 @@ from lcm.grids import (  # noqa: E402
     PiecewiseLogSpacedGrid,
     categorical,
 )
-from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
     SolveSnapshot,

@@ -7,10 +7,10 @@ import pytest
 from numpy.testing import assert_array_equal
 
 from lcm import AgeGrid
+from lcm.api.model import Model
 from lcm.api.regime import MarkovTransition
 from lcm.api.regime import Regime as UserRegime
 from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
-from lcm.model import Model
 from lcm.params.processing import (
     create_params_template,
     get_flat_param_names,

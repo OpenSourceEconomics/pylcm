@@ -3,12 +3,12 @@ import pytest
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.api.model import Model
 from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.grids import categorical
 from lcm.grids.continuous import LinSpacedGrid
 from lcm.grids.discrete import DiscreteGrid
-from lcm.model import Model
 from lcm.typing import ScalarInt
 
 # Run these tests on the CPU for parallelization, does not work if pytest runs
