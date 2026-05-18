@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING, Any
 import jax
 
 if TYPE_CHECKING:
-    from lcm.typing import _ParamsLeaf, _UserParamsLeaf
+    from lcm.api.typing import _UserParamsLeaf
+    from lcm.typing import _ParamsLeaf
 
 
 class UserMappingLeaf:

@@ -1,15 +1,12 @@
 from collections.abc import Mapping
-from fractions import Fraction
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, runtime_checkable
 
-import numpy as np
-import pandas as pd
 from jax import Array
 from jaxtyping import Bool, Float, Int32, Key, Scalar
 
-from lcm.params import MappingLeaf, UserMappingLeaf
-from lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
+from lcm.params import MappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -36,9 +33,6 @@ type PRNGKeyND = Key[Array, "..."]
 
 type Period = ScalarInt
 type Age = ScalarInt | ScalarFloat
-# Boundary form accepted by `AgeGrid.__init__` for `start`, `stop`, and
-# `exact_values` entries — converted to canonical JAX scalars internally.
-type UserAge = int | Fraction
 type RegimeName = str
 type StateName = str
 type ActionName = str
@@ -59,12 +53,6 @@ type TransitionFunctionsMapping = MappingProxyType[
 type RegimeStates = MappingProxyType[StateName, Float1D | Int1D]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 
-# Boundary form of initial conditions — accepted by `Model.simulate` and
-# canonicalized by `canonicalize_initial_conditions`.
-type UserInitialConditions = Mapping[
-    StateName | Literal["regime_id"], Array | np.ndarray
-]
-
 # Post-canonicalization form — emitted by `canonicalize_initial_conditions`
 # and consumed by `validate_initial_conditions`, `simulate`, and persistence.
 # Read-protocol typing so callers don't have to wrap a dict in
@@ -73,25 +61,6 @@ type UserInitialConditions = Mapping[
 # of length `n_subjects`; the validator checks the rank-1 invariant.
 type InitialConditions = Mapping[StateName | Literal["regime_id"], Float1D | Int1D]
 
-
-# Boundary leaf type — accepted by `Model.__init__` / `Model.solve` /
-# `Model.simulate` and canonicalized by `cast_params_to_canonical_dtypes`.
-type _UserParamsLeaf = (
-    bool
-    | int
-    | float
-    | FloatND
-    | IntND
-    | BoolND
-    | np.ndarray
-    | pd.Series
-    | UserMappingLeaf
-    | UserSequenceLeaf
-)
-type UserParams = Mapping[
-    str,
-    _UserParamsLeaf | Mapping[str, _UserParamsLeaf | Mapping[str, _UserParamsLeaf]],
-]
 
 # Post-canonicalization leaf type — output of
 # `cast_params_to_canonical_dtypes`. Only canonical-dtype JAX arrays and
@@ -115,23 +84,8 @@ type FlatParams = MappingProxyType[RegimeName, FlatRegimeParams]
 type RegimeParamsTemplate = MappingProxyType[FunctionName, MappingProxyType[str, str]]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
-# User-facing template; types rendered as strings.
-type UserFacingParamsTemplate = dict[RegimeName, dict[FunctionName, dict[str, str]]]
-
 # Type aliases for value function arrays
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
-
-
-@runtime_checkable
-class UserFunction(Protocol):
-    """A function provided by the user.
-
-    Used for both type checking and beartype runtime checks on perimeter
-    constructors. Any callable satisfies this protocol structurally.
-
-    """
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...  # noqa: ANN401
 
 
 @runtime_checkable
@@ -326,3 +280,16 @@ class ActiveFunction(Protocol):
     """
 
     def __call__(self, age: Any, /) -> bool: ...  # noqa: ANN401
+
+
+# Backwards-compatibility shim: User* aliases live in `lcm.api.typing`.
+# Re-exported here so existing `from lcm.typing import UserParams` etc.
+# keep working. Placed at the bottom of the module so the core type
+# names imported by `lcm.api.typing` are already defined.
+from lcm.api.typing import (  # noqa: E402, F401
+    UserAge,
+    UserFacingParamsTemplate,
+    UserFunction,
+    UserInitialConditions,
+    UserParams,
+)
