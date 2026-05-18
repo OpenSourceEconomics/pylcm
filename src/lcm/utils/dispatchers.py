@@ -147,7 +147,7 @@ def vmap_1d(
             in_axes_for_vmap[p] = 0
 
         vmapped = vmap(func, in_axes=in_axes_for_vmap)
-    vmapped.__signature__ = signature
+    vmapped.__signature__ = signature  # ty: ignore[invalid-assignment]
 
     if callable_with == "only_kwargs":
         out = allow_only_kwargs(vmapped, enforce=False)
@@ -239,7 +239,8 @@ def _base_productmap_batched(
         if param.kind == inspect.Parameter.POSITIONAL_ONLY:
             raise FunctionDispatchError(
                 "Positional-only parameters are not allowed in dispatched functions. "
-                f"The parameter '{name}' to the function {func.__name__} "
+                f"The parameter '{name}' to the function "
+                f"{getattr(func, '__name__', repr(func))} "
                 "is POSITIONAL_ONLY."
             )
 

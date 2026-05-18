@@ -272,8 +272,15 @@ class NextStateSimulationFunction(Protocol):
 class ActiveFunction(Protocol):
     """Function that determines if a regime is active at a given age.
 
+    The single positional argument is the age value emitted by the
+    `AgeGrid`; its runtime type is `int` for annual grids and `float`
+    for sub-annual ones. The argument is typed as `Any` so model
+    authors can pin the annotation to whichever concrete type matches
+    their grid (`int` or `float`) without tripping contravariance
+    checks at the assignment site.
+
     Only used for type checking.
 
     """
 
-    def __call__(self, age: float, /) -> bool: ...
+    def __call__(self, age: Any, /) -> bool: ...  # noqa: ANN401
