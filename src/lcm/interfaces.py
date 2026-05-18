@@ -217,6 +217,40 @@ class SimulateFunctions:
     """Compiled function to compute next-period states."""
 
 
+@dataclasses.dataclass(frozen=True)
+class _StochasticStateTransition:
+    """Metadata for a stochastic state transition, used by automatic validation.
+
+    Built during `process_regimes` for every `MarkovTransition` state — and
+    for each target of a per-target dict. The pre-solve validator
+    `validate_state_transitions_all_periods` in
+    `regime_building/runtime_checks.py` consumes these to evaluate the
+    function on the regime's grid Cartesian product and check that the
+    output has the expected outcome-axis size, lies in [0, 1], and has
+    rows summing to 1.
+    """
+
+    func: Callable[..., FloatND]
+    """The `MarkovTransition`'s wrapped function."""
+
+    state_name: StateName
+    """Name of the state being transitioned."""
+
+    target_regime_name: RegimeName | None
+    """Target regime for per-target dicts; `None` for a plain `MarkovTransition`."""
+
+    n_outcomes: int
+    """Size of the outcome axis (always the last axis of the function output)."""
+
+    indexing_params: tuple[str, ...]
+    """Parameters used to index `probs_array`, in subscript order.
+
+    Derived statically at process time from the function's AST. Empty
+    when the function doesn't use the `probs_array[...]` pattern, in
+    which case the AST subscript-order check is permissively skipped.
+    """
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Regime:
     """Canonical regime produced by `process_regimes` from a user-facing `Regime`.
@@ -248,6 +282,17 @@ class Regime:
 
     simulate_functions: SimulateFunctions
     """Compiled functions for the forward-simulation phase."""
+
+    stochastic_state_transitions: MappingProxyType[
+        TransitionFunctionName, _StochasticStateTransition
+    ]
+    """Immutable mapping of qualified transition name to validation metadata.
+
+    Populated for every `MarkovTransition` state transition. Per-target
+    dict entries appear under qualified names like `next_health__working`.
+    Empty for terminal regimes and for regimes whose state transitions
+    are all deterministic.
+    """
 
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""

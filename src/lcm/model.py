@@ -33,7 +33,10 @@ from lcm.persistence import (
     save_solve_snapshot,
 )
 from lcm.regime_building.processing import Regime
-from lcm.regime_building.runtime_checks import validate_regime_transitions_all_periods
+from lcm.regime_building.runtime_checks import (
+    validate_regime_transitions_all_periods,
+    validate_state_transitions_all_periods,
+)
 from lcm.simulation.compile import compile_all_simulate_functions
 from lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
@@ -294,6 +297,12 @@ class Model:
             flat_params=flat_params,
             ages=self.ages,
         )
+        if log_level != "off":
+            validate_state_transitions_all_periods(
+                regimes=self.regimes,
+                flat_params=flat_params,
+                ages=self.ages,
+            )
         return self._solve_compiled(
             flat_params=flat_params,
             params=params,
@@ -463,6 +472,12 @@ class Model:
             flat_params=flat_params,
             ages=self.ages,
         )
+        if log_level != "off":
+            validate_state_transitions_all_periods(
+                regimes=self.regimes,
+                flat_params=flat_params,
+                ages=self.ages,
+            )
         log = get_logger(log_level=log_level)
         actual_n_subjects = len(next(iter(initial_conditions.values())))
         n_subjects = self.n_subjects

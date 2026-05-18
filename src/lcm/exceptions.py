@@ -22,6 +22,17 @@ class InvalidRegimeTransitionProbabilitiesError(PyLCMError):
     """Raised when the regime transition probabilities are invalid."""
 
 
+class InvalidStateTransitionProbabilitiesError(PyLCMError):
+    """Raised when a stochastic state transition produces invalid probabilities.
+
+    Surfaces shape mismatches, values outside [0, 1], and rows that don't sum
+    to 1 in a state's `MarkovTransition` function output. Raised by the
+    pre-solve sweep `validate_state_transitions_all_periods` in
+    `regime_building/runtime_checks.py` and by the process-time AST
+    subscript-order check in `regime_building/static_checks.py`.
+    """
+
+
 class InvalidInitialConditionsError(PyLCMError):
     """Raised when the initial conditions (states or regimes) are invalid."""
 

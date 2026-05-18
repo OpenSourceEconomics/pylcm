@@ -1,6 +1,6 @@
 """Runtime checks on JAX arrays produced during solve / simulate.
 
-Two families of defensive checks fire during `model.solve()` and
+Three families of defensive checks fire during `model.solve()` and
 `model.simulate()`:
 
 - **Value-function NaN check** (`validate_V`). Fires after each
@@ -14,6 +14,14 @@ Two families of defensive checks fire during `model.solve()` and
   variables, and verify finiteness, [0, 1] range, sum-to-1, no
   probability mass to inactive regimes, and no positive probability
   to a target with incomplete stochastic transitions.
+- **State transition probability check** keyed on
+  `validate_state_transitions_all_periods`. Pre-solve sweep over every
+  `MarkovTransition` state transition (incl. per-target dict entries):
+  evaluate the user function on the Cartesian product of the function's
+  accepted grid variables, and verify outcome-axis size, [0, 1] range,
+  and sum-to-1. State validation is gated by `log_level != "off"` because
+  state transitions commonly depend on more variables than regime
+  transitions, so the Cartesian product can blow up.
 
 """
 
@@ -30,9 +38,10 @@ import pandas as pd
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
+    InvalidStateTransitionProbabilitiesError,
     InvalidValueFunctionError,
 )
-from lcm.interfaces import Regime, StateActionSpace
+from lcm.interfaces import Regime, StateActionSpace, _StochasticStateTransition
 from lcm.typing import (
     FlatParams,
     FlatRegimeParams,
@@ -598,4 +607,164 @@ def _validate_no_reachable_incomplete_targets(
             f"'{target_regime_name}' (via a per-target dict if the "
             f"transition differs by target), or ensure "
             f"'{target_regime_name}' is unreachable."
+        )
+
+
+def validate_state_transitions_all_periods(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+) -> None:
+    """Validate every `MarkovTransition` state transition before solve.
+
+    For each non-terminal active period of each active regime, iterate the
+    regime's `stochastic_state_transitions` and evaluate each
+    `MarkovTransition` function on the Cartesian product of its accepted
+    grid variables. Check:
+
+    - The output's last-axis size matches the state's outcome count.
+    - All values lie in [0, 1].
+    - Rows along the last axis sum to 1.
+
+    Fast-exits when no regime in the model has any stochastic state
+    transitions, so models without `MarkovTransition` states pay no cost.
+
+    Args:
+        regimes: Immutable mapping of regime names to canonical regimes.
+        flat_params: Immutable mapping of regime names to flat parameter
+            mappings.
+        ages: Age grid for the model.
+
+    Raises:
+        InvalidStateTransitionProbabilitiesError: If a `MarkovTransition`
+            function returns the wrong outcome-axis size, values outside
+            [0, 1], or rows that don't sum to 1.
+
+    """
+    if not any(r.stochastic_state_transitions for r in regimes.values()):
+        return
+
+    for period in range(ages.n_periods - 1):
+        for regime_name, regime in regimes.items():
+            if period not in regime.active_periods:
+                continue
+            if regime.terminal:
+                continue
+            if not regime.stochastic_state_transitions:
+                continue
+
+            state_action_space = regime.state_action_space(
+                regime_params=flat_params[regime_name],
+            )
+            age = ages.values[period]  # noqa: PD011
+            for transition in regime.stochastic_state_transitions.values():
+                _validate_state_transition_single(
+                    transition=transition,
+                    regime_params=flat_params[regime_name],
+                    state_action_space=state_action_space,
+                    regime_name=regime_name,
+                    age=age,
+                    period=period,
+                )
+
+
+def _validate_state_transition_single(
+    *,
+    transition: _StochasticStateTransition,
+    regime_params: FlatRegimeParams,
+    state_action_space: StateActionSpace,
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+    period: int,
+) -> None:
+    """Evaluate one MarkovTransition on its grid args and validate the output."""
+    func = transition.func
+    sig_params = tuple(inspect.signature(func).parameters)
+
+    grid_args: dict[StateOrActionName, FloatND | IntND] = {}
+    scalar_kwargs: dict[str, object] = {}
+    period_int32 = jnp.int32(period)
+
+    for name in sig_params:
+        if name == "period":
+            scalar_kwargs["period"] = period_int32
+        elif name == "age":
+            scalar_kwargs["age"] = age
+        elif name in state_action_space.states:
+            grid_args[name] = state_action_space.states[name]
+        elif name in state_action_space.actions:
+            grid_args[name] = state_action_space.actions[name]
+        elif name in regime_params:
+            scalar_kwargs[name] = regime_params[name]
+        else:
+            # An indexing param the function expects is neither a regime
+            # grid nor a param. Leave the validation to whichever solve
+            # step surfaces the real error — raising here would conceal it.
+            return
+
+    if grid_args:
+        grid_var_names = list(grid_args.keys())
+        grid_arrays = list(grid_args.values())
+        mesh = jnp.meshgrid(*grid_arrays, indexing="ij")
+        flat_arrays = [m.ravel() for m in mesh]
+
+        def _call(
+            *args: FloatND | IntND,
+            _names: list[str] = grid_var_names,
+            _scalar: dict[str, object] = scalar_kwargs,
+            _func: object = func,
+        ) -> FloatND:
+            kwargs = dict(zip(_names, args, strict=True))
+            return _func(**kwargs, **_scalar)  # ty: ignore[call-non-callable]
+
+        probs = jax.vmap(_call)(*flat_arrays)
+    else:
+        probs = func(**scalar_kwargs)
+
+    _check_state_probs(
+        probs=probs,
+        transition=transition,
+        regime_name=regime_name,
+        age=age,
+    )
+
+
+def _check_state_probs(
+    *,
+    probs: FloatND,
+    transition: _StochasticStateTransition,
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+) -> None:
+    """Assert outcome-axis size, [0, 1] range, and sum-to-1 on a probs array."""
+    state_label = (
+        f"state '{transition.state_name}'"
+        if transition.target_regime_name is None
+        else (
+            f"state '{transition.state_name}' (target regime "
+            f"'{transition.target_regime_name}')"
+        )
+    )
+
+    if probs.shape[-1] != transition.n_outcomes:
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} returned an outcome axis of size "
+            f"{probs.shape[-1]}; expected {transition.n_outcomes} from the "
+            f"state's DiscreteGrid."
+        )
+
+    if jnp.any(probs < 0) or jnp.any(probs > 1):
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} returned values outside [0, 1]."
+        )
+
+    row_sums = jnp.sum(probs, axis=-1)
+    if not jnp.allclose(row_sums, 1.0, atol=1e-6):
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} returned rows that do not sum to 1 along the "
+            f"outcome axis."
         )

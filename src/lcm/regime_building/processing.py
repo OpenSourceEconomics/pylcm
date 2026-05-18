@@ -36,6 +36,7 @@ from lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
+from lcm.regime_building.static_checks import derive_stochastic_state_transitions
 from lcm.regime_building.transitions import collect_state_transitions
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.shocks import _ShockGrid
@@ -191,6 +192,11 @@ def process_regimes(
             solve_compute_regime_transition_probs=solve_functions.compute_regime_transition_probs,
         )
 
+        stochastic_state_transitions = derive_stochastic_state_transitions(
+            user_regime=user_regime,
+            user_regimes=user_regimes,
+        )
+
         canonical_regimes[regime_name] = Regime(
             name=regime_name,
             terminal=user_regime.terminal,
@@ -200,6 +206,7 @@ def process_regimes(
             regime_params_template=regime_params_template,
             solve_functions=solve_functions,
             simulate_functions=simulate_functions,
+            stochastic_state_transitions=stochastic_state_transitions,
             _base_state_action_space=state_action_spaces[regime_name],
         )
 

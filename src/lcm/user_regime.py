@@ -2,6 +2,7 @@ import ast
 import dataclasses
 import inspect
 import textwrap
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -590,6 +591,14 @@ def validate_transition_probs(
 ) -> None:
     """Validate a state transition probability array.
 
+    .. deprecated::
+        State transition probabilities are now validated automatically during
+        `model.solve()` and `model.simulate()` (unless `log_level="off"`) via
+        `validate_state_transitions_all_periods` in
+        `regime_building/runtime_checks.py`. This manual helper will be
+        removed in a future release. Drop the call — the model checks for
+        you.
+
     Check that the array has the shape expected from the function signature,
     that all values are in [0, 1], that rows sum to 1, and that the function's
     `probs_array[…]` subscripts match the signature parameter order.
@@ -618,6 +627,13 @@ def validate_transition_probs(
             don't sum to 1.
 
     """
+    warnings.warn(
+        "lcm.validate_transition_probs is deprecated: state transition "
+        "probabilities are now validated automatically during model.solve() "
+        "and model.simulate() (unless log_level='off'). Drop this call.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     regime = model.user_regimes[regime_name]
     raw_transition = regime.state_transitions[state_name]
     markov = _extract_markov_transition(

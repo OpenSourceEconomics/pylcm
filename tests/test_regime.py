@@ -442,15 +442,19 @@ def _make_partner_probs_array():
 def test_validate_transition_probs_valid():
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
-    validate_transition_probs(
-        probs=arr, model=model, regime_name="working_life", state_name="partner"
-    )
+    with pytest.warns(DeprecationWarning, match="deprecated"):
+        validate_transition_probs(
+            probs=arr, model=model, regime_name="working_life", state_name="partner"
+        )
 
 
 def test_validate_transition_probs_wrong_shape():
     model = get_stochastic_model(3)
     arr = jnp.ones((2, 2, 2)) / 2  # wrong shape
-    with pytest.raises(ValueError, match="shape"):
+    with (
+        pytest.warns(DeprecationWarning, match="deprecated"),
+        pytest.raises(ValueError, match="shape"),
+    ):
         validate_transition_probs(
             probs=arr, model=model, regime_name="working_life", state_name="partner"
         )
@@ -460,7 +464,10 @@ def test_validate_transition_probs_values_out_of_range():
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     bad_arr = arr.at[0, 0, 0, 0].set(-0.1)
-    with pytest.raises(ValueError, match="\\[0, 1\\]"):
+    with (
+        pytest.warns(DeprecationWarning, match="deprecated"),
+        pytest.raises(ValueError, match="\\[0, 1\\]"),
+    ):
         validate_transition_probs(
             probs=bad_arr, model=model, regime_name="working_life", state_name="partner"
         )
@@ -469,7 +476,10 @@ def test_validate_transition_probs_values_out_of_range():
 def test_validate_transition_probs_rows_dont_sum_to_one():
     model = get_stochastic_model(3)
     arr = jnp.ones((3, 2, 2, 2)) * 0.3  # rows sum to 0.6, not 1
-    with pytest.raises(ValueError, match="sum to 1"):
+    with (
+        pytest.warns(DeprecationWarning, match="deprecated"),
+        pytest.raises(ValueError, match="sum to 1"),
+    ):
         validate_transition_probs(
             probs=arr, model=model, regime_name="working_life", state_name="partner"
         )
