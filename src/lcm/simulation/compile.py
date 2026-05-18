@@ -22,7 +22,7 @@ import jax
 import jax.numpy as jnp
 from dags.tree import qname_from_tree_path
 
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.engine import Regime
 from lcm.simulation.random import generate_simulation_keys
 from lcm.solution.solve_brute import (

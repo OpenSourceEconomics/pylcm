@@ -11,8 +11,13 @@ import pandas as pd
 from beartype import beartype
 
 from lcm._beartype_conf import MODEL_CONF, PARAMS_CONF
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
+from lcm.api.persistence import (
+    save_simulate_snapshot,
+    save_solve_snapshot,
+)
 from lcm.api.regime import Regime as UserRegime
+from lcm.api.result import SimulationResult, get_simulation_output_dtypes
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
@@ -29,10 +34,6 @@ from lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
 )
-from lcm.persistence import (
-    save_simulate_snapshot,
-    save_solve_snapshot,
-)
 from lcm.regime_building.processing import Regime
 from lcm.regime_building.runtime_checks import (
     validate_regime_transitions_all_periods,
@@ -43,7 +44,6 @@ from lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
     validate_initial_conditions,
 )
-from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (

@@ -8,9 +8,9 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from lcm import Model
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
+from lcm.api.result import SimulationResult, get_simulation_output_dtypes
 from lcm.regime_building import process_regimes
-from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,

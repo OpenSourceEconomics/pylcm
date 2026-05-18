@@ -48,14 +48,25 @@ beartype_package("lcm", conf=INTERNAL_CONF)
 # rewritten string annotations resolve at call time.
 from lcm import shocks  # noqa: E402
 from lcm._version import __version__  # noqa: E402
-from lcm.ages import AgeGrid  # noqa: E402
+from lcm.api.ages import AgeGrid  # noqa: E402
 from lcm.api.model import Model  # noqa: E402
+from lcm.api.persistence import (  # noqa: E402
+    SimulateSnapshot,
+    SolveSnapshot,
+    load_snapshot,
+    load_solution,
+    save_solution,
+)
+from lcm.api.persistence import (  # noqa: E402
+    _bind_forward_refs as _bind_persistence_forward_refs,
+)
 from lcm.api.regime import (  # noqa: E402
     MarkovTransition,
     Regime,
     SolveSimulateFunctionPair,
     validate_transition_probs,
 )
+from lcm.api.result import SimulationResult  # noqa: E402
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
@@ -66,17 +77,6 @@ from lcm.grids import (  # noqa: E402
     PiecewiseLogSpacedGrid,
     categorical,
 )
-from lcm.persistence import (  # noqa: E402
-    SimulateSnapshot,
-    SolveSnapshot,
-    load_snapshot,
-    load_solution,
-    save_solution,
-)
-from lcm.persistence import (  # noqa: E402
-    _bind_forward_refs as _bind_persistence_forward_refs,
-)
-from lcm.simulation.result import SimulationResult  # noqa: E402
 from lcm.utils.containers import invert_regime_ids  # noqa: E402
 from lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,

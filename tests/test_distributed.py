@@ -2,7 +2,7 @@ import jax
 import pytest
 from jax import numpy as jnp
 
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.api.model import Model
 from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import PyLCMError, RegimeInitializationError

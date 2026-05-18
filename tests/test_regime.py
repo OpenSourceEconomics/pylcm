@@ -8,7 +8,7 @@ import pytest
 from dags.tree import QNAME_DELIMITER
 
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.api.regime import (
     MarkovTransition,
     _IdentityTransition,

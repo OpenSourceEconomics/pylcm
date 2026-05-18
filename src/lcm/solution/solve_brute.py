@@ -10,7 +10,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.engine import Regime, _build_regime_sharding
 from lcm.regime_building.runtime_checks import validate_V
 from lcm.typing import BoolND, FlatParams, FloatND, RegimeName, StateName

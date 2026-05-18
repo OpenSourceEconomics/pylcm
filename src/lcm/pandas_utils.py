@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
-from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
+from lcm.api.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.dtypes import canonical_float_dtype
 from lcm.grids import DiscreteGrid, IrregSpacedGrid

@@ -30,7 +30,7 @@ from lcm.typing import (
 
 if TYPE_CHECKING:
     from lcm.api.model import Model
-    from lcm.simulation.result import SimulationResult
+    from lcm.api.result import SimulationResult
 
     # Type-checker view: full precision.
     _ModelOrNone = Model | None

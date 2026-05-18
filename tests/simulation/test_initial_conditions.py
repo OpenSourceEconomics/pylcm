@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, categorical
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.params.processing import process_params

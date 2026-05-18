@@ -8,7 +8,8 @@ import jax.numpy as jnp
 import pandas as pd
 from jax import vmap
 
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
+from lcm.api.result import SimulationResult
 from lcm.engine import (
     PeriodRegimeSimulationData,
     Regime,
@@ -19,7 +20,6 @@ from lcm.simulation.initial_conditions import (
     build_initial_states,
 )
 from lcm.simulation.random import draw_random_seed
-from lcm.simulation.result import SimulationResult
 from lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,

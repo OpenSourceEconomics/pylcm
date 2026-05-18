@@ -35,7 +35,7 @@ import jax
 import jax.numpy as jnp
 import pandas as pd
 
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,

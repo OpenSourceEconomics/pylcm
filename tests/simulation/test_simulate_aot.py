@@ -20,7 +20,7 @@ import pytest
 from jax import Array
 
 from lcm import Model
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from tests.test_models.deterministic.regression import (
     RegimeId,

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from lcm import Model
-from lcm.ages import AgeGrid, parse_step
+from lcm.api.ages import AgeGrid, parse_step
 from lcm.exceptions import GridInitializationError
 from tests.test_models.deterministic.base import (
     RegimeId,

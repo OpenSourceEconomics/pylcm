@@ -14,7 +14,7 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidParamsError, ModelInitializationError, format_messages
 from lcm.pandas_utils import convert_series_in_params, has_series

@@ -11,7 +11,7 @@ from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.api.regime import MarkovTransition, SolveSimulateFunctionPair
 from lcm.api.regime import Regime as UserRegime
 from lcm.engine import (

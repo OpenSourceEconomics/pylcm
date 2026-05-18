@@ -2,7 +2,7 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.engine import VariableInfo, Variables
 from lcm.grids import DiscreteGrid, categorical
 from lcm.regime_building import process_regimes

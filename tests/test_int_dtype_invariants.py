@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from lcm import Model
-from lcm.ages import AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.params import MappingLeaf
 from lcm.params.processing import process_params
 from lcm.params.sequence_leaf import SequenceLeaf
