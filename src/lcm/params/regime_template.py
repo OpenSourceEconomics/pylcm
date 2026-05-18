@@ -6,7 +6,7 @@ from dags.tree import tree_path_from_qname
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
 from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.regime_building.validation import collect_state_transitions
+from lcm.regime_building.transitions import collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
     FunctionName,

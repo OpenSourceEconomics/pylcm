@@ -244,7 +244,7 @@ class Regime:
                 result[name] = func
         result |= dict(self.constraints)
         if callable(self.transition):
-            from lcm.regime_building.validation import (  # noqa: PLC0415
+            from lcm.regime_building.transitions import (  # noqa: PLC0415
                 collect_state_transitions,
             )
 

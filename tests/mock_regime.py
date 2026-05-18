@@ -3,7 +3,7 @@ from typing import Literal, cast
 
 from lcm.grids import Grid
 from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.regime_building.validation import collect_state_transitions
+from lcm.regime_building.transitions import collect_state_transitions
 from lcm.typing import UserFunction
 from lcm.user_regime import Regime as UserRegime
 from lcm.user_regime import _default_H
