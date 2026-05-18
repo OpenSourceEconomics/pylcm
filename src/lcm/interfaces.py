@@ -14,6 +14,7 @@ from lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
     Bool1D,
+    ConstraintFunctionsMapping,
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
@@ -162,8 +163,8 @@ class SolveFunctions:
     functions: EconFunctionsMapping
     """Immutable mapping of function names to internal user functions."""
 
-    constraints: EconFunctionsMapping
-    """Immutable mapping of constraint names to internal user functions."""
+    constraints: ConstraintFunctionsMapping
+    """Immutable mapping of constraint names to feasibility predicates."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
@@ -197,8 +198,8 @@ class SimulateFunctions:
     functions: EconFunctionsMapping
     """Immutable mapping of function names to internal user functions."""
 
-    constraints: EconFunctionsMapping
-    """Immutable mapping of constraint names to internal user functions."""
+    constraints: ConstraintFunctionsMapping
+    """Immutable mapping of constraint names to feasibility predicates."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""

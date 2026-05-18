@@ -50,9 +50,10 @@ type RegimeNamesToIds = MappingProxyType[RegimeName, ScalarInt]
 type RegimeIdsToNames = MappingProxyType[int, RegimeName]
 
 type EconFunctionsMapping = MappingProxyType[FunctionName, EconFunction]
+type ConstraintFunctionsMapping = MappingProxyType[FunctionName, ConstraintFunction]
 
 type TransitionFunctionsMapping = MappingProxyType[
-    RegimeName, MappingProxyType[TransitionFunctionName, EconFunction]
+    RegimeName, MappingProxyType[TransitionFunctionName, TransitionFunction]
 ]
 
 type RegimeStates = MappingProxyType[StateName, Float1D | Int1D]
@@ -135,11 +136,16 @@ class UserFunction(Protocol):
 
 @runtime_checkable
 class EconFunction(Protocol):
-    """A user-defined economic function after processing into the engine signature.
+    """A numeric model function after processing into the engine signature.
 
-    Accepts `Float/Int/BoolND | float | MappingLeaf | SequenceLeaf` arguments and
-    returns one of the array kinds. Used for both type checking and beartype runtime
-    checks.
+    Covers the *value-side* user-supplied content of a regime: the period
+    utility, the Bellman aggregator `H`, and any helper / DAG functions
+    whose output is consumed by them. Returns a numeric array
+    (`FloatND` or `IntND`). Feasibility predicates live in
+    `ConstraintFunction`; state / regime / shock transitions live in
+    `TransitionFunction`.
+
+    Used for both type checking and beartype runtime checks.
 
     """
 
@@ -147,7 +153,48 @@ class EconFunction(Protocol):
         self,
         *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
         **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-    ) -> FloatND | IntND | BoolND: ...
+    ) -> FloatND | IntND: ...
+
+
+@runtime_checkable
+class ConstraintFunction(Protocol):
+    """A feasibility predicate over (state, action, params).
+
+    Returns a boolean array indicating whether each grid point is
+    feasible. Stored on `Regime.constraints` and combined into the
+    `F` array of `Q_and_F`.
+
+    Used for both type checking and beartype runtime checks.
+
+    """
+
+    def __call__(
+        self,
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+    ) -> BoolND: ...
+
+
+@runtime_checkable
+class TransitionFunction(Protocol):
+    """A state / regime / shock transition function.
+
+    Stored on `Regime.transition` (regime transition), in
+    `Regime.state_transitions` (per-state, plus per-target dicts),
+    and as the auto-generated stubs for shock-derived transitions.
+    Returns the deterministic next-period value (`IntND` / `FloatND`)
+    or, for stochastic / weight functions, the corresponding numeric
+    array (probability mass, weight, etc.).
+
+    Used for both type checking and beartype runtime checks.
+
+    """
+
+    def __call__(
+        self,
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+    ) -> FloatND | IntND: ...
 
 
 @runtime_checkable

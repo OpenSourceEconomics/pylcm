@@ -24,6 +24,7 @@ from lcm.regime_building.V import VInterpolationInfo
 from lcm.typing import (
     ActionName,
     BoolND,
+    ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FloatND,
     IntND,
@@ -42,7 +43,7 @@ def _build_compute_intermediates_per_period(
     flat_param_names: frozenset[str],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     functions: EconFunctionsMapping,
-    constraints: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,

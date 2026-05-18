@@ -23,6 +23,7 @@ from lcm.typing import (
     StateName,
     StateOrActionName,
     StochasticNextFunction,
+    TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
@@ -31,7 +32,7 @@ from lcm.variables import Variables
 
 def get_next_state_function_for_solution(
     *,
-    transitions: EconFunctionsMapping,
+    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
@@ -123,7 +124,7 @@ def get_next_stochastic_weights_function(
     *,
     regime_name: RegimeName,
     functions: EconFunctionsMapping,
-    transitions: EconFunctionsMapping,
+    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
     stochastic_transition_names: frozenset[TransitionFunctionName],
 ) -> Callable[..., dict[str, FloatND | IntND]]:
     """Get function that computes the weights for the next stochastic states.

@@ -42,6 +42,7 @@ from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ArgmaxQOverAFunction,
+    ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
     Float1D,
@@ -58,6 +59,7 @@ from lcm.typing import (
     ShockName,
     StateName,
     StateOrActionName,
+    TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
     UserFunction,
@@ -460,7 +462,7 @@ class _CoreResult:
     functions: EconFunctionsMapping
     """User functions (utility, helpers) with params renamed to qnames."""
 
-    constraints: EconFunctionsMapping
+    constraints: ConstraintFunctionsMapping
     """Constraint functions with params renamed to qnames."""
 
     transitions: TransitionFunctionsMapping
@@ -469,7 +471,7 @@ class _CoreResult:
     stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
 
-    next_regime_func: EconFunction | None
+    next_regime_func: TransitionFunction | None
     """The regime transition function, or `None` for terminal regimes."""
 
 
@@ -621,7 +623,7 @@ def _process_regime_core(
         if func_name != "next_regime"
     } | {key: functions[key] for key in shock_transition_keys}
 
-    constraints = MappingProxyType(
+    constraints: ConstraintFunctionsMapping = MappingProxyType(
         {func_name: functions[func_name] for func_name in user_regime.constraints}
     )
     excluded_from_functions = (
@@ -639,7 +641,7 @@ def _process_regime_core(
 
     transitions = _wrap_transitions(unflatten_regime_namespace(internal_transition))
 
-    next_regime_func = functions.get("next_regime")
+    next_regime_func: TransitionFunction | None = functions.get("next_regime")
 
     return _CoreResult(
         functions=phase_functions,
@@ -772,7 +774,7 @@ def _classify_transitions(
 
 
 def _wrap_transitions(
-    transitions: dict[RegimeName, dict[TransitionFunctionName, EconFunction]],
+    transitions: dict[RegimeName, dict[TransitionFunctionName, TransitionFunction]],
 ) -> TransitionFunctionsMapping:
     """Wrap nested transitions dict in MappingProxyType."""
     return MappingProxyType(
@@ -1184,7 +1186,7 @@ def _get_simple_transition_discrete_grid(
 def build_regime_transition_probs_functions(
     *,
     functions: EconFunctionsMapping,
-    compute_regime_transition_probs: EconFunction,
+    compute_regime_transition_probs: TransitionFunction,
     grids: MappingProxyType[StateOrActionName, Grid],
     regime_names_to_ids: RegimeNamesToIds,
     regime_params_template: RegimeParamsTemplate,
@@ -1255,9 +1257,9 @@ def build_regime_transition_probs_functions(
 
 def _wrap_regime_transition_probs(
     *,
-    func: EconFunction,
+    func: TransitionFunction,
     regime_names_to_ids: RegimeNamesToIds,
-) -> EconFunction:
+) -> Callable[..., MappingProxyType[str, Any]]:
     """Wrap next_regime function to convert array output to dict format.
 
     The next_regime function returns a JAX array of probabilities indexed by
@@ -1309,9 +1311,9 @@ def _wrap_regime_transition_probs(
 
 def _wrap_deterministic_regime_transition(
     *,
-    func: EconFunction,
+    func: TransitionFunction,
     regime_names_to_ids: RegimeNamesToIds,
-) -> EconFunction:
+) -> TransitionFunction:
     """Wrap deterministic next_regime to return one-hot probability array.
 
     Converts a deterministic regime transition function that returns an integer
@@ -1362,7 +1364,7 @@ def _build_Q_and_F_per_period(
     *,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     functions: EconFunctionsMapping,
-    constraints: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
