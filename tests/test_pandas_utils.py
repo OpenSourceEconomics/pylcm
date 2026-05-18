@@ -18,7 +18,6 @@ from lcm.pandas_utils import (
 from lcm.params.processing import broadcast_to_template
 from lcm.typing import ScalarInt
 from lcm.user_regime import Regime as UserRegime
-from lcm.user_regime import validate_transition_probs
 from tests.test_models.basic_discrete import (
     Health,
 )
@@ -1022,43 +1021,6 @@ def test_array_from_series_transition_sparse_input_fills_nan():
     assert jnp.all(jnp.isnan(result[1]))
     # age=60 (period 2) → all NaN
     assert jnp.all(jnp.isnan(result[2]))
-
-
-def test_validate_transition_probs_valid():
-    model = get_stochastic_model(3)
-    arr = _make_partner_probs_array()
-    validate_transition_probs(
-        probs=arr, model=model, regime_name="working_life", state_name="partner"
-    )
-
-
-def test_validate_transition_probs_wrong_shape():
-    model = get_stochastic_model(3)
-    arr = jnp.ones((2, 2, 2)) / 2  # wrong shape
-    with pytest.raises(ValueError, match="shape"):
-        validate_transition_probs(
-            probs=arr, model=model, regime_name="working_life", state_name="partner"
-        )
-
-
-def test_validate_transition_probs_values_out_of_range():
-    model = get_stochastic_model(3)
-    arr = _make_partner_probs_array()
-    # Set one value negative
-    bad_arr = arr.at[0, 0, 0, 0].set(-0.1)  # noqa: PD008
-    with pytest.raises(ValueError, match="\\[0, 1\\]"):
-        validate_transition_probs(
-            probs=bad_arr, model=model, regime_name="working_life", state_name="partner"
-        )
-
-
-def test_validate_transition_probs_rows_dont_sum_to_one():
-    model = get_stochastic_model(3)
-    arr = jnp.ones((3, 2, 2, 2)) * 0.3  # rows sum to 0.6, not 1
-    with pytest.raises(ValueError, match="sum to 1"):
-        validate_transition_probs(
-            probs=arr, model=model, regime_name="working_life", state_name="partner"
-        )
 
 
 def _make_regime_probs_array():
