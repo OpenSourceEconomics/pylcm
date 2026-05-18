@@ -31,7 +31,8 @@ dynamic = [ "version" ]
 dependencies = [
   "beartype>=0.21",
   "cloudpickle>=3.1.2",
-  "dags>=0.5.1",
+  # Require the beartype fix, replace once release is there
+  # "dags>=0.6.0",
   "h5py>=3.12",
   "jax>=0.9",
   "jaxtyping>=0.3.2",
@@ -149,12 +150,8 @@ ty = "ty check"
 jax = ">=0.9"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
-# Pin dags to the feat/no-type-check-flag branch (PR
-# OpenSourceEconomics/dags#82): its wrappers advertise the `*args,
-# **kwargs` forwarder shape on `__annotations__`, so beartype's import
-# claw treats them as permissive forwarders. Replace with `dags>=0.6`
-# once that PR is released.
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", rev = "cf59c04" }
+# Remove and comment in `dags >= 0.6.0` above once released.
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
 [tool.pixi.tasks]
 asv-compare = "asv compare"
 asv-preview = "asv preview"
