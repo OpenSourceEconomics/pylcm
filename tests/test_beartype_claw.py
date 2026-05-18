@@ -32,12 +32,12 @@ from lcm.exceptions import (
 )
 from lcm.interfaces import _build_regime_sharding
 from lcm.model import _validate_log_args
+from lcm.regime_building.runtime_checks import _validate_regime_transition_probs
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats
 from lcm.state_action_space import _validate_all_states_present
 from lcm.user_regime import Regime as UserRegime
 from lcm.user_regime import _default_H
-from lcm.utils.error_handling import validate_regime_transition_probs
 
 
 def test_claw_checks_lcm_simulation() -> None:
@@ -61,10 +61,10 @@ def test_claw_checks_lcm_solution() -> None:
         )
 
 
-def test_claw_checks_lcm_utils_error_handling() -> None:
-    """Type-violating arguments to `lcm.utils.error_handling` helpers raise."""
+def test_claw_checks_lcm_regime_building_runtime_checks() -> None:
+    """Type-violating arguments to runtime_checks helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
-        validate_regime_transition_probs(
+        _validate_regime_transition_probs(
             regime_transition_probs={"working": jnp.array([1.0])},  # ty: ignore[invalid-argument-type]
             active_regimes_next_period=("working",),
             regime_name="working",

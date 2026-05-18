@@ -13,6 +13,7 @@ from lcm.interfaces import (
     PeriodRegimeSimulationData,
     Regime,
 )
+from lcm.regime_building.runtime_checks import validate_V
 from lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
@@ -40,7 +41,6 @@ from lcm.typing import (
     StatesPerRegime,
 )
 from lcm.utils.containers import invert_regime_ids
-from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
     log_nan_in_V,

@@ -33,6 +33,7 @@ from lcm.persistence import (
     save_solve_snapshot,
 )
 from lcm.regime_building.processing import Regime
+from lcm.regime_building.runtime_checks import validate_regime_transitions_all_periods
 from lcm.simulation.compile import compile_all_simulate_functions
 from lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
@@ -58,7 +59,6 @@ from lcm.utils.containers import (
     ensure_containers_are_mutable,
     get_field_names_and_values,
 )
-from lcm.utils.error_handling import validate_regime_transitions_all_periods
 from lcm.utils.logging import LogLevel, get_logger
 
 
