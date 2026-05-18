@@ -167,7 +167,7 @@ def test_regime_requires_utility_in_functions():
 
 def test_active_validation_rejects_non_callable():
     """Active attribute must be a callable."""
-    with pytest.raises(RegimeInitializationError, match="must be a callable"):
+    with pytest.raises(RegimeInitializationError, match="active"):
         Regime(
             transition=next_wealth,
             functions={"utility": utility},
@@ -179,10 +179,7 @@ def test_active_validation_rejects_non_callable():
 
 
 def test_markov_transition_rejects_non_callable():
-    with pytest.raises(
-        RegimeInitializationError,
-        match="MarkovTransition requires a callable",
-    ):
+    with pytest.raises(RegimeInitializationError, match="func"):
         MarkovTransition(func=42)  # ty: ignore[invalid-argument-type]
 
 
@@ -196,8 +193,8 @@ def test_identity_transition_call():
 def test_identity_transition_discrete():
     """Identity transition works for discrete states."""
     identity = _IdentityTransition("education", annotation=DiscreteState)
-    result = identity(education=jnp.array(1))
-    assert result == jnp.array(1)
+    result = identity(education=jnp.array(1, dtype=jnp.int32))
+    assert result == jnp.array(1, dtype=jnp.int32)
 
 
 def test_identity_transition_name():

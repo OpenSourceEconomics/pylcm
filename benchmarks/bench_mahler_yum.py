@@ -29,7 +29,7 @@ class MahlerYum:
         self.model_params = {"alive": common_params}
         self.initial_conditions = {
             **initial_states,
-            "regime": jnp.full(
+            "regime_id": jnp.full(
                 _N_SUBJECTS,
                 self.model.regime_names_to_ids["alive"],
                 dtype=jnp.int32,

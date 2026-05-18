@@ -1,7 +1,7 @@
 """Float dtypes follow `canonical_float_dtype()` across pylcm boundaries."""
 
 from collections.abc import Callable
-from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -12,12 +12,23 @@ from lcm.grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
 from lcm.params import MappingLeaf
 from lcm.params.processing import process_params
 from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.simulation.initial_conditions import build_initial_states
+from lcm.simulation.initial_conditions import (
+    build_initial_states,
+    canonicalize_initial_conditions,
+)
+from lcm.typing import ParamsTemplate
+from lcm.utils.containers import ensure_containers_are_immutable
 from tests.test_models.deterministic.regression import (
     RegimeId,
     get_model,
     get_params,
 )
+
+
+def _as_template(plain: dict) -> ParamsTemplate:
+    """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
+    return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
+
 
 # These tests deliberately pass `float64` inputs to verify the cast at
 # the barrier. Re-allow the JAX truncation warning that the
@@ -28,18 +39,25 @@ pytestmark = pytest.mark.filterwarnings(
 )
 
 
-def test_build_initial_states_casts_user_float64_to_canonical(x64_disabled: None):
-    """A float64 continuous initial state lands at `canonical_float_dtype()`."""
+def test_canonicalize_initial_conditions_casts_user_float64_to_canonical(
+    x64_disabled: None,
+):
+    """A float64 continuous initial state lands at `canonical_float_dtype()`.
+
+    `canonicalize_initial_conditions` is pylcm's simulation input boundary:
+    user arrays of any dtype are cast to their canonical pylcm dtype before
+    validation and the simulate stack see them.
+    """
     model = get_model(n_periods=3)
-    initial_states = {
+    initial_conditions = {
         "wealth": np.asarray([20.0, 50.0], dtype=np.float64),
         "age": np.asarray([18.0, 18.0], dtype=np.float64),
     }
-    states_per_regime = build_initial_states(
-        initial_states=initial_states,  # ty: ignore[invalid-argument-type]
+    canonical = canonicalize_initial_conditions(
+        initial_conditions=initial_conditions,
         internal_regimes=model.internal_regimes,
     )
-    assert states_per_regime["working_life"]["wealth"].dtype == canonical_float_dtype()
+    assert canonical["wealth"].dtype == canonical_float_dtype()
 
 
 def test_build_initial_states_casts_user_int_to_canonical(x64_disabled: None):
@@ -94,48 +112,48 @@ def test_process_params_casts_float64_array_to_canonical_under_no_x64(
     silently truncates to `float32` under no-x64 at construction time, so a
     JAX-built input would never reach the helper as `float64`.
     """
-    template = MappingProxyType({"regime_a": MappingProxyType({"schedule": "Array"})})
+    template = _as_template({"regime_a": {"fun": {"schedule": "Array"}}})
     user_params = {
-        "regime_a": {"schedule": np.asarray([0.1, 0.2, 0.3], dtype=np.float64)}
+        "regime_a": {"fun": {"schedule": np.asarray([0.1, 0.2, 0.3], dtype=np.float64)}}
     }
 
     out = process_params(
-        params=user_params,  # ty: ignore[invalid-argument-type]
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params=user_params,
+        params_template=template,
     )
 
-    schedule = out["regime_a"]["schedule"]
-    assert schedule.dtype == jnp.float32
+    schedule = out["regime_a"]["fun__schedule"]
+    assert schedule.dtype == jnp.float32  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_casts_python_float_to_canonical(x64_disabled: None):
     """A Python `float` param leaf is cast to `canonical_float_dtype()`."""
-    template = MappingProxyType(
-        {"regime_a": MappingProxyType({"discount_factor": "float"})}
-    )
-    user_params = {"regime_a": {"discount_factor": 0.95}}
+    template = _as_template({"regime_a": {"fun": {"discount_factor": "float"}}})
+    user_params = {"regime_a": {"fun": {"discount_factor": 0.95}}}
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
-    discount_factor = out["regime_a"]["discount_factor"]
-    np.testing.assert_allclose(float(discount_factor), 0.95, rtol=1e-6)
-    assert discount_factor.dtype == canonical_float_dtype()
+    discount_factor = out["regime_a"]["fun__discount_factor"]
+    np.testing.assert_allclose(float(discount_factor), 0.95, rtol=1e-6)  # ty: ignore[invalid-argument-type]
+    assert discount_factor.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_float_array_overflow_raises_with_qualified_name(
     x64_disabled: None,
 ):
     """An out-of-float32 float64 array raises naming the qualified leaf."""
-    template = MappingProxyType({"regime_a": MappingProxyType({"schedule": "Array"})})
-    user_params = {"regime_a": {"schedule": np.asarray([0.0, 1e40], dtype=np.float64)}}
+    template = _as_template({"regime_a": {"fun": {"schedule": "Array"}}})
+    user_params = {
+        "regime_a": {"fun": {"schedule": np.asarray([0.0, 1e40], dtype=np.float64)}}
+    }
 
     with pytest.raises(OverflowError, match="schedule"):
         process_params(
-            params=user_params,  # ty: ignore[invalid-argument-type]
-            params_template=template,  # ty: ignore[invalid-argument-type]
+            params=user_params,
+            params_template=template,
         )
 
 
@@ -152,7 +170,7 @@ def test_simulate_state_pool_dtype_stable_across_periods(x64_disabled: None):
     initial = {
         "wealth": jnp.asarray([20.0, 50.0, 80.0]),
         "age": jnp.asarray([18.0, 18.0, 18.0]),
-        "regime": jnp.asarray([RegimeId.working_life] * 3),
+        "regime_id": jnp.asarray([RegimeId.working_life] * 3),
     }
 
     result = model.simulate(
@@ -234,27 +252,27 @@ def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
     key: str, x64_disabled: None
 ):
     """`MappingLeaf` float arrays land at `canonical_float_dtype()`."""
-    template = MappingProxyType(
-        {"regime_a": MappingProxyType({"sched": "MappingLeaf"})}
-    )
+    template = _as_template({"regime_a": {"fun": {"sched": "MappingLeaf"}}})
     user_params = {
         "regime_a": {
-            "sched": MappingLeaf(
-                {
-                    "low": np.asarray([0.1, 0.2], dtype=np.float64),
-                    "high": np.asarray([0.5, 0.7], dtype=np.float64),
-                }
-            )
+            "fun": {
+                "sched": MappingLeaf(
+                    {
+                        "low": np.asarray([0.1, 0.2], dtype=np.float64),
+                        "high": np.asarray([0.5, 0.7], dtype=np.float64),
+                    }
+                )
+            }
         }
     }
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     assert (
-        out["regime_a"]["sched"].data[key].dtype  # ty: ignore[unresolved-attribute]
+        out["regime_a"]["fun__sched"].data[key].dtype  # ty: ignore[unresolved-attribute, invalid-argument-type]
         == jnp.float32
     )
 
@@ -264,26 +282,26 @@ def test_process_params_casts_float_array_inside_sequence_leaf_to_canonical(
     index: int, x64_disabled: None
 ):
     """`SequenceLeaf` float arrays land at `canonical_float_dtype()`."""
-    template = MappingProxyType(
-        {"regime_a": MappingProxyType({"sched": "SequenceLeaf"})}
-    )
+    template = _as_template({"regime_a": {"fun": {"sched": "SequenceLeaf"}}})
     user_params = {
         "regime_a": {
-            "sched": SequenceLeaf(
-                [
-                    np.asarray([0.1, 0.2], dtype=np.float64),
-                    np.asarray([0.5, 0.7], dtype=np.float64),
-                ]
-            )
+            "fun": {
+                "sched": SequenceLeaf(
+                    [
+                        np.asarray([0.1, 0.2], dtype=np.float64),
+                        np.asarray([0.5, 0.7], dtype=np.float64),
+                    ]
+                )
+            }
         }
     }
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     assert (
-        out["regime_a"]["sched"].data[index].dtype  # ty: ignore[unresolved-attribute]
+        out["regime_a"]["fun__sched"].data[index].dtype  # ty: ignore[unresolved-attribute, invalid-argument-type]
         == jnp.float32
     )

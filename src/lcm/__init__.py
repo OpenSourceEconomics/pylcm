@@ -25,13 +25,31 @@ if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
 
 import jax
 
+# Patch jaxtyping's `"..."` sentinel to survive pickling before any
+# `jaxtyping`-subscripted type is created (see the module docstring).
+from lcm import _jaxtyping_patch  # noqa: F401
+
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
-from lcm import shocks
-from lcm._version import __version__
-from lcm.ages import AgeGrid
-from lcm.grids import (
+# Register beartype's package claw before any submodule import so every
+# `lcm.*` module loads with runtime type checks installed via
+# `INTERNAL_CONF`. User-facing constructors stack an explicit
+# `@beartype(conf=...)` decorator that maps violations to the relevant
+# project exception (see `lcm._beartype_conf`).
+from beartype.claw import beartype_package
+
+from lcm._beartype_conf import INTERNAL_CONF
+
+beartype_package("lcm", conf=INTERNAL_CONF)
+
+# Modules with TYPE_CHECKING-only forward references expose a
+# `_bind_forward_refs` helper; calling it here makes the claw's
+# rewritten string annotations resolve at call time.
+from lcm import shocks  # noqa: E402
+from lcm._version import __version__  # noqa: E402
+from lcm.ages import AgeGrid  # noqa: E402
+from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -41,19 +59,29 @@ from lcm.grids import (
     PiecewiseLogSpacedGrid,
     categorical,
 )
-from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.model import Model
-from lcm.persistence import (
+from lcm.interfaces import SolveSimulateFunctionPair  # noqa: E402
+from lcm.model import Model  # noqa: E402
+from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
     SolveSnapshot,
     load_snapshot,
     load_solution,
     save_solution,
 )
-from lcm.regime import MarkovTransition, Regime
-from lcm.simulation.result import SimulationResult
-from lcm.utils.containers import invert_regime_ids
-from lcm.utils.error_handling import validate_transition_probs
+from lcm.persistence import (  # noqa: E402
+    _bind_forward_refs as _bind_persistence_forward_refs,
+)
+from lcm.regime import MarkovTransition, Regime  # noqa: E402
+from lcm.simulation.result import SimulationResult  # noqa: E402
+from lcm.utils.containers import invert_regime_ids  # noqa: E402
+from lcm.utils.error_handling import validate_transition_probs  # noqa: E402
+from lcm.variables import (  # noqa: E402
+    _bind_forward_refs as _bind_variables_forward_refs,
+)
+
+_bind_variables_forward_refs(regime_cls=Regime)
+_bind_persistence_forward_refs(model_cls=Model, simulation_result_cls=SimulationResult)
+del _bind_persistence_forward_refs, _bind_variables_forward_refs
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
 # This allows regime transition probabilities to use immutable mappings.

@@ -4,7 +4,6 @@ from typing import Any, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
-from jax import Array
 
 from lcm.regime_building.h_dag import _get_build_H_kwargs
 from lcm.regime_building.next_state import (
@@ -18,6 +17,7 @@ from lcm.typing import (
     FloatND,
     FunctionsMapping,
     InternalUserFunction,
+    IntND,
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
@@ -136,7 +136,7 @@ def get_Q_and_F(
     )
     def Q_and_F(
         next_regime_to_V_arr: FloatND,
-        **states_actions_params: Array,
+        **states_actions_params: FloatND | IntND | BoolND,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
@@ -149,7 +149,7 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             compute_regime_transition_probs(**states_actions_params)
         )
         U_arr, F_arr = U_and_F(**states_actions_params)
@@ -309,15 +309,17 @@ def get_compute_intermediates(
         args=arg_names_of_compute_intermediates,
         return_annotation=(
             "tuple[FloatND, FloatND, FloatND, FloatND, "
-            "MappingProxyType[RegimeName, Array]]"
+            "MappingProxyType[RegimeName, FloatND]]"
         ),
     )
     def compute_intermediates(
         next_regime_to_V_arr: FloatND,
-        **states_actions_params: Array,
-    ) -> tuple[FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, Array]]:
+        **states_actions_params: FloatND | IntND | BoolND,
+    ) -> tuple[
+        FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
+    ]:
         """Compute all Q_and_F intermediates."""
-        regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             compute_regime_transition_probs(**states_actions_params)
         )
         U_arr, F_arr = U_and_F(**states_actions_params)
@@ -393,7 +395,7 @@ def get_Q_and_F_terminal(
     )
     def Q_and_F(
         next_regime_to_V_arr: FloatND,  # noqa: ARG001
-        **states_actions_params: Array,
+        **states_actions_params: FloatND | IntND | BoolND,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
 

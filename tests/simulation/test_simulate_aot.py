@@ -21,6 +21,7 @@ from jax import Array
 
 from lcm import Model
 from lcm.ages import AgeGrid
+from lcm.exceptions import ModelInitializationError
 from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
@@ -51,7 +52,7 @@ def _build_initial_conditions(*, n_subjects: int) -> dict[str, Array]:
     return {
         "wealth": wealths,
         "age": jnp.full((n_subjects,), 18.0),
-        "regime": jnp.array([RegimeId.working_life] * n_subjects),
+        "regime_id": jnp.array([RegimeId.working_life] * n_subjects),
     }
 
 
@@ -63,8 +64,8 @@ def test_n_subjects_validation_rejects_non_positive(invalid: int) -> None:
 
 
 def test_n_subjects_validation_rejects_non_int() -> None:
-    """`Model(n_subjects=1.5)` raises `TypeError`."""
-    with pytest.raises(TypeError, match="n_subjects"):
+    """`Model(n_subjects=1.5)` raises `ModelInitializationError`."""
+    with pytest.raises(ModelInitializationError, match="n_subjects"):
         _build_test_model(n_periods=3, n_subjects=1.5)  # ty: ignore[invalid-argument-type]
 
 

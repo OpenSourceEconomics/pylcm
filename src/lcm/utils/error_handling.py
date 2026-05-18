@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, overload
 import jax
 import jax.numpy as jnp
 import pandas as pd
-from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
@@ -23,29 +22,34 @@ from lcm.typing import (
     FlatRegimeParams,
     FloatND,
     InternalParams,
+    IntND,
     RegimeName,
     ScalarFloat,
     ScalarInt,
     StateName,
+    StateOrActionName,
 )
 
 # Genuine circular import: model.py imports from this module at module level.
-# Safe because Model is only used at runtime in validate_transition_probs,
-# which is never called during module initialisation.
+# The `model` parameter of `validate_transition_probs` is annotated with the
+# fully-qualified string `"lcm.model.Model"` so the beartype claw resolves it
+# by importing `lcm.model` at first call — long after the import cycle settles
+# — rather than at module-init time. Importing `lcm.model` here keeps `lcm` a
+# bound name for the type checker.
 if TYPE_CHECKING:
-    from lcm.model import Model
+    import lcm.model
 
 
 def validate_V(
     *,
-    V_arr: Array,
+    V_arr: FloatND,
     age: float | ScalarInt | ScalarFloat,
     regime_name: RegimeName | None = None,
     partial_solution: object = None,
     compute_intermediates: Callable | None = None,
     state_action_space: StateActionSpace | None = None,
-    next_regime_to_V_arr: MappingProxyType | None = None,
-    internal_params: Mapping | None = None,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None = None,
+    internal_params: FlatRegimeParams | None = None,
     period: int | None = None,
 ) -> None:
     """Validate the value function array for NaN values.
@@ -128,8 +132,8 @@ def _enrich_with_diagnostics(
     exc: InvalidValueFunctionError,
     compute_intermediates: Callable,
     state_action_space: StateActionSpace,
-    next_regime_to_V_arr: MappingProxyType | None,
-    internal_params: Mapping | None,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None,
+    internal_params: FlatRegimeParams | None,
     regime_name: RegimeName,
     age: float,
     period: int | None,
@@ -284,12 +288,13 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
 
 def validate_regime_transition_probs(
     *,
-    regime_transition_probs: MappingProxyType[str, Array],
+    regime_transition_probs: MappingProxyType[RegimeName, FloatND],
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
     next_age: float | ScalarInt | ScalarFloat,
-    state_action_values: MappingProxyType[str, Array] | None = None,
+    state_action_values: MappingProxyType[StateOrActionName, FloatND | IntND]
+    | None = None,
 ) -> None:
     """Validate regime transition probabilities.
 
@@ -352,8 +357,9 @@ def validate_regime_transition_probs(
 
 def _format_sum_violation(
     *,
-    sum_all: Array,
-    state_action_values: MappingProxyType[str, Array] | None = None,
+    sum_all: FloatND,
+    state_action_values: MappingProxyType[StateOrActionName, FloatND | IntND]
+    | None = None,
 ) -> str:
     """Format a human-readable description of probability sum violations.
 
@@ -480,7 +486,7 @@ def _validate_regime_transition_single(
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted_params}
 
     # Collect only grid variables the transition function accepts
-    grids: dict[str, Array] = {
+    grids: dict[StateOrActionName, FloatND | IntND] = {
         k: v for k, v in state_action_space.states.items() if k in accepted_params
     } | {k: v for k, v in state_action_space.actions.items() if k in accepted_params}
 
@@ -488,36 +494,40 @@ def _validate_regime_transition_single(
     grid_var_names = list(grids.keys())
     grid_arrays = list(grids.values())
 
+    # Pin to int32: a Python-int `period` traced through `jax.vmap` becomes
+    # int64 under x64, breaking any int32 `period` contract downstream.
+    period_int32 = jnp.int32(period)
+
     if grid_arrays:
         mesh = jnp.meshgrid(*grid_arrays, indexing="ij")
         flat_arrays = [m.ravel() for m in mesh]
 
         def _call(
-            *args: Array,
+            *args: FloatND | IntND,
             _names: list[str] = grid_var_names,
             _params: dict = filtered_params,
             _func: object = regime_transition_func,
-            _period: int = period,
+            _period: ScalarInt = period_int32,
             _age: ScalarInt | ScalarFloat = ages.values[period],  # noqa: PD011
-        ) -> MappingProxyType[str, Array]:
+        ) -> MappingProxyType[RegimeName, FloatND]:
             kwargs = dict(zip(_names, args, strict=True))
             return _func(  # ty: ignore[call-non-callable]
                 **kwargs, **_params, period=_period, age=_age
             )
 
-        regime_transition_probs: MappingProxyType[str, Array] = jax.vmap(_call)(
-            *flat_arrays
-        )
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = jax.vmap(
+            _call
+        )(*flat_arrays)
         point = dict(zip(grid_var_names, flat_arrays, strict=True))
     else:
-        regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             regime_transition_func(  # ty: ignore[call-non-callable]
                 **filtered_params,
-                period=period,
+                period=period_int32,
                 age=ages.values[period],  # noqa: PD011
             )
         )
-        point: dict[str, Array] = {}
+        point: dict[StateOrActionName, FloatND | IntND] = {}
 
     validate_regime_transition_probs(
         regime_transition_probs=regime_transition_probs,
@@ -540,7 +550,7 @@ def _validate_regime_transition_single(
 def _validate_no_reachable_incomplete_targets(
     *,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    regime_transition_probs: MappingProxyType[str, Array],
+    regime_transition_probs: MappingProxyType[RegimeName, FloatND],
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
@@ -740,7 +750,7 @@ def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
 def validate_transition_probs(
     *,
     probs: FloatND,
-    model: Model,
+    model: lcm.model.Model,
     regime_name: RegimeName,
     state_name: StateName,
 ) -> None: ...
@@ -750,7 +760,7 @@ def validate_transition_probs(
 def validate_transition_probs(
     *,
     probs: FloatND,
-    model: Model,
+    model: lcm.model.Model,
     regime_name: RegimeName,
     state_name: StateName,
     target_regime_name: RegimeName,
@@ -761,7 +771,7 @@ def validate_transition_probs(
 def validate_transition_probs(
     *,
     probs: FloatND,
-    model: Model,
+    model: lcm.model.Model,
     regime_name: RegimeName,
 ) -> None: ...
 
@@ -769,7 +779,7 @@ def validate_transition_probs(
 def validate_transition_probs(
     *,
     probs: FloatND,
-    model: Model,
+    model: lcm.model.Model,
     regime_name: RegimeName,
     state_name: StateName | None = None,
     target_regime_name: RegimeName | None = None,
@@ -918,7 +928,7 @@ def _build_expected_shape(
     indexing_params: list[str],
     n_outcomes: int,
     grids: dict[str, DiscreteGrid],
-    model: Model,
+    model: lcm.model.Model,
 ) -> tuple[int, ...]:
     """Compute expected shape for a transition probability array."""
     shape: list[int] = []

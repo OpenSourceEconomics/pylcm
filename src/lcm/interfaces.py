@@ -19,11 +19,17 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FlatRegimeParams,
+    Float1D,
+    FloatND,
     FunctionsMapping,
+    IntND,
     MaxQOverAFunction,
     NextStateSimulationFunction,
+    RegimeName,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    ScalarFloat,
+    ScalarInt,
     StateName,
     StateOrActionName,
     TransitionFunctionName,
@@ -214,7 +220,7 @@ class SimulateFunctions:
 class InternalRegime:
     """Internal representation of a user regime."""
 
-    name: str
+    name: RegimeName
     """Regime name (key in the regimes dict)."""
 
     terminal: bool
@@ -273,10 +279,13 @@ class InternalRegime:
                 points_key = f"{name}__points"
                 if points_key not in all_params:
                     continue
+                # Runtime grid-point params are flat JAX arrays — never a
+                # `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
+                points = cast("Array", all_params[points_key])
                 if in_states:
-                    state_replacements[name] = all_params[points_key]
+                    state_replacements[name] = points
                 else:
-                    action_replacements[name] = all_params[points_key]
+                    action_replacements[name] = points
             # `_ShockGrid` is state-only by construction (intrinsic
             # transitions, forbidden as actions per AGENTS.md). The
             # `in_states` gate makes that invariant explicit — a
@@ -292,9 +301,13 @@ class InternalRegime:
                 )
                 if not all_present:
                     continue
-                shock_kw: dict[str, float] = dict(spec.params)
+                shock_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    shock_kw[p] = cast("float", all_params[f"{name}__{p}"])
+                    # Runtime shock-grid params are flat JAX scalars — never
+                    # a `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
+                    shock_kw[p] = cast(
+                        "ScalarFloat | ScalarInt", all_params[f"{name}__{p}"]
+                    )
                 state_replacements[name] = spec.compute_gridpoints(**shock_kw)
 
         new_states = (
@@ -417,9 +430,9 @@ def _build_regime_sharding(
 
 def _distribute_states_to_devices(
     *,
-    states: MappingProxyType[StateName, Array],
+    states: MappingProxyType[StateName, FloatND | IntND],
     grids: MappingProxyType[StateOrActionName, Grid],
-) -> MappingProxyType[StateName, Array]:
+) -> MappingProxyType[StateName, FloatND | IntND]:
     """Place each distributed state's array on its device mesh.
 
     States whose grid carries `distributed=True` are placed via
@@ -451,13 +464,13 @@ def _distribute_states_to_devices(
 class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
 
-    V_arr: Array
+    V_arr: Float1D
     """Value function array for all subjects at this period."""
 
-    actions: MappingProxyType[ActionName, Array]
+    actions: MappingProxyType[ActionName, FloatND | IntND]
     """Immutable mapping of action names to optimal action arrays for all subjects."""
 
-    states: MappingProxyType[StateName, Array]
+    states: MappingProxyType[StateName, FloatND | IntND]
     """Immutable mapping of state names to state value arrays for all subjects."""
 
     in_regime: Bool1D

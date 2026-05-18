@@ -52,8 +52,8 @@ def test_safe_to_int_dtype_raises_on_array_overflow():
     # under `jax_enable_x64=False` and trips JAX's own overflow guard before
     # `safe_to_int_dtype` ever sees the value.
     arr = np.asarray([1, 2, 2**32], dtype=np.int64)
-    with pytest.raises(ValueError, match="regime"):
-        safe_to_int_dtype(arr, name="regime")
+    with pytest.raises(ValueError, match="regime_id"):
+        safe_to_int_dtype(arr, name="regime_id")
 
 
 def test_safe_to_int_dtype_raises_on_underflow():

@@ -308,11 +308,11 @@ def savings_constraint(
     return net_income + (wealth) * r >= (saving)
 
 
-def alive_is_active(age: int, final_age_alive: float) -> bool:
+def alive_is_active(age: int, final_age_alive: int) -> bool:
     return age <= final_age_alive
 
 
-def dead_is_active(age: int, initial_age: float) -> bool:
+def dead_is_active(age: int, initial_age: int) -> bool:
     return age > initial_age
 
 
@@ -320,7 +320,7 @@ prod_shock_grid = lcm.shocks.ar1.Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
     transition=MarkovTransition(next_regime),
-    active=partial(alive_is_active, final_age_alive=ages.values[-2]),
+    active=partial(alive_is_active, final_age_alive=int(ages.values[-2])),
     states={
         "wealth": LinSpacedGrid(start=0, stop=49, n_points=50),
         "health": DiscreteGrid(Health),
@@ -382,7 +382,7 @@ def dead_utility(discount_type: DiscreteState) -> FloatND:  # noqa: ARG001
 
 DEAD_REGIME = Regime(
     transition=None,
-    active=partial(dead_is_active, initial_age=ages.values[0]),
+    active=partial(dead_is_active, initial_age=int(ages.values[0])),
     states={
         "discount_type": DiscreteGrid(DiscountType),
     },

@@ -128,34 +128,12 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
         _build_discrete_grid_lookup(regimes)
 
 
-def test_continuous_states_and_age():
+def test_regime_name_column_maps_to_regime_id_codes():
+    """`regime_name` column (strings) yields a `regime_id` dict entry of int codes."""
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "working_life"],
-            "health": ["bad", "good"],
-            "wealth": [10.0, 50.0],
-            "age": [25.0, 35.0],
-        }
-    )
-    conditions = initial_conditions_from_dataframe(
-        df=df,
-        regimes=model.regimes,
-        regime_names_to_ids=model.regime_names_to_ids,
-    )
-    assert jnp.array_equal(
-        conditions["regime"],
-        jnp.array([BasicRegimeId.working_life, BasicRegimeId.working_life]),
-    )
-    assert jnp.allclose(conditions["wealth"], jnp.array([10.0, 50.0]))
-    assert jnp.allclose(conditions["age"], jnp.array([25.0, 35.0]))
-
-
-def test_categorical_string_labels():
-    model = get_basic_model()
-    df = pd.DataFrame(
-        {
-            "regime": ["working_life", "retirement"],
+            "regime_name": ["working_life", "retirement"],
             "health": ["bad", "good"],
             "wealth": [10.0, 50.0],
             "age": [25.0, 25.0],
@@ -167,7 +145,52 @@ def test_categorical_string_labels():
         regime_names_to_ids=model.regime_names_to_ids,
     )
     assert jnp.array_equal(
-        conditions["regime"],
+        conditions["regime_id"],
+        jnp.array([BasicRegimeId.working_life, BasicRegimeId.retirement]),
+    )
+    assert "regime_name" not in conditions
+
+
+def test_continuous_states_and_age():
+    model = get_basic_model()
+    df = pd.DataFrame(
+        {
+            "regime_name": ["working_life", "working_life"],
+            "health": ["bad", "good"],
+            "wealth": [10.0, 50.0],
+            "age": [25.0, 35.0],
+        }
+    )
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
+    assert jnp.array_equal(
+        conditions["regime_id"],
+        jnp.array([BasicRegimeId.working_life, BasicRegimeId.working_life]),
+    )
+    assert jnp.allclose(conditions["wealth"], jnp.array([10.0, 50.0]))
+    assert jnp.allclose(conditions["age"], jnp.array([25.0, 35.0]))
+
+
+def test_categorical_string_labels():
+    model = get_basic_model()
+    df = pd.DataFrame(
+        {
+            "regime_name": ["working_life", "retirement"],
+            "health": ["bad", "good"],
+            "wealth": [10.0, 50.0],
+            "age": [25.0, 25.0],
+        }
+    )
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
+    assert jnp.array_equal(
+        conditions["regime_id"],
         jnp.array([BasicRegimeId.working_life, BasicRegimeId.retirement]),
     )
     assert jnp.array_equal(conditions["health"], jnp.array([Health.bad, Health.good]))
@@ -178,7 +201,7 @@ def test_categorical_pd_categorical_column():
     health_dtype = Health.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "working_life"],
+            "regime_name": ["working_life", "working_life"],
             "health": pd.Categorical(["good", "bad"], dtype=health_dtype),
             "wealth": [10.0, 50.0],
             "age": [25.0, 25.0],
@@ -196,7 +219,7 @@ def test_multi_regime():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "retirement", "working_life"],
+            "regime_name": ["working_life", "retirement", "working_life"],
             "health": ["good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0],
             "age": [25.0, 25.0, 25.0],
@@ -208,7 +231,7 @@ def test_multi_regime():
         regime_names_to_ids=model.regime_names_to_ids,
     )
     assert jnp.array_equal(
-        conditions["regime"],
+        conditions["regime_id"],
         jnp.array(
             [
                 BasicRegimeId.working_life,
@@ -223,7 +246,7 @@ def test_multi_regime():
 def test_missing_regime_column_raises():
     model = get_basic_model()
     df = pd.DataFrame({"wealth": [10.0]})
-    with pytest.raises(ValueError, match="'regime' column"):
+    with pytest.raises(ValueError, match="'regime_name' column"):
         initial_conditions_from_dataframe(
             df=df,
             regimes=model.regimes,
@@ -235,7 +258,7 @@ def test_invalid_regime_name_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "nonexistent"],
+            "regime_name": ["working_life", "nonexistent"],
             "wealth": [10.0, 50.0],
         }
     )
@@ -251,7 +274,7 @@ def test_invalid_category_label_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life"],
+            "regime_name": ["working_life"],
             "health": ["excellent"],
             "wealth": [10.0],
             "age": [25.0],
@@ -268,7 +291,7 @@ def test_invalid_category_label_raises():
 def test_empty_dataframe_raises():
     model = get_basic_model()
     df = pd.DataFrame(
-        {"regime": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
+        {"regime_name": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
     )
     with pytest.raises(ValueError, match="empty"):
         initial_conditions_from_dataframe(
@@ -282,7 +305,7 @@ def test_unknown_column_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life"],
+            "regime_name": ["working_life"],
             "health": ["bad"],
             "wealth": [10.0],
             "age": [25.0],
@@ -301,7 +324,7 @@ def test_missing_state_column_raises():
     model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working_life"],
+            "regime_name": ["working_life"],
             "age": [25.0],
             # missing "health" and "wealth"
         }
@@ -319,7 +342,7 @@ def test_shock_state_columns_accepted():
     model = get_shock_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
-            "regime": ["alive", "alive"],
+            "regime_name": ["alive", "alive"],
             "wealth": [2.0, 4.0],
             "health": ["bad", "good"],
             "income": [0.3, 0.7],
@@ -333,7 +356,7 @@ def test_shock_state_columns_accepted():
     )
     assert jnp.allclose(conditions["income"], jnp.array([0.3, 0.7]))
     assert jnp.allclose(conditions["wealth"], jnp.array([2.0, 4.0]))
-    assert "regime" in conditions
+    assert "regime_id" in conditions
 
 
 def test_shock_state_columns_required():
@@ -341,7 +364,7 @@ def test_shock_state_columns_required():
     model = get_shock_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
-            "regime": ["alive", "alive"],
+            "regime_name": ["alive", "alive"],
             "wealth": [2.0, 4.0],
             "health": ["bad", "good"],
             "age": [0.0, 0.0],
@@ -372,7 +395,7 @@ def test_round_trip_with_discrete_model():
     raw_conditions = {
         "wealth": jnp.array([DiscreteWealth.low, DiscreteWealth.high]),
         "age": jnp.array([50.0, 50.0]),
-        "regime": jnp.array([RegimeId.working_life, RegimeId.working_life]),
+        "regime_id": jnp.array([RegimeId.working_life, RegimeId.working_life]),
     }
     result_raw = model.simulate(
         params=params,
@@ -383,7 +406,7 @@ def test_round_trip_with_discrete_model():
     # DataFrame approach
     df = pd.DataFrame(
         {
-            "regime": ["working_life", "working_life"],
+            "regime_name": ["working_life", "working_life"],
             "wealth": ["low", "high"],
             "age": [50.0, 50.0],
         }
@@ -472,7 +495,7 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
     model = _get_heterogeneous_health_model()
     df = pd.DataFrame(
         {
-            "regime": ["pre65", "pre65", "post65", "post65"],
+            "regime_name": ["pre65", "pre65", "post65", "post65"],
             "health": ["disabled", "good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0, 70.0],
             "age": [50.0, 50.0, 70.0, 70.0],
@@ -488,7 +511,7 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
     assert jnp.array_equal(result["health"], jnp.array([0, 2, 0, 1]))
     assert jnp.allclose(result["wealth"], jnp.array([10.0, 50.0, 30.0, 70.0]))
     assert jnp.array_equal(
-        result["regime"],
+        result["regime_id"],
         jnp.array(
             [
                 _HetRegimeId.pre65,
@@ -552,7 +575,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
 
     df = pd.DataFrame(
         {
-            "regime": ["with_status", "with_status", "without_status"],
+            "regime_name": ["with_status", "with_status", "without_status"],
             "wealth": [10.0, 20.0, 30.0],
             "status": ["low", "high", pd.NA],
             "age": [50.0, 51.0, 50.0],
@@ -616,7 +639,7 @@ def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
 
     df = pd.DataFrame(
         {
-            "regime": ["earner", "earner", "retiree"],
+            "regime_name": ["earner", "earner", "retiree"],
             "wealth": [10.0, 20.0, 30.0],
             "income": [0.3, 0.7, float("nan")],
             "age": [50.0, 51.0, 50.0],
@@ -704,7 +727,7 @@ def test_heterogeneous_health_solve_simulate() -> None:
     model = _get_heterogeneous_health_model()
     df = pd.DataFrame(
         {
-            "regime": ["pre65", "pre65", "post65", "post65"],
+            "regime_name": ["pre65", "pre65", "post65", "post65"],
             "health": ["disabled", "good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0, 70.0],
             "age": [50.0, 50.0, 70.0, 70.0],
@@ -732,7 +755,9 @@ def test_heterogeneous_health_solve_simulate() -> None:
     assert list(period_0["health"]) == ["disabled", "good"]
 
     # Period 2: post65 subjects have correct health labels
-    period_2 = out.query("period == 2 and regime == 'post65'").sort_values("subject_id")
+    period_2 = out.query("period == 2 and regime_name == 'post65'").sort_values(
+        "subject_id"
+    )
     assert list(period_2["health"]) == ["bad", "good"]
 
 
@@ -741,7 +766,7 @@ def test_heterogeneous_health_simulate_use_labels_false() -> None:
     model = _get_heterogeneous_health_model()
     df = pd.DataFrame(
         {
-            "regime": ["pre65", "post65"],
+            "regime_name": ["pre65", "post65"],
             "health": ["disabled", "good"],
             "wealth": [10.0, 70.0],
             "age": [50.0, 70.0],
@@ -1444,8 +1469,8 @@ def test_convert_series_function_level_series() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     arr = result["working_life"]["next_partner__probs_array"]
-    assert arr.shape == (3, 2, 2, 2)
-    assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
+    assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)  # ty: ignore[not-subscriptable]
 
 
 def test_convert_series_model_level_scalar_passthrough() -> None:
@@ -1485,7 +1510,7 @@ def test_convert_series_regime_level_series() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     arr = result["working_life"]["next_partner__probs_array"]
-    assert arr.shape == (3, 2, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_mixed_dict() -> None:
@@ -1512,20 +1537,20 @@ def test_convert_series_mixed_dict() -> None:
     )
     assert result["working_life"]["H__discount_factor"] == 0.95
     assert result["working_life"]["utility__disutility_of_work"] == 0.5
-    assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)
+    assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
     assert result["working_life"]["next_wealth__interest_rate"] == 0.05
-    np.testing.assert_allclose(
+    np.testing.assert_allclose(  # ty: ignore[no-matching-overload]
         result["working_life"]["labor_income__wage"], jnp.array([10.0])
     )
 
 
 def test_convert_series_mapping_leaf() -> None:
-    """Series inside a MappingLeaf is converted."""
-    from lcm.params import MappingLeaf  # noqa: PLC0415
+    """Series inside a `UserMappingLeaf` is converted in place."""
+    from lcm.params import UserMappingLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
-    leaf = MappingLeaf({"sub_key": series})
+    leaf = UserMappingLeaf({"sub_key": series})
     params = {
         "working_life": {
             "next_partner": {"probs_array": leaf},
@@ -1541,19 +1566,19 @@ def test_convert_series_mapping_leaf() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     converted_leaf = result["working_life"]["next_partner__probs_array"]
-    assert isinstance(converted_leaf, MappingLeaf)
+    assert isinstance(converted_leaf, UserMappingLeaf)
     arr = converted_leaf.data["sub_key"]
-    assert arr.shape == (3, 2, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_nested_mapping_leaf() -> None:
-    """Series inside nested MappingLeaf is recursively converted."""
-    from lcm.params import MappingLeaf  # noqa: PLC0415
+    """Series inside nested `UserMappingLeaf` is recursively converted."""
+    from lcm.params import UserMappingLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
-    inner = MappingLeaf({"sub": series})
-    outer = MappingLeaf({"inner_leaf": inner})
+    inner = UserMappingLeaf({"sub": series})
+    outer = UserMappingLeaf({"inner_leaf": inner})
     params = {
         "working_life": {
             "next_partner": {"probs_array": outer},
@@ -1569,11 +1594,11 @@ def test_convert_series_nested_mapping_leaf() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     converted = result["working_life"]["next_partner__probs_array"]
-    assert isinstance(converted, MappingLeaf)
+    assert isinstance(converted, UserMappingLeaf)
     inner_converted = converted.data["inner_leaf"]
-    assert isinstance(inner_converted, MappingLeaf)
+    assert isinstance(inner_converted, UserMappingLeaf)
     assert not isinstance(inner_converted.data["sub"], pd.Series)
-    assert inner_converted.data["sub"].shape == (3, 2, 2, 2)
+    assert inner_converted.data["sub"].shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_unknown_param_raises() -> None:
@@ -1656,7 +1681,7 @@ def test_convert_series_with_derived_categoricals() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     arr = result["retirement"]["next_partner__probs_array"]
-    assert arr.shape == (3, 2, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_per_target_transition() -> None:
@@ -1736,7 +1761,7 @@ def test_convert_series_per_target_transition() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     arr = result["working"]["to_working_next_health__probs_array"]
-    assert arr.shape == (3, 2, 2)
+    assert arr.shape == (3, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_build_outcome_mapping_qualified_func_name() -> None:
@@ -1834,8 +1859,8 @@ def test_convert_series_structured_derived_categoricals() -> None:
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
-    assert result_both["regime_a"]["utility__rates"].shape == (2,)
-    assert result_both["regime_b"]["utility__rates"].shape == (3,)
+    assert result_both["regime_a"]["utility__rates"].shape == (2,)  # ty: ignore[unresolved-attribute]
+    assert result_both["regime_b"]["utility__rates"].shape == (3,)  # ty: ignore[unresolved-attribute]
 
 
 def test_convert_series_runtime_grid_param() -> None:
@@ -1876,16 +1901,16 @@ def test_convert_series_runtime_grid_param() -> None:
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
-    np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())
+    np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())  # ty: ignore[no-matching-overload]
 
 
 def test_convert_series_sequence_leaf_traversal() -> None:
-    """Series inside a SequenceLeaf should be converted to JAX arrays."""
-    from lcm.params.sequence_leaf import SequenceLeaf  # noqa: PLC0415
+    """Series inside a `UserSequenceLeaf` should be converted to JAX arrays."""
+    from lcm.params.sequence_leaf import UserSequenceLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     sr = pd.Series([10.0])
-    leaf = SequenceLeaf((sr, 42))
+    leaf = UserSequenceLeaf((sr, 42))
     params = {"working_life": {"labor_income": {"wage": leaf}}}
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
@@ -1897,9 +1922,9 @@ def test_convert_series_sequence_leaf_traversal() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     converted = result["working_life"]["labor_income__wage"]
-    assert isinstance(converted, SequenceLeaf)
+    assert isinstance(converted, UserSequenceLeaf)
     assert not isinstance(converted.data[0], pd.Series)
-    np.testing.assert_allclose(converted.data[0], jnp.array([10.0]))
+    np.testing.assert_allclose(converted.data[0], jnp.array([10.0]))  # ty: ignore[no-matching-overload]
 
 
 def test_resolve_categoricals_conflict_raises() -> None:
@@ -2022,7 +2047,7 @@ def test_convert_series_cross_grid_transition() -> None:
     arr = result["pre65"]["to_post65_next_health__health_trans_probs_cross"]
     # Shape: (n_ages=2, n_source_health=3, n_target_health=2)
     # n_ages=2 because AgeGrid has ages [0, 1]; missing age 1 is NaN-filled.
-    assert arr.shape == (2, 3, 2)
+    assert arr.shape == (2, 3, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:

@@ -41,15 +41,15 @@ def test_model_simulate_with_stochastic_model():
     result = model.simulate(
         params=params,
         initial_conditions={
-            "health": jnp.array([1, 1, 0, 0]),
-            "partner": jnp.array([0, 0, 1, 0]),
+            "health": jnp.array([1, 1, 0, 0], dtype=jnp.int32),
+            "partner": jnp.array([0, 0, 1, 0], dtype=jnp.int32),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
             "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
-            "regime": jnp.array([RegimeId.working_life] * 4),
+            "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
         period_to_regime_to_V_arr=None,
     )
-    df = result.to_dataframe().query('regime == "working_life"')
+    df = result.to_dataframe().query('regime_name == "working_life"')
 
     # Verify expected columns
     required_cols = {"period", "subject_id", "partner", "labor_supply"}
@@ -190,11 +190,11 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     # Compare simulation results
     # ==================================================================================
     initial_conditions = {
-        "health": jnp.array([1, 1, 0, 0]),
-        "partner": jnp.array([0, 0, 0, 0]),
+        "health": jnp.array([1, 1, 0, 0], dtype=jnp.int32),
+        "partner": jnp.array([0, 0, 0, 0], dtype=jnp.int32),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
-        "regime": jnp.array([RegimeId.working_life] * 4),
+        "regime_id": jnp.array([RegimeId.working_life] * 4),
     }
 
     simulation_deterministic = model_deterministic.simulate(
@@ -208,10 +208,10 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         initial_conditions=initial_conditions,
     )
     df_deterministic = simulation_deterministic.to_dataframe().query(
-        'regime == "working_life"'
+        'regime_name == "working_life"'
     )
     df_stochastic = simulation_stochastic.to_dataframe().query(
-        'regime == "working_life"'
+        'regime_name == "working_life"'
     )
     pd.testing.assert_frame_equal(
         df_deterministic.reset_index(drop=True),

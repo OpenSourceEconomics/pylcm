@@ -1,16 +1,17 @@
 import dataclasses
 from dataclasses import dataclass
-from typing import overload
 
 import jax.numpy as jnp
 import portion
-from jax import Array
+from beartype import beartype
 
+from lcm._beartype_conf import GRID_CONF
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.grids import coordinates as grid_coordinates
 from lcm.grids.continuous import ContinuousGrid
 from lcm.typing import (
     Float1D,
+    FloatND,
     Int1D,
     ScalarFloat,
     ScalarInt,
@@ -34,6 +35,7 @@ class Piece:
     n_points: ScalarInt
     """The number of grid points in this piece (`jnp.int32` JAX scalar)."""
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
@@ -44,6 +46,7 @@ class Piece:
         object.__setattr__(self, "n_points", jnp.int32(n_points))
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class PiecewiseLinSpacedGrid(ContinuousGrid):
     """A piecewise linearly spaced grid with multiple segments.
@@ -85,7 +88,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     @property
     def n_points(self) -> ScalarInt:
         """Return the total number of points in the grid."""
-        return self._piece_n_points.sum()
+        return self._piece_n_points.sum(dtype=jnp.int32)
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -95,11 +98,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
         ]
         return jnp.concatenate(piece_arrays)
 
-    @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
-    @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_linspace_coordinate(
@@ -111,6 +110,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
         return self._cumulative_offsets[piece_idx] + local_coord
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class PiecewiseLogSpacedGrid(ContinuousGrid):
     """A piecewise logarithmically spaced grid with multiple segments.
@@ -152,7 +152,7 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     @property
     def n_points(self) -> ScalarInt:
         """Return the total number of points in the grid."""
-        return self._piece_n_points.sum()
+        return self._piece_n_points.sum(dtype=jnp.int32)
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -166,11 +166,7 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
         ]
         return jnp.concatenate(piece_arrays)
 
-    @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
-    @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_logspace_coordinate(
@@ -236,8 +232,10 @@ def _init_piecewise_grid_cache(
     # Breakpoints are the effective starts of pieces 1..k-1
     breakpoints = starts[1:] if len(starts) > 1 else jnp.array([])
 
-    n_points = jnp.array([p.n_points for p in grid.pieces])
-    cumulative = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_points[:-1])])
+    n_points = jnp.array([p.n_points for p in grid.pieces], dtype=jnp.int32)
+    cumulative = jnp.concatenate(
+        [jnp.array([0], dtype=jnp.int32), jnp.cumsum(n_points[:-1])]
+    )
 
     object.__setattr__(grid, "_breakpoints", breakpoints)
     object.__setattr__(grid, "_piece_starts", starts)

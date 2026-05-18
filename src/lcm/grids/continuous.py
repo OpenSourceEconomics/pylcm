@@ -2,17 +2,19 @@ import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import overload
+from typing import Any
 
 import jax.numpy as jnp
-from jax import Array
+from beartype import beartype
 
+from lcm._beartype_conf import GRID_CONF
 from lcm.dtypes import canonical_float_dtype
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.grids import coordinates as grid_coordinates
 from lcm.grids.base import Grid
 from lcm.typing import (
     Float1D,
+    FloatND,
     ScalarFloat,
     ScalarInt,
 )
@@ -32,12 +34,8 @@ class ContinuousGrid(Grid):
     distributed: bool = False
     """Whether to distribute the grid over the available devices."""
 
-    @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
-    @overload
-    def get_coordinate(self, value: Array) -> Array: ...
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
 
 
@@ -59,6 +57,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     n_points: ScalarInt
     """The number of points in the grid (`jnp.int32` JAX scalar)."""
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
@@ -82,12 +81,8 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
 
-    @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
-    @overload
-    def get_coordinate(self, value: Array) -> Array: ...
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
 
     def replace(self, **kwargs: float) -> UniformContinuousGrid:
@@ -123,11 +118,7 @@ class LinSpacedGrid(UniformContinuousGrid):
             start=self.start, stop=self.stop, n_points=self.n_points
         )
 
-    @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
-    @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_linspace_coordinate(
             value=value,
@@ -148,6 +139,7 @@ class LogSpacedGrid(UniformContinuousGrid):
 
     """
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
@@ -173,11 +165,7 @@ class LogSpacedGrid(UniformContinuousGrid):
             start=self.start, stop=self.stop, n_points=self.n_points
         )
 
-    @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
-    @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_logspace_coordinate(
             value=value,
@@ -248,6 +236,7 @@ class IrregSpacedGrid(ContinuousGrid):
     n_points: int
     """Number of points. Derived from `len(points)` when points are given."""
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
@@ -308,11 +297,7 @@ class IrregSpacedGrid(ContinuousGrid):
             )
         return self.points
 
-    @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
-    @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
         if self.points is None:
             raise GridInitializationError(
@@ -377,8 +362,15 @@ def _validate_continuous_grid(
         raise GridInitializationError(msg)
 
 
-def _validate_irreg_spaced_grid(points: Sequence[float] | Float1D) -> None:
+def _validate_irreg_spaced_grid(points: Sequence[Any] | Float1D) -> None:
     """Validate the irregular spaced grid parameters.
+
+    The element type is `Any` because the function's manual loop is what
+    surfaces the user-facing `GridInitializationError` for non-numeric
+    entries; tightening to `Sequence[float]` makes beartype's package-
+    claw deep-check intercept first (observed flaking under cuda12 +
+    32-bit precision in CI), raising raw `BeartypeCallHintViolation`
+    before the manual check fires.
 
     Args:
         points: The grid points.

@@ -62,7 +62,7 @@ def _generate_precautionary_savings(data_dir: Path) -> None:
             "age": jnp.full(n_subjects, 20.0),
             "wealth": jnp.full(n_subjects, 5.0),
             "income": jnp.full(n_subjects, 0.0),
-            "regime": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
         },
         period_to_regime_to_V_arr=None,
         seed=12345,
@@ -82,7 +82,7 @@ def _generate_mortality(data_dir: Path) -> None:
         initial_conditions={
             "age": jnp.full(n_subjects, 40.0),
             "wealth": jnp.full(n_subjects, 100.0),
-            "regime": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
         },
         period_to_regime_to_V_arr=None,
         seed=12345,
@@ -102,7 +102,7 @@ def _generate_mahler_yum(data_dir: Path) -> None:
     params = {"alive": common_params}
     initial_conditions = {
         **initial_states,
-        "regime": jnp.full(
+        "regime_id": jnp.full(
             n_subjects,
             model.regime_names_to_ids["alive"],
             dtype=jnp.int32,

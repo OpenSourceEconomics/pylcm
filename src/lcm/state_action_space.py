@@ -1,11 +1,10 @@
 from types import MappingProxyType
 
 import jax.numpy as jnp
-from jax import Array
 
 from lcm.grids import Grid, IrregSpacedGrid
 from lcm.interfaces import StateActionSpace
-from lcm.typing import StateName, StateOrActionName
+from lcm.typing import FloatND, IntND, StateName, StateOrActionName
 from lcm.variables import Variables
 
 
@@ -13,7 +12,7 @@ def create_state_action_space(
     *,
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
-    states: dict[StateName, Array] | None = None,
+    states: dict[StateName, FloatND | IntND] | None = None,
 ) -> StateActionSpace:
     """Create a state-action-space.
 
@@ -58,7 +57,7 @@ def create_state_action_space(
     )
 
 
-def _grid_to_jax_or_placeholder(grid: Grid) -> Array:
+def _grid_to_jax_or_placeholder(grid: Grid) -> FloatND | IntND:
     """Return the grid's points, or a NaN placeholder for runtime-supplied grids.
 
     `IrregSpacedGrid.to_jax()` raises when its points haven't been supplied — that
@@ -74,7 +73,9 @@ def _grid_to_jax_or_placeholder(grid: Grid) -> Array:
 
 
 def _validate_all_states_present(
-    *, provided_states: dict[StateName, Array], required_state_names: set[StateName]
+    *,
+    provided_states: dict[StateName, FloatND | IntND],
+    required_state_names: set[StateName],
 ) -> None:
     """Check that all states are present in the provided states."""
     provided_state_names = set(provided_states)

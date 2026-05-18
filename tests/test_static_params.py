@@ -110,7 +110,7 @@ def test_simulate_with_fixed_params():
         initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
-            "regime": jnp.array([RegimeId.alive] * 2),
+            "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=None,
         log_level="off",
@@ -126,7 +126,7 @@ def test_simulate_with_fixed_params():
         initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
-            "regime": jnp.array([RegimeId.alive] * 2),
+            "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=None,
         log_level="off",
@@ -225,7 +225,7 @@ _MARKOV_INITIAL_CONDITIONS = {
     "wealth": jnp.array([50.0, 80.0]),
     "health": jnp.array([Health.bad, Health.good]),
     "age": jnp.array([60.0, 60.0]),
-    "regime": jnp.array([MarkovRegimeId.alive] * 2),
+    "regime_id": jnp.array([MarkovRegimeId.alive] * 2),
 }
 
 
@@ -362,7 +362,7 @@ def test_series_fixed_param_with_derived_categoricals():
         initial_conditions={
             "wealth": jnp.array([3.0, 8.0]),
             "age": jnp.array([0.0, 0.0]),
-            "regime": jnp.array([RegimeId.alive] * 2),
+            "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=None,
         log_level="off",

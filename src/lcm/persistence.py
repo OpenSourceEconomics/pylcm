@@ -9,7 +9,7 @@ import platform
 import shutil
 import tempfile
 import textwrap
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -19,13 +19,49 @@ import cloudpickle
 import h5py
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
 
-from lcm.typing import FloatND, PeriodToRegimeToVArr, RegimeName, UserParams
+from lcm.typing import (
+    FloatND,
+    InitialConditions,
+    PeriodToRegimeToVArr,
+    RegimeName,
+    UserParams,
+)
 
 if TYPE_CHECKING:
     from lcm.model import Model
     from lcm.simulation.result import SimulationResult
+
+    # Type-checker view: full precision.
+    _ModelOrNone = Model | None
+    _SimulationResultOrNone = SimulationResult | None
+else:
+    # Runtime view used by beartype's annotation evaluator. `Model` and
+    # `SimulationResult` cannot be imported here (circular), so collapse
+    # to `Any`. The snapshot dataclasses are serialization carriers; the
+    # API surface that needs strict checking is the `save_*_snapshot`
+    # callers, which beartype still polices via their own parameters.
+    _ModelOrNone = Any
+    _SimulationResultOrNone = Any
+
+
+def _bind_forward_refs(
+    *,
+    model_cls: type,
+    simulation_result_cls: type,
+) -> None:
+    """Bind `Model` and `SimulationResult` into this module's globals.
+
+    The package claw rewrites string annotations in `save_*_snapshot` into
+    runtime forward references resolved against this module's globals.
+    `lcm.__init__` calls this helper once both classes are loaded so the
+    refs resolve at call time without depending on an ad-hoc assignment
+    from outside the module.
+    """
+    global Model, SimulationResult  # noqa: PLW0603
+    Model = model_cls  # ty: ignore[invalid-assignment]
+    SimulationResult = simulation_result_cls  # ty: ignore[invalid-assignment]
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +70,7 @@ logger = logging.getLogger(__name__)
 class SolveSnapshot:
     """Snapshot of a solve run for offline reconstruction."""
 
-    model: Model | None
+    model: _ModelOrNone
     """The Model instance."""
 
     params: UserParams | None
@@ -51,19 +87,19 @@ class SolveSnapshot:
 class SimulateSnapshot:
     """Snapshot of a simulate run for offline reconstruction."""
 
-    model: Model | None
+    model: _ModelOrNone
     """The Model instance."""
 
     params: UserParams | None
     """User parameters passed to simulate."""
 
-    initial_conditions: Mapping[str, Array] | None
-    """Mapping of state names and "regime" to arrays."""
+    initial_conditions: InitialConditions | None
+    """Immutable mapping of state names and `"regime_id"` to canonical-dtype arrays."""
 
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
 
-    result: SimulationResult | None
+    result: _SimulationResultOrNone
     """SimulationResult object."""
 
     platform: str
@@ -189,7 +225,7 @@ def save_simulate_snapshot(
     *,
     model: Model,
     params: UserParams,
-    initial_conditions: Mapping[str, Array],
+    initial_conditions: InitialConditions,
     period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     result: SimulationResult,
     log_path: Path,
@@ -200,7 +236,7 @@ def save_simulate_snapshot(
     Args:
         model: The Model instance.
         params: User parameters passed to simulate.
-        initial_conditions: Mapping of state names and "regime" to arrays.
+        initial_conditions: Mapping of state names and "regime_id" to arrays.
         period_to_regime_to_V_arr: Value function arrays.
         result: SimulationResult object.
         log_path: Parent directory for snapshot directories.

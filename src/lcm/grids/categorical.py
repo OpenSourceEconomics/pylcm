@@ -5,7 +5,9 @@ from dataclasses import dataclass, field, is_dataclass
 import jax
 import jax.numpy as jnp
 import pandas as pd
+from beartype import beartype
 
+from lcm._beartype_conf import CATEGORICAL_CONF
 from lcm.exceptions import (
     CategoricalDefinitionError,
     GridInitializationError,
@@ -15,6 +17,7 @@ from lcm.typing import ScalarInt
 from lcm.utils.containers import find_duplicates, get_field_names_and_values
 
 
+@beartype(conf=CATEGORICAL_CONF)
 def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
     """Create a categorical class with auto-assigned `ScalarInt` values.
 

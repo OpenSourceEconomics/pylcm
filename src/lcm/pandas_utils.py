@@ -3,24 +3,26 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
-from jax import Array
 
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.dtypes import canonical_float_dtype
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
-from lcm.params import MappingLeaf
-from lcm.params.sequence_leaf import SequenceLeaf
+from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from lcm.typing import (
+    Float1D,
+    FloatND,
     FunctionName,
+    InitialConditions,
+    Int1D,
     InternalParams,
     RegimeName,
     RegimeNamesToIds,
@@ -38,9 +40,11 @@ def has_series(params: Mapping) -> bool:
             return True
         if isinstance(value, Mapping) and has_series(value):
             return True
-        if isinstance(value, (MappingLeaf, SequenceLeaf)):
+        if isinstance(value, (UserMappingLeaf, UserSequenceLeaf)):
             items = (
-                value.data.values() if isinstance(value, MappingLeaf) else value.data
+                value.data.values()
+                if isinstance(value, UserMappingLeaf)
+                else value.data
             )
             if any(isinstance(v, pd.Series) for v in items):
                 return True
@@ -52,28 +56,30 @@ def initial_conditions_from_dataframe(  # noqa: C901
     df: pd.DataFrame,
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
-) -> dict[str, Array]:
+) -> InitialConditions:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
     Args:
-        df: DataFrame with columns for states and a "regime" column.
+        df: DataFrame with columns for states and a "regime_name" column
+            carrying the regime label strings.
         regimes: Mapping of regime names to user Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
 
     Returns:
-        Dict mapping state names (plus `"regime"`) to JAX arrays. The
-        `"regime"` entry contains integer codes derived from the `"regime"`
-        column via `regime_names_to_ids`.
+        Immutable mapping of state names (plus `"regime_id"`) to JAX
+        arrays. The `"regime_id"` entry contains integer codes derived
+        from the `"regime_name"` column via `regime_names_to_ids`.
 
     Raises:
-        ValueError: If the DataFrame is empty, the "regime" column is missing,
-            contains invalid regime names, has unknown columns, is missing required
-            states, or categorical columns contain invalid labels.
+        ValueError: If the DataFrame is empty, the "regime_name" column is
+            missing, contains invalid regime names, has unknown columns, is
+            missing required states, or categorical columns contain invalid
+            labels.
 
     """
-    if "regime" not in df.columns:
-        msg = "DataFrame must contain a 'regime' column."
+    if "regime_name" not in df.columns:
+        msg = "DataFrame must contain a 'regime_name' column."
         raise ValueError(msg)
 
     if len(df) == 0:
@@ -82,23 +88,24 @@ def initial_conditions_from_dataframe(  # noqa: C901
 
     # Validate regime names
     valid_regimes = set(regime_names_to_ids.keys())
-    invalid_regimes = set(df["regime"]) - valid_regimes
+    invalid_regimes = set(df["regime_name"]) - valid_regimes
     if invalid_regimes:
         msg = (
-            f"Invalid regime names in 'regime' column: {sorted(invalid_regimes)}. "
+            f"Invalid regime names in 'regime_name' column: "
+            f"{sorted(invalid_regimes)}. "
             f"Valid regimes: {sorted(valid_regimes)}."
         )
         raise ValueError(msg)
 
-    state_columns = {col for col in df.columns if col != "regime"}
+    state_columns = {col for col in df.columns if col != "regime_name"}
     _validate_state_columns(
         state_columns=state_columns,
         regimes=regimes,
-        initial_regimes=df["regime"].tolist(),
+        initial_regimes=df["regime_name"].tolist(),
     )
 
     n_subjects = len(df)
-    state_cols = [col for col in df.columns if col != "regime"]
+    state_cols = [col for col in df.columns if col != "regime_name"]
 
     # Pre-allocate result arrays (NaN default surfaces bugs for missing states)
     result_arrays: dict[str, np.ndarray] = {
@@ -107,7 +114,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     discrete_state_names: set[StateName] = set()
 
     # Process per regime group (vectorised .map() within each group)
-    for regime_name, group in df.groupby("regime"):
+    for regime_name, group in df.groupby("regime_name"):
         regime = regimes[str(regime_name)]
         idx = group.index
         discrete_grids = {
@@ -147,18 +154,18 @@ def initial_conditions_from_dataframe(  # noqa: C901
             nan_mask = np.isnan(result_arrays[col])
             result_arrays[col][nan_mask] = MISSING_CAT_CODE
 
-    initial_conditions: dict[str, Array] = {
+    initial_conditions: dict[StateName | Literal["regime_id"], Float1D | Int1D] = {
         col: jnp.array(arr, dtype=jnp.int32)
         if col in discrete_state_names
         else jnp.array(arr, dtype=canonical_float_dtype())
         for col, arr in result_arrays.items()
     }
-    initial_conditions["regime"] = jnp.array(
-        df["regime"].map(dict(regime_names_to_ids)).to_numpy(),
+    initial_conditions["regime_id"] = jnp.array(
+        df["regime_name"].map(dict(regime_names_to_ids)).to_numpy(),
         dtype=jnp.int32,
     )
 
-    return initial_conditions
+    return MappingProxyType(initial_conditions)
 
 
 def _map_discrete_labels(
@@ -196,7 +203,8 @@ def convert_series_in_params(
 
     Iterate over the template-shaped `internal_params` (produced by
     `process_params`) and convert any `pd.Series` leaf values via
-    `array_from_series`. `MappingLeaf` and `SequenceLeaf` values are
+    `array_from_series`. `UserMappingLeaf` and `UserSequenceLeaf` values
+    (and their canonical `MappingLeaf` / `SequenceLeaf` subclasses) are
     traversed and any Series inside are converted. Other values (scalars,
     existing arrays) pass through unchanged.
 
@@ -279,7 +287,8 @@ def _convert_param_value(
     """Convert a single param value, dispatching on type.
 
     Args:
-        value: The parameter value (Series, MappingLeaf, or passthrough).
+        value: The parameter value (Series, `UserMappingLeaf` /
+            `UserSequenceLeaf`, or passthrough).
         func: The function that uses this parameter (`None` for runtime
             grid params — triggers scalar passthrough).
         param_name: Parameter name in the function.
@@ -291,8 +300,9 @@ def _convert_param_value(
         regime_name: Regime name for action grid lookup.
 
     Returns:
-        Converted value: JAX array for Series, MappingLeaf with converted
-        Series entries, or the original value unchanged.
+        Converted value: JAX array for Series, a `UserMappingLeaf` /
+        `UserSequenceLeaf` with converted Series entries, or the original
+        value unchanged.
 
     """
 
@@ -319,10 +329,13 @@ def _convert_param_value(
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
         )
-    if isinstance(value, MappingLeaf):
-        return MappingLeaf({k: _recurse(v) for k, v in value.data.items()})
-    if isinstance(value, SequenceLeaf):
-        return SequenceLeaf(tuple(_recurse(v) for v in value.data))
+    # `convert_series_in_params` runs between broadcast and canonicalization,
+    # so leaves are still in user form. Preserve that user form on output:
+    # canonicalization happens downstream in `cast_params_to_canonical_dtypes`.
+    if isinstance(value, UserMappingLeaf):
+        return UserMappingLeaf({k: _recurse(v) for k, v in value.data.items()})
+    if isinstance(value, UserSequenceLeaf):
+        return UserSequenceLeaf(tuple(_recurse(v) for v in value.data))
     return value
 
 
@@ -336,7 +349,7 @@ def array_from_series(
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None = None,
-) -> Array:
+) -> FloatND:
     """Convert a pandas Series to a JAX array.
 
     Inspect `func` to determine indexing dimensions (states, actions,
@@ -683,7 +696,7 @@ def _scatter_series(
     series: pd.Series,
     level_mappings: tuple[_LevelMapping, ...],
     fill_value: float = np.nan,
-) -> Array:
+) -> FloatND:
     """Scatter a MultiIndex Series into an N-dimensional JAX array.
 
     Each `_LevelMapping` defines one axis: its size, and how to map labels from

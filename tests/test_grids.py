@@ -252,20 +252,20 @@ def test_categorical_instance_attr_is_scalar_int():
 
 
 def test_lin_spaced_grid_rejects_non_numeric_start():
-    """Non-numeric `start` is rejected at the boundary cast."""
-    with pytest.raises((TypeError, ValueError)):
+    """Non-numeric `start` raises `GridInitializationError`."""
+    with pytest.raises(GridInitializationError, match="start"):
         LinSpacedGrid(start="a", stop=1, n_points=10)  # ty: ignore[invalid-argument-type]
 
 
 def test_lin_spaced_grid_rejects_non_numeric_stop():
-    """Non-numeric `stop` is rejected at the boundary cast."""
-    with pytest.raises((TypeError, ValueError)):
+    """Non-numeric `stop` raises `GridInitializationError`."""
+    with pytest.raises(GridInitializationError, match="stop"):
         LinSpacedGrid(start=1, stop="a", n_points=10)  # ty: ignore[invalid-argument-type]
 
 
 def test_lin_spaced_grid_rejects_non_numeric_n_points():
-    """Non-numeric `n_points` is rejected at the boundary cast."""
-    with pytest.raises((TypeError, ValueError)):
+    """Non-numeric `n_points` raises `GridInitializationError`."""
+    with pytest.raises(GridInitializationError, match="n_points"):
         LinSpacedGrid(start=1, stop=2, n_points="a")  # ty: ignore[invalid-argument-type]
 
 
@@ -363,7 +363,7 @@ def test_irreg_spaced_grid_invalid_too_few_points():
 
 
 def test_irreg_spaced_grid_invalid_non_numeric():
-    with pytest.raises(GridInitializationError, match="must be int or float"):
+    with pytest.raises(GridInitializationError, match="points"):
         IrregSpacedGrid(points=(1.0, "a", 3.0))  # ty: ignore[invalid-argument-type]
 
 
@@ -559,13 +559,13 @@ def test_piecewise_lin_spaced_grid_invalid_numeric_gap():
 
 def test_piecewise_lin_spaced_grid_invalid_not_tuple():
     """Pieces must be a tuple."""
-    with pytest.raises(GridInitializationError, match="must be a tuple"):
+    with pytest.raises(GridInitializationError, match="pieces"):
         PiecewiseLinSpacedGrid(pieces=[Piece(interval="[1, 4]", n_points=3)])  # ty: ignore[invalid-argument-type]
 
 
 def test_piecewise_lin_spaced_grid_invalid_not_piece():
     """Each element in pieces must be a Piece object."""
-    with pytest.raises(GridInitializationError, match="must be a Piece"):
+    with pytest.raises(GridInitializationError, match="pieces"):
         PiecewiseLinSpacedGrid(
             pieces=({"interval": "[1, 4]", "n_points": 3},)  # ty: ignore[invalid-argument-type]
         )
@@ -753,15 +753,15 @@ def test_piecewise_boundary_conditions(grid_cls, boundary_style: str):
         expected_coord_at = 5.0 if is_lin else 2.0
 
     # Test value just below boundary -> piece 0
-    coord_below = float(grid.get_coordinate(below_boundary))
+    coord_below = float(grid.get_coordinate(jnp.asarray(below_boundary)))
     assert coord_below < expected_coord_at
 
     # Test value exactly at boundary
-    coord_at = float(grid.get_coordinate(boundary))
+    coord_at = float(grid.get_coordinate(jnp.asarray(boundary)))
     assert coord_at == pytest.approx(expected_coord_at)
 
     # Test value just above boundary -> piece 1
-    coord_above = float(grid.get_coordinate(above_boundary))
+    coord_above = float(grid.get_coordinate(jnp.asarray(above_boundary)))
     assert coord_above > expected_coord_at
 
 

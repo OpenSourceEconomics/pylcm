@@ -7,16 +7,19 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Never, cast
+from typing import NoReturn, cast
 
 import jax
 import numpy as np
 import pandas as pd
-from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
-from lcm.dtypes import canonical_float_dtype, safe_to_float_dtype
+from lcm.dtypes import (
+    canonical_float_dtype,
+    safe_to_float_dtype,
+    safe_to_int_dtype,
+)
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     PyLCMError,
@@ -27,13 +30,20 @@ from lcm.interfaces import InternalRegime
 from lcm.regime_building.Q_and_F import _get_feasibility
 from lcm.typing import (
     ActionName,
+    BoolND,
     FlatRegimeParams,
+    Float1D,
+    FloatND,
+    InitialConditions,
+    Int1D,
     InternalParams,
+    IntND,
     RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
     StateName,
     StatesPerRegime,
+    UserInitialConditions,
 )
 from lcm.utils.containers import invert_regime_ids
 from lcm.utils.functools import get_union_of_args
@@ -44,9 +54,57 @@ from lcm.utils.functools import get_union_of_args
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 
+def canonicalize_initial_conditions(
+    *,
+    initial_conditions: UserInitialConditions,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+) -> InitialConditions:
+    """Cast every initial-conditions array to its canonical pylcm dtype.
+
+    This is pylcm's simulation input boundary: `"regime_id"` and discrete
+    states cast to `int32`; `"age"` and continuous states cast to the canonical
+    float dtype. Keys that match no model state are cast by their array kind
+    (integer arrays to `int32`, otherwise to canonical float) and left for
+    `validate_initial_conditions` to report. Downstream validation and the
+    simulate stack receive canonical-dtype arrays and do not re-cast.
+
+    Args:
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to
+            user-supplied arrays of any integer or floating dtype.
+        internal_regimes: Immutable mapping of regime names to internal regime
+            instances, used to classify each state as discrete or continuous.
+
+    Returns:
+        Mapping of the same keys to JAX arrays at their canonical dtype.
+
+    """
+    discrete_state_names = {
+        state_name
+        for internal_regime in internal_regimes.values()
+        for state_name, grid in internal_regime.grids.items()
+        if isinstance(grid, DiscreteGrid)
+    }
+    known_state_names = {
+        state_name
+        for internal_regime in internal_regimes.values()
+        for state_name in internal_regime.grids
+    }
+    canonical: dict[str, FloatND | IntND] = {}
+    for name, value in initial_conditions.items():
+        if name == "regime_id" or name in discrete_state_names:
+            canonical[name] = safe_to_int_dtype(value, name=name)
+        elif name == "age" or name in known_state_names:
+            canonical[name] = safe_to_float_dtype(value, name=name)
+        elif np.asarray(value).dtype.kind in "iu":
+            canonical[name] = safe_to_int_dtype(value, name=name)
+        else:
+            canonical[name] = safe_to_float_dtype(value, name=name)
+    return MappingProxyType(canonical)
+
+
 def build_initial_states(
     *,
-    initial_states: Mapping[StateName, Array],
+    initial_states: Mapping[StateName, Float1D | Int1D],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> StatesPerRegime:
     """Build the regime-keyed state carrier from user-provided initial states.
@@ -66,10 +124,12 @@ def build_initial_states(
 
     """
     n_subjects = len(next(iter(initial_states.values())))
-    states_per_regime: dict[RegimeName, MappingProxyType[StateName, Array]] = {}
+    states_per_regime: dict[
+        RegimeName, MappingProxyType[StateName, Float1D | Int1D]
+    ] = {}
 
     for regime_name, internal_regime in internal_regimes.items():
-        regime_states: dict[StateName, Array] = {}
+        regime_states: dict[StateName, Float1D | Int1D] = {}
         # Logic for distribution of subjects over devices
         distributed = any(grid.distributed for grid in internal_regime.grids.values())
         devices = jax.devices()
@@ -121,7 +181,7 @@ def build_initial_states(
 
 def validate_initial_conditions(
     *,
-    initial_conditions: Mapping[str, Array],
+    initial_conditions: InitialConditions,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     internal_params: InternalParams,
@@ -130,14 +190,14 @@ def validate_initial_conditions(
     """Validate initial conditions (regimes, states, and feasibility).
 
     Checks that:
-    1. `"regime"` is present, non-empty, and contains only valid regime IDs
+    1. `"regime_id"` is present, non-empty, and contains only valid regime IDs
     2. All required state names (across all regimes) are provided, with no extras
     3. All arrays have the same length
     4. Discrete state values are valid codes
     5. Each subject has at least one feasible action combination
 
     Args:
-        initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer IDs.
@@ -154,10 +214,10 @@ def validate_initial_conditions(
     regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
     # Extract regime array
-    regime_arr = initial_conditions.get("regime")
+    regime_arr = initial_conditions.get("regime_id")
     if regime_arr is None:
         raise InvalidInitialConditionsError(
-            format_messages(["'regime' must be provided in initial_conditions."])
+            format_messages(["'regime_id' must be provided in initial_conditions."])
         )
 
     # Vectorized regime ID validity check
@@ -174,7 +234,7 @@ def validate_initial_conditions(
             )
         )
 
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
 
     # Validate regime names and state names/shapes first; early-exit on errors so that
     # downstream checks (discrete codes, feasibility) can assume correct names.
@@ -239,8 +299,8 @@ def _format_missing_states_message(missing: set[str], required: set[str]) -> str
 
 def _collect_state_name_errors(
     *,
-    initial_states: Mapping[StateName, Array],
-    regime_id_arr: Array,
+    initial_states: Mapping[StateName, FloatND | IntND],
+    regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     valid_regime_names: set[RegimeName],
@@ -297,8 +357,8 @@ def _collect_state_name_errors(
 
 def _collect_structural_errors(
     *,
-    initial_states: Mapping[StateName, Array],
-    regime_id_arr: Array,
+    initial_states: Mapping[StateName, FloatND | IntND],
+    regime_id_arr: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -369,12 +429,17 @@ def _collect_structural_errors(
     else:
         # Validate that each subject's initial regime is active at their starting age.
         # Only safe to run when all ages are valid (so age_to_period lookup succeeds).
-        periods = jnp.array([ages.age_to_period(a.item()) for a in age_values])
+        periods = jnp.array(
+            [ages.age_to_period(a.item()) for a in age_values], dtype=jnp.int32
+        )
 
         active_mask = jnp.ones(regime_id_arr.size, dtype=bool)
         for regime_name, internal_regime in internal_regimes.items():
             in_regime = regime_id_arr == regime_names_to_ids[regime_name]
-            period_active = jnp.isin(periods, jnp.array(internal_regime.active_periods))
+            period_active = jnp.isin(
+                periods,
+                jnp.array(internal_regime.active_periods, dtype=jnp.int32),
+            )
             active_mask = active_mask & (~in_regime | period_active)
 
         if not jnp.all(active_mask):
@@ -397,8 +462,8 @@ def _collect_structural_errors(
 
 def _collect_feasibility_errors(
     *,
-    initial_states: Mapping[StateName, Array],
-    regime_id_arr: Array,
+    initial_states: Mapping[StateName, FloatND | IntND],
+    regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
@@ -448,9 +513,9 @@ def _collect_feasibility_errors(
 
 def _validate_discrete_state_values(
     *,
-    initial_states: Mapping[StateName, Array],
+    initial_states: Mapping[StateName, FloatND | IntND],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    regime_id_arr: Array,
+    regime_id_arr: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
 ) -> None:
     """Validate that discrete state values are valid codes.
@@ -512,12 +577,12 @@ _BYTES_PER_ACTION_ELEMENT = 4
 
 def _batched_feasibility_check(
     *,
-    feasibility_func: Callable[..., Array],
-    subject_states: Mapping[StateName, Array],
-    action_kwargs: Mapping[str, Array],
+    feasibility_func: Callable[..., BoolND],
+    subject_states: Mapping[str, FloatND | IntND],
+    action_kwargs: Mapping[str, FloatND | IntND],
     filtered_params: Mapping[str, object],
-    flat_actions: Mapping[ActionName, Array],
-) -> Array:
+    flat_actions: Mapping[ActionName, FloatND | IntND],
+) -> BoolND:
     """Check feasibility for all subjects, batching to avoid OOM.
 
     Vmaps over action combos individually (like solve/simulate do) so each
@@ -540,12 +605,14 @@ def _batched_feasibility_check(
     if action_kwargs:
 
         def _is_combo_feasible(
-            action_kw: dict[str, Array],
-            subject_kw: dict[str, Array],
-        ) -> Array:
+            action_kw: dict[str, FloatND | IntND],
+            subject_kw: dict[str, FloatND | IntND],
+        ) -> BoolND:
             return feasibility_func(**action_kw, **subject_kw, **filtered_params)
 
-        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> Array:
+        def _is_any_action_feasible(
+            per_subject_kwargs: dict[str, FloatND | IntND],
+        ) -> BoolND:
             per_combo = jax.vmap(_is_combo_feasible, in_axes=(0, None))(
                 action_kwargs,
                 per_subject_kwargs,
@@ -554,7 +621,9 @@ def _batched_feasibility_check(
 
     else:
 
-        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> Array:
+        def _is_any_action_feasible(
+            per_subject_kwargs: dict[str, FloatND | IntND],
+        ) -> BoolND:
             return jnp.any(feasibility_func(**per_subject_kwargs, **filtered_params))
 
     vmapped_check = jax.vmap(_is_any_action_feasible)
@@ -569,7 +638,7 @@ def _batched_feasibility_check(
     if n_subjects <= batch_size:
         return vmapped_check(subject_states)
 
-    results: list[Array] = []
+    results: list[BoolND] = []
     for start in range(0, n_subjects, batch_size):
         end = min(start + batch_size, n_subjects)
         batch = {k: v[start:end] for k, v in subject_states.items()}
@@ -581,7 +650,7 @@ def _check_regime_feasibility(  # noqa: C901
     *,
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: Mapping[StateName, Array],
+    initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
     ages: AgeGrid,
@@ -617,7 +686,7 @@ def _check_regime_feasibility(  # noqa: C901
     state_action_space = internal_regime.state_action_space(
         regime_params=cast("FlatRegimeParams", MappingProxyType(dict(regime_params))),
     )
-    action_grids: dict[str, Array] = {
+    action_grids: dict[ActionName, FloatND | IntND] = {
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
     }
@@ -632,8 +701,8 @@ def _check_regime_feasibility(  # noqa: C901
     needs_period = "period" in accepted
 
     # Build per-subject state arrays
-    idx_arr = jnp.array(subject_indices)
-    subject_states: dict[StateName, Array] = {}
+    idx_arr = jnp.array(subject_indices, dtype=jnp.int32)
+    subject_states: dict[StateName, FloatND | IntND] = {}
     for sn in state_names:
         if sn in accepted:
             subject_states[sn] = initial_states[sn][idx_arr]
@@ -642,11 +711,12 @@ def _check_regime_feasibility(  # noqa: C901
         subject_states["age"] = initial_states["age"][idx_arr]
     if needs_period:
         subject_states["period"] = jnp.array(
-            [ages.age_to_period(a.item()) for a in initial_states["age"][idx_arr]]
+            [ages.age_to_period(a.item()) for a in initial_states["age"][idx_arr]],
+            dtype=jnp.int32,
         )
 
     # Split actions and params — actions are vmapped over, params are not
-    action_kwargs: dict[str, Array] = {
+    action_kwargs: dict[str, FloatND | IntND] = {
         k: v for k, v in flat_actions.items() if k in accepted
     }
 
@@ -672,7 +742,7 @@ def _check_regime_feasibility(  # noqa: C901
         # No per-subject varying states: feasibility is identical for all subjects.
         if action_kwargs:
 
-            def _check_combo(action_kw: dict[str, Array]) -> Array:
+            def _check_combo(action_kw: dict[str, FloatND | IntND]) -> BoolND:
                 return feasibility_func(**action_kw, **filtered_params)  # ty: ignore[invalid-argument-type]
 
             result = jax.vmap(_check_combo)(action_kwargs)
@@ -704,14 +774,14 @@ def _check_regime_feasibility(  # noqa: C901
 
 def _admits_any_action(
     *,
-    feasibility_func: Callable[..., Array],
-    action_kwargs: Mapping[str, Array],
+    feasibility_func: Callable[..., BoolND],
+    action_kwargs: Mapping[str, FloatND | IntND],
     params: Mapping[str, object],
 ) -> bool:
     """Return True iff the feasibility function admits ≥ 1 action under params."""
     if action_kwargs:
 
-        def _check_combo(action_kw: dict[str, Array]) -> Array:
+        def _check_combo(action_kw: dict[str, FloatND | IntND]) -> BoolND:
             return feasibility_func(**action_kw, **params)
 
         per_combo = jax.vmap(_check_combo)(action_kwargs)
@@ -722,10 +792,10 @@ def _admits_any_action(
 def _per_constraint_feasibility(
     *,
     internal_regime: InternalRegime,
-    subject_states: Mapping[StateName, Array],
+    subject_states: Mapping[str, FloatND | IntND],
     regime_params: Mapping[str, object],
-    flat_actions: Mapping[ActionName, Array],
-    idx_arr: Array,
+    flat_actions: Mapping[ActionName, FloatND | IntND],
+    idx_arr: Int1D,
     infeasible_indices: Sequence[int],
 ) -> dict[str, np.ndarray]:
     """Per-constraint feasibility for the infeasible subjects.
@@ -789,8 +859,8 @@ def _raise_feasibility_type_error(
     exc: TypeError,
     regime_name: RegimeName,
     internal_regime: InternalRegime,
-    subject_states: dict[StateName, Array],
-) -> Never:
+    subject_states: dict[StateName, FloatND | IntND],
+) -> NoReturn:
     """Re-raise a TypeError from feasibility checking with diagnostic context.
 
     Args:
@@ -835,7 +905,7 @@ def _format_infeasibility_message(
     infeasible_indices: Sequence[int],
     internal_regime: InternalRegime,
     regime_name: RegimeName,
-    initial_states: Mapping[StateName, Array],
+    initial_states: Mapping[StateName, FloatND | IntND],
     state_names: Sequence[str],
     per_constraint_admits_any: Mapping[str, np.ndarray],
 ) -> str:
@@ -902,8 +972,8 @@ def _format_infeasibility_message(
 def _build_flat_action_grid(
     *,
     action_names: list[ActionName],
-    grids: MappingProxyType[str, Array],
-) -> dict[str, Array]:
+    grids: MappingProxyType[str, FloatND | IntND],
+) -> dict[str, FloatND | IntND]:
     """Build a flat array of all action combinations from action grids.
 
     Args:

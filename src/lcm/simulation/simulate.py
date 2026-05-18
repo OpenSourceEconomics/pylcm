@@ -6,7 +6,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pandas as pd
-from jax import Array, vmap
+from jax import vmap
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import (
@@ -25,14 +25,18 @@ from lcm.simulation.transitions import (
     create_regime_state_action_space,
 )
 from lcm.typing import (
+    Float1D,
     FloatND,
+    InitialConditions,
     Int1D,
     InternalParams,
     IntND,
+    PRNGKeyND,
     RegimeName,
     RegimeNamesToIds,
     ScalarFloat,
     ScalarInt,
+    StateOrActionName,
     StatesPerRegime,
 )
 from lcm.utils.containers import invert_regime_ids
@@ -49,7 +53,7 @@ from lcm.utils.logging import (
 def simulate(
     *,
     internal_params: InternalParams,
-    initial_conditions: Mapping[str, Array],
+    initial_conditions: InitialConditions,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
@@ -64,10 +68,11 @@ def simulate(
 
     Args:
         internal_params: Immutable mapping of regime names to flat parameter mappings.
-        initial_conditions: Flat mapping of state names (plus `"regime"`) to arrays.
-            All arrays must have the same length (number of subjects). The `"regime"`
-            entry must contain integer regime codes.
-            Example: {"wealth": jnp.array([10.0, 50.0]), "regime": jnp.array([0, 0])}
+        initial_conditions: Flat mapping of state names (plus `"regime_id"`) to
+            arrays. All arrays must have the same length (number of subjects).
+            The `"regime_id"` entry must contain integer regime codes.
+            Example:
+            {"wealth": jnp.array([10.0, 50.0]), "regime_id": jnp.array([0, 0])}
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
@@ -91,7 +96,7 @@ def simulate(
     total_start = time.monotonic()
 
     # Extract state arrays from initial conditions, which include the regime on top.
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
 
     # Preparations
     key = jax.random.key(seed=seed)
@@ -104,7 +109,7 @@ def simulate(
         initial_ages=initial_states["age"], ages=ages
     )
     subject_regime_ids = jnp.full_like(
-        initial_conditions["regime"], MISSING_CAT_CODE, dtype=jnp.int32
+        initial_conditions["regime_id"], MISSING_CAT_CODE, dtype=jnp.int32
     )
 
     # Forward simulation
@@ -122,7 +127,7 @@ def simulate(
         # Activate subjects whose starting period matches the current period
         subject_regime_ids = jnp.where(
             starting_periods == period,
-            initial_conditions["regime"],
+            initial_conditions["regime_id"],
             subject_regime_ids,
         )
 
@@ -215,8 +220,8 @@ def _simulate_regime_in_period(
     internal_params: InternalParams,
     regime_names_to_ids: RegimeNamesToIds,
     active_regimes_next_period: tuple[RegimeName, ...],
-    key: Array,
-) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Array]:
+    key: PRNGKeyND,
+) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -335,8 +340,8 @@ def _simulate_regime_in_period(
 def _lookup_values_from_indices(
     *,
     flat_indices: IntND,
-    grids: MappingProxyType[str, Array],
-) -> MappingProxyType[str, Array]:
+    grids: MappingProxyType[StateOrActionName, FloatND | IntND],
+) -> MappingProxyType[StateOrActionName, FloatND | IntND]:
     """Retrieve values from indices.
 
     Args:
@@ -369,7 +374,7 @@ vmapped_unravel_index = vmap(jnp.unravel_index, in_axes=(0, None))
 
 def _compute_starting_periods(
     *,
-    initial_ages: Array,
+    initial_ages: Float1D,
     ages: AgeGrid,
 ) -> Int1D:
     """Convert per-subject initial ages to starting period indices.

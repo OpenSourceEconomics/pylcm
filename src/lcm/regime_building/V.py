@@ -5,14 +5,13 @@ from types import MappingProxyType
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
-from jax import Array
 
 from lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.regime import Regime
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.shocks import _ShockGrid
-from lcm.typing import FloatND, ScalarFloat, StateName
+from lcm.typing import FloatND, IntND, ScalarFloat, StateName
 from lcm.utils.functools import all_as_kwargs
 from lcm.variables import Variables, get_grids
 
@@ -159,7 +158,7 @@ def _get_lookup_function(
     *,
     array_name: str,
     axis_names: list[str],
-) -> Callable[..., Array]:
+) -> Callable[..., FloatND]:
     """Create a function that emulates indexing into an array via named axes.
 
     Args:
@@ -173,8 +172,11 @@ def _get_lookup_function(
     """
     arg_names = [*axis_names, array_name]
 
-    @with_signature(args=dict.fromkeys(arg_names, "Array"), return_annotation="Array")
-    def lookup_wrapper(*args: Array, **kwargs: Array) -> Array:
+    @with_signature(
+        args=dict.fromkeys(arg_names, "FloatND | IntND"),
+        return_annotation="FloatND",
+    )
+    def lookup_wrapper(*args: FloatND | IntND, **kwargs: FloatND | IntND) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
         positions = tuple(kwargs[var] for var in axis_names)
         return kwargs[array_name][positions]
@@ -186,7 +188,7 @@ def _get_coordinate_finder(
     *,
     in_name: str,
     grid: ContinuousGrid,
-) -> Callable[..., Array]:
+) -> Callable[..., FloatND]:
     """Create a function that translates a value into coordinates on a grid.
 
     The resulting coordinates can be used to do linear interpolation via
@@ -210,9 +212,9 @@ def _get_coordinate_finder(
             arg_names = [in_name, points_param]
 
             @with_signature(
-                args=dict.fromkeys(arg_names, "Array"), return_annotation="Array"
+                args=dict.fromkeys(arg_names, "FloatND"), return_annotation="FloatND"
             )
-            def find_irreg_coordinate(*args: Array, **kwargs: Array) -> Array:
+            def find_irreg_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
                 kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
                 return get_irreg_coordinate(
                     value=kwargs[in_name], points=kwargs[points_param]
@@ -224,17 +226,19 @@ def _get_coordinate_finder(
         points_jax = grid.to_jax()
 
         @with_signature(
-            args=dict.fromkeys([in_name], "Array"), return_annotation="Array"
+            args=dict.fromkeys([in_name], "FloatND"), return_annotation="FloatND"
         )
-        def find_irreg_coordinate(*args: Array, **kwargs: Array) -> Array:
+        def find_irreg_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
             kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
             return get_irreg_coordinate(value=kwargs[in_name], points=points_jax)
 
         return find_irreg_coordinate
 
     # All other grid types (LinSpaced, LogSpaced, Piecewise*, ShockGrid)
-    @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
-    def find_coordinate(*args: Array, **kwargs: Array) -> Array:
+    @with_signature(
+        args=dict.fromkeys([in_name], "FloatND"), return_annotation="FloatND"
+    )
+    def find_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
         return grid.get_coordinate(kwargs[in_name])
 
@@ -245,7 +249,7 @@ def _get_interpolator(
     *,
     name_of_values_on_grid: str,
     axis_names: list[str],
-) -> Callable[..., Array]:
+) -> Callable[..., FloatND]:
     """Create a function interpolator via named axes.
 
     Args:
@@ -260,8 +264,10 @@ def _get_interpolator(
     """
     arg_names = [name_of_values_on_grid, *axis_names]
 
-    @with_signature(args=dict.fromkeys(arg_names, "Array"), return_annotation="Array")
-    def interpolate(*args: Array, **kwargs: Array) -> Array:
+    @with_signature(
+        args=dict.fromkeys(arg_names, "FloatND"), return_annotation="FloatND"
+    )
+    def interpolate(*args: FloatND, **kwargs: FloatND) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
         coordinates = jnp.array([kwargs[var] for var in axis_names])
         return map_coordinates(

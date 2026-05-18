@@ -9,7 +9,6 @@ import jax
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
-from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
@@ -45,9 +44,11 @@ from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Float1D,
+    FloatND,
     FunctionsMapping,
     Int1D,
     InternalUserFunction,
+    IntND,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     QAndFFunction,
@@ -866,7 +867,7 @@ def _get_stochastic_next_function_for_shock(
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
     def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
-        return jnp.arange(grid.shape[0])
+        return jnp.arange(grid.shape[0], dtype=jnp.int32)
 
     return next_func
 
@@ -884,11 +885,16 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
         runtime_param_names = {
             qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
         }
-        args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
+        args = {
+            name: "ContinuousState",
+            **dict.fromkeys(runtime_param_names, "FloatND"),
+        }
 
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
-        def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-            shock_kw: dict[str, float] = {  # ty: ignore[invalid-assignment]
+        def weights_func_runtime(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+            # `grid.params` is canonical (0-d JAX scalars) from its own
+            # boundary cast; `kwargs` arrive as JAX tracers from JIT.
+            shock_kw: dict[str, FloatND | IntND] = {
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
@@ -899,7 +905,7 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
                 input=transition_probs,
                 coordinates=[
                     jnp.full(n_points, fill_value=coord),
-                    jnp.arange(n_points),
+                    jnp.arange(n_points, dtype=jnp.int32),
                 ],
             )
 
@@ -913,13 +919,13 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
         return_annotation="FloatND",
         enforce=False,
     )
-    def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
+    def weights_func(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
         coordinate = get_irreg_coordinate(value=kwargs[f"{name}"], points=gridpoints)
         return map_coordinates(
             input=transition_probs,
             coordinates=[
                 jnp.full(grid.n_points, fill_value=coordinate),
-                jnp.arange(grid.n_points),
+                jnp.arange(grid.n_points, dtype=jnp.int32),
             ],
         )
 
@@ -1256,7 +1262,8 @@ def _wrap_regime_transition_probs(
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
 
     Returns:
-        A wrapped function that returns MappingProxyType[str, float|Array].
+        A wrapped function that returns an immutable mapping of regime
+        names to probability scalars.
 
     """
     # Get regime names in index order from regime_names_to_ids. Coerce
@@ -1276,8 +1283,8 @@ def _wrap_regime_transition_probs(
     )
     @functools.wraps(func)
     def wrapped(
-        *args: Array | int,
-        **kwargs: Array | int,
+        *args: FloatND | IntND | int,
+        **kwargs: FloatND | IntND | int,
     ) -> MappingProxyType[str, Any]:
         result = func(*args, **kwargs)
         # Convert array to dict using ordering by regime id
@@ -1285,6 +1292,11 @@ def _wrap_regime_transition_probs(
             {name: result[idx] for idx, name in enumerate(regime_names)}
         )
 
+    # Pin `__annotations__` on the final wrapper: `concatenate_functions`
+    # reads `__annotations__` (not `__signature__`) to reconcile the DAG, and
+    # the decorator stack can drop them when `func` carries deferred (PEP 649)
+    # annotations through `functools.wraps`.
+    wrapped.__annotations__ = {**annotations, "return": return_annotation}
     return wrapped
 
 
@@ -1312,15 +1324,20 @@ def _wrap_deterministic_regime_transition(
     # Preserve original annotations but update return type
     annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
 
-    @with_signature(args=annotations, return_annotation="Array")
+    @with_signature(args=annotations, return_annotation="FloatND")
     @functools.wraps(func)
     def wrapped(
-        *args: Array | int,
-        **kwargs: Array | int,
-    ) -> Array:
+        *args: FloatND | IntND | int,
+        **kwargs: FloatND | IntND | int,
+    ) -> FloatND:
         regime_idx = func(*args, **kwargs)
         return jax.nn.one_hot(regime_idx, n_regimes)
 
+    # Pin `__annotations__` on the final wrapper: `concatenate_functions`
+    # reads `__annotations__` (not `__signature__`) to reconcile the DAG, and
+    # the decorator stack can drop them when `func` carries deferred (PEP 649)
+    # annotations through `functools.wraps`.
+    wrapped.__annotations__ = {**annotations, "return": "FloatND"}
     return wrapped
 
 

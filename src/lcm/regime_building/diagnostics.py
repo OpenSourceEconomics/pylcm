@@ -15,7 +15,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.grids import Grid
@@ -24,7 +23,10 @@ from lcm.regime_building.Q_and_F import get_complete_targets, get_compute_interm
 from lcm.regime_building.V import VInterpolationInfo
 from lcm.typing import (
     ActionName,
+    BoolND,
+    FloatND,
     FunctionsMapping,
+    IntND,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -164,14 +166,19 @@ def _wrap_with_reduction(
 
     """
 
-    def reduced(**kwargs: Array) -> dict[str, Any]:
+    # `kwargs` carries the wrapped function's full input map: the
+    # `next_regime_to_V_arr` mapping alongside the Float/Int/Bool-valued
+    # state/action inputs.
+    def reduced(
+        **kwargs: MappingProxyType[RegimeName, FloatND] | FloatND | IntND | BoolND,
+    ) -> dict[str, Any]:
         U_arr, F_arr, E_next_V, Q_arr, regime_probs = func(**kwargs)
         F_float = F_arr.astype(float)
         # NaN-count arrays are masked by feasibility: only feasible cells
         # contribute to numerators. Infeasible cells are zeroed out because
         # the solver masks them before the max, so a NaN there never
         # propagates to V_arr — reporting it would conflate causes.
-        nan_arrays: dict[str, Array] = {
+        nan_arrays: dict[str, FloatND] = {
             "U_nan": jnp.isnan(U_arr).astype(float) * F_float,
             "E_nan": jnp.isnan(E_next_V).astype(float) * F_float,
             "Q_nan": jnp.isnan(Q_arr).astype(float) * F_float,

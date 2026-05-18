@@ -38,7 +38,7 @@ def _aggregate_with_ids(
     """
     data = jnp.array([consumption])  # shape-(1,) when scalar
     ids = invariant_array.data["ids"]  # shape-(1,) always
-    result = jax.ops.segment_sum(data, ids, num_segments=1)
+    result = jax.ops.segment_sum(data, ids, num_segments=1)  # ty: ignore[invalid-argument-type]
     return result.squeeze()
 
 
@@ -108,7 +108,7 @@ def test_validation_vmaps_over_action_combos():
         initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
-            "regime": jnp.array([RegimeId.alive] * 2),
+            "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=None,
         log_level="off",

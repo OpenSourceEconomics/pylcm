@@ -4,15 +4,17 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from beartype import beartype
 from jax.scipy.stats.norm import cdf
 
+from lcm._beartype_conf import GRID_CONF
 from lcm.shocks._base import (
     _gauss_hermite_normal,
     _mixture_cdf,
     _ShockGrid,
     _validate_gauss_hermite_grid,
 )
-from lcm.typing import Float1D, FloatND
+from lcm.typing import Float1D, FloatND, PRNGKeyND, ScalarFloat, ScalarInt
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -22,11 +24,12 @@ class _ShockGridIID(_ShockGrid):
     @abstractmethod
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
-    ) -> Float1D: ...
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+    ) -> ScalarFloat: ...
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Uniform(_ShockGridIID):
     r"""Discretized iid uniform shock: $U(\text{start}, \text{stop})$.
@@ -36,31 +39,32 @@ class Uniform(_ShockGridIID):
 
     """
 
-    start: float | None = None
+    start: float | int | None = None
     """Lower bound of the uniform distribution."""
 
-    stop: float | None = None
+    stop: float | int | None = None
     """Upper bound of the uniform distribution."""
 
-    def compute_gridpoints(self, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
         return jnp.linspace(
             start=kwargs["start"], stop=kwargs["stop"], num=self.n_points
         )
 
-    def compute_transition_probs(self, **kwargs: float) -> FloatND:  # noqa: ARG002
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:  # noqa: ARG002
         n_points = self.n_points
         return jnp.full((n_points, n_points), fill_value=1 / n_points)
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
-    ) -> Float1D:
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+    ) -> ScalarFloat:
         return jax.random.uniform(
             key=key, minval=params["start"], maxval=params["stop"]
         )
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Normal(_ShockGridIID):
     r"""Discretized iid normal shock: $N(\mu_\varepsilon, \sigma_\varepsilon^2)$.
@@ -75,13 +79,13 @@ class Normal(_ShockGridIID):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Mean of the shock distribution."""
 
-    sigma: float | None = None
+    sigma: float | int | None = None
     """Standard deviation of the shock distribution."""
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of standard deviations from the mean to the grid boundary."""
 
     def __post_init__(self) -> None:
@@ -96,7 +100,7 @@ class Normal(_ShockGridIID):
             exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -109,7 +113,7 @@ class Normal(_ShockGridIID):
         x_max = mu + n_std * sigma
         return jnp.linspace(start=x_min, stop=x_max, num=n_points)
 
-    def compute_transition_probs(self, **kwargs: float) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -129,12 +133,13 @@ class Normal(_ShockGridIID):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
-    ) -> Float1D:
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+    ) -> ScalarFloat:
         return params["mu"] + params["sigma"] * jax.random.normal(key=key)
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class LogNormal(_ShockGridIID):
     r"""Discretized iid log-normal shock: $\ln X \sim N(\mu, \sigma^2)$."""
@@ -142,13 +147,13 @@ class LogNormal(_ShockGridIID):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Mean of the underlying normal distribution ($E[\\ln X]$)."""
 
-    sigma: float | None = None
+    sigma: float | int | None = None
     """Standard deviation of the underlying normal distribution."""
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of standard deviations in log-space for the grid boundary."""
 
     def __post_init__(self) -> None:
@@ -163,7 +168,7 @@ class LogNormal(_ShockGridIID):
             exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -174,7 +179,7 @@ class LogNormal(_ShockGridIID):
         n_std = kwargs["n_std"]
         return jnp.exp(jnp.linspace(mu - n_std * sigma, mu + n_std * sigma, n_points))
 
-    def compute_transition_probs(self, **kwargs: float) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -194,12 +199,13 @@ class LogNormal(_ShockGridIID):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
-    ) -> Float1D:
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+    ) -> ScalarFloat:
         return jnp.exp(params["mu"] + params["sigma"] * jax.random.normal(key=key))
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class NormalMixture(_ShockGridIID):
     r"""Discretized IID normal-mixture shock.
@@ -215,25 +221,25 @@ class NormalMixture(_ShockGridIID):
 
     """
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of mixture standard deviations for the grid boundary."""
 
-    p1: float | None = None
+    p1: float | int | None = None
     """Probability of the first mixture component."""
 
-    mu1: float | None = None
+    mu1: float | int | None = None
     """Mean of the first mixture component."""
 
-    sigma1: float | None = None
+    sigma1: float | int | None = None
     """Standard deviation of the first mixture component."""
 
-    mu2: float | None = None
+    mu2: float | int | None = None
     """Mean of the second mixture component."""
 
-    sigma2: float | None = None
+    sigma2: float | int | None = None
     """Standard deviation of the second mixture component."""
 
-    def compute_gridpoints(self, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
         n_points = self.n_points
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
@@ -248,7 +254,7 @@ class NormalMixture(_ShockGridIID):
             mean_eps - n_std * std_eps, mean_eps + n_std * std_eps, n_points
         )
 
-    def compute_transition_probs(self, **kwargs: float) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         n_points = self.n_points
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
@@ -278,9 +284,9 @@ class NormalMixture(_ShockGridIID):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
-    ) -> Float1D:
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+    ) -> ScalarFloat:
         key1, key2 = jax.random.split(key)
         component = jax.random.bernoulli(key1, params["p1"])
         normal = jax.random.normal(key2)

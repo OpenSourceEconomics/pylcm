@@ -240,6 +240,56 @@ def test_solve_catches_transition_bug_hidden_at_first_grid_point():
         model.solve(params=params)
 
 
+def test_regime_transition_validation_passes_period_as_int32():
+    """Regime-transition validation hands the transition function a 0-d int32 `period`.
+
+    The x64-enabled test suite would otherwise trace a Python-int `period` as
+    int64 inside `jax.vmap`, breaking any consumer that dtype-checks its
+    `period` slot (e.g. a beartyped `Period` hint).
+    """
+    seen_period_dtypes: list = []
+
+    def _transition_recording_period(
+        action: DiscreteAction, period: ScalarInt
+    ) -> FloatND:
+        seen_period_dtypes.append(getattr(period, "dtype", None))
+        # `action` keeps a grid variable in the signature so validation takes
+        # the `jax.vmap` path; both outcomes route to the always-active
+        # terminal regime so the probabilities are valid at every transition.
+        return jnp.where(
+            action == _Action.leave,
+            jnp.array([0.0, 1.0]),
+            jnp.array([0.0, 1.0]),
+        )
+
+    active = Regime(
+        transition=MarkovTransition(_transition_recording_period),
+        active=lambda age: age < 27,
+        actions={
+            "action": DiscreteGrid(_Action),
+            "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),
+        },
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        constraints={"budget": lambda consumption, wealth: consumption <= wealth},
+        functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
+    )
+    terminal = Regime(
+        transition=None,
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
+    )
+    model = Model(
+        regimes={"active": active, "terminal": terminal},
+        ages=AgeGrid(start=25, stop=27, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+    model.solve(params={"discount_factor": 0.95})
+
+    assert seen_period_dtypes
+    assert all(dtype == jnp.int32 for dtype in seen_period_dtypes)
+
+
 N_PERIODS = 4
 
 
@@ -268,7 +318,7 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
     initial_conditions = {
         "age": jnp.array([40.0]),
         "wealth": jnp.array([10.0]),
-        "regime": jnp.array([MortalityRegimeId.working_life]),
+        "regime_id": jnp.array([MortalityRegimeId.working_life]),
     }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.simulate(
@@ -285,7 +335,7 @@ def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
     initial_conditions = {
         "age": jnp.array([40.0]),
         "wealth": jnp.array([10.0]),
-        "regime": jnp.array([MortalityRegimeId.working_life]),
+        "regime_id": jnp.array([MortalityRegimeId.working_life]),
     }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.simulate(

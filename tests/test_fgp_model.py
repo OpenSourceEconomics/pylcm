@@ -45,7 +45,7 @@ def _simulate(shock_type):
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
             "income": jnp.zeros(_N_SUBJECTS),
             "age": jnp.full(_N_SUBJECTS, 20.0),
-            "regime": jnp.array([RegimeId.alive] * _N_SUBJECTS),
+            "regime_id": jnp.array([RegimeId.alive] * _N_SUBJECTS),
         },
         period_to_regime_to_V_arr=None,
         seed=_SEED,
@@ -92,7 +92,7 @@ def test_model_simulates(shock_type):
 def test_simulated_income_moments(shock_type):
     """Simulated income moments are in the right ballpark."""
     df = _simulate(shock_type)
-    alive_df = df[df["regime"] == "alive"]
+    alive_df = df[df["regime_name"] == "alive"]
 
     # Income on the grid should have mean near 0 and std near sigma_y
     income_vals = alive_df["income"].to_numpy()
@@ -109,8 +109,8 @@ def test_rouwenhorst_income_moments_closer_to_theory():
     df_r = _simulate("rouwenhorst")
     df_t = _simulate("tauchen")
 
-    r_var = df_r[df_r["regime"] == "alive"]["income"].var()
-    t_var = df_t[df_t["regime"] == "alive"]["income"].var()
+    r_var = df_r[df_r["regime_name"] == "alive"]["income"].var()
+    t_var = df_t[df_t["regime_name"] == "alive"]["income"].var()
 
     # Both should be in the right ballpark; Rouwenhorst should be at least as close
     r_err = abs(r_var - expected_var)

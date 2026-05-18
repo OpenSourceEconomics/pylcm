@@ -27,6 +27,19 @@ if TYPE_CHECKING:
     from lcm.regime import Regime
 
 
+def _bind_forward_refs(*, regime_cls: type) -> None:
+    """Bind `Regime` into this module's globals.
+
+    The package claw rewrites string annotations on `from_regime`,
+    `get_grids`, and similar helpers into runtime forward references
+    resolved against this module's globals. `lcm.__init__` calls this
+    helper once `Regime` is loaded so the refs resolve at call time
+    without depending on an ad-hoc assignment from outside the module.
+    """
+    global Regime  # noqa: PLW0603
+    Regime = regime_cls  # ty: ignore[invalid-assignment]
+
+
 @dataclasses.dataclass(frozen=True)
 class VariableInfo:
     """Kind/topology/shock tags for one state or action variable."""

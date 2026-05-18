@@ -1,5 +1,7 @@
 import jax.numpy as jnp
+from beartype import beartype
 
+from lcm._beartype_conf import GRID_CONF
 from lcm.grids.base import Grid
 from lcm.grids.categorical import _validate_discrete_grid
 from lcm.typing import Int1D
@@ -19,6 +21,7 @@ class DiscreteGrid(Grid):
 
     """
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self, category_class: type, batch_size: int = 0, *, distributed: bool = False
     ) -> None:

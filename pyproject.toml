@@ -29,8 +29,10 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
+  "beartype>=0.21",
   "cloudpickle>=3.1.2",
-  "dags>=0.5.1",
+  # Require the beartype fix, replace once release is there
+  # "dags>=0.6.0",
   "h5py>=3.12",
   "jax>=0.9",
   "jaxtyping>=0.3.2",
@@ -98,7 +100,7 @@ tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "b807b286175e00f8a721f039f4afd657bbb10e2f" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "bce9101b049f4088789c19be14ab7b436daf44f7" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }
@@ -148,6 +150,8 @@ ty = "ty check"
 jax = ">=0.9"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
+# Remove and comment in `dags >= 0.6.0` above once released.
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
 [tool.pixi.tasks]
 asv-compare = "asv compare"
 asv-preview = "asv preview"

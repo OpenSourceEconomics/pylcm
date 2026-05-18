@@ -37,7 +37,7 @@ def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
         functions={"utility": utility},
     )
 
-    got = Variables.from_regime(regime_mock)  # ty: ignore[invalid-argument-type]
+    got = Variables.from_regime(regime_mock)
 
     assert isinstance(got, Variables)
     assert set(got) == {"a", "c"}
@@ -60,7 +60,7 @@ def test_get_grids(binary_category_class):
         functions={"utility": lambda _c: None},
     )
 
-    got = get_grids(regime_mock)  # ty: ignore[invalid-argument-type]
+    got = get_grids(regime_mock)
     assert isinstance(got["a"], DiscreteGrid)
     assert got["a"].categories == ("cat0", "cat1")
     assert got["a"].codes == (0, 1)
@@ -95,7 +95,7 @@ def test_get_grids_reorder(binary_category_class):
         functions={"utility": lambda _c: None},
     )
 
-    got = get_grids(regime_mock)  # ty: ignore[invalid-argument-type]
+    got = get_grids(regime_mock)
     assert list(got.keys()) == ["c", "b", "e", "d", "f", "a"]
 
 

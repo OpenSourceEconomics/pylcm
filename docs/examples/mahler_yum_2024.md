@@ -40,7 +40,7 @@ result = MAHLER_YUM_MODEL.simulate(
     params={"alive": params},
     initial_conditions={
         **initial_states,
-        "regime": jnp.full(
+        "regime_id": jnp.full(
             n_subjects,
             MAHLER_YUM_MODEL.regime_names_to_ids["alive"],
         ),

@@ -156,7 +156,7 @@ def analytical_solve_deterministic(wealth_grid, params):
 def analytical_simulate_deterministic(initial_wealth, params):
     """Compute analytical simulation results in the same format as to_dataframe().
 
-    Returns DataFrame with columns: period, subject_id, regime, value, wealth,
+    Returns DataFrame with columns: period, subject_id, regime_name, value, wealth,
     consumption, working. Sorted by (subject_id, period).
     Uses categorical dtypes for discrete variables to match to_dataframe() output.
     """
@@ -186,7 +186,7 @@ def analytical_simulate_deterministic(initial_wealth, params):
                 [np.zeros(n_subjects), np.ones(n_subjects)]
             ).astype(int),
             "subject_id": np.tile(np.arange(n_subjects), 2),
-            "regime": pd.Categorical(
+            "regime_name": pd.Categorical(
                 ["alive"] * (2 * n_subjects), categories=["alive", "dead"]
             ),
             "value": np.concatenate([V_arr_0, V_arr_1]),
@@ -216,7 +216,7 @@ def dict_of_vectors_to_matrix(d):
     return np.column_stack(list(d.values()))
 
 
-@pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
+@pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 def test_deterministic_solve(discount_factor, n_wealth_points):
     n_periods = 3
@@ -263,7 +263,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     aaae(got[1]["alive"], expected[1], decimal=DECIMAL_PRECISION)
 
 
-@pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
+@pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 def test_deterministic_simulate(discount_factor, n_wealth_points):
     n_periods = 3
@@ -292,14 +292,14 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         initial_conditions={
             "wealth": jnp.array([0.25, 0.75, 1.25, 1.75]),
             "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
-            "regime": jnp.array([RegimeId.alive] * 4),
+            "regime_id": jnp.array([RegimeId.alive] * 4),
         },
         period_to_regime_to_V_arr=None,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = (
         result.to_dataframe()
-        .query('regime == "alive"')
+        .query('regime_name == "alive"')
         .drop(columns=["age"])  # Analytical function doesn't include age
         .reset_index(drop=True)
     )

@@ -107,7 +107,7 @@ def test_simulate_with_chained_transitions_yields_expected_next_wealth() -> None
         "age": jnp.array([0.0, 0.0]),
         "aime": jnp.array([0.0, 1.0]),
         "wealth": jnp.array([2.0, 3.0]),
-        "regime": jnp.array([_RegimeId.active, _RegimeId.active]),
+        "regime_id": jnp.array([_RegimeId.active, _RegimeId.active]),
     }
 
     df = (
@@ -117,7 +117,7 @@ def test_simulate_with_chained_transitions_yields_expected_next_wealth() -> None
             period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
-        .query('regime == "active"')
+        .query('regime_name == "active"')
         .sort_values(["subject_id", "period"])
         .reset_index(drop=True)
     )

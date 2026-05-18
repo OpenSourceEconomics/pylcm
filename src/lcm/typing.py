@@ -1,13 +1,15 @@
 from collections.abc import Mapping
+from fractions import Fraction
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
+import numpy as np
 import pandas as pd
 from jax import Array
-from jaxtyping import Bool, Float, Int32, Scalar
+from jaxtyping import Bool, Float, Int32, Key, Scalar
 
-from lcm.params import MappingLeaf
-from lcm.params.sequence_leaf import SequenceLeaf
+from lcm.params import MappingLeaf, UserMappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -27,8 +29,16 @@ type ScalarInt = Int32[Scalar, ""]
 type ScalarFloat = Float[Scalar, ""]
 type ScalarBool = Bool[Scalar, ""]
 
+# JAX PRNG keys (`jax.random`) carry the dedicated `key<fry>` dtype, which
+# jaxtyping matches via `Key` — distinct from `FloatND`/`IntND`. Covers both a
+# single 0-d key and a batched 1-d array of keys.
+type PRNGKeyND = Key[Array, "..."]
+
 type Period = ScalarInt
 type Age = ScalarInt | ScalarFloat
+# Boundary form accepted by `AgeGrid.__init__` for `start`, `stop`, and
+# `exact_values` entries — converted to canonical JAX scalars internally.
+type UserAge = int | Fraction
 type RegimeName = str
 type StateName = str
 type ActionName = str
@@ -45,20 +55,59 @@ type TransitionFunctionsMapping = MappingProxyType[
     RegimeName, MappingProxyType[TransitionFunctionName, InternalUserFunction]
 ]
 
-type RegimeStates = MappingProxyType[StateName, Array]
+type RegimeStates = MappingProxyType[StateName, Float1D | Int1D]
 type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 
+# Boundary form of initial conditions — accepted by `Model.simulate` and
+# canonicalized by `canonicalize_initial_conditions`.
+type UserInitialConditions = Mapping[
+    StateName | Literal["regime_id"], Array | np.ndarray
+]
 
-type _ParamsLeaf = bool | float | Array | pd.Series | MappingLeaf | SequenceLeaf
+# Post-canonicalization form — emitted by `canonicalize_initial_conditions`
+# and consumed by `validate_initial_conditions`, `simulate`, and persistence.
+# Read-protocol typing so callers don't have to wrap a dict in
+# `MappingProxyType` before passing it in; pylcm producers still wrap on
+# the way out to preserve immutability at runtime. Values are 1-D arrays
+# of length `n_subjects`; the validator checks the rank-1 invariant.
+type InitialConditions = Mapping[StateName | Literal["regime_id"], Float1D | Int1D]
+
+
+# Boundary leaf type — accepted by `Model.__init__` / `Model.solve` /
+# `Model.simulate` and canonicalized by `cast_params_to_canonical_dtypes`.
+type _UserParamsLeaf = (
+    bool
+    | int
+    | float
+    | FloatND
+    | IntND
+    | BoolND
+    | np.ndarray
+    | pd.Series
+    | UserMappingLeaf
+    | UserSequenceLeaf
+)
 type UserParams = Mapping[
+    str,
+    _UserParamsLeaf | Mapping[str, _UserParamsLeaf | Mapping[str, _UserParamsLeaf]],
+]
+
+# Post-canonicalization leaf type — output of
+# `cast_params_to_canonical_dtypes`. Only canonical-dtype JAX arrays and
+# canonical-narrow `MappingLeaf` / `SequenceLeaf` instances survive.
+type _ParamsLeaf = FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
+type Params = Mapping[
     str,
     _ParamsLeaf | Mapping[str, _ParamsLeaf | Mapping[str, _ParamsLeaf]],
 ]
 
 # Internal regime parameters: A flat mapping with function-qualified names.
 # Keys are always function-qualified (e.g., "utility__risk_aversion",
-# "H__discount_factor"). Values are scalars or arrays.
-type FlatRegimeParams = MappingProxyType[str, Array]
+# "H__discount_factor"). Values are canonical-dtype JAX arrays or
+# canonical-narrow container leaves.
+type FlatRegimeParams = MappingProxyType[
+    str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
+]
 type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
@@ -72,16 +121,19 @@ type UserFacingParamsTemplate = dict[RegimeName, dict[FunctionName, dict[str, st
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
 
 
+@runtime_checkable
 class UserFunction(Protocol):
     """A function provided by the user.
 
-    Only used for type checking.
+    Used for both type checking and beartype runtime checks on perimeter
+    constructors. Any callable satisfies this protocol structurally.
 
     """
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...  # noqa: ANN401
 
 
+@runtime_checkable
 class InternalUserFunction(Protocol):
     """The internal representation of a function provided by the user.
 
@@ -91,15 +143,18 @@ class InternalUserFunction(Protocol):
 
     def __call__(
         self,
-        *args: Array | float,
-        **kwargs: Array | float,
-    ) -> Array: ...
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+    ) -> FloatND | IntND | BoolND: ...
 
 
+@runtime_checkable
 class RegimeTransitionFunction(Protocol):
-    """The regime transition function provided by the user.
+    """The processed regime transition function for the solve phase.
 
-    Returns an array of transition probabilities indexed by regime ID.
+    Wraps the user's `next_regime` function so its output is a mapping of
+    target regime name to a transition-probability array, rather than a
+    raw array indexed by regime id.
 
     Only used for type checking.
 
@@ -107,15 +162,18 @@ class RegimeTransitionFunction(Protocol):
 
     def __call__(
         self,
-        *args: Array | float,
-        **kwargs: Array | float,
-    ) -> Float1D: ...
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+    ) -> MappingProxyType[RegimeName, FloatND]: ...
 
 
+@runtime_checkable
 class VmappedRegimeTransitionFunction(Protocol):
-    """The vmapped regime transition function.
+    """The processed regime transition function for the simulate phase.
 
-    Returns a 2D array of transition probabilities with shape [n_regimes, n_subjects].
+    The `vmap`-over-subjects counterpart of `RegimeTransitionFunction`:
+    same mapping output, with each probability array carrying a leading
+    per-subject axis.
 
     Only used for type checking.
 
@@ -123,11 +181,12 @@ class VmappedRegimeTransitionFunction(Protocol):
 
     def __call__(
         self,
-        *args: Array | float,
-        **kwargs: Array | float,
-    ) -> FloatND: ...
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+    ) -> MappingProxyType[RegimeName, FloatND]: ...
 
 
+@runtime_checkable
 class QAndFFunction(Protocol):
     """The function that computes Q and F.
 
@@ -145,6 +204,7 @@ class QAndFFunction(Protocol):
     ) -> tuple[FloatND, BoolND]: ...
 
 
+@runtime_checkable
 class MaxQOverAFunction(Protocol):
     """The function that maximizes Q over all actions.
 
@@ -157,11 +217,12 @@ class MaxQOverAFunction(Protocol):
 
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, Array],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: Any,  # noqa: ANN401
-    ) -> Array: ...
+    ) -> FloatND: ...
 
 
+@runtime_checkable
 class ArgmaxQOverAFunction(Protocol):
     """The function that finds the argmax of Q over all actions.
 
@@ -174,11 +235,12 @@ class ArgmaxQOverAFunction(Protocol):
 
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, Array],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: Any,  # noqa: ANN401
-    ) -> tuple[Array, Array]: ...
+    ) -> tuple[IntND, FloatND]: ...
 
 
+@runtime_checkable
 class StochasticNextFunction(Protocol):
     """The function that simulates the next state of a stochastic variable.
 
@@ -186,9 +248,10 @@ class StochasticNextFunction(Protocol):
 
     """
 
-    def __call__(self, **kwargs: Array) -> Array: ...
+    def __call__(self, **kwargs: FloatND | IntND) -> FloatND | IntND: ...
 
 
+@runtime_checkable
 class NextStateSimulationFunction(Protocol):
     """The function that computes the next states during the simulation.
 
@@ -199,17 +262,25 @@ class NextStateSimulationFunction(Protocol):
 
     def __call__(
         self,
-        **kwargs: Array | Period | Age,
+        **kwargs: FloatND | IntND | Period | Age | MappingLeaf | SequenceLeaf,
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
     ]: ...
 
 
+@runtime_checkable
 class ActiveFunction(Protocol):
     """Function that determines if a regime is active at a given age.
+
+    The single positional argument is the age value emitted by the
+    `AgeGrid`; its runtime type is `int` for annual grids and `float`
+    for sub-annual ones. The argument is typed as `Any` so model
+    authors can pin the annotation to whichever concrete type matches
+    their grid (`int` or `float`) without tripping contravariance
+    checks at the assignment site.
 
     Only used for type checking.
 
     """
 
-    def __call__(self, age: float, /) -> bool: ...
+    def __call__(self, age: Any, /) -> bool: ...  # noqa: ANN401

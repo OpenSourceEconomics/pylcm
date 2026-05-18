@@ -13,7 +13,7 @@ jitted_argmax = jit(argmax_and_max, static_argnums=[1, 2])
 
 
 def test_argmax_1d_with_mask():
-    a = jnp.arange(10)
+    a = jnp.arange(10, dtype=jnp.int32)
     mask = jnp.array([1, 0, 0, 1, 1, 0, 0, 0, 0, 0], dtype=bool)
     _argmax, _max = jitted_argmax(a, where=mask, initial=-1)
     assert _argmax == 4
@@ -21,7 +21,7 @@ def test_argmax_1d_with_mask():
 
 
 def test_argmax_2d_with_mask():
-    a = jnp.arange(10).reshape(2, 5)
+    a = jnp.arange(10, dtype=jnp.int32).reshape(2, 5)
     mask = jnp.array([1, 0, 0, 1, 1, 0, 0, 0, 0, 0], dtype=bool).reshape(a.shape)
 
     _argmax, _max = jitted_argmax(a, axis=None, where=mask, initial=-1)
@@ -38,14 +38,14 @@ def test_argmax_2d_with_mask():
 
 
 def test_argmax_1d_no_mask():
-    a = jnp.arange(10)
+    a = jnp.arange(10, dtype=jnp.int32)
     _argmax, _max = jitted_argmax(a)
     assert _argmax == 9
     assert _max == 9
 
 
 def test_argmax_2d_no_mask():
-    a = jnp.arange(10).reshape(2, 5)
+    a = jnp.arange(10, dtype=jnp.int32).reshape(2, 5)
 
     _argmax, _max = jitted_argmax(a, axis=None)
     assert _argmax == 9
@@ -65,7 +65,7 @@ def test_argmax_2d_no_mask():
 
 
 def test_argmax_3d_no_mask():
-    a = jnp.arange(24).reshape(2, 3, 4)
+    a = jnp.arange(24, dtype=jnp.int32).reshape(2, 3, 4)
 
     _argmax, _max = jitted_argmax(a, axis=None)
     assert _argmax == 23
@@ -107,37 +107,37 @@ def test_argmax_with_ties():
 
 
 def test_move_axes_to_back_1d():
-    a = jnp.arange(4)
+    a = jnp.arange(4, dtype=jnp.int32)
     got = _move_axes_to_back(a, axes=(0,))
     assert_array_equal(got, a)
 
 
 def test_move_axes_to_back_2d():
-    a = jnp.arange(4).reshape(2, 2)
+    a = jnp.arange(4, dtype=jnp.int32).reshape(2, 2)
     got = _move_axes_to_back(a, axes=(0,))
     assert_array_equal(got, a.transpose(1, 0))
 
 
 def test_move_axes_to_back_3d():
     # 2 dimensions in back
-    a = jnp.arange(8).reshape(2, 2, 2)
+    a = jnp.arange(8, dtype=jnp.int32).reshape(2, 2, 2)
     got = _move_axes_to_back(a, axes=(0, 1))
     assert_array_equal(got, a.transpose(2, 0, 1))
 
     # 2 dimensions in front
-    a = jnp.arange(8).reshape(2, 2, 2)
+    a = jnp.arange(8, dtype=jnp.int32).reshape(2, 2, 2)
     got = _move_axes_to_back(a, axes=(1,))
     assert_array_equal(got, a.transpose(0, 2, 1))
 
 
 def test_flatten_last_n_axes_1d():
-    a = jnp.arange(4)
+    a = jnp.arange(4, dtype=jnp.int32)
     got = _flatten_last_n_axes(a, n=1)
     assert_array_equal(got, a)
 
 
 def test_flatten_last_n_axes_2d():
-    a = jnp.arange(4).reshape(2, 2)
+    a = jnp.arange(4, dtype=jnp.int32).reshape(2, 2)
 
     got = _flatten_last_n_axes(a, n=1)
     assert_array_equal(got, a)
@@ -147,7 +147,7 @@ def test_flatten_last_n_axes_2d():
 
 
 def test_flatten_last_n_axes_3d():
-    a = jnp.arange(8).reshape(2, 2, 2)
+    a = jnp.arange(8, dtype=jnp.int32).reshape(2, 2, 2)
 
     got = _flatten_last_n_axes(a, n=1)
     assert_array_equal(got, a)

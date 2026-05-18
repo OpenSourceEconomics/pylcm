@@ -2,14 +2,14 @@ import inspect
 from collections.abc import Callable
 from functools import partial
 from types import MappingProxyType
-from typing import Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 import jax
 import jax.numpy as jnp
-from jax import Array, vmap
+from jax import vmap
 
 from lcm.exceptions import FunctionDispatchError
-from lcm.typing import ActionName, Float1D, FloatND, StateName
+from lcm.typing import ActionName, BoolND, FloatND, IntND, StateName
 from lcm.utils.containers import find_duplicates
 from lcm.utils.functools import allow_args, allow_only_kwargs
 
@@ -17,10 +17,12 @@ FunctionWithArrayReturn = TypeVar(
     "FunctionWithArrayReturn",
     bound=Callable[
         ...,
-        Array
-        | tuple[Array, Array]
-        | MappingProxyType[str, Array]
-        | MappingProxyType[str, MappingProxyType[str, Array]],
+        FloatND
+        | IntND
+        | BoolND
+        | tuple[FloatND | IntND | BoolND, FloatND | IntND | BoolND]
+        | MappingProxyType[str, FloatND | IntND]
+        | MappingProxyType[str, MappingProxyType[str, FloatND | IntND]],
     ],
 )
 
@@ -145,17 +147,12 @@ def vmap_1d(
             in_axes_for_vmap[p] = 0
 
         vmapped = vmap(func, in_axes=in_axes_for_vmap)
-    vmapped.__signature__ = signature
+    vmapped.__signature__ = signature  # ty: ignore[invalid-assignment]
 
     if callable_with == "only_kwargs":
         out = allow_only_kwargs(vmapped, enforce=False)
-    elif callable_with == "only_args":
-        out = vmapped
     else:
-        raise ValueError(
-            f"Invalid callable_with option: {callable_with}. Possible options are "
-            "('only_args', 'only_kwargs')",
-        )
+        out = vmapped
 
     return cast("FunctionWithArrayReturn", out)
 
@@ -242,11 +239,19 @@ def _base_productmap_batched(
         if param.kind == inspect.Parameter.POSITIONAL_ONLY:
             raise FunctionDispatchError(
                 "Positional-only parameters are not allowed in dispatched functions. "
-                f"The parameter '{name}' to the function {func.__name__} "
+                f"The parameter '{name}' to the function "
+                f"{getattr(func, '__name__', repr(func))} "
                 "is POSITIONAL_ONLY."
             )
 
-    def batched_vmap(**kwargs: FloatND) -> FloatND:
+    def batched_vmap(**kwargs: Any) -> Any:  # noqa: ANN401
+        # `batched_vmap` is a generic helper: it accepts whatever values the
+        # composed `func` expects (canonical JAX arrays in the production
+        # pipeline, but also Python scalars, non-canonical-dtype arrays, or
+        # `MappingProxyType` containers in callers that wrap their own pytrees)
+        # and returns whatever `func` returns. Beartype shouldn't constrain
+        # the shape here — the wrapped `func` is responsible for its own
+        # contract.
         non_array_kwargs = {
             key: val for key, val in kwargs.items() if key not in product_axes
         }
@@ -259,8 +264,9 @@ def _base_productmap_batched(
             loop_func: FunctionWithArrayReturn, axis: str
         ) -> FunctionWithArrayReturn:
             def func_mapped_over_one_more_axis(
-                *already_mapped_args: Float1D, **already_mapped_kwargs: Float1D
-            ) -> FloatND:
+                *already_mapped_args: Any,  # noqa: ANN401
+                **already_mapped_kwargs: Any,  # noqa: ANN401
+            ) -> Any:  # noqa: ANN401
                 return jax.lax.map(
                     lambda axis_i: loop_func(
                         *already_mapped_args, **{axis: axis_i}, **already_mapped_kwargs

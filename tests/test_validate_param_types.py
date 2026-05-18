@@ -60,7 +60,7 @@ def test_numpy_array_param_normalised_to_canonical_jax_array() -> None:
     """A numpy array param is cast to a JAX array at `canonical_float_dtype()`."""
     model = _make_model()
     internal = model._process_params(
-        params={"bonus": np.asarray(1.0, dtype=np.float64), "discount_factor": 0.95}  # ty: ignore[invalid-argument-type]
+        params={"bonus": np.asarray(1.0, dtype=np.float64), "discount_factor": 0.95}
     )
     bonus = internal["working"]["utility__bonus"]
     assert isinstance(bonus, Array)
@@ -74,7 +74,7 @@ def test_jax_array_param_kept_at_canonical_dtype() -> None:
         params={"bonus": jnp.asarray(1.0), "discount_factor": 0.95}
     )
     bonus = internal["working"]["utility__bonus"]
-    assert bonus.dtype == canonical_float_dtype()
+    assert bonus.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
 
 
 def test_python_float_param_cast_to_canonical_dtype() -> None:
@@ -82,5 +82,5 @@ def test_python_float_param_cast_to_canonical_dtype() -> None:
     model = _make_model()
     internal = model._process_params(params={"bonus": 1.0, "discount_factor": 0.95})
     bonus = internal["working"]["utility__bonus"]
-    assert float(bonus) == 1.0
-    assert bonus.dtype == canonical_float_dtype()
+    assert float(bonus) == 1.0  # ty: ignore[invalid-argument-type]
+    assert bonus.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]

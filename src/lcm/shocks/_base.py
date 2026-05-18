@@ -1,21 +1,23 @@
 from abc import abstractmethod
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import ClassVar, overload
+from typing import ClassVar
 
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
 from jax.scipy.stats.norm import cdf
 
 from lcm.exceptions import GridInitializationError
 from lcm.grids import ContinuousGrid
 from lcm.grids import coordinates as grid_coordinates
-from lcm.typing import Float1D, FloatND, ScalarFloat
+from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
 
 def _gauss_hermite_normal(
-    *, n_points: int, mu: float | Float1D, sigma: float | Float1D
+    *,
+    n_points: int,
+    mu: ScalarFloat,
+    sigma: ScalarFloat,
 ) -> tuple[Float1D, Float1D]:
     """Compute Gauss-Hermite quadrature nodes and weights for $N(\\mu, \\sigma^2)$.
 
@@ -59,15 +61,27 @@ class _ShockGrid(ContinuousGrid):
         )
 
     @property
-    def params(self) -> MappingProxyType[str, float]:
-        """Mapping of the distribution's parameters' names to their specified values."""
-        return MappingProxyType(
-            {
-                name: getattr(self, name)
-                for name in self._param_field_names
-                if getattr(self, name) is not None
-            }
-        )
+    def params(self) -> MappingProxyType[str, ScalarFloat | ScalarInt]:
+        """Distribution parameters as canonical 0-d JAX scalars.
+
+        Boundary cast: dataclass fields supplied by the user as Python
+        `bool` / `int` / `float` are returned as `ScalarInt` / `ScalarFloat`
+        so every consumer downstream — `compute_gridpoints`,
+        `compute_transition_probs`, the regime-building runtime closures —
+        sees the canonical dtype.
+
+        """
+        out: dict[str, ScalarFloat | ScalarInt] = {}
+        for name in self._param_field_names:
+            value = getattr(self, name)
+            if value is None:
+                continue
+            # `bool` before `int` — `True` is a Python `int` subclass.
+            if isinstance(value, bool | int):
+                out[name] = jnp.int32(value)
+            else:
+                out[name] = jnp.asarray(value)
+        return MappingProxyType(out)
 
     @property
     def params_to_pass_at_runtime(self) -> tuple[str, ...]:
@@ -82,11 +96,11 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(self, **kwargs: float) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:
@@ -115,11 +129,7 @@ class _ShockGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return self.get_gridpoints()
 
-    @overload
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
-    @overload
-    def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
         if not self.is_fully_specified:
             raise GridInitializationError(
@@ -150,11 +160,11 @@ def _validate_gauss_hermite_grid(
 def _mixture_cdf(
     *,
     x: FloatND,
-    p1: float,
-    mu1: float,
-    sigma1: float,
-    mu2: float,
-    sigma2: float,
+    p1: ScalarFloat,
+    mu1: ScalarFloat,
+    sigma1: ScalarFloat,
+    mu2: ScalarFloat,
+    sigma2: ScalarFloat,
 ) -> FloatND:
     """Evaluate the CDF of a two-component normal mixture.
 

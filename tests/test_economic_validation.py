@@ -29,7 +29,7 @@ def _simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
             "income": jnp.full(_N_SUBJECTS, unconditional_mean),
             "age": jnp.full(_N_SUBJECTS, 20.0),
-            "regime": jnp.array([RegimeId.alive] * _N_SUBJECTS),
+            "regime_id": jnp.array([RegimeId.alive] * _N_SUBJECTS),
         },
         period_to_regime_to_V_arr=None,
         seed=_SEED,
@@ -38,7 +38,7 @@ def _simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
 
 
 def _mean_wealth_in_final_alive_period(df):
-    rows = df[(df["period"] == _N_PERIODS - 2) & (df["regime"] == "alive")]
+    rows = df[(df["period"] == _N_PERIODS - 2) & (df["regime_name"] == "alive")]
     assert len(rows) > 0, "No rows in final alive period"
     return rows["wealth"].mean()
 
@@ -48,7 +48,7 @@ def test_deterministic_when_sigma_zero(shock_type):
     rho = 0.5 if shock_type in ("rouwenhorst", "tauchen") else 0.0
     df = _simulate(shock_type, sigma=_SIGMA_ZERO, rho=rho)
 
-    alive_df = df[df["regime"] == "alive"]
+    alive_df = df[df["regime_name"] == "alive"]
     for period in alive_df["period"].unique():
         period_data = alive_df[alive_df["period"] == period]
         assert period_data["wealth"].std() == pytest.approx(0, abs=_DETERMINISTIC_ATOL)

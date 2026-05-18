@@ -213,7 +213,7 @@ def get_multi_regime_params(
     shock_params = _SHOCK_PARAMS[distribution_type]
     health_probs = jnp.full((2, 2), fill_value=0.5)
     regime_params = {
-        "discount_factor": 1,
+        "discount_factor": 1.0,
         "next_health": {"probs_array": health_probs},
         "income": shock_params,
     }
@@ -240,7 +240,7 @@ def get_params(
 ):
     return {
         "alive": {
-            "discount_factor": 1,
+            "discount_factor": 1.0,
             "next_health": {"probs_array": jnp.full((2, 2), fill_value=0.5)},
             "income": _SHOCK_PARAMS[distribution_type],
         },

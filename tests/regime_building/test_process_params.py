@@ -1,14 +1,23 @@
 """Tests for process_params function."""
 
 from types import MappingProxyType
+from typing import cast
 
 import pytest
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
+from lcm.interfaces import InternalRegime
 from lcm.params.processing import (
     create_params_template,
     process_params,
 )
+from lcm.typing import ParamsTemplate
+from lcm.utils.containers import ensure_containers_are_immutable
+
+
+def _as_template(plain: dict) -> ParamsTemplate:
+    """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
+    return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
 
 
 def _expected_flat_keys(params_template, regime):
@@ -22,16 +31,18 @@ def _expected_flat_keys(params_template, regime):
 @pytest.fixture
 def params_template():
     """Fixture providing a params_template with two regimes and two functions each."""
-    return {
-        "regime_0": {
-            "fun_0": {"arg_0": float, "arg_1": float},
-            "fun_1": {"arg_0": float, "arg_1": 1.0},
-        },
-        "regime_1": {
-            "fun_0": {"arg_0": float, "arg_1": float},
-            "fun_1": {"arg_0": float, "arg_1": 1.0},
-        },
-    }
+    return _as_template(
+        {
+            "regime_0": {
+                "fun_0": {"arg_0": "float", "arg_1": "float"},
+                "fun_1": {"arg_0": "float", "arg_1": "float"},
+            },
+            "regime_1": {
+                "fun_0": {"arg_0": "float", "arg_1": "float"},
+                "fun_1": {"arg_0": "float", "arg_1": "float"},
+            },
+        }
+    )
 
 
 def test_params_at_function_level(params_template):
@@ -164,16 +175,22 @@ def test_ambiguous_model_regime_level(params_template):
         process_params(params=params, params_template=params_template)
 
 
-class MockRegime:
-    """Mock regime with regime_params_template for testing create_params_template."""
+class MockRegime(InternalRegime):
+    """Mock InternalRegime exposing only `regime_params_template`.
+
+    Inherits from `InternalRegime` so `isinstance(x, InternalRegime)`
+    holds at `create_params_template`'s beartype-checked perimeter, but
+    bypasses `InternalRegime.__init__` to keep test fixtures minimal —
+    `create_params_template` only reads `regime_params_template`.
+
+    """
 
     def __init__(self, regime_params_template: dict) -> None:
-        self._regime_params_template = regime_params_template
-
-    @property
-    def regime_params_template(self) -> MappingProxyType:
-        """Return regime_params_template as MappingProxyType."""
-        return MappingProxyType(self._regime_params_template)
+        object.__setattr__(
+            self,
+            "regime_params_template",
+            MappingProxyType(regime_params_template),
+        )
 
 
 def test_function_params_no_qname_separator():
@@ -184,7 +201,7 @@ def test_function_params_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(MappingProxyType(internal_regimes))
 
 
 def test_regime_name_no_qname_separator():
@@ -195,7 +212,7 @@ def test_regime_name_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(MappingProxyType(internal_regimes))
 
 
 def test_function_name_no_qname_separator():
@@ -206,7 +223,7 @@ def test_function_name_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(MappingProxyType(internal_regimes))
 
 
 def test_regime_function_names_disjoint():
@@ -218,7 +235,7 @@ def test_regime_function_names_disjoint():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(MappingProxyType(internal_regimes))
 
 
 def test_regime_argument_names_disjoint():
@@ -230,7 +247,7 @@ def test_regime_argument_names_disjoint():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(MappingProxyType(internal_regimes))
 
 
 def test_missing_parameter_raises_error(params_template):
@@ -271,19 +288,21 @@ def test_passing_same_params_to_regimes_with_different_templates():
     """
     # Template for a non-terminal regime with functions that have parameters
     alive_template = {
-        "discount_factor": float,
-        "utility": {"beta_mean": float, "beta_std": float},
-        "cons_util": {"sigma": float, "bb": float, "kappa": float},
-        "next_health": {"probs_array": float},
+        "H": {"discount_factor": "float"},
+        "utility": {"beta_mean": "float", "beta_std": "float"},
+        "cons_util": {"sigma": "float", "bb": "float", "kappa": "float"},
+        "next_health": {"probs_array": "float"},
     }
 
     # Template for a terminal regime - empty (no H, no transitions)
-    dead_template: dict[str, type] = {}
+    dead_template: dict[str, dict[str, str]] = {}
 
-    params_template = {
-        "alive": alive_template,
-        "dead": dead_template,
-    }
+    params_template = _as_template(
+        {
+            "alive": alive_template,
+            "dead": dead_template,
+        }
+    )
 
     # User's shared params dict - has all parameters for the alive regime
     shared_params = {
@@ -303,7 +322,7 @@ def test_passing_same_params_to_regimes_with_different_templates():
     # InvalidParamsError is raised because dead__cons_util__*, dead__utility__*,
     # etc. are not in the template
     with pytest.raises(InvalidParamsError, match="Unknown keys"):
-        process_params(params=params, params_template=params_template)  # ty: ignore[invalid-argument-type]
+        process_params(params=params, params_template=params_template)
 
 
 def test_shock_params_via_regular_params():
@@ -313,13 +332,15 @@ def test_shock_params_via_regular_params():
     state name (e.g., "adjustment_cost"), so users can pass them via regular params.
     """
     # Template includes ShockGrid params under the state name
-    params_template = {
-        "working_life": {
-            "discount_factor": float,
-            "utility": {"param": float},
-            "adjustment_cost": {"start": float, "stop": float},
-        },
-    }
+    params_template = _as_template(
+        {
+            "working_life": {
+                "H": {"discount_factor": "float"},
+                "utility": {"param": "float"},
+                "adjustment_cost": {"start": "float", "stop": "float"},
+            },
+        }
+    )
 
     params = {
         "working_life": {
@@ -332,6 +353,6 @@ def test_shock_params_via_regular_params():
         },
     }
 
-    result = process_params(params=params, params_template=params_template)  # ty: ignore[invalid-argument-type]
+    result = process_params(params=params, params_template=params_template)
     assert result["working_life"]["adjustment_cost__start"] == 0
     assert result["working_life"]["adjustment_cost__stop"] == 1

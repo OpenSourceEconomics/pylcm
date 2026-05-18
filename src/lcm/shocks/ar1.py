@@ -5,15 +5,17 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from beartype import beartype
 from jax.scipy.stats.norm import cdf
 
+from lcm._beartype_conf import GRID_CONF
 from lcm.shocks._base import (
     _gauss_hermite_normal,
     _mixture_cdf,
     _ShockGrid,
     _validate_gauss_hermite_grid,
 )
-from lcm.typing import Float1D, FloatND
+from lcm.typing import Float1D, FloatND, PRNGKeyND, ScalarFloat, ScalarInt
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -23,12 +25,13 @@ class _ShockGridAR1(_ShockGrid):
     @abstractmethod
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
-        current_value: Float1D,
-    ) -> Float1D: ...
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+        current_value: ScalarFloat,
+    ) -> ScalarFloat: ...
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Tauchen(_ShockGridAR1):
     r"""AR(1) shock discretized via Tauchen (1986).
@@ -49,16 +52,16 @@ class Tauchen(_ShockGridAR1):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    rho: float | None = None
+    rho: float | int | None = None
     """Persistence parameter of the AR(1) process."""
 
-    sigma: float | None = None
+    sigma: float | int | None = None
     """Standard deviation of the innovation."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of standard deviations for the grid boundary."""
 
     def __post_init__(self) -> None:
@@ -75,7 +78,7 @@ class Tauchen(_ShockGridAR1):
             exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
         n_points = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
@@ -88,14 +91,14 @@ class Tauchen(_ShockGridAR1):
         x = jnp.linspace(-x_max, x_max, n_points)
         return x + mu / (1 - rho)
 
-    def compute_transition_probs(self, **kwargs: float) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         n_points = self.n_points
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
 
         if self.gauss_hermite:
             nodes, _weights = _gauss_hermite_normal(
-                n_points=n_points, mu=0.0, sigma=std_y
+                n_points=n_points, mu=jnp.asarray(0.0), sigma=std_y
             )
         else:
             n_std = kwargs["n_std"]
@@ -117,10 +120,10 @@ class Tauchen(_ShockGridAR1):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
-        current_value: Float1D,
-    ) -> Float1D:
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+        current_value: ScalarFloat,
+    ) -> ScalarFloat:
         return (
             params["mu"]
             + params["rho"] * current_value
@@ -128,6 +131,7 @@ class Tauchen(_ShockGridAR1):
         )
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Rouwenhorst(_ShockGridAR1):
     r"""AR(1) shock discretized via Rouwenhorst (1995).
@@ -140,23 +144,23 @@ class Rouwenhorst(_ShockGridAR1):
 
     """
 
-    rho: float | None = None
+    rho: float | int | None = None
     """Persistence parameter of the AR(1) process."""
 
-    sigma: float | None = None
+    sigma: float | int | None = None
     """Standard deviation of the innovation."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    def compute_gridpoints(self, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
         n_points = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma
         long_run_mean = mu / (1.0 - rho)
         return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)
 
-    def compute_transition_probs(self, **kwargs: float) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         n_points = self.n_points
         rho = kwargs["rho"]
         q = (rho + 1) / 2
@@ -185,10 +189,10 @@ class Rouwenhorst(_ShockGridAR1):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
-        current_value: Float1D,
-    ) -> Float1D:
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+        current_value: ScalarFloat,
+    ) -> ScalarFloat:
         return (
             params["mu"]
             + params["rho"] * current_value
@@ -196,6 +200,7 @@ class Rouwenhorst(_ShockGridAR1):
         )
 
 
+@beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class TauchenNormalMixture(_ShockGridAR1):
     r"""AR(1) shock with mixture-of-normals innovations, discretized via Tauchen.
@@ -211,44 +216,44 @@ class TauchenNormalMixture(_ShockGridAR1):
 
     """
 
-    rho: float | None = None
+    rho: float | int | None = None
     """Persistence parameter of the AR(1) process."""
 
-    mu: float | None = None
+    mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    n_std: float | None = None
+    n_std: float | int | None = None
     """Number of unconditional standard deviations for the grid boundary."""
 
-    p1: float | None = None
+    p1: float | int | None = None
     """Probability of the first mixture component."""
 
-    mu1: float | None = None
+    mu1: float | int | None = None
     """Mean of the first mixture component."""
 
-    sigma1: float | None = None
+    sigma1: float | int | None = None
     """Standard deviation of the first mixture component."""
 
-    mu2: float | None = None
+    mu2: float | int | None = None
     """Mean of the second mixture component."""
 
-    sigma2: float | None = None
+    sigma2: float | int | None = None
     """Standard deviation of the second mixture component."""
 
     @staticmethod
     def _innovation_variance(
         *,
-        p1: float,
-        mu1: float,
-        sigma1: float,
-        mu2: float,
-        sigma2: float,
-    ) -> float:
+        p1: ScalarFloat,
+        mu1: ScalarFloat,
+        sigma1: ScalarFloat,
+        mu2: ScalarFloat,
+        sigma2: ScalarFloat,
+    ) -> ScalarFloat:
         """Compute the variance of the mixture innovation."""
         mean_eps = p1 * mu1 + (1 - p1) * mu2
         return p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean_eps**2
 
-    def compute_gridpoints(self, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
         n_points = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
@@ -264,7 +269,7 @@ class TauchenNormalMixture(_ShockGridAR1):
         x_max = n_std * std_y
         return jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n_points)
 
-    def compute_transition_probs(self, **kwargs: float) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         n_points = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
@@ -298,10 +303,10 @@ class TauchenNormalMixture(_ShockGridAR1):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float | FloatND],
-        key: FloatND,
-        current_value: Float1D,
-    ) -> Float1D:
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+        current_value: ScalarFloat,
+    ) -> ScalarFloat:
         key1, key2 = jax.random.split(key)
         component = jax.random.bernoulli(key1, params["p1"])
         normal = jax.random.normal(key2)

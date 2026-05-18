@@ -8,8 +8,9 @@ from pathlib import Path
 from types import MappingProxyType
 
 import pandas as pd
-from jax import Array
+from beartype import beartype
 
+from lcm._beartype_conf import MODEL_CONF, PARAMS_CONF
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.grids import DiscreteGrid
@@ -34,18 +35,22 @@ from lcm.persistence import (
 from lcm.regime import Regime
 from lcm.regime_building.processing import InternalRegime
 from lcm.simulation.compile import compile_all_simulate_functions
-from lcm.simulation.initial_conditions import validate_initial_conditions
+from lcm.simulation.initial_conditions import (
+    canonicalize_initial_conditions,
+    validate_initial_conditions,
+)
 from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
-    FloatND,
     FunctionName,
     InternalParams,
     ParamsTemplate,
+    PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
     UserFacingParamsTemplate,
+    UserInitialConditions,
     UserParams,
 )
 from lcm.utils.containers import (
@@ -128,6 +133,7 @@ class Model:
     simulate() calls don't serialise on logging I/O.
     """
 
+    @beartype(conf=MODEL_CONF)
     def __init__(
         self,
         *,
@@ -239,6 +245,7 @@ class Model:
             for regime, funcs in mutable.items()
         }
 
+    @beartype(conf=PARAMS_CONF)
     def solve(
         self,
         *,
@@ -247,7 +254,7 @@ class Model:
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
-    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+    ) -> PeriodToRegimeToVArr:
         """Solve the model using the pre-computed functions.
 
         Args:
@@ -301,7 +308,7 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
-    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+    ) -> PeriodToRegimeToVArr:
         """Run backward induction, persisting a snapshot on debug or NaN failure."""
         try:
             period_to_regime_to_V_arr = solve(
@@ -368,15 +375,13 @@ class Model:
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[self.n_subjects]
 
+    @beartype(conf=PARAMS_CONF)
     def simulate(
         self,
         *,
         params: UserParams,
-        initial_conditions: Mapping[str, Array],
-        period_to_regime_to_V_arr: MappingProxyType[
-            int, MappingProxyType[RegimeName, FloatND]
-        ]
-        | None,
+        initial_conditions: UserInitialConditions | pd.DataFrame,
+        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         check_initial_conditions: bool = True,
         seed: int | None = None,
         log_level: LogLevel = "progress",
@@ -401,11 +406,12 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
-            initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
+            initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
                 All arrays must have the same length (number of subjects). The
-                `"regime"` entry must contain integer regime codes (from
+                `"regime_id"` entry must contain integer regime codes (from
                 `model.regime_names_to_ids`). May also be a `pd.DataFrame`
-                with a `"regime"` column (auto-converted).
+                with a `"regime_name"` column carrying regime label strings
+                (auto-converted via `initial_conditions_from_dataframe`).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
             check_initial_conditions: Whether to validate initial conditions.
@@ -433,6 +439,10 @@ class Model:
                 regimes=self.regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
+        initial_conditions = canonicalize_initial_conditions(
+            initial_conditions=initial_conditions,
+            internal_regimes=self.internal_regimes,
+        )
         internal_params = self._process_params(params)
         if check_initial_conditions:
             validate_initial_conditions(

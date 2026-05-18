@@ -5,6 +5,8 @@ from itertools import chain
 from types import MappingProxyType
 from typing import Any, TypeVar, cast
 
+from lcm.params import UserMappingLeaf, UserSequenceLeaf
+
 T = TypeVar("T")
 
 
@@ -68,11 +70,11 @@ def find_duplicates(*containers: Iterable[T]) -> set[T]:
     return {v for v, count in counts.items() if count > 1}
 
 
-def get_field_names_and_values(dc: type) -> MappingProxyType[str, Any]:
+def get_field_names_and_values(dc: object) -> MappingProxyType[str, Any]:
     """Return the fields of a dataclass.
 
     Args:
-        dc: The dataclass to get the fields of.
+        dc: The dataclass class or instance to get the fields of.
 
     Returns:
         An immutable mapping with the field names as keys and the field values as
@@ -80,7 +82,10 @@ def get_field_names_and_values(dc: type) -> MappingProxyType[str, Any]:
 
     """
     return MappingProxyType(
-        {field.name: getattr(dc, field.name, None) for field in fields(dc)}
+        {
+            field.name: getattr(dc, field.name, None)
+            for field in fields(dc)  # ty: ignore[invalid-argument-type]
+        }
     )
 
 
@@ -118,10 +123,7 @@ def first_non_none(*args: T | None) -> T:
 
 def _make_immutable(value: Any) -> Any:  # noqa: ANN401
     """Recursively convert a value to its immutable equivalent."""
-    from lcm.params import MappingLeaf  # noqa: PLC0415
-    from lcm.params.sequence_leaf import SequenceLeaf  # noqa: PLC0415
-
-    if isinstance(value, (MappingLeaf, SequenceLeaf)):
+    if isinstance(value, (UserMappingLeaf, UserSequenceLeaf)):
         return value  # already immutable by construction
     if isinstance(value, (MappingProxyType, tuple, frozenset)):
         return value
@@ -136,12 +138,9 @@ def _make_immutable(value: Any) -> Any:  # noqa: ANN401
 
 def _make_mutable(value: Any) -> Any:  # noqa: ANN401, PLR0911
     """Recursively convert a value to its mutable equivalent."""
-    from lcm.params import MappingLeaf  # noqa: PLC0415
-    from lcm.params.sequence_leaf import SequenceLeaf  # noqa: PLC0415
-
-    if isinstance(value, MappingLeaf):
+    if isinstance(value, UserMappingLeaf):
         return {k: _make_mutable(v) for k, v in value.data.items()}
-    if isinstance(value, SequenceLeaf):
+    if isinstance(value, UserSequenceLeaf):
         return [_make_mutable(v) for v in value.data]
     if isinstance(value, (set, list)):
         return value

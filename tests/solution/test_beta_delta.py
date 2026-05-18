@@ -185,7 +185,7 @@ def test_beta_delta_consumption(label, beta, delta):
     initial_conditions = {
         "age": initial_age,
         "wealth": initial_wealth,
-        "regime": jnp.array([RegimeId.working]),
+        "regime_id": jnp.array([RegimeId.working]),
     }
 
     if label == "naive_phase_variant":
@@ -227,7 +227,7 @@ def test_beta_delta_consumption(label, beta, delta):
             period_to_regime_to_V_arr=None,
         )
 
-    df = result.to_dataframe().query('regime == "working"')
+    df = result.to_dataframe().query('regime_name == "working"')
     got_c0 = df.loc[df["age"] == 0, "consumption"].iloc[0]
     got_c1 = df.loc[df["age"] == 1, "consumption"].iloc[0]
 

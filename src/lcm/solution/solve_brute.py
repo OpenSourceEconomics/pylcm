@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import InternalRegime, _build_regime_sharding
-from lcm.typing import FloatND, InternalParams, RegimeName, StateName
+from lcm.typing import BoolND, FloatND, InternalParams, RegimeName, StateName
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
@@ -107,8 +107,8 @@ def solve(
     diagnostic_min: list[FloatND] = []
     diagnostic_max: list[FloatND] = []
     diagnostic_mean: list[FloatND] = []
-    running_any_nan: FloatND = jnp.zeros((), dtype=bool)
-    running_any_inf: FloatND = jnp.zeros((), dtype=bool)
+    running_any_nan: BoolND = jnp.zeros((), dtype=bool)
+    running_any_inf: BoolND = jnp.zeros((), dtype=bool)
 
     logger.info("Starting solution")
     total_start = time.monotonic()
@@ -436,7 +436,7 @@ def _get_regime_V_shapes_and_shardings(
     return topology
 
 
-def _build_zero_V_arr(*, topology: _RegimeVTopology) -> jax.Array:
+def _build_zero_V_arr(*, topology: _RegimeVTopology) -> FloatND:
     """Build the zero V-array template for a regime, sharded where requested."""
     zeros = jnp.zeros(topology.shape)
     if topology.sharding is None:
@@ -471,18 +471,17 @@ def _emit_post_loop_diagnostics(
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
-    running_any_nan: FloatND,
-    running_any_inf: FloatND,
+    running_any_nan: BoolND,
+    running_any_inf: BoolND,
     diagnostic_min: list[FloatND] | None,
     diagnostic_max: list[FloatND] | None,
     diagnostic_mean: list[FloatND] | None,
 ) -> None:
     """Flush async diagnostics: raise on NaN, warn on Inf, log debug stats.
 
-    The two `.item()` calls on the running scalars decide whether to
-    enter the per-row failure-path localisation. On a healthy solve
-    neither inner walk runs and no per-row scalar is materialised, so
-    device memory stays bounded by the V templates currently in flight.
+    Only enters the per-row failure path when the running NaN or Inf
+    accumulators are set, so a healthy solve incurs no host-side scalar
+    materialisation here.
     """
     if running_any_nan.item():
         _raise_first_nan_row(
@@ -516,9 +515,7 @@ def _raise_first_nan_row(
 ) -> None:
     """Find the first NaN-bearing (regime, period) and raise.
 
-    Only invoked on the failure path (`running_any_nan` was True).
-    Materialises one host-side bool per row until the first hit; on
-    a healthy solve this function is never called.
+    Failure-path only — walks rows until the first NaN hit.
     """
     for row in diagnostic_rows:
         V_arr = solution[row.period][row.regime_name]

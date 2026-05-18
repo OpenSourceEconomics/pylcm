@@ -19,14 +19,16 @@ import operator
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jax import Array, jit, lax
+from jax import jit, lax
+
+from lcm.typing import FloatND, IntND
 
 
 @jit
 def map_coordinates(
-    input: Array,  # noqa: A002
-    coordinates: Sequence[Array],
-) -> Array:
+    input: FloatND | IntND,  # noqa: A002
+    coordinates: Sequence[FloatND | IntND] | FloatND | IntND,
+) -> FloatND | IntND:
     """Map the input array to new coordinates using linear interpolation.
 
     Modified from JAX implementation of `scipy.ndimage.map_coordinates`.
@@ -71,8 +73,8 @@ def map_coordinates(
 
 
 def _compute_indices_and_weights(
-    coordinate: Array, input_size: int
-) -> list[tuple[Array, Array]]:
+    coordinate: FloatND | IntND, input_size: int
+) -> list[tuple[IntND, FloatND | IntND]]:
     """Compute indices and weights for linear interpolation."""
     lower_index = jnp.clip(jnp.floor(coordinate), 0, input_size - 2).astype(jnp.int32)
     upper_weight = coordinate - lower_index
@@ -80,15 +82,15 @@ def _compute_indices_and_weights(
     return [(lower_index, lower_weight), (lower_index + 1, upper_weight)]
 
 
-def _multiply_all(arrs: Sequence[Array]) -> Array:
+def _multiply_all(arrs: Sequence[FloatND | IntND]) -> FloatND | IntND:
     """Multiply all arrays in the sequence."""
     return functools.reduce(operator.mul, arrs)
 
 
-def _sum_all(arrs: Sequence[Array]) -> Array:
+def _sum_all(arrs: Sequence[FloatND | IntND]) -> FloatND | IntND:
     """Sum all arrays in the sequence."""
     return functools.reduce(operator.add, arrs)
 
 
-def _round_half_away_from_zero(a: Array) -> Array:
+def _round_half_away_from_zero(a: FloatND | IntND) -> FloatND | IntND:
     return a if jnp.issubdtype(a.dtype, jnp.integer) else lax.round(a)

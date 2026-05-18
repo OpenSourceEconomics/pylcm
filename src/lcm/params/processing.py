@@ -9,7 +9,9 @@ leaf to a canonical pylcm dtype:
   range values surface as `ValueError`.
 - Python `float` and typed float arrays cast to `canonical_float_dtype()`.
   Down-cast overflow surfaces as `OverflowError`.
-- `MappingLeaf` / `SequenceLeaf` containers recurse.
+- `UserMappingLeaf` / `UserSequenceLeaf` containers (covering both the
+  user-input variant and the canonical narrow variant) recurse, always
+  emitting a canonical `MappingLeaf` / `SequenceLeaf`.
 
 The pass runs as the *last* step over `internal_params` — `pd.Series`
 leaves are reshaped to JAX arrays via `convert_series_in_params`
@@ -34,8 +36,8 @@ from jax import Array
 from lcm.dtypes import safe_to_float_dtype, safe_to_int_dtype
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
-from lcm.params.mapping_leaf import MappingLeaf
-from lcm.params.sequence_leaf import SequenceLeaf
+from lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 from lcm.typing import (
     InternalParams,
     ParamsTemplate,
@@ -64,8 +66,9 @@ def process_params(
 
     The output always matches the params_template skeleton. Every numeric
     leaf — Python `bool` / `int` / `float`, typed JAX or numpy arrays, and
-    numerics inside `MappingLeaf` / `SequenceLeaf` — is cast to the
-    canonical pylcm dtype so the AOT signature is stable across calls.
+    numerics inside `UserMappingLeaf` / `UserSequenceLeaf` (or their
+    canonical narrow subclasses) — is cast to the canonical pylcm dtype
+    so the AOT signature is stable across calls.
 
     Callers that pass `pd.Series` leaves should orchestrate the steps
     themselves: `broadcast_to_template` (resolve), `convert_series_in_params`
@@ -205,7 +208,9 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
 
     Casts:
 
-    - `MappingLeaf` / `SequenceLeaf`: recurse on contents.
+    - `UserMappingLeaf` / `UserSequenceLeaf` (covers both wide user and
+      canonical narrow variants): recurse on contents, always emit the
+      canonical `MappingLeaf` / `SequenceLeaf`.
     - Python `bool`: `jnp.bool_(value)` (must come before `int` —
       `True` is a Python `int` subclass).
     - Python `int`: `safe_to_int_dtype(value)` → `jnp.int32`.
@@ -224,14 +229,16 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
     - Anything else (`str`, `None`, `dict`, lists, custom objects).
 
     """
-    if isinstance(value, MappingLeaf):
+    # `UserMappingLeaf` covers both user (wide) and canonical (`MappingLeaf`)
+    # variants — recursing always emits a canonical `MappingLeaf`.
+    if isinstance(value, UserMappingLeaf):
         return MappingLeaf(
             {
                 k: _cast_leaves_to_canonical_dtype(v, name=f"{name}.{k}")
                 for k, v in value.data.items()
             }
         )
-    if isinstance(value, SequenceLeaf):
+    if isinstance(value, UserSequenceLeaf):
         return SequenceLeaf(
             [
                 _cast_leaves_to_canonical_dtype(v, name=f"{name}[{i}]")
@@ -268,7 +275,7 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
     msg = (
         f"{name!r}: unsupported leaf type {type(value).__name__} "
         f"(expected bool / int / float / numpy or JAX array / "
-        f"MappingLeaf / SequenceLeaf)."
+        f"UserMappingLeaf / UserSequenceLeaf)."
     )
     raise InvalidParamsError(msg)
 
@@ -306,7 +313,8 @@ def create_params_template(  # noqa: C901
     are disjoint sets to enable unambiguous parameter propagation.
 
     Args:
-        internal_regimes: Mapping of regime names to InternalRegime instances.
+        internal_regimes: Immutable mapping of regime names to InternalRegime
+            instances.
 
     Returns:
         The parameter template.

@@ -1,6 +1,7 @@
 """Integer dtypes are pinned to int32 across pylcm regardless of x64 mode."""
 
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -17,6 +18,8 @@ from lcm.simulation.initial_conditions import (
     build_initial_states,
 )
 from lcm.simulation.transitions import _advance_states_for_subjects
+from lcm.typing import ParamsTemplate
+from lcm.utils.containers import ensure_containers_are_immutable
 from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
@@ -24,6 +27,12 @@ from tests.test_models.deterministic.regression import (
     get_params,
     working_life,
 )
+
+
+def _as_template(plain: dict) -> ParamsTemplate:
+    """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
+    return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
+
 
 # These tests deliberately pass `int64` inputs to verify the cast at
 # the barrier. Re-allow the JAX truncation warning that the
@@ -105,71 +114,80 @@ def test_advance_states_for_subjects_keeps_same_dtype_round_trip() -> None:
 
 def test_process_params_casts_python_int_to_int32() -> None:
     """A Python `int` param leaf is cast to `jnp.int32`."""
-    template = MappingProxyType({"regime_a": MappingProxyType({"final_age": "int"})})
-    user_params = {"regime_a": {"final_age": 65}}
+    template = _as_template({"regime_a": {"fun": {"final_age": "int"}}})
+    user_params = {"regime_a": {"fun": {"final_age": 65}}}
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
-    final_age = out["regime_a"]["final_age"]
-    assert int(final_age) == 65
-    assert final_age.dtype == jnp.int32
+    final_age = out["regime_a"]["fun__final_age"]
+    assert int(final_age) == 65  # ty: ignore[invalid-argument-type]
+    assert final_age.dtype == jnp.int32  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_casts_int64_array_to_int32() -> None:
-    """A `jnp.int64` array param leaf is normalised to `jnp.int32`."""
-    template = MappingProxyType({"regime_a": MappingProxyType({"schedule": "Array"})})
-    user_params = {"regime_a": {"schedule": jnp.asarray([0, 1, 2], dtype=jnp.int64)}}
+    """An `int64` array param leaf is normalised to `jnp.int32`.
+
+    Built with `np.asarray`: a JAX `int64` array is rejected at the beartype
+    boundary (`_ParamsLeaf` pins JAX integer leaves to `int32`), so the
+    realistic raw-data path for a wider-dtype input is a numpy array.
+    """
+    template = _as_template({"regime_a": {"fun": {"schedule": "Array"}}})
+    user_params = {
+        "regime_a": {"fun": {"schedule": np.asarray([0, 1, 2], dtype=np.int64)}}
+    }
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
-    schedule = out["regime_a"]["schedule"]
-    assert schedule.dtype == jnp.int32
+    schedule = out["regime_a"]["fun__schedule"]
+    assert schedule.dtype == jnp.int32  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
     """An out-of-int32-range int array surfaces the param's qualified name."""
-    template = MappingProxyType({"regime_a": MappingProxyType({"big_param": "Array"})})
+    template = _as_template({"regime_a": {"fun": {"big_param": "Array"}}})
     # Numpy here: under `jax_enable_x64=False`, `jnp.asarray(..., dtype=int64)`
     # of an out-of-int32 value raises before our helper sees it.
-    user_params = {"regime_a": {"big_param": np.asarray([0, 2**40], dtype=np.int64)}}
+    user_params = {
+        "regime_a": {"fun": {"big_param": np.asarray([0, 2**40], dtype=np.int64)}}
+    }
 
     with pytest.raises(ValueError, match="big_param"):
         process_params(
-            params=user_params,  # ty: ignore[invalid-argument-type]
-            params_template=template,  # ty: ignore[invalid-argument-type]
+            params=user_params,
+            params_template=template,
         )
 
 
 @pytest.mark.parametrize("key", ["low", "high"])
 def test_process_params_casts_int_array_inside_mapping_leaf_to_int32(key: str) -> None:
     """`MappingLeaf` int arrays land at `jnp.int32` after params processing."""
-    template = MappingProxyType(
-        {"regime_a": MappingProxyType({"sched": "MappingLeaf"})}
-    )
+    template = _as_template({"regime_a": {"fun": {"sched": "MappingLeaf"}}})
     user_params = {
         "regime_a": {
-            "sched": MappingLeaf(
-                {
-                    "low": jnp.asarray([0, 1], dtype=jnp.int64),
-                    "high": jnp.asarray([10, 20], dtype=jnp.int64),
-                }
-            )
+            "fun": {
+                "sched": MappingLeaf(
+                    {
+                        "low": jnp.asarray([0, 1], dtype=jnp.int64),
+                        "high": jnp.asarray([10, 20], dtype=jnp.int64),
+                    }
+                )
+            }
         }
     }
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     assert (
-        out["regime_a"]["sched"].data[key].dtype  # ty: ignore[unresolved-attribute]
+        out["regime_a"]["fun__sched"].data[key].dtype  # ty: ignore[unresolved-attribute, invalid-argument-type]
         == jnp.int32
     )
 
@@ -179,27 +197,27 @@ def test_process_params_casts_int_array_inside_sequence_leaf_to_int32(
     index: int,
 ) -> None:
     """`SequenceLeaf` int arrays land at `jnp.int32` after params processing."""
-    template = MappingProxyType(
-        {"regime_a": MappingProxyType({"sched": "SequenceLeaf"})}
-    )
+    template = _as_template({"regime_a": {"fun": {"sched": "SequenceLeaf"}}})
     user_params = {
         "regime_a": {
-            "sched": SequenceLeaf(
-                [
-                    jnp.asarray([0, 1], dtype=jnp.int64),
-                    jnp.asarray([10, 20], dtype=jnp.int64),
-                ]
-            )
+            "fun": {
+                "sched": SequenceLeaf(
+                    [
+                        jnp.asarray([0, 1], dtype=jnp.int64),
+                        jnp.asarray([10, 20], dtype=jnp.int64),
+                    ]
+                )
+            }
         }
     }
 
     out = process_params(
         params=user_params,
-        params_template=template,  # ty: ignore[invalid-argument-type]
+        params_template=template,
     )
 
     assert (
-        out["regime_a"]["sched"].data[index].dtype  # ty: ignore[unresolved-attribute]
+        out["regime_a"]["fun__sched"].data[index].dtype  # ty: ignore[unresolved-attribute, invalid-argument-type]
         == jnp.int32
     )
 
@@ -226,11 +244,11 @@ def test_simulate_accepts_int64_regime_initial_condition_and_round_trips() -> No
     }
     initial_conditions_int32 = {
         **common,
-        "regime": jnp.asarray([RegimeId.working_life] * 4, dtype=jnp.int32),
+        "regime_id": jnp.asarray([RegimeId.working_life] * 4, dtype=jnp.int32),
     }
     initial_conditions_int64 = {
         **common,
-        "regime": jnp.asarray([RegimeId.working_life] * 4, dtype=jnp.int64),
+        "regime_id": jnp.asarray([RegimeId.working_life] * 4, dtype=jnp.int64),
     }
 
     df_int32 = model.simulate(

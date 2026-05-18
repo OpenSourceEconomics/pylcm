@@ -12,12 +12,12 @@ is DataFrame in, DataFrame out.
 ## Initial Conditions as a DataFrame
 
 Pass a pandas DataFrame directly to `simulate()` as `initial_conditions`. One row per
-agent, one column per state variable, plus a `"regime"` column:
+agent, one column per state variable, plus a `"regime_name"` column:
 
 ```python
 df = pd.DataFrame(
     {
-        "regime": ["working", "working", "retired"],
+        "regime_name": ["working", "working", "retired"],
         "wealth": [10.0, 50.0, 30.0],
         "health": ["good", "bad", "good"],
         "age": [25.0, 25.0, 25.0],
@@ -31,7 +31,7 @@ result = model.simulate(
 )
 ```
 
-- `"regime"` column is required. Use regime names as strings (e.g., `"working"`).
+- `"regime_name"` column is required. Use regime names as strings (e.g., `"working"`).
 - Discrete states use string labels from the model's categorical classes (e.g., `"good"`
   instead of `0`). Labels are validated and mapped to integer codes automatically.
 - Continuous states pass through as-is.

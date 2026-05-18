@@ -21,8 +21,10 @@ from lcm.typing import (
     ScalarInt,
 )
 
-_ACTIVE = 0
-_TERMINAL = 1
+# Regime-id codes are canonical `int32`; `validate_initial_conditions` is an
+# internal function that receives already-canonicalized initial conditions.
+_ACTIVE = jnp.int32(0)
+_TERMINAL = jnp.int32(1)
 
 
 @pytest.fixture
@@ -112,7 +114,7 @@ def test_validate_initial_conditions_valid_input(
             "age": jnp.array([0.0, 0.0]),
             "wealth": jnp.array([10.0, 50.0]),
             "health": jnp.array([0, 1]),
-            "regime": jnp.array([_ACTIVE, _ACTIVE]),
+            "regime_id": jnp.array([_ACTIVE, _ACTIVE]),
         },
         internal_regimes=model.internal_regimes,
         regime_names_to_ids=model.regime_names_to_ids,
@@ -132,7 +134,7 @@ def test_validate_initial_conditions_missing_state(
             initial_conditions={
                 "age": jnp.array([0.0, 0.0]),
                 "wealth": jnp.array([10.0, 50.0]),
-                "regime": jnp.array([_ACTIVE, _ACTIVE]),
+                "regime_id": jnp.array([_ACTIVE, _ACTIVE]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
@@ -152,7 +154,7 @@ def test_validate_initial_conditions_extra_state(
                 "wealth": jnp.array([10.0]),
                 "health": jnp.array([0]),
                 "unknown": jnp.array([1.0]),
-                "regime": jnp.array([_ACTIVE]),
+                "regime_id": jnp.array([_ACTIVE]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
@@ -171,7 +173,7 @@ def test_validate_initial_conditions_inconsistent_lengths(
                 "age": jnp.array([0.0, 0.0]),
                 "wealth": jnp.array([10.0, 20.0]),
                 "health": jnp.array([0]),
-                "regime": jnp.array([_ACTIVE, _ACTIVE]),
+                "regime_id": jnp.array([_ACTIVE, _ACTIVE]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
@@ -190,7 +192,7 @@ def test_validate_initial_conditions_invalid_discrete_value(
                 "age": jnp.array([0.0]),
                 "wealth": jnp.array([10.0]),
                 "health": jnp.array([5]),
-                "regime": jnp.array([_ACTIVE]),
+                "regime_id": jnp.array([_ACTIVE]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
@@ -209,7 +211,7 @@ def test_validate_initial_conditions_invalid_regime_id(
                 "age": jnp.array([0.0]),
                 "wealth": jnp.array([10.0]),
                 "health": jnp.array([0]),
-                "regime": jnp.array([99]),
+                "regime_id": jnp.array([99]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
@@ -228,7 +230,7 @@ def test_validate_initial_conditions_invalid_age_values(
                 "age": jnp.array([0.0, 99.0]),
                 "wealth": jnp.array([10.0, 50.0]),
                 "health": jnp.array([0, 1]),
-                "regime": jnp.array([_ACTIVE, _ACTIVE]),
+                "regime_id": jnp.array([_ACTIVE, _ACTIVE]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
@@ -313,7 +315,7 @@ def test_infeasible_initial_states_detected():
             initial_conditions={
                 "age": jnp.array([0.0]),
                 "wealth": jnp.array([0.25]),
-                "regime": jnp.array([_working_life]),
+                "regime_id": jnp.array([_working_life]),
             },
             period_to_regime_to_V_arr=None,
         )
@@ -339,7 +341,7 @@ def test_on_grid_state_but_combination_infeasible():
             initial_conditions={
                 "age": jnp.array([0.0]),
                 "wealth": jnp.array([0.3]),
-                "regime": jnp.array([_working_life]),
+                "regime_id": jnp.array([_working_life]),
             },
             period_to_regime_to_V_arr=None,
         )
@@ -360,7 +362,7 @@ def test_extrapolated_initial_states_accepted():
         initial_conditions={
             "age": jnp.array([0.0]),
             "wealth": jnp.array([1.0]),
-            "regime": jnp.array([_working_life]),
+            "regime_id": jnp.array([_working_life]),
         },
         period_to_regime_to_V_arr=None,
     )
@@ -381,7 +383,7 @@ def test_on_grid_initial_states_accepted():
         initial_conditions={
             "age": jnp.array([0.0]),
             "wealth": jnp.array([5.0]),
-            "regime": jnp.array([_working_life]),
+            "regime_id": jnp.array([_working_life]),
         },
         period_to_regime_to_V_arr=None,
     )
@@ -403,7 +405,7 @@ def test_irreg_spaced_grid_with_runtime_points():
             params=params,
             initial_conditions={
                 "wealth": jnp.array([0.3]),
-                "regime": jnp.array([_working_life]),
+                "regime_id": jnp.array([_working_life]),
             },
             period_to_regime_to_V_arr=None,
         )
@@ -421,7 +423,7 @@ def test_missing_age_error_message(
             initial_conditions={
                 "wealth": jnp.array([10.0]),
                 "health": jnp.array([0]),
-                "regime": jnp.array([_ACTIVE]),
+                "regime_id": jnp.array([_ACTIVE]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
@@ -560,7 +562,7 @@ def test_subject_in_inactive_regime_at_starting_age() -> None:
             initial_conditions={
                 "age": jnp.array([0.0]),
                 "wealth": jnp.array([10.0]),
-                "regime": jnp.array([_dead]),
+                "regime_id": jnp.array([_dead]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
@@ -581,7 +583,7 @@ def test_all_subjects_in_regime_with_fewer_states() -> None:
         initial_conditions={
             "age": jnp.array([2.0, 2.0]),
             "wealth": jnp.array([10.0, 50.0]),
-            "regime": jnp.array([_dead, _dead]),
+            "regime_id": jnp.array([_dead, _dead]),
         },
         internal_regimes=model.internal_regimes,
         regime_names_to_ids=model.regime_names_to_ids,
@@ -607,7 +609,7 @@ def test_mixed_regimes_all_union_states_provided() -> None:
             "age": jnp.array([0.0, 2.0]),
             "wealth": jnp.array([10.0, 50.0]),
             "health": jnp.array([0, 0]),
-            "regime": jnp.array([_alive, _dead]),
+            "regime_id": jnp.array([_alive, _dead]),
         },
         internal_regimes=model.internal_regimes,
         regime_names_to_ids=model.regime_names_to_ids,
@@ -628,7 +630,7 @@ def test_constraint_not_checked_for_unused_regime() -> None:
         initial_conditions={
             "age": jnp.array([2.0]),
             "wealth": jnp.array([40.0]),
-            "regime": jnp.array([_dead]),
+            "regime_id": jnp.array([_dead]),
         },
         internal_regimes=model.internal_regimes,
         regime_names_to_ids=model.regime_names_to_ids,
@@ -650,7 +652,7 @@ def test_constraint_checked_for_starting_regime() -> None:
             initial_conditions={
                 "age": jnp.array([0.0]),
                 "wealth": jnp.array([40.0]),
-                "regime": jnp.array([_alive]),
+                "regime_id": jnp.array([_alive]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
@@ -676,7 +678,7 @@ def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
             initial_conditions={
                 "age": jnp.array([0.0, 2.0]),
                 "wealth": jnp.array([40.0, 40.0]),
-                "regime": jnp.array([_alive, _dead]),
+                "regime_id": jnp.array([_alive, _dead]),
             },
             internal_regimes=model.internal_regimes,
             regime_names_to_ids=model.regime_names_to_ids,
