@@ -18,7 +18,7 @@ from lcm.pandas_utils import (
 from lcm.params.processing import broadcast_to_template
 from lcm.typing import ScalarInt
 from lcm.user_regime import Regime as UserRegime
-from lcm.utils.error_handling import validate_transition_probs
+from lcm.user_regime import validate_transition_probs
 from tests.test_models.basic_discrete import (
     Health,
 )
@@ -1174,26 +1174,6 @@ def test_array_from_series_regime_transition_invalid_label_raises():
             regime_names_to_ids=model.regime_names_to_ids,
             regime_name="alive",
         )
-
-
-def test_validate_regime_transition_probs_valid():
-    model = get_regime_markov_model()
-    arr = _make_regime_probs_array()
-    validate_transition_probs(probs=arr, model=model, regime_name="alive")
-
-
-def test_validate_regime_transition_probs_wrong_shape():
-    model = get_regime_markov_model()
-    arr = jnp.ones((2, 2)) / 2
-    with pytest.raises(ValueError, match="shape"):
-        validate_transition_probs(probs=arr, model=model, regime_name="alive")
-
-
-def test_validate_regime_transition_probs_not_markov_raises():
-    model = get_basic_model()
-    arr = jnp.ones((3, 2)) / 2
-    with pytest.raises(TypeError, match="stochastic regime transition"):
-        validate_transition_probs(probs=arr, model=model, regime_name="working_life")
 
 
 def _build_partner_probs_series(model: Model) -> pd.Series:
