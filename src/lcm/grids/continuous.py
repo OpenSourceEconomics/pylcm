@@ -282,7 +282,7 @@ class IrregSpacedGrid(ContinuousGrid):
 
         Raises `GridInitializationError` for runtime-supplied grids
         (`pass_points_at_runtime=True`). To get the substituted points,
-        call `internal_regime.state_action_space(regime_params=...)` and
+        call `regime.state_action_space(regime_params=...)` and
         read from `.states[name]` or `.continuous_actions[name]`.
         """
         if self.points is None:
@@ -291,7 +291,7 @@ class IrregSpacedGrid(ContinuousGrid):
                 f"no points; values are supplied at runtime via "
                 f"params['<regime>']['<grid_name>']['points']. To get the "
                 f"substituted points, call "
-                f"`internal_regime.state_action_space(regime_params=...)` and "
+                f"`regime.state_action_space(regime_params=...)` and "
                 f"read from `.states[name]` or `.continuous_actions[name]`. "
                 f"Use `.n_points` if only the shape is needed."
             )

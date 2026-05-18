@@ -217,7 +217,7 @@ loaded = SimulationResult.from_pickle("my_results.pkl")
 
 ```python
 result.raw_results  # regime -> period -> PeriodRegimeSimulationData
-result.internal_params  # processed parameter object
+result.flat_params  # processed parameter object
 result.period_to_regime_to_V_arr  # value function arrays from solve()
 ```
 

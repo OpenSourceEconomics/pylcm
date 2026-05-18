@@ -108,7 +108,10 @@ class _IdentityTransition:
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Regime:
-    """A user regime which can be processed into an internal regime.
+    """User-facing regime definition.
+
+    `Model` processes instances of this class into the canonical regime form
+    (`lcm.interfaces.Regime`) used internally by the solver and simulator.
 
     State transitions are specified via `state_transitions`, mapping state names to
     transition functions. A bare callable is deterministic; wrap in `MarkovTransition`

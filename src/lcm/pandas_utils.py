@@ -14,20 +14,20 @@ from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.dtypes import canonical_float_dtype
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
-from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from lcm.typing import (
+    FlatParams,
     Float1D,
     FloatND,
     FunctionName,
     InitialConditions,
     Int1D,
-    InternalParams,
     RegimeName,
     RegimeNamesToIds,
     StateName,
 )
+from lcm.user_regime import Regime as UserRegime
 from lcm.utils.error_handling import (
     _get_func_indexing_params,
 )
@@ -54,7 +54,7 @@ def has_series(params: Mapping) -> bool:
 def initial_conditions_from_dataframe(  # noqa: C901
     *,
     df: pd.DataFrame,
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> InitialConditions:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
@@ -62,7 +62,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     Args:
         df: DataFrame with columns for states and a "regime_name" column
             carrying the regime label strings.
-        regimes: Mapping of regime names to user Regime instances.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
 
@@ -100,7 +100,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     state_columns = {col for col in df.columns if col != "regime_name"}
     _validate_state_columns(
         state_columns=state_columns,
-        regimes=regimes,
+        user_regimes=user_regimes,
         initial_regimes=df["regime_name"].tolist(),
     )
 
@@ -115,16 +115,16 @@ def initial_conditions_from_dataframe(  # noqa: C901
 
     # Process per regime group (vectorised .map() within each group)
     for regime_name, group in df.groupby("regime_name"):
-        regime = regimes[str(regime_name)]
+        user_regime = user_regimes[str(regime_name)]
         idx = group.index
         discrete_grids = {
             name: grid
-            for name, grid in regime.states.items()
+            for name, grid in user_regime.states.items()
             if isinstance(grid, DiscreteGrid)
         }
         discrete_state_names |= discrete_grids.keys()
 
-        regime_state_names = set(regime.states.keys()) | PSEUDO_STATE_NAMES
+        regime_state_names = set(user_regime.states.keys()) | PSEUDO_STATE_NAMES
 
         for col in state_cols:
             if col not in regime_state_names:
@@ -194,14 +194,14 @@ def _map_discrete_labels(
 
 def convert_series_in_params(
     *,
-    internal_params: Mapping[RegimeName, Mapping[str, object]],
+    flat_params: Mapping[RegimeName, Mapping[str, object]],
     ages: AgeGrid,
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
-) -> InternalParams:
+) -> FlatParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
 
-    Iterate over the template-shaped `internal_params` (produced by
+    Iterate over the template-shaped `flat_params` (produced by
     `process_params`) and convert any `pd.Series` leaf values via
     `array_from_series`. `UserMappingLeaf` and `UserSequenceLeaf` values
     (and their canonical `MappingLeaf` / `SequenceLeaf` subclasses) are
@@ -212,10 +212,10 @@ def convert_series_in_params(
     levels that correspond to DAG function outputs (not states/actions).
 
     Args:
-        internal_params: Already-broadcast params in template shape
+        flat_params: Already-broadcast params in template shape
             (`{regime: {func__param: value}}`).
         ages: Age grid for the model.
-        regimes: Mapping of regime names to user Regime instances.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
 
@@ -225,9 +225,9 @@ def convert_series_in_params(
 
     """
     result: dict[RegimeName, dict[str, object]] = {}
-    for regime_name, regime_params in internal_params.items():
-        regime = regimes[regime_name]
-        all_funcs = regime.get_all_functions()
+    for regime_name, regime_params in flat_params.items():
+        user_regime = user_regimes[regime_name]
+        all_funcs = user_regime.get_all_functions()
         converted_regime: dict[str, object] = {}
         for func_param, value in regime_params.items():
             parts = tree_path_from_qname(func_param)
@@ -235,14 +235,16 @@ def convert_series_in_params(
             param_name = parts[-1]
 
             # Runtime grid/shock params are scalar — no AST inspection
-            if _is_runtime_grid_param(func_name=template_func_name, regime=regime):
+            if _is_runtime_grid_param(
+                func_name=template_func_name, user_regime=user_regime
+            ):
                 converted_regime[func_param] = _convert_param_value(
                     value=value,
                     func=None,
                     param_name=param_name,
                     func_name=template_func_name,
                     ages=ages,
-                    regimes=regimes,
+                    user_regimes=user_regimes,
                     regime_names_to_ids=regime_names_to_ids,
                     regime_name=regime_name,
                 )
@@ -251,7 +253,7 @@ def convert_series_in_params(
             # Resolve per-target template key before function lookup
             resolved_func_name = (
                 _resolve_per_target_template_key(
-                    func_name=template_func_name, regime=regime
+                    func_name=template_func_name, user_regime=user_regime
                 )
                 or template_func_name
             )
@@ -262,13 +264,13 @@ def convert_series_in_params(
                 param_name=param_name,
                 func_name=resolved_func_name,
                 ages=ages,
-                regimes=regimes,
+                user_regimes=user_regimes,
                 regime_names_to_ids=regime_names_to_ids,
                 regime_name=regime_name,
             )
         result[regime_name] = converted_regime
     return cast(
-        "InternalParams",
+        "FlatParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
 
@@ -280,7 +282,7 @@ def _convert_param_value(
     param_name: str,
     func_name: FunctionName,
     ages: AgeGrid,
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None,
 ) -> object:
@@ -294,7 +296,7 @@ def _convert_param_value(
         param_name: Parameter name in the function.
         func_name: Function name (for `next_*` outcome axis detection).
         ages: Age grid for the model.
-        regimes: Mapping of regime names to user Regime instances.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime name for action grid lookup.
@@ -313,7 +315,7 @@ def _convert_param_value(
             param_name=param_name,
             func_name=func_name,
             ages=ages,
-            regimes=regimes,
+            user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
         )
@@ -325,7 +327,7 @@ def _convert_param_value(
             param_name=param_name,
             func_name=func_name,
             ages=ages,
-            regimes=regimes,
+            user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
         )
@@ -346,7 +348,7 @@ def array_from_series(
     param_name: str,
     func_name: FunctionName,
     ages: AgeGrid,
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None = None,
 ) -> FloatND:
@@ -361,8 +363,9 @@ def array_from_series(
     Missing grid points are filled with NaN. Extra ages outside the model's
     `AgeGrid` are silently dropped.
 
-    Derived categoricals are read from `regimes[regime_name].derived_categoricals`
-    when `regime_name` is not None.
+    Derived categoricals are read from
+    `user_regimes[regime_name].derived_categoricals` when `regime_name` is
+    not None.
 
     Args:
         sr: Labeled pandas Series.
@@ -371,7 +374,7 @@ def array_from_series(
         param_name: The array parameter name in `func`.
         func_name: Function name (for `next_*` outcome axis detection).
         ages: Age grid for the model.
-        regimes: Mapping of regime names to user Regime instances.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime for grid and derived categorical lookup.
@@ -393,7 +396,7 @@ def array_from_series(
         return jnp.array(sr.to_numpy(), dtype=canonical_float_dtype())
 
     grids = _resolve_categoricals(
-        regimes=regimes,
+        user_regimes=user_regimes,
         regime_name=regime_name,
     )
 
@@ -414,7 +417,7 @@ def array_from_series(
             outcome_mapping = _build_outcome_mapping(
                 func_name=func_name,
                 grids=grids,
-                regimes=regimes,
+                user_regimes=user_regimes,
                 regime_names_to_ids=regime_names_to_ids,
             )
             level_mappings = (*level_mappings, outcome_mapping)
@@ -428,7 +431,7 @@ def array_from_series(
 
 def _resolve_categoricals(
     *,
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_name: RegimeName | None,
 ) -> dict[str, DiscreteGrid]:
     """Build combined categorical lookup from model grids and regime overrides.
@@ -437,7 +440,7 @@ def _resolve_categoricals(
     `derived_categoricals` (grids for DAG function outputs).
 
     Args:
-        regimes: Mapping of regime names to user Regime instances.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_name: Regime for grid discovery. When `None`, grids from
             all regimes are merged.
 
@@ -450,12 +453,12 @@ def _resolve_categoricals(
     """
     grids: dict[str, DiscreteGrid] = {}
     if regime_name is not None:
-        regime = regimes[regime_name]
-        for grids_mapping in (regime.states, regime.actions):
+        user_regime = user_regimes[regime_name]
+        for grids_mapping in (user_regime.states, user_regime.actions):
             grids.update(
                 {n: g for n, g in grids_mapping.items() if isinstance(g, DiscreteGrid)}
             )
-        for name, grid in regime.derived_categoricals.items():
+        for name, grid in user_regime.derived_categoricals.items():
             if name in grids and grids[name].categories != grid.categories:
                 msg = (
                     f"Derived categorical '{name}' conflicts with "
@@ -465,9 +468,9 @@ def _resolve_categoricals(
                 raise ValueError(msg)
             grids[name] = grid
     else:
-        grids.update(_build_discrete_grid_lookup(regimes))
-        for regime in regimes.values():
-            for name, grid in regime.derived_categoricals.items():
+        grids.update(_build_discrete_grid_lookup(user_regimes))
+        for user_regime in user_regimes.values():
+            for name, grid in user_regime.derived_categoricals.items():
                 if name in grids and grids[name].categories != grid.categories:
                     msg = (
                         f"Derived categorical '{name}' conflicts with "
@@ -482,7 +485,7 @@ def _resolve_categoricals(
 def _resolve_per_target_template_key(
     *,
     func_name: FunctionName,
-    regime: Regime,
+    user_regime: UserRegime,
 ) -> str | None:
     """Translate a per-target template key to `get_all_functions()` format.
 
@@ -494,7 +497,7 @@ def _resolve_per_target_template_key(
     Args:
         func_name: The function name from the template
             (e.g., `to_working_next_health`).
-        regime: The regime to check for per-target transitions.
+        user_regime: The user-provided `Regime` to check for per-target transitions.
 
     Returns:
         The `get_all_functions()` key, or `None` if not a per-target key.
@@ -505,7 +508,7 @@ def _resolve_per_target_template_key(
 
     # Per-target template keys have the form "to_{target}_{next_state}".
     # Find matching per-target transitions in the regime.
-    for state_name, raw in regime.state_transitions.items():
+    for state_name, raw in user_regime.state_transitions.items():
         if isinstance(raw, Mapping):
             for target_name in raw:
                 target = str(target_name)
@@ -517,15 +520,15 @@ def _resolve_per_target_template_key(
     return None
 
 
-def _is_runtime_grid_param(*, func_name: FunctionName, regime: Regime) -> bool:
+def _is_runtime_grid_param(*, func_name: FunctionName, user_regime: UserRegime) -> bool:
     """Check if a template function key refers to a runtime grid param."""
-    if func_name in regime.states:
-        grid = regime.states[func_name]
+    if func_name in user_regime.states:
+        grid = user_regime.states[func_name]
         return (isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime) or (
             isinstance(grid, _ShockGrid) and bool(grid.params_to_pass_at_runtime)
         )
-    if func_name in regime.actions:
-        grid = regime.actions[func_name]
+    if func_name in user_regime.actions:
+        grid = user_regime.actions[func_name]
         return isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime
     return False
 
@@ -646,7 +649,7 @@ def _build_outcome_mapping(
     *,
     func_name: FunctionName,
     grids: dict[str, DiscreteGrid],
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> _LevelMapping:
     """Build a `_LevelMapping` for the outcome axis of a `next_*` function.
@@ -659,7 +662,7 @@ def _build_outcome_mapping(
     Args:
         func_name: Function name starting with `"next_"`.
         grids: Categorical grid lookup.
-        regimes: Mapping of regime names to user Regime instances.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
 
@@ -682,9 +685,9 @@ def _build_outcome_mapping(
     # regime's grid for the outcome axis, not the source regime's grid.
     if len(path) > 1:
         target_regime_name = path[1]
-        target_regime = regimes.get(target_regime_name)
-        if target_regime is not None and state_name in target_regime.states:
-            target_grid = target_regime.states[state_name]
+        target_user_regime = user_regimes.get(target_regime_name)
+        if target_user_regime is not None and state_name in target_user_regime.states:
+            target_grid = target_user_regime.states[state_name]
             if isinstance(target_grid, DiscreteGrid):
                 return _grid_level_mapping(name=f"next_{state_name}", grid=target_grid)
 
@@ -815,11 +818,13 @@ def _validate_and_reorder_levels(
 def _validate_state_columns(
     *,
     state_columns: set[str],
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     initial_regimes: list[RegimeName],
 ) -> None:
     """Validate that DataFrame columns match model states."""
-    expected = _collect_state_names(regimes=regimes, initial_regimes=initial_regimes)
+    expected = _collect_state_names(
+        user_regimes=user_regimes, initial_regimes=initial_regimes
+    )
 
     unknown = state_columns - expected
     if unknown:
@@ -834,7 +839,7 @@ def _validate_state_columns(
     if missing:
         required_by: dict[str, list[str]] = {name: [] for name in missing}
         for regime_name in set(initial_regimes):
-            for name in regimes[regime_name].states:
+            for name in user_regimes[regime_name].states:
                 if name in required_by:
                     required_by[name].append(regime_name)
         details = ", ".join(
@@ -855,7 +860,7 @@ def _format_missing_state_detail(*, name: str, required_by: list[str]) -> str:
 
 def _collect_state_names(
     *,
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     initial_regimes: list[RegimeName],
 ) -> set[str]:
     """Collect all state names (including shock grids) from initial regimes.
@@ -867,17 +872,17 @@ def _collect_state_names(
     """
     names: set[str] = set(PSEUDO_STATE_NAMES)
     for regime_name in set(initial_regimes):
-        names.update(regimes[regime_name].states.keys())
+        names.update(user_regimes[regime_name].states.keys())
     return names
 
 
 def _build_discrete_grid_lookup(
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
 ) -> dict[str, DiscreteGrid]:
     """Collect all DiscreteGrid instances from states and actions across regimes.
 
     Args:
-        regimes: Mapping of regime names to Regime instances.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
 
     Returns:
         Dict mapping variable name to DiscreteGrid.
@@ -887,8 +892,8 @@ def _build_discrete_grid_lookup(
 
     """
     lookup: dict[str, DiscreteGrid] = {}
-    for regime_name, regime in regimes.items():
-        for grids_mapping in (regime.states, regime.actions):
+    for regime_name, user_regime in user_regimes.items():
+        for grids_mapping in (user_regime.states, user_regime.actions):
             for var_name, grid in grids_mapping.items():
                 if isinstance(grid, DiscreteGrid):
                     if var_name in lookup:

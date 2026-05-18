@@ -4,11 +4,11 @@ from lcm.params.regime_template import (
     create_regime_params_template,
 )
 from lcm.utils.containers import ensure_containers_are_immutable
-from tests.regime_mock import RegimeMock
+from tests.mock_regime import MockRegime
 
 
 def test_create_params_without_shocks(binary_category_class):
-    regime = RegimeMock(
+    regime = MockRegime(
         actions={
             "a": DiscreteGrid(binary_category_class),
         },
@@ -36,7 +36,7 @@ def test_create_params_with_custom_H_no_extra_params():
     def custom_H(utility: float, E_next_V: float) -> float:
         return utility + E_next_V
 
-    regime = RegimeMock(
+    regime = MockRegime(
         actions={
             "a": None,
         },
@@ -60,7 +60,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
     runtime, not from the user-facing params dict, so they do not appear
     in the template.
     """
-    regime = RegimeMock(
+    regime = MockRegime(
         actions={"a": None},
         states={"discount_factor": None},
         state_transitions={"discount_factor": None},
@@ -90,7 +90,7 @@ def test_custom_H_shadowing_state_is_allowed():
     def custom_H(utility: float, E_next_V: float, wealth: float) -> float:
         return utility + wealth * E_next_V
 
-    regime = RegimeMock(
+    regime = MockRegime(
         actions={"a": None},
         states={"wealth": None},
         functions={"utility": lambda a, wealth: None, "H": custom_H},  # noqa: ARG005
@@ -116,7 +116,7 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
     ) -> float:
         return utility + beta * delta * E_next_V
 
-    regime = RegimeMock(
+    regime = MockRegime(
         actions={"a": None},
         states={"b": None},
         functions={  # ty: ignore[invalid-argument-type]
@@ -130,7 +130,7 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
 
 def test_regular_function_taking_state_as_argument_no_error(binary_category_class):
     """Regular functions that use states as arguments should not trigger the error."""
-    regime = RegimeMock(
+    regime = MockRegime(
         actions={
             "a": DiscreteGrid(binary_category_class),
         },
@@ -167,7 +167,7 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
     def next_wealth(wealth: float, next_aime: float) -> float:
         return wealth + next_aime
 
-    regime = RegimeMock(
+    regime = MockRegime(
         actions={"a": DiscreteGrid(binary_category_class)},
         states={
             "wealth": DiscreteGrid(binary_category_class),

@@ -6,10 +6,10 @@ from lcm import (
     LinSpacedGrid,
     MarkovTransition,
     Model,
-    Regime,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=True)
@@ -32,7 +32,7 @@ def _next_regime_probs(
     return probs_array[period, health]
 
 
-alive = Regime(
+alive = UserRegime(
     transition=MarkovTransition(_next_regime_probs),
     states={
         "health": DiscreteGrid(Health),
@@ -46,7 +46,7 @@ alive = Regime(
     active=lambda age: age < 62,
 )
 
-dead = Regime(
+dead = UserRegime(
     transition=None,
     functions={"utility": lambda: 0.0},
 )

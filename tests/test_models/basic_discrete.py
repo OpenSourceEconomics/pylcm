@@ -1,7 +1,8 @@
 """Basic model with discrete + continuous states, no stochastic transitions."""
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.typing import ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=True)
@@ -21,7 +22,7 @@ def _next_regime() -> ScalarInt:
     return RegimeId.dead
 
 
-working_life = Regime(
+working_life = UserRegime(
     transition=_next_regime,
     states={
         "health": DiscreteGrid(Health),
@@ -34,7 +35,7 @@ working_life = Regime(
     functions={"utility": lambda wealth, health: wealth + health},
 )
 
-retirement = Regime(
+retirement = UserRegime(
     transition=_next_regime,
     states={
         "health": DiscreteGrid(Health),
@@ -47,7 +48,7 @@ retirement = Regime(
     functions={"utility": lambda wealth, health: wealth + health},
 )
 
-dead = Regime(
+dead = UserRegime(
     transition=None,
     functions={"utility": lambda: 0.0},
 )
@@ -56,7 +57,11 @@ dead = Regime(
 def get_model() -> Model:
     """Create a minimal model with discrete + continuous states and two regimes."""
     return Model(
-        regimes={"working_life": working_life, "retirement": retirement, "dead": dead},
+        regimes={
+            "working_life": working_life,
+            "retirement": retirement,
+            "dead": dead,
+        },
         ages=AgeGrid(start=25, stop=75, step="10Y"),
         regime_id_class=RegimeId,
     )

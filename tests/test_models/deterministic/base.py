@@ -6,11 +6,12 @@ import functools
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, categorical
 from lcm.typing import (
     DiscreteAction,
     ScalarInt,
 )
+from lcm.user_regime import Regime as UserRegime
 from lcm_examples.mortality import (
     CONSUMPTION_GRID,
     WEALTH_GRID,
@@ -60,7 +61,7 @@ _DEFAULT_AGE_GRID = AgeGrid(start=40, stop=70, step="10Y")  # 4 periods
 _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 
-working_life = Regime(
+working_life = UserRegime(
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": CONSUMPTION_GRID,
@@ -77,7 +78,7 @@ working_life = Regime(
     active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 
-retirement = Regime(
+retirement = UserRegime(
     transition=next_regime_from_retirement,
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},

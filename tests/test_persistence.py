@@ -10,7 +10,6 @@ from lcm import (
     AgeGrid,
     LinSpacedGrid,
     Model,
-    Regime,
     SimulateSnapshot,
     SolveSnapshot,
     categorical,
@@ -21,6 +20,7 @@ from lcm import variables as _variables
 from lcm.persistence import _get_platform, load_solution, save_solution
 from lcm.simulation.result import SimulationResult as _PublicSimulationResult
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 def test_forward_refs_bound_after_import() -> None:
@@ -33,7 +33,7 @@ def test_forward_refs_bound_after_import() -> None:
     """
     assert _persistence.Model is lcm.Model
     assert _persistence.SimulationResult is _PublicSimulationResult
-    assert _variables.Regime is lcm.Regime
+    assert _variables.UserRegime is lcm.Regime
 
 
 @categorical(ordered=False)
@@ -58,7 +58,7 @@ def _build_tiny_model(*, enable_jit: bool, n_subjects: int):
     def next_regime(period: int) -> ScalarInt:
         return jnp.where(period >= 1, 1, 0)
 
-    working = Regime(
+    working = UserRegime(
         transition=next_regime,
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         state_transitions={"wealth": next_wealth},
@@ -66,7 +66,7 @@ def _build_tiny_model(*, enable_jit: bool, n_subjects: int):
         functions={"utility": utility},
         active=lambda age: age < 2,
     )
-    retired = Regime(
+    retired = UserRegime(
         transition=None,
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         functions={"utility": _retired_utility},
@@ -193,7 +193,7 @@ def test_simulate_debug_persists_snapshot_with_aot_compiled_regimes(tmp_path):
     """Debug snapshot saves successfully when `n_subjects` triggers AOT compile.
 
     AOT compilation produces `jax.stages.Compiled` callables on each
-    `InternalRegime.simulate_functions`; their backing `LoadedExecutable`
+    `Regime.simulate_functions`; their backing `LoadedExecutable`
     cannot be pickled. The snapshot path must strip those before pickling
     `result.pkl`.
     """

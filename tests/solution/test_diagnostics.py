@@ -14,9 +14,10 @@ from pathlib import Path
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)
@@ -48,7 +49,7 @@ def _next_regime(period: int) -> FloatND:
 
 
 def _make_model() -> Model:
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         state_transitions={"wealth": _next_wealth},
@@ -57,7 +58,7 @@ def _make_model() -> Model:
         transition=_next_regime,
         active=lambda age: age < 2,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,

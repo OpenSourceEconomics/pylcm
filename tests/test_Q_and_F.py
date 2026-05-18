@@ -14,7 +14,6 @@ from lcm.params.processing import (
     get_flat_param_names,
     process_params,
 )
-from lcm.regime import MarkovTransition, Regime
 from lcm.regime_building import process_regimes
 from lcm.regime_building.Q_and_F import (
     _get_feasibility,
@@ -31,6 +30,8 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
+from lcm.user_regime import MarkovTransition
+from lcm.user_regime import Regime as UserRegime
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,
@@ -43,12 +44,12 @@ from tests.test_models.deterministic.regression import (
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, stop=4, step="Y")
-    regimes = {"working_life": working_life, "dead": dead}
+    user_regimes = {"working_life": working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
-        {name: jnp.int32(idx) for idx, name in enumerate(regimes.keys())}
+        {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
-    internal_regimes = process_regimes(
-        regimes=regimes,
+    regimes = process_regimes(
+        user_regimes=user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
@@ -56,16 +57,16 @@ def test_get_Q_and_F_function():
 
     raw_params = get_params(n_periods=4)
 
-    params_template = create_params_template(internal_regimes)
-    internal_params = process_params(params=raw_params, params_template=params_template)
+    params_template = create_params_template(regimes)
+    flat_params = process_params(params=raw_params, params_template=params_template)
 
     # Compute flat param names for the working regime's regime_params_template
     flat_param_names = frozenset(
-        get_flat_param_names(internal_regimes["working_life"].regime_params_template)
+        get_flat_param_names(regimes["working_life"].regime_params_template)
     )
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
-    solve = internal_regimes["working_life"].solve_functions
+    solve = regimes["working_life"].solve_functions
     Q_and_F = get_Q_and_F_terminal(
         flat_param_names=flat_param_names,
         functions=solve.functions,
@@ -80,7 +81,7 @@ def test_get_Q_and_F_function():
         consumption=consumption,
         labor_supply=labor_supply,
         wealth=wealth,
-        **internal_params["working_life"],
+        **flat_params["working_life"],
         next_regime_to_V_arr=jnp.empty(0),
         period=3,
         age=ages.period_to_age(3),
@@ -297,7 +298,7 @@ def _build_incomplete_target_model(
     def _next_wealth(consumption: float, wealth: float) -> float:
         return wealth - consumption
 
-    work = Regime(
+    work = UserRegime(
         active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
@@ -315,7 +316,7 @@ def _build_incomplete_target_model(
         transition=next_regime_func,
         functions={"utility": _utility},
     )
-    retire = Regime(
+    retire = UserRegime(
         active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
@@ -331,7 +332,7 @@ def _build_incomplete_target_model(
         transition=next_regime_func,
         functions={"utility": _utility},
     )
-    dead_regime = Regime(
+    dead_regime = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
     )

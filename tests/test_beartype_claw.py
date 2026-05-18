@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime
+from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
@@ -32,10 +32,11 @@ from lcm.exceptions import (
 )
 from lcm.interfaces import _build_regime_sharding
 from lcm.model import _validate_log_args
-from lcm.regime import _default_H
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats
 from lcm.state_action_space import _validate_all_states_present
+from lcm.user_regime import Regime as UserRegime
+from lcm.user_regime import _default_H
 from lcm.utils.error_handling import validate_regime_transition_probs
 
 
@@ -103,7 +104,7 @@ def test_claw_checks_lcm_regime() -> None:
 def test_regime_with_bad_arg_raises_project_exception() -> None:
     """A bad `Regime` argument surfaces as `RegimeInitializationError`."""
     with pytest.raises(RegimeInitializationError):
-        Regime(
+        UserRegime(
             transition=None,
             states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
             functions="not a mapping",  # ty: ignore[invalid-argument-type]

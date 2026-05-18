@@ -64,7 +64,7 @@ def _grid_to_jax_or_placeholder(grid: Grid) -> FloatND | IntND:
     is the right behaviour everywhere except here: the base state-action space
     needs a *shape-correct* array to wire through pytree structures and AOT
     tracing before runtime substitution by
-    `InternalRegime.state_action_space(regime_params=...)`. NaN (rather than
+    `Regime.state_action_space(regime_params=...)`. NaN (rather than
     zero) makes any accidental computation against the placeholder fail loudly.
     """
     if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:

@@ -37,30 +37,30 @@ def simulate_inputs():
         },
         active=lambda age: age <= final_age_alive,
     )
-    regimes = {"working_life": updated_working_life, "dead": dead}
+    user_regimes = {"working_life": updated_working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
-        {name: jnp.int32(idx) for idx, name in enumerate(regimes.keys())}
+        {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
-    internal_regimes = process_regimes(
-        regimes=regimes,
+    regimes = process_regimes(
+        user_regimes=user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
     )
 
     return {
-        "internal_regimes": internal_regimes,
+        "regimes": regimes,
         "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
         "simulation_output_dtypes": get_simulation_output_dtypes(
-            regimes=regimes,
+            user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
         ),
     }
 
 
 def test_simulate_using_raw_inputs(simulate_inputs):
-    internal_params = MappingProxyType(
+    flat_params = MappingProxyType(
         {
             "working_life": MappingProxyType(
                 {
@@ -75,7 +75,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
     )
 
     result = simulate(
-        internal_params=internal_params,
+        flat_params=flat_params,
         period_to_regime_to_V_arr=MappingProxyType(
             {
                 0: MappingProxyType(

@@ -13,14 +13,16 @@ from lcm.regime_building.next_state import (
 from lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from lcm.typing import (
     BoolND,
+    ConstraintFunction,
+    ConstraintFunctionsMapping,
+    EconFunctionsMapping,
     Float1D,
     FloatND,
-    FunctionsMapping,
-    InternalUserFunction,
     IntND,
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
+    TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
@@ -31,8 +33,8 @@ from lcm.utils.functools import get_union_of_args
 def get_Q_and_F(
     *,
     flat_param_names: frozenset[str],
-    functions: FunctionsMapping,
-    constraints: FunctionsMapping,
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
     complete_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
@@ -212,8 +214,8 @@ def get_Q_and_F(
 def get_compute_intermediates(
     *,
     flat_param_names: frozenset[str],
-    functions: FunctionsMapping,
-    constraints: FunctionsMapping,
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
     complete_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
@@ -362,8 +364,8 @@ def get_compute_intermediates(
 def get_Q_and_F_terminal(
     *,
     flat_param_names: frozenset[str],
-    functions: FunctionsMapping,
-    constraints: FunctionsMapping,
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a terminal period.
 
@@ -494,7 +496,7 @@ def _get_arg_names_of_Q_and_F(
 
 def _get_joint_weights_function(
     *,
-    transitions: FunctionsMapping,
+    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
     stochastic_transition_names: frozenset[TransitionFunctionName],
     regime_name: RegimeName,
 ) -> Callable[..., FloatND]:
@@ -533,8 +535,8 @@ def _get_joint_weights_function(
 
 def _get_U_and_F(
     *,
-    functions: FunctionsMapping,
-    constraints: FunctionsMapping,
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -565,9 +567,9 @@ def _get_U_and_F(
 
 def _get_feasibility(
     *,
-    functions: FunctionsMapping,
-    constraints: FunctionsMapping,
-) -> InternalUserFunction:
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+) -> ConstraintFunction:
     """Create a function that combines all constraint functions into a single one.
 
     Args:
@@ -593,4 +595,4 @@ def _get_feasibility(
             """Dummy feasibility function that always returns True."""
             return True
 
-    return cast("InternalUserFunction", combined_constraint)
+    return cast("ConstraintFunction", combined_constraint)

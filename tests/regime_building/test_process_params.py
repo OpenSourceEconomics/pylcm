@@ -6,7 +6,7 @@ from typing import cast
 import pytest
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.interfaces import InternalRegime
+from lcm.interfaces import Regime
 from lcm.params.processing import (
     create_params_template,
     process_params,
@@ -57,13 +57,13 @@ def test_params_at_function_level(params_template):
             "fun_1": {"arg_0": 0.0, "arg_1": 1.0},
         },
     }
-    internal_params = process_params(params=params, params_template=params_template)
+    flat_params = process_params(params=params, params_template=params_template)
 
     # Check that output has regime-level keys
-    assert set(internal_params.keys()) == set(params_template.keys())
+    assert set(flat_params.keys()) == set(params_template.keys())
     # Check that output is flat per regime (function__param format)
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+        assert set(flat_params[regime].keys()) == _expected_flat_keys(
             params_template, regime
         )
 
@@ -77,12 +77,12 @@ def test_params_at_regime_level(params_template):
             "fun_1": {"arg_0": 0.0, "arg_1": 1.0},
         },
     }
-    internal_params = process_params(params=params, params_template=params_template)
+    flat_params = process_params(params=params, params_template=params_template)
 
     # Check that output has regime-level keys with flat format
-    assert set(internal_params.keys()) == set(params_template.keys())
+    assert set(flat_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+        assert set(flat_params[regime].keys()) == _expected_flat_keys(
             params_template, regime
         )
 
@@ -100,12 +100,12 @@ def test_params_mixed_regime_function_level(params_template):
             "fun_1": {"arg_0": 0.0, "arg_1": 1.0},
         },
     }
-    internal_params = process_params(params=params, params_template=params_template)
+    flat_params = process_params(params=params, params_template=params_template)
 
     # Check that output has regime-level keys with flat format
-    assert set(internal_params.keys()) == set(params_template.keys())
+    assert set(flat_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+        assert set(flat_params[regime].keys()) == _expected_flat_keys(
             params_template, regime
         )
 
@@ -113,12 +113,12 @@ def test_params_mixed_regime_function_level(params_template):
 def test_params_at_model_level(params_template):
     """Test 4: Passing all parameters at the model level."""
     params = {"arg_0": 0.0, "arg_1": 1.0}
-    internal_params = process_params(params=params, params_template=params_template)
+    flat_params = process_params(params=params, params_template=params_template)
 
     # Check that output has regime-level keys with flat format
-    assert set(internal_params.keys()) == set(params_template.keys())
+    assert set(flat_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+        assert set(flat_params[regime].keys()) == _expected_flat_keys(
             params_template, regime
         )
 
@@ -175,12 +175,12 @@ def test_ambiguous_model_regime_level(params_template):
         process_params(params=params, params_template=params_template)
 
 
-class MockRegime(InternalRegime):
-    """Mock InternalRegime exposing only `regime_params_template`.
+class MockRegime(Regime):
+    """Mock Regime exposing only `regime_params_template`.
 
-    Inherits from `InternalRegime` so `isinstance(x, InternalRegime)`
+    Inherits from `Regime` so `isinstance(x, Regime)`
     holds at `create_params_template`'s beartype-checked perimeter, but
-    bypasses `InternalRegime.__init__` to keep test fixtures minimal —
+    bypasses `Regime.__init__` to keep test fixtures minimal —
     `create_params_template` only reads `regime_params_template`.
 
     """
@@ -195,59 +195,59 @@ class MockRegime(InternalRegime):
 
 def test_function_params_no_qname_separator():
     """Function parameters should not contain the qname separator."""
-    internal_regimes = {
+    regimes = {
         "regime_0": MockRegime(
             {"fun_0": {"arg__0": float}}  # Invalid: contains '__'
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(internal_regimes))
+        create_params_template(MappingProxyType(regimes))
 
 
 def test_regime_name_no_qname_separator():
     """Regime names should not contain the qname separator."""
-    internal_regimes = {
+    regimes = {
         "regime__0": MockRegime(  # Invalid: contains '__'
             {"fun_0": {"arg_0": float}}
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(internal_regimes))
+        create_params_template(MappingProxyType(regimes))
 
 
 def test_function_name_no_qname_separator():
     """Function names should not contain the qname separator."""
-    internal_regimes = {
+    regimes = {
         "regime_0": MockRegime(
             {"fun__0": {"arg_0": float}}  # Invalid: contains '__'
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(internal_regimes))
+        create_params_template(MappingProxyType(regimes))
 
 
 def test_regime_function_names_disjoint():
     """Regime names and function names must be disjoint."""
     # Case: function name same as regime name
-    internal_regimes = {
+    regimes = {
         "regime_0": MockRegime(
             {"regime_0": {"arg_0": float}}  # Invalid: function name = regime name
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(internal_regimes))
+        create_params_template(MappingProxyType(regimes))
 
 
 def test_regime_argument_names_disjoint():
     """Regime names and argument names must be disjoint."""
     # Case: argument name same as regime name
-    internal_regimes = {
+    regimes = {
         "regime_0": MockRegime(
             {"fun_0": {"regime_0": float}}  # Invalid: arg name = regime name
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(internal_regimes))
+        create_params_template(MappingProxyType(regimes))
 
 
 def test_missing_parameter_raises_error(params_template):

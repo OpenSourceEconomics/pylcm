@@ -17,18 +17,18 @@ from tests.test_models.deterministic.regression import dead, working_life
 
 def test_get_next_state_function_with_solve_target():
     ages = AgeGrid(start=0, stop=4, step="Y")
-    regimes = {"working_life": working_life, "dead": dead}
+    user_regimes = {"working_life": working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
-        {name: jnp.int32(idx) for idx, name in enumerate(regimes.keys())}
+        {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
-    internal_regimes = process_regimes(
-        regimes=regimes,
+    regimes = process_regimes(
+        user_regimes=user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
     )
 
-    internal_working = internal_regimes["working_life"]
+    internal_working = regimes["working_life"]
 
     got_func = get_next_state_function_for_solution(
         transitions=internal_working.solve_functions.transitions["working_life"],

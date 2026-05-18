@@ -46,7 +46,7 @@ pytestmark = pytest.mark.filterwarnings(
 def test_discrete_grid_to_jax_is_int32() -> None:
     """Every `DiscreteGrid.to_jax()` in the model returns an `int32` array."""
     model = get_model(n_periods=3)
-    for regime in model.regimes.values():
+    for regime in model.user_regimes.values():
         for grid in {**regime.states, **regime.actions}.values():
             jax_arr = grid.to_jax()
             if jax_arr.dtype.kind == "i":
@@ -64,7 +64,7 @@ def test_build_initial_states_discrete_dtype_is_int32() -> None:
     }
     states_per_regime = build_initial_states(
         initial_states=initial_states,
-        internal_regimes=model.internal_regimes,
+        regimes=model.regimes,
     )
     for regime_name, regime_states in states_per_regime.items():
         for state_name, arr in regime_states.items():

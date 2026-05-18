@@ -10,9 +10,10 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.dtypes import canonical_float_dtype
 from lcm.typing import ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=True)
@@ -31,7 +32,7 @@ def _next_regime() -> ScalarInt:
     return RegimeId.dead
 
 
-working = Regime(
+working = UserRegime(
     transition=_next_regime,
     active=lambda age: age < 30,
     states={
@@ -42,7 +43,7 @@ working = Regime(
     functions={"utility": lambda wealth, health, bonus: wealth + health + bonus},
 )
 
-dead = Regime(
+dead = UserRegime(
     transition=None,
     functions={"utility": lambda: 0.0},
 )

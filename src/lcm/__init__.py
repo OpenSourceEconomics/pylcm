@@ -71,8 +71,8 @@ from lcm.persistence import (  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     _bind_forward_refs as _bind_persistence_forward_refs,
 )
-from lcm.regime import MarkovTransition, Regime  # noqa: E402
 from lcm.simulation.result import SimulationResult  # noqa: E402
+from lcm.user_regime import MarkovTransition, Regime  # noqa: E402
 from lcm.utils.containers import invert_regime_ids  # noqa: E402
 from lcm.utils.error_handling import validate_transition_probs  # noqa: E402
 from lcm.variables import (  # noqa: E402

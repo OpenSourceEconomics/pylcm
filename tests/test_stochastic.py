@@ -11,7 +11,6 @@ from lcm import (
     LinSpacedGrid,
     MarkovTransition,
     Model,
-    Regime,
     categorical,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
@@ -24,6 +23,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from lcm.user_regime import Regime as UserRegime
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -253,7 +253,7 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
             age >= final_age_alive, ShockRegimeId.dead, ShockRegimeId.working_life
         )
 
-    working_regime = Regime(
+    working_regime = UserRegime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
             "draw": DiscreteGrid(ShockStatus),
@@ -268,7 +268,7 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
         functions={"utility": utility},
         active=lambda age: age <= final_age,
     )
-    dead_regime = Regime(
+    dead_regime = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
     )

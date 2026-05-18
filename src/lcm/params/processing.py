@@ -13,7 +13,7 @@ leaf to a canonical pylcm dtype:
   user-input variant and the canonical narrow variant) recurse, always
   emitting a canonical `MappingLeaf` / `SequenceLeaf`.
 
-The pass runs as the *last* step over `internal_params` — `pd.Series`
+The pass runs as the *last* step over `flat_params` — `pd.Series`
 leaves are reshaped to JAX arrays via `convert_series_in_params`
 beforehand, so by the time the cast walks the tree, every numeric leaf
 is either a JAX array, a numpy array, or a Python scalar.
@@ -35,11 +35,11 @@ from jax import Array
 
 from lcm.dtypes import safe_to_float_dtype, safe_to_int_dtype
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.interfaces import InternalRegime
+from lcm.interfaces import Regime
 from lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 from lcm.typing import (
-    InternalParams,
+    FlatParams,
     ParamsTemplate,
     RegimeName,
     RegimeParamsTemplate,
@@ -55,7 +55,7 @@ def process_params(
     *,
     params: UserParams,
     params_template: ParamsTemplate,
-) -> InternalParams:
+) -> FlatParams:
     """Process user-provided params into internal params.
 
     Users can provide parameters at exactly one of three levels:
@@ -104,7 +104,7 @@ def broadcast_to_template(
     params: Mapping,
     template: Mapping[str, Mapping],
     required: bool = True,
-) -> InternalParams:
+) -> FlatParams:
     """Broadcast user params to template shape via 3-level resolution.
 
     For each template qname, search for a matching user value at:
@@ -163,20 +163,20 @@ def broadcast_to_template(
         raise InvalidParamsError(f"Unknown keys: {sorted(unknown)}")
 
     return cast(
-        "InternalParams",
+        "FlatParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
 
 
-def cast_params_to_canonical_dtypes(internal_params: InternalParams) -> InternalParams:
-    """Cast every numeric leaf of `internal_params` to its canonical pylcm dtype.
+def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
+    """Cast every numeric leaf of `flat_params` to its canonical pylcm dtype.
 
     Runs as a separate pass so the orchestrator can interpose
     `convert_series_in_params` between broadcast and cast — by the time
     this pass walks the tree, no `pd.Series` leaf should remain.
 
     Args:
-        internal_params: Output of `broadcast_to_template`, optionally
+        flat_params: Output of `broadcast_to_template`, optionally
             after `convert_series_in_params`.
 
     Returns:
@@ -184,7 +184,7 @@ def cast_params_to_canonical_dtypes(internal_params: InternalParams) -> Internal
 
     """
     return cast(
-        "InternalParams",
+        "FlatParams",
         MappingProxyType(
             {
                 regime: MappingProxyType(
@@ -195,7 +195,7 @@ def cast_params_to_canonical_dtypes(internal_params: InternalParams) -> Internal
                         for param_qname, value in leaves.items()
                     }
                 )
-                for regime, leaves in internal_params.items()
+                for regime, leaves in flat_params.items()
             }
         ),
     )
@@ -305,7 +305,7 @@ def _find_candidates(
 
 
 def create_params_template(  # noqa: C901
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regimes: MappingProxyType[RegimeName, Regime],
 ) -> ParamsTemplate:
     """Create params_template from internal regimes and validate name uniqueness.
 
@@ -313,7 +313,7 @@ def create_params_template(  # noqa: C901
     are disjoint sets to enable unambiguous parameter propagation.
 
     Args:
-        internal_regimes: Immutable mapping of regime names to InternalRegime
+        regimes: Immutable mapping of regime names to Regime
             instances.
 
     Returns:
@@ -328,7 +328,7 @@ def create_params_template(  # noqa: C901
     function_names: set[str] = set()
     arg_names: set[str] = set()
 
-    for name, regime in internal_regimes.items():
+    for name, regime in regimes.items():
         regime_names.add(name)
         regime_template = dict(regime.regime_params_template)
         template[name] = regime_template

@@ -24,122 +24,120 @@ from lcm.params.processing import (
     create_params_template,
 )
 from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.regime import Regime
 from lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from lcm.regime_building.processing import (
-    InternalRegime,
+    Regime,
     process_regimes,
 )
 from lcm.typing import (
+    FlatParams,
     FunctionName,
-    InternalParams,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
     UserParams,
 )
+from lcm.user_regime import Regime as UserRegime
 from lcm.utils.containers import get_field_names_and_values
 
 
 def build_regimes_and_template(
     *,
     ages: AgeGrid,
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
-) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
-    """Build internal regimes and params template in a single pass.
+) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
+    """Build canonical regimes and params template in a single pass.
 
     Compose regime processing, template creation, and optional fixed-param partialling
     so that each result is computed exactly once.
 
     Args:
         ages: Age grid for the model.
-        regimes: Mapping of regime names to Regime instances.
+        user_regimes: Mapping of regime names to Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
 
     Returns:
-        Tuple of (internal_regimes, params_template).
+        Tuple of (regimes, params_template).
 
     """
     if not fixed_params:
-        internal_regimes = process_regimes(
+        regimes = process_regimes(
             ages=ages,
-            regimes=regimes,
+            user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
         )
-        params_template = create_params_template(internal_regimes)
+        params_template = create_params_template(regimes)
     else:
-        internal_regimes, params_template = (
-            _build_regimes_and_template_with_fixed_params(
-                ages=ages,
-                regimes=regimes,
-                regime_names_to_ids=regime_names_to_ids,
-                enable_jit=enable_jit,
-                fixed_params=fixed_params,
-            )
+        regimes, params_template = _build_regimes_and_template_with_fixed_params(
+            ages=ages,
+            user_regimes=user_regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            enable_jit=enable_jit,
+            fixed_params=fixed_params,
         )
 
-    return internal_regimes, params_template
+    return regimes, params_template
 
 
 def _build_regimes_and_template_with_fixed_params(
     *,
     ages: AgeGrid,
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
-) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
-    """Build internal regimes and template, then partial in fixed params.
+) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
+    """Build canonical regimes and template, then partial in fixed params.
 
     Args:
         ages: Age grid for the model.
-        regimes: Mapping of regime names to Regime instances.
+        user_regimes: Mapping of regime names to Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
 
     Returns:
-        Tuple of internal_regimes and params_template with fixed params
+        Tuple of regimes and params_template with fixed params
         partialled in.
 
     """
-    raw_internal_regimes = process_regimes(
+    raw_regimes = process_regimes(
         ages=ages,
-        regimes=regimes,
+        user_regimes=user_regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
     )
-    raw_params_template = create_params_template(raw_internal_regimes)
+    raw_params_template = create_params_template(raw_regimes)
 
-    fixed_internal = _resolve_fixed_params(
+    fixed_flat_params = _resolve_fixed_params(
         fixed_params=dict(fixed_params), template=raw_params_template
     )
-    if has_series(fixed_internal):
-        fixed_internal = convert_series_in_params(
-            internal_params=fixed_internal,
+    if has_series(fixed_flat_params):
+        fixed_flat_params = convert_series_in_params(
+            flat_params=fixed_flat_params,
             ages=ages,
-            regimes=regimes,
+            user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
         )
-    fixed_internal = cast_params_to_canonical_dtypes(fixed_internal)
-    _validate_param_types(fixed_internal)
+    fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
+    _validate_param_types(fixed_flat_params)
 
     return (
         _partial_fixed_params_into_regimes(
-            internal_regimes=raw_internal_regimes,
-            fixed_internal=fixed_internal,
+            raw_regimes=raw_regimes,
+            fixed_flat_params=fixed_flat_params,
         ),
         _remove_fixed_params_from_template(
             template=raw_params_template,
-            fixed_internal=fixed_internal,
+            fixed_flat_params=fixed_flat_params,
         ),
     )
 
@@ -147,7 +145,7 @@ def _build_regimes_and_template_with_fixed_params(
 def validate_model_inputs(
     *,
     n_periods: int,
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_id_class: type,
     n_subjects: int | None = None,
 ) -> None:
@@ -166,13 +164,13 @@ def validate_model_inputs(
     if n_periods <= 1:
         error_messages.append("n_periods must be at least 2.")
 
-    if not regimes:
+    if not user_regimes:
         error_messages.append(
             "At least one non-terminal and one terminal regime must be provided."
         )
 
     # Validate regime names don't contain separator
-    invalid_names = [name for name in regimes if QNAME_DELIMITER in name]
+    invalid_names = [name for name in user_regimes if QNAME_DELIMITER in name]
     if invalid_names:
         error_messages.append(
             f"Regime names cannot contain the separator character "
@@ -180,16 +178,18 @@ def validate_model_inputs(
         )
 
     # Assume all items in regimes are lcm.Regime instances beyond this point
-    terminal_regimes = [name for name, r in regimes.items() if r.terminal]
+    terminal_regimes = [name for name, r in user_regimes.items() if r.terminal]
     if len(terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one terminal regime.")
 
-    non_terminal_regimes = {name: r for name, r in regimes.items() if not r.terminal}
+    non_terminal_regimes = {
+        name: r for name, r in user_regimes.items() if not r.terminal
+    }
     if len(non_terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one non-terminal regime.")
 
     regime_id_fields = sorted(get_field_names_and_values(regime_id_class).keys())
-    regime_names = sorted(regimes.keys())
+    regime_names = sorted(user_regimes.keys())
     if regime_id_fields != regime_names:
         error_messages.append(
             f"regime_id_cls fields must match regime names.\nGot:\n"
@@ -198,7 +198,7 @@ def validate_model_inputs(
             "regime names:\n"
             f"    {regime_names}."
         )
-    error_messages.extend(_validate_all_variables_used(regimes))
+    error_messages.extend(_validate_all_variables_used(user_regimes))
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -218,7 +218,9 @@ def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
         raise ValueError(msg)
 
 
-def _validate_all_variables_used(regimes: Mapping[RegimeName, Regime]) -> list[str]:
+def _validate_all_variables_used(
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
     Each state or action must appear in at least one of:
@@ -227,7 +229,8 @@ def _validate_all_variables_used(regimes: Mapping[RegimeName, Regime]) -> list[s
     - A regime function whose output H consumes at the Bellman step
 
     Args:
-        regimes: Mapping of regime names to regimes to validate.
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances.
 
     Returns:
         A list of error messages. Empty list if validation passes.
@@ -235,13 +238,13 @@ def _validate_all_variables_used(regimes: Mapping[RegimeName, Regime]) -> list[s
     """
     error_messages = []
 
-    for regime_name, regime in regimes.items():
-        variable_names = set(regime.states) | set(regime.actions)
-        user_functions = dict(regime.get_all_functions(phase="solve"))
+    for regime_name, user_regime in user_regimes.items():
+        variable_names = set(user_regime.states) | set(user_regime.actions)
+        user_functions = dict(user_regime.get_all_functions(phase="solve"))
 
         targets = [
             "utility",
-            *list(regime.constraints),
+            *list(user_regime.constraints),
             *(
                 name
                 for name in user_functions
@@ -256,8 +259,8 @@ def _validate_all_variables_used(regimes: Mapping[RegimeName, Regime]) -> list[s
         unused_variables = sorted(variable_names - reachable)
 
         if unused_variables:
-            unused_states = [v for v in unused_variables if v in regime.states]
-            unused_actions = [v for v in unused_variables if v in regime.actions]
+            unused_states = [v for v in unused_variables if v in user_regime.states]
+            unused_actions = [v for v in unused_variables if v in user_regime.actions]
 
             msg_parts = []
             if unused_states:
@@ -281,7 +284,7 @@ def _resolve_fixed_params(
     *,
     fixed_params: dict[str, object],
     template: ParamsTemplate,
-) -> InternalParams:
+) -> FlatParams:
     """Resolve fixed_params against the params template.
 
     Like `process_params`, support model/regime/function level specification, but
@@ -298,7 +301,7 @@ def _resolve_fixed_params(
 def _remove_fixed_params_from_template(
     *,
     template: ParamsTemplate,
-    fixed_internal: InternalParams,
+    fixed_flat_params: FlatParams,
 ) -> ParamsTemplate:
     """Remove fixed params from the params template.
 
@@ -308,7 +311,7 @@ def _remove_fixed_params_from_template(
     """
     result: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
     for regime_name, regime_template in template.items():
-        regime_fixed = fixed_internal.get(regime_name, MappingProxyType({}))
+        regime_fixed = fixed_flat_params.get(regime_name, MappingProxyType({}))
         new_regime: dict[FunctionName, dict[str, str]] = {}
         for func_name, func_params in regime_template.items():
             new_func_params = {
@@ -338,13 +341,13 @@ def _remove_fixed_params_from_template(
 
 def _partial_fixed_params_into_regimes(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    fixed_internal: InternalParams,
-) -> MappingProxyType[RegimeName, InternalRegime]:
-    """Partial fixed params into all compiled functions on each InternalRegime."""
-    result: dict[RegimeName, InternalRegime] = {}
-    for regime_name, regime in internal_regimes.items():
-        regime_fixed = dict(fixed_internal.get(regime_name, MappingProxyType({})))
+    raw_regimes: MappingProxyType[RegimeName, Regime],
+    fixed_flat_params: FlatParams,
+) -> MappingProxyType[RegimeName, Regime]:
+    """Partial fixed params into all compiled functions on each Regime."""
+    result: dict[RegimeName, Regime] = {}
+    for regime_name, regime in raw_regimes.items():
+        regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
         if not regime_fixed:
             result[regime_name] = regime
             continue
@@ -421,14 +424,14 @@ def _filter_kwargs_for_func(
     return {k: v for k, v in kwargs.items() if k in params}
 
 
-def _validate_param_types(internal_params: InternalParams) -> None:
+def _validate_param_types(flat_params: FlatParams) -> None:
     """Raise if any param leaf is not a JAX `Array` or container leaf.
 
     Defense-in-depth check after `cast_params_to_canonical_dtypes`: by the
     time this runs, every leaf must be a JAX `Array`, or a `MappingLeaf` /
     `SequenceLeaf` whose contents recursively satisfy the same rule.
     """
-    for regime_name, regime_params in internal_params.items():
+    for regime_name, regime_params in flat_params.items():
         for key, value in regime_params.items():
             _check_leaf(value, f"{regime_name}__{key}")
 

@@ -24,20 +24,21 @@ from lcm.shocks import _ShockGrid
 from lcm.typing import StateOrActionName
 
 if TYPE_CHECKING:
-    from lcm.regime import Regime
+    from lcm.user_regime import Regime as UserRegime
 
 
 def _bind_forward_refs(*, regime_cls: type) -> None:
-    """Bind `Regime` into this module's globals.
+    """Bind `UserRegime` into this module's globals.
 
     The package claw rewrites string annotations on `from_regime`,
     `get_grids`, and similar helpers into runtime forward references
     resolved against this module's globals. `lcm.__init__` calls this
-    helper once `Regime` is loaded so the refs resolve at call time
-    without depending on an ad-hoc assignment from outside the module.
+    helper once the user-facing `Regime` is loaded so the refs resolve
+    at call time without depending on an ad-hoc assignment from outside
+    the module.
     """
-    global Regime  # noqa: PLW0603
-    Regime = regime_cls  # ty: ignore[invalid-assignment]
+    global UserRegime  # noqa: PLW0603
+    UserRegime = regime_cls  # ty: ignore[invalid-assignment]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -179,7 +180,7 @@ class Variables(Mapping[StateOrActionName, VariableInfo]):
         return len(self.info)
 
     @classmethod
-    def from_regime(cls, regime: Regime) -> Self:
+    def from_regime(cls, user_regime: UserRegime) -> Self:
         """Build `Variables` from a regime, ordering names canonically.
 
         Order: discrete states (by `batch_size`), continuous states (by
@@ -187,25 +188,25 @@ class Variables(Mapping[StateOrActionName, VariableInfo]):
         group, `batch_size == 0` sorts last.
 
         Args:
-            regime: The regime as provided by the user.
+            user_regime: User-form `Regime` instance.
 
         Returns:
             A `Variables` instance whose iteration order matches the canonical
             ordering described above.
 
         """
-        raw_info = _raw_variable_info(regime)
-        ordered_names = _ordered_state_action_names(regime, raw_info)
+        raw_info = _raw_variable_info(user_regime)
+        ordered_names = _ordered_state_action_names(user_regime, raw_info)
         return cls(
             info=MappingProxyType({name: raw_info[name] for name in ordered_names})
         )
 
 
-def get_grids(regime: Regime) -> MappingProxyType[StateOrActionName, Grid]:
+def get_grids(user_regime: UserRegime) -> MappingProxyType[StateOrActionName, Grid]:
     """Create a mapping of grid objects for each variable in the regime.
 
     Args:
-        regime: The regime as provided by the user.
+        user_regime: User-form `Regime` instance.
 
     Returns:
         Immutable mapping of state and action variable names to their grid objects,
@@ -213,17 +214,19 @@ def get_grids(regime: Regime) -> MappingProxyType[StateOrActionName, Grid]:
         continuous states, then actions).
 
     """
-    variables = Variables.from_regime(regime)
-    raw_variables = dict(regime.states) | dict(regime.actions)
+    variables = Variables.from_regime(user_regime)
+    raw_variables = dict(user_regime.states) | dict(user_regime.actions)
     return MappingProxyType({name: raw_variables[name] for name in variables})
 
 
-def _raw_variable_info(regime: Regime) -> dict[StateOrActionName, VariableInfo]:
+def _raw_variable_info(
+    user_regime: UserRegime,
+) -> dict[StateOrActionName, VariableInfo]:
     """Derive `VariableInfo` for every state and action variable."""
-    variables = dict(regime.states) | dict(regime.actions)
+    variables = dict(user_regime.states) | dict(user_regime.actions)
     info: dict[StateOrActionName, VariableInfo] = {}
     for name, spec in variables.items():
-        is_state = name in regime.states
+        is_state = name in user_regime.states
         is_shock = isinstance(spec, _ShockGrid)
         is_continuous = isinstance(spec, ContinuousGrid) and not is_shock
         info[name] = VariableInfo(
@@ -235,7 +238,7 @@ def _raw_variable_info(regime: Regime) -> dict[StateOrActionName, VariableInfo]:
 
 
 def _ordered_state_action_names(
-    regime: Regime,
+    user_regime: UserRegime,
     info: dict[StateOrActionName, VariableInfo],
 ) -> list[StateOrActionName]:
     """Order variables: discrete states, continuous states, actions.
@@ -246,7 +249,7 @@ def _ordered_state_action_names(
     """
 
     def state_batch_size(name: StateOrActionName) -> float:
-        batch_size = regime.states[name].batch_size
+        batch_size = user_regime.states[name].batch_size
         return batch_size if batch_size != 0 else math.inf
 
     discrete_states = sorted(

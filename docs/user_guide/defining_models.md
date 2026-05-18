@@ -23,7 +23,8 @@ model = Model(
 ```
 
 All arguments are keyword-only. The three required arguments are `regimes`, `ages`, and
-`regime_id_class`.
+`regime_id_class`. The mapping is stored as `model.user_regimes` (boundary form); the
+processed canonical form is `model.regimes`.
 
 ## Regime ID Classes
 
@@ -105,8 +106,8 @@ The `Model` constructor validates:
 After construction, the model exposes several useful attributes:
 
 ```python
-model.regimes  # immutable mapping of user Regime objects
-model.internal_regimes  # processed internal representations
+model.user_regimes  # immutable mapping of user-provided `Regime` objects
+model.regimes  # immutable mapping of processed `Regime` objects
 model.n_periods  # number of periods
 model.regime_names_to_ids  # name -> integer mapping
 model.get_params_template()  # mutable copy of the parameter template

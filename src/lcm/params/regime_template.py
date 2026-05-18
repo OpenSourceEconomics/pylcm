@@ -6,7 +6,6 @@ from dags.tree import tree_path_from_qname
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
 from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.regime import Regime
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
@@ -15,9 +14,10 @@ from lcm.typing import (
     TransitionFunctionName,
     UserFunction,
 )
+from lcm.user_regime import Regime as UserRegime
 
 
-def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
+def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
     Discover parameters from function signatures via `dags.tree`. Parameters
@@ -33,17 +33,17 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
     pseudo-function keys matching the state or action name.
 
     Args:
-        regime: The regime as provided by the user.
+        user_regime: User-form `Regime` instance.
 
     Returns:
         The regime parameter template with type annotations as values.
 
     """
     variables = {
-        *set(regime.states),
-        *set(regime.actions),
-        *regime.functions,
-        *(f"next_{name}" for name in regime.states),
+        *set(user_regime.states),
+        *set(user_regime.actions),
+        *user_regime.functions,
+        *(f"next_{name}" for name in user_regime.states),
         "period",
         "age",
         "E_next_V",
@@ -51,7 +51,7 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
 
     function_params: dict[FunctionName, dict[str, str]] = {}
 
-    for name, func in _collect_all_functions_for_template(regime).items():
+    for name, func in _collect_all_functions_for_template(user_regime).items():
         if isinstance(func, SolveSimulateFunctionPair):
             tree_solve = dt.create_tree_with_input_types({name: func.solve})
             tree_sim = dt.create_tree_with_input_types({name: func.simulate})
@@ -73,9 +73,9 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
         else:
             function_params[template_key] = params
 
-    _validate_no_shadowing(function_params, regime)
+    _validate_no_shadowing(function_params, user_regime)
 
-    _add_runtime_grid_params(function_params, regime)
+    _add_runtime_grid_params(function_params, user_regime)
 
     return MappingProxyType(
         {k: MappingProxyType(v) for k, v in function_params.items()}
@@ -84,10 +84,10 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
 
 def _add_runtime_grid_params(
     function_params: dict[FunctionName, dict[str, str]],
-    regime: Regime,
+    user_regime: UserRegime,
 ) -> None:
     """Add runtime-supplied state/action grid params to the template in place."""
-    for state_name, grid in regime.states.items():
+    for state_name, grid in user_regime.states.items():
         if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params, name=state_name, kind="state"
@@ -103,7 +103,7 @@ def _add_runtime_grid_params(
                 grid.params_to_pass_at_runtime, "float"
             )
 
-    for action_name, grid in regime.actions.items():
+    for action_name, grid in user_regime.actions.items():
         if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params, name=action_name, kind="action"
@@ -142,33 +142,35 @@ def _fail_if_runtime_grid_shadows_function(
 
 
 def _collect_all_functions_for_template(
-    regime: Regime,
+    user_regime: UserRegime,
 ) -> dict[
     FunctionName | TransitionFunctionName, UserFunction | SolveSimulateFunctionPair
 ]:
     """Collect all regime functions, preserving `SolveSimulateFunctionPair` entries.
 
-    Unlike `regime.get_all_functions(phase=...)` which resolves pairs to a single
-    variant, this returns pairs as-is so the caller can union both variants'
-    parameters.
+    Unlike `user_regime.get_all_functions(phase=...)` which resolves pairs to a
+    single variant, this returns pairs as-is so the caller can union both
+    variants' parameters.
     """
     result: dict[
         FunctionName | TransitionFunctionName,
         UserFunction | SolveSimulateFunctionPair,
-    ] = dict(regime.functions)
-    result |= dict(regime.constraints)
-    if callable(regime.transition):
-        result |= collect_state_transitions(regime.states, regime.state_transitions)
-        result["next_regime"] = regime.transition
+    ] = dict(user_regime.functions)
+    result |= dict(user_regime.constraints)
+    if callable(user_regime.transition):
+        result |= collect_state_transitions(
+            user_regime.states, user_regime.state_transitions
+        )
+        result["next_regime"] = user_regime.transition
     return result
 
 
 def _validate_no_shadowing(
     function_params: dict[FunctionName, dict[str, str]],
-    regime: Regime,
+    user_regime: UserRegime,
 ) -> None:
     """Raise if any discovered parameter shadows a state or action name."""
-    state_action_names = set(regime.states) | set(regime.actions)
+    state_action_names = set(user_regime.states) | set(user_regime.actions)
     for func_name, params in function_params.items():
         shadows = set(params) & state_action_names
         if shadows:

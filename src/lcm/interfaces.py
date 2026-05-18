@@ -14,14 +14,15 @@ from lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
     Bool1D,
+    ConstraintFunctionsMapping,
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
     DiscreteState,
+    EconFunctionsMapping,
     FlatRegimeParams,
     Float1D,
     FloatND,
-    FunctionsMapping,
     IntND,
     MaxQOverAFunction,
     NextStateSimulationFunction,
@@ -159,11 +160,11 @@ class SolveSimulateFunctionPair[S, T]:
 class SolveFunctions:
     """Compiled functions for the backward-induction (solve) phase."""
 
-    functions: FunctionsMapping
+    functions: EconFunctionsMapping
     """Immutable mapping of function names to internal user functions."""
 
-    constraints: FunctionsMapping
-    """Immutable mapping of constraint names to internal user functions."""
+    constraints: ConstraintFunctionsMapping
+    """Immutable mapping of constraint names to feasibility predicates."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
@@ -194,11 +195,11 @@ class SolveFunctions:
 class SimulateFunctions:
     """Compiled functions for the forward-simulation phase."""
 
-    functions: FunctionsMapping
+    functions: EconFunctionsMapping
     """Immutable mapping of function names to internal user functions."""
 
-    constraints: FunctionsMapping
-    """Immutable mapping of constraint names to internal user functions."""
+    constraints: ConstraintFunctionsMapping
+    """Immutable mapping of constraint names to feasibility predicates."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
@@ -217,8 +218,12 @@ class SimulateFunctions:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class InternalRegime:
-    """Internal representation of a user regime."""
+class Regime:
+    """Canonical regime produced by `process_regimes` from a user-facing `Regime`.
+
+    Threaded through the solver and simulator as the engine-side representation.
+    The user-facing counterpart with the same name lives in `lcm.user_regime`.
+    """
 
     name: RegimeName
     """Regime name (key in the regimes dict)."""
@@ -368,8 +373,8 @@ def _build_regime_sharding(
     """Build a `_RegimeSharding` covering this regime's distributed grids.
 
     Returns `None` when no grid is distributed. Action grids are rejected at
-    `Regime` construction (see `regime_building.validation`); the helper
-    assumes any grid with `distributed=True` is a state grid.
+    user-facing `Regime` construction (see `regime_building.validation`); the
+    helper assumes any grid with `distributed=True` is a state grid.
 
     Sharding policy depends on the number of distributed grids:
     - exactly one: build a 1-axis mesh with shape `(n_devices,)`, axis name

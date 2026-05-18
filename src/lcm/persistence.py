@@ -335,8 +335,8 @@ def _strip_V_arr_from_result(
     """Create a copy of result with value arrays and compiled callables stripped.
 
     `period_to_regime_to_V_arr` is dropped to avoid storing it both in the
-    pickle and in the HDF5 file. `_internal_regimes` is overwritten with the
-    model's lazy-path `internal_regimes`: when `Model(n_subjects=N)` is set
+    pickle and in the HDF5 file. `_regimes` is overwritten with the
+    model's lazy-path `regimes`: when `Model(n_subjects=N)` is set
     the result carries the AOT-compiled regimes, whose
     `jax.stages.Compiled` callables hold a `LoadedExecutable` that cannot
     be pickled. The lazy regimes carry the same metadata and cloud-pickle
@@ -344,7 +344,7 @@ def _strip_V_arr_from_result(
     """
     stripped = copy.copy(result)
     object.__setattr__(stripped, "_period_to_regime_to_V_arr", MappingProxyType({}))
-    object.__setattr__(stripped, "_internal_regimes", model.internal_regimes)
+    object.__setattr__(stripped, "_regimes", model.regimes)
     return stripped
 
 

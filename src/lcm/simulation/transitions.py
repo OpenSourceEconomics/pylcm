@@ -13,7 +13,7 @@ from dags.tree import qname_from_tree_path
 from jax import numpy as jnp
 from jax import vmap
 
-from lcm.interfaces import InternalRegime, StateActionSpace
+from lcm.interfaces import Regime, StateActionSpace
 from lcm.simulation.random import generate_simulation_keys
 from lcm.state_action_space import _validate_all_states_present
 from lcm.typing import (
@@ -37,7 +37,7 @@ from lcm.typing import (
 
 def create_regime_state_action_space(
     *,
-    internal_regime: InternalRegime,
+    regime: Regime,
     regime_states: RegimeStates,
     regime_params: FlatRegimeParams,
 ) -> StateActionSpace:
@@ -45,10 +45,10 @@ def create_regime_state_action_space(
 
     Continuous action grids declared with `pass_points_at_runtime=True` are
     completed from `regime_params` (via
-    `InternalRegime.state_action_space`).
+    `Regime.state_action_space`).
 
     Args:
-        internal_regime: The internal regime instance.
+        regime: The internal regime instance.
         regime_states: State arrays for this regime, keyed by state name.
         regime_params: Flat regime parameters supplied at runtime, used to
             substitute runtime-supplied action gridpoints.
@@ -57,14 +57,14 @@ def create_regime_state_action_space(
         The state-action space for the subjects in the regime.
 
     """
-    base = internal_regime.state_action_space(regime_params=regime_params)
+    base = regime.state_action_space(regime_params=regime_params)
 
     states_for_state_action_space = {
-        sn: regime_states[sn] for sn in internal_regime.variables.state_names
+        sn: regime_states[sn] for sn in regime.variables.state_names
     }
     _validate_all_states_present(
         provided_states=states_for_state_action_space,
-        required_state_names=set(internal_regime.variables.state_names),
+        required_state_names=set(regime.variables.state_names),
     )
 
     return base.replace(states=MappingProxyType(states_for_state_action_space))
@@ -72,7 +72,7 @@ def create_regime_state_action_space(
 
 def calculate_next_states(
     *,
-    internal_regime: InternalRegime,
+    regime: Regime,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     period: int,
     age: ScalarInt | ScalarFloat,
@@ -85,7 +85,7 @@ def calculate_next_states(
     """Calculate next period states for subjects in a regime.
 
     Args:
-        internal_regime: The internal regime instance.
+        regime: The internal regime instance.
         subjects_in_regime: Boolean array indicating if subject is in regime.
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
@@ -103,15 +103,13 @@ def calculate_next_states(
     """
     # Identify stochastic transitions and generate random keys
     # ---------------------------------------------------------------------------------
-    stochastic_transition_names = (
-        internal_regime.simulate_functions.stochastic_transition_names
-    )
+    stochastic_transition_names = regime.simulate_functions.stochastic_transition_names
     # Sorted to fix a downstream-ordering bug when the nested iteration
     # yields names in a non-deterministic order.
     stochastic_next_function_names = sorted(
         qname_from_tree_path((target_regime, transition_name))
         for target_regime, target_transitions in (
-            internal_regime.simulate_functions.transitions.items()
+            regime.simulate_functions.transitions.items()
         )
         for transition_name in target_transitions
         if transition_name in stochastic_transition_names
@@ -125,7 +123,7 @@ def calculate_next_states(
 
     # Compute next states using regime's transition functions
     # ---------------------------------------------------------------------------------
-    next_state_vmapped = internal_regime.simulate_functions.next_state
+    next_state_vmapped = regime.simulate_functions.next_state
 
     states_with_next_prefix = next_state_vmapped(
         **state_action_space.states,
@@ -161,7 +159,7 @@ def calculate_next_states(
 
 def calculate_next_regime_membership(
     *,
-    internal_regime: InternalRegime,
+    regime: Regime,
     state_action_space: StateActionSpace,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     period: int,
@@ -179,7 +177,7 @@ def calculate_next_regime_membership(
     current states and actions, then draws random regime assignments for each subject.
 
     Args:
-        internal_regime: The internal regime instance.
+        regime: The internal regime instance.
         state_action_space: State-action space for subjects in this regime.
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
@@ -201,7 +199,7 @@ def calculate_next_regime_membership(
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
     regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
-        internal_regime.simulate_functions.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
+        regime.simulate_functions.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
             **state_action_space.states,
             **optimal_actions,
             period=jnp.int32(period),

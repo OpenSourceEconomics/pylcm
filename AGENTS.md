@@ -31,17 +31,21 @@ automation. Python 3.14+ is required.
 
 ### Core Components
 
-**Model Definition (`src/lcm/model.py`, `src/lcm/regime.py`)**
+**Model Definition (`src/lcm/model.py`, `src/lcm/user_regime.py`)**
 
 - `Model`: User-facing class for defining dynamic choice models
-- `Regime`: Defines a single regime with utility, constraints, functions, actions, and
-  states. State transitions live on grids; regime transitions live on the regime.
+- `Regime` (from `lcm.user_regime`): User-facing regime definition with utility,
+  constraints, functions, actions, and states. State transitions live on grids; regime
+  transitions live on the regime.
 - Models must have at least one terminal regime and one non-terminal regime
 - Models support transitions between multiple regimes
 
-**Internal Processing (`src/lcm/interfaces.py`)**
+**Canonical Processing (`src/lcm/interfaces.py`)**
 
-- `InternalRegime`: Internal representation after processing user regime
+- `Regime` (from `lcm.interfaces`): Canonical representation produced by
+  `process_regimes` from a user-facing `Regime`. Internal engine code threads this form.
+  Inside boundary files that import both, alias the user form as
+  `from lcm.user_regime import Regime as UserRegime`.
 - `StateActionSpace`: Manages state-action combinations for solution/simulation
 - `PeriodRegimeSimulationData`: Raw simulation results for one period in one regime
 
@@ -96,8 +100,8 @@ to transition functions for target-dependent transitions.
 
 1. User defines `Regime`(s) with grids, functions, states/actions
 1. User creates `Model` from a dict of regimes with `ages` and `regime_id_class`
-1. `process_regimes()` converts to `InternalRegime` and pre-compiles optimization
-   functions
+1. `process_regimes()` converts user-facing `Regime` instances into canonical
+   `lcm.interfaces.Regime` objects and pre-compiles optimization functions
 1. `model.solve()` performs backward induction using dynamic programming
 1. `model.simulate()` performs forward simulation using solved policy functions
 1. `SimulationResult.to_dataframe()` creates flat DataFrame output
@@ -265,7 +269,7 @@ result.available_targets  # list[str] - computable additional targets
 
 # Access raw data for advanced users
 result.raw_results  # dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
-result.internal_params  # InternalParams
+result.flat_params  # FlatParams
 result.period_to_regime_to_V_arr  # dict[int, dict[RegimeName, FloatND]]
 
 # Serialization (requires cloudpickle)
@@ -289,9 +293,10 @@ initial_conditions = {
 
 - `model.get_params_template()` - Mutable copy of the parameter template (dict by regime
   name)
-- `model.regimes` - Immutable mapping of regime names to user `Regime` objects
-- `model.internal_regimes` - Immutable mapping of regime names to processed
-  `InternalRegime` objects
+- `model.user_regimes` - Immutable mapping of regime names to user-facing `Regime`
+  objects (`lcm.user_regime.Regime`)
+- `model.regimes` - Immutable mapping of regime names to canonical `Regime` objects
+  (`lcm.interfaces.Regime`) produced by `process_regimes`
 - `model.ages` - The AgeGrid defining the lifecycle
 - `model.n_periods` - Number of periods in the model (derived from `ages`)
 - `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices

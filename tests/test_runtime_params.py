@@ -4,9 +4,10 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.grids import IrregSpacedGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)
@@ -42,7 +43,7 @@ def _make_model(*, wealth_grid=None):
     if wealth_grid is None:
         wealth_grid = LinSpacedGrid(start=1, stop=10, n_points=5)
 
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility},
         states={"wealth": wealth_grid},
         state_transitions={"wealth": _next_wealth},
@@ -51,7 +52,7 @@ def _make_model(*, wealth_grid=None):
         transition=_next_regime,
         active=lambda age: age < 2,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
@@ -73,7 +74,7 @@ def test_runtime_grid_creation():
 
 def test_runtime_grid_to_jax_raises_before_substitution():
     """`to_jax()` on a runtime grid is a bug — substitution happens at
-    solve/simulate time via `InternalRegime.state_action_space(regime_params=...)`.
+    solve/simulate time via `Regime.state_action_space(regime_params=...)`.
     The error message must point the caller at that API."""
     grid = IrregSpacedGrid(n_points=5)
     with pytest.raises(Exception, match="state_action_space"):
@@ -153,7 +154,7 @@ def test_runtime_grid_matches_fixed():
 
 def _make_action_grid_model(*, consumption_grid: IrregSpacedGrid) -> Model:
     """Create a 2-regime model where consumption is the runtime-points action grid."""
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         state_transitions={"wealth": _next_wealth},
@@ -162,7 +163,7 @@ def _make_action_grid_model(*, consumption_grid: IrregSpacedGrid) -> Model:
         transition=_next_regime,
         active=lambda age: age < 2,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
@@ -258,7 +259,7 @@ def _make_action_grid_model_with_stateful_dead(
     def _dead_utility(wealth: ContinuousState) -> FloatND:
         return jnp.log(wealth + 1)
 
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _alive_utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         state_transitions={
@@ -272,7 +273,7 @@ def _make_action_grid_model_with_stateful_dead(
         transition=_next_regime,
         active=lambda age: age < 2,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": _dead_utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},

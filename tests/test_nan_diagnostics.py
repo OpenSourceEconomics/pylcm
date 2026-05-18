@@ -5,7 +5,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
-from lcm import Model, Regime, categorical
+from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinSpacedGrid
@@ -17,6 +17,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from lcm.user_regime import Regime as UserRegime
 from lcm.utils.error_handling import validate_V
 
 
@@ -78,7 +79,7 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
             next_regime_to_V_arr=MappingProxyType(
                 {"alive": jnp.zeros(3)},
             ),
-            internal_params=MappingProxyType({}),
+            flat_params=MappingProxyType({}),
         )
 
     exc = exc_info.value
@@ -119,7 +120,7 @@ def _build_nan_model() -> tuple[Model, dict]:
     ) -> BoolND:
         return consumption <= wealth
 
-    non_terminal = Regime(
+    non_terminal = UserRegime(
         actions={"consumption": LinSpacedGrid(start=1, stop=2, n_points=3)},
         states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=3)},
         state_transitions={"wealth": next_wealth},
@@ -128,7 +129,7 @@ def _build_nan_model() -> tuple[Model, dict]:
         transition=next_regime,
         active=lambda age: age < 1,
     )
-    terminal = Regime(
+    terminal = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 1,
@@ -191,5 +192,5 @@ def test_diagnostic_failure_preserves_original_error():
             next_regime_to_V_arr=MappingProxyType(
                 {"test": jnp.zeros(3)},
             ),
-            internal_params=MappingProxyType({}),
+            flat_params=MappingProxyType({}),
         )
