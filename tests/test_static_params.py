@@ -68,7 +68,7 @@ def _make_model(n_periods=3, *, extra_fixed_params=None):
     fixed_params = extra_fixed_params or {}
 
     return Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
@@ -233,7 +233,7 @@ _MARKOV_INITIAL_CONDITIONS = {
 def _make_markov_model(*, fixed_params: UserParams | None = None) -> Model:
     """Create regime_markov model with optional fixed_params."""
     return Model(
-        user_regimes={"alive": markov_alive, "dead": markov_dead},
+        regimes={"alive": markov_alive, "dead": markov_dead},
         ages=AgeGrid(start=60, stop=62, step="Y"),
         regime_id_class=MarkovRegimeId,
         fixed_params=fixed_params or {},
@@ -353,7 +353,7 @@ def test_series_fixed_param_with_derived_categoricals():
         active=lambda age: age >= 2,
     )
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"group_bonus": group_bonus},
@@ -389,7 +389,7 @@ def test_model_broadcast_merges_into_regimes():
         active=lambda age: age >= 2,
     )
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
@@ -421,7 +421,7 @@ def test_model_broadcast_matching_regime_entry():
         active=lambda age: age >= 2,
     )
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         derived_categoricals={"wealth_group": wg_grid},
@@ -455,7 +455,7 @@ def test_model_broadcast_conflict_raises():
     )
     with pytest.raises(Exception, match="conflicts"):
         Model(
-            user_regimes={"alive": alive, "dead": dead},
+            regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
             derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
@@ -493,7 +493,7 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
         derived_categoricals={"group_b": DiscreteGrid(_GroupB)},
     )
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         derived_categoricals={"shared": DiscreteGrid(_Shared)},

@@ -13,7 +13,7 @@ lifecycle model.
 from lcm import Model
 
 model = Model(
-    user_regimes=user_regimes,  # dict mapping names to Regime instances
+    regimes=regimes,  # dict mapping names to Regime instances
     ages=ages,  # AgeGrid defining the lifecycle timeline
     regime_id_class=RegimeId,  # @categorical dataclass mapping names to ScalarInt indices
     enable_jit=True,  # controls JAX compilation (default: True)
@@ -22,8 +22,9 @@ model = Model(
 )
 ```
 
-All arguments are keyword-only. The three required arguments are `user_regimes`, `ages`,
-and `regime_id_class`.
+All arguments are keyword-only. The three required arguments are `regimes`, `ages`, and
+`regime_id_class`. The mapping is stored as `model.user_regimes` (boundary form); the
+processed canonical form is `model.regimes`.
 
 ## Regime ID Classes
 
@@ -46,7 +47,7 @@ Rules:
 - Fields must be annotated as `ScalarInt` — the 0-d `jnp.int32` scalar pylcm produces
   for category codes. Other annotations raise `CategoricalDefinitionError` at decoration
   time.
-- Fields must match the keys of the `user_regimes` dict exactly (sorted alphabetically).
+- Fields must match the keys of the `regimes` dict exactly (sorted alphabetically).
 - Values are auto-assigned as consecutive `jnp.int32` scalars starting from 0.
 - Use `RegimeId.working` (class attribute access) to reference regime IDs in transition
   functions.
@@ -95,7 +96,7 @@ The `Model` constructor validates:
 
 - At least one terminal regime and one non-terminal regime must be provided.
 - Regime names cannot contain `__` (reserved separator).
-- `regime_id_class` fields must exactly match the `user_regimes` dict keys.
+- `regime_id_class` fields must exactly match the `regimes` dict keys.
 - All states and actions must be used by at least one function (utility, constraints, or
   transitions).
 - The age grid must have at least 2 periods.
@@ -177,7 +178,7 @@ retired = Regime(
 )
 
 model = Model(
-    user_regimes={"working": working, "retired": retired},
+    regimes={"working": working, "retired": retired},
     ages=AgeGrid(start=25, stop=75, step="Y"),
     regime_id_class=RegimeId,
 )

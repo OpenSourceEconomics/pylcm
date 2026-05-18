@@ -112,7 +112,7 @@ def nan_value_model(
         functions={**regimes["non_terminal"].functions, "utility": invalid_utility},
     )
     return Model(
-        user_regimes={
+        regimes={
             "non_terminal": invalid_regime,
             "terminal": regimes["terminal"],
         },
@@ -143,7 +143,7 @@ def inf_value_model(
         functions={**regimes["non_terminal"].functions, "utility": invalid_utility},
     )
     return Model(
-        user_regimes={
+        regimes={
             "non_terminal": inf_regime,
             "terminal": regimes["terminal"],
         },

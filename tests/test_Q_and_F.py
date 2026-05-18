@@ -338,7 +338,7 @@ def _build_incomplete_target_model(
     )
 
     model = Model(
-        user_regimes={"work": work, "retire": retire, "dead": dead_regime},
+        regimes={"work": work, "retire": retire, "dead": dead_regime},
         regime_id_class=_IncompleteTargetRegimeId,
         ages=AgeGrid(start=0, stop=3, step="Y"),
     )

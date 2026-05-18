@@ -101,7 +101,7 @@ def get_model(
 ) -> Model:
     final_age_alive = START_AGE + n_periods - 2
     return Model(
-        user_regimes={
+        regimes={
             "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive,
                 states={"wealth": wealth_grid},

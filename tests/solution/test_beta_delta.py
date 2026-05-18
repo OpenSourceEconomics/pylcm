@@ -119,7 +119,7 @@ def _make_model(*, H_func=beta_delta_H):
     )
 
     return Model(
-        user_regimes={"working": working, "dead": dead},
+        regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )

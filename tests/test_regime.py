@@ -62,7 +62,7 @@ def test_regime_name_does_not_contain_separator():
     # Regime name containing separator should raise at Model creation
     with pytest.raises(ModelInitializationError, match=QNAME_DELIMITER):
         Model(
-            user_regimes={f"work{QNAME_DELIMITER}test": working, "dead": dead},
+            regimes={f"work{QNAME_DELIMITER}test": working, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
         )
@@ -408,7 +408,7 @@ def test_regime_with_fixed_states_only():
         active=lambda age: age > final_age,
     )
     model = Model(
-        user_regimes={"working_life": working_regime, "dead": dead_regime},
+        regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=FixedRegimeId,
     )

@@ -135,7 +135,7 @@ def _build_nan_model() -> tuple[Model, dict]:
         active=lambda age: age >= 1,
     )
     model = Model(
-        user_regimes={"non_terminal": non_terminal, "terminal": terminal},
+        regimes={"non_terminal": non_terminal, "terminal": terminal},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_Rid,
     )

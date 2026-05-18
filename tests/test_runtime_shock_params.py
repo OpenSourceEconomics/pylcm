@@ -62,7 +62,7 @@ def _make_model(*, fixed_params=None):
     )
 
     return Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeIdShock,
         fixed_params=fixed_params or {},

@@ -101,7 +101,7 @@ def _build_model(
         active=lambda age: age > last_alive_age,
     )
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -342,7 +342,7 @@ def _build_alive_dead_model(
         active=lambda _age: True,
     )
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=AliveDeadRegimeId,
     )
@@ -487,7 +487,7 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         active=lambda age: age > last_alive_age,
     )
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RuntimeRegimeId,
     )

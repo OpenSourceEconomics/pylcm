@@ -166,7 +166,7 @@ def test_model_requires_terminal_regime(binary_category_class):
     )
     with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
         Model(
-            user_regimes={"test": regime},
+            regimes={"test": regime},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -189,7 +189,7 @@ def test_model_requires_non_terminal_regime(binary_category_class):
     )
     with pytest.raises(ModelInitializationError, match="at least one non-terminal"):
         Model(
-            user_regimes={"dead": dead},
+            regimes={"dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -238,7 +238,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     )
     # Should not raise - multiple terminal regimes are allowed
     model = Model(
-        user_regimes={"alive": alive, "dead1": dead1, "dead2": dead2},
+        regimes={"alive": alive, "dead1": dead1, "dead2": dead2},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -271,7 +271,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
         active=lambda age: age >= 1,
     )
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -308,7 +308,7 @@ def test_model_regime_name_validation(binary_category_class):
     # Using separator in regime name should raise error
     with pytest.raises(ModelInitializationError, match="separator character"):
         Model(
-            user_regimes={"alive__bad": alive, "dead": dead},
+            regimes={"alive__bad": alive, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -365,7 +365,7 @@ def test_unused_state_raises_error():
     # Should raise error about unused_state
     with pytest.raises(ModelInitializationError, match="unused_state"):
         Model(
-            user_regimes={"working_life": working_life, "retirement": retirement},
+            regimes={"working_life": working_life, "retirement": retirement},
             ages=AgeGrid(start=0, stop=5, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -420,7 +420,7 @@ def test_unused_action_raises_error():
     # Should raise error about unused_action
     with pytest.raises(ModelInitializationError, match="unused_action"):
         Model(
-            user_regimes={"working_life": working_life, "retirement": retirement},
+            regimes={"working_life": working_life, "retirement": retirement},
             ages=AgeGrid(start=0, stop=5, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -501,7 +501,7 @@ def test_constraint_depending_on_transition_output():
     )
 
     Model(
-        user_regimes={"alive": alive_regime, "dead": dead_regime},
+        regimes={"alive": alive_regime, "dead": dead_regime},
         ages=AgeGrid(start=59, stop=61, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -580,7 +580,7 @@ def test_state_only_used_in_transitions():
     )
 
     Model(
-        user_regimes={"alive": alive_regime, "dead": dead_regime},
+        regimes={"alive": alive_regime, "dead": dead_regime},
         ages=AgeGrid(start=59, stop=61, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -643,7 +643,7 @@ def test_state_only_in_transitions_with_terminal_regime():
     dead = UserRegime(transition=None, functions={"utility": dead_utility})
 
     Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
     )

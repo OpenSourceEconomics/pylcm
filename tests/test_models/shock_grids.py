@@ -112,7 +112,7 @@ def get_model(
         functions={"utility": lambda: 0.0},
     )
     return Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         fixed_params={"final_age_alive": final_age_alive},
@@ -195,7 +195,7 @@ def get_multi_regime_model(
         functions={"utility": lambda: 0.0},
     )
     return Model(
-        user_regimes={
+        regimes={
             "work": work_regime,
             "retire": retire_regime,
             "dead": dead_regime,

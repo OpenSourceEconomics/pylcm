@@ -139,7 +139,7 @@ class Model:
         *,
         description: str = "",
         ages: AgeGrid,
-        user_regimes: Mapping[RegimeName, UserRegime],
+        regimes: Mapping[RegimeName, UserRegime],
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
@@ -151,8 +151,10 @@ class Model:
         """Initialize the Model.
 
         Args:
-            user_regimes: Mapping of regime names to user-provided `Regime`
-                instances.
+            regimes: Mapping of regime names to user-provided `Regime`
+                instances. Stored as `self.user_regimes` after merging in
+                any model-level `derived_categoricals`; the canonical
+                processed form is exposed as `self.regimes`.
             ages: Age grid for the model.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
@@ -180,7 +182,7 @@ class Model:
 
         validate_model_inputs(
             n_periods=self.n_periods,
-            user_regimes=user_regimes,
+            user_regimes=regimes,
             regime_id_class=regime_id_class,
             n_subjects=n_subjects,
         )
@@ -193,7 +195,8 @@ class Model:
             )
         )
         self.user_regimes = _merge_derived_categoricals(
-            user_regimes, derived_categoricals
+            user_regimes=regimes,
+            derived_categoricals=derived_categoricals,
         )
         self.regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
@@ -545,6 +548,7 @@ class Model:
 
 
 def _merge_derived_categoricals(
+    *,
     user_regimes: Mapping[RegimeName, UserRegime],
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> MappingProxyType[RegimeName, UserRegime]:

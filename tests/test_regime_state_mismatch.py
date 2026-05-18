@@ -124,7 +124,7 @@ def test_discrete_state_different_categories_across_regimes():
 
     with pytest.raises(ModelInitializationError, match="health"):
         Model(
-            user_regimes={"working_life": working, "retirement": retired, "dead": dead},
+            regimes={"working_life": working, "retirement": retired, "dead": dead},
             ages=AgeGrid(start=0, stop=4, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -178,7 +178,7 @@ def test_deterministic_target_only_state() -> None:
     )
 
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
     )
@@ -270,7 +270,7 @@ def test_stochastic_target_only_state() -> None:
     )
 
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
     )
@@ -344,7 +344,7 @@ def test_per_target_dict_transitions():
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
 
     model = Model(
-        user_regimes={"working_life": working, "retirement": retired, "dead": dead},
+        regimes={"working_life": working, "retirement": retired, "dead": dead},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -436,7 +436,7 @@ def test_discrete_state_same_count_different_names():
 
     with pytest.raises(ModelInitializationError, match="status"):
         Model(
-            user_regimes={"work": work, "retire": retire, "dead": dead},
+            regimes={"work": work, "retire": retire, "dead": dead},
             ages=AgeGrid(start=0, stop=3, step="Y"),
             regime_id_class=_RegimeId,
         )
@@ -480,7 +480,7 @@ def test_mixed_ordered_flags_raises():
 
     with pytest.raises(ModelInitializationError, match="inconsistent ordered flags"):
         Model(
-            user_regimes={"a": a, "b": b, "dead": dead},
+            regimes={"a": a, "b": b, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=_RegimeId,
         )
@@ -524,7 +524,7 @@ def test_both_ordered_same_categories_passes():
 
     # Should not raise
     Model(
-        user_regimes={"a": a, "b": b, "dead": dead},
+        regimes={"a": a, "b": b, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
     )
@@ -675,7 +675,7 @@ def test_incomplete_per_target_reachable_target():
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
 
     model = Model(
-        user_regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
+        regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
     )
@@ -751,7 +751,7 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
 
     model = Model(
-        user_regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
+        regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
     )
@@ -865,7 +865,7 @@ def test_incomplete_per_target_unreachable_target() -> None:
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
 
     model = Model(
-        user_regimes={
+        regimes={
             "regime_a": regime_a,
             "regime_b": regime_b,
             "regime_c": regime_c,

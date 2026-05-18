@@ -168,7 +168,7 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
     )
 
     return Model(
-        user_regimes={"working_life": working_life_regime, "dead": dead_regime},
+        regimes={"working_life": working_life_regime, "dead": dead_regime},
         ages=AgeGrid(start=START_AGE, stop=FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
     )

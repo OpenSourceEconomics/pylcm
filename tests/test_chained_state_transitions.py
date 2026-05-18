@@ -69,7 +69,7 @@ _dead = UserRegime(transition=None, functions={"utility": lambda: jnp.array(0.0)
 
 def _build_model() -> Model:
     return Model(
-        user_regimes={"active": _active, "dead": _dead},
+        regimes={"active": _active, "dead": _dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
     )

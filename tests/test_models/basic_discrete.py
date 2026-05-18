@@ -57,7 +57,7 @@ dead = UserRegime(
 def get_model() -> Model:
     """Create a minimal model with discrete + continuous states and two regimes."""
     return Model(
-        user_regimes={
+        regimes={
             "working_life": working_life,
             "retirement": retirement,
             "dead": dead,

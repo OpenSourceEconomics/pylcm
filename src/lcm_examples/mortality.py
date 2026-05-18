@@ -165,7 +165,7 @@ def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     return Model(
-        user_regimes={
+        regimes={
             "working_life": working_life.replace(
                 active=lambda age, la=last_age: age < la
             ),

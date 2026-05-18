@@ -125,7 +125,7 @@ def test_model_with_bad_arg_raises_project_exception() -> None:
     with pytest.raises(ModelInitializationError):
         Model(
             ages=AgeGrid(start=25, stop=75, step="Y"),
-            user_regimes="not a mapping",  # ty: ignore[invalid-argument-type]
+            regimes="not a mapping",  # ty: ignore[invalid-argument-type]
             regime_id_class=int,
         )
 

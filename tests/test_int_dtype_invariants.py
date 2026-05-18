@@ -227,7 +227,7 @@ def test_simulate_accepts_int64_regime_initial_condition_and_round_trips() -> No
     n_periods = 3
     final_age_alive = 18 + n_periods - 2
     model = Model(
-        user_regimes={
+        regimes={
             "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive,
             ),

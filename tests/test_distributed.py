@@ -78,7 +78,7 @@ def correct_distributed_model():
     )
 
     return Model(
-        user_regimes={"working_life": working_life, "retirement": retirement},
+        regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -138,7 +138,7 @@ def wrong_distributed_model():
     )
 
     return Model(
-        user_regimes={"working_life": working_life, "retirement": retirement},
+        regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -253,7 +253,7 @@ def partially_distributed_model():
     )
 
     return Model(
-        user_regimes={"working_life": working_life, "retirement": retirement},
+        regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
     )

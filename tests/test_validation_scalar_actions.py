@@ -90,7 +90,7 @@ def test_validation_vmaps_over_action_combos():
     )
 
     model = Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
     )

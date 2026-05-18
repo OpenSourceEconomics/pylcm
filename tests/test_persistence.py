@@ -74,7 +74,7 @@ def _build_tiny_model(*, enable_jit: bool, n_subjects: int):
     )
     ages = AgeGrid(start=0, stop=3, step="Y")
     model = Model(
-        user_regimes={"working": working, "retired": retired},
+        regimes={"working": working, "retired": retired},
         ages=ages,
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,

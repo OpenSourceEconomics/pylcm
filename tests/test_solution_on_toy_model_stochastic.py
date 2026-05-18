@@ -219,7 +219,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
         n_points=n_wealth_points
     )
     model = Model(
-        user_regimes={
+        regimes={
             "alive": alive_stochastic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
@@ -278,7 +278,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
         n_points=n_wealth_points
     )
     model = Model(
-        user_regimes={
+        regimes={
             "alive": alive_stochastic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),

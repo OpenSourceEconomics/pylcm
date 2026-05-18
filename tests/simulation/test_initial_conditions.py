@@ -76,7 +76,7 @@ def model() -> Model:
     )
 
     return Model(
-        user_regimes={"active": alive, "terminal": dead},
+        regimes={"active": alive, "terminal": dead},
         ages=ages,
         regime_id_class=RegimeId,
     )
@@ -289,7 +289,7 @@ def _make_constraint_model(wealth_grid) -> Model:
         active=lambda age: age > final_age,
     )
     return Model(
-        user_regimes={"working_life": working_regime, "dead": dead_regime},
+        regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -485,7 +485,7 @@ def _make_constrained_asymmetric_model() -> Model:
     )
 
     return Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -540,7 +540,7 @@ def _make_asymmetric_state_model() -> Model:
     )
 
     return Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
     )

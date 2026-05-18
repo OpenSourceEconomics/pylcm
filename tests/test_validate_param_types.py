@@ -51,7 +51,7 @@ dead = UserRegime(
 
 def _make_model() -> Model:
     return Model(
-        user_regimes={"working": working, "dead": dead},
+        regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=25, stop=30, step="Y"),
         regime_id_class=RegimeId,
     )

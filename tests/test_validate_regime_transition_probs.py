@@ -225,7 +225,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
     model = Model(
-        user_regimes={"active": active, "terminal": terminal},
+        regimes={"active": active, "terminal": terminal},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
     )
@@ -280,7 +280,7 @@ def test_regime_transition_validation_passes_period_as_int32():
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
     model = Model(
-        user_regimes={"active": active, "terminal": terminal},
+        regimes={"active": active, "terminal": terminal},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
     )

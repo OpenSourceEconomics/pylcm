@@ -34,7 +34,7 @@ def _build_test_model(*, n_periods: int, n_subjects: int | None = None) -> Model
     """Construct the small 2-regime regression model with optional n_subjects."""
     final_age_alive = 18 + n_periods - 2
     return Model(
-        user_regimes={
+        regimes={
             "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive,
             ),

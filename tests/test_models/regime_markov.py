@@ -55,7 +55,7 @@ dead = UserRegime(
 def get_model() -> Model:
     """Create a model with MarkovTransition on regime transitions."""
     return Model(
-        user_regimes={"alive": alive, "dead": dead},
+        regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=60, stop=62, step="Y"),
         regime_id_class=RegimeId,
     )

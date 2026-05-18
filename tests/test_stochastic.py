@@ -134,7 +134,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     )
 
     model_deterministic = Model(
-        user_regimes={
+        regimes={
             "working_life": working_deterministic,
             "retirement": retirement_deterministic,
             "dead": dead,
@@ -144,7 +144,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     )
 
     model_stochastic = Model(
-        user_regimes={
+        regimes={
             "working_life": working_stochastic,
             "retirement": retirement_stochastic,
             "dead": dead,
@@ -273,7 +273,7 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
         functions={"utility": lambda: 0.0},
     )
     return Model(
-        user_regimes={"working_life": working_regime, "dead": dead_regime},
+        regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=ShockRegimeId,
     )
@@ -331,7 +331,7 @@ def test_stochastic_regime_transition_active_at_last_period_raises():
 
     # Deliberately set active=always to trigger the validation error.
     model = Model(
-        user_regimes={
+        regimes={
             "working_life": mortality.working_life.replace(active=lambda _age: True),
             "retirement": mortality.retirement.replace(active=lambda _age: True),
             "dead": mortality.dead,
