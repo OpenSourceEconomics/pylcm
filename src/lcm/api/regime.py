@@ -13,7 +13,6 @@ from beartype import beartype
 from dags.tree import QNAME_DELIMITER
 
 from lcm._beartype_conf import REGIME_CONF
-from lcm.engine import SolveSimulateFunctionPair
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import DiscreteGrid, Grid
 from lcm.shocks._base import _ShockGrid
@@ -42,6 +41,27 @@ from lcm.utils.containers import (
 # bound name for the type checker.
 if TYPE_CHECKING:
     import lcm.model
+
+
+class SolveSimulateFunctionPair[S, T]:
+    """Container for phase-specific function variants.
+
+    Use this to provide different implementations of a function for the solve
+    and simulate phases.  For example, naive beta-delta discounting uses
+    exponential discounting during backward induction (solve) but
+    present-biased discounting for action selection (simulate).
+
+    Variants may have different parameter signatures.  The params template is
+    the union of both variants' parameters; each variant receives only the
+    kwargs it expects.
+
+    """
+
+    __slots__ = ("simulate", "solve")
+
+    def __init__(self, *, solve: S, simulate: T) -> None:
+        self.solve = solve
+        self.simulate = simulate
 
 
 @beartype(conf=REGIME_CONF)

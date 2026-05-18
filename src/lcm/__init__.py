@@ -49,7 +49,12 @@ beartype_package("lcm", conf=INTERNAL_CONF)
 from lcm import shocks  # noqa: E402
 from lcm._version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
-from lcm.engine import SolveSimulateFunctionPair  # noqa: E402
+from lcm.api.regime import (  # noqa: E402
+    MarkovTransition,
+    Regime,
+    SolveSimulateFunctionPair,
+    validate_transition_probs,
+)
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
@@ -72,11 +77,6 @@ from lcm.persistence import (  # noqa: E402
     _bind_forward_refs as _bind_persistence_forward_refs,
 )
 from lcm.simulation.result import SimulationResult  # noqa: E402
-from lcm.user_regime import (  # noqa: E402
-    MarkovTransition,
-    Regime,
-    validate_transition_probs,
-)
 from lcm.utils.containers import invert_regime_ids  # noqa: E402
 from lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,

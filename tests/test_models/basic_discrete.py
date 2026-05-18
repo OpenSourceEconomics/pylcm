@@ -1,8 +1,8 @@
 """Basic model with discrete + continuous states, no stochastic transitions."""
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm.api.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=True)

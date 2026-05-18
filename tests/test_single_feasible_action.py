@@ -25,6 +25,7 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm.api.regime import Regime as UserRegime
 from lcm.grids import IrregSpacedGrid
 from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.regime_building.ndimage import map_coordinates
@@ -35,7 +36,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

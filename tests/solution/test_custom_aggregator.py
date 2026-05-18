@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm.api.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -15,7 +16,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

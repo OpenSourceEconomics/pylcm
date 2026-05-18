@@ -9,6 +9,7 @@ import pytest
 from pandas.api.types import CategoricalDtype
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm.api.regime import Regime as UserRegime
 from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     array_from_series,
@@ -17,7 +18,6 @@ from lcm.pandas_utils import (
 )
 from lcm.params.processing import broadcast_to_template
 from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
 from tests.test_models.basic_discrete import (
     Health,
 )

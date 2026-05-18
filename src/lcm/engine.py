@@ -272,27 +272,6 @@ class StateActionSpace:
         )
 
 
-class SolveSimulateFunctionPair[S, T]:
-    """Container for phase-specific function variants.
-
-    Use this to provide different implementations of a function for the solve
-    and simulate phases.  For example, naive beta-delta discounting uses
-    exponential discounting during backward induction (solve) but present-biased
-    discounting for action selection (simulate).
-
-    Variants may have different parameter signatures.  The params template is
-    the union of both variants' parameters; each variant receives only the
-    kwargs it expects.
-
-    """
-
-    __slots__ = ("simulate", "solve")
-
-    def __init__(self, *, solve: S, simulate: T) -> None:
-        self.solve = solve
-        self.simulate = simulate
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SolveFunctions:
     """Compiled functions for the backward-induction (solve) phase."""
@@ -393,7 +372,7 @@ class Regime:
     """Canonical regime produced by `process_regimes` from a user-facing `Regime`.
 
     Threaded through the solver and simulator as the engine-side representation.
-    The user-facing counterpart with the same name lives in `lcm.user_regime`.
+    The user-facing counterpart with the same name lives in `lcm.api.regime`.
     """
 
     name: RegimeName

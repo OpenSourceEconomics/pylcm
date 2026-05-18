@@ -5,6 +5,8 @@ from jax import numpy as jnp
 
 import lcm
 from lcm.ages import AgeGrid
+from lcm.api.regime import MarkovTransition
+from lcm.api.regime import Regime as UserRegime
 from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.model import Model
 from lcm.typing import (
@@ -15,8 +17,6 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
-from lcm.user_regime import MarkovTransition
-from lcm.user_regime import Regime as UserRegime
 
 _SHOCK_GRID_CLASSES = {
     "uniform": lcm.shocks.iid.Uniform,

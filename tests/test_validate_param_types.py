@@ -11,9 +11,9 @@ import numpy as np
 from jax import Array
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm.api.regime import Regime as UserRegime
 from lcm.dtypes import canonical_float_dtype
 from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=True)

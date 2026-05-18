@@ -9,6 +9,12 @@ from dags.tree import QNAME_DELIMITER
 
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.ages import AgeGrid
+from lcm.api.regime import (
+    MarkovTransition,
+    _IdentityTransition,
+    validate_transition_probs,
+)
+from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import IrregSpacedGrid
 from lcm.regime_building.transitions import collect_state_transitions
@@ -20,12 +26,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import (
-    MarkovTransition,
-    _IdentityTransition,
-    validate_transition_probs,
-)
-from lcm.user_regime import Regime as UserRegime
 from tests.test_models.stochastic import get_model as get_stochastic_model
 
 

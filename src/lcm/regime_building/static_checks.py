@@ -26,12 +26,12 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
 
+from lcm.api.regime import MarkovTransition
+from lcm.api.regime import Regime as UserRegime
 from lcm.engine import _StochasticStateTransition
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.grids import DiscreteGrid
 from lcm.typing import RegimeName, TransitionFunctionName
-from lcm.user_regime import MarkovTransition
-from lcm.user_regime import Regime as UserRegime
 from lcm.utils.ast_inspection import _get_func_indexing_params
 
 

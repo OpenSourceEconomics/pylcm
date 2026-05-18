@@ -5,6 +5,7 @@ from typing import TypeAliasType
 
 from dags.tree import QNAME_DELIMITER
 
+from lcm.api.regime import _IdentityTransition
 from lcm.exceptions import RegimeInitializationError
 from lcm.grids import DiscreteGrid, Grid
 from lcm.shocks._base import _ShockGrid
@@ -16,7 +17,6 @@ from lcm.typing import (
     TransitionFunctionName,
     UserFunction,
 )
-from lcm.user_regime import _IdentityTransition
 
 
 def collect_state_transitions(

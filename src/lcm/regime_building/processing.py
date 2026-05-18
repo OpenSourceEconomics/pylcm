@@ -12,11 +12,12 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qnam
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.api.regime import MarkovTransition, SolveSimulateFunctionPair
+from lcm.api.regime import Regime as UserRegime
 from lcm.engine import (
     Regime,
     SimulateFunctions,
     SolveFunctions,
-    SolveSimulateFunctionPair,
     StateActionSpace,
     Variables,
 )
@@ -67,8 +68,6 @@ from lcm.typing import (
     UserFunction,
     VmappedRegimeTransitionFunction,
 )
-from lcm.user_regime import MarkovTransition
-from lcm.user_regime import Regime as UserRegime
 from lcm.utils.containers import ensure_containers_are_immutable
 from lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace

@@ -7,6 +7,8 @@ import pytest
 from numpy.testing import assert_array_equal
 
 from lcm import AgeGrid
+from lcm.api.regime import MarkovTransition
+from lcm.api.regime import Regime as UserRegime
 from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.model import Model
 from lcm.params.processing import (
@@ -30,8 +32,6 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from lcm.user_regime import MarkovTransition
-from lcm.user_regime import Regime as UserRegime
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,

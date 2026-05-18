@@ -10,8 +10,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm.api.regime import Regime as UserRegime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

@@ -15,9 +15,9 @@ import jax
 import jax.numpy as jnp
 
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm.api.regime import Regime as UserRegime
 from lcm.params import MappingLeaf, as_leaf
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

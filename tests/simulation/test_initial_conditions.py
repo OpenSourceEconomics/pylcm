@@ -5,6 +5,7 @@ import pytest
 
 from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, categorical
 from lcm.ages import AgeGrid
+from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.params.processing import process_params
 from lcm.simulation.initial_conditions import (
@@ -20,7 +21,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 # Regime-id codes are canonical `int32`; `validate_initial_conditions` is an
 # internal function that receives already-canonicalized initial conditions.

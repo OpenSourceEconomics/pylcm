@@ -6,12 +6,12 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 
+from lcm.api.regime import Regime as UserRegime
 from lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.shocks import _ShockGrid
 from lcm.typing import FloatND, IntND, ScalarFloat, StateName
-from lcm.user_regime import Regime as UserRegime
 from lcm.utils.functools import all_as_kwargs
 from lcm.variables import from_regime, get_grids
 

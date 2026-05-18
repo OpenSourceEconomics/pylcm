@@ -12,6 +12,7 @@ from beartype import beartype
 
 from lcm._beartype_conf import MODEL_CONF, PARAMS_CONF
 from lcm.ages import AgeGrid
+from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
@@ -56,7 +57,6 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
-from lcm.user_regime import Regime as UserRegime
 from lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,

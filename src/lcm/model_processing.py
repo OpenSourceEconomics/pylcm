@@ -15,6 +15,7 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
 from lcm.ages import AgeGrid
+from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidParamsError, ModelInitializationError, format_messages
 from lcm.pandas_utils import convert_series_in_params, has_series
 from lcm.params import MappingLeaf
@@ -37,7 +38,6 @@ from lcm.typing import (
     RegimeNamesToIds,
     UserParams,
 )
-from lcm.user_regime import Regime as UserRegime
 from lcm.utils.containers import get_field_names_and_values
 
 

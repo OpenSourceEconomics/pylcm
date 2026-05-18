@@ -16,13 +16,13 @@ from lcm import (
     PiecewiseLogSpacedGrid,
     categorical,
 )
+from lcm.api.regime import Regime as UserRegime
 from lcm.grids import UniformContinuousGrid
 from lcm.typing import (
     FloatND,
     ScalarInt,
     UserParams,
 )
-from lcm.user_regime import Regime as UserRegime
 from lcm_examples.mortality import (
     LaborSupply,
     borrowing_constraint,

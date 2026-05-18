@@ -11,13 +11,13 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.regime_building.runtime_checks import (
     _format_sum_violation,
     _validate_regime_transition_probs,
 )
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
-from lcm.user_regime import Regime as UserRegime
 from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 

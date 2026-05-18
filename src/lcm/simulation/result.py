@@ -14,6 +14,7 @@ import pandas as pd
 from dags import concatenate_functions
 
 from lcm.ages import AgeGrid
+from lcm.api.regime import Regime as UserRegime
 from lcm.engine import PeriodRegimeSimulationData, Regime
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
@@ -31,7 +32,6 @@ from lcm.typing import (
     StateName,
     UserFunction,
 )
-from lcm.user_regime import Regime as UserRegime
 from lcm.utils.dispatchers import vmap_1d
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (

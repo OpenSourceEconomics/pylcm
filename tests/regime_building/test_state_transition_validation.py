@@ -16,6 +16,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.typing import (
     BoolND,
@@ -25,7 +26,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

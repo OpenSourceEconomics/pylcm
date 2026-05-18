@@ -5,9 +5,9 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm.api.regime import Regime as UserRegime
 from lcm.grids import IrregSpacedGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

@@ -8,8 +8,8 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.api.regime import Regime as UserRegime
 from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=True)

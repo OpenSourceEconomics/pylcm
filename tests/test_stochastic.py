@@ -13,6 +13,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import (
     BoolND,
@@ -23,7 +24,6 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
-from lcm.user_regime import Regime as UserRegime
 from tests.test_models.stochastic import (
     RegimeId,
     dead,

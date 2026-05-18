@@ -7,6 +7,7 @@ import pytest
 
 from lcm import Model, categorical
 from lcm.ages import AgeGrid
+from lcm.api.regime import Regime as UserRegime
 from lcm.engine import StateActionSpace
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinSpacedGrid
@@ -18,7 +19,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 
 def _make_state_action_space(

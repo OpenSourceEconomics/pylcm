@@ -3,13 +3,13 @@ import pytest
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.grids import categorical
 from lcm.grids.continuous import LinSpacedGrid
 from lcm.grids.discrete import DiscreteGrid
 from lcm.model import Model
 from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 # Run these tests on the CPU for parallelization, does not work if pytest runs
 # multiple workers, because jax will be initialized already

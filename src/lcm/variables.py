@@ -21,7 +21,7 @@ from lcm.shocks import _ShockGrid
 from lcm.typing import StateOrActionName
 
 if TYPE_CHECKING:
-    from lcm.user_regime import Regime as UserRegime
+    from lcm.api.regime import Regime as UserRegime
 
 
 def _bind_forward_refs(*, regime_cls: type) -> None:

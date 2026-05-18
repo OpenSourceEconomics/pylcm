@@ -1,4 +1,4 @@
-from lcm.engine import SolveSimulateFunctionPair
+from lcm.api.regime import SolveSimulateFunctionPair
 from lcm.grids import DiscreteGrid
 from lcm.params.regime_template import (
     create_regime_params_template,

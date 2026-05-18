@@ -17,10 +17,10 @@ from lcm import (
 )
 from lcm import persistence as _persistence
 from lcm import variables as _variables
+from lcm.api.regime import Regime as UserRegime
 from lcm.persistence import _get_platform, load_solution, save_solution
 from lcm.simulation.result import SimulationResult as _PublicSimulationResult
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 def test_forward_refs_bound_after_import() -> None:

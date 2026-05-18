@@ -7,11 +7,11 @@ import functools
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, categorical
+from lcm.api.regime import Regime as UserRegime
 from lcm.typing import (
     DiscreteAction,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 from lcm_examples.mortality import (
     CONSUMPTION_GRID,
     WEALTH_GRID,

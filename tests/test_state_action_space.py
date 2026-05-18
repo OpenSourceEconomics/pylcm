@@ -3,12 +3,12 @@ from types import MappingProxyType
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
+from lcm.api.regime import Regime as UserRegime
 from lcm.engine import StateActionSpace, VariableInfo, Variables
 from lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 def _create_variables(
