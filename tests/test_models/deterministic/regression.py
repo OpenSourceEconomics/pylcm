@@ -14,7 +14,6 @@ from lcm import (
     Model,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
-    Regime,
     categorical,
 )
 from lcm.grids import UniformContinuousGrid
@@ -23,6 +22,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from lcm.user_regime import Regime as UserRegime
 from lcm_examples.mortality import (
     LaborSupply,
     borrowing_constraint,
@@ -59,7 +59,7 @@ _DEFAULT_LAST_ACTIVE_AGE = START_AGE + _DEFAULT_N_PERIODS - 2
 DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
-working_life = Regime(
+working_life = UserRegime(
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DEFAULT_CONSUMPTION_GRID,
@@ -82,7 +82,7 @@ working_life = Regime(
 )
 
 
-dead = Regime(
+dead = UserRegime(
     transition=None,
     functions={"utility": lambda: 0.0},
 )
@@ -101,7 +101,7 @@ def get_model(
 ) -> Model:
     final_age_alive = START_AGE + n_periods - 2
     return Model(
-        regimes={
+        user_regimes={
             "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive,
                 states={"wealth": wealth_grid},

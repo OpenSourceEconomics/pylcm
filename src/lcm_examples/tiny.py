@@ -154,7 +154,7 @@ def get_model(
     )
 
     return Model(
-        regimes={"working_life": wl, "retirement": ret},
+        user_regimes={"working_life": wl, "retirement": ret},
         ages=age_grid,
         regime_id_class=RegimeId,
         description="A tiny consumption-savings model.",

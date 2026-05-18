@@ -16,22 +16,22 @@ from dags import concatenate_functions
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
-from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
+from lcm.interfaces import PeriodRegimeSimulationData, Regime
 from lcm.persistence import atomic_dump
-from lcm.regime import Regime
 from lcm.regime_building.processing import compute_merged_discrete_categories
 from lcm.typing import (
     ActionName,
     BoolND,
+    FlatParams,
     FlatRegimeParams,
     FloatND,
-    InternalParams,
     IntND,
     RegimeName,
     RegimeNamesToIds,
     StateName,
     UserFunction,
 )
+from lcm.user_regime import Regime as UserRegime
 from lcm.utils.dispatchers import vmap_1d
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
@@ -49,8 +49,8 @@ class SimulationResult:
         raw_results: MappingProxyType[
             RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
         ],
-        internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-        internal_params: InternalParams,
+        regimes: MappingProxyType[RegimeName, Regime],
+        flat_params: FlatParams,
         period_to_regime_to_V_arr: MappingProxyType[
             int, MappingProxyType[RegimeName, FloatND]
         ],
@@ -58,19 +58,17 @@ class SimulationResult:
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ) -> None:
         self._raw_results = raw_results
-        self._internal_regimes = internal_regimes
-        self._internal_params = internal_params
+        self._regimes = regimes
+        self._flat_params = flat_params
         self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._metadata = _compute_metadata(
-            internal_regimes=internal_regimes,
+            regimes=regimes,
             raw_results=raw_results,
             simulation_output_dtypes=simulation_output_dtypes,
             ages=ages,
         )
-        self._available_targets = sorted(
-            _collect_all_available_targets(internal_regimes)
-        )
+        self._available_targets = sorted(_collect_all_available_targets(regimes))
 
     @property
     def raw_results(
@@ -82,9 +80,9 @@ class SimulationResult:
         return self._raw_results
 
     @property
-    def internal_params(self) -> InternalParams:
+    def flat_params(self) -> FlatParams:
         """Model parameters used in simulation."""
-        return self._internal_params
+        return self._flat_params
 
     @property
     def period_to_regime_to_V_arr(
@@ -159,8 +157,8 @@ class SimulationResult:
 
         df = _create_flat_dataframe(
             raw_results=self._raw_results,
-            internal_regimes=self._internal_regimes,
-            internal_params=self._internal_params,
+            regimes=self._regimes,
+            flat_params=self._flat_params,
             metadata=self._metadata,
             additional_targets=resolved_targets,
             ages=self._ages,
@@ -225,7 +223,7 @@ class SimulationResult:
 
 
 def get_simulation_output_dtypes(
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> MappingProxyType[str, pd.CategoricalDtype]:
     """Compute pandas CategoricalDtype for all discrete output columns.
@@ -234,7 +232,7 @@ def get_simulation_output_dtypes(
     called after model validation (which guarantees merges succeed).
 
     Args:
-        regimes: Mapping of regime names to Regime instances.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Mapping of regime names to integer IDs.
 
     Returns:
@@ -242,7 +240,7 @@ def get_simulation_output_dtypes(
         all discrete state/action variables plus the `"regime_name"` column.
 
     """
-    merged_categories, ordered_flags = compute_merged_discrete_categories(regimes)
+    merged_categories, ordered_flags = compute_merged_discrete_categories(user_regimes)
 
     dtypes: dict[str, pd.CategoricalDtype] = {}
     for var_name, categories in merged_categories.items():
@@ -298,22 +296,22 @@ class SimulationMetadata:
 
 def _compute_metadata(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regimes: MappingProxyType[RegimeName, Regime],
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ages: AgeGrid,
 ) -> SimulationMetadata:
-    """Compute metadata from internal regimes, raw results, and output dtypes."""
-    regime_names = list(internal_regimes.keys())
+    """Compute metadata from canonical regimes, raw results, and output dtypes."""
+    regime_names = list(regimes.keys())
 
     all_states: set[StateName] = set()
     all_actions: set[ActionName] = set()
     regime_to_states: dict[RegimeName, tuple[StateName, ...]] = {}
     regime_to_actions: dict[RegimeName, tuple[ActionName, ...]] = {}
 
-    for regime_name, regime in internal_regimes.items():
+    for regime_name, regime in regimes.items():
         regime_to_states[regime_name] = regime.variables.state_names
         regime_to_actions[regime_name] = regime.variables.action_names
         all_states.update(regime.variables.state_names)
@@ -330,7 +328,7 @@ def _compute_metadata(
 
     # Per-regime discrete categories for correct code→label mapping
     regime_discrete_categories: dict[tuple[RegimeName, str], tuple[str, ...]] = {}
-    for regime_name, regime in internal_regimes.items():
+    for regime_name, regime in regimes.items():
         for var_name, grid in regime.grids.items():
             if isinstance(grid, DiscreteGrid):
                 regime_discrete_categories[(regime_name, var_name)] = grid.categories
@@ -400,16 +398,16 @@ def _resolve_targets(
 
 
 def _collect_all_available_targets(
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regimes: MappingProxyType[RegimeName, Regime],
 ) -> set[str]:
     """Collect all available target names across all regimes."""
     all_targets: set[str] = set()
-    for regime in internal_regimes.values():
+    for regime in regimes.values():
         all_targets.update(_get_available_targets_for_regime(regime))
     return all_targets
 
 
-def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
+def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     """Get available target names for a single regime."""
     excluded = {"H"} | _get_stochastic_weight_function_names(regime)
     sim = regime.simulate_functions
@@ -418,7 +416,7 @@ def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
     } | sim.constraints.keys()
 
 
-def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
+def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
     """Get names of internal stochastic weight functions.
 
     These are functions named `weight_{transition_name}` that return probability arrays
@@ -440,8 +438,8 @@ def _create_flat_dataframe(
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
     metadata: SimulationMetadata,
     additional_targets: list[str] | None,
     ages: AgeGrid,
@@ -449,11 +447,11 @@ def _create_flat_dataframe(
     """Create a single flat DataFrame from all regime results."""
     regime_dfs = [
         _process_regime(
-            internal_regime=internal_regimes[name],
+            regime=regimes[name],
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
-            regime_params=internal_params[name],
+            regime_params=flat_params[name],
             additional_targets=additional_targets,
             ages=ages,
         )
@@ -470,7 +468,7 @@ def _create_flat_dataframe(
 
 def _process_regime(
     *,
-    internal_regime: InternalRegime,
+    regime: Regime,
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
@@ -499,18 +497,18 @@ def _process_regime(
     data["age"] = ages.values[data["period"]]  # noqa: PD011
 
     # Add regime name
-    data["regime_name"] = [internal_regime.name] * len(data["period"])
+    data["regime_name"] = [regime.name] * len(data["period"])
 
     # Compute additional targets
     if additional_targets:
         targets_for_regime = _filter_targets_for_regime(
-            targets=additional_targets, internal_regime=internal_regime
+            targets=additional_targets, regime=regime
         )
         if targets_for_regime:
             target_values = _compute_targets(
                 data=data,
                 targets=targets_for_regime,
-                internal_regime=internal_regime,
+                regime=regime,
                 regime_params=regime_params,
             )
             data.update(target_values)
@@ -561,10 +559,10 @@ def _concatenate_and_filter(
 def _filter_targets_for_regime(
     *,
     targets: list[str],
-    internal_regime: InternalRegime,
+    regime: Regime,
 ) -> list[str]:
     """Filter targets to only those available in this regime."""
-    available = _get_available_targets_for_regime(internal_regime)
+    available = _get_available_targets_for_regime(regime)
     return [t for t in targets if t in available]
 
 
@@ -754,17 +752,17 @@ def _compute_targets(
     *,
     data: dict[str, FloatND | IntND | BoolND | Sequence[str]],
     targets: list[str],
-    internal_regime: InternalRegime,
+    regime: Regime,
     regime_params: FlatRegimeParams,
 ) -> dict[str, FloatND | IntND | BoolND]:
     """Compute additional targets for a regime."""
-    functions_pool = _build_functions_pool(internal_regime)
+    functions_pool = _build_functions_pool(regime)
     target_func = _create_target_function(
         functions_pool=functions_pool, targets=targets
     )
     # Merge resolved fixed params with runtime params so that the target
     # function (built from raw user functions) receives all needed arguments.
-    all_params = {**internal_regime.resolved_fixed_params, **regime_params}
+    all_params = {**regime.resolved_fixed_params, **regime_params}
     flat_param_names = frozenset(all_params.keys())
     variables = _get_function_variables(func=target_func, param_names=flat_param_names)
     vectorized_func = vmap_1d(func=target_func, variables=variables)
@@ -774,9 +772,9 @@ def _compute_targets(
     return {k: jnp.squeeze(v) for k, v in result.items()}
 
 
-def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, UserFunction]:
+def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
     """Build pool of available functions for target computation."""
-    sim = internal_regime.simulate_functions
+    sim = regime.simulate_functions
     pool: dict[str, UserFunction] = {
         **{k: v for k, v in sim.functions.items() if k != "H"},
         **sim.constraints,

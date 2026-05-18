@@ -24,7 +24,7 @@ points to also exercise the runtime-action-grids substitution path.
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.grids import IrregSpacedGrid
 from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.regime_building.ndimage import map_coordinates
@@ -35,6 +35,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)
@@ -83,7 +84,7 @@ def _build_model(
     IrregSpacedGrid.
     """
     last_alive_age = n_periods - 2  # alive at ages 0..n-2; dead at n-1
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility},
         states={
             "wealth": LinSpacedGrid(start=wealth_lo, stop=wealth_hi, n_points=n_wealth)
@@ -94,13 +95,13 @@ def _build_model(
         transition=_next_regime,
         active=lambda age: age <= last_alive_age,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age > last_alive_age,
     )
     model = Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -319,7 +320,7 @@ def _build_alive_dead_model(
 ) -> tuple[Model, dict]:
     last_alive_age = n_periods - 2
 
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _alive_utility},
         states={
             "assets": LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
@@ -331,7 +332,7 @@ def _build_alive_dead_model(
         transition=_alive_to_dead,
         active=lambda age: age <= last_alive_age,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": _crra_bequest},
         states={
@@ -341,7 +342,7 @@ def _build_alive_dead_model(
         active=lambda _age: True,
     )
     model = Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=AliveDeadRegimeId,
     )
@@ -471,7 +472,7 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         )
 
     last_alive_age = 1
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": utility},
         states={"wealth": IrregSpacedGrid(n_points=4)},  # runtime state grid
         state_transitions={"wealth": next_wealth},
@@ -480,13 +481,13 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         transition=next_regime,
         active=lambda age: age <= last_alive_age,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age > last_alive_age,
     )
     model = Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RuntimeRegimeId,
     )

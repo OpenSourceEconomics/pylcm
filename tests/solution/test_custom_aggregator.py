@@ -5,7 +5,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -15,6 +15,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)
@@ -133,7 +134,7 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         working_life_state_transitions["pref_type"] = None
         dead_states["pref_type"] = DiscreteGrid(PrefType, batch_size=1)
 
-    working_life_regime = Regime(
+    working_life_regime = UserRegime(
         actions={
             "labor_supply": DiscreteGrid(LaborSupply),
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=50),
@@ -159,7 +160,7 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         def dead_utility() -> float:
             return 0.0
 
-    dead_regime = Regime(
+    dead_regime = UserRegime(
         transition=None,
         functions={"utility": dead_utility},
         states=dead_states,
@@ -167,7 +168,7 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
     )
 
     return Model(
-        regimes={"working_life": working_life_regime, "dead": dead_regime},
+        user_regimes={"working_life": working_life_regime, "dead": dead_regime},
         ages=AgeGrid(start=START_AGE, stop=FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -214,7 +215,7 @@ def test_custom_ces_aggregator_differs_from_default():
 
 def test_default_H_injected_for_non_terminal():
     """The default H function should be in non-terminal Regime.functions."""
-    r = Regime(
+    r = UserRegime(
         functions={"utility": lambda: 0.0},
         transition=lambda: {"a": 1.0},
         active=lambda age: age < 1,
@@ -224,7 +225,7 @@ def test_default_H_injected_for_non_terminal():
 
 def test_default_H_not_injected_for_terminal():
     """Terminal regimes should not have H injected."""
-    r = Regime(
+    r = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
     )
@@ -237,7 +238,7 @@ def test_custom_H_not_overwritten():
     def my_H(utility: float, E_next_V: float) -> float:
         return utility + E_next_V
 
-    r = Regime(
+    r = UserRegime(
         transition=lambda: {"a": 1.0},
         active=lambda age: age < 1,
         functions={"utility": lambda: 0.0, "H": my_H},

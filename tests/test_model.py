@@ -7,7 +7,6 @@ from lcm import (
     LinSpacedGrid,
     MarkovTransition,
     Model,
-    Regime,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
@@ -19,12 +18,13 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from lcm.user_regime import Regime as UserRegime
 
 
 def test_regime_invalid_states():
     """Regime rejects non-dict states argument."""
     with pytest.raises(RegimeInitializationError, match="states"):
-        Regime(
+        UserRegime(
             transition=lambda: 0,
             states="health",  # ty: ignore[invalid-argument-type]
             actions={},
@@ -36,7 +36,7 @@ def test_regime_invalid_states():
 def test_regime_invalid_actions():
     """Regime rejects non-dict actions argument."""
     with pytest.raises(RegimeInitializationError, match="actions"):
-        Regime(
+        UserRegime(
             transition=lambda: 0,
             states={},
             actions="exercise",  # ty: ignore[invalid-argument-type]
@@ -48,7 +48,7 @@ def test_regime_invalid_actions():
 def test_regime_invalid_functions():
     """Regime rejects non-dict functions argument."""
     with pytest.raises(RegimeInitializationError, match="functions"):
-        Regime(
+        UserRegime(
             transition=lambda: 0,
             states={},
             actions={},
@@ -60,7 +60,7 @@ def test_regime_invalid_functions():
 def test_regime_invalid_functions_values():
     """Regime rejects non-callable function values."""
     with pytest.raises(RegimeInitializationError, match="functions"):
-        Regime(
+        UserRegime(
             states={},
             actions={},
             transition=lambda: 0,
@@ -72,7 +72,7 @@ def test_regime_invalid_functions_values():
 def test_regime_invalid_functions_keys():
     """Regime rejects non-string function keys."""
     with pytest.raises(RegimeInitializationError, match="functions"):
-        Regime(
+        UserRegime(
             states={},
             actions={},
             transition=lambda: 0,
@@ -84,7 +84,7 @@ def test_regime_invalid_functions_keys():
 def test_regime_invalid_actions_values():
     """Regime rejects non-grid action values."""
     with pytest.raises(RegimeInitializationError, match="actions"):
-        Regime(
+        UserRegime(
             states={},
             actions={"exercise": 0},  # ty: ignore[invalid-argument-type]
             functions={"utility": lambda: 0},
@@ -96,7 +96,7 @@ def test_regime_invalid_actions_values():
 def test_regime_invalid_states_values():
     """Regime rejects non-grid state values."""
     with pytest.raises(RegimeInitializationError, match="states"):
-        Regime(
+        UserRegime(
             states={"health": 0},  # ty: ignore[invalid-argument-type]
             actions={},
             functions={"utility": lambda: 0},
@@ -108,7 +108,7 @@ def test_regime_invalid_states_values():
 def test_regime_invalid_utility():
     """Regime rejects non-callable utility argument."""
     with pytest.raises(RegimeInitializationError, match="functions"):
-        Regime(
+        UserRegime(
             states={},
             actions={},
             functions={"utility": 0},  # ty: ignore[invalid-argument-type]
@@ -123,7 +123,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
         RegimeInitializationError,
         match=r"States and actions cannot have overlapping names.",
     ):
-        Regime(
+        UserRegime(
             states={
                 "health": DiscreteGrid(binary_category_class),
             },
@@ -138,7 +138,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
 def test_regime_transition_must_be_callable():
     """Regime rejects non-callable transition."""
     with pytest.raises(RegimeInitializationError, match="transition"):
-        Regime(
+        UserRegime(
             states={},
             actions={},
             functions={"utility": lambda: 0},
@@ -154,7 +154,7 @@ def test_model_requires_terminal_regime(binary_category_class):
     class RegimeId:
         test: ScalarInt
 
-    regime = Regime(
+    regime = UserRegime(
         states={
             "health": DiscreteGrid(binary_category_class),
         },
@@ -166,7 +166,7 @@ def test_model_requires_terminal_regime(binary_category_class):
     )
     with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
         Model(
-            regimes={"test": regime},
+            user_regimes={"test": regime},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -179,7 +179,7 @@ def test_model_requires_non_terminal_regime(binary_category_class):
     class RegimeId:
         dead: ScalarInt
 
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         states={
             "health": DiscreteGrid(binary_category_class),
@@ -189,7 +189,7 @@ def test_model_requires_non_terminal_regime(binary_category_class):
     )
     with pytest.raises(ModelInitializationError, match="at least one non-terminal"):
         Model(
-            regimes={"dead": dead},
+            user_regimes={"dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -211,7 +211,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         dead1: ScalarInt
         dead2: ScalarInt
 
-    alive = Regime(
+    alive = UserRegime(
         states={
             "health": DiscreteGrid(binary_category_class),
         },
@@ -220,7 +220,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         transition=MarkovTransition(lambda: jnp.array([0.8, 0.1, 0.1])),
         active=lambda age: age < 1,
     )
-    dead1 = Regime(
+    dead1 = UserRegime(
         transition=None,
         states={
             "health": DiscreteGrid(binary_category_class),
@@ -228,7 +228,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
-    dead2 = Regime(
+    dead2 = UserRegime(
         transition=None,
         states={
             "health": DiscreteGrid(binary_category_class),
@@ -238,11 +238,11 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     )
     # Should not raise - multiple terminal regimes are allowed
     model = Model(
-        regimes={"alive": alive, "dead1": dead1, "dead2": dead2},
+        user_regimes={"alive": alive, "dead1": dead1, "dead2": dead2},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
-    assert model.internal_regimes is not None
+    assert model.regimes is not None
 
 
 def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
@@ -253,7 +253,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
         alive: ScalarInt
         dead: ScalarInt
 
-    alive = Regime(
+    alive = UserRegime(
         states={
             "health": DiscreteGrid(binary_category_class),
         },
@@ -262,7 +262,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
         transition=MarkovTransition(lambda: jnp.array([0.5, 0.5])),
         active=lambda age: age < 1,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         states={
             "health": DiscreteGrid(binary_category_class),
@@ -271,7 +271,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
         active=lambda age: age >= 1,
     )
     model = Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -288,7 +288,7 @@ def test_model_regime_name_validation(binary_category_class):
         alive__bad: ScalarInt
         dead: ScalarInt
 
-    alive = Regime(
+    alive = UserRegime(
         states={
             "health": DiscreteGrid(binary_category_class),
         },
@@ -297,7 +297,7 @@ def test_model_regime_name_validation(binary_category_class):
         transition=MarkovTransition(lambda: jnp.array([0.5, 0.5])),
         active=lambda age: age < 1,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         states={
             "health": DiscreteGrid(binary_category_class),
@@ -308,7 +308,7 @@ def test_model_regime_name_validation(binary_category_class):
     # Using separator in regime name should raise error
     with pytest.raises(ModelInitializationError, match="separator character"):
         Model(
-            regimes={"alive__bad": alive, "dead": dead},
+            user_regimes={"alive__bad": alive, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -329,7 +329,7 @@ def test_unused_state_raises_error():
         high: ScalarInt
 
     # Define a regime where 'unused_state' is not used in any function
-    working_life = Regime(
+    working_life = UserRegime(
         functions={
             "utility": lambda wealth, consumption: (
                 jnp.log(consumption) + wealth * 0.001
@@ -352,7 +352,7 @@ def test_unused_state_raises_error():
         active=lambda age: age < 5,
     )
 
-    retirement = Regime(
+    retirement = UserRegime(
         transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={
@@ -365,7 +365,7 @@ def test_unused_state_raises_error():
     # Should raise error about unused_state
     with pytest.raises(ModelInitializationError, match="unused_state"):
         Model(
-            regimes={"working_life": working_life, "retirement": retirement},
+            user_regimes={"working_life": working_life, "retirement": retirement},
             ages=AgeGrid(start=0, stop=5, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -384,7 +384,7 @@ def test_unused_action_raises_error():
         option_a: ScalarInt
         option_b: ScalarInt
 
-    working_life = Regime(
+    working_life = UserRegime(
         functions={
             "utility": lambda wealth, consumption: (
                 jnp.log(consumption) + wealth * 0.001
@@ -408,7 +408,7 @@ def test_unused_action_raises_error():
         active=lambda age: age < 5,
     )
 
-    retirement = Regime(
+    retirement = UserRegime(
         transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={
@@ -420,7 +420,7 @@ def test_unused_action_raises_error():
     # Should raise error about unused_action
     with pytest.raises(ModelInitializationError, match="unused_action"):
         Model(
-            regimes={"working_life": working_life, "retirement": retirement},
+            user_regimes={"working_life": working_life, "retirement": retirement},
             ages=AgeGrid(start=0, stop=5, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -477,7 +477,7 @@ def test_constraint_depending_on_transition_output():
     def borrowing_constraint(next_assets: ContinuousState) -> BoolND:
         return next_assets >= 0.0
 
-    alive_regime = Regime(
+    alive_regime = UserRegime(
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,
         functions={"utility": utility, "model_end_age": model_end_age},
@@ -495,13 +495,13 @@ def test_constraint_depending_on_transition_output():
         },
     )
 
-    dead_regime = Regime(
+    dead_regime = UserRegime(
         transition=None,
         functions={"utility": dead_utility},
     )
 
     Model(
-        regimes={"alive": alive_regime, "dead": dead_regime},
+        user_regimes={"alive": alive_regime, "dead": dead_regime},
         ages=AgeGrid(start=59, stop=61, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -557,7 +557,7 @@ def test_state_only_used_in_transitions():
             EmploymentLastPeriod.unemployed,
         )
 
-    alive_regime = Regime(
+    alive_regime = UserRegime(
         transition=next_regime,
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
@@ -574,13 +574,13 @@ def test_state_only_used_in_transitions():
         },
     )
 
-    dead_regime = Regime(
+    dead_regime = UserRegime(
         transition=None,
         functions={"utility": dead_utility},
     )
 
     Model(
-        regimes={"alive": alive_regime, "dead": dead_regime},
+        user_regimes={"alive": alive_regime, "dead": dead_regime},
         ages=AgeGrid(start=59, stop=61, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -623,7 +623,7 @@ def test_state_only_in_transitions_with_terminal_regime():
 
     ages = AgeGrid(start=0, stop=3, step="Y")
 
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": utility},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
@@ -640,10 +640,10 @@ def test_state_only_in_transitions_with_terminal_regime():
         active=lambda age: age <= 2,
     )
 
-    dead = Regime(transition=None, functions={"utility": dead_utility})
+    dead = UserRegime(transition=None, functions={"utility": dead_utility})
 
     Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
     )

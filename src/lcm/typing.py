@@ -49,10 +49,10 @@ type TransitionFunctionName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, ScalarInt]
 type RegimeIdsToNames = MappingProxyType[int, RegimeName]
 
-type FunctionsMapping = MappingProxyType[FunctionName, InternalUserFunction]
+type EconFunctionsMapping = MappingProxyType[FunctionName, EconFunction]
 
 type TransitionFunctionsMapping = MappingProxyType[
-    RegimeName, MappingProxyType[TransitionFunctionName, InternalUserFunction]
+    RegimeName, MappingProxyType[TransitionFunctionName, EconFunction]
 ]
 
 type RegimeStates = MappingProxyType[StateName, Float1D | Int1D]
@@ -108,7 +108,7 @@ type Params = Mapping[
 type FlatRegimeParams = MappingProxyType[
     str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
 ]
-type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
+type FlatParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
 type RegimeParamsTemplate = MappingProxyType[FunctionName, MappingProxyType[str, str]]
@@ -134,10 +134,12 @@ class UserFunction(Protocol):
 
 
 @runtime_checkable
-class InternalUserFunction(Protocol):
-    """The internal representation of a function provided by the user.
+class EconFunction(Protocol):
+    """A user-defined economic function after processing into the engine signature.
 
-    Only used for type checking.
+    Accepts `Float/Int/BoolND | float | MappingLeaf | SequenceLeaf` arguments and
+    returns one of the array kinds. Used for both type checking and beartype runtime
+    checks.
 
     """
 
@@ -156,7 +158,7 @@ class RegimeTransitionFunction(Protocol):
     target regime name to a transition-probability array, rather than a
     raw array indexed by regime id.
 
-    Only used for type checking.
+    Used for both type checking and beartype runtime checks.
 
     """
 
@@ -175,7 +177,7 @@ class VmappedRegimeTransitionFunction(Protocol):
     same mapping output, with each probability array carrying a leading
     per-subject axis.
 
-    Only used for type checking.
+    Used for both type checking and beartype runtime checks.
 
     """
 
@@ -193,7 +195,7 @@ class QAndFFunction(Protocol):
     Q is the state-action value function. F is a boolean array that indicates whether
     the state-action pair is feasible.
 
-    Only used for type checking.
+    Used for both type checking and beartype runtime checks.
 
     """
 
@@ -211,7 +213,7 @@ class MaxQOverAFunction(Protocol):
     Q is the state-action value function. The MaxQOverCFunction returns the maximum of Q
     over all actions.
 
-    Only used for type checking.
+    Used for both type checking and beartype runtime checks.
 
     """
 
@@ -229,7 +231,7 @@ class ArgmaxQOverAFunction(Protocol):
     Q is the state-action value function. The ArgmaxQOverCFunction returns the argmax
     and the maximum of Q over all actions.
 
-    Only used for type checking.
+    Used for both type checking and beartype runtime checks.
 
     """
 
@@ -244,7 +246,7 @@ class ArgmaxQOverAFunction(Protocol):
 class StochasticNextFunction(Protocol):
     """The function that simulates the next state of a stochastic variable.
 
-    Only used for type checking.
+    Used for both type checking and beartype runtime checks.
 
     """
 
@@ -255,8 +257,8 @@ class StochasticNextFunction(Protocol):
 class NextStateSimulationFunction(Protocol):
     """The function that computes the next states during the simulation.
 
-    Returns a nested mapping `{target_regime: {next_<state>: array}}`. Only
-    used for type checking.
+    Returns a nested mapping `{target_regime: {next_<state>: array}}`. Used for
+    both type checking and beartype runtime checks.
 
     """
 
@@ -272,14 +274,7 @@ class NextStateSimulationFunction(Protocol):
 class ActiveFunction(Protocol):
     """Function that determines if a regime is active at a given age.
 
-    The single positional argument is the age value emitted by the
-    `AgeGrid`; its runtime type is `int` for annual grids and `float`
-    for sub-annual ones. The argument is typed as `Any` so model
-    authors can pin the annotation to whichever concrete type matches
-    their grid (`int` or `float`) without tripping contravariance
-    checks at the assignment site.
-
-    Only used for type checking.
+    Used for both type checking and beartype runtime checks.
 
     """
 

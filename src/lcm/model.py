@@ -32,8 +32,7 @@ from lcm.persistence import (
     save_simulate_snapshot,
     save_solve_snapshot,
 )
-from lcm.regime import Regime
-from lcm.regime_building.processing import InternalRegime
+from lcm.regime_building.processing import Regime
 from lcm.simulation.compile import compile_all_simulate_functions
 from lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
@@ -43,8 +42,8 @@ from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
+    FlatParams,
     FunctionName,
-    InternalParams,
     ParamsTemplate,
     PeriodToRegimeToVArr,
     RegimeName,
@@ -53,6 +52,7 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
+from lcm.user_regime import Regime as UserRegime
 from lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
@@ -82,11 +82,11 @@ class Model:
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from regime names to integer indices."""
 
-    regimes: MappingProxyType[RegimeName, Regime]
-    """Immutable mapping of regime names to user `Regime` instances."""
+    user_regimes: MappingProxyType[RegimeName, UserRegime]
+    """Boundary-form snapshot of regimes as supplied by the user."""
 
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime]
-    """Immutable mapping of regime names to internal regime instances."""
+    regimes: MappingProxyType[RegimeName, Regime]
+    """Canonical, processed regimes used by solve and simulate."""
 
     enable_jit: bool = True
     """Whether to JIT-compile the functions of the internal regimes."""
@@ -109,7 +109,7 @@ class Model:
       back to the runtime-traced path.
 
     Param-shape contract: the cache is keyed only on `n_subjects`. The shapes
-    and dtypes of `internal_params` leaves at the first matching call become
+    and dtypes of `flat_params` leaves at the first matching call become
     part of the AOT signature; subsequent calls must keep them stable. MSM-
     style estimation (varying values, fixed shapes) is the target use case;
     construct a fresh `Model` whenever a param array's shape or dtype changes.
@@ -118,8 +118,8 @@ class Model:
     _params_template: ParamsTemplate
     """Template for the model parameters."""
 
-    _simulate_compile_cache: dict[int, MappingProxyType[RegimeName, InternalRegime]]
-    """AOT-compiled `internal_regimes` per matching `n_subjects`."""
+    _simulate_compile_cache: dict[int, MappingProxyType[RegimeName, Regime]]
+    """AOT-compiled `regimes` per matching `n_subjects`."""
 
     _warned_n_subjects: set[int]
     """Mismatching `actual_n_subjects` already warned about (one warning each)."""
@@ -139,7 +139,7 @@ class Model:
         *,
         description: str = "",
         ages: AgeGrid,
-        regimes: Mapping[RegimeName, Regime],
+        user_regimes: Mapping[RegimeName, UserRegime],
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
@@ -151,7 +151,8 @@ class Model:
         """Initialize the Model.
 
         Args:
-            regimes: Mapping of regime names to Regime instances.
+            user_regimes: Mapping of regime names to user-provided `Regime`
+                instances.
             ages: Age grid for the model.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
@@ -179,7 +180,7 @@ class Model:
 
         validate_model_inputs(
             n_periods=self.n_periods,
-            regimes=regimes,
+            user_regimes=user_regimes,
             regime_id_class=regime_id_class,
             n_subjects=n_subjects,
         )
@@ -191,17 +192,19 @@ class Model:
                 )
             )
         )
-        self.regimes = _merge_derived_categoricals(regimes, derived_categoricals)
-        self.internal_regimes, self._params_template = build_regimes_and_template(
+        self.user_regimes = _merge_derived_categoricals(
+            user_regimes, derived_categoricals
+        )
+        self.regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
-            regimes=self.regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = get_simulation_output_dtypes(
-            regimes=self.regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
 
@@ -282,14 +285,14 @@ class Model:
 
         """
         _validate_log_args(log_level=log_level, log_path=log_path)
-        internal_params = self._process_params(params)
+        flat_params = self._process_params(params)
         validate_regime_transitions_all_periods(
-            internal_regimes=self.internal_regimes,
-            internal_params=internal_params,
+            regimes=self.regimes,
+            flat_params=flat_params,
             ages=self.ages,
         )
         return self._solve_compiled(
-            internal_params=internal_params,
+            flat_params=flat_params,
             params=params,
             log=get_logger(log_level=log_level),
             log_level=log_level,
@@ -301,7 +304,7 @@ class Model:
     def _solve_compiled(
         self,
         *,
-        internal_params: InternalParams,
+        flat_params: FlatParams,
         params: UserParams,
         log: logging.Logger,
         log_level: LogLevel,
@@ -312,9 +315,9 @@ class Model:
         """Run backward induction, persisting a snapshot on debug or NaN failure."""
         try:
             period_to_regime_to_V_arr = solve(
-                internal_params=internal_params,
+                flat_params=flat_params,
                 ages=self.ages,
-                internal_regimes=self.internal_regimes,
+                regimes=self.regimes,
                 logger=log,
                 enable_jit=self.enable_jit,
                 max_compilation_workers=max_compilation_workers,
@@ -340,25 +343,25 @@ class Model:
             )
         return period_to_regime_to_V_arr
 
-    def _resolve_simulate_internal_regimes(
+    def _resolve_simulate_regimes(
         self,
         *,
         actual_n_subjects: int,
         log: logging.Logger,
-    ) -> MappingProxyType[RegimeName, InternalRegime]:
-        """Return internal_regimes to use for simulate; AOT cache when matching.
+    ) -> MappingProxyType[RegimeName, Regime]:
+        """Return regimes to use for simulate; AOT cache when matching.
 
         Dispatch by `n_subjects` and batch-shape match:
 
-        - `n_subjects is None`: return the original `internal_regimes`
+        - `n_subjects is None`: return the original `regimes`
           (purely lazy path).
         - `actual_n_subjects != n_subjects`: warn once per mismatching size,
-          return the original `internal_regimes`.
+          return the original `regimes`.
         - `actual_n_subjects == n_subjects`: return the cached compiled
           regimes (caller must have populated the cache before calling).
         """
         if self.n_subjects is None:
-            return self.internal_regimes
+            return self.regimes
         if actual_n_subjects != self.n_subjects:
             with self._simulate_compile_lock:
                 already_warned = actual_n_subjects in self._warned_n_subjects
@@ -371,7 +374,7 @@ class Model:
                     actual_n_subjects,
                     self.n_subjects,
                 )
-            return self.internal_regimes
+            return self.regimes
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[self.n_subjects]
 
@@ -436,25 +439,25 @@ class Model:
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
-                regimes=self.regimes,
+                user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
         initial_conditions = canonicalize_initial_conditions(
             initial_conditions=initial_conditions,
-            internal_regimes=self.internal_regimes,
+            regimes=self.regimes,
         )
-        internal_params = self._process_params(params)
+        flat_params = self._process_params(params)
         if check_initial_conditions:
             validate_initial_conditions(
                 initial_conditions=initial_conditions,
-                internal_regimes=self.internal_regimes,
+                regimes=self.regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
-                internal_params=internal_params,
+                flat_params=flat_params,
                 ages=self.ages,
             )
         validate_regime_transitions_all_periods(
-            internal_regimes=self.internal_regimes,
-            internal_params=internal_params,
+            regimes=self.regimes,
+            flat_params=flat_params,
             ages=self.ages,
         )
         log = get_logger(log_level=log_level)
@@ -465,8 +468,8 @@ class Model:
                 needs_compile = n_subjects not in self._simulate_compile_cache
             if needs_compile:
                 compiled = compile_all_simulate_functions(
-                    internal_regimes=self.internal_regimes,
-                    internal_params=internal_params,
+                    regimes=self.regimes,
+                    flat_params=flat_params,
                     ages=self.ages,
                     n_subjects=n_subjects,
                     max_compilation_workers=max_compilation_workers,
@@ -476,7 +479,7 @@ class Model:
                     self._simulate_compile_cache[n_subjects] = compiled
         if period_to_regime_to_V_arr is None:
             period_to_regime_to_V_arr = self._solve_compiled(
-                internal_params=internal_params,
+                flat_params=flat_params,
                 params=params,
                 log=log,
                 log_level=log_level,
@@ -484,14 +487,14 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
                 max_compilation_workers=max_compilation_workers,
             )
-        simulate_internal_regimes = self._resolve_simulate_internal_regimes(
+        simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             log=log,
         )
         result = simulate(
-            internal_params=internal_params,
+            flat_params=flat_params,
             initial_conditions=initial_conditions,
-            internal_regimes=simulate_internal_regimes,
+            regimes=simulate_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             logger=log,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
@@ -504,8 +507,8 @@ class Model:
         # the lazy DAG functions / constraints / transitions on
         # `simulate_functions`, never the compiled callables — so swap in
         # the lazy regimes to keep the result cloudpickle-safe.
-        if simulate_internal_regimes is not self.internal_regimes:
-            result._internal_regimes = self.internal_regimes  # noqa: SLF001
+        if simulate_regimes is not self.regimes:
+            result._regimes = self.regimes  # noqa: SLF001
         if log_level == "debug" and log_path is not None:
             save_simulate_snapshot(
                 model=self,
@@ -518,7 +521,7 @@ class Model:
             )
         return result
 
-    def _process_params(self, params: UserParams) -> InternalParams:
+    def _process_params(self, params: UserParams) -> FlatParams:
         """Broadcast, convert Series, dtype-cast, and validate user params.
 
         Step order matters: `convert_series_in_params` runs *between*
@@ -526,29 +529,30 @@ class Model:
         the dtype cast walks a uniform tree (no `pd.Series` to special-
         case).
         """
-        internal_params = broadcast_to_template(
+        flat_params = broadcast_to_template(
             params=params, template=self._params_template, required=True
         )
-        if has_series(internal_params):
-            internal_params = convert_series_in_params(
-                internal_params=internal_params,
+        if has_series(flat_params):
+            flat_params = convert_series_in_params(
+                flat_params=flat_params,
                 ages=self.ages,
-                regimes=self.regimes,
+                user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
-        internal_params = cast_params_to_canonical_dtypes(internal_params)
-        _validate_param_types(internal_params)
-        return internal_params
+        flat_params = cast_params_to_canonical_dtypes(flat_params)
+        _validate_param_types(flat_params)
+        return flat_params
 
 
 def _merge_derived_categoricals(
-    regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
-) -> MappingProxyType[RegimeName, Regime]:
+) -> MappingProxyType[RegimeName, UserRegime]:
     """Merge model-level derived_categoricals into each regime.
 
     Args:
-        regimes: Mapping of regime names to Regime instances.
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances.
         derived_categoricals: Model-level categorical grids to broadcast.
 
     Returns:
@@ -560,10 +564,10 @@ def _merge_derived_categoricals(
 
     """
     if not derived_categoricals:
-        return MappingProxyType(dict(regimes))
-    result: dict[RegimeName, Regime] = {}
-    for regime_name, regime in regimes.items():
-        merged = dict(regime.derived_categoricals)
+        return MappingProxyType(dict(user_regimes))
+    result: dict[RegimeName, UserRegime] = {}
+    for regime_name, user_regime in user_regimes.items():
+        merged = dict(user_regime.derived_categoricals)
         for var, grid in derived_categoricals.items():
             existing = merged.get(var)
             if existing is not None and existing.categories != grid.categories:
@@ -575,7 +579,7 @@ def _merge_derived_categoricals(
                 raise ModelInitializationError(msg)
             merged[var] = grid
         result[regime_name] = dataclasses.replace(
-            regime, derived_categoricals=MappingProxyType(merged)
+            user_regime, derived_categoricals=MappingProxyType(merged)
         )
     return MappingProxyType(result)
 

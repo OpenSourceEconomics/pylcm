@@ -154,7 +154,7 @@ def get_model(retirement_age: int = 24) -> Model:
     )
 
     return Model(
-        regimes={
+        user_regimes={
             "working_life": wl,
             "retirement": ret,
         },

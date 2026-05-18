@@ -16,12 +16,11 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
 )
 from lcm.grids import DiscreteGrid
-from lcm.interfaces import InternalRegime, StateActionSpace
-from lcm.regime import MarkovTransition, Regime
+from lcm.interfaces import Regime, StateActionSpace
 from lcm.typing import (
+    FlatParams,
     FlatRegimeParams,
     FloatND,
-    InternalParams,
     IntND,
     RegimeName,
     ScalarFloat,
@@ -29,6 +28,8 @@ from lcm.typing import (
     StateName,
     StateOrActionName,
 )
+from lcm.user_regime import MarkovTransition
+from lcm.user_regime import Regime as UserRegime
 
 # Genuine circular import: model.py imports from this module at module level.
 # The `model` parameter of `validate_transition_probs` is annotated with the
@@ -49,7 +50,7 @@ def validate_V(
     compute_intermediates: Callable | None = None,
     state_action_space: StateActionSpace | None = None,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None = None,
-    internal_params: FlatRegimeParams | None = None,
+    flat_params: FlatRegimeParams | None = None,
     period: int | None = None,
 ) -> None:
     """Validate the value function array for NaN values.
@@ -69,7 +70,7 @@ def validate_V(
             for the regime/period whose V array is being validated.
         state_action_space: StateActionSpace for the current regime/period.
         next_regime_to_V_arr: Next-period value function arrays.
-        internal_params: Flat regime parameters.
+        flat_params: Flat regime parameters.
         period: The current period index (forwarded to diagnostic closure).
 
     Raises:
@@ -113,7 +114,7 @@ def validate_V(
                 compute_intermediates=compute_intermediates,
                 state_action_space=state_action_space,
                 next_regime_to_V_arr=next_regime_to_V_arr,
-                internal_params=internal_params,
+                flat_params=flat_params,
                 regime_name=regime_name or "",
                 age=float(age),
                 period=period,
@@ -133,7 +134,7 @@ def _enrich_with_diagnostics(
     compute_intermediates: Callable,
     state_action_space: StateActionSpace,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None,
-    internal_params: FlatRegimeParams | None,
+    flat_params: FlatRegimeParams | None,
     regime_name: RegimeName,
     age: float,
     period: int | None,
@@ -155,7 +156,7 @@ def _enrich_with_diagnostics(
             to build call kwargs and label per-dimension reductions.
         next_regime_to_V_arr: Immutable mapping of next-period value
             function arrays per regime (or `None`).
-        internal_params: Optional mapping of flat regime parameter values.
+        flat_params: Optional mapping of flat regime parameter values.
         regime_name: Name of the regime whose V array failed validation.
         age: Age at which the V array failed validation.
 
@@ -168,8 +169,8 @@ def _enrich_with_diagnostics(
     # Drop any flat regime params that collide with state/action names so
     # they don't silently overwrite the grids.
     param_kwargs = (
-        {k: v for k, v in internal_params.items() if k not in state_action_kwargs}
-        if internal_params
+        {k: v for k, v in flat_params.items() if k not in state_action_kwargs}
+        if flat_params
         else {}
     )
     # Wrap Python scalars as JAX arrays so the call matches the dtype used
@@ -398,8 +399,8 @@ def _format_sum_violation(
 
 def validate_regime_transitions_all_periods(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
     ages: AgeGrid,
 ) -> None:
     """Validate regime transition probabilities for all periods before solve.
@@ -409,8 +410,8 @@ def validate_regime_transitions_all_periods(
     receive zero probability.
 
     Args:
-        internal_regimes: Immutable mapping of regime names to internal regimes.
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        regimes: Immutable mapping of regime names to regimes.
+        flat_params: Immutable mapping of regime names to flat parameter mappings.
         ages: Age grid for the model.
 
     Raises:
@@ -421,7 +422,7 @@ def validate_regime_transitions_all_periods(
     last_period = ages.n_periods - 1
     non_terminal_active_at_last = [
         regime_name
-        for regime_name, regime in internal_regimes.items()
+        for regime_name, regime in regimes.items()
         if not regime.terminal and last_period in regime.active_periods
     ]
     if non_terminal_active_at_last:
@@ -436,19 +437,19 @@ def validate_regime_transitions_all_periods(
     for period in range(ages.n_periods - 1):
         active_regimes_next_period = tuple(
             regime_name
-            for regime_name, regime in internal_regimes.items()
+            for regime_name, regime in regimes.items()
             if period + 1 in regime.active_periods
         )
 
-        for regime_name, internal_regime in internal_regimes.items():
-            if period not in internal_regime.active_periods:
+        for regime_name, regime in regimes.items():
+            if period not in regime.active_periods:
                 continue
-            if internal_regime.terminal:
+            if regime.terminal:
                 continue
 
             _validate_regime_transition_single(
-                internal_regimes=internal_regimes,
-                regime_params=internal_params[regime_name],
+                regimes=regimes,
+                regime_params=flat_params[regime_name],
                 active_regimes_next_period=active_regimes_next_period,
                 regime_name=regime_name,
                 period=period,
@@ -458,7 +459,7 @@ def validate_regime_transitions_all_periods(
 
 def _validate_regime_transition_single(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regimes: MappingProxyType[RegimeName, Regime],
     regime_params: FlatRegimeParams,
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
@@ -471,13 +472,11 @@ def _validate_regime_transition_single(
     variables it accepts, using `jax.vmap` for vectorised evaluation.
 
     """
-    internal_regime = internal_regimes[regime_name]
+    regime = regimes[regime_name]
     # Non-None guaranteed: only called for non-terminal regimes
-    regime_transition_func = (
-        internal_regime.solve_functions.compute_regime_transition_probs
-    )
+    regime_transition_func = regime.solve_functions.compute_regime_transition_probs
 
-    state_action_space = internal_regime.state_action_space(
+    state_action_space = regime.state_action_space(
         regime_params=regime_params,
     )
 
@@ -539,7 +538,7 @@ def _validate_regime_transition_single(
     )
 
     _validate_no_reachable_incomplete_targets(
-        internal_regimes=internal_regimes,
+        regimes=regimes,
         regime_transition_probs=regime_transition_probs,
         active_regimes_next_period=active_regimes_next_period,
         regime_name=regime_name,
@@ -549,7 +548,7 @@ def _validate_regime_transition_single(
 
 def _validate_no_reachable_incomplete_targets(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regimes: MappingProxyType[RegimeName, Regime],
     regime_transition_probs: MappingProxyType[RegimeName, FloatND],
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
@@ -565,12 +564,12 @@ def _validate_no_reachable_incomplete_targets(
     self-entry in a per-target dict is a common user error.
 
     """
-    solve_functions = internal_regimes[regime_name].solve_functions
+    solve_functions = regimes[regime_name].solve_functions
     transitions = solve_functions.transitions
     stochastic_names = solve_functions.stochastic_transition_names
 
     for target_regime_name in active_regimes_next_period:
-        target_regime = internal_regimes[target_regime_name]
+        target_regime = regimes[target_regime_name]
         needs = {
             f"next_{s}"
             for s in target_regime.variables.state_names
@@ -808,7 +807,7 @@ def validate_transition_probs(
             don't sum to 1.
 
     """
-    regime = model.regimes[regime_name]
+    regime = model.user_regimes[regime_name]
 
     if state_name is not None:
         raw_transition = regime.state_transitions[state_name]
@@ -914,11 +913,11 @@ def _extract_markov_transition(
     raise TypeError(msg)
 
 
-def _build_grids(regime: Regime) -> dict[str, DiscreteGrid]:
+def _build_grids(user_regime: UserRegime) -> dict[str, DiscreteGrid]:
     """Collect all DiscreteGrid instances from regime states and actions."""
     return {
         name: grid
-        for name, grid in (*regime.states.items(), *regime.actions.items())
+        for name, grid in (*user_regime.states.items(), *user_regime.actions.items())
         if isinstance(grid, DiscreteGrid)
     }
 

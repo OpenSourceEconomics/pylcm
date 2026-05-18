@@ -11,8 +11,8 @@ import jax
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.interfaces import InternalRegime, _build_regime_sharding
-from lcm.typing import BoolND, FloatND, InternalParams, RegimeName, StateName
+from lcm.interfaces import Regime, _build_regime_sharding
+from lcm.typing import BoolND, FlatParams, FloatND, RegimeName, StateName
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
@@ -23,9 +23,9 @@ from lcm.utils.logging import (
 
 def solve(
     *,
-    internal_params: InternalParams,
+    flat_params: FlatParams,
     ages: AgeGrid,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regimes: MappingProxyType[RegimeName, Regime],
     logger: logging.Logger,
     enable_jit: bool,
     max_compilation_workers: int | None = None,
@@ -33,9 +33,9 @@ def solve(
     """Solve a model using grid search.
 
     Args:
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        flat_params: Immutable mapping of regime names to flat parameter mappings.
         ages: Age grid for the model.
-        internal_regimes: The internal regimes, that contain all necessary functions
+        regimes: The internal regimes, that contain all necessary functions
             to solve the model.
         logger: Logger that logs to stdout.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
@@ -51,8 +51,8 @@ def solve(
     # structure (keys and shapes) across all periods avoids JIT re-
     # compilation from pytree mismatches.
     regime_V_topology = _get_regime_V_shapes_and_shardings(
-        internal_regimes=internal_regimes,
-        internal_params=internal_params,
+        regimes=regimes,
+        flat_params=flat_params,
     )
 
     next_regime_to_V_arr = MappingProxyType(
@@ -64,8 +64,8 @@ def solve(
 
     # AOT-compile all unique max_Q_over_a functions in parallel.
     compiled_functions = _compile_all_functions(
-        internal_regimes=internal_regimes,
-        internal_params=internal_params,
+        regimes=regimes,
+        flat_params=flat_params,
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
         enable_jit=enable_jit,
@@ -120,7 +120,7 @@ def solve(
 
         active_regimes = {
             regime_name: regime
-            for regime_name, regime in internal_regimes.items()
+            for regime_name, regime in regimes.items()
             if period in regime.active_periods
         }
 
@@ -130,9 +130,9 @@ def solve(
             n_active_regimes=len(active_regimes),
         )
 
-        for regime_name, internal_regime in active_regimes.items():
-            state_action_space = internal_regime.state_action_space(
-                regime_params=internal_params[regime_name],
+        for regime_name, regime in active_regimes.items():
+            state_action_space = regime.state_action_space(
+                regime_params=flat_params[regime_name],
             )
             max_Q_over_a = compiled_functions[(regime_name, period)]
 
@@ -144,7 +144,7 @@ def solve(
                 **state_action_space.states,
                 **state_action_space.actions,
                 next_regime_to_V_arr=next_regime_to_V_arr,
-                **internal_params[regime_name],
+                **flat_params[regime_name],
                 period=jnp.int32(period),
                 age=ages.values[period],
             )
@@ -195,7 +195,7 @@ def solve(
                 regime_name: period_solution.get(
                     regime_name, next_regime_to_V_arr[regime_name]
                 )
-                for regime_name in internal_regimes
+                for regime_name in regimes
             }
         )
         solution[period] = MappingProxyType(period_solution)
@@ -218,8 +218,8 @@ def solve(
             logger=logger,
             diagnostic_rows=diagnostic_rows,
             solution=MappingProxyType(solution),
-            internal_regimes=internal_regimes,
-            internal_params=internal_params,
+            regimes=regimes,
+            flat_params=flat_params,
             running_any_nan=running_any_nan,
             running_any_inf=running_any_inf,
             diagnostic_min=diagnostic_min if stats_enabled else None,
@@ -235,8 +235,8 @@ def solve(
 
 def _compile_all_functions(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     enable_jit: bool,
@@ -254,8 +254,8 @@ def _compile_all_functions(
     without compilation.
 
     Args:
-        internal_regimes: The internal regimes containing solve functions.
-        internal_params: Regime parameters for constructing lowering args.
+        regimes: The internal regimes containing solve functions.
+        flat_params: Regime parameters for constructing lowering args.
         ages: Age grid for the model.
         next_regime_to_V_arr: Template with consistent keys and V array shapes
             for constructing lowering arguments.
@@ -270,7 +270,7 @@ def _compile_all_functions(
     """
     # Collect all (regime, period) -> function mappings.
     all_functions: dict[tuple[RegimeName, int], Callable] = {}
-    for regime_name, regime in internal_regimes.items():
+    for regime_name, regime in regimes.items():
         for period in regime.active_periods:
             all_functions[(regime_name, period)] = regime.solve_functions.max_Q_over_a[
                 period
@@ -304,14 +304,14 @@ def _compile_all_functions(
     lowered: dict[Hashable, jax.stages.Lowered] = {}
     labels: dict[Hashable, str] = {}
     for i, (func_id, (func, regime_name, period)) in enumerate(unique.items(), 1):
-        state_action_space = internal_regimes[regime_name].state_action_space(
-            regime_params=internal_params[regime_name],
+        state_action_space = regimes[regime_name].state_action_space(
+            regime_params=flat_params[regime_name],
         )
         lower_args = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
             "next_regime_to_V_arr": next_regime_to_V_arr,
-            **dict(internal_params[regime_name]),
+            **dict(flat_params[regime_name]),
             "period": jnp.int32(period),
             "age": ages.values[period],
         }
@@ -400,8 +400,8 @@ class _RegimeVTopology:
 
 def _get_regime_V_shapes_and_shardings(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
 ) -> dict[RegimeName, _RegimeVTopology]:
     """Compute V-array shapes and shardings for every regime.
 
@@ -411,8 +411,8 @@ def _get_regime_V_shapes_and_shardings(
     sharding is `None`.
 
     Args:
-        internal_regimes: Immutable mapping of regime names to internal regimes.
-        internal_params: Regime parameters (needed for runtime grid shapes).
+        regimes: Immutable mapping of regime names to internal regimes.
+        flat_params: Regime parameters (needed for runtime grid shapes).
 
     Returns:
         Dict of regime names to `_RegimeVTopology` (shape and sharding).
@@ -420,9 +420,9 @@ def _get_regime_V_shapes_and_shardings(
     """
     n_devices = len(jax.devices())
     topology: dict[RegimeName, _RegimeVTopology] = {}
-    for regime_name, regime in internal_regimes.items():
+    for regime_name, regime in regimes.items():
         state_action_space = regime.state_action_space(
-            regime_params=internal_params[regime_name],
+            regime_params=flat_params[regime_name],
         )
         state_order: tuple[StateName, ...] = tuple(state_action_space.states.keys())
         shape = tuple(len(v) for v in state_action_space.states.values())
@@ -452,7 +452,7 @@ class _DiagnosticRow:
     every (regime, period) row stays at a few bytes regardless of grid
     size. State-action space, next-period V mapping, regime params, and
     the `compute_intermediates` closure are reconstructed lazily on the
-    failure path from `internal_regimes`, `internal_params`, and the
+    failure path from `regimes`, `flat_params`, and the
     partial `solution` built up to that point.
     """
 
@@ -469,8 +469,8 @@ def _emit_post_loop_diagnostics(
     logger: logging.Logger,
     diagnostic_rows: list[_DiagnosticRow],
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
     running_any_nan: BoolND,
     running_any_inf: BoolND,
     diagnostic_min: list[FloatND] | None,
@@ -487,8 +487,8 @@ def _emit_post_loop_diagnostics(
         _raise_first_nan_row(
             diagnostic_rows=diagnostic_rows,
             solution=solution,
-            internal_regimes=internal_regimes,
-            internal_params=internal_params,
+            regimes=regimes,
+            flat_params=flat_params,
         )
     if running_any_inf.item():
         _warn_inf_rows(
@@ -510,8 +510,8 @@ def _raise_first_nan_row(
     *,
     diagnostic_rows: list[_DiagnosticRow],
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
 ) -> None:
     """Find the first NaN-bearing (regime, period) and raise.
 
@@ -523,8 +523,8 @@ def _raise_first_nan_row(
             _raise_at(
                 row=row,
                 solution=solution,
-                internal_regimes=internal_regimes,
-                internal_params=internal_params,
+                regimes=regimes,
+                flat_params=flat_params,
             )
 
 
@@ -532,12 +532,12 @@ def _raise_at(
     *,
     row: _DiagnosticRow,
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
 ) -> None:
     """Run the enriched NaN diagnostic on a single offending row and raise."""
-    internal_regime = internal_regimes[row.regime_name]
-    regime_params = internal_params[row.regime_name]
+    regime = regimes[row.regime_name]
+    regime_params = flat_params[row.regime_name]
     # `compute_intermediates` was built from the regime's full `flat_param_names`
     # (per-iteration params + fixed params); the live solve loop merges
     # `resolved_fixed_params` into `regime_params` implicitly via the partialled
@@ -545,18 +545,16 @@ def _raise_at(
     # directly. Same merge order as `interfaces.state_action_space` and
     # `simulation.result`.
     effective_regime_params = MappingProxyType(
-        {**internal_regime.resolved_fixed_params, **regime_params}
+        {**regime.resolved_fixed_params, **regime_params}
     )
-    state_action_space = internal_regime.state_action_space(regime_params=regime_params)
+    state_action_space = regime.state_action_space(regime_params=regime_params)
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
         period=row.period,
-        internal_regimes=internal_regimes,
-        internal_params=internal_params,
+        regimes=regimes,
+        flat_params=flat_params,
         solution=solution,
     )
-    compute_intermediates = internal_regime.solve_functions.compute_intermediates.get(
-        row.period
-    )
+    compute_intermediates = regime.solve_functions.compute_intermediates.get(row.period)
     V_arr = solution[row.period][row.regime_name]
     validate_V(
         V_arr=V_arr,
@@ -566,7 +564,7 @@ def _raise_at(
         compute_intermediates=compute_intermediates,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
-        internal_params=effective_regime_params,
+        flat_params=effective_regime_params,
         period=row.period,
     )
 
@@ -574,8 +572,8 @@ def _raise_at(
 def _reconstruct_next_regime_to_V_arr(
     *,
     period: int,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
 ) -> MappingProxyType[RegimeName, FloatND]:
     """Recreate the rolling `next_regime_to_V_arr` that was used at `period`.
@@ -591,8 +589,8 @@ def _reconstruct_next_regime_to_V_arr(
     the live ones in `solve()`.
     """
     regime_V_topology = _get_regime_V_shapes_and_shardings(
-        internal_regimes=internal_regimes,
-        internal_params=internal_params,
+        regimes=regimes,
+        flat_params=flat_params,
     )
     later_periods = sorted(p for p in solution if p > period)
     result: dict[RegimeName, FloatND] = {}

@@ -9,8 +9,9 @@ mathematically expected next-period values in solve and simulate.
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)
@@ -44,7 +45,7 @@ def _next_regime(age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, _RegimeId.dead, _RegimeId.active)
 
 
-_active = Regime(
+_active = UserRegime(
     transition=_next_regime,
     actions={
         "labor_supply": DiscreteGrid(_LaborSupply),
@@ -63,12 +64,12 @@ _active = Regime(
 )
 
 
-_dead = Regime(transition=None, functions={"utility": lambda: jnp.array(0.0)})
+_dead = UserRegime(transition=None, functions={"utility": lambda: jnp.array(0.0)})
 
 
 def _build_model() -> Model:
     return Model(
-        regimes={"active": _active, "dead": _dead},
+        user_regimes={"active": _active, "dead": _dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
     )

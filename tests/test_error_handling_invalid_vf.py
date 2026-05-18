@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import pytest
 
-from lcm import Model, Regime, categorical
+from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinSpacedGrid
@@ -13,6 +13,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from lcm.user_regime import Regime as UserRegime
 
 
 @pytest.fixture
@@ -27,7 +28,7 @@ class RegimeId:
 
 
 @pytest.fixture
-def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
+def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
     def utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,  # noqa: ARG001
@@ -54,7 +55,7 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
     ) -> BoolND:
         return consumption <= wealth
 
-    non_terminal = Regime(
+    non_terminal = UserRegime(
         actions={
             "consumption": LinSpacedGrid(
                 start=1,
@@ -78,7 +79,7 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
         active=lambda age, n=n_periods: age < n - 1,
     )
 
-    terminal = Regime(
+    terminal = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age, n=n_periods: age >= n - 1,
@@ -91,7 +92,7 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
 
 @pytest.fixture
 def nan_value_model(
-    regimes_and_ages: tuple[dict[str, Regime], AgeGrid],
+    regimes_and_ages: tuple[dict[str, UserRegime], AgeGrid],
 ) -> Model:
     regimes, ages = regimes_and_ages
 
@@ -111,7 +112,7 @@ def nan_value_model(
         functions={**regimes["non_terminal"].functions, "utility": invalid_utility},
     )
     return Model(
-        regimes={
+        user_regimes={
             "non_terminal": invalid_regime,
             "terminal": regimes["terminal"],
         },
@@ -122,7 +123,7 @@ def nan_value_model(
 
 @pytest.fixture
 def inf_value_model(
-    regimes_and_ages: tuple[dict[str, Regime], AgeGrid],
+    regimes_and_ages: tuple[dict[str, UserRegime], AgeGrid],
 ) -> Model:
     regimes, ages = regimes_and_ages
 
@@ -142,7 +143,7 @@ def inf_value_model(
         functions={**regimes["non_terminal"].functions, "utility": invalid_utility},
     )
     return Model(
-        regimes={
+        user_regimes={
             "non_terminal": inf_regime,
             "terminal": regimes["terminal"],
         },

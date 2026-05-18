@@ -10,8 +10,8 @@ from jax import vmap
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import (
-    InternalRegime,
     PeriodRegimeSimulationData,
+    Regime,
 )
 from lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
@@ -25,11 +25,11 @@ from lcm.simulation.transitions import (
     create_regime_state_action_space,
 )
 from lcm.typing import (
+    FlatParams,
     Float1D,
     FloatND,
     InitialConditions,
     Int1D,
-    InternalParams,
     IntND,
     PRNGKeyND,
     RegimeName,
@@ -52,9 +52,9 @@ from lcm.utils.logging import (
 
 def simulate(
     *,
-    internal_params: InternalParams,
+    flat_params: FlatParams,
     initial_conditions: InitialConditions,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
     period_to_regime_to_V_arr: MappingProxyType[
@@ -67,13 +67,13 @@ def simulate(
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        flat_params: Immutable mapping of regime names to flat parameter mappings.
         initial_conditions: Flat mapping of state names (plus `"regime_id"`) to
             arrays. All arrays must have the same length (number of subjects).
             The `"regime_id"` entry must contain integer regime codes.
             Example:
             {"wealth": jnp.array([10.0, 50.0]), "regime_id": jnp.array([0, 0])}
-        internal_regimes: Immutable mapping of regime names to internal regime
+        regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         logger: Logger that logs to stdout.
@@ -102,9 +102,7 @@ def simulate(
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
-    states = build_initial_states(
-        initial_states=initial_states, internal_regimes=internal_regimes
-    )
+    states = build_initial_states(initial_states=initial_states, regimes=regimes)
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
@@ -114,7 +112,7 @@ def simulate(
 
     # Forward simulation
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
-        regime_name: {} for regime_name in internal_regimes
+        regime_name: {} for regime_name in regimes
     }
     # Build reverse lookup for regime transition logging. `regime_names_to_ids`
     # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict keys
@@ -136,30 +134,30 @@ def simulate(
 
         active_regimes = {
             regime_name: regime
-            for regime_name, regime in internal_regimes.items()
+            for regime_name, regime in regimes.items()
             if period in regime.active_periods
         }
 
         active_regimes_next_period = tuple(
             regime_name
-            for regime_name, regime in internal_regimes.items()
+            for regime_name, regime in regimes.items()
             if period + 1 in regime.active_periods
         )
 
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
 
-        for regime_name, internal_regime in active_regimes.items():
+        for regime_name, regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
-                    internal_regime=internal_regime,
+                    regime=regime,
                     period=period,
                     age=age,
                     states=states,
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                    internal_params=internal_params,
+                    flat_params=flat_params,
                     regime_names_to_ids=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
@@ -197,8 +195,8 @@ def simulate(
 
     return SimulationResult(
         raw_results=wrapped_results,
-        internal_regimes=internal_regimes,
-        internal_params=internal_params,
+        regimes=regimes,
+        flat_params=flat_params,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         ages=ages,
         simulation_output_dtypes=simulation_output_dtypes,
@@ -208,7 +206,7 @@ def simulate(
 def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
-    internal_regime: InternalRegime,
+    regime: Regime,
     period: int,
     age: ScalarInt | ScalarFloat,
     states: StatesPerRegime,
@@ -217,7 +215,7 @@ def _simulate_regime_in_period(
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
-    internal_params: InternalParams,
+    flat_params: FlatParams,
     regime_names_to_ids: RegimeNamesToIds,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
@@ -229,7 +227,7 @@ def _simulate_regime_in_period(
 
     Args:
         regime_name: Name of the current regime.
-        internal_regime: Internal representation of the regime.
+        regime: Internal representation of the regime.
         period: Current period (0-indexed).
         age: Age corresponding to current period.
         states: Carrier of current-period state arrays for every regime and
@@ -237,7 +235,7 @@ def _simulate_regime_in_period(
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
-        internal_params: Model parameters for all regimes.
+        flat_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         active_regimes_next_period: Tuple of active regime names in the next period.
         key: JAX random key for stochastic operations.
@@ -256,9 +254,9 @@ def _simulate_regime_in_period(
     )
 
     state_action_space = create_regime_state_action_space(
-        internal_regime=internal_regime,
+        regime=regime,
         regime_states=states[regime_name],
-        regime_params=internal_params[regime_name],
+        regime_params=flat_params[regime_name],
     )
     # Compute optimal actions
     # We need to pass the value function array of the next period to the
@@ -271,16 +269,14 @@ def _simulate_regime_in_period(
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.
-    argmax_and_max_Q_over_a = (
-        internal_regime.simulate_functions.argmax_and_max_Q_over_a[period]
-    )
+    argmax_and_max_Q_over_a = regime.simulate_functions.argmax_and_max_Q_over_a[period]
 
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
         next_regime_to_V_arr=next_regime_to_V_arr,
-        **internal_params[regime_name],
+        **flat_params[regime_name],
         period=jnp.int32(period),
         age=age,
     )
@@ -305,15 +301,15 @@ def _simulate_regime_in_period(
     )
 
     # Update states and regime membership for next period
-    if not internal_regime.terminal:
+    if not regime.terminal:
         next_states_key, next_regime_key, key = jax.random.split(key, 3)
 
         next_states = calculate_next_states(
-            internal_regime=internal_regime,
+            regime=regime,
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            regime_params=internal_params[regime_name],
+            regime_params=flat_params[regime_name],
             states_per_regime=states,
             state_action_space=state_action_space,
             key=next_states_key,
@@ -321,12 +317,12 @@ def _simulate_regime_in_period(
         )
         states = next_states
         new_subject_regime_ids = calculate_next_regime_membership(
-            internal_regime=internal_regime,
+            regime=regime,
             state_action_space=state_action_space,
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            regime_params=internal_params[regime_name],
+            regime_params=flat_params[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             new_subject_regime_ids=new_subject_regime_ids,
             active_regimes_next_period=active_regimes_next_period,

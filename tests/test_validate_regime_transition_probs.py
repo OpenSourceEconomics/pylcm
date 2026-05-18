@@ -9,11 +9,11 @@ from lcm import (
     LinSpacedGrid,
     MarkovTransition,
     Model,
-    Regime,
     categorical,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from lcm.user_regime import Regime as UserRegime
 from lcm.utils.error_handling import (
     _format_sum_violation,
     validate_regime_transition_probs,
@@ -207,7 +207,7 @@ def _next_regime_only_fails_for_leave(action: DiscreteAction) -> FloatND:
 
 def _build_action_dependent_model() -> tuple[Model, dict]:
     """Build a minimal model whose transition bug only shows for the second action."""
-    active = Regime(
+    active = UserRegime(
         transition=MarkovTransition(_next_regime_only_fails_for_leave),
         active=lambda age: age < 27,
         actions={
@@ -219,13 +219,13 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         constraints={"budget": lambda consumption, wealth: consumption <= wealth},
         functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
     )
-    terminal = Regime(
+    terminal = UserRegime(
         transition=None,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
     model = Model(
-        regimes={"active": active, "terminal": terminal},
+        user_regimes={"active": active, "terminal": terminal},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
     )
@@ -262,7 +262,7 @@ def test_regime_transition_validation_passes_period_as_int32():
             jnp.array([0.0, 1.0]),
         )
 
-    active = Regime(
+    active = UserRegime(
         transition=MarkovTransition(_transition_recording_period),
         active=lambda age: age < 27,
         actions={
@@ -274,13 +274,13 @@ def test_regime_transition_validation_passes_period_as_int32():
         constraints={"budget": lambda consumption, wealth: consumption <= wealth},
         functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
     )
-    terminal = Regime(
+    terminal = UserRegime(
         transition=None,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
     model = Model(
-        regimes={"active": active, "terminal": terminal},
+        user_regimes={"active": active, "terminal": terminal},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
     )

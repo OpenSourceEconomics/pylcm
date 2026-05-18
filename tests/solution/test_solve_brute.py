@@ -7,7 +7,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.ages import AgeGrid
 from lcm.grids import Grid
-from lcm.interfaces import InternalRegime, StateActionSpace
+from lcm.interfaces import Regime, StateActionSpace
 from lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
@@ -16,17 +16,17 @@ from lcm.utils.logging import get_logger
 
 
 @dataclasses.dataclass(frozen=True)
-class SolveFunctionsMock:
+class MockSolveFunctions:
     """Mock SolveFunctions with only max_Q_over_a."""
 
     max_Q_over_a: dict[int, MaxQOverAFunction]
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
 
 
-class InternalRegimeMock(InternalRegime):
-    """Mock InternalRegime with only the attributes required by solve().
+class MockRegime(Regime):
+    """Mock Regime with only the attributes required by solve().
 
-    Inherits from `InternalRegime` so `isinstance(x, InternalRegime)` holds at
+    Inherits from `Regime` so `isinstance(x, Regime)` holds at
     the beartype-checked perimeter of `solve()`, but bypasses the dataclass
     `__init__` so tests can supply only the attributes `solve()` reads:
     - `_base_state_action_space`: StateActionSpace object
@@ -39,7 +39,7 @@ class InternalRegimeMock(InternalRegime):
         self,
         *,
         _base_state_action_space: StateActionSpace,
-        solve_functions: SolveFunctionsMock,
+        solve_functions: MockSolveFunctions,
         active_periods: list[int],
         grids: MappingProxyType[StateOrActionName, Grid],
     ) -> None:
@@ -63,7 +63,7 @@ def test_solve_brute():
     # ==================================================================================
     # create the params
     # ==================================================================================
-    internal_params = MappingProxyType({"discount_factor": jnp.asarray(0.9)})
+    flat_params = MappingProxyType({"discount_factor": jnp.asarray(0.9)})
 
     # ==================================================================================
     # create the list of state_action_spaces
@@ -131,9 +131,9 @@ def test_solve_brute():
     # call solve function
     # ==================================================================================
 
-    internal_regime = InternalRegimeMock(
+    regime = MockRegime(
         _base_state_action_space=state_action_space,
-        solve_functions=SolveFunctionsMock(
+        solve_functions=MockSolveFunctions(
             max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
         ),
         active_periods=[0, 1],
@@ -141,9 +141,9 @@ def test_solve_brute():
     )
 
     solution = solve(
-        internal_params=MappingProxyType({"default": internal_params}),
+        flat_params=MappingProxyType({"default": flat_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
-        internal_regimes=MappingProxyType({"default": internal_regime}),
+        regimes=MappingProxyType({"default": regime}),
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
@@ -192,9 +192,9 @@ def test_solve_brute_single_period_Qc_arr():
     # by setting max_Q_over_a to identity, we can test that the function
     # is correctly applied to the state_action_space
 
-    internal_regime = InternalRegimeMock(
+    regime = MockRegime(
         _base_state_action_space=state_action_space,
-        solve_functions=SolveFunctionsMock(
+        solve_functions=MockSolveFunctions(
             max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
         ),
         active_periods=[0, 1],
@@ -202,9 +202,9 @@ def test_solve_brute_single_period_Qc_arr():
     )
 
     got = solve(
-        internal_params=MappingProxyType({"default": MappingProxyType({})}),
+        flat_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
-        internal_regimes=MappingProxyType({"default": internal_regime}),
+        regimes=MappingProxyType({"default": regime}),
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )

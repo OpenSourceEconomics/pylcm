@@ -7,11 +7,10 @@ import jax.numpy as jnp
 import pytest
 from dags.tree import QNAME_DELIMITER
 
-from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import IrregSpacedGrid
-from lcm.regime import MarkovTransition, _IdentityTransition
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.typing import (
     BoolND,
@@ -21,6 +20,8 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from lcm.user_regime import MarkovTransition, _IdentityTransition
+from lcm.user_regime import Regime as UserRegime
 
 
 def utility(consumption):
@@ -43,7 +44,7 @@ def test_regime_name_does_not_contain_separator():
         work__test: ScalarInt  # Contains separator — validated at Model level
         dead: ScalarInt
 
-    working = Regime(
+    working = UserRegime(
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
@@ -51,7 +52,7 @@ def test_regime_name_does_not_contain_separator():
         active=lambda age: age < 5,
         state_transitions={"wealth": None},
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0},
         active=lambda age: age >= 5,
@@ -61,7 +62,7 @@ def test_regime_name_does_not_contain_separator():
     # Regime name containing separator should raise at Model creation
     with pytest.raises(ModelInitializationError, match=QNAME_DELIMITER):
         Model(
-            regimes={f"work{QNAME_DELIMITER}test": working, "dead": dead},
+            user_regimes={f"work{QNAME_DELIMITER}test": working, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
         )
@@ -69,7 +70,7 @@ def test_regime_name_does_not_contain_separator():
 
 def test_function_name_does_not_contain_separator():
     with pytest.raises(RegimeInitializationError, match=QNAME_DELIMITER):
-        Regime(
+        UserRegime(
             states={"wealth": WEALTH_GRID},
             actions={f"consumption{QNAME_DELIMITER}action": CONSUMPTION_GRID},
             transition=next_wealth,
@@ -81,7 +82,7 @@ def test_function_name_does_not_contain_separator():
 
 def test_state_name_does_not_contain_separator():
     with pytest.raises(RegimeInitializationError, match=QNAME_DELIMITER):
-        Regime(
+        UserRegime(
             functions={"utility": utility},
             states={f"my{QNAME_DELIMITER}wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
@@ -93,7 +94,7 @@ def test_state_name_does_not_contain_separator():
 
 def test_terminal_regime_creation():
     """Terminal regime (transition=None) can be created with states and utility."""
-    regime = Regime(
+    regime = UserRegime(
         transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={"wealth": WEALTH_GRID},
@@ -104,7 +105,7 @@ def test_terminal_regime_creation():
 
 def test_terminal_regime_with_actions():
     """Terminal regime can have actions for final decisions."""
-    regime = Regime(
+    regime = UserRegime(
         transition=None,
         functions={"utility": lambda wealth, bequest_share: wealth * bequest_share},
         states={"wealth": WEALTH_GRID},
@@ -117,7 +118,7 @@ def test_terminal_regime_with_actions():
 
 def test_non_terminal_regime_has_transition():
     """A regime with a transition function is non-terminal."""
-    regime = Regime(
+    regime = UserRegime(
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
@@ -130,7 +131,7 @@ def test_non_terminal_regime_has_transition():
 
 def test_terminal_regime_can_be_created_without_states():
     """Terminal regime can be created without states (e.g., death state)."""
-    regime = Regime(
+    regime = UserRegime(
         transition=None,
         functions={"utility": lambda: 0},
         states={},
@@ -142,7 +143,7 @@ def test_terminal_regime_can_be_created_without_states():
 
 def test_regime_with_active_callable():
     """Regime can specify active periods with a callable."""
-    regime = Regime(
+    regime = UserRegime(
         transition=next_wealth,
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
@@ -158,7 +159,7 @@ def test_regime_with_active_callable():
 def test_regime_requires_utility_in_functions():
     """Regime must have 'utility' in the functions dict."""
     with pytest.raises(RegimeInitializationError, match=r"utility.*must be provided"):
-        Regime(
+        UserRegime(
             transition=None,
             functions={"helper": lambda: 1},
             states={"wealth": WEALTH_GRID},
@@ -168,7 +169,7 @@ def test_regime_requires_utility_in_functions():
 def test_active_validation_rejects_non_callable():
     """Active attribute must be a callable."""
     with pytest.raises(RegimeInitializationError, match="active"):
-        Regime(
+        UserRegime(
             transition=next_wealth,
             functions={"utility": utility},
             states={"wealth": WEALTH_GRID},
@@ -235,7 +236,7 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
         low: ScalarInt
         high: ScalarInt
 
-    regime = Regime(
+    regime = UserRegime(
         transition=lambda: 0,
         functions={"utility": lambda education: education},
         states={"education": DiscreteGrid(Edu)},
@@ -250,7 +251,7 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
 
 def test_get_all_functions_includes_identity_for_fixed_continuous_state():
     """Fixed continuous states get identity transitions with correct annotation."""
-    regime = Regime(
+    regime = UserRegime(
         transition=lambda: 0,
         functions={"utility": lambda wealth: wealth},
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
@@ -268,7 +269,7 @@ def test_state_grid_without_explicit_transition_raises():
     with pytest.raises(
         RegimeInitializationError, match="must have an entry in state_transitions"
     ):
-        Regime(
+        UserRegime(
             transition=lambda: 0,
             functions={"utility": utility},
             states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
@@ -278,7 +279,7 @@ def test_state_grid_without_explicit_transition_raises():
 
 def test_state_grid_with_transition_none_is_accepted():
     """State with state_transitions entry of None (fixed state) is valid."""
-    regime = Regime(
+    regime = UserRegime(
         transition=lambda: 0,
         functions={"utility": utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
@@ -290,7 +291,7 @@ def test_state_grid_with_transition_none_is_accepted():
 
 def test_state_grid_with_transition_callable_is_accepted():
     """State with a transition function in state_transitions is valid."""
-    regime = Regime(
+    regime = UserRegime(
         transition=lambda: 0,
         functions={"utility": utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
@@ -302,7 +303,7 @@ def test_state_grid_with_transition_callable_is_accepted():
 
 def test_action_grid_without_transition_is_accepted():
     """Action grid with default UNSET transition is valid."""
-    regime = Regime(
+    regime = UserRegime(
         transition=lambda: 0,
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
@@ -327,7 +328,7 @@ def test_state_grid_unset_error_with_different_grid_types(grid_cls):
     with pytest.raises(
         RegimeInitializationError, match="must have an entry in state_transitions"
     ):
-        Regime(
+        UserRegime(
             transition=lambda: 0,
             functions={"utility": utility},
             states={"wealth": grid},
@@ -345,7 +346,7 @@ def test_discrete_state_grid_without_explicit_transition_raises():
     with pytest.raises(
         RegimeInitializationError, match="must have an entry in state_transitions"
     ):
-        Regime(
+        UserRegime(
             transition=lambda: 0,
             functions={"utility": lambda status: status},
             states={"status": DiscreteGrid(Status)},
@@ -390,7 +391,7 @@ def test_regime_with_fixed_states_only():
 
     final_age = 1
 
-    working_regime = Regime(
+    working_regime = UserRegime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
@@ -401,13 +402,13 @@ def test_regime_with_fixed_states_only():
         active=lambda age: age <= final_age,
         state_transitions={"wealth": None},
     )
-    dead_regime = Regime(
+    dead_regime = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age > final_age,
     )
     model = Model(
-        regimes={"working_life": working_regime, "dead": dead_regime},
+        user_regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=FixedRegimeId,
     )

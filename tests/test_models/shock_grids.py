@@ -7,7 +7,6 @@ import lcm
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.model import Model
-from lcm.regime import MarkovTransition, Regime
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -16,6 +15,8 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from lcm.user_regime import MarkovTransition
+from lcm.user_regime import Regime as UserRegime
 
 _SHOCK_GRID_CLASSES = {
     "uniform": lcm.shocks.iid.Uniform,
@@ -86,7 +87,7 @@ def get_model(
 ):
     final_age_alive = n_periods - 2
 
-    alive = Regime(
+    alive = UserRegime(
         active=lambda age, n=final_age_alive: age <= n,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
@@ -106,12 +107,12 @@ def get_model(
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         fixed_params={"final_age_alive": final_age_alive},
@@ -153,7 +154,7 @@ def get_multi_regime_model(
     shock_grid_cls = _SHOCK_GRID_CLASSES[distribution_type]
     shock_kwargs = _SHOCK_GRID_KWARGS[distribution_type]
 
-    work_regime = Regime(
+    work_regime = UserRegime(
         active=lambda age, w=work_final_age: age <= w,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
@@ -171,7 +172,7 @@ def get_multi_regime_model(
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
-    retire_regime = Regime(
+    retire_regime = UserRegime(
         active=lambda age, w=work_final_age, r=retire_final_age: (age > w) & (age <= r),
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
@@ -189,12 +190,16 @@ def get_multi_regime_model(
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
-    dead_regime = Regime(
+    dead_regime = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
-        regimes={"work": work_regime, "retire": retire_regime, "dead": dead_regime},
+        user_regimes={
+            "work": work_regime,
+            "retire": retire_regime,
+            "dead": dead_regime,
+        },
         regime_id_class=MultiRegimeId,
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         fixed_params={

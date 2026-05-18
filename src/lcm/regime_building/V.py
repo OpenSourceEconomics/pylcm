@@ -8,10 +8,10 @@ from dags.tree import qname_from_tree_path
 
 from lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from lcm.grids.coordinates import get_irreg_coordinate
-from lcm.regime import Regime
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.shocks import _ShockGrid
 from lcm.typing import FloatND, IntND, ScalarFloat, StateName
+from lcm.user_regime import Regime as UserRegime
 from lcm.utils.functools import all_as_kwargs
 from lcm.variables import Variables, get_grids
 
@@ -35,18 +35,18 @@ class VInterpolationInfo:
     """Immutable mapping of continuous state names to their grids."""
 
 
-def create_v_interpolation_info(regime: Regime) -> VInterpolationInfo:
+def create_v_interpolation_info(user_regime: UserRegime) -> VInterpolationInfo:
     """Create state space info for V-function interpolation.
 
     Args:
-        regime: Regime instance.
+        user_regime: User-form `Regime` instance.
 
     Returns:
         State space information for the regime.
 
     """
-    variables = Variables.from_regime(regime)
-    grids = get_grids(regime)
+    variables = Variables.from_regime(user_regime)
+    grids = get_grids(user_regime)
 
     discrete_states = {name: grids[name] for name in variables.discrete_state_names}
     continuous_states = {name: grids[name] for name in variables.continuous_state_names}

@@ -7,8 +7,9 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
+from lcm.user_regime import Regime as UserRegime
 from tests.test_models.regime_markov import Health
 from tests.test_models.regime_markov import RegimeId as MarkovRegimeId
 from tests.test_models.regime_markov import alive as markov_alive
@@ -45,7 +46,7 @@ def _next_regime(period: int) -> FloatND:
 
 def _make_model(n_periods=3, *, extra_fixed_params=None):
     """Create a simple 2-regime model for testing."""
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility},
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -58,7 +59,7 @@ def _make_model(n_periods=3, *, extra_fixed_params=None):
         transition=_next_regime,
         active=lambda age, n=n_periods: age < n - 1,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age, n=n_periods: age >= n - 1,
@@ -67,7 +68,7 @@ def _make_model(n_periods=3, *, extra_fixed_params=None):
     fixed_params = extra_fixed_params or {}
 
     return Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
@@ -232,7 +233,7 @@ _MARKOV_INITIAL_CONDITIONS = {
 def _make_markov_model(*, fixed_params: UserParams | None = None) -> Model:
     """Create regime_markov model with optional fixed_params."""
     return Model(
-        regimes={"alive": markov_alive, "dead": markov_dead},
+        user_regimes={"alive": markov_alive, "dead": markov_dead},
         ages=AgeGrid(start=60, stop=62, step="Y"),
         regime_id_class=MarkovRegimeId,
         fixed_params=fixed_params or {},
@@ -336,7 +337,7 @@ def test_series_fixed_param_with_derived_categoricals():
         [0.0, 1.0],
         index=pd.Index(["low", "high"], name="wealth_group"),
     )
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         state_transitions={"wealth": lambda wealth: wealth},
@@ -346,13 +347,13 @@ def test_series_fixed_param_with_derived_categoricals():
         active=lambda age: age < 2,
         derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
     model = Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"group_bonus": group_bonus},
@@ -373,7 +374,7 @@ def test_series_fixed_param_with_derived_categoricals():
 
 def test_model_broadcast_merges_into_regimes():
     """Model-level derived_categoricals broadcast to all regimes (raw class)."""
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         state_transitions={"wealth": lambda wealth: wealth},
@@ -382,29 +383,29 @@ def test_model_broadcast_merges_into_regimes():
         transition=_next_regime,
         active=lambda age: age < 2,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
     model = Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
     )
     assert isinstance(
-        model.regimes["alive"].derived_categoricals["wealth_group"], DiscreteGrid
+        model.user_regimes["alive"].derived_categoricals["wealth_group"], DiscreteGrid
     )
     assert isinstance(
-        model.regimes["dead"].derived_categoricals["wealth_group"], DiscreteGrid
+        model.user_regimes["dead"].derived_categoricals["wealth_group"], DiscreteGrid
     )
 
 
 def test_model_broadcast_matching_regime_entry():
     """Model-level entry matching a regime entry does not conflict."""
     wg_grid = DiscreteGrid(_WealthGroup)
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         state_transitions={"wealth": lambda wealth: wealth},
@@ -414,18 +415,18 @@ def test_model_broadcast_matching_regime_entry():
         active=lambda age: age < 2,
         derived_categoricals={"wealth_group": wg_grid},
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
     model = Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         derived_categoricals={"wealth_group": wg_grid},
     )
-    assert model.regimes["alive"].derived_categoricals["wealth_group"] is wg_grid
+    assert model.user_regimes["alive"].derived_categoricals["wealth_group"] is wg_grid
 
 
 def test_model_broadcast_conflict_raises():
@@ -437,7 +438,7 @@ def test_model_broadcast_conflict_raises():
         b: ScalarInt
         c: ScalarInt
 
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         state_transitions={"wealth": lambda wealth: wealth},
@@ -447,14 +448,14 @@ def test_model_broadcast_conflict_raises():
         active=lambda age: age < 2,
         derived_categoricals={"wealth_group": DiscreteGrid(_OtherGroup)},
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
     with pytest.raises(Exception, match="conflicts"):
         Model(
-            regimes={"alive": alive, "dead": dead},
+            user_regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
             derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
@@ -479,26 +480,26 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
         lo: ScalarInt
         hi: ScalarInt
 
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": lambda: 0.0},
         transition=_next_regime,
         active=lambda age: age < 2,
         derived_categoricals={"group_a": DiscreteGrid(_GroupA)},
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
         derived_categoricals={"group_b": DiscreteGrid(_GroupB)},
     )
     model = Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         derived_categoricals={"shared": DiscreteGrid(_Shared)},
     )
-    assert "group_a" in model.regimes["alive"].derived_categoricals
-    assert "shared" in model.regimes["alive"].derived_categoricals
-    assert "group_a" not in model.regimes["dead"].derived_categoricals
-    assert "group_b" in model.regimes["dead"].derived_categoricals
-    assert "shared" in model.regimes["dead"].derived_categoricals
+    assert "group_a" in model.user_regimes["alive"].derived_categoricals
+    assert "shared" in model.user_regimes["alive"].derived_categoricals
+    assert "group_a" not in model.user_regimes["dead"].derived_categoricals
+    assert "group_b" in model.user_regimes["dead"].derived_categoricals
+    assert "shared" in model.user_regimes["dead"].derived_categoricals

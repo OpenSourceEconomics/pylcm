@@ -1,7 +1,7 @@
 """AOT-compile simulate functions for a fixed batch size.
 
 When `Model(n_subjects=N)` is set, `compile_all_simulate_functions(...)` returns
-an `internal_regimes` mapping with each regime's `simulate_functions` callables
+an `regimes` mapping with each regime's `simulate_functions` callables
 swapped for AOT-compiled programs sized for batch shape `N`. The existing
 simulate call sites then pick them up transparently — no signature changes
 downstream.
@@ -23,16 +23,16 @@ import jax.numpy as jnp
 from dags.tree import qname_from_tree_path
 
 from lcm.ages import AgeGrid
-from lcm.interfaces import InternalRegime
+from lcm.interfaces import Regime
 from lcm.simulation.random import generate_simulation_keys
 from lcm.solution.solve_brute import (
     _func_dedup_key,
     _resolve_compilation_workers,
 )
 from lcm.typing import (
+    FlatParams,
     FlatRegimeParams,
     FloatND,
-    InternalParams,
     IntND,
     RegimeName,
 )
@@ -41,18 +41,18 @@ from lcm.utils.logging import format_duration
 
 def compile_all_simulate_functions(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
     ages: AgeGrid,
     n_subjects: int,
     max_compilation_workers: int | None,
     logger: logging.Logger,
-) -> MappingProxyType[RegimeName, InternalRegime]:
+) -> MappingProxyType[RegimeName, Regime]:
     """AOT-compile every unique simulate function for batch shape `n_subjects`.
 
     Args:
-        internal_regimes: Original internal regimes from the Model.
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        regimes: Original internal regimes from the Model.
+        flat_params: Immutable mapping of regime names to flat parameter mappings.
         ages: AgeGrid for the model.
         n_subjects: Batch size for which to compile.
         max_compilation_workers: Maximum threads for parallel XLA compilation.
@@ -60,7 +60,7 @@ def compile_all_simulate_functions(
         logger: Logger.
 
     Returns:
-        Immutable mapping of regime names to InternalRegime where each
+        Immutable mapping of regime names to Regime where each
         regime's `simulate_functions` has its callables replaced by
         AOT-compiled programs.
 
@@ -69,13 +69,13 @@ def compile_all_simulate_functions(
     # match the *sparse* mapping `simulate.simulate(...)` actually dispatches:
     # `period_to_regime_to_V_arr.get(P+1, {})` — only regimes active at P+1.
     regime_V_shapes = _get_regime_V_shapes(
-        internal_regimes=internal_regimes,
-        internal_params=internal_params,
+        regimes=regimes,
+        flat_params=flat_params,
     )
 
     unique, func_keys = _collect_unique_simulate_functions(
-        internal_regimes=internal_regimes,
-        internal_params=internal_params,
+        regimes=regimes,
+        flat_params=flat_params,
         ages=ages,
         n_subjects=n_subjects,
         regime_V_shapes=regime_V_shapes,
@@ -141,7 +141,7 @@ def compile_all_simulate_functions(
             del lowered[k]
 
     return _swap_in_compiled(
-        internal_regimes=internal_regimes,
+        regimes=regimes,
         compiled=compiled,
         func_keys=func_keys,
     )
@@ -149,8 +149,8 @@ def compile_all_simulate_functions(
 
 def _collect_unique_simulate_functions(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
     ages: AgeGrid,
     n_subjects: int,
     regime_V_shapes: dict[RegimeName, tuple[int, ...]],
@@ -169,8 +169,8 @@ def _collect_unique_simulate_functions(
     unique: dict[Hashable, tuple[Callable, dict | None, str]] = {}
     func_keys: dict[tuple[RegimeName, str, int | None], Hashable] = {}
 
-    for regime_name, regime in internal_regimes.items():
-        regime_params = internal_params.get(regime_name, MappingProxyType({}))
+    for regime_name, regime in regimes.items():
+        regime_params = flat_params.get(regime_name, MappingProxyType({}))
         sf = regime.simulate_functions
 
         # `sf.argmax_and_max_Q_over_a` has entries for *every* period
@@ -183,14 +183,12 @@ def _collect_unique_simulate_functions(
         # periods to mirror runtime.
         for period in regime.active_periods:
             argmax_func = sf.argmax_and_max_Q_over_a[period]
-            active_next = _active_regimes_at_period(
-                internal_regimes=internal_regimes, period=period + 1
-            )
+            active_next = _active_regimes_at_period(regimes=regimes, period=period + 1)
             next_regime_to_V_arr = MappingProxyType(
                 {name: jnp.zeros(regime_V_shapes[name]) for name in active_next}
             )
             args = _build_argmax_args(
-                internal_regime=regime,
+                regime=regime,
                 regime_params=regime_params,
                 ages=ages,
                 period=period,
@@ -211,7 +209,7 @@ def _collect_unique_simulate_functions(
         # share a callable identity, their compiled programs are distinct.
         if not regime.terminal:
             args = _build_next_state_args(
-                internal_regime=regime,
+                regime=regime,
                 regime_params=regime_params,
                 ages=ages,
                 n_subjects=n_subjects,
@@ -230,7 +228,7 @@ def _collect_unique_simulate_functions(
 
         if sf.compute_regime_transition_probs is not None:
             args = _build_crtp_args(
-                internal_regime=regime,
+                regime=regime,
                 regime_params=regime_params,
                 ages=ages,
                 n_subjects=n_subjects,
@@ -253,13 +251,13 @@ def _collect_unique_simulate_functions(
 
 def _swap_in_compiled(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regimes: MappingProxyType[RegimeName, Regime],
     compiled: dict[Hashable, jax.stages.Compiled],
     func_keys: dict[tuple[RegimeName, str, int | None], Hashable],
-) -> MappingProxyType[RegimeName, InternalRegime]:
+) -> MappingProxyType[RegimeName, Regime]:
     """Swap compiled programs into each regime's `simulate_functions`."""
-    new_regimes: dict[RegimeName, InternalRegime] = {}
-    for regime_name, regime in internal_regimes.items():
+    new_regimes: dict[RegimeName, Regime] = {}
+    for regime_name, regime in regimes.items():
         sf = regime.simulate_functions
         # Only active periods are AOT-compiled (see
         # `_collect_unique_simulate_functions`); leave inactive-period
@@ -299,8 +297,8 @@ def _swap_in_compiled(
 
 def _get_regime_V_shapes(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
 ) -> dict[RegimeName, tuple[int, ...]]:
     """Return per-regime V-array shape (one length per state grid).
 
@@ -309,9 +307,9 @@ def _get_regime_V_shapes(
     needs the shapes, not the values.
     """
     shapes: dict[RegimeName, tuple[int, ...]] = {}
-    for regime_name, regime in internal_regimes.items():
+    for regime_name, regime in regimes.items():
         space = regime.state_action_space(
-            regime_params=internal_params.get(regime_name, MappingProxyType({}))
+            regime_params=flat_params.get(regime_name, MappingProxyType({}))
         )
         shapes[regime_name] = tuple(len(v) for v in space.states.values())
     return shapes
@@ -319,31 +317,31 @@ def _get_regime_V_shapes(
 
 def _active_regimes_at_period(
     *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regimes: MappingProxyType[RegimeName, Regime],
     period: int,
 ) -> tuple[RegimeName, ...]:
-    """Tuple of regime names active at `period`, in `internal_regimes` order.
+    """Tuple of regime names active at `period`, in `regimes` order.
 
     Returned as a `tuple` so it's hashable and pytree-key-stable. An empty
     tuple matches the runtime fallback for periods past the last (`{}`).
     """
     return tuple(
         regime_name
-        for regime_name, regime in internal_regimes.items()
+        for regime_name, regime in regimes.items()
         if period in regime.active_periods
     )
 
 
 def _build_argmax_args(
     *,
-    internal_regime: InternalRegime,
+    regime: Regime,
     regime_params: FlatRegimeParams,
     ages: AgeGrid,
     period: int,
     n_subjects: int,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
 ) -> dict[str, object]:
-    base = internal_regime.state_action_space(regime_params=regime_params)
+    base = regime.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
     return {
         **subject_states,
@@ -358,25 +356,23 @@ def _build_argmax_args(
 
 def _build_next_state_args(
     *,
-    internal_regime: InternalRegime,
+    regime: Regime,
     regime_params: FlatRegimeParams,
     ages: AgeGrid,
     n_subjects: int,
 ) -> dict[str, object]:
-    base = internal_regime.state_action_space(regime_params=regime_params)
+    base = regime.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
     subject_actions = _subject_shape_arrays(
         {**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
     )
 
-    stoch_transition_names = (
-        internal_regime.simulate_functions.stochastic_transition_names
-    )
+    stoch_transition_names = regime.simulate_functions.stochastic_transition_names
     stoch_next_func_names = sorted(
         qname_from_tree_path((target_regime, transition_name))
         for target_regime, target_transitions in (
-            internal_regime.simulate_functions.transitions.items()
+            regime.simulate_functions.transitions.items()
         )
         for transition_name in target_transitions
         if transition_name in stoch_transition_names
@@ -399,12 +395,12 @@ def _build_next_state_args(
 
 def _build_crtp_args(
     *,
-    internal_regime: InternalRegime,
+    regime: Regime,
     regime_params: FlatRegimeParams,
     ages: AgeGrid,
     n_subjects: int,
 ) -> dict[str, object]:
-    base = internal_regime.state_action_space(regime_params=regime_params)
+    base = regime.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
     subject_actions = _subject_shape_arrays(
         {**base.discrete_actions, **base.continuous_actions},

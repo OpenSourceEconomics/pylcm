@@ -14,7 +14,7 @@ to take `g`).
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
     ContinuousAction,
@@ -23,6 +23,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)
@@ -60,7 +61,7 @@ def _next_regime(period: int) -> FloatND:
 
 
 def _make_clashing_model() -> Model:
-    alive = Regime(
+    alive = UserRegime(
         functions={
             "utility": _utility_redundantly_indexes,
             "per_type_scale": _per_type_scale_takes_pref_type,
@@ -71,13 +72,13 @@ def _make_clashing_model() -> Model:
         transition=_next_regime,
         active=lambda age: age < 2,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
     return Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -105,7 +106,7 @@ def _utility_consumes_scalar(
 def test_safe_pattern_does_not_raise():
     """The safe pattern (function takes the state, returns a scalar; consumer
     uses it directly) builds fine."""
-    alive = Regime(
+    alive = UserRegime(
         functions={
             "utility": _utility_consumes_scalar,
             "per_type_scale": _per_type_scale_takes_pref_type,
@@ -116,13 +117,13 @@ def test_safe_pattern_does_not_raise():
         transition=_next_regime,
         active=lambda age: age < 2,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
     Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -140,7 +141,7 @@ def _per_type_scale_array_output(some_param: FloatND) -> FloatND:
 def test_array_valued_producer_indexed_by_state_does_not_raise():
     """When the producing function does NOT take the discrete grid as input,
     its output stays array-shaped and `func_output[grid]` is correct code."""
-    alive = Regime(
+    alive = UserRegime(
         functions={
             "utility": _utility_redundantly_indexes,
             "per_type_scale": _per_type_scale_array_output,
@@ -151,13 +152,13 @@ def test_array_valued_producer_indexed_by_state_does_not_raise():
         transition=_next_regime,
         active=lambda age: age < 2,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
     Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -195,7 +196,7 @@ def test_function_output_indexed_by_derived_categorical_raises():
         RegimeInitializationError,
         match=r"per_marital_scale.*is_married",
     ):
-        Regime(
+        UserRegime(
             functions={
                 "utility": _utility_clash,
                 "per_marital_scale": _per_marital_scale,
@@ -232,7 +233,7 @@ def test_function_output_indexed_by_discrete_action_raises():
         RegimeInitializationError,
         match=r"per_choice_scale.*labor_supply",
     ):
-        Regime(
+        UserRegime(
             functions={
                 "utility": _utility_clash,
                 "per_choice_scale": _per_choice_scale,
@@ -262,7 +263,7 @@ def test_constraint_indexing_function_output_by_state_raises():
         RegimeInitializationError,
         match=r"per_type_scale.*pref_type",
     ):
-        Regime(
+        UserRegime(
             functions={
                 "utility": lambda consumption, pref_type, per_type_scale: jnp.log(  # noqa: ARG005
                     consumption + 1.0

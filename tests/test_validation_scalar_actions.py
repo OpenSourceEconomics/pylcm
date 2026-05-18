@@ -14,9 +14,10 @@ schedules.
 import jax
 import jax.numpy as jnp
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.params import MappingLeaf, as_leaf
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)
@@ -73,7 +74,7 @@ def test_validation_vmaps_over_action_combos():
     """simulate succeeds when a MappingLeaf param requires scalar actions."""
     n_periods = 4
 
-    alive = Regime(
+    alive = UserRegime(
         functions={"utility": _utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         state_transitions={"wealth": _next_wealth},
@@ -82,14 +83,14 @@ def test_validation_vmaps_over_action_combos():
         transition=_next_regime,
         active=lambda age, n=n_periods: age < n - 1,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age, n=n_periods: age >= n - 1,
     )
 
     model = Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
     )

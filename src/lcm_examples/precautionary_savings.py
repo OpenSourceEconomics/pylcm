@@ -152,7 +152,7 @@ def get_model(
     )
 
     return Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},

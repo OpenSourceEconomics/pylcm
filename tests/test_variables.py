@@ -8,7 +8,7 @@ import pytest
 
 from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.variables import VariableInfo, Variables
-from tests.regime_mock import RegimeMock
+from tests.mock_regime import MockRegime
 
 
 @pytest.fixture(name="variables")
@@ -148,7 +148,7 @@ def test_from_regime_orders_discrete_states_continuous_states_actions(
     def next_state(x):
         return x
 
-    regime = RegimeMock(
+    regime = MockRegime(
         states={
             "a_discrete": DiscreteGrid(binary_category_class),
             "b_continuous": LinSpacedGrid(start=0, stop=1, n_points=5),
@@ -174,7 +174,7 @@ def test_from_regime_within_states_orders_by_batch_size(
     def next_state(x):
         return x
 
-    regime = RegimeMock(
+    regime = MockRegime(
         states={
             "third": DiscreteGrid(binary_category_class),
             "first": DiscreteGrid(binary_category_class, batch_size=1),

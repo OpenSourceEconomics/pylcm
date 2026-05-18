@@ -5,10 +5,10 @@ from numpy.testing import assert_array_equal
 
 from lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
 from lcm.interfaces import StateActionSpace
-from lcm.regime import Regime
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import ScalarInt
+from lcm.user_regime import Regime as UserRegime
 from lcm.variables import VariableInfo, Variables
 
 
@@ -130,7 +130,7 @@ def test_create_v_interpolation_info():
         good: ScalarInt
         bad: ScalarInt
 
-    regime = Regime(
+    regime = UserRegime(
         transition=lambda: 0,  # non-terminal
         functions={"utility": lambda wealth: wealth},
         states={

@@ -12,7 +12,7 @@ import functools
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, Model, categorical
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -21,6 +21,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from lcm.user_regime import Regime as UserRegime
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     is_working,
@@ -89,7 +90,7 @@ def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> 
 _DEFAULT_N_PERIODS = 4
 _DEFAULT_LAST_ACTIVE_AGE = 50 + (_DEFAULT_N_PERIODS - 2) * 10
 
-working_life = Regime(
+working_life = UserRegime(
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DiscreteGrid(DiscreteConsumption),
@@ -113,7 +114,7 @@ working_life = Regime(
 )
 
 
-dead = Regime(
+dead = UserRegime(
     transition=None,
     functions={"utility": lambda: 0.0},
 )
@@ -124,7 +125,7 @@ def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=50, stop=50 + (n_periods - 1) * 10, step="10Y")
     final_age_alive = 50 + (n_periods - 2) * 10
     return Model(
-        regimes={
+        user_regimes={
             "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive
             ),

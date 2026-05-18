@@ -8,8 +8,8 @@ from lcm.grids import categorical
 from lcm.grids.continuous import LinSpacedGrid
 from lcm.grids.discrete import DiscreteGrid
 from lcm.model import Model
-from lcm.regime import Regime
 from lcm.typing import ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 # Run these tests on the CPU for parallelization, does not work if pytest runs
 # multiple workers, because jax will be initialized already
@@ -37,7 +37,7 @@ def correct_distributed_model():
         low: ScalarInt
         high: ScalarInt
 
-    working_life = Regime(
+    working_life = UserRegime(
         functions={
             "utility": lambda wealth, consumption, type1, type2: (
                 (jnp.log(consumption) + wealth * 0.001) * type1 * type2
@@ -64,7 +64,7 @@ def correct_distributed_model():
         active=lambda age: age < 5,
     )
 
-    retirement = Regime(
+    retirement = UserRegime(
         transition=None,
         functions={
             "utility": lambda wealth, type1, type2: (wealth * 0.5) * type1 * type2
@@ -78,7 +78,7 @@ def correct_distributed_model():
     )
 
     return Model(
-        regimes={"working_life": working_life, "retirement": retirement},
+        user_regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -97,7 +97,7 @@ def wrong_distributed_model():
         medium: ScalarInt
         high: ScalarInt
 
-    working_life = Regime(
+    working_life = UserRegime(
         functions={
             "utility": lambda wealth, consumption, type1, type2: (
                 (jnp.log(consumption) + wealth * 0.001) * type1 * type2
@@ -124,7 +124,7 @@ def wrong_distributed_model():
         active=lambda age: age < 5,
     )
 
-    retirement = Regime(
+    retirement = UserRegime(
         transition=None,
         functions={
             "utility": lambda wealth, type1, type2: (wealth * 0.5) * type1 * type2
@@ -138,7 +138,7 @@ def wrong_distributed_model():
     )
 
     return Model(
-        regimes={"working_life": working_life, "retirement": retirement},
+        user_regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -222,7 +222,7 @@ def partially_distributed_model():
         low: ScalarInt
         high: ScalarInt
 
-    working_life = Regime(
+    working_life = UserRegime(
         functions={
             "utility": lambda wealth, consumption, type1, type2: (
                 (jnp.log(consumption) + wealth * 0.001) * type1 * type2
@@ -245,7 +245,7 @@ def partially_distributed_model():
         active=lambda age: age < 5,
     )
 
-    retirement = Regime(
+    retirement = UserRegime(
         transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
@@ -253,7 +253,7 @@ def partially_distributed_model():
     )
 
     return Model(
-        regimes={"working_life": working_life, "retirement": retirement},
+        user_regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -283,7 +283,7 @@ def test_distributed_action_grid_raises_at_regime_init():
     current sharding model, so it is rejected at construction time.
     """
     with pytest.raises(RegimeInitializationError, match="distributed=True"):
-        Regime(
+        UserRegime(
             functions={"utility": jnp.log},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             state_transitions={

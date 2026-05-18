@@ -9,14 +9,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
-from lcm import (
-    AgeGrid,
-    DiscreteGrid,
-    LinSpacedGrid,
-    Model,
-    Regime,
-    categorical,
-)
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -25,6 +18,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from lcm.user_regime import Regime as UserRegime
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -71,7 +65,7 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-alive_deterministic = Regime(
+alive_deterministic = UserRegime(
     actions={
         "consumption": DiscreteGrid(DiscreteConsumption),
         "labor_supply": DiscreteGrid(LaborSupply),
@@ -94,7 +88,7 @@ alive_deterministic = Regime(
     active=lambda age: age < 1,  # n_periods=2, so active in period 0
 )
 
-dead = Regime(
+dead = UserRegime(
     transition=None,
     functions={"utility": lambda: 0.0},
     active=lambda age: age >= 1,  # n_periods=2, so active in period 1
@@ -226,7 +220,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
         n_points=n_wealth_points
     )
     model = Model(
-        regimes={
+        user_regimes={
             "alive": alive_deterministic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
@@ -273,7 +267,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         n_points=n_wealth_points
     )
     model = Model(
-        regimes={
+        user_regimes={
             "alive": alive_deterministic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),

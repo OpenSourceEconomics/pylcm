@@ -3,19 +3,20 @@ from typing import Literal, cast
 
 from lcm.grids import Grid
 from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.regime import Regime, _default_H
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.typing import UserFunction
+from lcm.user_regime import Regime as UserRegime
+from lcm.user_regime import _default_H
 
 
-class RegimeMock(Regime):
-    """A regime mock for testing the params_template creation functions.
+class MockRegime(UserRegime):
+    """A mock of the user-provided `Regime` for params-template tests.
 
-    Inherits from `Regime` so `isinstance(x, Regime)` holds at the
-    beartype-checked perimeter of `create_regime_params_template` and
-    friends, but bypasses `Regime.__init__`'s validation by writing
-    fields directly via `object.__setattr__`. Tests use this to supply
-    partial / loosely-typed configurations that the real `Regime`
+    Inherits from `UserRegime` so `isinstance(x, UserRegime)` holds at
+    the beartype-checked perimeter of `create_regime_params_template`
+    and friends, but bypasses `UserRegime.__init__`'s validation by
+    writing fields directly via `object.__setattr__`. Tests use this to
+    supply partial / loosely-typed configurations that the real
     constructor would reject.
 
     """
@@ -46,11 +47,11 @@ class RegimeMock(Regime):
         object.__setattr__(
             self, "functions", functions if functions is not None else {}
         )
-        # Match Regime's defaults for fields RegimeMock callers don't touch
+        # Match UserRegime's defaults for fields MockRegime callers don't touch
         object.__setattr__(self, "active", lambda _age: True)
         object.__setattr__(self, "derived_categoricals", MappingProxyType({}))
         object.__setattr__(self, "description", "")
-        # `Regime.__post_init__` injects the default `H` for non-terminal
+        # `UserRegime.__post_init__` injects the default `H` for non-terminal
         # regimes; mirror that here.
         if not self.terminal and "H" not in self.functions:
             object.__setattr__(self, "functions", {**self.functions, "H": _default_H})

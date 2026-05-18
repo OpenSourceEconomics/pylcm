@@ -4,14 +4,9 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
-from lcm import (
-    AgeGrid,
-    LinSpacedGrid,
-    Model,
-    Regime,
-    categorical,
-)
+from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)
@@ -44,7 +39,7 @@ _TAUCHEN_PARAMS = {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}
 
 def _make_model(*, fixed_params=None):
     """Create a shock model with all shock params supplied at runtime."""
-    alive = Regime(
+    alive = UserRegime(
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
             "income": lcm.shocks.ar1.Tauchen(n_points=3, gauss_hermite=False),
@@ -60,14 +55,14 @@ def _make_model(*, fixed_params=None):
         ),
         active=lambda age: age < 2,
     )
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
 
     return Model(
-        regimes={"alive": alive, "dead": dead},
+        user_regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeIdShock,
         fixed_params=fixed_params or {},

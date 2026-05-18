@@ -14,8 +14,8 @@ from lcm.shocks.iid import _ShockGridIID
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
+    EconFunctionsMapping,
     FloatND,
-    FunctionsMapping,
     IntND,
     NextStateSimulationFunction,
     RegimeName,
@@ -31,8 +31,8 @@ from lcm.variables import Variables
 
 def get_next_state_function_for_solution(
     *,
-    transitions: FunctionsMapping,
-    functions: FunctionsMapping,
+    transitions: EconFunctionsMapping,
+    functions: EconFunctionsMapping,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
@@ -61,7 +61,7 @@ def get_next_state_function_for_solution(
 def get_next_state_function_for_simulation(
     *,
     transitions: TransitionFunctionsMapping,
-    functions: FunctionsMapping,
+    functions: EconFunctionsMapping,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variables: Variables,
     stochastic_transition_names: frozenset[TransitionFunctionName] = frozenset(),
@@ -122,8 +122,8 @@ def get_next_state_function_for_simulation(
 def get_next_stochastic_weights_function(
     *,
     regime_name: RegimeName,
-    functions: FunctionsMapping,
-    transitions: FunctionsMapping,
+    functions: EconFunctionsMapping,
+    transitions: EconFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
 ) -> Callable[..., dict[str, FloatND | IntND]]:
     """Get function that computes the weights for the next stochastic states.

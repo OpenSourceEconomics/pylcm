@@ -120,7 +120,7 @@ def test_model_with_quarterly_steps():
     assert ages.step_size == 0.25
 
     model = Model(
-        regimes={
+        user_regimes={
             "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive
             ),
@@ -264,7 +264,7 @@ def test_model_with_integer_ages():
     last_age = ages.exact_values[-1]
 
     model = Model(
-        regimes={
+        user_regimes={
             "working_life": working_life.replace(
                 active=lambda age, la=last_age: age < la
             ),

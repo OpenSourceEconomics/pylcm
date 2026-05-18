@@ -21,15 +21,9 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
-from lcm import (
-    AgeGrid,
-    LinSpacedGrid,
-    Model,
-    Regime,
-    SolveSimulateFunctionPair,
-    categorical,
-)
+from lcm import AgeGrid, LinSpacedGrid, Model, SolveSimulateFunctionPair, categorical
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)
@@ -86,7 +80,7 @@ N_CONSUMPTION = 500
 
 
 def _make_model(*, H_func=beta_delta_H):
-    working = Regime(
+    working = UserRegime(
         actions={
             "consumption": LinSpacedGrid(
                 start=WEALTH_START / N_CONSUMPTION,
@@ -111,7 +105,7 @@ def _make_model(*, H_func=beta_delta_H):
         active=lambda age: age <= 1,
     )
 
-    dead = Regime(
+    dead = UserRegime(
         transition=None,
         states={
             "wealth": LinSpacedGrid(
@@ -125,7 +119,7 @@ def _make_model(*, H_func=beta_delta_H):
     )
 
     return Model(
-        regimes={"working": working, "dead": dead},
+        user_regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )

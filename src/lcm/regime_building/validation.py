@@ -16,7 +16,6 @@ from dags.tree import QNAME_DELIMITER
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import DiscreteGrid, Grid
 from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.regime import MarkovTransition, Regime, _IdentityTransition
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActiveFunction,
@@ -28,6 +27,7 @@ from lcm.typing import (
     TransitionFunctionName,
     UserFunction,
 )
+from lcm.user_regime import MarkovTransition, Regime, _IdentityTransition
 
 
 def validate_mapping_contents(regime: Regime) -> None:
