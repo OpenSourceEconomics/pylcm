@@ -25,12 +25,12 @@ import pytest
 from beartype.roar import BeartypeCallHintViolation
 
 from lcm import AgeGrid, LinSpacedGrid, Model
+from lcm.engine import _build_regime_sharding
 from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.interfaces import _build_regime_sharding
 from lcm.model import _validate_log_args
 from lcm.regime_building.runtime_checks import _validate_regime_transition_probs
 from lcm.simulation.simulate import _compute_starting_periods
@@ -82,8 +82,8 @@ def test_claw_checks_lcm_state_action_space() -> None:
         )
 
 
-def test_claw_checks_lcm_interfaces() -> None:
-    """Type-violating arguments to `lcm.interfaces` helpers raise."""
+def test_claw_checks_lcm_engine() -> None:
+    """Type-violating arguments to `lcm.engine` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _build_regime_sharding(
             grids=MappingProxyType({}),

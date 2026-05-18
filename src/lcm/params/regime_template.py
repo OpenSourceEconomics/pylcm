@@ -3,9 +3,9 @@ from types import MappingProxyType
 import dags.tree as dt
 from dags.tree import tree_path_from_qname
 
+from lcm.engine import SolveSimulateFunctionPair
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
-from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.regime_building.transitions import collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.typing import (

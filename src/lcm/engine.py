@@ -1,8 +1,8 @@
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
 import jax
 from jax import Array
@@ -38,7 +38,144 @@ from lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils.containers import first_non_none
-from lcm.variables import Variables
+
+
+@dataclasses.dataclass(frozen=True)
+class VariableInfo:
+    """Kind/topology/shock tags for one state or action variable."""
+
+    kind: Literal["state", "action"]
+    """Whether the variable is a state or an action."""
+
+    topology: Literal["continuous", "discrete"]
+    """Topology as treated by pylcm's solve/simulate machinery.
+
+    Shocks have topology `"discrete"` because their value space is
+    approximated by a finite grid of nodes, even though the underlying
+    random variable is mathematically continuous. Combine with `is_shock`
+    when the distinction matters.
+
+    """
+
+    is_shock: bool
+    """Whether the variable is a shock (always a state)."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Variables(Mapping[StateOrActionName, VariableInfo]):
+    """States + actions of a regime, with pre-computed name-tuple views.
+
+    Mapping access by variable name returns the per-variable `VariableInfo`.
+    Named accessors return tuples of names in iteration order. Use
+    `lcm.variables.from_regime` to construct from a regime; pass `info`
+    directly only when names are already in the desired order.
+
+    """
+
+    info: MappingProxyType[StateOrActionName, VariableInfo]
+    """Immutable mapping of variable name to its `VariableInfo`."""
+
+    state_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
+    """Names of variables with kind='state'."""
+
+    action_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
+    """Names of variables with kind='action'."""
+
+    discrete_state_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
+    """Names of states with topology='discrete' (includes shocks)."""
+
+    continuous_state_names: tuple[StateOrActionName, ...] = dataclasses.field(
+        init=False
+    )
+    """Names of states with topology='continuous'."""
+
+    discrete_action_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
+    """Names of actions with topology='discrete'."""
+
+    continuous_action_names: tuple[StateOrActionName, ...] = dataclasses.field(
+        init=False
+    )
+    """Names of actions with topology='continuous'."""
+
+    state_and_discrete_action_names: tuple[StateOrActionName, ...] = dataclasses.field(
+        init=False
+    )
+    """Every state plus every discrete action — the gridded variable set."""
+
+    shock_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
+    """Names of variables with `is_shock=True`."""
+
+    def __post_init__(self) -> None:
+        items = tuple(self.info.items())
+        object.__setattr__(
+            self,
+            "state_names",
+            tuple(name for name, info in items if info.kind == "state"),
+        )
+        object.__setattr__(
+            self,
+            "action_names",
+            tuple(name for name, info in items if info.kind == "action"),
+        )
+        object.__setattr__(
+            self,
+            "discrete_state_names",
+            tuple(
+                name
+                for name, info in items
+                if info.kind == "state" and info.topology == "discrete"
+            ),
+        )
+        object.__setattr__(
+            self,
+            "continuous_state_names",
+            tuple(
+                name
+                for name, info in items
+                if info.kind == "state" and info.topology == "continuous"
+            ),
+        )
+        object.__setattr__(
+            self,
+            "discrete_action_names",
+            tuple(
+                name
+                for name, info in items
+                if info.kind == "action" and info.topology == "discrete"
+            ),
+        )
+        object.__setattr__(
+            self,
+            "continuous_action_names",
+            tuple(
+                name
+                for name, info in items
+                if info.kind == "action" and info.topology == "continuous"
+            ),
+        )
+        object.__setattr__(
+            self,
+            "state_and_discrete_action_names",
+            tuple(
+                name
+                for name, info in items
+                if info.kind == "state" or info.topology == "discrete"
+            ),
+        )
+        object.__setattr__(
+            self,
+            "shock_names",
+            tuple(name for name, info in items if info.is_shock),
+        )
+
+    def __getitem__(self, key: StateOrActionName) -> VariableInfo:
+        return self.info[key]
+
+    def __iter__(self) -> Iterator[StateOrActionName]:
+        return iter(self.info)
+
+    def __len__(self) -> int:
+        return len(self.info)
 
 
 @dataclasses.dataclass(frozen=True)

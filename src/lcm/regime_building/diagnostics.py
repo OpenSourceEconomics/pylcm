@@ -17,8 +17,8 @@ import jax
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.engine import StateActionSpace
 from lcm.grids import Grid
-from lcm.interfaces import StateActionSpace
 from lcm.regime_building.Q_and_F import get_complete_targets, get_compute_intermediates
 from lcm.regime_building.V import VInterpolationInfo
 from lcm.typing import (

@@ -7,9 +7,9 @@ import pytest
 
 from lcm import Model, categorical
 from lcm.ages import AgeGrid
+from lcm.engine import StateActionSpace
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinSpacedGrid
-from lcm.interfaces import StateActionSpace
 from lcm.regime_building.runtime_checks import validate_V
 from lcm.typing import (
     BoolND,

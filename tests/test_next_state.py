@@ -3,6 +3,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.engine import VariableInfo, Variables
 from lcm.grids import DiscreteGrid, categorical
 from lcm.regime_building import process_regimes
 from lcm.regime_building.next_state import (
@@ -11,7 +12,6 @@ from lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
 )
 from lcm.typing import ContinuousState, ScalarInt
-from lcm.variables import VariableInfo, Variables
 from tests.test_models.deterministic.regression import dead, working_life
 
 

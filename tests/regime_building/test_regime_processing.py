@@ -7,15 +7,15 @@ from numpy.testing import assert_array_equal
 
 from lcm import categorical
 from lcm.ages import AgeGrid
+from lcm.engine import Regime, VariableInfo, Variables
 from lcm.grids import DiscreteGrid, LinSpacedGrid
-from lcm.interfaces import Regime
 from lcm.regime_building.processing import (
     _rename_params_to_qnames,
     process_regimes,
 )
 from lcm.typing import ScalarInt
 from lcm.user_regime import Regime as UserRegime
-from lcm.variables import VariableInfo, Variables, get_grids
+from lcm.variables import from_regime, get_grids
 from tests.mock_regime import MockRegime
 from tests.test_models.deterministic.base import dead, working_life
 
@@ -38,7 +38,7 @@ def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
         functions={"utility": utility},
     )
 
-    got = Variables.from_regime(mock_regime)
+    got = from_regime(mock_regime)
 
     assert isinstance(got, Variables)
     assert set(got) == {"a", "c"}
@@ -166,7 +166,7 @@ def test_variables_excludes_constraint_names():
         | {"wealth_constraint": wealth_constraint}
     )
 
-    got = Variables.from_regime(working_copy)
+    got = from_regime(working_copy)
     assert "wealth_constraint" not in got
 
 

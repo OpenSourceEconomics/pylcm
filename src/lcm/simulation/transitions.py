@@ -13,7 +13,7 @@ from dags.tree import qname_from_tree_path
 from jax import numpy as jnp
 from jax import vmap
 
-from lcm.interfaces import Regime, StateActionSpace
+from lcm.engine import Regime, StateActionSpace
 from lcm.simulation.random import generate_simulation_keys
 from lcm.state_action_space import _validate_all_states_present
 from lcm.typing import (

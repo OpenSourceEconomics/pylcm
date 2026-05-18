@@ -1,24 +1,21 @@
-"""Per-regime states + actions, with pre-computed name-tuple views.
+"""Factories that build `Variables` and grid mappings from a user regime.
 
-`Variables` wraps an immutable `MappingProxyType[StateOrActionName,
-VariableInfo]` and exposes 8 named tuples covering every kind/topology
-cross-section that consumers need (`state_names`, `discrete_action_names`,
-`shock_names`, etc.). Callers that need ad-hoc filters can iterate via the
-`Mapping` interface.
+The `Variables` and `VariableInfo` dataclasses live in `lcm.engine`. This
+module is the factory side: turn a user-facing `Regime` into the canonical
+`Variables` instance and accompanying grid mapping, ordering names so the
+state-action space iteration is stable.
 
-Iteration order (set by `Variables.from_regime`): discrete states sorted by
-`batch_size`, then continuous states sorted by `batch_size`, then actions.
-Batch size 0 sorts last within its group (treated as +∞). Every named view
-preserves this order.
+Iteration order: discrete states (sorted by `batch_size`), continuous states
+(sorted by `batch_size`), then actions in declaration order. Within each
+state-topology group, `batch_size == 0` sorts last (treated as +inf).
 
 """
 
-import dataclasses
 import math
-from collections.abc import Iterator, Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING
 
+from lcm.engine import VariableInfo, Variables
 from lcm.grids import ContinuousGrid, Grid
 from lcm.shocks import _ShockGrid
 from lcm.typing import StateOrActionName
@@ -41,168 +38,31 @@ def _bind_forward_refs(*, regime_cls: type) -> None:
     UserRegime = regime_cls  # ty: ignore[invalid-assignment]
 
 
-@dataclasses.dataclass(frozen=True)
-class VariableInfo:
-    """Kind/topology/shock tags for one state or action variable."""
+def from_regime(user_regime: UserRegime) -> Variables:
+    """Build `Variables` from a regime, ordering names canonically.
 
-    kind: Literal["state", "action"]
-    """Whether the variable is a state or an action."""
+    Order: discrete states (by `batch_size`), continuous states (by
+    `batch_size`), then actions in declaration order. Within each topology
+    group, `batch_size == 0` sorts last.
 
-    topology: Literal["continuous", "discrete"]
-    """Topology as treated by pylcm's solve/simulate machinery.
+    Args:
+        user_regime: User-form `Regime` instance.
 
-    Shocks have topology `"discrete"` because their value space is
-    approximated by a finite grid of nodes, even though the underlying
-    random variable is mathematically continuous. Combine with `is_shock`
-    when the distinction matters.
-
-    """
-
-    is_shock: bool
-    """Whether the variable is a shock (always a state)."""
-
-
-@dataclasses.dataclass(frozen=True)
-class Variables(Mapping[StateOrActionName, VariableInfo]):
-    """States + actions of a regime, with pre-computed name-tuple views.
-
-    Mapping access by variable name returns the per-variable `VariableInfo`.
-    Named accessors return tuples of names in iteration order. Use
-    `Variables.from_regime` to construct from a regime; pass `info` directly
-    only when names are already in the desired order.
+    Returns:
+        A `Variables` instance whose iteration order matches the canonical
+        ordering described above.
 
     """
-
-    info: MappingProxyType[StateOrActionName, VariableInfo]
-    """Immutable mapping of variable name to its `VariableInfo`."""
-
-    state_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
-    """Names of variables with kind='state'."""
-
-    action_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
-    """Names of variables with kind='action'."""
-
-    discrete_state_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
-    """Names of states with topology='discrete' (includes shocks)."""
-
-    continuous_state_names: tuple[StateOrActionName, ...] = dataclasses.field(
-        init=False
+    raw_info = _raw_variable_info(user_regime)
+    ordered_names = _ordered_state_action_names(user_regime, raw_info)
+    return Variables(
+        info=MappingProxyType({name: raw_info[name] for name in ordered_names})
     )
-    """Names of states with topology='continuous'."""
-
-    discrete_action_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
-    """Names of actions with topology='discrete'."""
-
-    continuous_action_names: tuple[StateOrActionName, ...] = dataclasses.field(
-        init=False
-    )
-    """Names of actions with topology='continuous'."""
-
-    state_and_discrete_action_names: tuple[StateOrActionName, ...] = dataclasses.field(
-        init=False
-    )
-    """Every state plus every discrete action — the gridded variable set."""
-
-    shock_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
-    """Names of variables with `is_shock=True`."""
-
-    def __post_init__(self) -> None:
-        items = tuple(self.info.items())
-        # `object.__setattr__` is required to bypass the frozen guard.
-        object.__setattr__(
-            self,
-            "state_names",
-            tuple(name for name, info in items if info.kind == "state"),
-        )
-        object.__setattr__(
-            self,
-            "action_names",
-            tuple(name for name, info in items if info.kind == "action"),
-        )
-        object.__setattr__(
-            self,
-            "discrete_state_names",
-            tuple(
-                name
-                for name, info in items
-                if info.kind == "state" and info.topology == "discrete"
-            ),
-        )
-        object.__setattr__(
-            self,
-            "continuous_state_names",
-            tuple(
-                name
-                for name, info in items
-                if info.kind == "state" and info.topology == "continuous"
-            ),
-        )
-        object.__setattr__(
-            self,
-            "discrete_action_names",
-            tuple(
-                name
-                for name, info in items
-                if info.kind == "action" and info.topology == "discrete"
-            ),
-        )
-        object.__setattr__(
-            self,
-            "continuous_action_names",
-            tuple(
-                name
-                for name, info in items
-                if info.kind == "action" and info.topology == "continuous"
-            ),
-        )
-        object.__setattr__(
-            self,
-            "state_and_discrete_action_names",
-            tuple(
-                name
-                for name, info in items
-                if info.kind == "state" or info.topology == "discrete"
-            ),
-        )
-        object.__setattr__(
-            self,
-            "shock_names",
-            tuple(name for name, info in items if info.is_shock),
-        )
-
-    def __getitem__(self, key: StateOrActionName) -> VariableInfo:
-        return self.info[key]
-
-    def __iter__(self) -> Iterator[StateOrActionName]:
-        return iter(self.info)
-
-    def __len__(self) -> int:
-        return len(self.info)
-
-    @classmethod
-    def from_regime(cls, user_regime: UserRegime) -> Self:
-        """Build `Variables` from a regime, ordering names canonically.
-
-        Order: discrete states (by `batch_size`), continuous states (by
-        `batch_size`), then actions in declaration order. Within each topology
-        group, `batch_size == 0` sorts last.
-
-        Args:
-            user_regime: User-form `Regime` instance.
-
-        Returns:
-            A `Variables` instance whose iteration order matches the canonical
-            ordering described above.
-
-        """
-        raw_info = _raw_variable_info(user_regime)
-        ordered_names = _ordered_state_action_names(user_regime, raw_info)
-        return cls(
-            info=MappingProxyType({name: raw_info[name] for name in ordered_names})
-        )
 
 
-def get_grids(user_regime: UserRegime) -> MappingProxyType[StateOrActionName, Grid]:
+def get_grids(
+    user_regime: UserRegime,
+) -> MappingProxyType[StateOrActionName, Grid]:
     """Create a mapping of grid objects for each variable in the regime.
 
     Args:
@@ -210,11 +70,11 @@ def get_grids(user_regime: UserRegime) -> MappingProxyType[StateOrActionName, Gr
 
     Returns:
         Immutable mapping of state and action variable names to their grid objects,
-        in the canonical order used by `Variables.from_regime` (discrete states,
+        in the canonical order used by `from_regime` (discrete states,
         continuous states, then actions).
 
     """
-    variables = Variables.from_regime(user_regime)
+    variables = from_regime(user_regime)
     raw_variables = dict(user_regime.states) | dict(user_regime.actions)
     return MappingProxyType({name: raw_variables[name] for name in variables})
 

@@ -9,7 +9,7 @@ import pandas as pd
 from jax import vmap
 
 from lcm.ages import AgeGrid
-from lcm.interfaces import (
+from lcm.engine import (
     PeriodRegimeSimulationData,
     Regime,
 )

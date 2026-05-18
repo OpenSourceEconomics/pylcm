@@ -13,7 +13,7 @@ from lcm.shocks import _ShockGrid
 from lcm.typing import FloatND, IntND, ScalarFloat, StateName
 from lcm.user_regime import Regime as UserRegime
 from lcm.utils.functools import all_as_kwargs
-from lcm.variables import Variables, get_grids
+from lcm.variables import from_regime, get_grids
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -45,7 +45,7 @@ def create_v_interpolation_info(user_regime: UserRegime) -> VInterpolationInfo:
         State space information for the regime.
 
     """
-    variables = Variables.from_regime(user_regime)
+    variables = from_regime(user_regime)
     grids = get_grids(user_regime)
 
     discrete_states = {name: grids[name] for name in variables.discrete_state_names}

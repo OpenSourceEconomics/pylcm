@@ -6,8 +6,9 @@ from types import MappingProxyType
 
 import pytest
 
+from lcm.engine import VariableInfo, Variables
 from lcm.grids import DiscreteGrid, LinSpacedGrid
-from lcm.variables import VariableInfo, Variables
+from lcm.variables import from_regime
 from tests.mock_regime import MockRegime
 
 
@@ -162,7 +163,7 @@ def test_from_regime_orders_discrete_states_continuous_states_actions(
         },
         functions={"utility": lambda c_action: 0},  # noqa: ARG005
     )
-    variables = Variables.from_regime(regime)
+    variables = from_regime(regime)
     assert list(variables) == ["a_discrete", "b_continuous", "c_action"]
 
 
@@ -188,5 +189,5 @@ def test_from_regime_within_states_orders_by_batch_size(
         actions={"a": DiscreteGrid(binary_category_class)},
         functions={"utility": lambda a: 0},  # noqa: ARG005
     )
-    variables = Variables.from_regime(regime)
+    variables = from_regime(regime)
     assert variables.discrete_state_names == ("first", "second", "third")

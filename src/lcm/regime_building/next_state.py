@@ -7,6 +7,7 @@ import jax
 from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 
+from lcm.engine import Variables
 from lcm.grids import Grid
 from lcm.shocks import _ShockGrid
 from lcm.shocks.ar1 import _ShockGridAR1
@@ -27,7 +28,6 @@ from lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
-from lcm.variables import Variables
 
 
 def get_next_state_function_for_solution(

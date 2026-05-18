@@ -13,9 +13,9 @@ from beartype import beartype
 from dags.tree import QNAME_DELIMITER
 
 from lcm._beartype_conf import REGIME_CONF
+from lcm.engine import SolveSimulateFunctionPair
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import DiscreteGrid, Grid
-from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActionName,
@@ -128,7 +128,7 @@ class Regime:
     """User-facing regime definition.
 
     `Model` processes instances of this class into the canonical regime form
-    (`lcm.interfaces.Regime`) used internally by the solver and simulator.
+    (`lcm.engine.Regime`) used internally by the solver and simulator.
 
     State transitions are specified via `state_transitions`, mapping state names to
     transition functions. A bare callable is deterministic; wrap in `MarkovTransition`

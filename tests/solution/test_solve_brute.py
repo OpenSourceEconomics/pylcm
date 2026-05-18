@@ -6,8 +6,8 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.ages import AgeGrid
+from lcm.engine import Regime, StateActionSpace
 from lcm.grids import Grid
-from lcm.interfaces import Regime, StateActionSpace
 from lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve

@@ -20,13 +20,13 @@ from lcm.dtypes import (
     safe_to_float_dtype,
     safe_to_int_dtype,
 )
+from lcm.engine import Regime
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     PyLCMError,
     format_messages,
 )
 from lcm.grids import DiscreteGrid
-from lcm.interfaces import Regime
 from lcm.regime_building.Q_and_F import _get_feasibility
 from lcm.typing import (
     ActionName,

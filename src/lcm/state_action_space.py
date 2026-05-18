@@ -2,10 +2,9 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 
+from lcm.engine import StateActionSpace, Variables
 from lcm.grids import Grid, IrregSpacedGrid
-from lcm.interfaces import StateActionSpace
 from lcm.typing import FloatND, IntND, StateName, StateOrActionName
-from lcm.variables import Variables
 
 
 def create_state_action_space(

@@ -12,16 +12,17 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qnam
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.grids import DiscreteGrid, Grid
-from lcm.grids.coordinates import get_irreg_coordinate
-from lcm.interfaces import (
+from lcm.engine import (
     Regime,
     SimulateFunctions,
     SolveFunctions,
     SolveSimulateFunctionPair,
     StateActionSpace,
+    Variables,
 )
+from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.grids import DiscreteGrid, Grid
+from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.params.processing import get_flat_param_names
 from lcm.params.regime_template import create_regime_params_template
 from lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
@@ -71,7 +72,7 @@ from lcm.user_regime import Regime as UserRegime
 from lcm.utils.containers import ensure_containers_are_immutable
 from lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
-from lcm.variables import Variables, get_grids
+from lcm.variables import from_regime, get_grids
 
 
 def process_regimes(
@@ -120,7 +121,7 @@ def process_regimes(
 
     regime_to_variables = MappingProxyType(
         {
-            regime_name: Variables.from_regime(user_regime)
+            regime_name: from_regime(user_regime)
             for regime_name, user_regime in user_regimes.items()
         }
     )

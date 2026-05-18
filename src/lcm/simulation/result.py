@@ -14,9 +14,9 @@ import pandas as pd
 from dags import concatenate_functions
 
 from lcm.ages import AgeGrid
+from lcm.engine import PeriodRegimeSimulationData, Regime
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
-from lcm.interfaces import PeriodRegimeSimulationData, Regime
 from lcm.persistence import atomic_dump
 from lcm.regime_building.processing import compute_merged_discrete_categories
 from lcm.typing import (

@@ -34,8 +34,8 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qnam
 from jax import Array
 
 from lcm.dtypes import safe_to_float_dtype, safe_to_int_dtype
+from lcm.engine import Regime
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.interfaces import Regime
 from lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 from lcm.typing import (

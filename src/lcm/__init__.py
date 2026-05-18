@@ -49,6 +49,7 @@ beartype_package("lcm", conf=INTERNAL_CONF)
 from lcm import shocks  # noqa: E402
 from lcm._version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.engine import SolveSimulateFunctionPair  # noqa: E402
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
@@ -59,7 +60,6 @@ from lcm.grids import (  # noqa: E402
     PiecewiseLogSpacedGrid,
     categorical,
 )
-from lcm.interfaces import SolveSimulateFunctionPair  # noqa: E402
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,

@@ -1,5 +1,5 @@
+from lcm.engine import SolveSimulateFunctionPair
 from lcm.grids import DiscreteGrid
-from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.params.regime_template import (
     create_regime_params_template,
 )

@@ -5,8 +5,8 @@ from typing import cast
 
 import pytest
 
+from lcm.engine import Regime
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.interfaces import Regime
 from lcm.params.processing import (
     create_params_template,
     process_params,
