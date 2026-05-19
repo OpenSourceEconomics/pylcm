@@ -15,13 +15,16 @@ feature, or understand which module they should be editing. End-users only ever 
 lcm/
 ├── __init__.py             ← thin re-export façade
 ├── api/                    ← every user-facing class and helper
+├── _ages.py                ← AgeGrid validators and step parsing
 ├── _grids/                 ← private grid infrastructure
+├── _persistence/           ← snapshot I/O and writer privates
 ├── _processes/             ← private stochastic-process infrastructure
+├── _regime/                ← Regime validators, default H, transition-probs helpers
 ├── engine.py               ← canonical / engine-side dataclasses
 ├── model_processing.py     ← Model.__init__ build pipeline
 ├── regime_building/        ← per-regime canonicalisation, runtime checks
 ├── solution/               ← backward induction (solve)
-├── simulation/             ← forward sampling (simulate)
+├── simulation/             ← forward sampling (simulate) + result helpers
 ├── params/                 ← params templating and processing
 ├── pandas_utils.py         ← pd.Series ↔ JAX array bridge
 ├── utils/                  ← small, dependency-free helpers
@@ -42,20 +45,24 @@ is called (which triggers `model_processing.build_regimes_and_template` →
 
 `lcm/api/` is the canonical home for every class users construct or consume. Putting all
 of them in one directory makes the public surface easy to find, review, and keep stable
-— anything outside `api/` is fair game for refactoring.
+— anything outside `api/` is fair game for refactoring. **`api/` modules are shallow by
+design**: each file holds class definitions and the small number of public top-level
+functions that round out the surface. Validators, I/O plumbing, DataFrame assembly, and
+similar implementation detail live in private siblings (leading-underscore files or
+packages) and are imported back in.
 
 The mapping of public names to files:
 
 | File                 | What lives there                                                                                                                                                                                         |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `api/model.py`       | `Model`                                                                                                                                                                                                  |
-| `api/regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, `validate_transition_probs` (deprecated), plus the absorbed validators that fire from `Regime.__post_init__`                                  |
-| `api/ages.py`        | `AgeGrid`                                                                                                                                                                                                |
+| `api/regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, `validate_transition_probs` (deprecated). Validators, default Bellman aggregator, and the deprecated-helper internals live in `lcm/_regime/`. |
+| `api/ages.py`        | `AgeGrid`. Step parser, validators, and `PSEUDO_STATE_NAMES` live in `lcm/_ages.py`.                                                                                                                     |
 | `api/grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `Piece`                                                                         |
 | `api/processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process` |
 | `api/categorical.py` | The `@categorical` class decorator                                                                                                                                                                       |
-| `api/persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_*`, `save_*`                                                                                                                                                  |
-| `api/result.py`      | `SimulationResult`                                                                                                                                                                                       |
+| `api/persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, `save_solution`, `load_solution`. Snapshot writers and atomic-dump live in `lcm/_persistence/`.                                                    |
+| `api/result.py`      | `SimulationResult`. DataFrame assembly, metadata, and additional-targets computation live in `lcm/simulation/_result_*.py` and `lcm/simulation/_additional_targets.py`.                                  |
 | `api/typing.py`      | `UserAge`, `UserParams`, `UserInitialConditions`, `UserFunction`, `UserFacingParamsTemplate`                                                                                                             |
 
 Internal code reaches these classes through `lcm.api.*`. Users keep writing
@@ -105,6 +112,56 @@ Two design points worth knowing:
   (on `VariableInfo`), `process_names` (on `Variables`), and `ProcessName` (typing
   alias). The codebase previously used `shock`; that word is now reserved for the
   colloquial meaning and never appears as an identifier.
+
+## Private siblings of `api/`
+
+Several `api/` modules have a private sibling that holds their implementation detail.
+The pattern is the same throughout: `api/` keeps the class definitions and the public
+top-level functions; the sibling holds validators, helpers, and I/O plumbing that
+internal code is free to refactor.
+
+```
+_ages.py                ← STEP_UNITS, PSEUDO_STATE_NAMES, _parse_step,
+                          _validate_age_grid / _validate_range / _validate_values
+_regime/
+├── _helpers.py         ← _default_H (default Bellman aggregator)
+├── _validation.py      ← the eight validators called from Regime.__post_init__
+└── _transition_probs.py← helpers backing the deprecated validate_transition_probs
+
+_persistence/
+├── _io.py              ← _atomic_dump, _save_pkl, _save_h5, _load_h5,
+│                          _get_platform, _next_counter, _enforce_retention,
+│                          _write_metadata, _write_environment_files
+└── _snapshots.py       ← _save_solve_snapshot, _save_simulate_snapshot,
+                          _strip_V_arr_from_result, _bind_forward_refs
+
+simulation/_result_metadata.py
+                        ← ResultMetadata + _compute_metadata,
+                          _get_output_dtypes (renamed from
+                          get_simulation_output_dtypes)
+simulation/_result_dataframe.py
+                        ← _create_flat_dataframe and the per-regime / per-period
+                          assembly helpers, plus categorical conversion
+simulation/_additional_targets.py
+                        ← _resolve_targets, _compute_targets, and DAG helpers
+                          for to_dataframe(additional_targets=...)
+```
+
+Why split these out? Two reasons:
+
+- **The public surface is easier to audit.** `api/regime.py`, `api/persistence.py`, and
+  `api/result.py` each contain only the dozen-or-so symbols users actually touch. A
+  reader looking for "what is the public contract of a Regime?" sees that contract
+  directly, without scrolling past validator bodies.
+- **Internal helpers can move freely.** Anything under a leading-underscore name is
+  internal — its location, signature, and existence can change without bumping the user
+  surface. The split makes it cheap to refactor things like `_save_solve_snapshot`
+  without touching `api/persistence.py`.
+
+A note on shadowing: the canonical `Regime` lives in `engine.py`. The validators in
+`_regime/_validation.py` operate on the user-facing `lcm.api.regime.Regime` and reach it
+through TYPE_CHECKING-guarded imports to break the circular dependency at import time;
+beartype resolves the forward references at first call.
 
 ## Engine-side: `engine.py`
 
