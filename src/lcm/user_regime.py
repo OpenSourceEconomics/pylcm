@@ -595,9 +595,8 @@ def validate_transition_probs(
         State transition probabilities are now validated automatically during
         `model.solve()` and `model.simulate()` (unless `log_level="off"`) via
         `validate_state_transitions_all_periods` in
-        `regime_building/runtime_checks.py`. This manual helper will be
-        removed in a future release. Drop the call — the model checks for
-        you.
+        `lcm/_transition_checks.py`. This manual helper will be removed in a
+        future release. Drop the call — the model checks for you.
 
     Check that the array has the shape expected from the function signature,
     that all values are in [0, 1], that rows sum to 1, and that the function's
@@ -609,8 +608,7 @@ def validate_transition_probs(
 
     Regime transition probabilities are validated automatically before solve
     via `validate_regime_transitions_all_periods` in
-    `regime_building/runtime_checks.py`; this helper covers only state
-    transitions.
+    `lcm/_transition_checks.py`; this helper covers only state transitions.
 
     Args:
         probs: The transition probability array to validate.

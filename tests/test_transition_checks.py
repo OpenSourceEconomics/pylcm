@@ -1,7 +1,7 @@
 """Automatic state transition probability validation.
 
 Exercises the pre-solve sweep `validate_state_transitions_all_periods`
-(`regime_building/runtime_checks.py`) and the process-time AST + n_outcomes
+(`lcm/_transition_checks.py`) and the process-time AST + n_outcomes
 derivation (`regime_building/static_checks.py`).
 """
 

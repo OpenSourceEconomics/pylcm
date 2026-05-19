@@ -10,7 +10,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinSpacedGrid
 from lcm.interfaces import StateActionSpace
-from lcm.regime_building.runtime_checks import validate_V
+from lcm.solution.validate_V import validate_V
 from lcm.typing import (
     BoolND,
     ContinuousAction,

@@ -13,7 +13,6 @@ from lcm.interfaces import (
     PeriodRegimeSimulationData,
     Regime,
 )
-from lcm.regime_building.runtime_checks import validate_V
 from lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
@@ -25,6 +24,7 @@ from lcm.simulation.transitions import (
     calculate_next_states,
     create_regime_state_action_space,
 )
+from lcm.solution.validate_V import validate_V
 from lcm.typing import (
     FlatParams,
     Float1D,
