@@ -11,7 +11,7 @@ from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.engine import StateActionSpace
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.regime_building.runtime_checks import validate_V
+from lcm.solution.validate_V import validate_V
 from lcm.typing import (
     BoolND,
     ContinuousAction,

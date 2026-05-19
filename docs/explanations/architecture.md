@@ -20,10 +20,11 @@ lcm/
 ├── _persistence/           ← snapshot I/O and writer privates
 ├── _processes/             ← private stochastic-process infrastructure
 ├── _regime/                ← Regime validators, default H, transition-probs helpers
+├── _transition_checks.py   ← pre-solve regime + state transition prob checks
 ├── engine.py               ← canonical / engine-side dataclasses
 ├── model_processing.py     ← Model.__init__ build pipeline
-├── regime_building/        ← per-regime canonicalisation, runtime checks
-├── solution/               ← backward induction (solve)
+├── regime_building/        ← per-regime canonicalisation
+├── solution/               ← backward induction (solve) + validate_V
 ├── simulation/             ← forward sampling (simulate) + result helpers
 ├── params/                 ← params templating and processing
 ├── pandas_utils.py         ← pd.Series ↔ JAX array bridge
@@ -205,10 +206,7 @@ regime_building/
 │                            stochastic state transitions (raises
 │                            InvalidStateTransitionProbabilitiesError
 │                            on subscript-order mismatches)
-├── runtime_checks.py     ← solve-/simulate-time numerical checks:
-│                            validate_V, regime-prob row-sums, state-prob
-│                            row-sums (gated by log_level != "off")
-└── diagnostics.py        ← cold-path machinery used by validate_V to
+└── diagnostics.py        ← cold-path machinery invoked by validate_V to
                             pinpoint *which* intermediate produced a NaN
 ```
 
@@ -216,17 +214,24 @@ The two-step name (`model_processing` at the model level, `regime_building` per 
 reflects what each layer actually does — the top level merges regimes and resolves fixed
 params; each regime is then canonicalised independently.
 
-The split between **static checks** and **runtime checks** is deliberate.
+The numerical checks fired at solve / simulate time **do not live in
+`regime_building/`**. That package is the build pipeline; runtime is a different
+lifecycle. The split:
 
-- `static_checks.py` runs at `Model(...)` construction time and can fail the build
-  before any params are involved. It catches malformed user functions (e.g.,
+- `regime_building/static_checks.py` runs at `Model(...)` construction time and can fail
+  the build before any params are involved. It catches malformed user functions (e.g.,
   `probs_array[health, age]` where the signature is `(age, health)`) via AST analysis.
   Always on, never gated.
-- `runtime_checks.py` runs at `solve` / `simulate` time, when params are in hand. It
-  evaluates user-provided transition functions on the regime's grid Cartesian product
-  and verifies output shape, [0, 1] range, and sum-to-1. Gated by `log_level != "off"`
-  because the Cartesian product can blow up on models with many
-  continuous-grid-dependent stochastic states.
+- `_transition_checks.py` (top-level, private) runs from `Model.solve()` /
+  `Model.simulate()` before backward induction starts. It evaluates the regime and state
+  transition functions on the regime's grid Cartesian product and verifies output shape,
+  [0, 1] range, and sum-to-1. State checks are gated by `log_level != "off"` because the
+  Cartesian product can blow up on models with many continuous-grid-dependent stochastic
+  states.
+- `solution/validate_V.py` runs *during* backward induction (after each period in
+  `solve_brute.py`, and once on the V handed to `simulate.py`). On NaN it invokes the
+  diagnostic-intermediates closure built in `regime_building/diagnostics.py` to pinpoint
+  which intermediate (`U`, `F`, `E[V]`, `Q`) produced the NaN.
 
 ## Solve and simulate
 
@@ -327,8 +332,8 @@ They split into two categories:
 - **Runtime errors** — `InvalidValueFunctionError`,
   `InvalidRegimeTransitionProbabilitiesError`,
   `InvalidStateTransitionProbabilitiesError`, `InvalidParamsError`,
-  `InvalidInitialConditionsError`. These fire from `runtime_checks.py` during solve /
-  simulate.
+  `InvalidInitialConditionsError`. These fire from `_transition_checks.py` and
+  `solution/validate_V.py` during solve / simulate.
 
 ## What's *not* in this map
 

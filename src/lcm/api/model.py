@@ -16,6 +16,10 @@ from lcm._persistence._snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from lcm._transition_checks import (
+    validate_regime_transitions_all_periods,
+    validate_state_transitions_all_periods,
+)
 from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.api.result import SimulationResult
@@ -35,10 +39,6 @@ from lcm.params.processing import (
     cast_params_to_canonical_dtypes,
 )
 from lcm.regime_building.processing import Regime
-from lcm.regime_building.runtime_checks import (
-    validate_regime_transitions_all_periods,
-    validate_state_transitions_all_periods,
-)
 from lcm.simulation._result_metadata import _get_output_dtypes
 from lcm.simulation.compile import compile_all_simulate_functions
 from lcm.simulation.initial_conditions import (

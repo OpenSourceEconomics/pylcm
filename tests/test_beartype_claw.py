@@ -26,6 +26,7 @@ from beartype.roar import BeartypeCallHintViolation
 
 from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm._regime._helpers import _default_H
+from lcm._transition_checks import _validate_regime_transition_probs
 from lcm.api.model import _validate_log_args
 from lcm.api.regime import Regime as UserRegime
 from lcm.engine import _build_regime_sharding
@@ -34,7 +35,6 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.regime_building.runtime_checks import _validate_regime_transition_probs
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats
 from lcm.state_action_space import _validate_all_states_present
@@ -61,8 +61,8 @@ def test_claw_checks_lcm_solution() -> None:
         )
 
 
-def test_claw_checks_lcm_regime_building_runtime_checks() -> None:
-    """Type-violating arguments to runtime_checks helpers raise."""
+def test_claw_checks_lcm_transition_checks() -> None:
+    """Type-violating arguments to `lcm._transition_checks` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _validate_regime_transition_probs(
             regime_transition_probs={"working": jnp.array([1.0])},  # ty: ignore[invalid-argument-type]

@@ -13,12 +13,12 @@ Runs during `process_regimes` for every `MarkovTransition` state transition
   does not need to look it up per call.
 
 The output is consumed by `validate_state_transitions_all_periods` in
-`regime_building/runtime_checks.py`. Full output-shape derivation is
-deferred to that runtime check, because it depends on which of the
-function's indexing parameters resolve to grids in the regime (states /
-actions) versus to scalar params (resolved at solve time from
-`flat_params`). The same function may be reused across regimes with
-different grid/param splits.
+`lcm/_transition_checks.py`. Full output-shape derivation is deferred to
+that runtime check, because it depends on which of the function's
+indexing parameters resolve to grids in the regime (states / actions)
+versus to scalar params (resolved at solve time from `flat_params`).
+The same function may be reused across regimes with different grid/param
+splits.
 """
 
 import inspect
