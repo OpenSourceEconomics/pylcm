@@ -8,6 +8,8 @@ These are developer-focused explanations of internal pylcm mechanisms. They are 
 for contributors and advanced users who want to understand how pylcm works under the
 hood.
 
+- [Internal Architecture](architecture.md) — Map of the source tree, the user/engine
+  boundary, and the role each package plays.
 - [Function Representation](function_representation.ipynb) — What the function
   representation does and how it works.
 - [Interpolation and Extrapolation](interpolation.ipynb) — How pylcm's coordinate

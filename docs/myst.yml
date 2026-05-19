@@ -51,6 +51,7 @@ project:
     - file: explanations/index.md
       title: Explanations
       children:
+        - file: explanations/architecture.md
         - file: explanations/function_representation.ipynb
         - file: explanations/interpolation.ipynb
         - file: explanations/approximating_continuous_shocks.ipynb
