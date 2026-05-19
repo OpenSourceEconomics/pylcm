@@ -87,12 +87,12 @@ def _raw_variable_info(
     info: dict[StateOrActionName, VariableInfo] = {}
     for name, spec in variables.items():
         is_state = name in user_regime.states
-        is_shock = isinstance(spec, _ProcessGrid)
-        is_continuous = isinstance(spec, ContinuousGrid) and not is_shock
+        is_process = isinstance(spec, _ProcessGrid)
+        is_continuous = isinstance(spec, ContinuousGrid) and not is_process
         info[name] = VariableInfo(
             kind="state" if is_state else "action",
             topology="continuous" if is_continuous else "discrete",
-            is_shock=is_shock,
+            is_process=is_process,
         )
     return info
 

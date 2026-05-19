@@ -52,12 +52,12 @@ class VariableInfo:
 
     Shocks have topology `"discrete"` because their value space is
     approximated by a finite grid of nodes, even though the underlying
-    random variable is mathematically continuous. Combine with `is_shock`
+    random variable is mathematically continuous. Combine with `is_process`
     when the distinction matters.
 
     """
 
-    is_shock: bool
+    is_process: bool
     """Whether the variable is a shock (always a state)."""
 
 
@@ -102,8 +102,8 @@ class Variables(Mapping[StateOrActionName, VariableInfo]):
     )
     """Every state plus every discrete action — the gridded variable set."""
 
-    shock_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
-    """Names of variables with `is_shock=True`."""
+    process_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
+    """Names of variables with `is_process=True`."""
 
     def __post_init__(self) -> None:
         items = tuple(self.info.items())
@@ -164,8 +164,8 @@ class Variables(Mapping[StateOrActionName, VariableInfo]):
         )
         object.__setattr__(
             self,
-            "shock_names",
-            tuple(name for name, info in items if info.is_shock),
+            "process_names",
+            tuple(name for name, info in items if info.is_process),
         )
 
     def __getitem__(self, key: StateOrActionName) -> VariableInfo:

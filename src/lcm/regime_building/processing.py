@@ -54,12 +54,12 @@ from lcm.typing import (
     IntND,
     MaxQOverAFunction,
     NextStateSimulationFunction,
+    ProcessName,
     QAndFFunction,
     RegimeName,
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
-    ShockName,
     StateName,
     StateOrActionName,
     TransitionFunction,
@@ -596,17 +596,17 @@ def _process_regime_core(
     # next functions for reachable target regimes from each target's grid.
     # Scope to targets already present in non-shock transitions to avoid
     # spurious entries for unreachable regimes.
-    shock_names = variables.shock_names
+    process_names = variables.process_names
     reachable_targets = {
         tree_path_from_qname(k)[0]
         for k in flat_nested_transitions
         if QNAME_DELIMITER in k
     }
-    target_shock_grids: dict[tuple[RegimeName, ShockName], _ProcessGrid] = {
+    target_shock_grids: dict[tuple[RegimeName, ProcessName], _ProcessGrid] = {
         (user_regime, shock): grid
         for user_regime, grids in all_grids.items()
         if user_regime in reachable_targets
-        for shock in shock_names
+        for shock in process_names
         if isinstance(grid := grids.get(shock), _ProcessGrid)
     }
     functions |= {
@@ -813,7 +813,7 @@ def _get_stochastic_transition_names(
         ):
             markov_state_names.add(name)
     return frozenset(
-        f"next_{name}" for name in markov_state_names | set(variables.shock_names)
+        f"next_{name}" for name in markov_state_names | set(variables.process_names)
     )
 
 

@@ -19,8 +19,8 @@ from lcm.typing import (
     FloatND,
     IntND,
     NextStateSimulationFunction,
+    ProcessName,
     RegimeName,
-    ShockName,
     StateName,
     StateOrActionName,
     StochasticNextFunction,
@@ -187,7 +187,7 @@ def _extend_target_transitions_for_simulation(
         Extended transitions dictionary keyed by unqualified `next_<state>` names.
 
     """
-    shock_names: frozenset[ShockName] = frozenset(variables.shock_names)
+    process_names: frozenset[ProcessName] = frozenset(variables.process_names)
     extended: dict[TransitionFunctionName, Callable[..., FloatND | IntND]] = dict(
         target_transitions
     )
@@ -195,7 +195,7 @@ def _extend_target_transitions_for_simulation(
         if next_state_name not in stochastic_transition_names:
             continue
         state_name = next_state_name.removeprefix("next_")
-        if state_name in shock_names:
+        if state_name in process_names:
             extended[next_state_name] = _create_continuous_stochastic_next_func(
                 target=target,
                 next_state_name=next_state_name,

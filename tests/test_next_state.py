@@ -78,7 +78,7 @@ def test_get_next_state_function_with_simulate_target():
     )
     variables = Variables(
         info=MappingProxyType(
-            {"b": VariableInfo(kind="state", topology="discrete", is_shock=False)}
+            {"b": VariableInfo(kind="state", topology="discrete", is_process=False)}
         )
     )
     transitions = MappingProxyType(

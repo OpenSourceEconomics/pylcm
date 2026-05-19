@@ -22,13 +22,15 @@ def _create_variables(
     # states, then actions (discrete then continuous within actions in original
     # declaration order).
     for name in discrete_states:
-        info[name] = VariableInfo(kind="state", topology="discrete", is_shock=False)
+        info[name] = VariableInfo(kind="state", topology="discrete", is_process=False)
     for name in continuous_states:
-        info[name] = VariableInfo(kind="state", topology="continuous", is_shock=False)
+        info[name] = VariableInfo(kind="state", topology="continuous", is_process=False)
     for name in discrete_actions:
-        info[name] = VariableInfo(kind="action", topology="discrete", is_shock=False)
+        info[name] = VariableInfo(kind="action", topology="discrete", is_process=False)
     for name in continuous_actions:
-        info[name] = VariableInfo(kind="action", topology="continuous", is_shock=False)
+        info[name] = VariableInfo(
+            kind="action", topology="continuous", is_process=False
+        )
     return Variables(info=MappingProxyType(info))
 
 

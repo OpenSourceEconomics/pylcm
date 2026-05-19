@@ -42,8 +42,10 @@ def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
 
     assert isinstance(got, Variables)
     assert set(got) == {"a", "c"}
-    assert got["a"] == VariableInfo(kind="action", topology="discrete", is_shock=False)
-    assert got["c"] == VariableInfo(kind="state", topology="discrete", is_shock=False)
+    assert got["a"] == VariableInfo(
+        kind="action", topology="discrete", is_process=False
+    )
+    assert got["c"] == VariableInfo(kind="state", topology="discrete", is_process=False)
 
 
 def test_get_grids(binary_category_class):
@@ -117,13 +119,13 @@ def test_process_regimes():
     # Variable Info
     variables = working_regime.variables
     assert variables["wealth"] == VariableInfo(
-        kind="state", topology="continuous", is_shock=False
+        kind="state", topology="continuous", is_process=False
     )
     assert variables["labor_supply"] == VariableInfo(
-        kind="action", topology="discrete", is_shock=False
+        kind="action", topology="discrete", is_process=False
     )
     assert variables["consumption"] == VariableInfo(
-        kind="action", topology="continuous", is_shock=False
+        kind="action", topology="continuous", is_process=False
     )
 
     # Grids — compare the grid objects (which now include transition attributes)

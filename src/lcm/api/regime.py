@@ -23,8 +23,8 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     FunctionName,
+    ProcessName,
     RegimeName,
-    ShockName,
     StateName,
     UserFunction,
 )
@@ -519,10 +519,10 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
     """Validate state_transitions against states."""
     error_messages: list[str] = []
 
-    shock_names: set[ShockName] = {
+    process_names: set[ProcessName] = {
         name for name, grid in regime.states.items() if isinstance(grid, _ProcessGrid)
     }
-    non_shock_names: set[StateName] = set(regime.states) - shock_names
+    non_process_names: set[StateName] = set(regime.states) - process_names
 
     # Keys not in states are allowed only with actual transitions (not None).
     # None means identity, which requires the state to exist in this regime.
@@ -535,7 +535,7 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
                 "Identity transitions require the state to exist in this regime.",
             )
 
-    shock_in_transitions = shock_names & set(regime.state_transitions)
+    shock_in_transitions = process_names & set(regime.state_transitions)
     if shock_in_transitions:
         error_messages.append(
             f"ShockGrid states have intrinsic transitions and must not appear "
@@ -549,7 +549,7 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
             )
         return error_messages
 
-    missing = non_shock_names - set(regime.state_transitions)
+    missing = non_process_names - set(regime.state_transitions)
     if missing:
         error_messages.append(
             f"Every non-shock state must have an entry in state_transitions. "

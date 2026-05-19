@@ -18,18 +18,20 @@ def _variables() -> Variables:
     return Variables(
         info=MappingProxyType(
             {
-                "edu": VariableInfo(kind="state", topology="discrete", is_shock=False),
+                "edu": VariableInfo(
+                    kind="state", topology="discrete", is_process=False
+                ),
                 "wealth": VariableInfo(
-                    kind="state", topology="continuous", is_shock=False
+                    kind="state", topology="continuous", is_process=False
                 ),
                 "wage_shock": VariableInfo(
-                    kind="state", topology="discrete", is_shock=True
+                    kind="state", topology="discrete", is_process=True
                 ),
                 "labor_supply": VariableInfo(
-                    kind="action", topology="discrete", is_shock=False
+                    kind="action", topology="discrete", is_process=False
                 ),
                 "consumption": VariableInfo(
-                    kind="action", topology="continuous", is_shock=False
+                    kind="action", topology="continuous", is_process=False
                 ),
             }
         )
@@ -86,15 +88,15 @@ def test_state_and_discrete_action_names_is_gridded_set(
     )
 
 
-def test_shock_names_filters_is_shock(variables: Variables) -> None:
-    """`shock_names` is every variable with `is_shock=True`."""
-    assert variables.shock_names == ("wage_shock",)
+def test_process_names_filters_is_process(variables: Variables) -> None:
+    """`process_names` is every variable with `is_process=True`."""
+    assert variables.process_names == ("wage_shock",)
 
 
 def test_getitem_returns_variable_info(variables: Variables) -> None:
     """`vars[name]` returns the underlying `VariableInfo` record."""
     assert variables["wealth"] == VariableInfo(
-        kind="state", topology="continuous", is_shock=False
+        kind="state", topology="continuous", is_process=False
     )
 
 
@@ -129,7 +131,7 @@ def test_items_yields_name_info_pairs(variables: Variables) -> None:
     items = list(variables.items())
     assert items[0] == (
         "edu",
-        VariableInfo(kind="state", topology="discrete", is_shock=False),
+        VariableInfo(kind="state", topology="discrete", is_process=False),
     )
 
 
