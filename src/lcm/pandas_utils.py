@@ -10,9 +10,10 @@ import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
+from lcm._ages import PSEUDO_STATE_NAMES
 from lcm._grids import DiscreteGrid, IrregSpacedGrid
 from lcm._processes import _ProcessGrid
-from lcm.api.ages import PSEUDO_STATE_NAMES, AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.dtypes import canonical_float_dtype
 from lcm.params import UserMappingLeaf, UserSequenceLeaf

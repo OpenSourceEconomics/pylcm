@@ -14,8 +14,9 @@ import numpy as np
 import pandas as pd
 from jax import numpy as jnp
 
+from lcm._ages import PSEUDO_STATE_NAMES
 from lcm._grids import DiscreteGrid
-from lcm.api.ages import PSEUDO_STATE_NAMES, AgeGrid
+from lcm.api.ages import AgeGrid
 from lcm.dtypes import (
     canonical_float_dtype,
     safe_to_float_dtype,

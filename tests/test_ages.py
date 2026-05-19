@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 from lcm import Model
-from lcm.api.ages import AgeGrid, parse_step
+from lcm._ages import _parse_step
+from lcm.api.ages import AgeGrid
 from lcm.exceptions import GridInitializationError
 from tests.test_models.deterministic.base import (
     RegimeId,
@@ -27,13 +28,13 @@ from tests.test_models.deterministic.base import (
         ("Q", Fraction(1, 4)),
     ],
 )
-def test_parse_step_valid_formats(step, expected):
-    assert parse_step(step) == expected
+def test__parse_step_valid_formats(step, expected):
+    assert _parse_step(step) == expected
 
 
-def test_parse_step_invalid():
+def test__parse_step_invalid():
     with pytest.raises(GridInitializationError, match="Invalid step format"):
-        parse_step("X")
+        _parse_step("X")
 
 
 def test_age_grid_from_range():
