@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import LinSpacedGrid
-from lcm.grids import ContinuousGrid, DiscreteGrid
+from lcm._grids import ContinuousGrid, DiscreteGrid
 from lcm.regime_building.V import (
     VInterpolationInfo,
     _fail_if_interpolation_axes_are_not_last,

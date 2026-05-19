@@ -17,7 +17,7 @@ from lcm import (
     PiecewiseLogSpacedGrid,
 )
 from lcm._config import TEST_DATA
-from lcm.grids import UniformContinuousGrid
+from lcm._grids import UniformContinuousGrid
 from lcm.typing import FloatND
 from lcm_examples import mortality as mortality_example
 from lcm_examples import precautionary_savings as ps_example

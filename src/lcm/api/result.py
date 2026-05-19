@@ -13,12 +13,12 @@ import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
 
+from lcm._grids import DiscreteGrid
 from lcm.api.ages import AgeGrid
 from lcm.api.persistence import atomic_dump
 from lcm.api.regime import Regime as UserRegime
 from lcm.engine import PeriodRegimeSimulationData, Regime
 from lcm.exceptions import InvalidAdditionalTargetsError
-from lcm.grids import DiscreteGrid
 from lcm.regime_building.processing import compute_merged_discrete_categories
 from lcm.typing import (
     ActionName,

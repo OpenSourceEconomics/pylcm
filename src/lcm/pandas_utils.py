@@ -10,10 +10,10 @@ import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
+from lcm._grids import DiscreteGrid, IrregSpacedGrid
 from lcm.api.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.dtypes import canonical_float_dtype
-from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.shocks import _ShockGrid
 from lcm.simulation.initial_conditions import MISSING_CAT_CODE

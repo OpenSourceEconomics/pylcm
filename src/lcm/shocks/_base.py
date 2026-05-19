@@ -7,9 +7,9 @@ import jax.numpy as jnp
 import numpy as np
 from jax.scipy.stats.norm import cdf
 
+from lcm._grids import ContinuousGrid
+from lcm._grids import coordinates as grid_coordinates
 from lcm.exceptions import GridInitializationError
-from lcm.grids import ContinuousGrid
-from lcm.grids import coordinates as grid_coordinates
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
 

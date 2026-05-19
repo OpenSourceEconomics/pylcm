@@ -6,8 +6,8 @@ from types import MappingProxyType
 
 import pytest
 
+from lcm._grids import DiscreteGrid, LinSpacedGrid
 from lcm.engine import VariableInfo, Variables
-from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.variables import from_regime
 from tests.mock_regime import MockRegime
 

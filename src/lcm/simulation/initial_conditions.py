@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 from jax import numpy as jnp
 
+from lcm._grids import DiscreteGrid
 from lcm.api.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.dtypes import (
     canonical_float_dtype,
@@ -26,7 +27,6 @@ from lcm.exceptions import (
     PyLCMError,
     format_messages,
 )
-from lcm.grids import DiscreteGrid
 from lcm.regime_building.Q_and_F import _get_feasibility
 from lcm.typing import (
     ActionName,

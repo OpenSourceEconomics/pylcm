@@ -1,14 +1,14 @@
-from lcm.grids.base import Grid
-from lcm.grids.categorical import categorical, validate_category_class
-from lcm.grids.continuous import (
+from lcm._grids.base import Grid
+from lcm._grids.categorical import categorical, validate_category_class
+from lcm._grids.continuous import (
     ContinuousGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
     UniformContinuousGrid,
 )
-from lcm.grids.discrete import DiscreteGrid
-from lcm.grids.piecewise import (
+from lcm._grids.discrete import DiscreteGrid
+from lcm._grids.piecewise import (
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,

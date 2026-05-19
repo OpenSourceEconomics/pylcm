@@ -2,17 +2,16 @@
 
 Leaf classes users instantiate to declare state and action grids on a
 `Regime`. The internal `Grid` / `ContinuousGrid` / `UniformContinuousGrid`
-ABCs and the validators / coordinate helpers live in `lcm.grids` (private
-implementation detail today; will move under `lcm._grids` in a follow-up).
+ABCs and the validators / coordinate helpers live in `lcm._grids`.
 """
 
-from lcm.grids.continuous import (
+from lcm._grids.continuous import (
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
 )
-from lcm.grids.discrete import DiscreteGrid
-from lcm.grids.piecewise import (
+from lcm._grids.discrete import DiscreteGrid
+from lcm._grids.piecewise import (
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,

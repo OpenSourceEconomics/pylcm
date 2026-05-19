@@ -6,8 +6,7 @@ import portion
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
-from lcm.grids import (
+from lcm._grids import (
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -18,8 +17,9 @@ from lcm.grids import (
     categorical,
     validate_category_class,
 )
-from lcm.grids.categorical import _validate_discrete_grid
-from lcm.grids.continuous import _validate_continuous_grid
+from lcm._grids.categorical import _validate_discrete_grid
+from lcm._grids.continuous import _validate_continuous_grid
+from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
 from lcm.typing import ScalarInt
 from lcm.utils.containers import get_field_names_and_values
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED

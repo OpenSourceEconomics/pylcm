@@ -6,9 +6,9 @@ import portion
 from beartype import beartype
 
 from lcm._beartype_conf import GRID_CONF
+from lcm._grids import coordinates as grid_coordinates
+from lcm._grids.continuous import ContinuousGrid
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.grids import coordinates as grid_coordinates
-from lcm.grids.continuous import ContinuousGrid
 from lcm.typing import (
     Float1D,
     FloatND,

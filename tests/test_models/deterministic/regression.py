@@ -16,8 +16,8 @@ from lcm import (
     PiecewiseLogSpacedGrid,
     categorical,
 )
+from lcm._grids import UniformContinuousGrid
 from lcm.api.regime import Regime as UserRegime
-from lcm.grids import UniformContinuousGrid
 from lcm.typing import (
     FloatND,
     ScalarInt,

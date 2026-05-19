@@ -11,6 +11,8 @@ from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from lcm._grids import DiscreteGrid, Grid
+from lcm._grids.coordinates import get_irreg_coordinate
 from lcm.api.ages import AgeGrid
 from lcm.api.regime import MarkovTransition, SolveSimulateFunctionPair
 from lcm.api.regime import Regime as UserRegime
@@ -22,8 +24,6 @@ from lcm.engine import (
     Variables,
 )
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.grids import DiscreteGrid, Grid
-from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.params.processing import get_flat_param_names
 from lcm.params.regime_template import create_regime_params_template
 from lcm.regime_building.diagnostics import _build_compute_intermediates_per_period

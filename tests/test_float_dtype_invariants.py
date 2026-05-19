@@ -7,8 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lcm._grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
 from lcm.dtypes import canonical_float_dtype
-from lcm.grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
 from lcm.params import MappingLeaf
 from lcm.params.processing import process_params
 from lcm.params.sequence_leaf import SequenceLeaf

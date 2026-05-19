@@ -2,10 +2,10 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import Model, categorical
+from lcm._grids import LinSpacedGrid
 from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.grids import LinSpacedGrid
 from lcm.typing import (
     BoolND,
     ContinuousAction,

@@ -8,6 +8,7 @@ import pytest
 from dags.tree import QNAME_DELIMITER
 
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm._grids import IrregSpacedGrid
 from lcm.api.ages import AgeGrid
 from lcm.api.regime import (
     MarkovTransition,
@@ -16,7 +17,6 @@ from lcm.api.regime import (
 )
 from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.grids import IrregSpacedGrid
 from lcm.regime_building.transitions import collect_state_transitions
 from lcm.typing import (
     BoolND,

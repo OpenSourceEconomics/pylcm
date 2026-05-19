@@ -7,8 +7,8 @@ from typing import Literal, cast
 import jax
 from jax import Array
 
+from lcm._grids import Grid, IrregSpacedGrid
 from lcm.exceptions import PyLCMError
-from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
     ActionName,

@@ -2,8 +2,8 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from lcm._beartype_conf import GRID_CONF
-from lcm.grids.base import Grid
-from lcm.grids.categorical import _validate_discrete_grid
+from lcm._grids.base import Grid
+from lcm._grids.categorical import _validate_discrete_grid
 from lcm.typing import Int1D
 from lcm.utils.containers import get_field_names_and_values
 

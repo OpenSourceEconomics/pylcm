@@ -8,10 +8,10 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from lcm._beartype_conf import GRID_CONF
+from lcm._grids import coordinates as grid_coordinates
+from lcm._grids.base import Grid
 from lcm.dtypes import canonical_float_dtype
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.grids import coordinates as grid_coordinates
-from lcm.grids.base import Grid
 from lcm.typing import (
     Float1D,
     FloatND,

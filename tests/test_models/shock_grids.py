@@ -4,11 +4,11 @@ from typing import Literal
 from jax import numpy as jnp
 
 import lcm
+from lcm._grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.api.ages import AgeGrid
 from lcm.api.model import Model
 from lcm.api.regime import MarkovTransition
 from lcm.api.regime import Regime as UserRegime
-from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,

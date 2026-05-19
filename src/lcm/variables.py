@@ -15,8 +15,8 @@ import math
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from lcm._grids import ContinuousGrid, Grid
 from lcm.engine import VariableInfo, Variables
-from lcm.grids import ContinuousGrid, Grid
 from lcm.shocks import _ShockGrid
 from lcm.typing import StateOrActionName
 
