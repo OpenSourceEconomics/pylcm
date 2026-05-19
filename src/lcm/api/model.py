@@ -12,11 +12,11 @@ from beartype import beartype
 
 from lcm._beartype_conf import MODEL_CONF, PARAMS_CONF
 from lcm._grids import DiscreteGrid
-from lcm.api.ages import AgeGrid
-from lcm.api.persistence import (
-    save_simulate_snapshot,
-    save_solve_snapshot,
+from lcm._persistence._snapshots import (
+    _save_simulate_snapshot,
+    _save_solve_snapshot,
 )
+from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.api.result import SimulationResult, get_simulation_output_dtypes
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
@@ -336,7 +336,7 @@ class Model:
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
-                snap_dir = save_solve_snapshot(
+                snap_dir = _save_solve_snapshot(
                     model=self,
                     params=params,
                     period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
@@ -346,7 +346,7 @@ class Model:
                 exc.add_note(f"Snapshot saved to {snap_dir}")
             raise
         if log_level == "debug" and log_path is not None:
-            save_solve_snapshot(
+            _save_solve_snapshot(
                 model=self,
                 params=params,
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
@@ -528,7 +528,7 @@ class Model:
         if simulate_regimes is not self.regimes:
             result._regimes = self.regimes  # noqa: SLF001
         if log_level == "debug" and log_path is not None:
-            save_simulate_snapshot(
+            _save_simulate_snapshot(
                 model=self,
                 params=params,
                 initial_conditions=initial_conditions,

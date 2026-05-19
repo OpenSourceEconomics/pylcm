@@ -16,23 +16,24 @@ from lcm import (
     load_snapshot,
 )
 from lcm import variables as _variables
-from lcm.api import persistence as _persistence
-from lcm.api.persistence import _get_platform, load_solution, save_solution
+from lcm._persistence import _snapshots as _snapshot_module
+from lcm._persistence._io import _get_platform
+from lcm.api.persistence import load_solution, save_solution
 from lcm.api.regime import Regime as UserRegime
 from lcm.api.result import SimulationResult as _PublicSimulationResult
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
 def test_forward_refs_bound_after_import() -> None:
-    """`Model` and `SimulationResult` are present in `lcm.api.persistence`'s globals.
+    """`Model` and `SimulationResult` are bound in `lcm._persistence._snapshots`.
 
-    The package claw rewrites their string annotations on `save_simulate_snapshot`
-    into runtime forward references resolved against this module's globals at
+    The package claw rewrites their string annotations on `_save_simulate_snapshot`
+    into runtime forward references resolved against that module's globals at
     call time. Missing the binding leaves those calls failing with
     `BeartypeCallHintForwardRefException`.
     """
-    assert _persistence.Model is lcm.Model
-    assert _persistence.SimulationResult is _PublicSimulationResult
+    assert _snapshot_module.Model is lcm.Model
+    assert _snapshot_module.SimulationResult is _PublicSimulationResult
     assert _variables.UserRegime is lcm.Regime
 
 

@@ -14,8 +14,8 @@ import pandas as pd
 from dags import concatenate_functions
 
 from lcm._grids import DiscreteGrid
+from lcm._persistence._io import _atomic_dump
 from lcm.api.ages import AgeGrid
-from lcm.api.persistence import atomic_dump
 from lcm.api.regime import Regime as UserRegime
 from lcm.engine import PeriodRegimeSimulationData, Regime
 from lcm.exceptions import InvalidAdditionalTargetsError
@@ -187,7 +187,7 @@ class SimulationResult:
             The path where the object was saved.
 
         """
-        return atomic_dump(self, path, protocol=protocol)
+        return _atomic_dump(self, path, protocol=protocol)
 
     @classmethod
     def from_pickle(cls, path: str | Path) -> SimulationResult:
