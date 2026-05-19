@@ -590,7 +590,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
 
 def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
     """A shock state (income) only present in one regime is NaN-filled elsewhere."""
-    import lcm._processes.iid  # noqa: PLC0415
+    from lcm import UniformIIDProcess  # noqa: PLC0415
 
     @categorical(ordered=False)
     class _Rid:
@@ -611,7 +611,7 @@ def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
         transition=_next_regime,
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-            "income": lcm._processes.iid.Uniform(n_points=5),
+            "income": UniformIIDProcess(n_points=5),
         },
         state_transitions={"wealth": None},
         functions={"utility": _earner_utility},

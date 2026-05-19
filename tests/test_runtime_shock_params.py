@@ -3,8 +3,15 @@
 import jax.numpy as jnp
 import pytest
 
-import lcm
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    Model,
+    NormalIIDProcess,
+    TauchenAR1Process,
+    UniformIIDProcess,
+    categorical,
+)
 from lcm.api.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
@@ -42,7 +49,7 @@ def _make_model(*, fixed_params=None):
     alive = UserRegime(
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
-            "income": lcm._processes.ar1.Tauchen(n_points=3, gauss_hermite=False),
+            "income": TauchenAR1Process(n_points=3, gauss_hermite=False),
         },
         state_transitions={
             "wealth": _next_wealth,
@@ -71,7 +78,7 @@ def _make_model(*, fixed_params=None):
 
 def test_runtime_shock_params_property():
     """Tauchen without params reports all params as runtime-supplied."""
-    grid = lcm._processes.ar1.Tauchen(n_points=5, gauss_hermite=False)
+    grid = TauchenAR1Process(n_points=5, gauss_hermite=False)
     for name in ("rho", "sigma", "mu", "n_std"):
         assert name in grid.params_to_pass_at_runtime
     assert not grid.is_fully_specified
@@ -79,7 +86,7 @@ def test_runtime_shock_params_property():
 
 def test_fully_specified_shock():
     """Tauchen with all params should have no runtime-supplied params."""
-    grid = lcm._processes.ar1.Tauchen(
+    grid = TauchenAR1Process(
         n_points=5,
         gauss_hermite=False,
         batch_size=0,
@@ -93,8 +100,8 @@ def test_fully_specified_shock():
 @pytest.mark.parametrize(
     ("grid_cls", "extra_kw"),
     [
-        (lcm._processes.iid.Uniform, {}),
-        (lcm._processes.iid.Normal, {"gauss_hermite": True}),
+        (UniformIIDProcess, {}),
+        (NormalIIDProcess, {"gauss_hermite": True}),
     ],
 )
 def test_shock_without_params_is_not_fully_specified(grid_cls, extra_kw):

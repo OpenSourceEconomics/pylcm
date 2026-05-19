@@ -3,7 +3,13 @@ from typing import Literal
 
 from jax import numpy as jnp
 
-import lcm
+from lcm import (
+    LogNormalIIDProcess,
+    NormalIIDProcess,
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    UniformIIDProcess,
+)
 from lcm._grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.api.ages import AgeGrid
 from lcm.api.model import Model
@@ -19,11 +25,11 @@ from lcm.typing import (
 )
 
 _SHOCK_GRID_CLASSES = {
-    "uniform": lcm._processes.iid.Uniform,
-    "normal": lcm._processes.iid.Normal,
-    "lognormal": lcm._processes.iid.LogNormal,
-    "tauchen": lcm._processes.ar1.Tauchen,
-    "rouwenhorst": lcm._processes.ar1.Rouwenhorst,
+    "uniform": UniformIIDProcess,
+    "normal": NormalIIDProcess,
+    "lognormal": LogNormalIIDProcess,
+    "tauchen": TauchenAR1Process,
+    "rouwenhorst": RouwenhorstAR1Process,
 }
 
 _SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {

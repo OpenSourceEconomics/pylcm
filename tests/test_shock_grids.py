@@ -6,7 +6,15 @@ from pandas.testing import assert_frame_equal
 from quantecon.markov.approximation import rouwenhorst as qe_rouwenhorst
 from quantecon.markov.approximation import tauchen as qe_tauchen
 
-import lcm
+from lcm import (
+    LogNormalIIDProcess,
+    NormalIIDProcess,
+    NormalMixtureIIDProcess,
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    TauchenNormalMixtureAR1Process,
+    UniformIIDProcess,
+)
 from lcm._config import TEST_DATA
 from lcm.exceptions import GridInitializationError
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
@@ -97,13 +105,13 @@ def test_model_with_cross_regime_shocks(distribution_type: str) -> None:
 
 
 _GRID_CLASSES_WITH_GH_KWARG = [
-    (lcm._processes.iid.Uniform, {}),
-    (lcm._processes.iid.Normal, {"gauss_hermite": True}),
-    (lcm._processes.iid.LogNormal, {"gauss_hermite": True}),
-    (lcm._processes.iid.NormalMixture, {}),
-    (lcm._processes.ar1.Tauchen, {"gauss_hermite": True}),
-    (lcm._processes.ar1.Rouwenhorst, {}),
-    (lcm._processes.ar1.TauchenNormalMixture, {}),
+    (UniformIIDProcess, {}),
+    (NormalIIDProcess, {"gauss_hermite": True}),
+    (LogNormalIIDProcess, {"gauss_hermite": True}),
+    (NormalMixtureIIDProcess, {}),
+    (TauchenAR1Process, {"gauss_hermite": True}),
+    (RouwenhorstAR1Process, {}),
+    (TauchenNormalMixtureAR1Process, {}),
 ]
 
 
@@ -122,33 +130,33 @@ def test_shock_grid_correct_shape_without_params(grid_cls, extra_kw):
 @pytest.mark.parametrize(
     ("grid_cls", "kwargs"),
     [
-        (lcm._processes.iid.Uniform, {"start": 0.0, "stop": 1.0}),
+        (UniformIIDProcess, {"start": 0.0, "stop": 1.0}),
         (
-            lcm._processes.iid.Normal,
+            NormalIIDProcess,
             {"gauss_hermite": True, "mu": 0.0, "sigma": 1.0},
         ),
         (
-            lcm._processes.iid.Normal,
+            NormalIIDProcess,
             {"gauss_hermite": False, "mu": 0.0, "sigma": 1.0, "n_std": 3.0},
         ),
         (
-            lcm._processes.iid.LogNormal,
+            LogNormalIIDProcess,
             {"gauss_hermite": True, "mu": 0.0, "sigma": 1.0},
         ),
         (
-            lcm._processes.iid.LogNormal,
+            LogNormalIIDProcess,
             {"gauss_hermite": False, "mu": 0.0, "sigma": 1.0, "n_std": 3.0},
         ),
         (
-            lcm._processes.ar1.Tauchen,
+            TauchenAR1Process,
             {"gauss_hermite": True, "rho": 0.9, "sigma": 1.0, "mu": 0.0},
         ),
         (
-            lcm._processes.ar1.Tauchen,
+            TauchenAR1Process,
             {"gauss_hermite": False, "rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2},
         ),
         (
-            lcm._processes.iid.NormalMixture,
+            NormalMixtureIIDProcess,
             {
                 "n_std": 3.0,
                 "p1": 0.9,
@@ -158,9 +166,9 @@ def test_shock_grid_correct_shape_without_params(grid_cls, extra_kw):
                 "sigma2": 0.3,
             },
         ),
-        (lcm._processes.ar1.Rouwenhorst, {"rho": 0.9, "sigma": 1.0, "mu": 0.0}),
+        (RouwenhorstAR1Process, {"rho": 0.9, "sigma": 1.0, "mu": 0.0}),
         (
-            lcm._processes.ar1.TauchenNormalMixture,
+            TauchenNormalMixtureAR1Process,
             {
                 "rho": 0.9,
                 "mu": 1.0,
@@ -182,7 +190,7 @@ def test_shock_grid_fully_specified_with_all_params(grid_cls, kwargs):
     assert result.shape == (3,)
 
 
-_AR1_GRID_CLASSES = [lcm._processes.ar1.Tauchen, lcm._processes.ar1.Rouwenhorst]
+_AR1_GRID_CLASSES = [TauchenAR1Process, RouwenhorstAR1Process]
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
@@ -190,7 +198,7 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
     """Midpoint of AR(1) gridpoints is approximately mu / (1 - rho)."""
     mu, rho = 2.0, 0.8
     kwargs = {"rho": rho, "sigma": 0.5, "mu": mu}
-    if grid_cls is lcm._processes.ar1.Tauchen:
+    if grid_cls is TauchenAR1Process:
         kwargs["gauss_hermite"] = True
     grid = grid_cls(n_points=11, **kwargs)
     points = grid.get_gridpoints()
@@ -203,7 +211,7 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
 def test_ar1_transition_probs_rows_sum_to_one(grid_cls):
     """Each row of the transition matrix sums to 1."""
     kwargs = {"rho": 0.9, "sigma": 0.5, "mu": 1.0}
-    if grid_cls is lcm._processes.ar1.Tauchen:
+    if grid_cls is TauchenAR1Process:
         kwargs["gauss_hermite"] = True
     grid = grid_cls(n_points=7, **kwargs)
     P = grid.get_transition_probs()
@@ -214,9 +222,9 @@ def test_ar1_transition_probs_rows_sum_to_one(grid_cls):
 @pytest.mark.parametrize(
     "grid_cls",
     [
-        lcm._processes.iid.Normal,
-        lcm._processes.iid.LogNormal,
-        lcm._processes.ar1.Tauchen,
+        NormalIIDProcess,
+        LogNormalIIDProcess,
+        TauchenAR1Process,
     ],
     ids=lambda c: c.__name__,
 )
@@ -229,13 +237,13 @@ def test_even_n_points_rejected_for_gauss_hermite(grid_cls):
 @pytest.mark.parametrize(
     "grid_cls_and_kwargs",
     [
-        (lcm._processes.iid.Normal, {"gauss_hermite": False, "n_std": 3.0}),
-        (lcm._processes.iid.LogNormal, {"gauss_hermite": False, "n_std": 3.0}),
-        (lcm._processes.ar1.Tauchen, {"gauss_hermite": False, "n_std": 3.0}),
-        (lcm._processes.iid.Uniform, {}),
-        (lcm._processes.iid.NormalMixture, {}),
-        (lcm._processes.ar1.Rouwenhorst, {}),
-        (lcm._processes.ar1.TauchenNormalMixture, {}),
+        (NormalIIDProcess, {"gauss_hermite": False, "n_std": 3.0}),
+        (LogNormalIIDProcess, {"gauss_hermite": False, "n_std": 3.0}),
+        (TauchenAR1Process, {"gauss_hermite": False, "n_std": 3.0}),
+        (UniformIIDProcess, {}),
+        (NormalMixtureIIDProcess, {}),
+        (RouwenhorstAR1Process, {}),
+        (TauchenNormalMixtureAR1Process, {}),
     ],
 )
 def test_even_n_points_accepted_for_non_gauss_hermite(grid_cls_and_kwargs):
@@ -248,9 +256,9 @@ def test_even_n_points_accepted_for_non_gauss_hermite(grid_cls_and_kwargs):
 @pytest.mark.parametrize(
     "grid_cls",
     [
-        lcm._processes.iid.Normal,
-        lcm._processes.iid.LogNormal,
-        lcm._processes.ar1.Tauchen,
+        NormalIIDProcess,
+        LogNormalIIDProcess,
+        TauchenAR1Process,
     ],
 )
 def test_gauss_hermite_and_n_std_mutual_exclusion(grid_cls):
@@ -262,19 +270,19 @@ def test_gauss_hermite_and_n_std_mutual_exclusion(grid_cls):
 def test_gauss_hermite_required():
     """Normal(n_points=5) without gauss_hermite raises TypeError."""
     with pytest.raises(TypeError):
-        lcm._processes.iid.Normal(n_points=5)  # ty: ignore[missing-argument]
+        NormalIIDProcess(n_points=5)  # ty: ignore[missing-argument]
 
 
 def test_normal_gauss_hermite_weights_sum_to_one():
     """GH weights for iid Normal sum to 1."""
-    grid = lcm._processes.iid.Normal(n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0)
+    grid = NormalIIDProcess(n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0)
     P = grid.get_transition_probs()
     aaae(P[0].sum(), 1.0, decimal=DECIMAL_PRECISION)
 
 
 def test_normal_linspace_transition_probs_rows_sum_to_one():
     """Non-GH Normal iid transition probability rows sum to 1."""
-    grid = lcm._processes.iid.Normal(
+    grid = NormalIIDProcess(
         n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=3.0
     )
     P = grid.get_transition_probs()
@@ -284,7 +292,7 @@ def test_normal_linspace_transition_probs_rows_sum_to_one():
 
 def test_lognormal_linspace_transition_probs_rows_sum_to_one():
     """Non-GH LogNormal iid transition probability rows sum to 1."""
-    grid = lcm._processes.iid.LogNormal(
+    grid = LogNormalIIDProcess(
         n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=3.0
     )
     P = grid.get_transition_probs()
@@ -294,19 +302,17 @@ def test_lognormal_linspace_transition_probs_rows_sum_to_one():
 
 def test_normal_gauss_hermite_n_std_not_in_params():
     """n_std is excluded from params_to_pass_at_runtime when gauss_hermite=True."""
-    grid = lcm._processes.iid.Normal(n_points=5, gauss_hermite=True)
+    grid = NormalIIDProcess(n_points=5, gauss_hermite=True)
     assert "n_std" not in grid.params_to_pass_at_runtime
 
 
 @pytest.mark.parametrize(
     "grid",
     [
-        lcm._processes.iid.Normal(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0),
-        lcm._processes.iid.LogNormal(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0),
-        lcm._processes.iid.Uniform(n_points=5, start=0.0, stop=1.0),
-        lcm._processes.ar1.Tauchen(
-            n_points=5, gauss_hermite=True, rho=0.9, sigma=0.5, mu=0.0
-        ),
+        NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0),
+        LogNormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0),
+        UniformIIDProcess(n_points=5, start=0.0, stop=1.0),
+        TauchenAR1Process(n_points=5, gauss_hermite=True, rho=0.9, sigma=0.5, mu=0.0),
     ],
     ids=["normal", "lognormal", "uniform", "tauchen"],
 )
@@ -323,9 +329,7 @@ def test_shock_grid_params_excludes_distributed(grid):
 
 def test_tauchen_gauss_hermite_transition_probs_rows_sum_to_one():
     """Each row of the GH Tauchen transition matrix sums to 1."""
-    grid = lcm._processes.ar1.Tauchen(
-        n_points=7, gauss_hermite=True, rho=0.9, sigma=0.5, mu=1.0
-    )
+    grid = TauchenAR1Process(n_points=7, gauss_hermite=True, rho=0.9, sigma=0.5, mu=1.0)
     P = grid.get_transition_probs()
     row_sums = P.sum(axis=1)
     aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
@@ -333,7 +337,7 @@ def test_tauchen_gauss_hermite_transition_probs_rows_sum_to_one():
 
 def test_tauchen_linspace_transition_probs_rows_sum_to_one():
     """Each row of the non-GH Tauchen transition matrix sums to 1."""
-    grid = lcm._processes.ar1.Tauchen(
+    grid = TauchenAR1Process(
         n_points=7, gauss_hermite=False, rho=0.9, sigma=0.5, mu=1.0, n_std=3.0
     )
     P = grid.get_transition_probs()
@@ -344,9 +348,7 @@ def test_tauchen_linspace_transition_probs_rows_sum_to_one():
 def test_tauchen_gauss_hermite_centers_on_unconditional_mean():
     """GH Tauchen gridpoints center on mu / (1 - rho)."""
     mu, rho = 2.0, 0.8
-    grid = lcm._processes.ar1.Tauchen(
-        n_points=11, gauss_hermite=True, rho=rho, sigma=0.5, mu=mu
-    )
+    grid = TauchenAR1Process(n_points=11, gauss_hermite=True, rho=rho, sigma=0.5, mu=mu)
     points = grid.get_gridpoints()
     midpoint = (points[0] + points[-1]) / 2
     expected = mu / (1 - rho)
@@ -355,7 +357,7 @@ def test_tauchen_gauss_hermite_centers_on_unconditional_mean():
 
 def test_lognormal_correct_shape_without_params():
     """LogNormal without params returns correct-shape NaN arrays."""
-    grid = lcm._processes.iid.LogNormal(n_points=3, gauss_hermite=True)
+    grid = LogNormalIIDProcess(n_points=3, gauss_hermite=True)
     assert not grid.is_fully_specified
     assert grid.get_gridpoints().shape == (3,)
     assert grid.get_transition_probs().shape == (3, 3)
@@ -363,16 +365,14 @@ def test_lognormal_correct_shape_without_params():
 
 def test_lognormal_fully_specified_gauss_hermite():
     """LogNormal with gauss_hermite=True is fully specified with mu/sigma."""
-    grid = lcm._processes.iid.LogNormal(
-        n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0
-    )
+    grid = LogNormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0)
     assert grid.is_fully_specified
     assert grid.get_gridpoints().shape == (5,)
 
 
 def test_lognormal_fully_specified_n_std():
     """LogNormal with gauss_hermite=False is fully specified with mu/sigma/n_std."""
-    grid = lcm._processes.iid.LogNormal(
+    grid = LogNormalIIDProcess(
         n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=3.0
     )
     assert grid.is_fully_specified
@@ -381,17 +381,13 @@ def test_lognormal_fully_specified_n_std():
 
 def test_lognormal_gridpoints_are_positive():
     """All LogNormal gridpoints are strictly positive."""
-    grid = lcm._processes.iid.LogNormal(
-        n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0
-    )
+    grid = LogNormalIIDProcess(n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0)
     assert jnp.all(grid.get_gridpoints() > 0)
 
 
 def test_lognormal_gauss_hermite_weights_sum_to_one():
     """GH weights for iid LogNormal sum to 1."""
-    grid = lcm._processes.iid.LogNormal(
-        n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0
-    )
+    grid = LogNormalIIDProcess(n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0)
     P = grid.get_transition_probs()
     aaae(P[0].sum(), 1.0, decimal=DECIMAL_PRECISION)
 
@@ -408,7 +404,7 @@ _NORMAL_MIXTURE_KWARGS = {
 
 def test_normal_mixture_transition_probs_rows_sum_to_one():
     """NormalMixture transition probability rows sum to 1."""
-    grid = lcm._processes.iid.NormalMixture(
+    grid = NormalMixtureIIDProcess(
         n_points=7, batch_size=0, distributed=False, **_NORMAL_MIXTURE_KWARGS
     )
     P = grid.get_transition_probs()
@@ -419,7 +415,7 @@ def test_normal_mixture_transition_probs_rows_sum_to_one():
 def test_iid_normal_mixture_stationary_moments():
     """IID NormalMixture stationary mean and std match mixture moments."""
     kwargs = _NORMAL_MIXTURE_KWARGS
-    grid = lcm._processes.iid.NormalMixture(
+    grid = NormalMixtureIIDProcess(
         n_points=21, batch_size=0, distributed=False, **kwargs
     )
     got_mean, got_std = _stationary_moments(
@@ -450,7 +446,7 @@ _TAUCHEN_NORMAL_MIXTURE_KWARGS = {
 
 def test_tauchen_normal_mixture_transition_probs_rows_sum_to_one():
     """TauchenNormalMixture transition probability rows sum to 1."""
-    grid = lcm._processes.ar1.TauchenNormalMixture(
+    grid = TauchenNormalMixtureAR1Process(
         n_points=7, batch_size=0, distributed=False, **_TAUCHEN_NORMAL_MIXTURE_KWARGS
     )
     P = grid.get_transition_probs()
@@ -461,7 +457,7 @@ def test_tauchen_normal_mixture_transition_probs_rows_sum_to_one():
 def test_tauchen_normal_mixture_centers_on_unconditional_mean():
     """TauchenNormalMixture gridpoints center on (mu + mean_eps) / (1 - rho)."""
     kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
-    grid = lcm._processes.ar1.TauchenNormalMixture(
+    grid = TauchenNormalMixtureAR1Process(
         n_points=11, batch_size=0, distributed=False, **kwargs
     )
     points = grid.get_gridpoints()
@@ -474,7 +470,7 @@ def test_tauchen_normal_mixture_centers_on_unconditional_mean():
 def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation():
     """TauchenNormalMixture stationary mean, std, and autocorrelation match theory."""
     kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
-    grid = lcm._processes.ar1.TauchenNormalMixture(
+    grid = TauchenNormalMixtureAR1Process(
         batch_size=0, distributed=False, n_points=21, **kwargs
     )
     points = grid.get_gridpoints()
@@ -518,7 +514,7 @@ ROUWENHORST_CASES = [
 def test_tauchen_matches_quantecon(case):
     """Tauchen (non-GH) gridpoints and transition probs match QuantEcon."""
     qe = qe_tauchen(**case)
-    grid = lcm._processes.ar1.Tauchen(
+    grid = TauchenAR1Process(
         n_points=case["n"],
         gauss_hermite=False,
         rho=case["rho"],
@@ -537,7 +533,7 @@ def test_tauchen_matches_quantecon(case):
 def test_rouwenhorst_matches_quantecon(case):
     """Rouwenhorst gridpoints and transition probs match QuantEcon."""
     qe = qe_rouwenhorst(**case)
-    grid = lcm._processes.ar1.Rouwenhorst(
+    grid = RouwenhorstAR1Process(
         n_points=case["n"],
         rho=case["rho"],
         sigma=case["sigma"],
@@ -579,7 +575,7 @@ def test_iid_normal_stationary_moments(gauss_hermite):
     extra = {"gauss_hermite": gauss_hermite}
     if not gauss_hermite:
         extra["n_std"] = 4.0
-    grid = lcm._processes.iid.Normal(n_points=21, mu=mu, sigma=sigma, **extra)
+    grid = NormalIIDProcess(n_points=21, mu=mu, sigma=sigma, **extra)
     got_mean, got_std = _stationary_moments(
         grid.get_gridpoints(), grid.get_transition_probs()
     )
@@ -594,7 +590,7 @@ def test_iid_lognormal_stationary_moments(gauss_hermite):
     extra = {"gauss_hermite": gauss_hermite}
     if not gauss_hermite:
         extra["n_std"] = 4.0
-    grid = lcm._processes.iid.LogNormal(n_points=21, mu=mu, sigma=sigma, **extra)
+    grid = LogNormalIIDProcess(n_points=21, mu=mu, sigma=sigma, **extra)
     points = grid.get_gridpoints()
     P = grid.get_transition_probs()
     got_mean, got_std = _stationary_moments(jnp.log(points), P)
@@ -605,9 +601,9 @@ def test_iid_lognormal_stationary_moments(gauss_hermite):
 @pytest.mark.parametrize(
     ("grid_cls", "extra_kw"),
     [
-        (lcm._processes.ar1.Tauchen, {"gauss_hermite": True}),
-        (lcm._processes.ar1.Tauchen, {"gauss_hermite": False, "n_std": 3.0}),
-        (lcm._processes.ar1.Rouwenhorst, {}),
+        (TauchenAR1Process, {"gauss_hermite": True}),
+        (TauchenAR1Process, {"gauss_hermite": False, "n_std": 3.0}),
+        (RouwenhorstAR1Process, {}),
     ],
     ids=["tauchen-gh", "tauchen-linspace", "rouwenhorst"],
 )

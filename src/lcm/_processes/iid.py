@@ -31,7 +31,7 @@ class _ProcessGridIID(_ProcessGrid):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class Uniform(_ProcessGridIID):
+class UniformIIDProcess(_ProcessGridIID):
     r"""Discretized iid uniform shock: $U(\text{start}, \text{stop})$.
 
     The continuous distribution is discretized into `n_points` equally spaced
@@ -66,7 +66,7 @@ class Uniform(_ProcessGridIID):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class Normal(_ProcessGridIID):
+class NormalIIDProcess(_ProcessGridIID):
     r"""Discretized iid normal shock: $N(\mu_\varepsilon, \sigma_\varepsilon^2)$.
 
     When `gauss_hermite=True`, the distribution is discretized using
@@ -141,7 +141,7 @@ class Normal(_ProcessGridIID):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class LogNormal(_ProcessGridIID):
+class LogNormalIIDProcess(_ProcessGridIID):
     r"""Discretized iid log-normal shock: $\ln X \sim N(\mu, \sigma^2)$."""
 
     gauss_hermite: bool
@@ -207,7 +207,7 @@ class LogNormal(_ProcessGridIID):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class NormalMixture(_ProcessGridIID):
+class NormalMixtureIIDProcess(_ProcessGridIID):
     r"""Discretized IID normal-mixture shock.
 
     The shock is drawn from a two-component normal mixture:

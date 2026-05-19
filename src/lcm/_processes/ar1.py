@@ -33,7 +33,7 @@ class _ProcessGridAR1(_ProcessGrid):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class Tauchen(_ProcessGridAR1):
+class TauchenAR1Process(_ProcessGridAR1):
     r"""AR(1) shock discretized via Tauchen (1986).
 
     The process is
@@ -133,7 +133,7 @@ class Tauchen(_ProcessGridAR1):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class Rouwenhorst(_ProcessGridAR1):
+class RouwenhorstAR1Process(_ProcessGridAR1):
     r"""AR(1) shock discretized via Rouwenhorst (1995).
 
     The process is
@@ -202,7 +202,7 @@ class Rouwenhorst(_ProcessGridAR1):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class TauchenNormalMixture(_ProcessGridAR1):
+class TauchenNormalMixtureAR1Process(_ProcessGridAR1):
     r"""AR(1) shock with mixture-of-normals innovations, discretized via Tauchen.
 
     The process is
