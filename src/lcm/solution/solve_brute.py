@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import Regime, _build_regime_sharding
-from lcm.regime_building.runtime_checks import validate_V
+from lcm.solution.validate_V import validate_V
 from lcm.typing import BoolND, FlatParams, FloatND, RegimeName, StateName
 from lcm.utils.logging import (
     format_duration,

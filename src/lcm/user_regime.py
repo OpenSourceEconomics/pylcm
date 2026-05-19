@@ -600,8 +600,7 @@ def validate_transition_probs(
 
     Regime transition probabilities are validated automatically before solve
     via `validate_regime_transitions_all_periods` in
-    `regime_building/runtime_checks.py`; this helper covers only state
-    transitions.
+    `lcm/_transition_checks.py`; this helper covers only state transitions.
 
     Args:
         probs: The transition probability array to validate.

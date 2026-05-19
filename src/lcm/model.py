@@ -11,6 +11,7 @@ import pandas as pd
 from beartype import beartype
 
 from lcm._beartype_conf import MODEL_CONF, PARAMS_CONF
+from lcm._transition_checks import validate_regime_transitions_all_periods
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.grids import DiscreteGrid
@@ -33,7 +34,6 @@ from lcm.persistence import (
     save_solve_snapshot,
 )
 from lcm.regime_building.processing import Regime
-from lcm.regime_building.runtime_checks import validate_regime_transitions_all_periods
 from lcm.simulation.compile import compile_all_simulate_functions
 from lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
