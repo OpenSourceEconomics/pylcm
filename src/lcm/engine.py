@@ -8,8 +8,8 @@ import jax
 from jax import Array
 
 from lcm._grids import Grid, IrregSpacedGrid
+from lcm._processes import _ProcessGrid
 from lcm.exceptions import PyLCMError
-from lcm.shocks import _ShockGrid
 from lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -421,7 +421,7 @@ class Regime:
 
         For IrregSpacedGrid (state or continuous action) with runtime-supplied
         points, the grid points come from params as `{name}__points`. For
-        `_ShockGrid` with runtime-supplied params, the grid points are computed
+        `_ProcessGrid` with runtime-supplied params, the grid points are computed
         from shock params in the params dict or `resolved_fixed_params`.
 
         Args:
@@ -452,14 +452,14 @@ class Regime:
                     state_replacements[name] = points
                 else:
                     action_replacements[name] = points
-            # `_ShockGrid` is state-only by construction (intrinsic
+            # `_ProcessGrid` is state-only by construction (intrinsic
             # transitions, forbidden as actions per AGENTS.md). The
             # `in_states` gate makes that invariant explicit — a
-            # `_ShockGrid` reaching the action branch would be a model
+            # `_ProcessGrid` reaching the action branch would be a model
             # bug, not something this method should silently substitute.
             elif (
                 in_states
-                and isinstance(spec, _ShockGrid)
+                and isinstance(spec, _ProcessGrid)
                 and spec.params_to_pass_at_runtime
             ):
                 all_present = all(

@@ -33,7 +33,7 @@ def _gauss_hermite_normal(
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ShockGrid(ContinuousGrid):
+class _ProcessGrid(ContinuousGrid):
     """Base class for discretized continuous shock grids.
 
     Subclasses define distribution-specific parameters as dataclass fields.

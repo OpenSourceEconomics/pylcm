@@ -6,9 +6,9 @@ from typing import TypeAliasType
 from dags.tree import QNAME_DELIMITER
 
 from lcm._grids import DiscreteGrid, Grid
+from lcm._processes._base import _ProcessGrid
 from lcm.api.regime import _IdentityTransition
 from lcm.exceptions import RegimeInitializationError
-from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -44,7 +44,7 @@ def collect_state_transitions(
     transitions: dict[TransitionFunctionName, UserFunction] = {}
     for name, grid in states.items():
         # Shock transitions built directly in _process_regime_core
-        if isinstance(grid, _ShockGrid):
+        if isinstance(grid, _ProcessGrid):
             continue
 
         if name not in state_transitions:

@@ -9,17 +9,17 @@ from beartype import beartype
 from jax.scipy.stats.norm import cdf
 
 from lcm._beartype_conf import GRID_CONF
-from lcm.shocks._base import (
+from lcm._processes._base import (
     _gauss_hermite_normal,
     _mixture_cdf,
-    _ShockGrid,
+    _ProcessGrid,
     _validate_gauss_hermite_grid,
 )
 from lcm.typing import Float1D, FloatND, PRNGKeyND, ScalarFloat, ScalarInt
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ShockGridAR1(_ShockGrid):
+class _ProcessGridAR1(_ProcessGrid):
     """Base for AR(1) shocks — draw depends on previous value."""
 
     @abstractmethod
@@ -33,7 +33,7 @@ class _ShockGridAR1(_ShockGrid):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class Tauchen(_ShockGridAR1):
+class Tauchen(_ProcessGridAR1):
     r"""AR(1) shock discretized via Tauchen (1986).
 
     The process is
@@ -133,7 +133,7 @@ class Tauchen(_ShockGridAR1):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class Rouwenhorst(_ShockGridAR1):
+class Rouwenhorst(_ProcessGridAR1):
     r"""AR(1) shock discretized via Rouwenhorst (1995).
 
     The process is
@@ -202,7 +202,7 @@ class Rouwenhorst(_ShockGridAR1):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class TauchenNormalMixture(_ShockGridAR1):
+class TauchenNormalMixture(_ProcessGridAR1):
     r"""AR(1) shock with mixture-of-normals innovations, discretized via Tauchen.
 
     The process is

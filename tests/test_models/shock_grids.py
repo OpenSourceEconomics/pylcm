@@ -19,11 +19,11 @@ from lcm.typing import (
 )
 
 _SHOCK_GRID_CLASSES = {
-    "uniform": lcm.shocks.iid.Uniform,
-    "normal": lcm.shocks.iid.Normal,
-    "lognormal": lcm.shocks.iid.LogNormal,
-    "tauchen": lcm.shocks.ar1.Tauchen,
-    "rouwenhorst": lcm.shocks.ar1.Rouwenhorst,
+    "uniform": lcm._processes.iid.Uniform,
+    "normal": lcm._processes.iid.Normal,
+    "lognormal": lcm._processes.iid.LogNormal,
+    "tauchen": lcm._processes.ar1.Tauchen,
+    "rouwenhorst": lcm._processes.ar1.Rouwenhorst,
 }
 
 _SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {

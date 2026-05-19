@@ -8,17 +8,17 @@ from beartype import beartype
 from jax.scipy.stats.norm import cdf
 
 from lcm._beartype_conf import GRID_CONF
-from lcm.shocks._base import (
+from lcm._processes._base import (
     _gauss_hermite_normal,
     _mixture_cdf,
-    _ShockGrid,
+    _ProcessGrid,
     _validate_gauss_hermite_grid,
 )
 from lcm.typing import Float1D, FloatND, PRNGKeyND, ScalarFloat, ScalarInt
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ShockGridIID(_ShockGrid):
+class _ProcessGridIID(_ProcessGrid):
     """Base for iid shocks — draw does not depend on previous value."""
 
     @abstractmethod
@@ -31,7 +31,7 @@ class _ShockGridIID(_ShockGrid):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class Uniform(_ShockGridIID):
+class Uniform(_ProcessGridIID):
     r"""Discretized iid uniform shock: $U(\text{start}, \text{stop})$.
 
     The continuous distribution is discretized into `n_points` equally spaced
@@ -66,7 +66,7 @@ class Uniform(_ShockGridIID):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class Normal(_ShockGridIID):
+class Normal(_ProcessGridIID):
     r"""Discretized iid normal shock: $N(\mu_\varepsilon, \sigma_\varepsilon^2)$.
 
     When `gauss_hermite=True`, the distribution is discretized using
@@ -141,7 +141,7 @@ class Normal(_ShockGridIID):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class LogNormal(_ShockGridIID):
+class LogNormal(_ProcessGridIID):
     r"""Discretized iid log-normal shock: $\ln X \sim N(\mu, \sigma^2)$."""
 
     gauss_hermite: bool
@@ -207,7 +207,7 @@ class LogNormal(_ShockGridIID):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class NormalMixture(_ShockGridIID):
+class NormalMixture(_ProcessGridIID):
     r"""Discretized IID normal-mixture shock.
 
     The shock is drawn from a two-component normal mixture:

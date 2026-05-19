@@ -46,7 +46,6 @@ beartype_package("lcm", conf=INTERNAL_CONF)
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
 # rewritten string annotations resolve at call time.
-from lcm import shocks  # noqa: E402
 from lcm._version import __version__  # noqa: E402
 from lcm.api.ages import AgeGrid  # noqa: E402
 from lcm.api.categorical import categorical  # noqa: E402
@@ -132,6 +131,5 @@ __all__ = [
     "load_snapshot",
     "load_solution",
     "save_solution",
-    "shocks",
     "validate_transition_probs",
 ]

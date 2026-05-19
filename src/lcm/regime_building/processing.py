@@ -13,6 +13,7 @@ from jax import numpy as jnp
 
 from lcm._grids import DiscreteGrid, Grid
 from lcm._grids.coordinates import get_irreg_coordinate
+from lcm._processes import _ProcessGrid
 from lcm.api.ages import AgeGrid
 from lcm.api.regime import MarkovTransition, SolveSimulateFunctionPair
 from lcm.api.regime import Regime as UserRegime
@@ -41,7 +42,6 @@ from lcm.regime_building.Q_and_F import (
 from lcm.regime_building.static_checks import derive_stochastic_state_transitions
 from lcm.regime_building.transitions import collect_state_transitions
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
-from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ArgmaxQOverAFunction,
@@ -602,12 +602,12 @@ def _process_regime_core(
         for k in flat_nested_transitions
         if QNAME_DELIMITER in k
     }
-    target_shock_grids: dict[tuple[RegimeName, ShockName], _ShockGrid] = {
+    target_shock_grids: dict[tuple[RegimeName, ShockName], _ProcessGrid] = {
         (user_regime, shock): grid
         for user_regime, grids in all_grids.items()
         if user_regime in reachable_targets
         for shock in shock_names
-        if isinstance(grid := grids.get(shock), _ShockGrid)
+        if isinstance(grid := grids.get(shock), _ProcessGrid)
     }
     functions |= {
         f"weight_{user_regime}__next_{shock}": _get_weights_func_for_shock(
@@ -888,7 +888,7 @@ def _get_stochastic_next_function_for_shock(
     return next_func
 
 
-def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
+def _get_weights_func_for_shock(*, name: str, grid: _ProcessGrid) -> UserFunction:
     """Get function that uses linear interpolation to calculate the shock weights.
 
     For shocks whose params are supplied at runtime, the grid points and transition

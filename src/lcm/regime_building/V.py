@@ -8,9 +8,9 @@ from dags.tree import qname_from_tree_path
 
 from lcm._grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from lcm._grids.coordinates import get_irreg_coordinate
+from lcm._processes import _ProcessGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.regime_building.ndimage import map_coordinates
-from lcm.shocks import _ShockGrid
 from lcm.typing import FloatND, IntND, ScalarFloat, StateName
 from lcm.utils.functools import all_as_kwargs
 from lcm.variables import from_regime, get_grids
@@ -28,7 +28,7 @@ class VInterpolationInfo:
     state_names: tuple[StateName, ...]
     """Tuple of state variable names."""
 
-    discrete_states: MappingProxyType[StateName, DiscreteGrid | _ShockGrid]
+    discrete_states: MappingProxyType[StateName, DiscreteGrid | _ProcessGrid]
     """Immutable mapping of discrete state names to their grids."""
 
     continuous_states: MappingProxyType[StateName, ContinuousGrid]

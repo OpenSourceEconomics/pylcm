@@ -14,14 +14,16 @@ from typing import Literal
 
 from jax import numpy as jnp
 
-import lcm
 from lcm import (
     AgeGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
     Model,
+    NormalIIDProcess,
     Regime,
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
     categorical,
 )
 from lcm.typing import (
@@ -36,9 +38,9 @@ ShockType = Literal["normal_gh", "rouwenhorst", "tauchen"]
 WealthGridType = Literal["lin", "log", "irreg"]
 
 _SHOCK_GRID_CLASSES = {
-    "normal_gh": lcm.shocks.iid.Normal,
-    "rouwenhorst": lcm.shocks.ar1.Rouwenhorst,
-    "tauchen": lcm.shocks.ar1.Tauchen,
+    "normal_gh": NormalIIDProcess,
+    "rouwenhorst": RouwenhorstAR1Process,
+    "tauchen": TauchenAR1Process,
 }
 
 _SHOCK_GRID_KWARGS: dict[str, dict[str, bool | float]] = {

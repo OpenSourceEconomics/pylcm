@@ -14,8 +14,8 @@ from dags.tree import QNAME_DELIMITER
 
 from lcm._beartype_conf import REGIME_CONF
 from lcm._grids import DiscreteGrid, Grid
+from lcm._processes._base import _ProcessGrid
 from lcm.exceptions import RegimeInitializationError, format_messages
-from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActionName,
     ActiveFunction,
@@ -520,7 +520,7 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
     error_messages: list[str] = []
 
     shock_names: set[ShockName] = {
-        name for name, grid in regime.states.items() if isinstance(grid, _ShockGrid)
+        name for name, grid in regime.states.items() if isinstance(grid, _ProcessGrid)
     }
     non_shock_names: set[StateName] = set(regime.states) - shock_names
 
