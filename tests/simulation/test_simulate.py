@@ -9,8 +9,9 @@ from pandas.testing import assert_frame_equal
 
 from lcm import Model
 from lcm.api.ages import AgeGrid
-from lcm.api.result import SimulationResult, get_simulation_output_dtypes
+from lcm.api.result import SimulationResult
 from lcm.regime_building import process_regimes
+from lcm.simulation._result_metadata import _get_output_dtypes
 from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
@@ -52,7 +53,7 @@ def simulate_inputs():
         "regimes": regimes,
         "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
-        "simulation_output_dtypes": get_simulation_output_dtypes(
+        "simulation_output_dtypes": _get_output_dtypes(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
         ),

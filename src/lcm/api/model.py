@@ -18,7 +18,7 @@ from lcm._persistence._snapshots import (
 )
 from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
-from lcm.api.result import SimulationResult, get_simulation_output_dtypes
+from lcm.api.result import SimulationResult
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.model_processing import (
     _validate_param_types,
@@ -39,6 +39,7 @@ from lcm.regime_building.runtime_checks import (
     validate_regime_transitions_all_periods,
     validate_state_transitions_all_periods,
 )
+from lcm.simulation._result_metadata import _get_output_dtypes
 from lcm.simulation.compile import compile_all_simulate_functions
 from lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
@@ -209,7 +210,7 @@ class Model:
             fixed_params=self.fixed_params,
         )
         self.enable_jit = enable_jit
-        self.simulation_output_dtypes = get_simulation_output_dtypes(
+        self.simulation_output_dtypes = _get_output_dtypes(
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )

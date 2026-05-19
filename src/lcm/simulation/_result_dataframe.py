@@ -1,0 +1,317 @@
+"""DataFrame assembly for `SimulationResult.to_dataframe`."""
+
+from collections.abc import Sequence
+from types import MappingProxyType
+
+import jax.numpy as jnp
+import pandas as pd
+
+from lcm.api.ages import AgeGrid
+from lcm.engine import PeriodRegimeSimulationData, Regime
+from lcm.simulation._additional_targets import (
+    _compute_targets,
+    _filter_targets_for_regime,
+)
+from lcm.simulation._result_metadata import ResultMetadata
+from lcm.typing import (
+    ActionName,
+    BoolND,
+    FlatParams,
+    FloatND,
+    IntND,
+    RegimeName,
+    StateName,
+)
+
+
+def _create_flat_dataframe(
+    *,
+    raw_results: MappingProxyType[
+        RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
+    ],
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    metadata: ResultMetadata,
+    additional_targets: list[str] | None,
+    ages: AgeGrid,
+) -> pd.DataFrame:
+    """Create a single flat DataFrame from all regime results."""
+    regime_dfs = [
+        _process_regime(
+            regime=regimes[name],
+            regime_results=raw_results[name],
+            regime_states=metadata.regime_to_states[name],
+            regime_actions=metadata.regime_to_actions[name],
+            regime_params=flat_params[name],
+            additional_targets=additional_targets,
+            ages=ages,
+        )
+        for name in metadata.regime_names
+        if raw_results[name]
+    ]
+
+    return _assemble_dataframe(
+        regime_dfs=regime_dfs,
+        state_names=metadata.state_names,
+        action_names=metadata.action_names,
+    )
+
+
+def _process_regime(
+    *,
+    regime: Regime,
+    regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
+    regime_states: tuple[str, ...],
+    regime_actions: tuple[str, ...],
+    regime_params,  # noqa: ANN001
+    additional_targets: list[str] | None,
+    ages: AgeGrid,
+) -> pd.DataFrame:
+    """Process results for a single regime into a DataFrame."""
+    period_dicts = [
+        _extract_period_data(
+            result=result,
+            period=period,
+            regime_states=regime_states,
+            regime_actions=regime_actions,
+        )
+        for period, result in regime_results.items()
+    ]
+
+    data: dict[str, FloatND | IntND | BoolND | Sequence[str]] = _concatenate_and_filter(
+        period_dicts
+    )  # ty: ignore[invalid-assignment]
+
+    data["age"] = ages.values[data["period"]]  # noqa: PD011
+    data["regime_name"] = [regime.name] * len(data["period"])
+
+    if additional_targets:
+        targets_for_regime = _filter_targets_for_regime(
+            targets=additional_targets, regime=regime
+        )
+        if targets_for_regime:
+            target_values = _compute_targets(
+                data=data,
+                targets=targets_for_regime,
+                regime=regime,
+                regime_params=regime_params,
+            )
+            data.update(target_values)
+
+    return pd.DataFrame(data)
+
+
+def _extract_period_data(
+    *,
+    result: PeriodRegimeSimulationData,
+    period: int,
+    regime_states: tuple[str, ...],
+    regime_actions: tuple[str, ...],
+) -> dict[str, FloatND | IntND | BoolND]:
+    """Extract data from a single period's simulation results."""
+    data: dict[str, FloatND | IntND | BoolND] = {
+        "subject_id": jnp.arange(len(result.in_regime), dtype=jnp.int32),
+        "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
+        "_in_regime": result.in_regime,
+        "value": result.V_arr,
+    }
+
+    for name in regime_states:
+        if name in result.states:
+            data[name] = result.states[name]
+
+    for name in regime_actions:
+        if name in result.actions:
+            data[name] = result.actions[name]
+
+    return data
+
+
+def _concatenate_and_filter(
+    period_dicts: list[dict[str, FloatND | IntND | BoolND]],
+) -> dict[str, FloatND | IntND | BoolND]:
+    """Concatenate period data and filter to in-regime subjects."""
+    keys = [k for k in period_dicts[0] if k != "_in_regime"]
+
+    concatenated = {
+        key: jnp.concatenate([d[key] for d in period_dicts]) for key in period_dicts[0]
+    }
+
+    mask = concatenated["_in_regime"].astype(bool)
+    return {key: concatenated[key][mask] for key in keys}
+
+
+def _assemble_dataframe(
+    *,
+    regime_dfs: list[pd.DataFrame],
+    state_names: list[StateName],
+    action_names: list[ActionName],
+) -> pd.DataFrame:
+    """Combine regime DataFrames, add missing columns, reorder, and sort."""
+    if not regime_dfs:
+        return _empty_dataframe(state_names=state_names, action_names=action_names)
+
+    df = pd.concat(regime_dfs, ignore_index=True)
+    df = _add_missing_columns(df=df, state_names=state_names, action_names=action_names)
+    df = _reorder_columns(df=df, state_names=state_names, action_names=action_names)
+    return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
+
+
+def _empty_dataframe(
+    *,
+    state_names: list[StateName],
+    action_names: list[ActionName],
+) -> pd.DataFrame:
+    """Create empty DataFrame with correct columns."""
+    columns = ["subject_id", "period", "regime_name", "value"]
+    columns.extend(state_names)
+    columns.extend(action_names)
+    return pd.DataFrame(columns=pd.Index(columns))
+
+
+def _add_missing_columns(
+    *,
+    df: pd.DataFrame,
+    state_names: list[StateName],
+    action_names: list[ActionName],
+) -> pd.DataFrame:
+    """Add NaN columns for states/actions not present in DataFrame."""
+    for name in state_names:
+        if name not in df.columns:
+            df[name] = float("nan")
+    for name in action_names:
+        if name not in df.columns:
+            df[name] = float("nan")
+    return df
+
+
+def _reorder_columns(
+    *,
+    df: pd.DataFrame,
+    state_names: list[StateName],
+    action_names: list[ActionName],
+) -> pd.DataFrame:
+    """Reorder columns: id, period, regime_name, value, states, actions, rest."""
+    base = ["subject_id", "period", "regime_name", "value"]
+    known = set(base) | set(state_names) | set(action_names)
+    rest = [c for c in df.columns if c not in known]
+    return df[base + state_names + action_names + rest]
+
+
+def _convert_to_categorical(
+    *,
+    df: pd.DataFrame,
+    metadata: ResultMetadata,
+) -> pd.DataFrame:
+    """Convert discrete columns to pandas Categorical dtype with string labels.
+
+    Converts:
+    - regime_name column: uses regime_names as categories
+    - discrete state/action columns: uses categories from simulation metadata
+
+    """
+    df = df.copy()
+
+    df["regime_name"] = pd.Categorical(
+        df["regime_name"], categories=metadata.regime_names
+    )
+
+    for var_name, merged_categories in metadata.discrete_categories.items():
+        if var_name not in df.columns:
+            continue
+
+        needs_remap = any(
+            metadata.regime_discrete_categories.get((rn, var_name)) != merged_categories
+            for rn in metadata.regime_names
+            if (rn, var_name) in metadata.regime_discrete_categories
+        )
+
+        if needs_remap:
+            df[var_name] = _remap_codes_per_regime(
+                df=df,
+                var_name=var_name,
+                merged_categories=merged_categories,
+                ordered=metadata.discrete_ordered[var_name],
+                metadata=metadata,
+            )
+        else:
+            df[var_name] = _codes_to_categorical(
+                codes=df[var_name],
+                categories=merged_categories,
+                ordered=metadata.discrete_ordered[var_name],
+            )
+
+    return df
+
+
+def _remap_codes_per_regime(
+    *,
+    df: pd.DataFrame,
+    var_name: str,
+    merged_categories: tuple[str, ...],
+    ordered: bool,
+    metadata: ResultMetadata,
+) -> pd.Categorical:
+    """Map per-regime integer codes to labels, then build a merged Categorical.
+
+    When regimes define different categories for the same variable, the raw integer
+    codes in the DataFrame correspond to each regime's own category ordering. This
+    function converts per-regime codes to string labels, then wraps them in a
+    Categorical with the merged category set.
+
+    """
+    labels = pd.Series(pd.NA, index=df.index, dtype="string")
+
+    for regime_name in metadata.regime_names:
+        regime_cats = metadata.regime_discrete_categories.get((regime_name, var_name))
+        if regime_cats is None:
+            continue
+
+        mask = df["regime_name"] == regime_name
+        if not mask.any():
+            continue
+
+        codes_in_regime = df.loc[mask, var_name]
+        valid = codes_in_regime.notna()
+        int_codes = codes_in_regime[valid].astype(int)
+        mapped = int_codes.map(dict(enumerate(regime_cats))).to_numpy()
+        labels[mask & valid] = mapped
+
+    return pd.Categorical(labels, categories=list(merged_categories), ordered=ordered)
+
+
+def _codes_to_categorical(
+    *,
+    codes: pd.Series,
+    categories: tuple[str, ...],
+    ordered: bool = False,
+) -> pd.Categorical | pd.Series:
+    """Convert integer codes to Categorical, handling NaN and out-of-range values.
+
+    If values are outside the valid category range, returns the original series
+    unchanged to avoid data loss.
+
+    """
+    codes_array = codes.to_numpy()
+    has_nan = pd.isna(codes_array)
+    n_categories = len(categories)
+
+    valid_values = codes_array[~has_nan]
+    if len(valid_values) > 0:
+        int_values = valid_values.astype(int)
+        if int_values.min() < 0 or int_values.max() >= n_categories:
+            return codes
+
+    if has_nan.any():
+        int_codes = [-1 if pd.isna(c) else int(c) for c in codes_array]
+        return pd.Categorical.from_codes(
+            int_codes,
+            categories=pd.Index(categories),
+            ordered=ordered,
+        )
+
+    return pd.Categorical.from_codes(
+        codes_array.astype(int),
+        categories=pd.Index(categories),
+        ordered=ordered,
+    )
