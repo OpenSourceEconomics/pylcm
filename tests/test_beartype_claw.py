@@ -25,9 +25,9 @@ import pytest
 from beartype.roar import BeartypeCallHintViolation
 
 from lcm import AgeGrid, LinSpacedGrid, Model
+from lcm._regime._helpers import _default_H
 from lcm.api.model import _validate_log_args
 from lcm.api.regime import Regime as UserRegime
-from lcm.api.regime import _default_H
 from lcm.engine import _build_regime_sharding
 from lcm.exceptions import (
     GridInitializationError,
@@ -92,7 +92,7 @@ def test_claw_checks_lcm_engine() -> None:
 
 
 def test_claw_checks_lcm_regime() -> None:
-    """Type-violating arguments to `lcm.regime` helpers raise."""
+    """Type-violating arguments to `lcm._regime` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _default_H(
             utility=np.array([1.0]),  # ty: ignore[invalid-argument-type]

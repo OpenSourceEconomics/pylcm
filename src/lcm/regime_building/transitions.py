@@ -1,13 +1,13 @@
 """State transition collection from user-facing `state_transitions` mappings."""
 
+import inspect
 from collections.abc import Callable, Mapping
-from typing import TypeAliasType
+from typing import TypeAliasType, overload
 
 from dags.tree import QNAME_DELIMITER
 
 from lcm._grids import DiscreteGrid, Grid
 from lcm._processes._base import _ProcessGrid
-from lcm.api.regime import _IdentityTransition
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
     ContinuousState,
@@ -17,6 +17,41 @@ from lcm.typing import (
     TransitionFunctionName,
     UserFunction,
 )
+
+
+class _IdentityTransition:
+    """Identity transition function for fixed states.
+
+    Used by `get_all_functions()` so the params template includes fixed states.
+    The `_is_auto_identity` attribute lets validation distinguish auto-generated
+    identities from user-provided transitions.
+
+    """
+
+    _is_auto_identity: bool = True
+
+    def __init__(self, state_name: StateName, *, annotation: TypeAliasType) -> None:
+        self._state_name = state_name
+        self.__name__ = f"next_{state_name}"
+        param = inspect.Parameter(
+            state_name,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=annotation,
+        )
+        self.__signature__ = inspect.Signature(
+            [param],
+            return_annotation=annotation,
+        )
+        self.__annotations__ = {state_name: annotation, "return": annotation}
+
+    @overload
+    def __call__(self, **kwargs: DiscreteState) -> DiscreteState: ...
+    @overload
+    def __call__(self, **kwargs: ContinuousState) -> ContinuousState: ...
+    def __call__(
+        self, **kwargs: DiscreteState | ContinuousState
+    ) -> DiscreteState | ContinuousState:
+        return kwargs[self._state_name]
 
 
 def collect_state_transitions(

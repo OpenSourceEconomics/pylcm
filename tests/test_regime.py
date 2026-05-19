@@ -12,12 +12,14 @@ from lcm._grids import IrregSpacedGrid
 from lcm.api.ages import AgeGrid
 from lcm.api.regime import (
     MarkovTransition,
-    _IdentityTransition,
     validate_transition_probs,
 )
 from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.regime_building.transitions import collect_state_transitions
+from lcm.regime_building.transitions import (
+    _IdentityTransition,
+    collect_state_transitions,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
