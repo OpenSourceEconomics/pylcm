@@ -111,8 +111,8 @@ Two design points worth knowing:
   automatically. Putting a process class in `state_transitions` is a bug.
 - **All vocabulary in the engine speaks of `process`, not `shock`.** Use `is_process`
   (on `VariableInfo`), `process_names` (on `Variables`), and `ProcessName` (typing
-  alias). The codebase previously used `shock`; that word is now reserved for the
-  colloquial meaning and never appears as an identifier.
+  alias). `shock` is reserved for the colloquial meaning and never appears as an
+  identifier.
 
 ## Private siblings of `api/`
 
@@ -137,8 +137,7 @@ _persistence/
 
 simulation/_result_metadata.py
                         ← ResultMetadata + _compute_metadata,
-                          _get_output_dtypes (renamed from
-                          get_simulation_output_dtypes)
+                          _get_output_dtypes
 simulation/_result_dataframe.py
                         ← _create_flat_dataframe and the per-regime / per-period
                           assembly helpers, plus categorical conversion
@@ -180,8 +179,7 @@ machinery operates on:
 - `PeriodRegimeSimulationData` — raw simulation output for one (regime, period) pair,
   before `SimulationResult` materialises a DataFrame.
 
-The file name `engine.py` reflects what's inside: the engine's view of a model. It
-replaces the older name `interfaces.py`, which was too generic to be useful.
+The file name `engine.py` reflects what's inside: the engine's view of a model.
 
 ## Build pipeline: `model_processing.py` and `regime_building/`
 

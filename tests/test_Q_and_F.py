@@ -16,7 +16,7 @@ from lcm.params.processing import (
     get_flat_param_names,
     process_params,
 )
-from lcm.regime_building import process_regimes
+from lcm.regime_building.processing import process_regimes
 from lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,

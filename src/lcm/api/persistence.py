@@ -15,6 +15,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+import cloudpickle
+
 from lcm._persistence._io import (
     _get_platform,
     _load_h5,
@@ -119,8 +121,6 @@ def load_snapshot(
         A `SolveSnapshot` or `SimulateSnapshot`.
 
     """
-    import cloudpickle  # noqa: PLC0415
-
     path = Path(path)
 
     with (path / "metadata.json").open() as fh:

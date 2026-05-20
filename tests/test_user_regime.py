@@ -367,9 +367,10 @@ def test_collect_state_transitions_missing_state_raises():
 
 
 def test_regime_with_fixed_states_only():
-    """Issue #152 (resolved): regimes with only fixed states (transition=None) work.
+    """A regime whose every state is fixed (`state_transitions` all `None`) builds.
 
-    Regression guard -- previously state transition functions were always required.
+    Fixed states need no transition function — identity transitions are
+    auto-generated — so a regime may omit `state_transitions` entries entirely.
     """
 
     @categorical(ordered=False)

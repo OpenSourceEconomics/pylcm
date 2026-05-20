@@ -36,20 +36,10 @@ def as_leaf(
     raise TypeError(msg)
 
 
-def __getattr__(name: str) -> object:
-    if name == "process_params":
-        from lcm.params.processing import process_params  # noqa: PLC0415
-
-        return process_params
-    msg = f"module {__name__!r} has no attribute {name!r}"
-    raise AttributeError(msg)
-
-
 __all__ = [
     "MappingLeaf",
     "SequenceLeaf",
     "UserMappingLeaf",
     "UserSequenceLeaf",
     "as_leaf",
-    "process_params",
 ]

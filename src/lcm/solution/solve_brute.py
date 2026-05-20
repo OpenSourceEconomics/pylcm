@@ -559,7 +559,7 @@ def _raise_at(
     # (per-iteration params + fixed params); the live solve loop merges
     # `resolved_fixed_params` into `regime_params` implicitly via the partialled
     # closures, but we have to do it by hand here to call the diagnostic
-    # directly. Same merge order as `interfaces.state_action_space` and
+    # directly. Same merge order as `engine.state_action_space` and
     # `simulation.result`.
     effective_regime_params = MappingProxyType(
         {**regime.resolved_fixed_params, **regime_params}

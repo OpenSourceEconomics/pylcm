@@ -233,7 +233,7 @@ def convert_series_in_params(
             template_func_name = parts[0] if len(parts) > 1 else func_param
             param_name = parts[-1]
 
-            # Runtime grid/shock params are scalar — no AST inspection
+            # Runtime grid/process params are scalar — no AST inspection
             if _is_runtime_grid_param(
                 func_name=template_func_name, user_regime=user_regime
             ):
@@ -369,7 +369,7 @@ def array_from_series(
     Args:
         sr: Labeled pandas Series.
         func: The function that uses this array parameter. `None` for
-            runtime grid/shock params (triggers scalar passthrough).
+            runtime grid/process params (triggers scalar passthrough).
         param_name: The array parameter name in `func`.
         func_name: Function name (for `next_*` outcome axis detection).
         ages: Age grid for the model.
@@ -862,7 +862,7 @@ def _collect_state_names(
     user_regimes: Mapping[RegimeName, UserRegime],
     initial_regimes: list[RegimeName],
 ) -> set[str]:
-    """Collect all state names (including shock grids) from initial regimes.
+    """Collect all state names (including process grids) from initial regimes.
 
     Returns:
         Set of all state names from the initial regimes, plus the pseudo-state

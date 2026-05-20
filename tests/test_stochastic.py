@@ -3,7 +3,7 @@ from collections.abc import Callable, Mapping
 import jax.numpy as jnp
 import pandas as pd
 import pytest
-from numpy.testing import assert_array_almost_equal
+from numpy.testing import assert_allclose, assert_array_almost_equal
 
 from lcm import (
     AgeGrid,
@@ -282,47 +282,77 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
     )
 
 
-def test_stochastic_next_function_with_no_arguments():
-    """Issue #39 (resolved): zero-arg stochastic next functions now work.
+def _always_bad_draw() -> FloatND:
+    """Degenerate `draw` transition: all mass on `bad` (zero expected bonus)."""
+    return jnp.array([1.0, 0.0])
 
-    Regression guard -- previously the weight function machinery assumed at least
-    one argument, causing a failure.
+
+def test_stochastic_zero_arg_weight_adds_discounted_expected_bonus() -> None:
+    """A zero-argument `MarkovTransition` weight feeds its probabilities into `V`.
+
+    In `_make_minimal_stochastic_model` the `good` outcome of `draw` adds a
+    utility bonus of 1.0 and `draw` is otherwise additively separable from the
+    budget. A 50/50 `draw` therefore raises period-0 `V` over an otherwise
+    identical model with an always-`bad` `draw` by exactly
+    `discount_factor * 0.5` — the discounted expected bonus implied by the
+    `[0.5, 0.5]` weights — at every state grid point.
     """
-
-    def next_draw_no_args() -> FloatND:
-        return jnp.array([0.5, 0.5])
-
-    model = _make_minimal_stochastic_model(next_draw_no_args)
+    discount_factor = 0.95
     params = {
-        "discount_factor": 0.95,
+        "discount_factor": discount_factor,
         "working_life": {"next_regime": {"final_age_alive": 1}},
     }
-    V = model.solve(log_level="debug", params=params)
-    assert all(
-        jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
+
+    def next_draw_5050() -> FloatND:
+        return jnp.array([0.5, 0.5])
+
+    V_stochastic = _make_minimal_stochastic_model(next_draw_5050).solve(
+        log_level="debug", params=params
+    )
+    V_degenerate = _make_minimal_stochastic_model(_always_bad_draw).solve(
+        log_level="debug", params=params
     )
 
+    extra_continuation_value = (
+        V_stochastic[0]["working_life"] - V_degenerate[0]["working_life"]
+    )
+    assert_allclose(extra_continuation_value, discount_factor * 0.5, atol=1e-6)
 
-def test_stochastic_next_depending_on_continuous_state():
-    """Issue #35 (resolved): stochastic next functions can depend on continuous states.
 
-    Regression guard -- previously an explicit check rejected any stochastic
-    dependency that was not a discrete state.
+def test_stochastic_weight_on_continuous_state_varies_continuation_by_wealth() -> None:
+    """A `MarkovTransition` weight may depend on a continuous state.
+
+    `next_draw` sets `P(good)` to `clip(wealth / 10, 0.1, 0.9)`, so the
+    discounted expected bonus in period-0 `V` varies across the wealth grid:
+    `V` exceeds the always-`bad` baseline by exactly
+    `discount_factor * P(good)(wealth)` at each wealth grid point.
     """
+    discount_factor = 0.95
+    params = {
+        "discount_factor": discount_factor,
+        "working_life": {"next_regime": {"final_age_alive": 1}},
+    }
 
-    def next_draw_continuous(wealth: ContinuousState) -> FloatND:
+    def next_draw_wealth_dependent(wealth: ContinuousState) -> FloatND:
         p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
         return jnp.array([1.0 - p_good, p_good])
 
-    model = _make_minimal_stochastic_model(next_draw_continuous)
-    params = {
-        "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
-    V = model.solve(log_level="debug", params=params)
-    assert all(
-        jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
+    V_stochastic = _make_minimal_stochastic_model(next_draw_wealth_dependent).solve(
+        log_level="debug", params=params
     )
+    V_degenerate = _make_minimal_stochastic_model(_always_bad_draw).solve(
+        log_level="debug", params=params
+    )
+
+    extra_continuation_value = (
+        V_stochastic[0]["working_life"] - V_degenerate[0]["working_life"]
+    )
+    # The state grid is (draw, wealth); the bonus is the same for both `draw`
+    # rows, so the per-wealth expected bonus appears on every row.
+    wealth_grid = jnp.linspace(1.0, 10.0, 15)
+    expected_per_wealth = discount_factor * jnp.clip(wealth_grid / 10.0, 0.1, 0.9)
+    expected = jnp.broadcast_to(expected_per_wealth, extra_continuation_value.shape)
+    assert_allclose(extra_continuation_value, expected, atol=1e-6)
 
 
 def test_stochastic_regime_transition_active_at_last_period_raises():

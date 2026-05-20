@@ -19,7 +19,7 @@ def create_state_action_space(
     simulation, states must be provided.
 
     Args:
-        variables: States and actions of the regime with kind/topology/shock tags.
+        variables: States and actions of the regime with kind/topology/process tags.
         grids: Immutable mapping of variable names to Grid spec objects.
         states: A dictionary of states. If None, the grids as specified in the regime
             are used.

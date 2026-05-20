@@ -34,7 +34,7 @@ def _gauss_hermite_normal(
 
 @dataclass(frozen=True, kw_only=True)
 class _ProcessGrid(ContinuousGrid):
-    """Base class for discretized continuous shock grids.
+    """Base class for discretized continuous stochastic processes.
 
     Subclasses define distribution-specific parameters as dataclass fields.
     Parameters set to `None` must be supplied at runtime via `params`.
@@ -42,7 +42,7 @@ class _ProcessGrid(ContinuousGrid):
     """
 
     n_points: int
-    """The number of points for the discretization of the shock."""
+    """The number of points for the discretization of the process."""
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {"n_points", "batch_size", "distributed"}
@@ -97,11 +97,11 @@ class _ProcessGrid(ContinuousGrid):
 
     @abstractmethod
     def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
-        """Compute discretized gridpoints for the shock distribution."""
+        """Compute discretized gridpoints for the process."""
 
     @abstractmethod
     def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
-        """Compute transition probability matrix for the shock distribution."""
+        """Compute transition probability matrix for the process."""
 
     def get_gridpoints(self) -> Float1D:
         """Get the gridpoints used for discretization.
@@ -133,7 +133,8 @@ class _ProcessGrid(ContinuousGrid):
         """Return the generalized coordinate of a value in the grid."""
         if not self.is_fully_specified:
             raise GridInitializationError(
-                "Cannot compute coordinate for a ShockGrid without all shock params."
+                "Cannot compute coordinate for a process grid without all "
+                "distribution params."
             )
         return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
 

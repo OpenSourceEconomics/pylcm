@@ -17,6 +17,7 @@ from lcm.typing import (
     ActionName,
     BoolND,
     FlatParams,
+    FlatRegimeParams,
     FloatND,
     IntND,
     RegimeName,
@@ -63,7 +64,7 @@ def _process_regime(
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
-    regime_params,  # noqa: ANN001
+    regime_params: FlatRegimeParams,
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:

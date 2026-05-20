@@ -10,8 +10,9 @@ from beartype import beartype
 
 from lcm._ages import _is_integer_valued, _parse_step, _validate_age_grid
 from lcm._beartype_conf import GRID_CONF
+from lcm.api.typing import UserAge
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, Int1D, UserAge
+from lcm.typing import Float1D, Int1D
 
 
 class AgeGrid:

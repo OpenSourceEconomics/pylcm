@@ -47,7 +47,7 @@ REGIME_CONF = _conf(RegimeInitializationError)
 # Used on `Model`.
 MODEL_CONF = _conf(ModelInitializationError)
 
-# Used on all grid and shock-grid constructors.
+# Used on all grid and process-grid constructors.
 GRID_CONF = _conf(GridInitializationError)
 
 # Used on the `categorical` decorator factory.

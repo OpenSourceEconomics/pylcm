@@ -8,6 +8,7 @@ from typing import Any, Literal
 import jax.numpy as jnp
 from dags import concatenate_functions
 
+from lcm.api.typing import UserFunction
 from lcm.engine import Regime
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.typing import (
@@ -16,7 +17,6 @@ from lcm.typing import (
     FloatND,
     IntND,
     RegimeName,
-    UserFunction,
 )
 from lcm.utils.dispatchers import vmap_1d
 

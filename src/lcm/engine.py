@@ -42,7 +42,7 @@ from lcm.utils.containers import first_non_none
 
 @dataclasses.dataclass(frozen=True)
 class VariableInfo:
-    """Kind/topology/shock tags for one state or action variable."""
+    """Kind/topology/process tags for one state or action variable."""
 
     kind: Literal["state", "action"]
     """Whether the variable is a state or an action."""
@@ -50,15 +50,15 @@ class VariableInfo:
     topology: Literal["continuous", "discrete"]
     """Topology as treated by pylcm's solve/simulate machinery.
 
-    Shocks have topology `"discrete"` because their value space is
-    approximated by a finite grid of nodes, even though the underlying
-    random variable is mathematically continuous. Combine with `is_process`
-    when the distinction matters.
+    Stochastic processes have topology `"discrete"` because their value
+    space is approximated by a finite grid of nodes, even though the
+    underlying random variable is mathematically continuous. Combine with
+    `is_process` when the distinction matters.
 
     """
 
     is_process: bool
-    """Whether the variable is a shock (always a state)."""
+    """Whether the variable is a stochastic process (always a state)."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,7 +82,7 @@ class Variables(Mapping[StateOrActionName, VariableInfo]):
     """Names of variables with kind='action'."""
 
     discrete_state_names: tuple[StateOrActionName, ...] = dataclasses.field(init=False)
-    """Names of states with topology='discrete' (includes shocks)."""
+    """Names of states with topology='discrete' (includes stochastic processes)."""
 
     continuous_state_names: tuple[StateOrActionName, ...] = dataclasses.field(
         init=False
@@ -383,7 +383,7 @@ class Regime:
     """Immutable mapping of variable names to grid objects."""
 
     variables: Variables
-    """States and actions of the regime, with kind/topology/shock tags."""
+    """States and actions of the regime, with kind/topology/process tags."""
 
     active_periods: tuple[int, ...]
     """Period indices during which this regime is active."""
@@ -420,7 +420,7 @@ class Regime:
         For IrregSpacedGrid (state or continuous action) with runtime-supplied
         points, the grid points come from params as `{name}__points`. For
         `_ProcessGrid` with runtime-supplied params, the grid points are computed
-        from shock params in the params dict or `resolved_fixed_params`.
+        from process params in the params dict or `resolved_fixed_params`.
 
         Args:
             regime_params: Flat regime parameters supplied at runtime.
@@ -465,14 +465,14 @@ class Regime:
                 )
                 if not all_present:
                     continue
-                shock_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
+                process_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    # Runtime shock-grid params are flat JAX scalars — never
+                    # Runtime process-grid params are flat JAX scalars — never
                     # a `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
-                    shock_kw[p] = cast(
+                    process_kw[p] = cast(
                         "ScalarFloat | ScalarInt", all_params[f"{name}__{p}"]
                     )
-                state_replacements[name] = spec.compute_gridpoints(**shock_kw)
+                state_replacements[name] = spec.compute_gridpoints(**process_kw)
 
         new_states = (
             dict(self._base_state_action_space.states) | state_replacements

@@ -1,5 +1,6 @@
 import functools
 import inspect
+from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -15,8 +16,9 @@ from lcm._grids import DiscreteGrid, Grid
 from lcm._grids.coordinates import get_irreg_coordinate
 from lcm._processes import _ProcessGrid
 from lcm.api.ages import AgeGrid
-from lcm.api.regime import MarkovTransition, SolveSimulateFunctionPair
 from lcm.api.regime import Regime as UserRegime
+from lcm.api.transition import MarkovTransition, SolveSimulateFunctionPair
+from lcm.api.typing import UserFunction
 from lcm.engine import (
     Regime,
     SimulateFunctions,
@@ -39,10 +41,10 @@ from lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
-from lcm.regime_building.transitions import (
-    collect_state_transitions,
+from lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
+from lcm.regime_building.transitions import collect_state_transitions
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
@@ -67,7 +69,6 @@ from lcm.typing import (
     TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
-    UserFunction,
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils.containers import ensure_containers_are_immutable
@@ -88,8 +89,8 @@ def process_regimes(
     Extract state transitions from `user_regime.state_transitions` and
     regime transitions from `user_regime.transition`. For fixed states
     (value `None` in `state_transitions`), an identity transition is
-    auto-generated. ShockGrid transitions are generated from the grid's
-    intrinsic transition logic.
+    auto-generated. Stochastic process transitions are generated from the
+    grid's intrinsic transition logic.
 
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime` instances.
@@ -242,7 +243,7 @@ def _build_solve_functions(
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
-        variables: States and actions of the regime with kind/topology/shock tags.
+        variables: States and actions of the regime with kind/topology/process tags.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
@@ -367,7 +368,7 @@ def _build_simulate_functions(
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
-        variables: States and actions of the regime with kind/topology/shock tags.
+        variables: States and actions of the regime with kind/topology/process tags.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
@@ -506,7 +507,7 @@ def _process_regime_core(
         nested_transitions: Nested transitions dict for internal processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
-        variables: States and actions of the regime with kind/topology/shock tags.
+        variables: States and actions of the regime with kind/topology/process tags.
         phase: Which phase variant to use for function pairs.
 
     Returns:
@@ -594,9 +595,9 @@ def _process_regime_core(
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
         )
 
-    # Shock transitions bypass the stub pipeline entirely. Build weight and
+    # Process transitions bypass the stub pipeline entirely. Build weight and
     # next functions for reachable target regimes from each target's grid.
-    # Scope to targets already present in non-shock transitions to avoid
+    # Scope to targets already present in non-process transitions to avoid
     # spurious entries for unreachable regimes.
     process_names = variables.process_names
     reachable_targets = {
@@ -604,33 +605,34 @@ def _process_regime_core(
         for k in flat_nested_transitions
         if QNAME_DELIMITER in k
     }
-    target_shock_grids: dict[tuple[RegimeName, ProcessName], _ProcessGrid] = {
-        (user_regime, shock): grid
+    target_process_grids: dict[tuple[RegimeName, ProcessName], _ProcessGrid] = {
+        (user_regime, process): grid
         for user_regime, grids in all_grids.items()
         if user_regime in reachable_targets
-        for shock in process_names
-        if isinstance(grid := grids.get(shock), _ProcessGrid)
+        for process in process_names
+        if isinstance(grid := grids.get(process), _ProcessGrid)
     }
     functions |= {
-        f"weight_{user_regime}__next_{shock}": _get_weights_func_for_shock(
-            name=shock, grid=grid
+        f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
+            name=process, grid=grid
         )
-        for (user_regime, shock), grid in target_shock_grids.items()
+        for (user_regime, process), grid in target_process_grids.items()
     } | {
-        f"{user_regime}__next_{shock}": _get_stochastic_next_function_for_shock(
-            name=shock, grid=grid.to_jax()
+        f"{user_regime}__next_{process}": _get_stochastic_next_function_for_process(
+            name=process, grid=grid.to_jax()
         )
-        for (user_regime, shock), grid in target_shock_grids.items()
+        for (user_regime, process), grid in target_process_grids.items()
     }
 
-    shock_transition_keys = {
-        f"{user_regime}__next_{shock}" for user_regime, shock in target_shock_grids
+    process_transition_keys = {
+        f"{user_regime}__next_{process}"
+        for user_regime, process in target_process_grids
     }
     internal_transition = {
         func_name: functions[func_name]
         for func_name in flat_nested_transitions
         if func_name != "next_regime"
-    } | {key: functions[key] for key in shock_transition_keys}
+    } | {key: functions[key] for key in process_transition_keys}
 
     constraints: ConstraintFunctionsMapping = MappingProxyType(
         {func_name: functions[func_name] for func_name in user_regime.constraints}
@@ -638,7 +640,7 @@ def _process_regime_core(
     excluded_from_functions = (
         set(flat_nested_transitions)
         | set(user_regime.constraints)
-        | shock_transition_keys
+        | process_transition_keys
     )
     phase_functions = MappingProxyType(
         {
@@ -673,7 +675,8 @@ def _extract_transitions_from_regime(
 
     For non-terminal regimes, reads state transitions from `regime.state_transitions`
     and auto-generates identity transitions for fixed states (`None` values).
-    ShockGrid transitions are handled separately during internal function processing.
+    Stochastic process transitions are handled separately during internal
+    function processing.
 
     For per-target dicts, selects the transition function matching each target regime.
 
@@ -796,11 +799,11 @@ def _get_stochastic_transition_names(
     user_regime: UserRegime,
     variables: Variables,
 ) -> frozenset[TransitionFunctionName]:
-    """Compute stochastic transition names from regime state transitions and shocks.
+    """Compute stochastic transition names from regime state transitions.
 
     Args:
         regime: The user regime.
-        variables: States and actions of the regime with kind/topology/shock tags.
+        variables: States and actions of the regime with kind/topology/process tags.
 
     Returns:
         Frozenset of stochastic transition function names (e.g., "next_health").
@@ -878,10 +881,10 @@ def _get_discrete_markov_next_function(
     return next_func
 
 
-def _get_stochastic_next_function_for_shock(
+def _get_stochastic_next_function_for_process(
     *, name: str, grid: Float1D
 ) -> UserFunction:
-    """Get function that returns the indices in the vf arr of the next shock states."""
+    """Get function returning the indices in the vf arr of the next process states."""
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
     def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
@@ -890,11 +893,11 @@ def _get_stochastic_next_function_for_shock(
     return next_func
 
 
-def _get_weights_func_for_shock(*, name: str, grid: _ProcessGrid) -> UserFunction:
-    """Get function that uses linear interpolation to calculate the shock weights.
+def _get_weights_func_for_process(*, name: str, grid: _ProcessGrid) -> UserFunction:
+    """Get function that uses linear interpolation to calculate the process weights.
 
-    For shocks whose params are supplied at runtime, the grid points and transition
-    probabilities are computed inside JIT from those runtime params.
+    For processes whose params are supplied at runtime, the grid points and
+    transition probabilities are computed inside JIT from those runtime params.
 
     """
     if grid.params_to_pass_at_runtime:
@@ -912,12 +915,12 @@ def _get_weights_func_for_shock(*, name: str, grid: _ProcessGrid) -> UserFunctio
         def weights_func_runtime(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
             # `grid.params` is canonical (0-d JAX scalars) from its own
             # boundary cast; `kwargs` arrive as JAX tracers from JIT.
-            shock_kw: dict[str, FloatND | IntND] = {
+            process_kw: dict[str, FloatND | IntND] = {
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
-            gridpoints = grid.compute_gridpoints(**shock_kw)
-            transition_probs = grid.compute_transition_probs(**shock_kw)
+            gridpoints = grid.compute_gridpoints(**process_kw)
+            transition_probs = grid.compute_transition_probs(**process_kw)
             coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
             return map_coordinates(
                 input=transition_probs,
@@ -1122,8 +1125,6 @@ def _build_ordering_graph(
     regime_categories: list[tuple[str, tuple[str, ...]]],
 ) -> tuple[dict[str, set[str]], set[str], dict[str, int]]:
     """Build a directed graph of ordering constraints from regime categories."""
-    from collections import defaultdict  # noqa: PLC0415
-
     edges: dict[str, set[str]] = defaultdict(set)
     all_nodes: set[str] = set()
     in_degree: dict[str, int] = defaultdict(int)

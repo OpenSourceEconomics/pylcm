@@ -19,7 +19,7 @@ from lcm.typing import Float1D, FloatND, PRNGKeyND, ScalarFloat, ScalarInt
 
 @dataclass(frozen=True, kw_only=True)
 class _ProcessGridIID(_ProcessGrid):
-    """Base for iid shocks — draw does not depend on previous value."""
+    """Base for IID processes — draw does not depend on previous value."""
 
     @abstractmethod
     def draw_shock(
@@ -32,7 +32,7 @@ class _ProcessGridIID(_ProcessGrid):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class UniformIIDProcess(_ProcessGridIID):
-    r"""Discretized iid uniform shock: $U(\text{start}, \text{stop})$.
+    r"""Discretized IID uniform process: $U(\text{start}, \text{stop})$.
 
     The continuous distribution is discretized into `n_points` equally spaced
     points between `start` and `stop`.
@@ -67,7 +67,7 @@ class UniformIIDProcess(_ProcessGridIID):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class NormalIIDProcess(_ProcessGridIID):
-    r"""Discretized iid normal shock: $N(\mu_\varepsilon, \sigma_\varepsilon^2)$.
+    r"""Discretized IID normal process: $N(\mu_\varepsilon, \sigma_\varepsilon^2)$.
 
     When `gauss_hermite=True`, the distribution is discretized using
     Gauss-Hermite quadrature nodes and weights.  When `gauss_hermite=False`,
@@ -80,10 +80,10 @@ class NormalIIDProcess(_ProcessGridIID):
     """Use Gauss-Hermite quadrature nodes and weights."""
 
     mu: float | int | None = None
-    """Mean of the shock distribution."""
+    """Mean of the distribution."""
 
     sigma: float | int | None = None
-    """Standard deviation of the shock distribution."""
+    """Standard deviation of the distribution."""
 
     n_std: float | int | None = None
     """Number of standard deviations from the mean to the grid boundary."""
@@ -142,7 +142,7 @@ class NormalIIDProcess(_ProcessGridIID):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class LogNormalIIDProcess(_ProcessGridIID):
-    r"""Discretized iid log-normal shock: $\ln X \sim N(\mu, \sigma^2)$."""
+    r"""Discretized IID log-normal process: $\ln X \sim N(\mu, \sigma^2)$."""
 
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
@@ -208,9 +208,9 @@ class LogNormalIIDProcess(_ProcessGridIID):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class NormalMixtureIIDProcess(_ProcessGridIID):
-    r"""Discretized IID normal-mixture shock.
+    r"""Discretized IID normal-mixture process.
 
-    The shock is drawn from a two-component normal mixture:
+    Each period's draw is taken from a two-component normal mixture:
 
     $\varepsilon \sim p_1 \, N(\mu_1, \sigma_1^2)
     + (1 - p_1) \, N(\mu_2, \sigma_2^2)$

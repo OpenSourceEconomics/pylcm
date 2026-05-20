@@ -146,7 +146,7 @@ def test_frozen_dataclass_rejects_field_assignment(
 def test_from_regime_orders_discrete_states_continuous_states_actions(
     binary_category_class,
 ) -> None:
-    """`Variables.from_regime` orders discrete states → continuous states → actions."""
+    """`from_regime` orders discrete states → continuous states → actions."""
 
     def next_state(x):
         return x

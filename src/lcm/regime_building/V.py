@@ -54,7 +54,7 @@ def create_v_interpolation_info(user_regime: UserRegime) -> VInterpolationInfo:
     return VInterpolationInfo(
         state_names=variables.state_names,
         # `variables.{discrete,continuous}_state_names` filter on
-        # topology/shock; ty can't see through that to narrow grid types.
+        # topology/process; ty can't see through that to narrow grid types.
         discrete_states=MappingProxyType(discrete_states),  # ty: ignore[invalid-argument-type]
         continuous_states=MappingProxyType(continuous_states),  # ty: ignore[invalid-argument-type]
     )
@@ -234,7 +234,7 @@ def _get_coordinate_finder(
 
         return find_irreg_coordinate
 
-    # All other grid types (LinSpaced, LogSpaced, Piecewise*, ShockGrid)
+    # All other grid types (LinSpaced, LogSpaced, Piecewise*, _ProcessGrid)
     @with_signature(
         args=dict.fromkeys([in_name], "FloatND"), return_annotation="FloatND"
     )

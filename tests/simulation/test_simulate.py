@@ -10,7 +10,7 @@ from pandas.testing import assert_frame_equal
 from lcm import Model
 from lcm.api.ages import AgeGrid
 from lcm.api.result import SimulationResult
-from lcm.regime_building import process_regimes
+from lcm.regime_building.processing import process_regimes
 from lcm.simulation._result_metadata import _get_output_dtypes
 from lcm.simulation.simulate import (
     _lookup_values_from_indices,

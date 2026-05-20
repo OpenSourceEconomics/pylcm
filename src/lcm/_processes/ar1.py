@@ -20,7 +20,7 @@ from lcm.typing import Float1D, FloatND, PRNGKeyND, ScalarFloat, ScalarInt
 
 @dataclass(frozen=True, kw_only=True)
 class _ProcessGridAR1(_ProcessGrid):
-    """Base for AR(1) shocks — draw depends on previous value."""
+    """Base for AR(1) processes — draw depends on previous value."""
 
     @abstractmethod
     def draw_shock(
@@ -34,7 +34,7 @@ class _ProcessGridAR1(_ProcessGrid):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class TauchenAR1Process(_ProcessGridAR1):
-    r"""AR(1) shock discretized via Tauchen (1986).
+    r"""AR(1) process discretized via Tauchen (1986).
 
     The process is
     $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
@@ -134,7 +134,7 @@ class TauchenAR1Process(_ProcessGridAR1):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class RouwenhorstAR1Process(_ProcessGridAR1):
-    r"""AR(1) shock discretized via Rouwenhorst (1995).
+    r"""AR(1) process discretized via Rouwenhorst (1995).
 
     The process is
     $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
@@ -203,7 +203,7 @@ class RouwenhorstAR1Process(_ProcessGridAR1):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class TauchenNormalMixtureAR1Process(_ProcessGridAR1):
-    r"""AR(1) shock with mixture-of-normals innovations, discretized via Tauchen.
+    r"""AR(1) process with mixture-of-normals innovations, discretized via Tauchen.
 
     The process is
     $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,

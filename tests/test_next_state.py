@@ -5,12 +5,12 @@ import jax.numpy as jnp
 from lcm._grids import DiscreteGrid, categorical
 from lcm.api.ages import AgeGrid
 from lcm.engine import VariableInfo, Variables
-from lcm.regime_building import process_regimes
 from lcm.regime_building.next_state import (
     _create_discrete_stochastic_next_func,
     get_next_state_function_for_simulation,
     get_next_state_function_for_solution,
 )
+from lcm.regime_building.processing import process_regimes
 from lcm.typing import ContinuousState, ScalarInt
 from tests.test_models.deterministic.regression import dead, working_life
 

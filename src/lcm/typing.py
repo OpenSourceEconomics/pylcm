@@ -96,7 +96,7 @@ class EconFunction(Protocol):
     utility, the Bellman aggregator `H`, and any helper / DAG functions
     whose output is consumed by them. Returns a numeric array
     (`FloatND` or `IntND`). Feasibility predicates live in
-    `ConstraintFunction`; state / regime / shock transitions live in
+    `ConstraintFunction`; state / regime / process transitions live in
     `TransitionFunction`.
 
     Used for both type checking and beartype runtime checks.
@@ -131,11 +131,11 @@ class ConstraintFunction(Protocol):
 
 @runtime_checkable
 class TransitionFunction(Protocol):
-    """A state / regime / shock transition function.
+    """A state / regime / process transition function.
 
     Stored on `Regime.transition` (regime transition), in
     `Regime.state_transitions` (per-state, plus per-target dicts),
-    and as the auto-generated stubs for shock-derived transitions.
+    and as the auto-generated stubs for process-derived transitions.
     Returns the deterministic next-period value (`IntND` / `FloatND`)
     or, for stochastic / weight functions, the corresponding numeric
     array (probability mass, weight, etc.).

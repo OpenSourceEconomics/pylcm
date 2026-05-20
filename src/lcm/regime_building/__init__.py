@@ -1,3 +1,5 @@
-from lcm.regime_building.processing import process_regimes
+"""Regime-building pipeline: user regimes to canonical engine regimes.
 
-__all__ = ["process_regimes"]
+Submodules are imported explicitly (e.g. `lcm.regime_building.processing`)
+rather than re-exported here, so importing one submodule does not eagerly
+pull in the others."""

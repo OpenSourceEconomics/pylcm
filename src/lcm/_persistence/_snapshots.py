@@ -145,7 +145,7 @@ def _strip_V_arr_from_result(
 
     `period_to_regime_to_V_arr` is dropped to avoid storing it both in the
     pickle and in the HDF5 file. `_regimes` is overwritten with the
-    model's lazy-path `regimes`: when `Model(n_subjects=N)` is set
+    model's lazy-path `_regimes`: when `Model(n_subjects=N)` is set
     the result carries the AOT-compiled regimes, whose
     `jax.stages.Compiled` callables hold a `LoadedExecutable` that cannot
     be pickled. The lazy regimes carry the same metadata and cloud-pickle

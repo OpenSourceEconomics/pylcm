@@ -80,8 +80,6 @@ def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
         @classmethod
         def _to_categorical_dtype(cls: type) -> pd.CategoricalDtype:
             """Return a `pd.CategoricalDtype` with the category names of this class."""
-            import pandas as pd  # noqa: PLC0415
-
             names = [f.name for f in dataclasses.fields(cls)]
             return pd.CategoricalDtype(categories=names, ordered=cls._ordered)  # ty: ignore[unresolved-attribute]
 

@@ -8,7 +8,7 @@ of public class definitions.
 """
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -22,11 +22,12 @@ from lcm._regime._validation import (
     _validate_logical_consistency,
     _validate_mapping_contents,
 )
+from lcm.api.transition import MarkovTransition, SolveSimulateFunctionPair
 from lcm.exceptions import RegimeInitializationError
+from lcm.regime_building.transitions import collect_state_transitions
 from lcm.typing import (
     ActionName,
     ActiveFunction,
-    FloatND,
     FunctionName,
     RegimeName,
     StateName,
@@ -35,64 +36,6 @@ from lcm.typing import (
 from lcm.utils.containers import (
     ensure_containers_are_immutable,
 )
-
-
-class SolveSimulateFunctionPair[S, T]:
-    """Container for phase-specific function variants.
-
-    Use this to provide different implementations of a function for the solve
-    and simulate phases.  For example, naive beta-delta discounting uses
-    exponential discounting during backward induction (solve) but
-    present-biased discounting for action selection (simulate).
-
-    Variants may have different parameter signatures.  The params template is
-    the union of both variants' parameters; each variant receives only the
-    kwargs it expects.
-
-    """
-
-    __slots__ = ("simulate", "solve")
-
-    def __init__(self, *, solve: S, simulate: T) -> None:
-        self.solve = solve
-        self.simulate = simulate
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True)
-class MarkovTransition:
-    """Wrapper marking a transition function as stochastic (Markov).
-
-    Wrap a transition function in `MarkovTransition` to indicate that it returns
-    a probability distribution over next states (for state transitions) or over
-    next regimes (for regime transitions), rather than a deterministic next value.
-
-    Use at both the state and regime level:
-
-        # Stochastic state transition (in Regime.state_transitions)
-        state_transitions={"health": MarkovTransition(health_probs)}
-
-        # Stochastic regime transition
-        Regime(transition=MarkovTransition(regime_probs), ...)
-
-    A bare callable (without the wrapper) is deterministic at both levels.
-
-    """
-
-    func: Callable[..., FloatND]
-    """The transition function returning a probability distribution."""
-
-    def __post_init__(self) -> None:
-        # Copy __wrapped__ and __annotations__ from the wrapped function so
-        # that inspect.signature and dags see the original signature. We use
-        # object.__setattr__ because the dataclass is frozen.
-        object.__setattr__(self, "__wrapped__", self.func)
-        object.__setattr__(
-            self, "__annotations__", getattr(self.func, "__annotations__", {})
-        )
-
-    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
-        return self.func(*args, **kwargs)
 
 
 @beartype(conf=REGIME_CONF)
@@ -106,7 +49,8 @@ class Regime:
     State transitions are specified via `state_transitions`, mapping state names to
     transition functions. A bare callable is deterministic; wrap in `MarkovTransition`
     for stochastic transitions. `None` marks a fixed state (identity auto-generated).
-    ShockGrids have intrinsic transitions and must not appear in `state_transitions`.
+    Stochastic processes have intrinsic transitions and must not appear in
+    `state_transitions`.
 
     The `transition` field on the regime itself is the *regime* transition function.
     A regime with `transition=None` is terminal — no separate `terminal` flag is
@@ -138,7 +82,7 @@ class Regime:
     ] = field(default_factory=lambda: MappingProxyType({}))
     """Mapping of state names to transition functions, `None`, or per-target dicts.
 
-    Every non-shock state must have an entry — omitting a state raises an error.
+    Every non-process state must have an entry — omitting a state raises an error.
     `None` marks a fixed state (identity auto-generated internally). Wrap in
     `MarkovTransition` for stochastic transitions. Per-target dicts map target
     regime names to transition functions — every reachable target must be listed.
@@ -229,10 +173,6 @@ class Regime:
                 result[name] = func
         result |= dict(self.constraints)
         if callable(self.transition):
-            from lcm.regime_building.transitions import (  # noqa: PLC0415
-                collect_state_transitions,
-            )
-
             result |= collect_state_transitions(self.states, self.state_transitions)
             result["next_regime"] = self.transition
         return MappingProxyType(result)

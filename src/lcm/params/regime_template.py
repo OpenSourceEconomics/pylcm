@@ -7,13 +7,13 @@ from lcm._grids import IrregSpacedGrid
 from lcm._processes import _ProcessGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.api.regime import SolveSimulateFunctionPair
+from lcm.api.typing import UserFunction
 from lcm.exceptions import InvalidNameError
 from lcm.regime_building.transitions import collect_state_transitions
 from lcm.typing import (
     FunctionName,
     RegimeParamsTemplate,
     TransitionFunctionName,
-    UserFunction,
 )
 
 
@@ -29,7 +29,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
     dict that satisfies both phases.
 
     Grids with runtime-supplied values (`IrregSpacedGrid` without points,
-    `_ProcessGrid` without full shock_params) add entries to the template under
+    `_ProcessGrid` without full distribution params) add entries to the template under
     pseudo-function keys matching the state or action name.
 
     Args:

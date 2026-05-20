@@ -17,6 +17,7 @@ from dags.tree import QNAME_DELIMITER
 
 from lcm._grids import DiscreteGrid, Grid
 from lcm._processes._base import _ProcessGrid
+from lcm.api.transition import MarkovTransition, SolveSimulateFunctionPair
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.typing import (
     ActiveFunction,
@@ -40,8 +41,6 @@ def _validate_mapping_contents(regime: lcm.api.regime.Regime) -> None:
     the standard `error_messages` aggregator.
 
     """
-    from lcm.api.regime import SolveSimulateFunctionPair  # noqa: PLC0415
-
     error_messages: list[str] = []
 
     for attr_name in ("states", "actions"):
@@ -272,11 +271,11 @@ def _validate_state_transitions(regime: lcm.api.regime.Regime) -> list[str]:
                 "Identity transitions require the state to exist in this regime.",
             )
 
-    shock_in_transitions = process_names & set(regime.state_transitions)
-    if shock_in_transitions:
+    process_in_transitions = process_names & set(regime.state_transitions)
+    if process_in_transitions:
         error_messages.append(
-            f"ShockGrid states have intrinsic transitions and must not appear "
-            f"in state_transitions: {shock_in_transitions}.",
+            f"Stochastic process states have intrinsic transitions and must not "
+            f"appear in state_transitions: {process_in_transitions}.",
         )
 
     if regime.terminal:
@@ -289,7 +288,7 @@ def _validate_state_transitions(regime: lcm.api.regime.Regime) -> list[str]:
     missing = non_process_names - set(regime.state_transitions)
     if missing:
         error_messages.append(
-            f"Every non-shock state must have an entry in state_transitions. "
+            f"Every non-process state must have an entry in state_transitions. "
             f"Missing: {missing}. Use None for fixed states.",
         )
 
@@ -313,8 +312,6 @@ def _validate_per_target_dict(
     *, state_name: StateName, targets: Mapping[RegimeName, object]
 ) -> list[str]:
     """Validate a per-target transition dict for stochastic consistency and types."""
-    from lcm.api.regime import MarkovTransition  # noqa: PLC0415
-
     error_messages: list[str] = []
     markov_count = 0
     for target_name, target_value in targets.items():

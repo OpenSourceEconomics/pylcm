@@ -84,7 +84,7 @@ def get_next_state_function_for_simulation(
         transitions: Nested mapping of target regime names to transition functions.
         functions: Immutable mapping of auxiliary functions of a regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        variables: States and actions of the regime with kind/topology/shock tags.
+        variables: States and actions of the regime with kind/topology/process tags.
         stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
@@ -180,7 +180,7 @@ def _extend_target_transitions_for_simulation(
             to functions, restricted to one target regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         variables: States and actions of the current regime with
-            kind/topology/shock tags.
+            kind/topology/process tags.
         stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
@@ -260,14 +260,14 @@ def _create_continuous_stochastic_next_func(
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
-    For shocks whose params are supplied at runtime, the runtime params are
-    accepted as additional keyword arguments and merged with fixed shock_params
-    before calling the shock calculation function.
+    For processes whose params are supplied at runtime, the runtime params are
+    accepted as additional keyword arguments and merged with fixed process
+    params before calling the process calculation function.
 
     Args:
         target: Target regime name.
         next_state_name: Transition function name with the `next_` prefix
-            (e.g. `next_shock`).
+            (e.g. `next_<process>`).
         all_grids: Immutable mapping of regime names to Grid spec objects.
 
     Returns:
