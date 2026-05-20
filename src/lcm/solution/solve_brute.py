@@ -105,11 +105,13 @@ def solve(
     # localisation. On a healthy solve no per-row materialisation
     # happens.
     #
-    # Gate falls out of the public log level:
-    # - `"off"` ⇒ nothing (skips even the NaN fail-fast)
-    # - `"warning"` / `"progress"` ⇒ NaN/Inf only
-    # - `"debug"` ⇒ adds the min/max/mean trio
-    diagnostics_enabled = logger.isEnabledFor(logging.WARNING)
+    # Two gates, both falling out of the public log level:
+    # - NaN/Inf tracking feeds runtime validation, so it runs whenever
+    #   validation is not `"off"` (log levels `"warning"`/`"progress"`/
+    #   `"debug"`). It skips even the NaN fail-fast when validation is off.
+    # - The min/max/mean trio is a pure logging extra, gated on the
+    #   logger's debug level.
+    diagnostics_enabled = validation_mode != "off"
     stats_enabled = logger.isEnabledFor(logging.DEBUG)
     diagnostic_rows: list[_DiagnosticRow] = []
     diagnostic_min: list[FloatND] = []
