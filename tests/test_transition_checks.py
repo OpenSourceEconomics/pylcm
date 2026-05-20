@@ -1,9 +1,12 @@
 """Automatic state transition probability validation.
 
-Exercises the pre-solve sweep `validate_state_transitions_all_periods`
-(`lcm/_transition_checks.py`) and the process-time AST + n_outcomes
-derivation (`regime_building/static_checks.py`).
+Exercises the pre-solve numerical sweep over `MarkovTransition` state
+transitions, the process-time AST subscript-order check, and the way the
+`log_level` validation policy turns failures into warnings or raises.
 """
+
+import logging
+from pathlib import Path
 
 import jax.numpy as jnp
 import pytest
@@ -26,6 +29,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm.user_regime import Regime as UserRegime
+from lcm.utils.logging import LogLevel
 
 
 @categorical(ordered=False)
@@ -97,18 +101,48 @@ def _model_with_state_probs(next_health_func) -> Model:
     )
 
 
-def test_valid_state_probs_pass() -> None:
-    """A correct MarkovTransition function passes pre-solve validation."""
+def test_valid_state_probs_at_boundary_pass() -> None:
+    """Inclusive [0, 1] bounds and a row sum within the 1e-6 tolerance pass.
 
-    def good_health_probs(health: DiscreteState) -> FloatND:
+    For `health == good` the row is exactly `[0.0, 1.0]` — values at the
+    inclusive bounds. For `health == bad` the row sums to `1 - 5e-7`, just
+    inside the `atol=1e-6` row-sum tolerance. Validation must accept both
+    without raising.
+    """
+
+    def boundary_health_probs(health: DiscreteState) -> FloatND:
         return jnp.where(
             health == _Health.good,
-            jnp.array([0.2, 0.8]),
-            jnp.array([0.6, 0.4]),
+            jnp.array([0.0, 1.0]),
+            jnp.array([0.5, 0.4999995]),
         )
 
-    model = _model_with_state_probs(good_health_probs)
+    model = _model_with_state_probs(boundary_health_probs)
     model.solve(params={"discount_factor": 0.95})
+
+
+def test_runtime_check_catches_invalidity_hidden_at_some_grid_points() -> None:
+    """An ensemble valid at some continuous-grid points and invalid at others raises.
+
+    The `MarkovTransition` for `health` is conditioned on the continuous
+    `wealth` grid: it returns a valid row for `wealth <= 5` and a row summing
+    to 0.7 for `wealth > 5`. Only sweeping the full `wealth` grid surfaces the
+    failure — a spot check at the first grid point (`wealth == 1`) would pass.
+    """
+
+    def sneaky_health_probs(
+        wealth: ContinuousState,
+        health: DiscreteState,  # noqa: ARG001
+    ) -> FloatND:
+        return jnp.where(
+            wealth > 5.0,
+            jnp.array([0.5, 0.2]),
+            jnp.array([0.3, 0.7]),
+        )
+
+    model = _model_with_state_probs(sneaky_health_probs)
+    with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
+        model.solve(params={"discount_factor": 0.95})
 
 
 def test_runtime_check_raises_on_wrong_outcome_axis_size() -> None:
@@ -156,19 +190,30 @@ def test_log_level_off_skips_runtime_check() -> None:
     model.solve(params={"discount_factor": 0.95}, log_level="off")
 
 
-@pytest.mark.parametrize("log_level", ["warning", "progress", "debug"])
-def test_runtime_check_runs_at_all_non_off_log_levels(log_level: str, tmp_path) -> None:
-    """Validation fires at every log level except 'off'."""
+@pytest.mark.parametrize("log_level", ["warning", "progress"])
+def test_warn_levels_log_invalid_probs_and_continue(
+    log_level: LogLevel, caplog: pytest.LogCaptureFixture
+) -> None:
+    """At 'warning'/'progress', invalid state probs log a warning; solve continues."""
 
     def bad_sum_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
         return jnp.array([0.5, 0.2])
 
     model = _model_with_state_probs(bad_sum_probs)
-    kwargs: dict = {"params": {"discount_factor": 0.95}, "log_level": log_level}
-    if log_level == "debug":
-        kwargs["log_path"] = tmp_path
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.solve(params={"discount_factor": 0.95}, log_level=log_level)
+    assert "sum to 1" in caplog.text
+
+
+def test_debug_level_raises_on_invalid_probs() -> None:
+    """At log_level='debug', invalid state probs raise rather than warn."""
+
+    def bad_sum_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.array([0.5, 0.2])
+
+    model = _model_with_state_probs(bad_sum_probs)
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
-        model.solve(**kwargs)
+        model.solve(params={"discount_factor": 0.95}, log_level="debug")
 
 
 def test_subscript_order_swap_raises_at_process_time() -> None:
@@ -296,6 +341,57 @@ def test_per_target_dict_validates_each_entry() -> None:
     )
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
         model.solve(params={"discount_factor": 0.95})
+
+
+def _good_health_probs(health: DiscreteState) -> FloatND:
+    return jnp.where(
+        health == _Health.good,
+        jnp.array([0.2, 0.8]),
+        jnp.array([0.6, 0.4]),
+    )
+
+
+@pytest.mark.parametrize(
+    ("log_level", "expect_snapshot"),
+    [
+        ("off", False),
+        ("warning", False),
+        ("progress", False),
+        ("debug", True),
+    ],
+)
+def test_snapshot_written_only_at_debug_on_valid_solve(
+    log_level: LogLevel,
+    expect_snapshot: bool,  # noqa: FBT001
+    tmp_path: Path,
+) -> None:
+    """With `log_path` set, a valid solve writes a snapshot only at `"debug"`.
+
+    Pins the snapshot column of the `log_level` x `log_path` table for a solve
+    that produces no NaN: `"debug"` snapshots every call, the warn/off levels
+    do not.
+    """
+    model = _model_with_state_probs(_good_health_probs)
+    model.solve(
+        params={"discount_factor": 0.95}, log_level=log_level, log_path=tmp_path
+    )
+    snapshots = list(tmp_path.glob("solve_snapshot_*"))
+    assert bool(snapshots) is expect_snapshot
+
+
+def test_warn_mode_writes_snapshot_on_nan_failure(tmp_path: Path) -> None:
+    """At `"warning"` with `log_path` set, a NaN solve writes a snapshot.
+
+    Pins the "one per warned failure" snapshot-table cell: warn mode does not
+    raise, so the snapshot is the only on-disk record of the failed solve.
+    """
+    model = _model_with_state_probs(_good_health_probs)
+    model.solve(
+        params={"discount_factor": float("nan")},
+        log_level="warning",
+        log_path=tmp_path,
+    )
+    assert list(tmp_path.glob("solve_snapshot_*"))
 
 
 def test_model_with_no_markov_transitions_solves_normally() -> None:

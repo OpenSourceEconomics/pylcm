@@ -146,6 +146,7 @@ def test_solve_brute():
         regimes=MappingProxyType({"default": regime}),
         logger=get_logger(log_level="off"),
         enable_jit=False,
+        validation_mode="raise",
     )
 
     # Solution is now MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
@@ -207,6 +208,7 @@ def test_solve_brute_single_period_Qc_arr():
         regimes=MappingProxyType({"default": regime}),
         logger=get_logger(log_level="off"),
         enable_jit=False,
+        validation_mode="raise",
     )
 
     # Solution is now dict[int, dict[RegimeName, FloatND]], need to extract the V_arr

@@ -16,24 +16,46 @@ period_to_regime_to_V_arr = model.solve(params=params)
 Performs backward induction using dynamic programming. Returns an immutable mapping of
 `period -> regime_name -> value_function_array`.
 
-### Log levels
+### Log levels and runtime validation
 
-Control console output and snapshot persistence with `log_level`:
+`log_level` controls both console verbosity *and* the runtime-validation policy: how
+`solve()` / `simulate()` react to an invalid transition-probability ensemble or a NaN
+value function. The default is `"debug"` — validation runs and raises.
 
 ```python
-# Default: progress + timing
+# Default: validation runs and raises on the first failure
 period_to_regime_to_V_arr = model.solve(params=params)
 
-# Silent
+# Silent — no logging, no validation
 period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
 
-# Full diagnostics + disk snapshots
+# Validation runs but only warns; the run continues
+period_to_regime_to_V_arr = model.solve(params=params, log_level="warning")
+
+# Diagnostics + disk snapshots
 period_to_regime_to_V_arr = model.solve(
     params=params, log_level="debug", log_path="./debug/"
 )
 ```
 
-See [Debugging](debugging.md) for details on log levels and debug snapshots.
+The full behaviour of every `log_level` × `log_path` combination:
+
+| `log_level`           | `log_path` | Runtime validation        | Console output                  | Snapshots to disk                                         |
+| --------------------- | ---------- | ------------------------- | ------------------------------- | --------------------------------------------------------- |
+| `"off"`               | (ignored)  | not run                   | silent                          | none                                                      |
+| `"warning"`           | `None`     | runs → failures **warn**  | warnings                        | none                                                      |
+| `"warning"`           | set        | runs → failures **warn**  | warnings                        | one per warned failure, capped at `log_keep_n_latest`     |
+| `"progress"`          | `None`     | runs → failures **warn**  | warnings + per-period timing    | none                                                      |
+| `"progress"`          | set        | runs → failures **warn**  | warnings + per-period timing    | one per warned failure, capped at `log_keep_n_latest`     |
+| `"debug"` *(default)* | `None`     | runs → failures **raise** | warnings + timing + V_arr stats | none                                                      |
+| `"debug"` *(default)* | set        | runs → failures **raise** | warnings + timing + V_arr stats | one per solve and on raise, capped at `log_keep_n_latest` |
+
+`log_path` is optional at every level — snapshots are written only when it is set. In
+`"warning"` / `"progress"` mode, an invalid model produces warnings and a numerically
+meaningless result rather than an exception; use this to keep an estimation loop
+running, but read the warnings.
+
+See [Debugging](debugging.md) for details on snapshots.
 
 ## Simulating
 
@@ -123,8 +145,9 @@ initial_conditions = {
 - `check_initial_conditions=True`: Validates that initial states are on-grid and regimes
   are valid. Set to `False` to skip validation.
 - `seed=None`: Random seed for stochastic simulations (int).
-- `log_level="progress"`: Controls logging verbosity (same options as `solve()`).
-- `log_path=None`: Directory for debug snapshots (when `log_level="debug"`).
+- `log_level="debug"`: Console verbosity and runtime-validation policy (same options and
+  table as `solve()`).
+- `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
 
 ### Heterogeneous initial ages

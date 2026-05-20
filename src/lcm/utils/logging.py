@@ -7,12 +7,68 @@ from lcm.typing import FloatND, Int1D, RegimeIdsToNames, ScalarFloat, ScalarInt
 
 type LogLevel = Literal["off", "warning", "progress", "debug"]
 
+# How runtime validation reacts to an invalid input:
+# - "off" — validation does not run.
+# - "warn" — validation runs; failures are logged as warnings, the run continues.
+# - "raise" — validation runs; failures raise.
+type ValidationMode = Literal["off", "warn", "raise"]
+
 _LOG_LEVEL_MAP: dict[str, int] = {
     "off": logging.CRITICAL,
     "warning": logging.WARNING,
     "progress": logging.INFO,
     "debug": logging.DEBUG,
 }
+
+_VALIDATION_MODE_MAP: dict[LogLevel, ValidationMode] = {
+    "off": "off",
+    "warning": "warn",
+    "progress": "warn",
+    "debug": "raise",
+}
+
+
+def get_validation_mode(*, log_level: LogLevel) -> ValidationMode:
+    """Map a log level to its runtime-validation behaviour.
+
+    `"off"` disables validation entirely; `"warning"` and `"progress"` run
+    validation and log failures as warnings without interrupting the run;
+    `"debug"` runs validation and raises on the first failure.
+
+    Args:
+        log_level: The verbosity level passed to `solve` / `simulate`.
+
+    Returns:
+        The validation mode the level implies.
+
+    """
+    return _VALIDATION_MODE_MAP[log_level]
+
+
+def raise_or_warn(
+    *,
+    mode: ValidationMode,
+    logger: logging.Logger,
+    error: Exception,
+) -> None:
+    """Surface a validation failure according to the validation mode.
+
+    In `"raise"` mode the error is raised. In `"warn"` mode it is logged as a
+    warning and control returns to the caller so the run continues. `"off"` is
+    not a valid mode here — validation should not have run at all.
+
+    Args:
+        mode: The active validation mode (`"warn"` or `"raise"`).
+        logger: Logger used to emit the warning in `"warn"` mode.
+        error: The validation error to raise or describe.
+
+    Raises:
+        Exception: The passed `error`, when `mode` is `"raise"`.
+
+    """
+    if mode == "raise":
+        raise error
+    logger.warning("%s", error)
 
 
 def get_logger(*, log_level: LogLevel) -> logging.Logger:

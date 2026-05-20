@@ -14,9 +14,10 @@ runs. Two families:
   state transition (incl. per-target dict entries), evaluates the user
   function on the Cartesian product of the function's accepted grid
   variables, and verifies outcome-axis size, [0, 1] range, and sum-to-1.
-  Gated by `log_level != "off"` because state transitions commonly depend
-  on more variables than regime transitions, so the Cartesian product can
-  blow up.
+
+Both checks take a `ValidationMode`: `"off"` skips the check, `"warn"` logs
+each failure and lets the run continue, `"raise"` raises on the first
+failure. The mode is derived from the caller's `log_level`.
 
 These are runtime checks: they need a fully-built `Regime` plus user
 `flat_params` and evaluate the transition functions numerically. The
@@ -26,6 +27,7 @@ inspect grids, signatures, and Python source) are a separate concern.
 """
 
 import inspect
+import logging
 from types import MappingProxyType
 
 import jax
@@ -48,6 +50,7 @@ from lcm.typing import (
     ScalarInt,
     StateOrActionName,
 )
+from lcm.utils.logging import ValidationMode, raise_or_warn
 
 
 def validate_regime_transitions_all_periods(
@@ -55,6 +58,8 @@ def validate_regime_transitions_all_periods(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
+    mode: ValidationMode,
+    logger: logging.Logger,
 ) -> None:
     """Validate regime transition probabilities for all periods before solve.
 
@@ -66,12 +71,18 @@ def validate_regime_transitions_all_periods(
         regimes: Immutable mapping of regime names to regimes.
         flat_params: Immutable mapping of regime names to flat parameter mappings.
         ages: Age grid for the model.
+        mode: Validation mode. `"off"` returns immediately; `"warn"` logs each
+            failure and continues; `"raise"` raises on the first failure.
+        logger: Logger used to emit warnings in `"warn"` mode.
 
     Raises:
-        InvalidRegimeTransitionProbabilitiesError: If any inactive regime receives
-            positive transition probability.
+        InvalidRegimeTransitionProbabilitiesError: If a regime transition produces
+            invalid probabilities and `mode` is `"raise"`.
 
     """
+    if mode == "off":
+        return
+
     last_period = ages.n_periods - 1
     non_terminal_active_at_last = [
         regime_name
@@ -79,12 +90,16 @@ def validate_regime_transitions_all_periods(
         if not regime.terminal and last_period in regime.active_periods
     ]
     if non_terminal_active_at_last:
-        raise InvalidRegimeTransitionProbabilitiesError(
-            f"Non-terminal regime(s) {non_terminal_active_at_last} are active at the "
-            f"last period (age {ages.exact_values[last_period]}). Non-terminal regimes "
-            "must not be active at the last period because there is no next period to "
-            "transition to. Adjust the 'active' function on these regimes to exclude "
-            "the last age."
+        raise_or_warn(
+            mode=mode,
+            logger=logger,
+            error=InvalidRegimeTransitionProbabilitiesError(
+                f"Non-terminal regime(s) {non_terminal_active_at_last} are active at "
+                f"the last period (age {ages.exact_values[last_period]}). Non-terminal "
+                "regimes must not be active at the last period because there is no "
+                "next period to transition to. Adjust the 'active' function on these "
+                "regimes to exclude the last age."
+            ),
         )
 
     for period in range(ages.n_periods - 1):
@@ -100,14 +115,17 @@ def validate_regime_transitions_all_periods(
             if regime.terminal:
                 continue
 
-            _validate_regime_transition_single(
-                regimes=regimes,
-                regime_params=flat_params[regime_name],
-                active_regimes_next_period=active_regimes_next_period,
-                regime_name=regime_name,
-                period=period,
-                ages=ages,
-            )
+            try:
+                _validate_regime_transition_single(
+                    regimes=regimes,
+                    regime_params=flat_params[regime_name],
+                    active_regimes_next_period=active_regimes_next_period,
+                    regime_name=regime_name,
+                    period=period,
+                    ages=ages,
+                )
+            except InvalidRegimeTransitionProbabilitiesError as error:
+                raise_or_warn(mode=mode, logger=logger, error=error)
 
 
 def _validate_regime_transition_single(
@@ -363,6 +381,8 @@ def validate_state_transitions_all_periods(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
+    mode: ValidationMode,
+    logger: logging.Logger,
 ) -> None:
     """Validate every `MarkovTransition` state transition before solve.
 
@@ -383,13 +403,18 @@ def validate_state_transitions_all_periods(
         flat_params: Immutable mapping of regime names to flat parameter
             mappings.
         ages: Age grid for the model.
+        mode: Validation mode. `"off"` returns immediately; `"warn"` logs each
+            failure and continues; `"raise"` raises on the first failure.
+        logger: Logger used to emit warnings in `"warn"` mode.
 
     Raises:
         InvalidStateTransitionProbabilitiesError: If a `MarkovTransition`
             function returns the wrong outcome-axis size, values outside
-            [0, 1], or rows that don't sum to 1.
+            [0, 1], or rows that don't sum to 1, and `mode` is `"raise"`.
 
     """
+    if mode == "off":
+        return
     if not any(r.stochastic_state_transitions for r in regimes.values()):
         return
 
@@ -407,14 +432,18 @@ def validate_state_transitions_all_periods(
             )
             age = ages.values[period]  # noqa: PD011
             for transition in regime.stochastic_state_transitions.values():
-                _validate_state_transition_single(
-                    transition=transition,
-                    regime_params=flat_params[regime_name],
-                    state_action_space=state_action_space,
-                    regime_name=regime_name,
-                    age=age,
-                    period=period,
-                )
+                try:
+                    _validate_state_transition_single(
+                        transition=transition,
+                        regime_params=flat_params[regime_name],
+                        state_action_space=state_action_space,
+                        regime_name=regime_name,
+                        age=age,
+                        period=period,
+                        logger=logger,
+                    )
+                except InvalidStateTransitionProbabilitiesError as error:
+                    raise_or_warn(mode=mode, logger=logger, error=error)
 
 
 def _validate_state_transition_single(
@@ -425,6 +454,7 @@ def _validate_state_transition_single(
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
     period: int,
+    logger: logging.Logger,
 ) -> None:
     """Evaluate one MarkovTransition on its grid args and validate the output."""
     func = transition.func
@@ -447,8 +477,18 @@ def _validate_state_transition_single(
             scalar_kwargs[name] = regime_params[name]
         else:
             # An indexing param the function expects is neither a regime
-            # grid nor a param. Leave the validation to whichever solve
-            # step surfaces the real error — raising here would conceal it.
+            # grid nor a param. Skip numerical validation for this
+            # transition rather than raising — a raise here would conceal
+            # the real error the solve step surfaces. Warn so the skip is
+            # not silent.
+            logger.warning(
+                "MarkovTransition for state '%s' in regime '%s' not numerically "
+                "validated: parameter '%s' is not a recognized grid or model "
+                "parameter.",
+                transition.state_name,
+                regime_name,
+                name,
+            )
             return
 
     if grid_args:

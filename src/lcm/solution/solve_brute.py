@@ -11,13 +11,16 @@ import jax
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.interfaces import Regime, _build_regime_sharding
 from lcm.solution.validate_V import validate_V
 from lcm.typing import BoolND, FlatParams, FloatND, RegimeName, StateName
 from lcm.utils.logging import (
+    ValidationMode,
     format_duration,
     log_period_header,
     log_period_timing,
+    raise_or_warn,
 )
 
 
@@ -28,6 +31,7 @@ def solve(
     regimes: MappingProxyType[RegimeName, Regime],
     logger: logging.Logger,
     enable_jit: bool,
+    validation_mode: ValidationMode,
     max_compilation_workers: int | None = None,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Solve a model using grid search.
@@ -39,6 +43,10 @@ def solve(
             to solve the model.
         logger: Logger that logs to stdout.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        validation_mode: How a NaN value function is surfaced. `"raise"` stops
+            backward induction at the first NaN period and raises; `"warn"` lets
+            induction run to completion and logs a warning, so `solve` returns a
+            complete (NaN-bearing) solution; `"off"` skips the NaN check.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
 
@@ -210,22 +218,32 @@ def solve(
         # diagnostics are on. Inf is non-fatal so we don't break on
         # it; the post-loop emitter still raises a warning if any
         # period flagged Inf.
-        if diagnostics_enabled and running_any_nan.item():
+        # Fail-fast only in raise mode. In warn mode, induction runs to
+        # completion so `solve` returns a complete (NaN-bearing) solution
+        # rather than a truncated one.
+        if (
+            diagnostics_enabled
+            and validation_mode == "raise"
+            and running_any_nan.item()
+        ):
             break
 
     if diagnostics_enabled:
-        _emit_post_loop_diagnostics(
-            logger=logger,
-            diagnostic_rows=diagnostic_rows,
-            solution=MappingProxyType(solution),
-            regimes=regimes,
-            flat_params=flat_params,
-            running_any_nan=running_any_nan,
-            running_any_inf=running_any_inf,
-            diagnostic_min=diagnostic_min if stats_enabled else None,
-            diagnostic_max=diagnostic_max if stats_enabled else None,
-            diagnostic_mean=diagnostic_mean if stats_enabled else None,
-        )
+        try:
+            _emit_post_loop_diagnostics(
+                logger=logger,
+                diagnostic_rows=diagnostic_rows,
+                solution=MappingProxyType(solution),
+                regimes=regimes,
+                flat_params=flat_params,
+                running_any_nan=running_any_nan,
+                running_any_inf=running_any_inf,
+                diagnostic_min=diagnostic_min if stats_enabled else None,
+                diagnostic_max=diagnostic_max if stats_enabled else None,
+                diagnostic_mean=diagnostic_mean if stats_enabled else None,
+            )
+        except InvalidValueFunctionError as error:
+            raise_or_warn(mode=validation_mode, logger=logger, error=error)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))

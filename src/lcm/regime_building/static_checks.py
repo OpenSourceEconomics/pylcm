@@ -12,11 +12,11 @@ Runs during `process_regimes` for every `MarkovTransition` state transition
   `DiscreteGrid`. Cached on the canonical `Regime` so the runtime validator
   does not need to look it up per call.
 
-The output is consumed by `validate_state_transitions_all_periods` in
-`lcm/_transition_checks.py`. Full output-shape derivation is deferred to
-that runtime check, because it depends on which of the function's
-indexing parameters resolve to grids in the regime (states / actions)
-versus to scalar params (resolved at solve time from `flat_params`).
+The output is consumed by the pre-solve state-transition validator. Full
+output-shape derivation is deferred to that runtime check, because it
+depends on which of the function's indexing parameters resolve to grids in
+the regime (states / actions) versus to scalar params (resolved at solve
+time from `flat_params`).
 The same function may be reused across regimes with different grid/param
 splits.
 """
@@ -108,13 +108,6 @@ def _add_entry(
 ) -> None:
     """Static-check one MarkovTransition and append its metadata."""
     func = markov.func
-    indexing_params = tuple(
-        _get_func_indexing_params(func=func, array_param_name="probs_array")
-    )
-
-    _check_subscript_order(
-        func=func, indexing_params=indexing_params, state_name=state_name
-    )
 
     state_grid = _find_state_grid(
         state_name=state_name,
@@ -125,9 +118,18 @@ def _add_entry(
     if not isinstance(state_grid, DiscreteGrid):
         # `MarkovTransition` on a continuous state is not a supported
         # pattern for the automatic validator. Static phase tolerates
-        # the omission; the runtime phase skips it by absence from
-        # the metadata.
+        # the omission; the runtime phase skips it by absence from the
+        # metadata. The subscript-order check is skipped too — it applies
+        # only to the discrete `probs_array[...]` pattern this validator
+        # covers.
         return
+
+    indexing_params = tuple(
+        _get_func_indexing_params(func=func, array_param_name="probs_array")
+    )
+    _check_subscript_order(
+        func=func, indexing_params=indexing_params, state_name=state_name
+    )
     n_outcomes = len(state_grid.categories)
 
     entries[key] = _StochasticStateTransition(
@@ -148,19 +150,23 @@ def _find_state_grid(
 ) -> object:
     """Look up the state's grid for outcome-axis sizing.
 
-    For per-target dicts, the **target** regime's grid wins because the
-    `MarkovTransition` returns a distribution over the target's state
-    space — which may differ in size from the source's (e.g. cross-grid
-    transitions where the target regime uses a coarser categorical).
-    Plain `MarkovTransition` (no per-target dict) sizes off the source.
+    For a per-target dict entry the **target** regime's grid is authoritative:
+    the `MarkovTransition` returns a distribution over the target's state
+    space, which may differ in size from the source's (cross-grid
+    transitions). The source grid is never substituted in that case — if the
+    target regime does not declare the state, `None` is returned so the
+    caller skips metadata creation rather than sizing off a wrong grid.
 
-    Returns `None` when the state is not declared in either location so
-    the caller can silently skip metadata creation.
+    A plain `MarkovTransition` (no per-target dict) sizes off the source
+    regime's grid.
+
+    Returns `None` when no authoritative grid is found.
     """
-    if target_regime_name is not None and target_regime_name in user_regimes:
-        target = user_regimes[target_regime_name]
-        if state_name in target.states:
+    if target_regime_name is not None:
+        target = user_regimes.get(target_regime_name)
+        if target is not None and state_name in target.states:
             return target.states[state_name]
+        return None
     if state_name in user_regime.states:
         return user_regime.states[state_name]
     return None
