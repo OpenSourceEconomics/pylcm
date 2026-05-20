@@ -399,6 +399,12 @@ def _validate_function_output_grid_indexing(regime: Regime) -> list[str]:
     consumer is indexing a 0-d array by a scalar integer, which raises
     `IndexError` at trace time. The fix is to drop the redundant `[g]`
     in the consumer (or refactor `f` not to take `g`).
+
+    This check is deliberately best-effort: it catches the common
+    `func_output[discrete_grid]` subscript form and nothing else. It is not
+    meant to grow into a general correctness checker for user functions —
+    if it ever produces false positives, prefer deleting it over hardening
+    it to chase every way the pattern can hide.
     """
     function_output_names = set(regime.functions)
     discrete_grid_names = (
