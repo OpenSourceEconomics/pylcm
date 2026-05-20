@@ -17,7 +17,11 @@ from lcm._transition_checks import (
     validate_state_transitions_all_periods,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidInitialConditionsError,
+    InvalidValueFunctionError,
+    ModelInitializationError,
+)
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
     _validate_param_types,
@@ -66,6 +70,7 @@ from lcm.utils.containers import (
 from lcm.utils.logging import (
     LogLevel,
     get_logger,
+    raise_or_warn,
     validation_enabled,
     validation_raises,
 )
@@ -422,7 +427,6 @@ class Model:
         initial_conditions: UserInitialConditions | pd.DataFrame,
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         log_level: LogLevel,
-        check_initial_conditions: bool = True,
         seed: int | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
@@ -453,11 +457,11 @@ class Model:
                 (auto-converted via `initial_conditions_from_dataframe`).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
-            check_initial_conditions: Whether to validate initial conditions.
             seed: Random seed.
             log_level: Verbosity, and the runtime-validation policy it implies.
                 Required — pick deliberately for the situation:
-                - `"off"` — silent; transition-probability and NaN checks skipped.
+                - `"off"` — silent; initial-condition, transition-probability,
+                  and NaN checks skipped.
                 - `"warning"` — validation runs, failures logged as warnings,
                   the run continues.
                 - `"progress"` — as `"warning"`, plus timing.
@@ -492,14 +496,17 @@ class Model:
             regimes=self.regimes,
         )
         flat_params = self._process_params(params)
-        if check_initial_conditions:
-            validate_initial_conditions(
-                initial_conditions=initial_conditions,
-                regimes=self.regimes,
-                regime_names_to_ids=self.regime_names_to_ids,
-                flat_params=flat_params,
-                ages=self.ages,
-            )
+        if validation_enabled(log):
+            try:
+                validate_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    regimes=self.regimes,
+                    regime_names_to_ids=self.regime_names_to_ids,
+                    flat_params=flat_params,
+                    ages=self.ages,
+                )
+            except InvalidInitialConditionsError as error:
+                raise_or_warn(logger=log, error=error)
         validate_regime_transitions_all_periods(
             regimes=self.regimes,
             flat_params=flat_params,

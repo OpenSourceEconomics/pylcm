@@ -181,7 +181,7 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
     nan_value_model: Model, params: UserParams
 ) -> None:
     initial_conditions = {
-        "wealth": jnp.array([0.9, 1.0]),
+        "wealth": jnp.array([1.5, 2.0]),
         "health": jnp.array([1.0, 1.0]),
         "age": jnp.array([0.0, 0.0]),
         "regime_id": jnp.array([RegimeId.non_terminal] * 2),
@@ -193,7 +193,6 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
             params=params,
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=None,
-            check_initial_conditions=False,
         )
 
 

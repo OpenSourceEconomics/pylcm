@@ -148,9 +148,8 @@ initial_conditions = {
 ### Further arguments
 
 - `log_level`: Required. Console verbosity and runtime-validation policy (same options
-  and table as `solve()`); start at `"debug"`.
-- `check_initial_conditions=True`: Validates that initial states are on-grid and regimes
-  are valid. Set to `False` to skip validation.
+  and table as `solve()`); start at `"debug"`. Initial-condition validation (states
+  on-grid, regimes valid) follows this policy too — `"off"` skips it.
 - `seed=None`: Random seed for stochastic simulations (int).
 - `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
