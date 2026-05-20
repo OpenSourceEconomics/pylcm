@@ -89,9 +89,9 @@ Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the ba
 continuous grids with `get_coordinate` method. `UniformContinuousGrid(ContinuousGrid)`
 is for grids with start/stop/n_points (LinSpacedGrid, LogSpacedGrid inherit from it).
 Other continuous grids (IrregSpacedGrid, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid)
-inherit directly from ContinuousGrid. `_ProcessGrid(ContinuousGrid)` is the base for the
-stochastic process classes. `DiscreteGrid` supports stochastic transitions via
-`MarkovTransition`-wrapped callables in `state_transitions`.
+inherit directly from ContinuousGrid. `_ContinuousStochasticProcess(ContinuousGrid)` is
+the base for the stochastic process classes. `DiscreteGrid` supports stochastic
+transitions via `MarkovTransition`-wrapped callables in `state_transitions`.
 
 Grids are pure outcome-space definitions — they define what values a variable can take.
 **State transitions** live on the `Regime` via the `state_transitions` field, which maps
@@ -490,7 +490,7 @@ erases them, so misuse never crashes — it just hides intent. Prefer the alias 
 | `StateName`              | Names of states — entries of `state_names`, keys of `regime.states`, `states_per_regime` values.                                                        |
 | `ActionName`             | Names of actions — entries of `action_names`, keys of `regime.actions`.                                                                                 |
 | `StateOrActionName`      | Mixed flat keys covering both states and actions — `flat_grids`, `all_grids[regime]` values, `state_and_discrete_action_names`.                         |
-| `ProcessName`            | Subset of `StateName` for stochastic processes — keys of `_ProcessGrid`-typed mappings, process-transition helpers.                                     |
+| `ProcessName`            | Subset of `StateName` for stochastic processes — keys of `_ContinuousStochasticProcess`-typed mappings, process-transition helpers.                     |
 | `FunctionName`           | User-supplied function names — `"utility"`, `"H"`, helpers; keys of `Regime.functions`, `derived_categoricals`.                                         |
 | `TransitionFunctionName` | Names of transition callables — `next_<state>`, `weight_next_<state>`; keys of `state_transitions` and per-target dicts.                                |
 

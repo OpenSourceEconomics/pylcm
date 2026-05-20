@@ -18,7 +18,7 @@ from typing import TypeAliasType, overload
 from dags.tree import QNAME_DELIMITER
 
 from lcm._grids import DiscreteGrid, Grid
-from lcm._processes._base import _ProcessGrid
+from lcm._processes._base import _ContinuousStochasticProcess
 from lcm.api.typing import UserFunction
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
@@ -91,7 +91,7 @@ def collect_state_transitions(
     transitions: dict[TransitionFunctionName, UserFunction] = {}
     for name, grid in states.items():
         # Process transitions built directly in _process_regime_core
-        if isinstance(grid, _ProcessGrid):
+        if isinstance(grid, _ContinuousStochasticProcess):
             continue
 
         if name not in state_transitions:

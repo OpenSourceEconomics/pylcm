@@ -10,16 +10,16 @@ from jax.scipy.stats.norm import cdf
 
 from lcm._beartype_conf import GRID_CONF
 from lcm._processes._base import (
+    _ContinuousStochasticProcess,
     _gauss_hermite_normal,
     _mixture_cdf,
-    _ProcessGrid,
     _validate_gauss_hermite_grid,
 )
 from lcm.typing import Float1D, FloatND, PRNGKeyND, ScalarFloat, ScalarInt
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ProcessGridAR1(_ProcessGrid):
+class _AR1Process(_ContinuousStochasticProcess):
     """Base for AR(1) processes — draw depends on previous value."""
 
     @abstractmethod
@@ -33,7 +33,7 @@ class _ProcessGridAR1(_ProcessGrid):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class TauchenAR1Process(_ProcessGridAR1):
+class TauchenAR1Process(_AR1Process):
     r"""AR(1) process discretized via Tauchen (1986).
 
     The process is
@@ -133,7 +133,7 @@ class TauchenAR1Process(_ProcessGridAR1):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class RouwenhorstAR1Process(_ProcessGridAR1):
+class RouwenhorstAR1Process(_AR1Process):
     r"""AR(1) process discretized via Rouwenhorst (1995).
 
     The process is
@@ -202,7 +202,7 @@ class RouwenhorstAR1Process(_ProcessGridAR1):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class TauchenNormalMixtureAR1Process(_ProcessGridAR1):
+class TauchenNormalMixtureAR1Process(_AR1Process):
     r"""AR(1) process with mixture-of-normals innovations, discretized via Tauchen.
 
     The process is

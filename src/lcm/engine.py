@@ -8,7 +8,7 @@ import jax
 from jax import Array
 
 from lcm._grids import Grid, IrregSpacedGrid
-from lcm._processes import _ProcessGrid
+from lcm._processes import _ContinuousStochasticProcess
 from lcm.exceptions import PyLCMError
 from lcm.typing import (
     ActionName,
@@ -419,8 +419,9 @@ class Regime:
 
         For IrregSpacedGrid (state or continuous action) with runtime-supplied
         points, the grid points come from params as `{name}__points`. For
-        `_ProcessGrid` with runtime-supplied params, the grid points are computed
-        from process params in the params dict or `resolved_fixed_params`.
+        `_ContinuousStochasticProcess` with runtime-supplied params, the grid
+        points are computed from process params in the params dict or
+        `resolved_fixed_params`.
 
         Args:
             regime_params: Flat regime parameters supplied at runtime.
@@ -450,14 +451,14 @@ class Regime:
                     state_replacements[name] = points
                 else:
                     action_replacements[name] = points
-            # `_ProcessGrid` is state-only by construction (intrinsic
+            # `_ContinuousStochasticProcess` is state-only by construction (intrinsic
             # transitions, forbidden as actions per AGENTS.md). The
             # `in_states` gate makes that invariant explicit — a
-            # `_ProcessGrid` reaching the action branch would be a model
+            # `_ContinuousStochasticProcess` reaching the action branch would be a model
             # bug, not something this method should silently substitute.
             elif (
                 in_states
-                and isinstance(spec, _ProcessGrid)
+                and isinstance(spec, _ContinuousStochasticProcess)
                 and spec.params_to_pass_at_runtime
             ):
                 all_present = all(

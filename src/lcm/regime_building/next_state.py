@@ -8,9 +8,9 @@ from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 
 from lcm._grids import Grid
-from lcm._processes import _ProcessGrid
-from lcm._processes.ar1 import _ProcessGridAR1
-from lcm._processes.iid import _ProcessGridIID
+from lcm._processes import _ContinuousStochasticProcess
+from lcm._processes.ar1 import _AR1Process
+from lcm._processes.iid import _IIDProcess
 from lcm.engine import Variables
 from lcm.typing import (
     ContinuousState,
@@ -275,20 +275,20 @@ def _create_continuous_stochastic_next_func(
 
     """
     state_name = next_state_name.removeprefix("next_")
-    grid: _ProcessGrid = all_grids[target][state_name]  # ty: ignore [invalid-assignment]
+    grid: _ContinuousStochasticProcess = all_grids[target][state_name]  # ty: ignore [invalid-assignment]
     qname = qname_from_tree_path((target, next_state_name))
 
-    if isinstance(grid, _ProcessGridAR1):
+    if isinstance(grid, _AR1Process):
         return _create_ar1_next_func(qname=qname, state_name=state_name, grid=grid)
-    if isinstance(grid, _ProcessGridIID):
+    if isinstance(grid, _IIDProcess):
         return _create_iid_next_func(qname=qname, state_name=state_name, grid=grid)
 
-    msg = f"Expected _ProcessGridIID or _ProcessGridAR1, got {type(grid)}"
+    msg = f"Expected _IIDProcess or _AR1Process, got {type(grid)}"
     raise TypeError(msg)
 
 
 def _create_ar1_next_func(
-    *, qname: str, state_name: StateName, grid: _ProcessGridAR1
+    *, qname: str, state_name: StateName, grid: _AR1Process
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {
@@ -319,7 +319,7 @@ def _create_ar1_next_func(
 
 
 def _create_iid_next_func(
-    *, qname: str, state_name: StateName, grid: _ProcessGridIID
+    *, qname: str, state_name: StateName, grid: _IIDProcess
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {

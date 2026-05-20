@@ -1,14 +1,13 @@
 ---
-title: Shocks
+title: Continuous stochastic processes
 ---
 
-# Shocks
+# Continuous stochastic processes
 
-Shocks are stochastic state variables. pylcm represents them with **continuous
-stochastic process** classes, which bundle both the discretized grid and its transition
-mechanism. Unlike ordinary grids, a process computes its own grid points and transition
-matrix from a distribution and its parameters — so you place it in `states` and never in
-`state_transitions`.
+A **continuous stochastic process** is a stochastic state variable whose class bundles
+both the discretized grid and its transition mechanism. Unlike ordinary grids, a process
+computes its own grid points and transition matrix from a distribution and its
+parameters — so you place it in `states` and never in `state_transitions`.
 
 Process classes follow the naming convention `<Distribution><Kind>Process` and are
 imported directly from `lcm`:
@@ -140,7 +139,7 @@ TauchenNormalMixtureAR1Process(
 )
 ```
 
-## Using a Process in a Regime
+## Using a Continuous Stochastic Process in a Regime
 
 A process goes in `states`. It must **not** appear in `state_transitions` — it manages
 its own transition:

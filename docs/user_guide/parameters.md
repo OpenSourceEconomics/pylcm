@@ -126,7 +126,8 @@ Not needed if you provide a custom `H` function in your regime's `functions` dic
 ### Shock parameters
 
 Shock grids with `None` parameters (deferred to runtime) expect their values in the
-params dict. They follow the same hierarchy rules. See [Shocks](shocks.md) for details.
+params dict. They follow the same hierarchy rules. See
+[Continuous stochastic processes](continuous_stochastic_processes.md) for details.
 
 ### Fixed parameters
 
@@ -185,4 +186,5 @@ pylcm inspects function signatures and classifies each argument:
 ## See Also
 
 - [Defining Models](defining_models.md) — the `Model` constructor and `fixed_params`
-- [Shocks](shocks.md) — runtime shock parameters
+- [Continuous stochastic processes](continuous_stochastic_processes.md) — runtime
+  process parameters

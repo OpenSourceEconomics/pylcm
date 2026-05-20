@@ -14,7 +14,7 @@ from jax import numpy as jnp
 
 from lcm._grids import DiscreteGrid, Grid
 from lcm._grids.coordinates import get_irreg_coordinate
-from lcm._processes import _ProcessGrid
+from lcm._processes import _ContinuousStochasticProcess
 from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.api.transition import MarkovTransition, SolveSimulateFunctionPair
@@ -605,12 +605,14 @@ def _process_regime_core(
         for k in flat_nested_transitions
         if QNAME_DELIMITER in k
     }
-    target_process_grids: dict[tuple[RegimeName, ProcessName], _ProcessGrid] = {
+    target_process_grids: dict[
+        tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
+    ] = {
         (user_regime, process): grid
         for user_regime, grids in all_grids.items()
         if user_regime in reachable_targets
         for process in process_names
-        if isinstance(grid := grids.get(process), _ProcessGrid)
+        if isinstance(grid := grids.get(process), _ContinuousStochasticProcess)
     }
     functions |= {
         f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
@@ -893,7 +895,9 @@ def _get_stochastic_next_function_for_process(
     return next_func
 
 
-def _get_weights_func_for_process(*, name: str, grid: _ProcessGrid) -> UserFunction:
+def _get_weights_func_for_process(
+    *, name: str, grid: _ContinuousStochasticProcess
+) -> UserFunction:
     """Get function that uses linear interpolation to calculate the process weights.
 
     For processes whose params are supplied at runtime, the grid points and

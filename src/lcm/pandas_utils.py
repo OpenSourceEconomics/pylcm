@@ -12,7 +12,7 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from lcm._ages import PSEUDO_STATE_NAMES
 from lcm._grids import DiscreteGrid, IrregSpacedGrid
-from lcm._processes import _ProcessGrid
+from lcm._processes import _ContinuousStochasticProcess
 from lcm.api.ages import AgeGrid
 from lcm.api.regime import Regime as UserRegime
 from lcm.dtypes import canonical_float_dtype
@@ -524,7 +524,8 @@ def _is_runtime_grid_param(*, func_name: FunctionName, user_regime: UserRegime) 
     if func_name in user_regime.states:
         grid = user_regime.states[func_name]
         return (isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime) or (
-            isinstance(grid, _ProcessGrid) and bool(grid.params_to_pass_at_runtime)
+            isinstance(grid, _ContinuousStochasticProcess)
+            and bool(grid.params_to_pass_at_runtime)
         )
     if func_name in user_regime.actions:
         grid = user_regime.actions[func_name]

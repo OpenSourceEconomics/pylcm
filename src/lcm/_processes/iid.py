@@ -9,16 +9,16 @@ from jax.scipy.stats.norm import cdf
 
 from lcm._beartype_conf import GRID_CONF
 from lcm._processes._base import (
+    _ContinuousStochasticProcess,
     _gauss_hermite_normal,
     _mixture_cdf,
-    _ProcessGrid,
     _validate_gauss_hermite_grid,
 )
 from lcm.typing import Float1D, FloatND, PRNGKeyND, ScalarFloat, ScalarInt
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ProcessGridIID(_ProcessGrid):
+class _IIDProcess(_ContinuousStochasticProcess):
     """Base for IID processes — draw does not depend on previous value."""
 
     @abstractmethod
@@ -31,7 +31,7 @@ class _ProcessGridIID(_ProcessGrid):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class UniformIIDProcess(_ProcessGridIID):
+class UniformIIDProcess(_IIDProcess):
     r"""Discretized IID uniform process: $U(\text{start}, \text{stop})$.
 
     The continuous distribution is discretized into `n_points` equally spaced
@@ -66,7 +66,7 @@ class UniformIIDProcess(_ProcessGridIID):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class NormalIIDProcess(_ProcessGridIID):
+class NormalIIDProcess(_IIDProcess):
     r"""Discretized IID normal process: $N(\mu_\varepsilon, \sigma_\varepsilon^2)$.
 
     When `gauss_hermite=True`, the distribution is discretized using
@@ -141,7 +141,7 @@ class NormalIIDProcess(_ProcessGridIID):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class LogNormalIIDProcess(_ProcessGridIID):
+class LogNormalIIDProcess(_IIDProcess):
     r"""Discretized IID log-normal process: $\ln X \sim N(\mu, \sigma^2)$."""
 
     gauss_hermite: bool
@@ -207,7 +207,7 @@ class LogNormalIIDProcess(_ProcessGridIID):
 
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
-class NormalMixtureIIDProcess(_ProcessGridIID):
+class NormalMixtureIIDProcess(_IIDProcess):
     r"""Discretized IID normal-mixture process.
 
     Each period's draw is taken from a two-component normal mixture:

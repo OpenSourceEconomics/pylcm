@@ -144,7 +144,7 @@ All grids inherit from the `Grid` base class:
     - `IrregSpacedGrid`
     - `PiecewiseLinSpacedGrid`
     - `PiecewiseLogSpacedGrid`
-    - `_ProcessGrid` — base for stochastic continuous grids
+    - `_ContinuousStochasticProcess` — base for stochastic continuous grids
 
 The `to_jax()` method converts any grid to a JAX array. `ContinuousGrid` subclasses
 provide `get_coordinate()` for mapping values to grid coordinates, used in
@@ -154,6 +154,7 @@ provide `get_coordinate()` for mapping values to grid coordinates, used in
 
 - [Regimes](regimes.ipynb) — how grids are used in regime definitions
 - [Transitions](transitions.ipynb) — state and regime transitions
-- [Shocks](shocks.md) — stochastic process grids
+- [Continuous stochastic processes](continuous_stochastic_processes.md) — grids with
+  built-in transitions
 - [Interpolation](../explanations/interpolation.ipynb) — coordinate math for continuous
   grids

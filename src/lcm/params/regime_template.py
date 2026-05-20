@@ -4,7 +4,7 @@ import dags.tree as dt
 from dags.tree import tree_path_from_qname
 
 from lcm._grids import IrregSpacedGrid
-from lcm._processes import _ProcessGrid
+from lcm._processes import _ContinuousStochasticProcess
 from lcm.api.regime import Regime as UserRegime
 from lcm.api.regime import SolveSimulateFunctionPair
 from lcm.api.typing import UserFunction
@@ -29,8 +29,9 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
     dict that satisfies both phases.
 
     Grids with runtime-supplied values (`IrregSpacedGrid` without points,
-    `_ProcessGrid` without full distribution params) add entries to the template under
-    pseudo-function keys matching the state or action name.
+    `_ContinuousStochasticProcess` without full distribution params) add
+    entries to the template under pseudo-function keys matching the state or
+    action name.
 
     Args:
         user_regime: User-form `Regime` instance.
@@ -93,11 +94,14 @@ def _add_runtime_grid_params(
                 function_params=function_params, name=state_name, kind="state"
             )
             function_params[state_name] = {"points": "Float1D"}
-        elif isinstance(grid, _ProcessGrid) and grid.params_to_pass_at_runtime:
+        elif (
+            isinstance(grid, _ContinuousStochasticProcess)
+            and grid.params_to_pass_at_runtime
+        ):
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params,
                 name=state_name,
-                kind="_ProcessGrid state",
+                kind="_ContinuousStochasticProcess state",
             )
             function_params[state_name] = dict.fromkeys(
                 grid.params_to_pass_at_runtime, "float"

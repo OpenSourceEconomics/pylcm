@@ -91,7 +91,7 @@ _grids/
 └── coordinates.py     ← coordinate lookup helpers used by interpolation
 
 _processes/
-├── _base.py           ← _ProcessGrid + Gauss-Hermite / mixture helpers
+├── _base.py           ← _ContinuousStochasticProcess + Gauss-Hermite / mixture helpers
 ├── iid.py             ← UniformIIDProcess, NormalIIDProcess, LogNormalIIDProcess,
 │                       NormalMixtureIIDProcess
 └── ar1.py             ← TauchenAR1Process, RouwenhorstAR1Process,
@@ -100,8 +100,9 @@ _processes/
 
 The leading underscore is a signal — both to readers and to the linter — that **user
 code must not import from these packages directly**. The leaf classes are surfaced
-through `api/grids.py` and `api/processes.py`; the ABCs (`Grid`, `_ProcessGrid`, etc.)
-are used by internal code but are not part of the documented public API.
+through `api/grids.py` and `api/processes.py`; the ABCs (`Grid`,
+`_ContinuousStochasticProcess`, etc.) are used by internal code but are not part of the
+documented public API.
 
 Two design points worth knowing:
 

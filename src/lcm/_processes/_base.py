@@ -33,7 +33,7 @@ def _gauss_hermite_normal(
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ProcessGrid(ContinuousGrid):
+class _ContinuousStochasticProcess(ContinuousGrid):
     """Base class for discretized continuous stochastic processes.
 
     Subclasses define distribution-specific parameters as dataclass fields.

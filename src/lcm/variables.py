@@ -16,7 +16,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from lcm._grids import ContinuousGrid, Grid
-from lcm._processes import _ProcessGrid
+from lcm._processes import _ContinuousStochasticProcess
 from lcm.engine import VariableInfo, Variables
 from lcm.typing import StateOrActionName
 
@@ -87,7 +87,7 @@ def _raw_variable_info(
     info: dict[StateOrActionName, VariableInfo] = {}
     for name, spec in variables.items():
         is_state = name in user_regime.states
-        is_process = isinstance(spec, _ProcessGrid)
+        is_process = isinstance(spec, _ContinuousStochasticProcess)
         is_continuous = isinstance(spec, ContinuousGrid) and not is_process
         info[name] = VariableInfo(
             kind="state" if is_state else "action",

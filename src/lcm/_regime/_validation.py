@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from dags.tree import QNAME_DELIMITER
 
 from lcm._grids import DiscreteGrid, Grid
-from lcm._processes._base import _ProcessGrid
+from lcm._processes._base import _ContinuousStochasticProcess
 from lcm.api.transition import MarkovTransition, SolveSimulateFunctionPair
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.typing import (
@@ -256,7 +256,9 @@ def _validate_state_transitions(regime: lcm.api.regime.Regime) -> list[str]:
     error_messages: list[str] = []
 
     process_names: set[ProcessName] = {
-        name for name, grid in regime.states.items() if isinstance(grid, _ProcessGrid)
+        name
+        for name, grid in regime.states.items()
+        if isinstance(grid, _ContinuousStochasticProcess)
     }
     non_process_names: set[StateName] = set(regime.states) - process_names
 

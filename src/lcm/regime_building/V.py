@@ -8,7 +8,7 @@ from dags.tree import qname_from_tree_path
 
 from lcm._grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from lcm._grids.coordinates import get_irreg_coordinate
-from lcm._processes import _ProcessGrid
+from lcm._processes import _ContinuousStochasticProcess
 from lcm.api.regime import Regime as UserRegime
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.typing import FloatND, IntND, ScalarFloat, StateName
@@ -28,7 +28,9 @@ class VInterpolationInfo:
     state_names: tuple[StateName, ...]
     """Tuple of state variable names."""
 
-    discrete_states: MappingProxyType[StateName, DiscreteGrid | _ProcessGrid]
+    discrete_states: MappingProxyType[
+        StateName, DiscreteGrid | _ContinuousStochasticProcess
+    ]
     """Immutable mapping of discrete state names to their grids."""
 
     continuous_states: MappingProxyType[StateName, ContinuousGrid]
@@ -234,7 +236,8 @@ def _get_coordinate_finder(
 
         return find_irreg_coordinate
 
-    # All other grid types (LinSpaced, LogSpaced, Piecewise*, _ProcessGrid)
+    # All other grid types (LinSpaced, LogSpaced, Piecewise*,
+    # _ContinuousStochasticProcess)
     @with_signature(
         args=dict.fromkeys([in_name], "FloatND"), return_annotation="FloatND"
     )
