@@ -233,7 +233,9 @@ def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
         "next_health": {"probs_array": probs_array},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
-    got = model.solve(params={"discount_factor": discount_factor, "alive": params})
+    got = model.solve(
+        log_level="debug", params={"discount_factor": discount_factor, "alive": params}
+    )
 
     wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
     _wealth_grid = np.linspace(
@@ -299,6 +301,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
         "regime_id": jnp.array([RegimeId.alive] * 5),
     }
     result = model.simulate(
+        log_level="debug",
         params={"discount_factor": discount_factor, "alive": params_alive},
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,

@@ -10,7 +10,7 @@ induction and simulates forward.
 ## Solving
 
 ```python
-period_to_regime_to_V_arr = model.solve(params=params)
+period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 ```
 
 Performs backward induction using dynamic programming. Returns an immutable mapping of
@@ -18,13 +18,15 @@ Performs backward induction using dynamic programming. Returns an immutable mapp
 
 ### Log levels and runtime validation
 
-`log_level` controls both console verbosity *and* the runtime-validation policy: how
-`solve()` / `simulate()` react to an invalid transition-probability ensemble or a NaN
-value function. The default is `"debug"` — validation runs and raises.
+`log_level` is a required argument: it controls both console verbosity *and* the
+runtime-validation policy — how `solve()` / `simulate()` react to an invalid
+transition-probability ensemble or a NaN value function. Start every project at
+`"debug"` (validation runs and raises); ease to `"warning"` / `"off"` once the model is
+trusted.
 
 ```python
-# Default: validation runs and raises on the first failure
-period_to_regime_to_V_arr = model.solve(params=params)
+# Debug — validation runs and raises on the first failure
+period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
 # Silent — no logging, no validation
 period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
@@ -64,6 +66,7 @@ result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
     period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+    log_level="debug",
 )
 ```
 
@@ -81,6 +84,7 @@ result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
     period_to_regime_to_V_arr=None,
+    log_level="debug",
 )
 ```
 
@@ -107,6 +111,7 @@ result = model.simulate(
     params=params,
     initial_conditions=df,
     period_to_regime_to_V_arr=None,
+    log_level="debug",
 )
 ```
 
@@ -140,13 +145,13 @@ initial_conditions = {
 - All arrays must have the same length (= number of agents).
 - Shock states are drawn automatically.
 
-### Optional arguments
+### Further arguments
 
+- `log_level`: Required. Console verbosity and runtime-validation policy (same options
+  and table as `solve()`); start at `"debug"`.
 - `check_initial_conditions=True`: Validates that initial states are on-grid and regimes
   are valid. Set to `False` to skip validation.
 - `seed=None`: Random seed for stochastic simulations (int).
-- `log_level="debug"`: Console verbosity and runtime-validation policy (same options and
-  table as `solve()`).
 - `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
 
@@ -273,6 +278,7 @@ result = model.simulate(
     params=params,
     initial_conditions=initial_df,
     period_to_regime_to_V_arr=None,
+    log_level="debug",
 )
 
 # 5. Analyze

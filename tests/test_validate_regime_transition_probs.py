@@ -242,7 +242,7 @@ def test_solve_catches_transition_bug_hidden_at_first_grid_point():
     """Pre-solve validation catches invalid probs even if first action value is ok."""
     model, params = _build_action_dependent_model()
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match="outside"):
-        model.solve(params=params)
+        model.solve(log_level="debug", params=params)
 
 
 def test_regime_transition_validation_passes_period_as_int32():
@@ -289,7 +289,7 @@ def test_regime_transition_validation_passes_period_as_int32():
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
     )
-    model.solve(params={"discount_factor": 0.95})
+    model.solve(log_level="debug", params={"discount_factor": 0.95})
 
     assert seen_period_dtypes
     assert all(dtype == jnp.int32 for dtype in seen_period_dtypes)
@@ -308,14 +308,14 @@ def test_solve_raises_for_invalid_regime_transition_probs():
     model = get_model(N_PERIODS)
     params = get_params(N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS))
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
-        model.solve(params=params)
+        model.solve(log_level="debug", params=params)
 
 
 def test_simulate_raises_for_invalid_regime_transition_probs():
     """model.simulate() raises for out-of-bounds regime transition probabilities."""
     model = get_model(N_PERIODS)
     good_params = get_params(N_PERIODS)
-    period_to_regime_to_V_arr = model.solve(params=good_params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=good_params)
 
     bad_params = get_params(
         N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
@@ -327,6 +327,7 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
     }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.simulate(
+            log_level="debug",
             params=bad_params,
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
@@ -344,6 +345,7 @@ def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
     }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.simulate(
+            log_level="debug",
             params=params,
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=None,

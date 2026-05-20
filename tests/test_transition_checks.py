@@ -118,7 +118,7 @@ def test_valid_state_probs_at_boundary_pass() -> None:
         )
 
     model = _model_with_state_probs(boundary_health_probs)
-    model.solve(params={"discount_factor": 0.95})
+    model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def test_runtime_check_catches_invalidity_hidden_at_some_grid_points() -> None:
@@ -142,7 +142,7 @@ def test_runtime_check_catches_invalidity_hidden_at_some_grid_points() -> None:
 
     model = _model_with_state_probs(sneaky_health_probs)
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
-        model.solve(params={"discount_factor": 0.95})
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def test_runtime_check_raises_on_wrong_outcome_axis_size() -> None:
@@ -153,7 +153,7 @@ def test_runtime_check_raises_on_wrong_outcome_axis_size() -> None:
 
     model = _model_with_state_probs(too_many_outcomes)
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="outcome axis"):
-        model.solve(params={"discount_factor": 0.95})
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def test_runtime_check_raises_on_values_out_of_range() -> None:
@@ -164,7 +164,7 @@ def test_runtime_check_raises_on_values_out_of_range() -> None:
 
     model = _model_with_state_probs(negative_probs)
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match=r"\[0, 1\]"):
-        model.solve(params={"discount_factor": 0.95})
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def test_runtime_check_raises_on_rows_not_summing_to_one() -> None:
@@ -175,7 +175,7 @@ def test_runtime_check_raises_on_rows_not_summing_to_one() -> None:
 
     model = _model_with_state_probs(bad_sum_probs)
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
-        model.solve(params={"discount_factor": 0.95})
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def test_log_level_off_skips_runtime_check() -> None:
@@ -282,7 +282,7 @@ def test_ast_check_is_permissive_when_no_probs_array_subscript() -> None:
     # Model construction must not raise just because the function lacks
     # the subscript pattern; runtime numerical checks still apply.
     model = _model_with_state_probs(no_subscript_probs)
-    model.solve(params={"discount_factor": 0.95})
+    model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def test_per_target_dict_validates_each_entry() -> None:
@@ -340,7 +340,7 @@ def test_per_target_dict_validates_each_entry() -> None:
         regime_id_class=_RegId,
     )
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
-        model.solve(params={"discount_factor": 0.95})
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def _good_health_probs(health: DiscreteState) -> FloatND:
@@ -411,4 +411,4 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
     )
-    model.solve(params={"discount_factor": 0.95})
+    model.solve(log_level="debug", params={"discount_factor": 0.95})

@@ -164,7 +164,10 @@ model = Model(
 # The solve/simulate calls only need the estimated parameters
 params = {"risk_aversion": 1.5, "disutility_of_work": 1.0}
 result = model.simulate(
-    params=params, initial_conditions=..., period_to_regime_to_V_arr=None
+    params=params,
+    initial_conditions=...,
+    period_to_regime_to_V_arr=None,
+    log_level="debug",
 )
 ```
 

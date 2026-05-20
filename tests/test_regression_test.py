@@ -53,8 +53,11 @@ def test_regression_test():
         interest_rate=0.05,
     )
 
-    got_solve: Mapping[int, Mapping[str, FloatND]] = model.solve(params=params)
+    got_solve: Mapping[int, Mapping[str, FloatND]] = model.solve(
+        log_level="debug", params=params
+    )
     got_simulate = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),
@@ -279,6 +282,7 @@ def test_model_with_different_grid_types(grid_type: str):
 
     # This should complete without error
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),

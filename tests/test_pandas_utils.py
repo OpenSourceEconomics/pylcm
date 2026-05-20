@@ -391,6 +391,7 @@ def test_round_trip_with_discrete_model():
         "regime_id": jnp.array([RegimeId.working_life, RegimeId.working_life]),
     }
     result_raw = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions=raw_conditions,
         period_to_regime_to_V_arr=None,
@@ -410,6 +411,7 @@ def test_round_trip_with_discrete_model():
         regime_names_to_ids=model.regime_names_to_ids,
     )
     result_df = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions=df_conditions,
         period_to_regime_to_V_arr=None,
@@ -732,6 +734,7 @@ def test_heterogeneous_health_solve_simulate() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     result = model.simulate(
+        log_level="debug",
         params={"bonus": 0.0, "discount_factor": 0.95},
         initial_conditions=ic,
         period_to_regime_to_V_arr=None,
@@ -771,6 +774,7 @@ def test_heterogeneous_health_simulate_use_labels_false() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     result = model.simulate(
+        log_level="debug",
         params={"bonus": 0.0, "discount_factor": 0.95},
         initial_conditions=ic,
         period_to_regime_to_V_arr=None,

@@ -18,6 +18,7 @@ def test_simulation_with_heterogeneous_initial_ages():
 
     # Subject 0 starts at age 40, subject 1 starts at age 60
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "age": jnp.array([40.0, 60.0]),

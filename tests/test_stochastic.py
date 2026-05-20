@@ -39,6 +39,7 @@ def test_model_simulate_with_stochastic_model():
     params = get_params(n_periods=4)
 
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "health": jnp.array([1, 1, 0, 0], dtype=jnp.int32),
@@ -80,7 +81,7 @@ def test_model_simulate_with_stochastic_model():
 
 def test_model_solve_with_stochastic_model():
     model = get_model(n_periods=4)
-    model.solve(params=get_params(n_periods=4))
+    model.solve(log_level="debug", params=get_params(n_periods=4))
 
 
 @pytest.fixture
@@ -173,10 +174,10 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     # Compare value function arrays
     # ==================================================================================
     solution_deterministic: Mapping[int, Mapping[str, FloatND]] = (
-        model_deterministic.solve(params=params)
+        model_deterministic.solve(log_level="debug", params=params)
     )
     solution_stochastic: Mapping[int, Mapping[str, FloatND]] = model_stochastic.solve(
-        params=params
+        log_level="debug", params=params
     )
 
     for period in range(model_deterministic.n_periods - 1):
@@ -198,11 +199,13 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     }
 
     simulation_deterministic = model_deterministic.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=solution_deterministic,
         initial_conditions=initial_conditions,
     )
     simulation_stochastic = model_stochastic.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=solution_stochastic,
         initial_conditions=initial_conditions,
@@ -294,7 +297,7 @@ def test_stochastic_next_function_with_no_arguments():
         "discount_factor": 0.95,
         "working_life": {"next_regime": {"final_age_alive": 1}},
     }
-    V = model.solve(params=params)
+    V = model.solve(log_level="debug", params=params)
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
     )
@@ -316,7 +319,7 @@ def test_stochastic_next_depending_on_continuous_state():
         "discount_factor": 0.95,
         "working_life": {"next_regime": {"final_age_alive": 1}},
     }
-    V = model.solve(params=params)
+    V = model.solve(log_level="debug", params=params)
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
     )
@@ -344,4 +347,4 @@ def test_stochastic_regime_transition_active_at_last_period_raises():
         InvalidRegimeTransitionProbabilitiesError,
         match=r"Non-terminal regime.*active at the last period",
     ):
-        model.solve(params=mortality.get_params(n_periods=4))
+        model.solve(log_level="debug", params=mortality.get_params(n_periods=4))

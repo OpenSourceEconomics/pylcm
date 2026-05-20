@@ -265,8 +265,8 @@ class Model:
         self,
         *,
         params: UserParams,
+        log_level: LogLevel,
         max_compilation_workers: int | None = None,
-        log_level: LogLevel = "debug",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
     ) -> PeriodToRegimeToVArr:
@@ -283,15 +283,20 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
-            max_compilation_workers: Maximum number of threads for parallel XLA
-                compilation. Defaults to the number of physical CPU cores.
-            log_level: Verbosity, and the runtime-validation policy it implies:
+            log_level: Verbosity, and the runtime-validation policy it implies.
+                Required — pick deliberately for the situation:
                 - `"off"` — silent; transition-probability and NaN checks skipped.
                 - `"warning"` — validation runs, failures logged as warnings,
                   the run continues.
-                - `"progress"` — as `"warning"`, plus per-period timing.
-                - `"debug"` (default) — validation runs and **raises** on the
-                  first failure; adds value-function stats.
+                - `"progress"` — as `"warning"`, plus timing.
+                - `"debug"` — validation runs and **raises** on the first
+                  failure; adds value-function stats.
+                Start every project at `"debug"`: fail early and gather maximum
+                diagnostics. Ease to `"warning"` / `"off"` only once the model
+                is trusted and you need the speed or the non-raising behaviour
+                for an estimation loop.
+            max_compilation_workers: Maximum number of threads for parallel XLA
+                compilation. Defaults to the number of physical CPU cores.
             log_path: Directory for persisting diagnostic snapshots. Optional at
                 every level; snapshots are written only when it is set.
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
@@ -416,9 +421,9 @@ class Model:
         params: UserParams,
         initial_conditions: UserInitialConditions | pd.DataFrame,
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
+        log_level: LogLevel,
         check_initial_conditions: bool = True,
         seed: int | None = None,
-        log_level: LogLevel = "debug",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -450,13 +455,18 @@ class Model:
                 When `None`, the model is solved automatically before simulating.
             check_initial_conditions: Whether to validate initial conditions.
             seed: Random seed.
-            log_level: Verbosity, and the runtime-validation policy it implies:
+            log_level: Verbosity, and the runtime-validation policy it implies.
+                Required — pick deliberately for the situation:
                 - `"off"` — silent; transition-probability and NaN checks skipped.
                 - `"warning"` — validation runs, failures logged as warnings,
                   the run continues.
-                - `"progress"` — as `"warning"`, plus per-period timing.
-                - `"debug"` (default) — validation runs and **raises** on the
-                  first failure; adds value-function stats.
+                - `"progress"` — as `"warning"`, plus timing.
+                - `"debug"` — validation runs and **raises** on the first
+                  failure; adds value-function stats.
+                Start every project at `"debug"`: fail early and gather maximum
+                diagnostics. Ease to `"warning"` / `"off"` only once the model
+                is trusted and you need the speed or the non-raising behaviour
+                for an estimation loop.
             log_path: Directory for persisting diagnostic snapshots. Optional at
                 every level; snapshots are written only when it is set.
             log_keep_n_latest: Maximum number of snapshots to retain on disk.

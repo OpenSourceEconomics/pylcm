@@ -30,6 +30,7 @@ result = model.simulate(
         "regime_id": jnp.full(100, model.regime_names_to_ids["alive"]),
     },
     period_to_regime_to_V_arr=None,
+    log_level="debug",
 )
 
 df = result.to_dataframe(additional_targets="all")

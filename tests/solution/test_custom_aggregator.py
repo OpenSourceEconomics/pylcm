@@ -195,8 +195,8 @@ def test_custom_ces_aggregator_differs_from_default():
         "dead": {},
     }
 
-    V_default = model_default.solve(params=params_default)
-    V_ces = model_ces.solve(params=params_ces)
+    V_default = model_default.solve(log_level="debug", params=params_default)
+    V_ces = model_ces.solve(log_level="debug", params=params_ces)
 
     # The value functions should differ because the aggregation rule differs
     has_difference = False
@@ -285,8 +285,8 @@ def test_terminal_regime_value_unchanged_by_H():
         "dead": {},
     }
 
-    V_default = model_default.solve(params=params_default)
-    V_ces = model_ces.solve(params=params_ces)
+    V_default = model_default.solve(log_level="debug", params=params_default)
+    V_ces = model_ces.solve(log_level="debug", params=params_ces)
 
     # Last period is terminal — value functions should be identical
     last_period = max(V_default.keys())
@@ -332,7 +332,7 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
     }
-    V = model.solve(params=params)
+    V = model.solve(log_level="debug", params=params)
 
     # Pick a non-terminal period; slice each pref_type.
     non_terminal_periods = [p for p in V if p < max(V.keys())]
@@ -381,6 +381,7 @@ def test_h_consumes_continuous_state():
         "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
     }
     V_zero = model.solve(
+        log_level="debug",
         params={
             "working_life": {
                 "H": {"discount_factor": 0.95, "wealth_weight": 0.0},
@@ -390,6 +391,7 @@ def test_h_consumes_continuous_state():
         },
     )
     V_pos = model.solve(
+        log_level="debug",
         params={
             "working_life": {
                 "H": {"discount_factor": 0.95, "wealth_weight": 0.1},
@@ -429,6 +431,7 @@ def test_h_consumes_continuous_action():
         "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
     }
     V_zero = model.solve(
+        log_level="debug",
         params={
             "working_life": {
                 "H": {"discount_factor": 0.95, "action_weight": 0.0},
@@ -438,6 +441,7 @@ def test_h_consumes_continuous_action():
         },
     )
     V_pos = model.solve(
+        log_level="debug",
         params={
             "working_life": {
                 "H": {"discount_factor": 0.95, "action_weight": 0.1},
@@ -475,6 +479,7 @@ def test_h_consumes_discrete_action():
     """
     model = _make_model(custom_H=labor_supply_H)
     V = model.solve(
+        log_level="debug",
         params={
             "working_life": {
                 "H": {"discount_factor": 0.95, "bonus": 0.1},
@@ -485,6 +490,7 @@ def test_h_consumes_discrete_action():
         },
     )
     baseline = _make_model().solve(
+        log_level="debug",
         params={
             "discount_factor": 0.95,
             "working_life": {
@@ -518,6 +524,7 @@ def test_h_consumes_discrete_state():
     """
     model = _make_model(custom_H=pref_type_direct_H, with_pref_type=True)
     V = model.solve(
+        log_level="debug",
         params={
             "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
             "working_life": {
@@ -561,6 +568,7 @@ def test_h_consumes_flat_param_state_action_and_dag_output():
     """
     model = _make_model(custom_H=mixed_H, with_pref_type=True)
     V = model.solve(
+        log_level="debug",
         params={
             "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
             "working_life": {
