@@ -863,7 +863,9 @@ def _collect_state_names(
     user_regimes: Mapping[RegimeName, UserRegime],
     initial_regimes: list[RegimeName],
 ) -> set[str]:
-    """Collect all state names (including process grids) from initial regimes.
+    """Collect all state names from initial regimes.
+
+    Continuous stochastic processes count as states and are included.
 
     Returns:
         Set of all state names from the initial regimes, plus the pseudo-state

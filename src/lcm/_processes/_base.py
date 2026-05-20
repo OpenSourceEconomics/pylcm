@@ -133,7 +133,8 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         """Return the generalized coordinate of a value in the grid."""
         if not self.is_fully_specified:
             raise GridInitializationError(
-                "Cannot compute coordinate for a process grid without all "
+                "Cannot compute coordinate for a continuous stochastic process "
+                "without all "
                 "distribution params."
             )
         return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
