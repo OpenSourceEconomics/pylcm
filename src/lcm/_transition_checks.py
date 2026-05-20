@@ -18,9 +18,10 @@ runs. Two families:
   on more variables than regime transitions, so the Cartesian product can
   blow up.
 
-Distinct from `regime_building/static_checks.py`, which fires at canonical-
-regime construction time on Python source (AST). The checks here need a
-fully-built `Regime` plus user `flat_params` to run.
+These are runtime checks: they need a fully-built `Regime` plus user
+`flat_params` and evaluate the transition functions numerically. The
+construction-time regime-spec validators (`Regime.__post_init__`, which
+inspect grids, signatures, and Python source) are a separate concern.
 
 """
 
@@ -346,8 +347,6 @@ def _validate_no_reachable_incomplete_targets(
         if not jnp.any(regime_transition_probs[target_regime_name] > 0):
             continue
         missing = sorted(needs - set(transitions.get(target_regime_name, {})))
-        if target_regime_name not in transitions:
-            missing = sorted(f"next_{s}" for s in target_regime.variables.state_names)
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Regime '{regime_name}' at age {age} has positive transition "
             f"probability to '{target_regime_name}', but '{regime_name}' "

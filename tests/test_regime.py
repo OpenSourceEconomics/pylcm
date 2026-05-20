@@ -439,9 +439,21 @@ def _make_partner_probs_array():
     )
 
 
-def test_validate_transition_probs_valid():
+def test_validate_transition_probs_accepts_boundary_inputs():
+    """Inclusive [0, 1] bounds and row sums within the 1e-6 tolerance pass.
+
+    The first row is exactly `[0.0, 1.0]` — values at the inclusive bounds.
+    The last row sums to `1 - 5e-7`, just inside the `atol=1e-6` row-sum
+    tolerance. The validator must accept both without raising.
+    """
     model = get_stochastic_model(3)
-    arr = _make_partner_probs_array()
+    arr = jnp.array(
+        [
+            [[[0.0, 1.0], [1.0, 0.0]], [[0.3, 0.7], [0.6, 0.4]]],
+            [[[0.4, 0.6], [0.8, 0.2]], [[0.2, 0.8], [0.7, 0.3]]],
+            [[[0.5, 0.5], [0.9, 0.1]], [[0.3, 0.7], [0.5, 0.4999995]]],
+        ]
+    )
     with pytest.warns(DeprecationWarning, match="deprecated"):
         validate_transition_probs(
             probs=arr, model=model, regime_name="working_life", state_name="partner"
