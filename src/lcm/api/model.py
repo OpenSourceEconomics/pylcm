@@ -100,8 +100,12 @@ class Model:
     user_regimes: MappingProxyType[RegimeName, UserRegime]
     """Boundary-form snapshot of regimes as supplied by the user."""
 
-    regimes: MappingProxyType[RegimeName, Regime]
-    """Canonical, processed regimes used by solve and simulate."""
+    _regimes: MappingProxyType[RegimeName, Regime]
+    """Canonical, processed regimes used by solve and simulate.
+
+    Private: the canonical form is engine-internal. User code should read
+    `user_regimes` (the boundary form supplied to the constructor).
+    """
 
     enable_jit: bool = True
     """Whether to JIT-compile the functions of the internal regimes."""
@@ -169,7 +173,7 @@ class Model:
             regimes: Mapping of regime names to user-provided `Regime`
                 instances. Stored as `self.user_regimes` after merging in
                 any model-level `derived_categoricals`; the canonical
-                processed form is exposed as `self.regimes`.
+                processed form is exposed as `self._regimes`.
             ages: Age grid for the model.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
@@ -213,7 +217,7 @@ class Model:
             user_regimes=regimes,
             derived_categoricals=derived_categoricals,
         )
-        self.regimes, self._params_template = build_regimes_and_template(
+        self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
@@ -314,13 +318,13 @@ class Model:
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
         validate_regime_transitions_all_periods(
-            regimes=self.regimes,
+            regimes=self._regimes,
             flat_params=flat_params,
             ages=self.ages,
             logger=log,
         )
         validate_state_transitions_all_periods(
-            regimes=self.regimes,
+            regimes=self._regimes,
             flat_params=flat_params,
             ages=self.ages,
             logger=log,
@@ -355,7 +359,7 @@ class Model:
             period_to_regime_to_V_arr = solve(
                 flat_params=flat_params,
                 ages=self.ages,
-                regimes=self.regimes,
+                regimes=self._regimes,
                 logger=log,
                 enable_jit=self.enable_jit,
                 max_compilation_workers=max_compilation_workers,
@@ -403,7 +407,7 @@ class Model:
           regimes (caller must have populated the cache before calling).
         """
         if self.n_subjects is None:
-            return self.regimes
+            return self._regimes
         if actual_n_subjects != self.n_subjects:
             with self._simulate_compile_lock:
                 already_warned = actual_n_subjects in self._warned_n_subjects
@@ -416,7 +420,7 @@ class Model:
                     actual_n_subjects,
                     self.n_subjects,
                 )
-            return self.regimes
+            return self._regimes
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[self.n_subjects]
 
@@ -494,14 +498,14 @@ class Model:
             )
         initial_conditions = canonicalize_initial_conditions(
             initial_conditions=initial_conditions,
-            regimes=self.regimes,
+            regimes=self._regimes,
         )
         flat_params = self._process_params(params)
         if validation_enabled(log):
             try:
                 validate_initial_conditions(
                     initial_conditions=initial_conditions,
-                    regimes=self.regimes,
+                    regimes=self._regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
                     flat_params=flat_params,
                     ages=self.ages,
@@ -509,13 +513,13 @@ class Model:
             except InvalidInitialConditionsError as error:
                 raise_or_warn(logger=log, error=error)
         validate_regime_transitions_all_periods(
-            regimes=self.regimes,
+            regimes=self._regimes,
             flat_params=flat_params,
             ages=self.ages,
             logger=log,
         )
         validate_state_transitions_all_periods(
-            regimes=self.regimes,
+            regimes=self._regimes,
             flat_params=flat_params,
             ages=self.ages,
             logger=log,
@@ -527,7 +531,7 @@ class Model:
                 needs_compile = n_subjects not in self._simulate_compile_cache
             if needs_compile:
                 compiled = compile_all_simulate_functions(
-                    regimes=self.regimes,
+                    regimes=self._regimes,
                     flat_params=flat_params,
                     ages=self.ages,
                     n_subjects=n_subjects,
@@ -565,8 +569,8 @@ class Model:
         # the lazy DAG functions / constraints / transitions on
         # `simulate_functions`, never the compiled callables — so swap in
         # the lazy regimes to keep the result cloudpickle-safe.
-        if simulate_regimes is not self.regimes:
-            result._regimes = self.regimes  # noqa: SLF001
+        if simulate_regimes is not self._regimes:
+            result._regimes = self._regimes  # noqa: SLF001
         if log_path is not None and validation_raises(log):
             _save_simulate_snapshot(
                 model=self,

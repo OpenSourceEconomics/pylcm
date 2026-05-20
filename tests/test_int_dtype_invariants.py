@@ -64,7 +64,7 @@ def test_build_initial_states_discrete_dtype_is_int32() -> None:
     }
     states_per_regime = build_initial_states(
         initial_states=initial_states,
-        regimes=model.regimes,
+        regimes=model._regimes,
     )
     for regime_name, regime_states in states_per_regime.items():
         for state_name, arr in regime_states.items():

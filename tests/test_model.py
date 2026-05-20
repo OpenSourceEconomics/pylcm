@@ -242,7 +242,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
-    assert model.regimes is not None
+    assert model._regimes is not None
 
 
 def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):

@@ -153,5 +153,5 @@ def _strip_V_arr_from_result(
     """
     stripped = copy.copy(result)
     object.__setattr__(stripped, "_period_to_regime_to_V_arr", MappingProxyType({}))
-    object.__setattr__(stripped, "_regimes", model.regimes)
+    object.__setattr__(stripped, "_regimes", model._regimes)  # noqa: SLF001
     return stripped

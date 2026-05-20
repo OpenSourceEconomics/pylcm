@@ -55,7 +55,7 @@ def test_canonicalize_initial_conditions_casts_user_float64_to_canonical(
     }
     canonical = canonicalize_initial_conditions(
         initial_conditions=initial_conditions,
-        regimes=model.regimes,
+        regimes=model._regimes,
     )
     assert canonical["wealth"].dtype == canonical_float_dtype()
 
@@ -69,7 +69,7 @@ def test_build_initial_states_casts_user_int_to_canonical(x64_disabled: None):
     }
     states_per_regime = build_initial_states(
         initial_states=initial_states,
-        regimes=model.regimes,
+        regimes=model._regimes,
     )
     assert states_per_regime["working_life"]["wealth"].dtype == canonical_float_dtype()
 
@@ -82,7 +82,7 @@ def test_build_initial_states_missing_continuous_fallback_dtype_is_canonical(
     # Supply a placeholder state to set n_subjects without touching `wealth`.
     states_per_regime = build_initial_states(
         initial_states={"placeholder": jnp.asarray([0.0, 0.0])},
-        regimes=model.regimes,
+        regimes=model._regimes,
     )
     assert states_per_regime["working_life"]["wealth"].dtype == canonical_float_dtype()
 
@@ -98,7 +98,7 @@ def test_build_initial_states_missing_continuous_fallback_values_are_nan(
     model = get_model(n_periods=3)
     states_per_regime = build_initial_states(
         initial_states={"placeholder": jnp.asarray([0.0, 0.0])},
-        regimes=model.regimes,
+        regimes=model._regimes,
     )
     assert bool(jnp.all(jnp.isnan(states_per_regime["working_life"]["wealth"])))
 

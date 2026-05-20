@@ -304,8 +304,9 @@ initial_conditions = {
   name)
 - `model.user_regimes` - Immutable mapping of regime names to user-facing `Regime`
   objects (`lcm.api.regime.Regime`)
-- `model.regimes` - Immutable mapping of regime names to canonical `Regime` objects
-  (`lcm.engine.Regime`) produced by `process_regimes`
+- `model._regimes` - Immutable mapping of regime names to canonical `Regime` objects
+  (`lcm.engine.Regime`) produced by `process_regimes`. Private — the canonical form is
+  engine-internal; user code should read `user_regimes`.
 - `model.ages` - The AgeGrid defining the lifecycle
 - `model.n_periods` - Number of periods in the model (derived from `ages`)
 - `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices
