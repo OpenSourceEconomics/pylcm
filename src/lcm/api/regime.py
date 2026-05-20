@@ -284,12 +284,10 @@ def validate_transition_probs(
 ) -> None:
     """Validate a state transition probability array.
 
-    .. deprecated::
-        State transition probabilities are now validated automatically during
-        `model.solve()` and `model.simulate()` (unless `log_level="off"`) via
-        `validate_state_transitions_all_periods` in
-        `lcm/_transition_checks.py`. This manual helper will be removed in a
-        future release. Drop the call — the model checks for you.
+    Deprecated: `model.solve()` and `model.simulate()` validate state
+    transition probabilities automatically unless `log_level="off"`. This
+    manual helper is redundant and will be removed in a future release —
+    drop the call.
 
     Check that the array has the shape expected from the function signature,
     that all values are in [0, 1], that rows sum to 1, and that the function's
@@ -299,9 +297,8 @@ def validate_transition_probs(
     a dict mapping target regime names to `MarkovTransition` instances), pass
     `target_regime_name` to select the specific transition to validate.
 
-    Regime transition probabilities are validated automatically before solve
-    via `validate_regime_transitions_all_periods` in
-    `lcm/_transition_checks.py`; this helper covers only state transitions.
+    Regime transition probabilities are validated automatically before solve;
+    this helper covers only state transitions.
 
     Args:
         probs: The transition probability array to validate.
@@ -320,8 +317,8 @@ def validate_transition_probs(
     """
     warnings.warn(
         "lcm.validate_transition_probs is deprecated: state transition "
-        "probabilities are now validated automatically during model.solve() "
-        "and model.simulate() (unless log_level='off'). Drop this call.",
+        "probabilities are validated automatically during model.solve() "
+        "and model.simulate() unless log_level='off'. Drop this call.",
         DeprecationWarning,
         stacklevel=2,
     )

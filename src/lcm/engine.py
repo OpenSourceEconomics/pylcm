@@ -337,12 +337,11 @@ class SimulateFunctions:
 class _StochasticStateTransition:
     """Metadata for a stochastic state transition, used by automatic validation.
 
-    Built during `process_regimes` for every `MarkovTransition` state — and
-    for each target of a per-target dict. The pre-solve validator
-    `validate_state_transitions_all_periods` in `lcm/_transition_checks.py`
-    consumes these to evaluate the function on the regime's grid Cartesian
-    product and check that the output has the expected outcome-axis size,
-    lies in [0, 1], and has rows summing to 1.
+    One entry exists for every `MarkovTransition` state — and for each target
+    of a per-target dict. The pre-solve state-transition validator consumes
+    these to evaluate the function on the regime's grid Cartesian product and
+    check that the output has the expected outcome-axis size, lies in [0, 1],
+    and has rows summing to 1.
     """
 
     func: Callable[..., FloatND]

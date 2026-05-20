@@ -64,7 +64,8 @@ def collect_state_transitions(
     """Collect state transition functions from `state_transitions`.
 
     For each state, produces entries keyed as `f"next_{name}"`:
-    - ShockGrid -> stub `lambda: None`
+    - ShockGrid -> skipped (shock transitions are built directly in
+      `_process_regime_core`)
     - `None` -> auto-generated identity transition
     - Callable -> used directly
     - `MarkovTransition` -> used directly (callable via `__call__`)

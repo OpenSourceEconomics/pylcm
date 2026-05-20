@@ -202,7 +202,7 @@ def _summarize_diagnostics(
         age: Age for the summary header.
 
     Returns:
-        Dict with per-metric `"overall"` and `"by_dim"` entries plus a
+        dict with per-metric `"overall"` and `"by_dim"` entries plus a
         `"regime_probs"` mapping, suitable for `_format_diagnostic_summary`.
 
     """

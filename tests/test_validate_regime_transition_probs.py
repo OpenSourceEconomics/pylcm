@@ -22,12 +22,17 @@ from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 
 
-def test_valid_probs_all_active():
-    """Valid probabilities with all regimes active pass validation."""
+def test_valid_probs_accept_boundary_inputs():
+    """Inclusive [0, 1] bounds and a sum within tolerance pass validation.
+
+    Subject 0 splits probability exactly `[1.0, 0.0]` — values at the
+    inclusive bounds. Subject 1 sums to `1 - 2.5e-6`, just inside the
+    `jnp.allclose` default tolerance. The validator must accept both.
+    """
     probs = MappingProxyType(
         {
-            "working_life": jnp.array([0.7, 0.6]),
-            "retirement": jnp.array([0.3, 0.4]),
+            "working_life": jnp.array([1.0, 0.4999975]),
+            "retirement": jnp.array([0.0, 0.5]),
         }
     )
     _validate_regime_transition_probs(

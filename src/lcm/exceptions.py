@@ -25,11 +25,9 @@ class InvalidRegimeTransitionProbabilitiesError(PyLCMError):
 class InvalidStateTransitionProbabilitiesError(PyLCMError):
     """Raised when a stochastic state transition produces invalid probabilities.
 
-    Surfaces shape mismatches, values outside [0, 1], and rows that don't sum
-    to 1 in a state's `MarkovTransition` function output. Raised by the
-    pre-solve sweep `validate_state_transitions_all_periods` in
-    `lcm/_transition_checks.py` and by the process-time AST subscript-order
-    check in `regime_building/static_checks.py`.
+    Covers a `MarkovTransition` function whose output has the wrong outcome-axis
+    size, values outside [0, 1], rows that don't sum to 1, or `probs_array[…]`
+    subscripts that don't match the signature parameter order.
     """
 
 

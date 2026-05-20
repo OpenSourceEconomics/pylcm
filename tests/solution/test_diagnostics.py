@@ -94,7 +94,18 @@ def test_nan_failure_raises_with_regime_and_age():
     model = _make_model()
     params = {**_HEALTHY_PARAMS, "discount_factor": float("nan")}
     with pytest.raises(InvalidValueFunctionError, match=r"alive"):
+        model.solve(params=params, log_level="debug")
+
+
+def test_nan_failure_warns_and_continues_at_warning_level(
+    caplog: pytest.LogCaptureFixture,
+):
+    """At log_level="warning", a NaN value function logs a warning, no raise."""
+    model = _make_model()
+    params = {**_HEALTHY_PARAMS, "discount_factor": float("nan")}
+    with caplog.at_level(logging.WARNING, logger="lcm"):
         model.solve(params=params, log_level="warning")
+    assert "NaN" in caplog.text
 
 
 def test_off_level_solves_without_diagnostics(caplog: pytest.LogCaptureFixture):

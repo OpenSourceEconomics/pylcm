@@ -27,7 +27,7 @@ from beartype.roar import BeartypeCallHintViolation
 from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm._regime._helpers import _default_H
 from lcm._transition_checks import _validate_regime_transition_probs
-from lcm.api.model import _validate_log_args
+from lcm.api.model import _contains_nan
 from lcm.api.regime import Regime as UserRegime
 from lcm.engine import _build_regime_sharding
 from lcm.exceptions import (
@@ -114,10 +114,7 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
 def test_claw_checks_lcm_model() -> None:
     """Type-violating arguments to internal `lcm.model` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
-        _validate_log_args(
-            log_level="progress",
-            log_path=123,  # ty: ignore[invalid-argument-type]
-        )
+        _contains_nan(123)  # ty: ignore[invalid-argument-type]
 
 
 def test_model_with_bad_arg_raises_project_exception() -> None:

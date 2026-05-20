@@ -119,26 +119,45 @@ def _write_environment_files(snap_dir: Path) -> None:
     (snap_dir / "REPRODUCE.md").write_text(reproduce_md)
 
 
+def _snapshot_counter(entry: Path, prefix: str) -> int:
+    """Parse the numeric counter suffix of a snapshot directory.
+
+    Returns `-1` for a name that does not end in an integer, so callers can
+    skip foreign directories rather than mis-order them.
+    """
+    try:
+        return int(entry.name.removeprefix(f"{prefix}_"))
+    except ValueError:
+        return -1
+
+
 def _next_counter(parent_path: Path, prefix: str) -> int:
     """Compute the next monotonic counter for snapshot directories with given prefix."""
-    existing = sorted(parent_path.glob(f"{prefix}_*/"))
-    if not existing:
-        return 1
-    counters: list[int] = []
-    for entry in existing:
-        try:
-            counters.append(int(entry.name.rsplit("_", 1)[1]))
-        except IndexError, ValueError:
-            continue
+    counters = [
+        counter
+        for entry in parent_path.glob(f"{prefix}_*/")
+        if (counter := _snapshot_counter(entry, prefix)) >= 0
+    ]
     return max(counters, default=0) + 1
 
 
 def _enforce_retention(parent_path: Path, prefix: str, *, keep_n_latest: int) -> None:
-    """Delete oldest snapshot directories so that at most keep_n_latest remain."""
-    existing = sorted(parent_path.glob(f"{prefix}_*/"))
-    if len(existing) > keep_n_latest:
-        for snap_dir in existing[: len(existing) - keep_n_latest]:
-            shutil.rmtree(snap_dir)
+    """Delete oldest snapshot directories so that at most keep_n_latest remain.
+
+    Directories are ordered by their parsed integer counter, not by name, so
+    retention stays correct once the counter grows past the zero-padded width
+    (e.g. `snapshot_1000` is newer than `snapshot_999`).
+    """
+    existing = sorted(
+        (
+            entry
+            for entry in parent_path.glob(f"{prefix}_*/")
+            if _snapshot_counter(entry, prefix) >= 0
+        ),
+        key=lambda entry: _snapshot_counter(entry, prefix),
+    )
+    for snap_dir in existing[: max(0, len(existing) - keep_n_latest)]:
+        shutil.rmtree(snap_dir)
 
 
 def _atomic_dump(obj: object, path: str | Path, *, protocol: int) -> Path:

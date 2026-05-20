@@ -236,10 +236,10 @@ def test_simulate_no_persistence_when_not_debug(tmp_path, model_and_params):
     assert len(list(tmp_path.iterdir())) == 0
 
 
-def test_debug_without_log_path_raises(model_and_params):
+def test_debug_without_log_path_solves(model_and_params):
+    """`log_level="debug"` runs without `log_path` — it just writes no snapshot."""
     model, params = model_and_params
-    with pytest.raises(ValueError, match="log_path is required"):
-        model.solve(params=params, log_level="debug")
+    model.solve(params=params, log_level="debug")
 
 
 def test_log_keep_n_latest_deletes_old_snapshots(tmp_path, model_and_params):
