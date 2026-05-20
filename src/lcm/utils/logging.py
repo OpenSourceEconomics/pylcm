@@ -7,12 +7,6 @@ from lcm.typing import FloatND, Int1D, RegimeIdsToNames, ScalarFloat, ScalarInt
 
 type LogLevel = Literal["off", "warning", "progress", "debug"]
 
-# How runtime validation reacts to an invalid input:
-# - "off" — validation does not run.
-# - "warn" — validation runs; failures are logged as warnings, the run continues.
-# - "raise" — validation runs; failures raise.
-type ValidationMode = Literal["off", "warn", "raise"]
-
 _LOG_LEVEL_MAP: dict[str, int] = {
     "off": logging.CRITICAL,
     "warning": logging.WARNING,
@@ -20,53 +14,43 @@ _LOG_LEVEL_MAP: dict[str, int] = {
     "debug": logging.DEBUG,
 }
 
-_VALIDATION_MODE_MAP: dict[LogLevel, ValidationMode] = {
-    "off": "off",
-    "warning": "warn",
-    "progress": "warn",
-    "debug": "raise",
-}
 
+def validation_enabled(logger: logging.Logger) -> bool:
+    """Return whether runtime validation runs at all.
 
-def get_validation_mode(*, log_level: LogLevel) -> ValidationMode:
-    """Map a log level to its runtime-validation behaviour.
-
-    `"off"` disables validation entirely; `"warning"` and `"progress"` run
-    validation and log failures as warnings without interrupting the run;
-    `"debug"` runs validation and raises on the first failure.
-
-    Args:
-        log_level: The verbosity level passed to `solve` / `simulate`.
-
-    Returns:
-        The validation mode the level implies.
-
+    Runtime validation runs unless `log_level="off"`. The logger's level is
+    the single source of truth for the runtime policy: `"off"` raises the
+    logger to `CRITICAL`, every other level keeps it at `WARNING` or lower.
     """
-    return _VALIDATION_MODE_MAP[log_level]
+    return logger.isEnabledFor(logging.WARNING)
 
 
-def raise_or_warn(
-    *,
-    mode: ValidationMode,
-    logger: logging.Logger,
-    error: Exception,
-) -> None:
-    """Surface a validation failure according to the validation mode.
+def validation_raises(logger: logging.Logger) -> bool:
+    """Return whether a validation failure raises (vs. logs a warning).
 
-    In `"raise"` mode the error is raised. In `"warn"` mode it is logged as a
-    warning and control returns to the caller so the run continues. `"off"` is
-    not a valid mode here — validation should not have run at all.
+    A failure raises at `log_level="debug"` and only warns at `"warning"` /
+    `"progress"`. `"debug"` is the one level that lowers the logger to
+    `DEBUG`, so `isEnabledFor(DEBUG)` is exactly the raise predicate.
+    """
+    return logger.isEnabledFor(logging.DEBUG)
+
+
+def raise_or_warn(*, logger: logging.Logger, error: Exception) -> None:
+    """Surface a validation failure according to the logger's policy.
+
+    Raises the error when the logger implies raise mode (`log_level="debug"`);
+    otherwise logs it as a warning and returns so the run continues. Must not
+    be called when validation is disabled (`log_level="off"`).
 
     Args:
-        mode: The active validation mode (`"warn"` or `"raise"`).
-        logger: Logger used to emit the warning in `"warn"` mode.
+        logger: Logger carrying the runtime-validation policy.
         error: The validation error to raise or describe.
 
     Raises:
-        Exception: The passed `error`, when `mode` is `"raise"`.
+        Exception: The passed `error`, in raise mode.
 
     """
-    if mode == "raise":
+    if validation_raises(logger):
         raise error
     logger.warning("%s", error)
 

@@ -65,9 +65,9 @@ from lcm.utils.containers import (
 )
 from lcm.utils.logging import (
     LogLevel,
-    ValidationMode,
     get_logger,
-    get_validation_mode,
+    validation_enabled,
+    validation_raises,
 )
 
 
@@ -300,28 +300,24 @@ class Model:
             Immutable mapping of period to a value function array for each regime.
 
         """
-        validation_mode = get_validation_mode(log_level=log_level)
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
         validate_regime_transitions_all_periods(
             regimes=self.regimes,
             flat_params=flat_params,
             ages=self.ages,
-            mode=validation_mode,
             logger=log,
         )
         validate_state_transitions_all_periods(
             regimes=self.regimes,
             flat_params=flat_params,
             ages=self.ages,
-            mode=validation_mode,
             logger=log,
         )
         return self._solve_compiled(
             flat_params=flat_params,
             params=params,
             log=log,
-            validation_mode=validation_mode,
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
@@ -333,16 +329,15 @@ class Model:
         flat_params: FlatParams,
         params: UserParams,
         log: logging.Logger,
-        validation_mode: ValidationMode,
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
     ) -> PeriodToRegimeToVArr:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
-        With `log_path` set, a snapshot is written in `"raise"` mode (every
-        solve) and in `"warn"` mode whenever the returned solution contains
-        NaN. `_enforce_retention` caps the snapshot count at
+        With `log_path` set, a snapshot is written at `log_level="debug"`
+        (every solve) and at `"warning"` / `"progress"` whenever the returned
+        solution contains NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
         try:
@@ -352,7 +347,6 @@ class Model:
                 regimes=self.regimes,
                 logger=log,
                 enable_jit=self.enable_jit,
-                validation_mode=validation_mode,
                 max_compilation_workers=max_compilation_workers,
             )
         except InvalidValueFunctionError as exc:
@@ -366,9 +360,10 @@ class Model:
                 )
                 exc.add_note(f"Snapshot saved to {snap_dir}")
             raise
-        if log_path is not None and (
-            validation_mode == "raise"
-            or (validation_mode == "warn" and _contains_nan(period_to_regime_to_V_arr))
+        if (
+            log_path is not None
+            and validation_enabled(log)
+            and (validation_raises(log) or _contains_nan(period_to_regime_to_V_arr))
         ):
             save_solve_snapshot(
                 model=self,
@@ -475,7 +470,6 @@ class Model:
             optionally with additional_targets.
 
         """
-        validation_mode = get_validation_mode(log_level=log_level)
         log = get_logger(log_level=log_level)
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
@@ -500,14 +494,12 @@ class Model:
             regimes=self.regimes,
             flat_params=flat_params,
             ages=self.ages,
-            mode=validation_mode,
             logger=log,
         )
         validate_state_transitions_all_periods(
             regimes=self.regimes,
             flat_params=flat_params,
             ages=self.ages,
-            mode=validation_mode,
             logger=log,
         )
         actual_n_subjects = len(next(iter(initial_conditions.values())))
@@ -531,7 +523,6 @@ class Model:
                 flat_params=flat_params,
                 params=params,
                 log=log,
-                validation_mode=validation_mode,
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
                 max_compilation_workers=max_compilation_workers,
@@ -558,7 +549,7 @@ class Model:
         # the lazy regimes to keep the result cloudpickle-safe.
         if simulate_regimes is not self.regimes:
             result._regimes = self.regimes  # noqa: SLF001
-        if log_path is not None and validation_mode == "raise":
+        if log_path is not None and validation_raises(log):
             save_simulate_snapshot(
                 model=self,
                 params=params,

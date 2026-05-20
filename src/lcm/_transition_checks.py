@@ -15,9 +15,9 @@ runs. Two families:
   function on the Cartesian product of the function's accepted grid
   variables, and verifies outcome-axis size, [0, 1] range, and sum-to-1.
 
-Both checks take a `ValidationMode`: `"off"` skips the check, `"warn"` logs
-each failure and lets the run continue, `"raise"` raises on the first
-failure. The mode is derived from the caller's `log_level`.
+Both checks read their policy off the `logger`: `log_level="off"` skips the
+check, `"warning"` / `"progress"` log each failure and let the run continue,
+`"debug"` raises on the first failure.
 
 These are runtime checks: they need a fully-built `Regime` plus user
 `flat_params` and evaluate the transition functions numerically. The
@@ -50,7 +50,7 @@ from lcm.typing import (
     ScalarInt,
     StateOrActionName,
 )
-from lcm.utils.logging import ValidationMode, raise_or_warn
+from lcm.utils.logging import raise_or_warn, validation_enabled
 
 
 def validate_regime_transitions_all_periods(
@@ -58,7 +58,6 @@ def validate_regime_transitions_all_periods(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
-    mode: ValidationMode,
     logger: logging.Logger,
 ) -> None:
     """Validate regime transition probabilities for all periods before solve.
@@ -71,16 +70,16 @@ def validate_regime_transitions_all_periods(
         regimes: Immutable mapping of regime names to regimes.
         flat_params: Immutable mapping of regime names to flat parameter mappings.
         ages: Age grid for the model.
-        mode: Validation mode. `"off"` returns immediately; `"warn"` logs each
-            failure and continues; `"raise"` raises on the first failure.
-        logger: Logger used to emit warnings in `"warn"` mode.
+        logger: Logger carrying the runtime-validation policy. `log_level="off"`
+            returns immediately; `"warning"` / `"progress"` log each failure and
+            continue; `"debug"` raises on the first failure.
 
     Raises:
         InvalidRegimeTransitionProbabilitiesError: If a regime transition produces
-            invalid probabilities and `mode` is `"raise"`.
+            invalid probabilities and the logger implies raise mode.
 
     """
-    if mode == "off":
+    if not validation_enabled(logger):
         return
 
     last_period = ages.n_periods - 1
@@ -91,7 +90,6 @@ def validate_regime_transitions_all_periods(
     ]
     if non_terminal_active_at_last:
         raise_or_warn(
-            mode=mode,
             logger=logger,
             error=InvalidRegimeTransitionProbabilitiesError(
                 f"Non-terminal regime(s) {non_terminal_active_at_last} are active at "
@@ -125,7 +123,7 @@ def validate_regime_transitions_all_periods(
                     ages=ages,
                 )
             except InvalidRegimeTransitionProbabilitiesError as error:
-                raise_or_warn(mode=mode, logger=logger, error=error)
+                raise_or_warn(logger=logger, error=error)
 
 
 def _validate_regime_transition_single(
@@ -381,7 +379,6 @@ def validate_state_transitions_all_periods(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
-    mode: ValidationMode,
     logger: logging.Logger,
 ) -> None:
     """Validate every `MarkovTransition` state transition before solve.
@@ -403,17 +400,18 @@ def validate_state_transitions_all_periods(
         flat_params: Immutable mapping of regime names to flat parameter
             mappings.
         ages: Age grid for the model.
-        mode: Validation mode. `"off"` returns immediately; `"warn"` logs each
-            failure and continues; `"raise"` raises on the first failure.
-        logger: Logger used to emit warnings in `"warn"` mode.
+        logger: Logger carrying the runtime-validation policy. `log_level="off"`
+            returns immediately; `"warning"` / `"progress"` log each failure and
+            continue; `"debug"` raises on the first failure.
 
     Raises:
         InvalidStateTransitionProbabilitiesError: If a `MarkovTransition`
             function returns the wrong outcome-axis size, values outside
-            [0, 1], or rows that don't sum to 1, and `mode` is `"raise"`.
+            [0, 1], or rows that don't sum to 1, and the logger implies raise
+            mode.
 
     """
-    if mode == "off":
+    if not validation_enabled(logger):
         return
     if not any(r.stochastic_state_transitions for r in regimes.values()):
         return
@@ -443,7 +441,7 @@ def validate_state_transitions_all_periods(
                         logger=logger,
                     )
                 except InvalidStateTransitionProbabilitiesError as error:
-                    raise_or_warn(mode=mode, logger=logger, error=error)
+                    raise_or_warn(logger=logger, error=error)
 
 
 def _validate_state_transition_single(
