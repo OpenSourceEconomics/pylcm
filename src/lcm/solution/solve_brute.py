@@ -16,11 +16,12 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.solution.validate_V import validate_V
 from lcm.typing import BoolND, FlatParams, FloatND, RegimeName, StateName
 from lcm.utils.logging import (
-    ValidationMode,
     format_duration,
     log_period_header,
     log_period_timing,
     raise_or_warn,
+    validation_enabled,
+    validation_raises,
 )
 
 
@@ -31,7 +32,6 @@ def solve(
     regimes: MappingProxyType[RegimeName, Regime],
     logger: logging.Logger,
     enable_jit: bool,
-    validation_mode: ValidationMode,
     max_compilation_workers: int | None = None,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Solve a model using grid search.
@@ -41,12 +41,12 @@ def solve(
         ages: Age grid for the model.
         regimes: The internal regimes, that contain all necessary functions
             to solve the model.
-        logger: Logger that logs to stdout.
+        logger: Logger that logs to stdout, and carries the runtime-validation
+            policy. `log_level="debug"` stops backward induction at the first
+            NaN period and raises; `"warning"` / `"progress"` let induction run
+            to completion and log a warning, so `solve` returns a complete
+            (NaN-bearing) solution; `"off"` skips the NaN check.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
-        validation_mode: How a NaN value function is surfaced. `"raise"` stops
-            backward induction at the first NaN period and raises; `"warn"` lets
-            induction run to completion and logs a warning, so `solve` returns a
-            complete (NaN-bearing) solution; `"off"` skips the NaN check.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
 
@@ -111,7 +111,7 @@ def solve(
     #   `"debug"`). It skips even the NaN fail-fast when validation is off.
     # - The min/max/mean trio is a pure logging extra, gated on the
     #   logger's debug level.
-    diagnostics_enabled = validation_mode != "off"
+    diagnostics_enabled = validation_enabled(logger)
     stats_enabled = logger.isEnabledFor(logging.DEBUG)
     diagnostic_rows: list[_DiagnosticRow] = []
     diagnostic_min: list[FloatND] = []
@@ -220,12 +220,11 @@ def solve(
         # we don't break on it; the post-loop emitter still raises a
         # warning if any period flagged Inf.
         #
-        # Only `"raise"` mode fails fast. `"raise"` implies diagnostics
-        # are on (it is the loudest level), so `running_any_nan` has
-        # been tracked. In `"warn"` mode induction runs to completion so
-        # `solve` returns a complete (NaN-bearing) solution rather than
-        # a truncated one.
-        if validation_mode == "raise" and running_any_nan.item():
+        # Only raise mode fails fast. Raise mode is the loudest level, so
+        # diagnostics are on and `running_any_nan` has been tracked. In warn
+        # mode induction runs to completion so `solve` returns a complete
+        # (NaN-bearing) solution rather than a truncated one.
+        if validation_raises(logger) and running_any_nan.item():
             break
 
     if diagnostics_enabled:
@@ -243,7 +242,7 @@ def solve(
                 diagnostic_mean=diagnostic_mean if stats_enabled else None,
             )
         except InvalidValueFunctionError as error:
-            raise_or_warn(mode=validation_mode, logger=logger, error=error)
+            raise_or_warn(logger=logger, error=error)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))

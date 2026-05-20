@@ -37,10 +37,12 @@ def test_model_with_shock(distribution_type):
     params = get_params(distribution_type)
 
     got_solve = model.solve(
+        log_level="debug",
         params=params,
     )
 
     got_simulate = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "health": jnp.asarray([0, 0], dtype=jnp.int32),
@@ -90,6 +92,7 @@ def test_model_with_cross_regime_shocks(distribution_type: str) -> None:
     params = get_multi_regime_params(distribution_type)  # ty: ignore[invalid-argument-type]
 
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "health": jnp.zeros(2, dtype=jnp.int32),

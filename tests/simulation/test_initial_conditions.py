@@ -310,6 +310,7 @@ def test_infeasible_initial_states_detected():
     _working_life = model.regime_names_to_ids["working_life"]
     with pytest.raises(InvalidInitialConditionsError):
         model.simulate(
+            log_level="debug",
             params=params,
             initial_conditions={
                 "age": jnp.array([0.0]),
@@ -336,6 +337,7 @@ def test_on_grid_state_but_combination_infeasible():
     _working_life = model.regime_names_to_ids["working_life"]
     with pytest.raises(InvalidInitialConditionsError):
         model.simulate(
+            log_level="debug",
             params=params,
             initial_conditions={
                 "age": jnp.array([0.0]),
@@ -357,6 +359,7 @@ def test_extrapolated_initial_states_accepted():
     }
     _working_life = model.regime_names_to_ids["working_life"]
     model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "age": jnp.array([0.0]),
@@ -378,6 +381,7 @@ def test_on_grid_initial_states_accepted():
     }
     _working_life = model.regime_names_to_ids["working_life"]
     model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "age": jnp.array([0.0]),
@@ -401,6 +405,7 @@ def test_irreg_spaced_grid_with_runtime_points():
     _working_life = model.regime_names_to_ids["working_life"]
     with pytest.raises(InvalidInitialConditionsError):
         model.simulate(
+            log_level="debug",
             params=params,
             initial_conditions={
                 "wealth": jnp.array([0.3]),

@@ -147,6 +147,7 @@ def test_model_with_quarterly_steps():
 
     # Solve and simulate
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.array([50.0, 100.0, 150.0]),
@@ -290,6 +291,7 @@ def test_model_with_integer_ages():
     }
 
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.array([50.0, 100.0, 150.0]),

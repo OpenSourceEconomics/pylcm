@@ -149,6 +149,7 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
     """Test that distribution over multiple CPU's works for solution."""
 
     period_to_regime_to_V_arr = correct_distributed_model.solve(
+        log_level="debug",
         params={"discount_factor": 0.95},
     )
 
@@ -160,6 +161,7 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     """Test that distribution over multiple CPU's works for simulation."""
 
     res = correct_distributed_model.simulate(
+        log_level="debug",
         params={"discount_factor": 0.95},
         initial_conditions={
             "age": jnp.full(36, 0),
@@ -185,6 +187,7 @@ def test_solution_error_if_grid_product_exceeds_devices(wrong_distributed_model)
 
     with pytest.raises(PyLCMError, match="must equal the number"):
         wrong_distributed_model.solve(
+            log_level="debug",
             params={"discount_factor": 0.95},
         )
 
@@ -195,6 +198,7 @@ def test_simulation_error_if_not_multiple(correct_distributed_model):
 
     with pytest.raises(PyLCMError, match="multiple"):
         correct_distributed_model.simulate(
+            log_level="debug",
             params={"discount_factor": 0.95},
             initial_conditions={
                 "age": jnp.full(5, 0),
@@ -269,6 +273,7 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
     undistributed regime's V-array carries no per-axis sharding (single device).
     """
     period_to_regime_to_V_arr = partially_distributed_model.solve(
+        log_level="debug",
         params={"discount_factor": 0.95},
     )
     assert period_to_regime_to_V_arr[0]["working_life"].sharding.num_devices == 4

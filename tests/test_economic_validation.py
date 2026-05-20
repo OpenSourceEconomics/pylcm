@@ -24,6 +24,7 @@ def _simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
     params = get_params(shock_type, sigma=sigma, mu=mu, rho=rho)
     unconditional_mean = mu / (1 - rho)
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.full(_N_SUBJECTS, 5.0),

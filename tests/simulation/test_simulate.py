@@ -127,7 +127,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
             ages=ages,
             regime_id_class=RegimeId,
         )
-        period_to_regime_to_V_arr = model.solve(params=params)
+        period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
         return period_to_regime_to_V_arr, params, model
 
     return _model_solution
@@ -144,6 +144,7 @@ def test_simulate_using_model_methods(
     )
 
     result = model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         initial_conditions={
@@ -198,6 +199,7 @@ def test_simulate_with_only_discrete_actions():
     params = get_params(n_periods=3, wage=1.5, discount_factor=1.0, interest_rate=0.0)
 
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.array([0.0, 2.0]),
@@ -262,6 +264,7 @@ def test_effect_of_discount_factor_on_last_period():
 
     df_low = (
         model.simulate(
+            log_level="debug",
             params=params_low,
             initial_conditions={
                 "wealth": initial_wealth,
@@ -276,6 +279,7 @@ def test_effect_of_discount_factor_on_last_period():
 
     df_high = (
         model.simulate(
+            log_level="debug",
             params=params_high,
             initial_conditions={
                 "wealth": initial_wealth,
@@ -327,6 +331,7 @@ def test_effect_of_disutility_of_work():
 
     df_low = (
         model.simulate(
+            log_level="debug",
             params=params_low,
             initial_conditions={
                 "wealth": initial_wealth,
@@ -341,6 +346,7 @@ def test_effect_of_disutility_of_work():
 
     df_high = (
         model.simulate(
+            log_level="debug",
             params=params_high,
             initial_conditions={
                 "wealth": initial_wealth,
@@ -374,6 +380,7 @@ def test_to_dataframe_use_labels_parameter():
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
@@ -402,6 +409,7 @@ def regression_simulation_result():
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
     return model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
@@ -445,6 +453,7 @@ def test_additional_targets_all_with_stochastic_transitions():
     params = get_params(n_periods=3)
 
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
@@ -485,6 +494,7 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),

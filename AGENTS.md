@@ -225,11 +225,15 @@ Model(
 
 ### Core Methods
 
-- `model.solve(params=params)` - Solve the model and return value function arrays per
-  period and regime
-- `model.simulate(params=params, initial_conditions=initial_conditions, period_to_regime_to_V_arr=period_to_regime_to_V_arr)`
+- `model.solve(params=params, log_level="debug")` - Solve the model and return value
+  function arrays per period and regime
+- `model.simulate(params=params, initial_conditions=initial_conditions, period_to_regime_to_V_arr=period_to_regime_to_V_arr, log_level="debug")`
   \- Simulate forward given solution. `period_to_regime_to_V_arr` is optional; when
   `None`, the model is solved automatically before simulating.
+- `log_level` is **required** on both `solve()` and `simulate()`
+  (`off < warning < progress < debug`). It governs all runtime validation: `"off"` skips
+  it, `"warning"` / `"progress"` warn and continue, `"debug"` raises. Start projects at
+  `"debug"`.
 
 ### Derived Categoricals
 
@@ -249,6 +253,7 @@ result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
     period_to_regime_to_V_arr=None,
+    log_level="debug",
 )
 
 # Convert to DataFrame (deferred computation)

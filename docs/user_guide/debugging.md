@@ -39,8 +39,8 @@ period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
 # Warnings only — invalid input is logged, the run continues
 period_to_regime_to_V_arr = model.solve(params=params, log_level="warning")
 
-# Debug (default) — validation raises, full diagnostics
-period_to_regime_to_V_arr = model.solve(params=params)  # log_level="debug"
+# Debug — validation raises, full diagnostics
+period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
 # Debug + snapshot persistence
 period_to_regime_to_V_arr = model.solve(
@@ -117,7 +117,9 @@ snapshot.params  # the user parameters
 snapshot.period_to_regime_to_V_arr  # value function arrays (loaded from HDF5)
 
 # Re-run the solve to reproduce the result
-period_to_regime_to_V_arr = snapshot.model.solve(params=snapshot.params)
+period_to_regime_to_V_arr = snapshot.model.solve(
+    params=snapshot.params, log_level="debug"
+)
 ```
 
 For large snapshots, skip fields you don't need:
@@ -210,7 +212,7 @@ model = Model(
 )
 
 # Call solve with the bad parameters --- the traceback will be readable
-period_to_regime_to_V_arr = model.solve(params=bad_params)
+period_to_regime_to_V_arr = model.solve(params=bad_params, log_level="debug")
 ```
 
 The traceback now points to the exact line in your user-defined functions where the NaN
@@ -227,7 +229,7 @@ import jax.numpy as jnp
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-period_to_regime_to_V_arr = model.solve(params=params)
+period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
 # Check for issues
 for period, regimes in period_to_regime_to_V_arr.items():
@@ -263,6 +265,7 @@ result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
     period_to_regime_to_V_arr=None,
+    log_level="debug",
     log_path="./debug/",
 )
 ```

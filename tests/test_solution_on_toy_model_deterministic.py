@@ -235,7 +235,8 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(
-        params={"discount_factor": discount_factor, "alive": params_alive}
+        log_level="debug",
+        params={"discount_factor": discount_factor, "alive": params_alive},
     )
 
     wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
@@ -282,6 +283,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     result = model.simulate(
+        log_level="debug",
         params={"discount_factor": discount_factor, "alive": params_alive},
         initial_conditions={
             "wealth": jnp.array([0.25, 0.75, 1.25, 1.75]),

@@ -39,8 +39,10 @@ from lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
-from lcm.regime_building.static_checks import derive_stochastic_state_transitions
-from lcm.regime_building.transitions import collect_state_transitions
+from lcm.regime_building.transitions import (
+    collect_state_transitions,
+    collect_stochastic_state_transitions,
+)
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
@@ -192,7 +194,7 @@ def process_regimes(
             solve_compute_regime_transition_probs=solve_functions.compute_regime_transition_probs,
         )
 
-        stochastic_state_transitions = derive_stochastic_state_transitions(
+        stochastic_state_transitions = collect_stochastic_state_transitions(
             user_regime=user_regime,
             user_regimes=user_regimes,
         )

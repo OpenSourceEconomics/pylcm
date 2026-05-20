@@ -57,7 +57,7 @@ def test_analytical_solution(model_name, model_and_params):
     params = model_and_params["params"]
 
     period_to_regime_to_V_arr: dict[int, dict[str, FloatND]] = model.solve(
-        params=params
+        log_level="debug", params=params
     )
 
     period_to_regime_to_V_arr_list = [

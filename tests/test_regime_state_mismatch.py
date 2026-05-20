@@ -184,8 +184,9 @@ def test_deterministic_target_only_state() -> None:
     )
 
     params = {"discount_factor": 0.95}
-    period_to_regime_to_V_arr = model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "age": jnp.array([0.0, 0.0]),
@@ -276,8 +277,9 @@ def test_stochastic_target_only_state() -> None:
     )
 
     params = {"discount_factor": 0.95}
-    period_to_regime_to_V_arr = model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "age": jnp.array([0.0, 0.0]),
@@ -350,7 +352,7 @@ def test_per_target_dict_transitions():
     )
 
     params = {"discount_factor": 0.95}
-    period_to_regime_to_V_arr = model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
 
     n_subjects = 4
     # Use codes 0 (disabled) and 1 (bad) — valid in both regimes.
@@ -365,6 +367,7 @@ def test_per_target_dict_transitions():
     )
 
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "age": jnp.zeros(n_subjects),
@@ -684,7 +687,7 @@ def test_incomplete_per_target_reachable_target():
         InvalidRegimeTransitionProbabilitiesError,
         match=r"does not provide state transition",
     ):
-        model.solve(params={"discount_factor": 0.95})
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def test_complete_per_target_stochastic_cross_grid() -> None:
@@ -755,7 +758,7 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
     )
-    model.solve(params={"discount_factor": 0.95})
+    model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def test_incomplete_per_target_unreachable_target() -> None:
@@ -874,4 +877,4 @@ def test_incomplete_per_target_unreachable_target() -> None:
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
     )
-    model.solve(params={"discount_factor": 0.95})
+    model.solve(log_level="debug", params={"discount_factor": 0.95})

@@ -158,7 +158,7 @@ def test_nan_diagnostics_end_to_end() -> None:
     model, params = _build_nan_model()
 
     with pytest.raises(InvalidValueFunctionError) as exc_info:
-        model.solve(params=params)
+        model.solve(log_level="debug", params=params)
 
     exc = exc_info.value
     assert exc.diagnostics is not None, (

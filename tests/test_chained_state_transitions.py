@@ -86,7 +86,7 @@ def test_solve_with_chained_transitions_returns_finite_value_function() -> None:
     model = _build_model()
     params = {"discount_factor": 0.9, "final_age_alive": 1.0}
 
-    period_to_regime_to_V_arr = model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
 
     V_active = period_to_regime_to_V_arr[0]["active"]
     assert jnp.all(jnp.isfinite(V_active))
@@ -113,6 +113,7 @@ def test_simulate_with_chained_transitions_yields_expected_next_wealth() -> None
 
     df = (
         model.simulate(
+            log_level="debug",
             params=params,
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=None,

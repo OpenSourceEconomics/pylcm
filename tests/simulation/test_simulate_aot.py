@@ -76,6 +76,7 @@ def test_n_subjects_none_leaves_aot_cache_empty_after_simulate() -> None:
     params = get_params(n_periods=n_periods)
 
     model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=None,
         initial_conditions=_build_initial_conditions(n_subjects=4),
@@ -91,6 +92,7 @@ def test_n_subjects_none_yields_simulate_result_sized_to_actual() -> None:
     params = get_params(n_periods=n_periods)
 
     result = model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=None,
         initial_conditions=_build_initial_conditions(n_subjects=4),
@@ -107,7 +109,7 @@ def test_simulate_second_matching_call_does_not_invoke_compile(
     n_subjects = 4
     model = _build_test_model(n_periods=n_periods, n_subjects=n_subjects)
     params = get_params(n_periods=n_periods)
-    period_to_regime_to_V_arr = model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
 
     counter = {"count": 0}
     original_compile = jax.stages.Lowered.compile
@@ -123,6 +125,7 @@ def test_simulate_second_matching_call_does_not_invoke_compile(
     initial_conditions = _build_initial_conditions(n_subjects=n_subjects)
 
     model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         initial_conditions=initial_conditions,
@@ -130,6 +133,7 @@ def test_simulate_second_matching_call_does_not_invoke_compile(
     counter["count"] = 0
 
     model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         initial_conditions=initial_conditions,
@@ -144,11 +148,12 @@ def test_simulate_first_matching_call_populates_aot_cache() -> None:
     n_subjects = 4
     model = _build_test_model(n_periods=n_periods, n_subjects=n_subjects)
     params = get_params(n_periods=n_periods)
-    period_to_regime_to_V_arr = model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
 
     assert n_subjects not in model._simulate_compile_cache
 
     model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         initial_conditions=_build_initial_conditions(n_subjects=n_subjects),
@@ -168,7 +173,7 @@ def test_solve_does_not_populate_simulate_compile_cache() -> None:
     model = _build_test_model(n_periods=n_periods, n_subjects=n_subjects)
     params = get_params(n_periods=n_periods)
 
-    model.solve(params=params)
+    model.solve(log_level="debug", params=params)
 
     assert dict(model._simulate_compile_cache) == {}
 
@@ -193,10 +198,11 @@ def _mismatch_outcome(
     n_periods = 3
     model = _build_test_model(n_periods=n_periods, n_subjects=_DECLARED_N)
     params = get_params(n_periods=n_periods)
-    period_to_regime_to_V_arr = model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
 
     with caplog.at_level(logging.WARNING, logger="lcm"):
         model.simulate(
+            log_level="debug",
             params=params,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             initial_conditions=_build_initial_conditions(n_subjects=_ACTUAL_N),
@@ -247,16 +253,18 @@ def test_simulate_warns_only_once_per_mismatching_size(
     n_periods = 3
     model = _build_test_model(n_periods=n_periods, n_subjects=_DECLARED_N)
     params = get_params(n_periods=n_periods)
-    period_to_regime_to_V_arr = model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
     initial_conditions = _build_initial_conditions(n_subjects=_ACTUAL_N)
 
     with caplog.at_level(logging.WARNING, logger="lcm"):
         model.simulate(
+            log_level="debug",
             params=params,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             initial_conditions=initial_conditions,
         )
         model.simulate(
+            log_level="debug",
             params=params,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             initial_conditions=initial_conditions,
@@ -285,6 +293,7 @@ def test_simulate_result_pickles_when_n_subjects_matches() -> None:
     params = get_params(n_periods=n_periods)
 
     result = model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=None,
         initial_conditions=_build_initial_conditions(n_subjects=n_subjects),
@@ -300,11 +309,12 @@ def test_unpickled_model_can_simulate_with_aot() -> None:
     n_subjects = 4
     model = _build_test_model(n_periods=n_periods, n_subjects=n_subjects)
     params = get_params(n_periods=n_periods)
-    period_to_regime_to_V_arr = model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
     initial_conditions = _build_initial_conditions(n_subjects=n_subjects)
 
     # Populate the AOT cache before pickling — confirms __getstate__ drops it.
     model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         initial_conditions=initial_conditions,
@@ -320,6 +330,7 @@ def test_unpickled_model_can_simulate_with_aot() -> None:
 
     # Simulate works post-unpickle and re-populates the cache for that size.
     restored.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         initial_conditions=initial_conditions,
