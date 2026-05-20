@@ -174,31 +174,10 @@ def is_good_health(health: DiscreteState) -> IntND:
 
 ## Validating State Transition Probabilities
 
-Check that a state transition probability array has the correct shape, values in
-$[0, 1]$, and rows that sum to 1:
-
-```python
-from lcm import validate_transition_probs
-
-validate_transition_probs(
-    probs=health_probs,
-    model=model,
-    regime_name="working",
-    state_name="health",
-)
-```
-
-Raises `ValueError` if:
-
-- The array shape doesn't match the expected dimensions (indexing parameters + outcome
-  axis)
-- Any value is outside $[0, 1]$
-- Any row (slice along the last axis) doesn't sum to 1
-
-Call this after building the array to catch mistakes early.
-
-Regime transition probabilities are validated automatically during `model.solve()` and
-`model.simulate()`, so this helper covers only state transitions.
+State (and regime) transition probabilities are validated automatically during
+`model.solve()` and `model.simulate()`: their shape, $[0, 1]$ range, and rows summing to
+1 are checked on a sweep over the regime's grids. Whether a failure raises or only warns
+is controlled by `log_level` — see [Solving and Simulating](solving_and_simulating.md).
 
 ## Under the Hood
 
