@@ -29,14 +29,8 @@ Re-enable JIT once the issue is resolved.
 
 `log_level` controls console verbosity *and* the runtime-validation policy — how
 `solve()` / `simulate()` react to an invalid transition-probability ensemble or a NaN
-value function:
-
-| Level               | Console output                                                    | Invalid input →    |
-| ------------------- | ----------------------------------------------------------------- | ------------------ |
-| `"off"`             | Nothing (good for HPC batch jobs); validation does not run        | (not checked)      |
-| `"warning"`         | NaN/Inf and invalid-probability warnings                          | **warn**, continue |
-| `"progress"`        | All above + progress and timing per period                        | **warn**, continue |
-| `"debug"` (default) | All above + V_arr statistics per regime, regime transition counts | **raise**          |
+value function. See [Solving and Simulating](solving_and_simulating.md) for the full
+`log_level` × `log_path` behaviour table.
 
 ```python
 # Silent — no console output, no validation
@@ -54,9 +48,7 @@ period_to_regime_to_V_arr = model.solve(
 )
 ```
 
-`log_path` is optional at every level — including `"debug"`. See
-[Solving and Simulating](solving_and_simulating.md) for the full `log_level` ×
-`log_path` behaviour table.
+`log_path` is optional at every level — including `"debug"`.
 
 ## Debug snapshots
 
