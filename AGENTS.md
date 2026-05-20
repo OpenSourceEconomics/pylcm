@@ -566,6 +566,16 @@ Code structure should be self-evident from function names and ordering.
 - Always use **plotly** for visualizations, never matplotlib. Use `plotly.graph_objects`
   and `plotly.subplots.make_subplots`.
 
+### Notebooks
+
+Explanation notebooks live in `docs/explanations/*.ipynb`. After editing one, verify:
+
+- Each cell's `source` is a JSON array of lines (one array element per line), never a
+  single multi-line string — a one-string `source` produces an unreadable diff.
+- Outputs and execution counts are stripped (`pixi run nbstripout <file>`).
+- Markdown and code use literal UTF-8 characters (`—`, `→`, `μ`), never `\u`-style
+  escape sequences.
+
 ### Key Dependencies
 
 - **jax**: Numerical computation

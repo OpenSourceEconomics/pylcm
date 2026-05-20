@@ -45,8 +45,8 @@ The full behaviour of every `log_level` × `log_path` combination:
 | `"off"`               | (ignored)  | not run                   | silent                          | none                                                      |
 | `"warning"`           | `None`     | runs → failures **warn**  | warnings                        | none                                                      |
 | `"warning"`           | set        | runs → failures **warn**  | warnings                        | one per warned failure, capped at `log_keep_n_latest`     |
-| `"progress"`          | `None`     | runs → failures **warn**  | warnings + per-period timing    | none                                                      |
-| `"progress"`          | set        | runs → failures **warn**  | warnings + per-period timing    | one per warned failure, capped at `log_keep_n_latest`     |
+| `"progress"`          | `None`     | runs → failures **warn**  | warnings + timing               | none                                                      |
+| `"progress"`          | set        | runs → failures **warn**  | warnings + timing               | one per warned failure, capped at `log_keep_n_latest`     |
 | `"debug"` *(default)* | `None`     | runs → failures **raise** | warnings + timing + V_arr stats | none                                                      |
 | `"debug"` *(default)* | set        | runs → failures **raise** | warnings + timing + V_arr stats | one per solve and on raise, capped at `log_keep_n_latest` |
 
