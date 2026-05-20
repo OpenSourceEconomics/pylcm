@@ -4,41 +4,32 @@ title: Shocks
 
 # Shocks
 
-Shock grids represent stochastic variables that define their own transition
-probabilities (based on the discretization method). Unlike regular grids, they compute
-their own grid points and transition matrices — you don't specify them in
+Shocks are stochastic state variables. pylcm represents them with **continuous
+stochastic process** classes, which bundle both the discretized grid and its transition
+mechanism. Unlike ordinary grids, a process computes its own grid points and transition
+matrix from a distribution and its parameters — so you place it in `states` and never in
 `state_transitions`.
 
-## Import Convention
-
-We recommend importing shock modules and using qualified names:
+Process classes follow the naming convention `<Distribution><Kind>Process` and are
+imported directly from `lcm`:
 
 ```python
-import lcm.shocks.iid
-import lcm.shocks.ar1
-
-# Recommended
-shock = lcm.shocks.iid.Normal(
-    n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0
-)
-
-# Not recommended — can cause name collisions (e.g., Normal from scipy)
-from lcm.shocks.iid import Normal  # noqa
+from lcm import NormalIIDProcess, TauchenAR1Process
 ```
 
-Qualified access makes the shock's origin clear in code review and avoids collisions
-with common names like `Normal` from other libraries.
+- `*IIDProcess` — independent draws each period.
+- `*AR1Process` — an AR(1) process with a chosen discretization scheme.
 
-## IID Shocks
+## IID Processes
 
-Shocks that are independent across periods. Import: `import lcm.shocks.iid`
+Processes whose draws are independent across periods.
 
-### Normal
+### NormalIIDProcess
 
 Discretized normal distribution $N(\mu, \sigma^2)$.
 
 ```python
-lcm.shocks.iid.Normal(n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
+NormalIIDProcess(n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
 ```
 
 **Parameters:**
@@ -48,37 +39,38 @@ lcm.shocks.iid.Normal(n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=
   `False`, use equally spaced points spanning $\mu \pm n_\text{std} \cdot \sigma$.
 - `mu`: Mean of the distribution.
 - `sigma`: Standard deviation.
-- `n_std`: Number of standard deviations for the grid boundary (not used when
-  `gauss_hermite=True`).
+- `n_std`: Number of standard deviations for the grid boundary. Mutually exclusive with
+  `gauss_hermite=True`.
 
-### LogNormal
+### LogNormalIIDProcess
 
 Discretized log-normal distribution where $\ln X \sim N(\mu, \sigma^2)$.
 
 ```python
-lcm.shocks.iid.LogNormal(n_points=7, gauss_hermite=False, mu=0.0, sigma=0.5, n_std=2.0)
+LogNormalIIDProcess(n_points=7, gauss_hermite=False, mu=0.0, sigma=0.5, n_std=2.0)
 ```
 
-Same parameters as `Normal`. Grid points are `exp()` of the underlying normal grid.
+Same parameters as `NormalIIDProcess`. Grid points are `exp()` of the underlying normal
+grid.
 
-### Uniform
+### UniformIIDProcess
 
 Discretized uniform distribution $U(\text{start}, \text{stop})$. Both endpoints are
 included in the grid.
 
 ```python
-lcm.shocks.iid.Uniform(n_points=5, start=0.0, stop=1.0)
+UniformIIDProcess(n_points=5, start=0.0, stop=1.0)
 ```
 
 Equally spaced points with uniform probabilities (all `1/n_points`).
 
-### NormalMixture
+### NormalMixtureIIDProcess
 
 Two-component normal mixture:
 $\varepsilon \sim p_1 \, N(\mu_1, \sigma_1^2) + (1 - p_1) \, N(\mu_2, \sigma_2^2)$.
 
 ```python
-lcm.shocks.iid.NormalMixture(
+NormalMixtureIIDProcess(
     n_points=9,
     n_std=2.0,
     p1=0.9,
@@ -91,23 +83,22 @@ lcm.shocks.iid.NormalMixture(
 
 Grid spans the mixture mean $\pm n_\text{std}$ mixture standard deviations.
 
-## AR(1) Shocks
+## AR(1) Processes
 
-Shocks with serial correlation. Import: `import lcm.shocks.ar1`
+Processes with serial correlation. The process is
+$y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$. The innovation distribution depends on
+the class:
 
-The process is $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$. The innovation
-distribution depends on the method:
-
-- **Tauchen** and **Rouwenhorst**: $\varepsilon_t \sim N(0, \sigma^2)$
-- **TauchenNormalMixture**:
+- `TauchenAR1Process` and `RouwenhorstAR1Process`: $\varepsilon_t \sim N(0, \sigma^2)$
+- `TauchenNormalMixtureAR1Process`:
   $\varepsilon_t \sim p_1 \, N(\mu_1, \sigma_1^2) + (1 - p_1) \, N(\mu_2, \sigma_2^2)$
 
-### Tauchen
+### TauchenAR1Process
 
 Discretization via @tauchen1986. Uses CDF-based transition probabilities.
 
 ```python
-lcm.shocks.ar1.Tauchen(
+TauchenAR1Process(
     n_points=7,
     gauss_hermite=False,
     rho=0.9,
@@ -118,25 +109,25 @@ lcm.shocks.ar1.Tauchen(
 ```
 
 - `gauss_hermite`: If `True`, use Gauss-Hermite quadrature nodes.
-- `n_std`: Number of unconditional standard deviations for the grid boundary (not used
-  when `gauss_hermite=True`).
+- `n_std`: Number of unconditional standard deviations for the grid boundary. Mutually
+  exclusive with `gauss_hermite=True`.
 
-### Rouwenhorst
+### RouwenhorstAR1Process
 
 Discretization via @rouwenhorst1995 / @kopecky2010. Better for highly persistent
 processes ($\rho$ close to 1).
 
 ```python
-lcm.shocks.ar1.Rouwenhorst(n_points=7, rho=0.95, sigma=0.1, mu=0.0)
+RouwenhorstAR1Process(n_points=7, rho=0.95, sigma=0.1, mu=0.0)
 ```
 
-### TauchenNormalMixture
+### TauchenNormalMixtureAR1Process
 
 AR(1) with mixture-of-normals innovations, discretized via Tauchen. Following
 @fella2019.
 
 ```python
-lcm.shocks.ar1.TauchenNormalMixture(
+TauchenNormalMixtureAR1Process(
     n_points=9,
     rho=0.9,
     mu=0.0,
@@ -149,20 +140,19 @@ lcm.shocks.ar1.TauchenNormalMixture(
 )
 ```
 
-## Using Shocks in a Regime
+## Using a Process in a Regime
 
-Shock grids go in `states`. They must **not** appear in state transitions (they manage
-their own):
+A process goes in `states`. It must **not** appear in `state_transitions` — it manages
+its own transition:
 
 ```python
-import lcm.shocks.iid
-from lcm import LinSpacedGrid, Regime
+from lcm import LinSpacedGrid, NormalIIDProcess, Regime
 
 working = Regime(
     transition=next_regime,
     states={
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=50),
-        "income_shock": lcm.shocks.iid.Normal(
+        "income_shock": NormalIIDProcess(
             n_points=5,
             gauss_hermite=False,
             mu=0.0,
@@ -184,21 +174,23 @@ working = Regime(
 
 ## Key Rules
 
-1. Shock grids go in `states` (they define the values the shock can take).
-1. Shock grids must **not** have a `transition` parameter (validation error if they do).
-1. Shock parameters can be specified at init or deferred to runtime (set to `None`).
+1. A process goes in `states` — it defines the values the shock can take.
+1. A process must **not** appear in `state_transitions` — placing it there is a
+   validation error.
+1. Process parameters can be specified at construction or deferred to runtime (set to
+   `None`).
 1. Runtime params follow the same hierarchy as other params (see
    [Parameters](parameters.md)).
 
 ## Runtime Parameters
 
-Set shock parameters to `None` at grid creation to supply them at runtime:
+Set distribution parameters to `None` at construction to supply them at runtime:
 
 ```python
-lcm.shocks.iid.Normal(n_points=5, gauss_hermite=False, mu=None, sigma=None, n_std=None)
+NormalIIDProcess(n_points=5, gauss_hermite=False, mu=None, sigma=None, n_std=None)
 ```
 
-Then supply the values in the params dict:
+Then supply the values in the params dict, keyed by regime name:
 
 ```python
 params = {
@@ -210,9 +202,12 @@ params = {
 }
 ```
 
+`n_points` and `gauss_hermite` are structural, not distribution parameters — they must
+always be given at construction.
+
 ## See Also
 
 - [Approximating Continuous Shocks](../explanations/approximating_continuous_shocks.ipynb)
   — theory behind Tauchen, Rouwenhorst, and quadrature methods
 - [Grids](grids.md) — deterministic grid types
-- [Parameters](parameters.md) — how to supply runtime shock parameters
+- [Parameters](parameters.md) — how to supply runtime process parameters

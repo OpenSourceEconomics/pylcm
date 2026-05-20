@@ -77,17 +77,19 @@ automation. Python 3.14+ is required.
   auto-assigned `ScalarInt` (0-d `jnp.int32`) codes. Requires explicit `ordered=True` or
   `ordered=False`. Every field must be annotated as `ScalarInt` (from `lcm.typing`) —
   other annotations raise `CategoricalDefinitionError` at decoration time.
-- **ShockGrids** (in `src/lcm/shocks/`): `Rouwenhorst`, `Tauchen`, `Normal`, `Uniform`.
-  These have intrinsic transitions — do NOT accept entries in `state_transitions`.
-  Import as modules (`import lcm.shocks.iid`) and use qualified access
-  (`lcm.shocks.iid.Uniform(...)`), never `from lcm.shocks.iid import Uniform`.
+- **Stochastic processes** (in `src/lcm/_processes/`): `UniformIIDProcess`,
+  `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`,
+  `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. These
+  bundle a discretized grid and its transition mechanism — they go in `states` and must
+  NOT appear in `state_transitions`. Import directly from `lcm`
+  (`from lcm import NormalIIDProcess`).
 
 Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the base for
 continuous grids with `get_coordinate` method. `UniformContinuousGrid(ContinuousGrid)`
 is for grids with start/stop/n_points (LinSpacedGrid, LogSpacedGrid inherit from it).
 Other continuous grids (IrregSpacedGrid, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid)
-inherit directly from ContinuousGrid. `_ShockGrid(ContinuousGrid)` is the base for
-stochastic continuous grids. `DiscreteGrid` supports stochastic transitions via
+inherit directly from ContinuousGrid. `_ProcessGrid(ContinuousGrid)` is the base for the
+stochastic process classes. `DiscreteGrid` supports stochastic transitions via
 `MarkovTransition`-wrapped callables in `state_transitions`.
 
 Grids are pure outcome-space definitions — they define what values a variable can take.
@@ -177,13 +179,14 @@ Regime(
   regimes. `terminal` is a derived property (`self.transition is None`).
 - `active` is optional; defaults to `lambda _age: True` (always active)
 - `functions` must contain a `"utility"` entry (the utility function)
-- `state_transitions` maps state names to transition functions. Every non-shock state in
-  a non-terminal regime must have an entry. `None` marks a fixed state (identity
+- `state_transitions` maps state names to transition functions. Every non-process state
+  in a non-terminal regime must have an entry. `None` marks a fixed state (identity
   auto-generated). Wrap in `MarkovTransition` for stochastic transitions.
 - Per-target dicts in `state_transitions` map target regime names to transition
   functions — every reachable target must be listed. Within a per-target dict,
   stochasticity must be consistent (all `MarkovTransition` or none).
-- ShockGrids have intrinsic transitions and must NOT appear in `state_transitions`.
+- Stochastic processes have intrinsic transitions and must NOT appear in
+  `state_transitions`.
 - Terminal regimes must have empty `state_transitions`.
 - Regime names (dict keys) cannot contain the reserved separator `__`
 
@@ -480,7 +483,7 @@ erases them, so misuse never crashes — it just hides intent. Prefer the alias 
 | `StateName`              | Names of states — entries of `state_names`, keys of `regime.states`, `states_per_regime` values.                                                        |
 | `ActionName`             | Names of actions — entries of `action_names`, keys of `regime.actions`.                                                                                 |
 | `StateOrActionName`      | Mixed flat keys covering both states and actions — `flat_grids`, `all_grids[regime]` values, `state_and_discrete_action_names`.                         |
-| `ShockName`              | Subset of `StateName` for shock grids — keys of `_ShockGrid`-typed mappings, stochastic-transition helpers.                                             |
+| `ProcessName`            | Subset of `StateName` for stochastic processes — keys of `_ProcessGrid`-typed mappings, process-transition helpers.                                     |
 | `FunctionName`           | User-supplied function names — `"utility"`, `"H"`, helpers; keys of `Regime.functions`, `derived_categoricals`.                                         |
 | `TransitionFunctionName` | Names of transition callables — `next_<state>`, `weight_next_<state>`; keys of `state_transitions` and per-target dicts.                                |
 
