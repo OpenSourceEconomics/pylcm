@@ -31,21 +31,21 @@ automation. Python 3.14+ is required.
 
 ### Core Components
 
-**Model Definition (`src/lcm/model.py`, `src/lcm/user_regime.py`)**
+**Model Definition (`src/lcm/api/model.py`, `src/lcm/api/regime.py`)**
 
 - `Model`: User-facing class for defining dynamic choice models
-- `Regime` (from `lcm.user_regime`): User-facing regime definition with utility,
-  constraints, functions, actions, and states. State transitions live on grids; regime
-  transitions live on the regime.
+- `Regime` (from `lcm.api.regime`): User-facing regime definition with utility,
+  constraints, functions, actions, states, and state transitions (the
+  `state_transitions` field). The regime transition is set via the `transition` field.
 - Models must have at least one terminal regime and one non-terminal regime
 - Models support transitions between multiple regimes
 
-**Canonical Processing (`src/lcm/interfaces.py`)**
+**Canonical Processing (`src/lcm/engine.py`)**
 
-- `Regime` (from `lcm.interfaces`): Canonical representation produced by
-  `process_regimes` from a user-facing `Regime`. Internal engine code threads this form.
-  Inside boundary files that import both, alias the user form as
-  `from lcm.user_regime import Regime as UserRegime`.
+- `Regime` (from `lcm.engine`): Canonical representation produced by `process_regimes`
+  from a user-facing `Regime`. Internal engine code threads this form. Inside boundary
+  files that import both, alias the user form as
+  `from lcm.api.regime import Regime as UserRegime`.
 - `StateActionSpace`: Manages state-action combinations for solution/simulation
 - `PeriodRegimeSimulationData`: Raw simulation results for one period in one regime
 
@@ -61,10 +61,11 @@ automation. Python 3.14+ is required.
 **Simulation (`src/lcm/simulation/`)**
 
 - `simulate.py`: Forward simulation of solved models
-- `result.py`: `SimulationResult` class with deferred DataFrame computation
+- `SimulationResult` (`lcm/api/result.py`): result object with deferred DataFrame
+  computation
 - Entry point: Model methods (`solve()`, `simulate()`)
 
-**Grid System (`src/lcm/grids.py`)**
+**Grid System (`src/lcm/_grids/`, `src/lcm/_processes/`)**
 
 - `DiscreteGrid`: Categorical variables with string labels (pure outcome space).
 - `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points).
@@ -103,7 +104,7 @@ to transition functions for target-dependent transitions.
 1. User defines `Regime`(s) with grids, functions, states/actions
 1. User creates `Model` from a dict of regimes with `ages` and `regime_id_class`
 1. `process_regimes()` converts user-facing `Regime` instances into canonical
-   `lcm.interfaces.Regime` objects and pre-compiles optimization functions
+   `lcm.engine.Regime` objects and pre-compiles optimization functions
 1. `model.solve()` performs backward induction using dynamic programming
 1. `model.simulate()` performs forward simulation using solved policy functions
 1. `SimulationResult.to_dataframe()` creates flat DataFrame output
@@ -297,9 +298,9 @@ initial_conditions = {
 - `model.get_params_template()` - Mutable copy of the parameter template (dict by regime
   name)
 - `model.user_regimes` - Immutable mapping of regime names to user-facing `Regime`
-  objects (`lcm.user_regime.Regime`)
+  objects (`lcm.api.regime.Regime`)
 - `model.regimes` - Immutable mapping of regime names to canonical `Regime` objects
-  (`lcm.interfaces.Regime`) produced by `process_regimes`
+  (`lcm.engine.Regime`) produced by `process_regimes`
 - `model.ages` - The AgeGrid defining the lifecycle
 - `model.n_periods` - Number of periods in the model (derived from `ages`)
 - `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices
