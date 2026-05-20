@@ -1,32 +1,23 @@
 """User-facing regime types: `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`.
 
-The validators, the default Bellman aggregator, the identity transition, and
-the `validate_transition_probs` helpers all live behind a leading underscore
-in `lcm._regime` and `lcm.regime_building.transitions`. This module is
-intentionally a thin layer of public class definitions plus the deprecated
-`validate_transition_probs` function.
+The validators, the default Bellman aggregator, and the identity transition
+live behind a leading underscore in `lcm._regime` and
+`lcm.regime_building.transitions`. This module is intentionally a thin layer
+of public class definitions.
 
 """
 
 import dataclasses
-import inspect
-import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
-import jax.numpy as jnp
 from beartype import beartype
 
 from lcm._beartype_conf import REGIME_CONF
 from lcm._grids import DiscreteGrid, Grid
 from lcm._regime._helpers import _default_H
-from lcm._regime._transition_probs import (
-    _build_expected_shape,
-    _build_grids,
-    _extract_markov_transition,
-)
 from lcm._regime._validation import (
     _validate_logical_consistency,
     _validate_mapping_contents,
@@ -41,19 +32,9 @@ from lcm.typing import (
     StateName,
     UserFunction,
 )
-from lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.utils.containers import (
     ensure_containers_are_immutable,
 )
-
-# Genuine circular import: model.py imports from this module at module level.
-# The `model` parameter of `validate_transition_probs` is annotated with the
-# fully-qualified `lcm.api.model.Model` so the beartype claw resolves it by
-# importing `lcm.model` at first call — long after the import cycle settles —
-# rather than at module-init time. Importing `lcm.model` here keeps `lcm` a
-# bound name for the type checker.
-if TYPE_CHECKING:
-    import lcm.api.model
 
 
 class SolveSimulateFunctionPair[S, T]:
@@ -272,101 +253,3 @@ class Regime:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
-
-
-def validate_transition_probs(
-    *,
-    probs: FloatND,
-    model: lcm.api.model.Model,
-    regime_name: RegimeName,
-    state_name: StateName,
-    target_regime_name: RegimeName | None = None,
-) -> None:
-    """Validate a state transition probability array.
-
-    Deprecated: `model.solve()` and `model.simulate()` validate state
-    transition probabilities automatically unless `log_level="off"`. This
-    manual helper is redundant and will be removed in a future release —
-    drop the call.
-
-    Check that the array has the shape expected from the function signature,
-    that all values are in [0, 1], that rows sum to 1, and that the function's
-    `probs_array[…]` subscripts match the signature parameter order.
-
-    For per-target state transitions (where `state_transitions[state_name]` is
-    a dict mapping target regime names to `MarkovTransition` instances), pass
-    `target_regime_name` to select the specific transition to validate.
-
-    Regime transition probabilities are validated automatically before solve;
-    this helper covers only state transitions.
-
-    Args:
-        probs: The transition probability array to validate.
-        model: The LCM Model instance.
-        regime_name: Name of the regime.
-        state_name: Name of the state with a `MarkovTransition`.
-        target_regime_name: Target regime name for per-target state
-            transitions. Required when the state transition is a per-target
-            dict.
-
-    Raises:
-        TypeError: If the transition is not a `MarkovTransition`.
-        ValueError: If the shape is wrong, values are outside [0, 1], or rows
-            don't sum to 1.
-
-    """
-    warnings.warn(
-        "lcm.validate_transition_probs is deprecated: state transition "
-        "probabilities are validated automatically during model.solve() "
-        "and model.simulate() unless log_level='off'. Drop this call.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    regime = model.user_regimes[regime_name]
-    raw_transition = regime.state_transitions[state_name]
-    markov = _extract_markov_transition(
-        raw_transition=raw_transition,
-        state_name=state_name,
-        regime_name=regime_name,
-        target_regime_name=target_regime_name,
-    )
-    func = markov.func
-    grids = _build_grids(regime)
-    n_outcomes = len(grids[state_name].categories)
-
-    indexing_params = _get_func_indexing_params(
-        func=func, array_param_name="probs_array"
-    )
-
-    sig = inspect.signature(func)
-    sig_order = [
-        p for p in sig.parameters if p != "probs_array" and p in indexing_params
-    ]
-    if indexing_params != sig_order:
-        func_name = getattr(func, "__name__", "<unknown>")
-        msg = (
-            f"In function '{func_name}', `probs_array` is indexed as "
-            f"`probs_array[{', '.join(indexing_params)}]` but the signature "
-            f"order is `probs_array[{', '.join(sig_order)}]`."
-        )
-        raise ValueError(msg)
-
-    expected_shape = _build_expected_shape(
-        indexing_params=indexing_params,
-        n_outcomes=n_outcomes,
-        grids=grids,
-        model=model,
-    )
-
-    if probs.shape != expected_shape:
-        msg = f"Expected shape {expected_shape} but got {probs.shape}."
-        raise ValueError(msg)
-
-    if jnp.any(probs < 0) or jnp.any(probs > 1):
-        msg = "All values must be in [0, 1]."
-        raise ValueError(msg)
-
-    row_sums = jnp.sum(probs, axis=-1)
-    if not jnp.allclose(row_sums, 1.0, atol=1e-6):
-        msg = "Rows must sum to 1 along the last axis."
-        raise ValueError(msg)

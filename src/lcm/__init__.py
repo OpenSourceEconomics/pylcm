@@ -82,7 +82,6 @@ from lcm.api.regime import (  # noqa: E402
     MarkovTransition,
     Regime,
     SolveSimulateFunctionPair,
-    validate_transition_probs,
 )
 from lcm.api.result import SimulationResult  # noqa: E402
 from lcm.utils.containers import invert_regime_ids  # noqa: E402
@@ -131,5 +130,4 @@ __all__ = [
     "load_snapshot",
     "load_solution",
     "save_solution",
-    "validate_transition_probs",
 ]

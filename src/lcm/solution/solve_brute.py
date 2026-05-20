@@ -105,11 +105,13 @@ def solve(
     # localisation. On a healthy solve no per-row materialisation
     # happens.
     #
-    # Gate falls out of the public log level:
-    # - `"off"` ⇒ nothing (skips even the NaN fail-fast)
-    # - `"warning"` / `"progress"` ⇒ NaN/Inf only
-    # - `"debug"` ⇒ adds the min/max/mean trio
-    diagnostics_enabled = logger.isEnabledFor(logging.WARNING)
+    # Two gates, both falling out of the public log level:
+    # - NaN/Inf tracking feeds runtime validation, so it runs whenever
+    #   validation is not `"off"` (log levels `"warning"`/`"progress"`/
+    #   `"debug"`). It skips even the NaN fail-fast when validation is off.
+    # - The min/max/mean trio is a pure logging extra, gated on the
+    #   logger's debug level.
+    diagnostics_enabled = validation_mode != "off"
     stats_enabled = logger.isEnabledFor(logging.DEBUG)
     diagnostic_rows: list[_DiagnosticRow] = []
     diagnostic_min: list[FloatND] = []
@@ -214,18 +216,16 @@ def solve(
         # Fail-fast on NaN: surface the offending period immediately
         # instead of finishing the whole backward induction. Costs one
         # host transfer of a scalar bool per period — negligible next
-        # to the per-period `max_Q_over_a` kernel, and only paid when
-        # diagnostics are on. Inf is non-fatal so we don't break on
-        # it; the post-loop emitter still raises a warning if any
-        # period flagged Inf.
-        # Fail-fast only in raise mode. In warn mode, induction runs to
-        # completion so `solve` returns a complete (NaN-bearing) solution
-        # rather than a truncated one.
-        if (
-            diagnostics_enabled
-            and validation_mode == "raise"
-            and running_any_nan.item()
-        ):
+        # to the per-period `max_Q_over_a` kernel. Inf is non-fatal so
+        # we don't break on it; the post-loop emitter still raises a
+        # warning if any period flagged Inf.
+        #
+        # Only `"raise"` mode fails fast. `"raise"` implies diagnostics
+        # are on (it is the loudest level), so `running_any_nan` has
+        # been tracked. In `"warn"` mode induction runs to completion so
+        # `solve` returns a complete (NaN-bearing) solution rather than
+        # a truncated one.
+        if validation_mode == "raise" and running_any_nan.item():
             break
 
     if diagnostics_enabled:

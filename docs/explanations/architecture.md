@@ -57,7 +57,7 @@ The mapping of public names to files:
 | File                 | What lives there                                                                                                                                                                                         |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `api/model.py`       | `Model`                                                                                                                                                                                                  |
-| `api/regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, `validate_transition_probs` (deprecated). Validators, default Bellman aggregator, and the deprecated-helper internals live in `lcm/_regime/`. |
+| `api/regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`. Validators and the default Bellman aggregator live in `lcm/_regime/`.                                                                         |
 | `api/ages.py`        | `AgeGrid`. Step parser, validators, and `PSEUDO_STATE_NAMES` live in `lcm/_ages.py`.                                                                                                                     |
 | `api/grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `Piece`                                                                         |
 | `api/processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process` |
@@ -126,8 +126,7 @@ _ages.py                ← STEP_UNITS, PSEUDO_STATE_NAMES, _parse_step,
                           _validate_age_grid / _validate_range / _validate_values
 _regime/
 ├── _helpers.py         ← _default_H (default Bellman aggregator)
-├── _validation.py      ← the eight validators called from Regime.__post_init__
-└── _transition_probs.py← helpers backing the deprecated validate_transition_probs
+└── _validation.py      ← the eight validators called from Regime.__post_init__
 
 _persistence/
 ├── _io.py              ← _atomic_dump, _save_pkl, _save_h5, _load_h5,

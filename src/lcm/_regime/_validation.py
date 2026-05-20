@@ -3,8 +3,7 @@
 These functions back `Regime.__post_init__`. They raise nothing themselves —
 instead they collect error messages, which `__post_init__` aggregates into a
 single `RegimeInitializationError`. Splitting the validators out of the
-public module keeps `lcm.api.regime` to class definitions plus the deprecated
-public `validate_transition_probs`.
+public module keeps `lcm.api.regime` to class definitions.
 
 """
 
