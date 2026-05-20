@@ -5,14 +5,14 @@ from typing import cast
 
 import pytest
 
-from lcm.engine import Regime
-from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.params.processing import (
+from _lcm.engine import Regime
+from _lcm.params.processing import (
     create_params_template,
     process_params,
 )
-from lcm.typing import ParamsTemplate
-from lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.typing import ParamsTemplate
+from _lcm.utils.containers import ensure_containers_are_immutable
+from lcm.exceptions import InvalidNameError, InvalidParamsError
 
 
 def _as_template(plain: dict) -> ParamsTemplate:

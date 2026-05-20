@@ -3,21 +3,21 @@
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, categorical
-from lcm.api.ages import AgeGrid
-from lcm.api.regime import Regime as UserRegime
-from lcm.exceptions import InvalidInitialConditionsError
-from lcm.params.processing import process_params
-from lcm.simulation.initial_conditions import (
+from _lcm.params.processing import process_params
+from _lcm.simulation.initial_conditions import (
     build_initial_states,
     validate_initial_conditions,
 )
+from _lcm.typing import FlatParams
+from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, categorical
+from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidInitialConditionsError
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
-    FlatParams,
     FloatND,
     ScalarInt,
 )

@@ -13,7 +13,7 @@ import functools
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, Model, categorical
-from lcm.api.regime import Regime as UserRegime
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     DiscreteAction,

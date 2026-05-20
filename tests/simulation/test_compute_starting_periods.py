@@ -3,8 +3,8 @@
 import jax.numpy as jnp
 import pytest
 
+from _lcm.simulation.simulate import _compute_starting_periods
 from lcm import AgeGrid
-from lcm.simulation.simulate import _compute_starting_periods
 
 
 def test_all_subjects_start_at_first_age():

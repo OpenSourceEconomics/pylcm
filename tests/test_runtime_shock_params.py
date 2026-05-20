@@ -12,7 +12,7 @@ from lcm import (
     UniformIIDProcess,
     categorical,
 )
-from lcm.api.regime import Regime as UserRegime
+from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 

@@ -24,24 +24,24 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
+from _lcm.engine import _build_regime_sharding
+from _lcm.regime.helpers import _default_H
+from _lcm.simulation.simulate import _compute_starting_periods
+from _lcm.solution.solve_brute import _log_per_period_stats
+from _lcm.state_action_space import _validate_all_states_present
+from _lcm.transition_checks import _validate_regime_transition_probs
 from lcm import AgeGrid, LinSpacedGrid, Model
-from lcm._regime._helpers import _default_H
-from lcm._transition_checks import _validate_regime_transition_probs
-from lcm.api.model import _contains_nan
-from lcm.api.regime import Regime as UserRegime
-from lcm.engine import _build_regime_sharding
 from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.simulation.simulate import _compute_starting_periods
-from lcm.solution.solve_brute import _log_per_period_stats
-from lcm.state_action_space import _validate_all_states_present
+from lcm.model import _contains_nan
+from lcm.regime import Regime as UserRegime
 
 
 def test_claw_checks_lcm_simulation() -> None:
-    """Type-violating arguments to internal `lcm.simulation` helpers raise."""
+    """Type-violating arguments to internal `_lcm.simulation` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _compute_starting_periods(
             initial_ages=np.array([25.0]),  # ty: ignore[invalid-argument-type]
@@ -50,7 +50,7 @@ def test_claw_checks_lcm_simulation() -> None:
 
 
 def test_claw_checks_lcm_solution() -> None:
-    """Type-violating arguments to internal `lcm.solution` helpers raise."""
+    """Type-violating arguments to internal `_lcm.solution` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _log_per_period_stats(
             logger="not a logger",  # ty: ignore[invalid-argument-type]
@@ -62,7 +62,7 @@ def test_claw_checks_lcm_solution() -> None:
 
 
 def test_claw_checks_lcm_transition_checks() -> None:
-    """Type-violating arguments to `lcm._transition_checks` helpers raise."""
+    """Type-violating arguments to `_lcm.transition_checks` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _validate_regime_transition_probs(
             regime_transition_probs={"working": jnp.array([1.0])},  # ty: ignore[invalid-argument-type]
@@ -74,7 +74,7 @@ def test_claw_checks_lcm_transition_checks() -> None:
 
 
 def test_claw_checks_lcm_state_action_space() -> None:
-    """Type-violating arguments to `lcm.state_action_space` helpers raise."""
+    """Type-violating arguments to `_lcm.state_action_space` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _validate_all_states_present(
             provided_states="",  # ty: ignore[invalid-argument-type]
@@ -83,7 +83,7 @@ def test_claw_checks_lcm_state_action_space() -> None:
 
 
 def test_claw_checks_lcm_engine() -> None:
-    """Type-violating arguments to `lcm.engine` helpers raise."""
+    """Type-violating arguments to `_lcm.engine` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _build_regime_sharding(
             grids=MappingProxyType({}),
@@ -92,7 +92,7 @@ def test_claw_checks_lcm_engine() -> None:
 
 
 def test_claw_checks_lcm_regime() -> None:
-    """Type-violating arguments to `lcm._regime` helpers raise."""
+    """Type-violating arguments to `_lcm.regime` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _default_H(
             utility=np.array([1.0]),  # ty: ignore[invalid-argument-type]

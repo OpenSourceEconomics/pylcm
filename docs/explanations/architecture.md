@@ -4,85 +4,120 @@ title: Internal Architecture
 
 # Internal Architecture
 
-This page describes how `lcm`'s source tree is organised and *why* it is laid out that
+This page describes how pylcm's source tree is organised and *why* it is laid out that
 way. The audience is contributors and advanced users who want to find code, add a
 feature, or understand which module they should be editing. End-users only ever write
 `from lcm import Model, Regime, ...` and never need anything here.
 
-## At a glance
+## The `lcm` / `_lcm` split
+
+pylcm's source is two packages, and the split is a hard binary:
+
+- **`src/lcm/`** — the public surface. Everything a user constructs or consumes lives
+  here, physically: the user-facing classes, the `@categorical` decorator, the `as_leaf`
+  helper, the public type aliases, and the exception classes. `lcm/__init__.py`
+  re-exports the public symbols so users write `from lcm import Model`.
+- **`src/_lcm/`** — the private implementation. The build pipeline, the canonical engine
+  dataclasses, the JAX-traced solve / simulate machinery, validators, I/O plumbing, and
+  the engine-side type aliases. The leading underscore on the *package* carries the
+  entire "private" signal — modules inside `_lcm/` are plainly named.
+
+There is no gradient and no per-module underscore convention: a module is either in
+`lcm/` (public) or in `_lcm/` (private). Internal code reaches the user-facing classes
+through `from lcm.regime import Regime as UserRegime` etc.; the public `lcm/__init__.py`
+imports `_lcm` first so the jaxtyping patch and the beartype claw are installed before
+anything else loads.
 
 ```
 lcm/
-├── __init__.py             ← thin re-export façade
-├── api/                    ← every user-facing class and helper
-├── _ages.py                ← AgeGrid validators and step parsing
-├── _grids/                 ← private grid infrastructure
-├── _persistence/           ← snapshot I/O and writer privates
-├── _processes/             ← private stochastic-process infrastructure
-├── _regime/                ← Regime validators, default H, transition-probs helpers
-├── _transition_checks.py   ← pre-solve regime + state transition prob checks
-├── engine.py               ← canonical / engine-side dataclasses
-├── model_processing.py     ← Model.__init__ build pipeline
-├── regime_building/        ← per-regime canonicalisation
-├── solution/               ← backward induction (solve) + validate_V
-├── simulation/             ← forward sampling (simulate) + result helpers
-├── params/                 ← params templating and processing
-├── pandas_utils.py         ← pd.Series ↔ JAX array bridge
-├── utils/                  ← small, dependency-free helpers
-├── typing.py               ← engine-side type aliases
-├── variables.py            ← factories that build `Variables` from `Regime`
-└── exceptions.py           ← every project-specific exception class
+├── __init__.py       ← re-export façade for the public symbols
+├── ages.py           ← AgeGrid
+├── categorical.py    ← the @categorical class decorator
+├── grids.py          ← LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid, DiscreteGrid,
+│                       PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid, Piece
+├── model.py          ← Model
+├── params.py         ← as_leaf + the MappingLeaf / SequenceLeaf re-exports
+├── persistence.py    ← SolveSnapshot, SimulateSnapshot, load_snapshot,
+│                       save_solution, load_solution
+├── processes.py      ← the seven *Process classes
+├── regime.py         ← Regime, MarkovTransition, SolveSimulateFunctionPair
+├── result.py         ← SimulationResult
+├── transition.py     ← transition helpers
+├── typing.py         ← user-facing type aliases
+└── exceptions.py     ← every project-specific exception class
 ```
 
-The directory tree maps onto a single organising principle: **the closer a module is to
-user-supplied input, the closer it sits to `api/`. The closer it is to the JAX-traced DP
-machinery, the deeper it sits in the engine side.** Names cross this boundary in exactly
-one direction (user → canonical form) and only twice — once when `Model(regimes={...})`
-is called (which triggers `model_processing.build_regimes_and_template` →
+```
+_lcm/
+├── __init__.py            ← applies the jaxtyping patch + registers the beartype claw
+├── ages.py                ← AgeGrid validators and step parsing
+├── beartype_conf.py       ← the two beartype configurations
+├── config.py              ← build-time configuration constants
+├── dtypes.py              ← canonical-dtype resolution
+├── engine.py              ← canonical / engine-side dataclasses
+├── jaxtyping_patch.py     ← bootstrap patch run before any jaxtyping type
+├── model_processing.py    ← Model.__init__ build pipeline
+├── pandas_utils.py        ← pd.Series ↔ JAX array bridge
+├── state_action_space.py  ← state / action space validators
+├── transition_checks.py   ← pre-solve regime + state transition prob checks
+├── typing.py              ← engine-side type aliases and protocols
+├── variables.py           ← factories that build `Variables` from `Regime`
+├── version.py             ← generated version string (hatch-vcs)
+├── grids/                 ← grid infrastructure
+├── processes/             ← stochastic-process infrastructure
+├── persistence/           ← snapshot I/O and writer internals
+├── regime/                ← Regime validators, default H
+├── regime_building/       ← per-regime canonicalisation
+├── solution/              ← backward induction (solve) + validate_V
+├── simulation/            ← forward sampling (simulate) + result helpers
+├── params/                ← params templating and processing
+└── utils/                 ← small, dependency-free helpers
+```
+
+Names cross the boundary in exactly one direction (user → canonical form) and only twice
+— once when `Model(regimes={...})` is called (which triggers
+`model_processing.build_regimes_and_template` →
 `regime_building.processing.process_regimes`), and once for `flat_params` at every
 `solve` / `simulate` call.
 
-## The `api/` boundary
+## The public surface — `lcm/`
 
-`lcm/api/` is the canonical home for every class users construct or consume. Putting all
-of them in one directory makes the public surface easy to find, review, and keep stable
-— anything outside `api/` is fair game for refactoring. **`api/` modules are shallow by
+`lcm/` is the canonical home for every class users construct or consume. Keeping all of
+them in one package makes the public surface easy to find, review, and keep stable —
+anything in `_lcm/` is fair game for refactoring. **`lcm/` modules are shallow by
 design**: each file holds class definitions and the small number of public top-level
 functions that round out the surface. Validators, I/O plumbing, DataFrame assembly, and
-similar implementation detail live in private siblings (leading-underscore files or
-packages) and are imported back in.
+similar implementation detail live in `_lcm/` and are imported back in.
 
 The mapping of public names to files:
 
-| File                 | What lives there                                                                                                                                                                                         |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `api/model.py`       | `Model`                                                                                                                                                                                                  |
-| `api/regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`. Validators and the default Bellman aggregator live in `lcm/_regime/`.                                                                         |
-| `api/ages.py`        | `AgeGrid`. Step parser, validators, and `PSEUDO_STATE_NAMES` live in `lcm/_ages.py`.                                                                                                                     |
-| `api/grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `Piece`                                                                         |
-| `api/processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process` |
-| `api/categorical.py` | The `@categorical` class decorator                                                                                                                                                                       |
-| `api/persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, `save_solution`, `load_solution`. Snapshot writers and atomic-dump live in `lcm/_persistence/`.                                                    |
-| `api/result.py`      | `SimulationResult`. DataFrame assembly, metadata, and additional-targets computation live in `lcm/simulation/_result_*.py` and `lcm/simulation/_additional_targets.py`.                                  |
-| `api/typing.py`      | `UserAge`, `UserParams`, `UserInitialConditions`, `UserFunction`, `UserFacingParamsTemplate`                                                                                                             |
+| File             | What lives there                                                                                                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model.py`       | `Model`                                                                                                                                                                                                   |
+| `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`. Validators and the default Bellman aggregator live in `_lcm/regime/`.                                                                          |
+| `ages.py`        | `AgeGrid`. Step parser, validators, and `PSEUDO_STATE_NAMES` live in `_lcm/ages.py`.                                                                                                                      |
+| `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `Piece`                                                                          |
+| `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
+| `categorical.py` | The `@categorical` class decorator                                                                                                                                                                        |
+| `persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, `save_solution`, `load_solution`. Snapshot writers and atomic-dump live in `_lcm/persistence/`.                                                     |
+| `result.py`      | `SimulationResult`. DataFrame assembly, metadata, and additional-targets computation live in `_lcm/simulation/result_*.py` and `_lcm/simulation/additional_targets.py`.                                   |
+| `params.py`      | `as_leaf` plus the `MappingLeaf` / `SequenceLeaf` re-exports. The leaf-class definitions and the engine params machinery live in `_lcm/params/`.                                                          |
+| `typing.py`      | The model-authoring aliases (`FloatND`, `ScalarInt`, `Period`, `Age`, ...) and the `User*` boundary aliases.                                                                                              |
+| `exceptions.py`  | Every project-specific exception class.                                                                                                                                                                   |
 
-Internal code reaches these classes through `lcm.api.*`. Users keep writing
-`from lcm import Model` — `lcm/__init__.py` is a thin re-export of every symbol in
-`api/` plus a few utilities.
+### Why a package boundary, not just naming?
 
-### Why physical separation, not just naming?
+A naming convention (a `_private_` prefix on every internal module) tells *readers* what
+is internal. A package boundary makes it visible to *tools*: code-search, auto-import,
+public-API audits, and the linter can all key off `_lcm/`. The boundary is enforced by
+the absence of imports — `lcm/` modules import from `_lcm/` only at well-defined wiring
+points, and `_lcm/` reaches the user-facing classes through aliased imports
+(`from lcm.regime import Regime as UserRegime`).
 
-A naming convention (e.g., a `_private_` prefix) tells *readers* what is internal. A
-physical directory makes it visible to *tools*: code-search, auto-import, public-API
-audits, and the linter can all key off `lcm/api/`. The boundary is enforced by the
-absence of imports — the rest of `lcm/` never imports *from* `api/` outside of
-well-defined wiring points, and `api/` does not import from internals beyond the ABCs
-and engine dataclasses it deliberately exposes.
-
-## Private packages: `_grids/` and `_processes/`
+## Grid and process infrastructure: `_lcm/grids/` and `_lcm/processes/`
 
 ```
-_grids/
+_lcm/grids/
 ├── base.py            ← Grid, ContinuousGrid, UniformContinuousGrid (ABCs)
 ├── continuous.py      ← LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid
 ├── discrete.py        ← DiscreteGrid
@@ -90,19 +125,17 @@ _grids/
 ├── categorical.py     ← @categorical decorator + validators
 └── coordinates.py     ← coordinate lookup helpers used by interpolation
 
-_processes/
-├── _base.py           ← _ContinuousStochasticProcess + Gauss-Hermite / mixture helpers
+_lcm/processes/
+├── base.py            ← _ContinuousStochasticProcess + Gauss-Hermite / mixture helpers
 ├── iid.py             ← UniformIIDProcess, NormalIIDProcess, LogNormalIIDProcess,
-│                       NormalMixtureIIDProcess
+│                        NormalMixtureIIDProcess
 └── ar1.py             ← TauchenAR1Process, RouwenhorstAR1Process,
-                        TauchenNormalMixtureAR1Process
+                         TauchenNormalMixtureAR1Process
 ```
 
-The leading underscore is a signal — both to readers and to the linter — that **user
-code must not import from these packages directly**. The leaf classes are surfaced
-through `api/grids.py` and `api/processes.py`; the ABCs (`Grid`,
-`_ContinuousStochasticProcess`, etc.) are used by internal code but are not part of the
-documented public API.
+The leaf classes are surfaced through `lcm/grids.py` and `lcm/processes.py`; the ABCs
+(`Grid`, `_ContinuousStochasticProcess`, etc.) are used by internal code but are not
+part of the documented public API.
 
 Two design points worth knowing:
 
@@ -115,62 +148,58 @@ Two design points worth knowing:
   alias). `shock` is reserved for the colloquial meaning and never appears as an
   identifier.
 
-## Private siblings of `api/`
+## Private siblings of the public modules
 
-Several `api/` modules have a private sibling that holds their implementation detail.
-The pattern is the same throughout: `api/` keeps the class definitions and the public
-top-level functions; the sibling holds validators, helpers, and I/O plumbing that
-internal code is free to refactor.
+Several `lcm/` modules have a private counterpart in `_lcm/` that holds their
+implementation detail. The pattern is the same throughout: `lcm/` keeps the class
+definitions and the public top-level functions; the `_lcm/` counterpart holds
+validators, helpers, and I/O plumbing that internal code is free to refactor.
 
 ```
-_ages.py                ← STEP_UNITS, PSEUDO_STATE_NAMES, _parse_step,
+_lcm/ages.py            ← STEP_UNITS, PSEUDO_STATE_NAMES, _parse_step,
                           _validate_age_grid / _validate_range / _validate_values
-_regime/
-├── _helpers.py         ← _default_H (default Bellman aggregator)
-└── _validation.py      ← the eight validators called from Regime.__post_init__
+_lcm/regime/
+├── helpers.py          ← _default_H (default Bellman aggregator)
+└── validation.py       ← the validators called from Regime.__post_init__
 
-_persistence/
-├── _io.py              ← _atomic_dump, _save_pkl, _save_h5, _load_h5,
+_lcm/persistence/
+├── io.py               ← _atomic_dump, _save_pkl, _save_h5, _load_h5,
 │                          _get_platform, _next_counter, _enforce_retention,
 │                          _write_metadata, _write_environment_files
-└── _snapshots.py       ← _save_solve_snapshot, _save_simulate_snapshot,
+└── snapshots.py        ← _save_solve_snapshot, _save_simulate_snapshot,
                           _strip_V_arr_from_result, _bind_forward_refs
 
-simulation/_result_metadata.py
-                        ← ResultMetadata + _compute_metadata,
-                          _get_output_dtypes
-simulation/_result_dataframe.py
+_lcm/simulation/result_metadata.py
+                        ← ResultMetadata + _compute_metadata, _get_output_dtypes
+_lcm/simulation/result_dataframe.py
                         ← _create_flat_dataframe and the per-regime / per-period
                           assembly helpers, plus categorical conversion
-simulation/_additional_targets.py
+_lcm/simulation/additional_targets.py
                         ← _resolve_targets, _compute_targets, and DAG helpers
                           for to_dataframe(additional_targets=...)
 ```
 
 Why split these out? Two reasons:
 
-- **The public surface is easier to audit.** `api/regime.py`, `api/persistence.py`, and
-  `api/result.py` each contain only the dozen-or-so symbols users actually touch. A
-  reader looking for "what is the public contract of a Regime?" sees that contract
-  directly, without scrolling past validator bodies.
-- **Internal helpers can move freely.** Anything under a leading-underscore name is
-  internal — its location, signature, and existence can change without bumping the user
-  surface. The split makes it cheap to refactor things like `_save_solve_snapshot`
-  without touching `api/persistence.py`.
+- **The public surface is easier to audit.** `regime.py`, `persistence.py`, and
+  `result.py` each contain only the dozen-or-so symbols users actually touch. A reader
+  looking for "what is the public contract of a Regime?" sees that contract directly,
+  without scrolling past validator bodies.
+- **Internal helpers can move freely.** Anything in `_lcm/` is internal — its location,
+  signature, and existence can change without bumping the user surface.
 
-A note on shadowing: the canonical `Regime` lives in `engine.py`. The validators in
-`_regime/_validation.py` operate on the user-facing `lcm.api.regime.Regime` and reach it
+A note on shadowing: the canonical `Regime` lives in `_lcm/engine.py`. The validators in
+`_lcm/regime/validation.py` operate on the user-facing `lcm.regime.Regime` and reach it
 through TYPE_CHECKING-guarded imports to break the circular dependency at import time;
 beartype resolves the forward references at first call.
 
-## Engine-side: `engine.py`
+## Engine-side: `_lcm/engine.py`
 
 `engine.py` holds the **canonical** post-processing dataclasses — the form the DP
 machinery operates on:
 
-- `Regime` — the canonical regime (distinct from the user-facing
-  `lcm.api.regime.Regime`; in source files that import both we alias the user-facing one
-  as `UserRegime`).
+- `Regime` — the canonical regime (distinct from the user-facing `lcm.regime.Regime`; in
+  source files that import both we alias the user-facing one as `UserRegime`).
 - `StateActionSpace` — pre-built state and action grids for a regime, with a
   `state_action_space(params)` method that fills in runtime-supplied grid points.
 - `SolveFunctions` / `SimulateFunctions` — the compiled function bundles consumed by
@@ -185,25 +214,27 @@ The file name `engine.py` reflects what's inside: the engine's view of a model.
 ## Build pipeline: `model_processing.py` and `regime_building/`
 
 ```
-model_processing.py       ← top-level pipeline:
+_lcm/model_processing.py  ← top-level pipeline:
                             user regimes + params → canonical Model
 
-regime_building/
+_lcm/regime_building/
 ├── processing.py         ← per-regime canonicalisation:
 │                            UserRegime → engine.Regime
 ├── transitions.py        ← collect_state_transitions: walk user-supplied
 │                            state_transitions into per-target callables
+├── stochastic_state_transitions.py
+│                         ← process-time AST + n_outcomes derivation for
+│                            stochastic state transitions (raises
+│                            InvalidStateTransitionProbabilitiesError on
+│                            subscript-order mismatches)
 ├── Q_and_F.py            ← build (Q, F) closure for solve / simulate
+├── argmax.py             ← argmax helpers over action grids
 ├── max_Q_over_a.py       ← argmax / max over action grids
 ├── V.py                  ← value-function interpolation info
 ├── h_dag.py              ← user-DAG resolution for H (Bellman aggregator)
 ├── next_state.py         ← compose per-state transitions into a single
 │                            next_state function for simulation
-├── ndimage.py            ← Map-coordinates wrapper for continuous interp
-├── static_checks.py      ← process-time AST + n_outcomes derivation for
-│                            stochastic state transitions (raises
-│                            InvalidStateTransitionProbabilitiesError
-│                            on subscript-order mismatches)
+├── ndimage.py            ← map-coordinates wrapper for continuous interp
 └── diagnostics.py        ← cold-path machinery invoked by validate_V to
                             pinpoint *which* intermediate produced a NaN
 ```
@@ -212,21 +243,18 @@ The two-step name (`model_processing` at the model level, `regime_building` per 
 reflects what each layer actually does — the top level merges regimes and resolves fixed
 params; each regime is then canonicalised independently.
 
-The numerical checks fired at solve / simulate time **do not live in
-`regime_building/`**. That package is the build pipeline; runtime is a different
-lifecycle. The split:
+The numerical checks fired at solve / simulate time live outside `regime_building/`:
 
-- `regime_building/static_checks.py` runs at `Model(...)` construction time and can fail
-  the build before any params are involved. It catches malformed user functions (e.g.,
-  `probs_array[health, age]` where the signature is `(age, health)`) via AST analysis.
-  Always on, never gated.
-- `_transition_checks.py` (top-level, private) runs from `Model.solve()` /
-  `Model.simulate()` before backward induction starts. It evaluates the regime and state
-  transition functions on the regime's grid Cartesian product and verifies output shape,
-  [0, 1] range, and sum-to-1. State checks are gated by `log_level != "off"` because the
-  Cartesian product can blow up on models with many continuous-grid-dependent stochastic
-  states.
-- `solution/validate_V.py` runs *during* backward induction (after each period in
+- `regime_building/stochastic_state_transitions.py` runs at `Model(...)` construction
+  time and can fail the build before any params are involved. It catches malformed user
+  functions (e.g., `probs_array[health, age]` where the signature is `(age, health)`)
+  via AST analysis. Always on, never gated.
+- `_lcm/transition_checks.py` runs from `Model.solve()` / `Model.simulate()` before
+  backward induction starts. It evaluates the regime and state transition functions on
+  the regime's grid Cartesian product and verifies output shape, [0, 1] range, and
+  sum-to-1. State checks are gated by `log_level != "off"` because the Cartesian product
+  can blow up on models with many continuous-grid-dependent stochastic states.
+- `_lcm/solution/validate_V.py` runs *during* backward induction (after each period in
   `solve_brute.py`, and once on the V handed to `simulate.py`). On NaN it invokes the
   diagnostic-intermediates closure built in `regime_building/diagnostics.py` to pinpoint
   which intermediate (`U`, `F`, `E[V]`, `Q`) produced the NaN.
@@ -234,16 +262,19 @@ lifecycle. The split:
 ## Solve and simulate
 
 ```
-solution/
-└── solve_brute.py      ← backward induction loop:
-                           V[T], V[T-1], ..., V[0] via max_Q_over_a
+_lcm/solution/
+├── solve_brute.py      ← backward induction loop:
+│                          V[T], V[T-1], ..., V[0] via max_Q_over_a
+└── validate_V.py       ← per-period NaN / Inf validation
 
-simulation/
+_lcm/simulation/
 ├── simulate.py         ← forward sampling loop with state-action draws
-├── initial_conditions.py
+├── compile.py          ← compiled-function assembly for the simulate phase
+├── random.py           ← PRNG-key handling for the sampling draws
+├── transitions.py      ← per-state transition composition for simulation
+└── initial_conditions.py
                         ← canonicalize / validate the user's
                           initial_conditions kwarg
-└── core_helpers.py     ← shared subroutines
 ```
 
 These are the JAX-traced hot paths. The DP and sampling logic is the *only* thing here;
@@ -254,7 +285,7 @@ instances.
 ## Params: boundary form vs. canonical form
 
 ```
-params/
+_lcm/params/
 ├── processing.py       ← cast_params_to_canonical_dtypes:
 │                          User-supplied dicts (with int/float/np.array
 │                          leaves) → flat MappingProxyType keyed by
@@ -269,6 +300,9 @@ params/
                            sequences.
 ```
 
+The public `lcm/params.py` module exposes `as_leaf` and re-exports the four leaf
+classes; their definitions and the engine params machinery live in `_lcm/params/`.
+
 Two leaf types exist because params dicts can contain heterogeneous leaves (scalars,
 arrays, named tuples, etc.). Wrapping them in `MappingLeaf` / `SequenceLeaf` lets the
 pytree machinery treat them as opaque leaves rather than walking into them — important
@@ -279,7 +313,7 @@ The `User*` types accept the wide boundary form (`int`, `float`, `np.ndarray`,
 JAX-array leaves and canonical-narrow `MappingLeaf` / `SequenceLeaf` instances survive.
 The downstream `solve` / `simulate` code only ever sees the canonical form.
 
-## Pandas bridge: `pandas_utils.py`
+## Pandas bridge: `_lcm/pandas_utils.py`
 
 A single module for converting between user-friendly `pd.Series` / `pd.DataFrame`
 representations and the JAX arrays the engine expects. `array_from_series` is the
@@ -290,7 +324,7 @@ materialises a properly-shaped JAX array.
 This file gets used both at params processing (for any `pd.Series` leaves in user
 params) and at simulation output (for building the result DataFrame).
 
-## Utilities: `utils/`
+## Utilities: `_lcm/utils/`
 
 Small, dependency-light helpers grouped by topic:
 
@@ -300,25 +334,33 @@ Small, dependency-light helpers grouped by topic:
   `invert_regime_ids`.
 - `dispatchers.py` — `productmap`, `vmap_1d`, `simulation_spacemap`. See
   [Dispatchers](dispatchers.ipynb).
+- `error_messages.py` — `format_messages`, which collapses a list of validation errors
+  into a single string.
 - `functools.py` — `all_as_kwargs`, `get_union_of_args`.
 - `logging.py` — `get_logger`, `format_duration`, log-formatting helpers.
 - `namespace.py` — `flatten_regime_namespace` / `unflatten_regime_namespace` for the
   qualified-name pytree keys.
 
-## Type aliases: `typing.py` vs `api/typing.py`
+## Type aliases: `lcm/typing.py` vs `_lcm/typing.py`
 
 ```
-typing.py        ← engine-side aliases (FloatND, RegimeName, EconFunction, ...)
-api/typing.py    ← user-facing aliases (UserParams, UserInitialConditions, ...)
+lcm/typing.py    ← user-facing aliases: jaxtyping array shapes (FloatND,
+                   ScalarInt, ...), Period, Age, and the User* boundary
+                   aliases (UserParams, UserInitialConditions, ...)
+_lcm/typing.py   ← engine-side aliases and protocols: string labels
+                   (RegimeName, StateName, ...), compound mapping
+                   aliases, canonical post-processing forms (Params,
+                   InitialConditions, ...), and the structural Protocol
+                   classes (EconFunction, TransitionFunction, ...)
 ```
 
-The split mirrors the boundary / canonical distinction: User\* aliases accept wide
-boundary types; the corresponding engine aliases (`Params`, `InitialConditions`)
-describe the post-canonicalization form. `typing.py` re-exports the User\* aliases at
-the bottom for backwards compatibility so `from lcm.typing import UserParams` keeps
-working.
+The split mirrors the public / private package boundary. `lcm/typing.py` holds the
+aliases a user needs to annotate model functions and the `User*` aliases that accept
+wide boundary types; it imports nothing from `_lcm`. `_lcm/typing.py` holds the
+engine-internal aliases — including the post-canonicalization forms (`Params`,
+`InitialConditions`) — and builds on the public aliases it imports from `lcm.typing`.
 
-## Exceptions: `exceptions.py`
+## Exceptions: `lcm/exceptions.py`
 
 Every project-specific exception class lives here, all inheriting from `PyLCMError`.
 They split into two categories:
@@ -330,36 +372,40 @@ They split into two categories:
 - **Runtime errors** — `InvalidValueFunctionError`,
   `InvalidRegimeTransitionProbabilitiesError`,
   `InvalidStateTransitionProbabilitiesError`, `InvalidParamsError`,
-  `InvalidInitialConditionsError`. These fire from `_transition_checks.py` and
-  `solution/validate_V.py` during solve / simulate.
+  `InvalidInitialConditionsError`. These fire from `_lcm/transition_checks.py` and
+  `_lcm/solution/validate_V.py` during solve / simulate.
 
-## What's *not* in this map
+The exception classes are public — both `from lcm.exceptions import InvalidParamsError`
+and `except lcm.InvalidParamsError` work. `format_messages`, the helper that assembles a
+list of validation errors into one string, is internal validation plumbing and lives in
+`_lcm/utils/error_messages.py`.
 
-A few things deliberately don't fit the boundary metaphor:
+## Bootstrap modules
 
-- `_jaxtyping_patch.py` — Bootstrap patch that has to run before any
-  `jaxtyping`-annotated type is created. Lives at top level because of ordering, not
-  design.
-- `_beartype_conf.py` — Holds the two beartype configurations used in the package
+A few `_lcm/` modules exist for ordering reasons rather than for any conceptual
+grouping:
+
+- `jaxtyping_patch.py` — Bootstrap patch that has to run before any
+  `jaxtyping`-annotated type is created. `_lcm/__init__.py` applies it as its first
+  statement.
+- `beartype_conf.py` — Holds the two beartype configurations used in the package
   (internal claw + user-facing constructor decorators).
-- `_config.py` — Build-time configuration constants (paths to test data, etc.).
+- `config.py` — Build-time configuration constants (paths to test data, etc.).
 - `dtypes.py` — Canonical-dtype resolution (`canonical_float_dtype()`), which depends on
   the JAX x64 setting.
-
-These are small, stable, and don't naturally belong to any of the larger groupings.
 
 ## Reading order for new contributors
 
 If you're reading the codebase for the first time, the path of least confusion is:
 
-1. **`api/regime.py`** to see what users supply.
-1. **`api/model.py`** to see what `Model.__init__` triggers.
-1. **`model_processing.py`** for the top-level pipeline.
-1. **`regime_building/processing.py`** for per-regime canonicalisation — the longest
-   single file and the heart of the build.
-1. **`engine.py`** for the canonical dataclasses the DP machinery consumes.
-1. **`solution/solve_brute.py`** and **`simulation/simulate.py`** for the actual DP and
-   sampling.
+1. **`lcm/regime.py`** to see what users supply.
+1. **`lcm/model.py`** to see what `Model.__init__` triggers.
+1. **`_lcm/model_processing.py`** for the top-level pipeline.
+1. **`_lcm/regime_building/processing.py`** for per-regime canonicalisation — the
+   longest single file and the heart of the build.
+1. **`_lcm/engine.py`** for the canonical dataclasses the DP machinery consumes.
+1. **`_lcm/solution/solve_brute.py`** and **`_lcm/simulation/simulate.py`** for the
+   actual DP and sampling.
 
 By the time you reach (6), the canonical form should feel familiar and the JAX-traced
 code becomes easy to read.

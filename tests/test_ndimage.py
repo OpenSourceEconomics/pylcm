@@ -22,7 +22,7 @@ import pytest
 import scipy.ndimage
 from numpy.testing import assert_allclose, assert_array_almost_equal
 
-import lcm.regime_building.ndimage as lcm_ndimage
+import _lcm.regime_building.ndimage as lcm_ndimage
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 # Use 64-bit dtypes when x64 is enabled, 32-bit otherwise

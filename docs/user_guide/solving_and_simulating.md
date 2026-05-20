@@ -235,7 +235,7 @@ Save and load results (requires `cloudpickle`):
 result.to_pickle("my_results.pkl")
 
 # Load
-from lcm.simulation.result import SimulationResult
+from lcm import SimulationResult
 
 loaded = SimulationResult.from_pickle("my_results.pkl")
 ```

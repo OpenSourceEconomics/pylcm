@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
-from lcm.api.regime import Regime as UserRegime
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,

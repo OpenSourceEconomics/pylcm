@@ -16,12 +16,12 @@ import pytest
 from jax.scipy.stats.norm import cdf as jax_cdf
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.processes.base import _mixture_cdf
 from lcm import (
     RouwenhorstAR1Process,
     TauchenAR1Process,
     TauchenNormalMixtureAR1Process,
 )
-from lcm._processes._base import _mixture_cdf
 from tests.conftest import DECIMAL_PRECISION
 
 SIGMA_EPS_SQ = 0.0161

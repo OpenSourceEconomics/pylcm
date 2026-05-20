@@ -5,13 +5,13 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
+from _lcm.engine import StateActionSpace
+from _lcm.grids import LinSpacedGrid
+from _lcm.solution.validate_V import validate_V
 from lcm import Model, categorical
-from lcm._grids import LinSpacedGrid
-from lcm.api.ages import AgeGrid
-from lcm.api.regime import Regime as UserRegime
-from lcm.engine import StateActionSpace
+from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.solution.validate_V import validate_V
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,

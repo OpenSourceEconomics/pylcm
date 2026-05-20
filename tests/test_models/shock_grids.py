@@ -3,6 +3,7 @@ from typing import Literal
 
 from jax import numpy as jnp
 
+from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm import (
     LogNormalIIDProcess,
     NormalIIDProcess,
@@ -10,11 +11,10 @@ from lcm import (
     TauchenAR1Process,
     UniformIIDProcess,
 )
-from lcm._grids import DiscreteGrid, LinSpacedGrid, categorical
-from lcm.api.ages import AgeGrid
-from lcm.api.model import Model
-from lcm.api.regime import MarkovTransition
-from lcm.api.regime import Regime as UserRegime
+from lcm.ages import AgeGrid
+from lcm.model import Model
+from lcm.regime import MarkovTransition
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,

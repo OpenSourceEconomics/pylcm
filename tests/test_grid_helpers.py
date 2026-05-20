@@ -3,14 +3,14 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm._grids.coordinates import (
+from _lcm.grids.coordinates import (
     get_irreg_coordinate,
     get_linspace_coordinate,
     get_logspace_coordinate,
     linspace,
     logspace,
 )
-from lcm.regime_building.ndimage import map_coordinates
+from _lcm.regime_building.ndimage import map_coordinates
 from tests.conftest import DECIMAL_PRECISION
 
 

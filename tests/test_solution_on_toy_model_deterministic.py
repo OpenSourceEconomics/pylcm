@@ -10,7 +10,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
-from lcm.api.regime import Regime as UserRegime
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousState,

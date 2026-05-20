@@ -22,7 +22,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from lcm import AgeGrid, LinSpacedGrid, Model, SolveSimulateFunctionPair, categorical
-from lcm.api.regime import Regime as UserRegime
+from lcm.regime import Regime as UserRegime
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 

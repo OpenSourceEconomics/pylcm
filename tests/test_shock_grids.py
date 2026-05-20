@@ -6,6 +6,7 @@ from pandas.testing import assert_frame_equal
 from quantecon.markov.approximation import rouwenhorst as qe_rouwenhorst
 from quantecon.markov.approximation import tauchen as qe_tauchen
 
+from _lcm.config import TEST_DATA
 from lcm import (
     LogNormalIIDProcess,
     NormalIIDProcess,
@@ -15,7 +16,6 @@ from lcm import (
     TauchenNormalMixtureAR1Process,
     UniformIIDProcess,
 )
-from lcm._config import TEST_DATA
 from lcm.exceptions import GridInitializationError
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.test_models.shock_grids import (

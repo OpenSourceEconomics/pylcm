@@ -11,6 +11,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import pytest
 
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -19,8 +20,8 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.api.regime import Regime as UserRegime
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -29,7 +30,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.utils.logging import LogLevel
 
 
 @categorical(ordered=False)

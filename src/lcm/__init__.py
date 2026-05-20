@@ -25,31 +25,38 @@ if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
 
 import jax
 
-# Patch jaxtyping's `"..."` sentinel to survive pickling before any
-# `jaxtyping`-subscripted type is created (see the module docstring).
-from lcm import _jaxtyping_patch  # noqa: F401
+# Import the private implementation package first: `_lcm.__init__` applies the
+# jaxtyping `"..."`-sentinel patch, which must run before any
+# jaxtyping-subscripted type is created.
+import _lcm  # noqa: F401
 
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
-# Register beartype's package claw before any submodule import so every
-# `lcm.*` module loads with runtime type checks installed via
+# Register beartype's package claw on both the private implementation package
+# `_lcm` and the public `lcm` package before any of their submodules are
+# imported, so every module loads with runtime type checks installed via
 # `INTERNAL_CONF`. User-facing constructors stack an explicit
-# `@beartype(conf=...)` decorator that maps violations to the relevant
-# project exception (see `lcm._beartype_conf`).
+# `@beartype(conf=...)` decorator that maps violations to the relevant project
+# exception (see `_lcm.beartype_conf`).
 from beartype.claw import beartype_package
 
-from lcm._beartype_conf import INTERNAL_CONF
+from _lcm.beartype_conf import INTERNAL_CONF
 
+beartype_package("_lcm", conf=INTERNAL_CONF)
 beartype_package("lcm", conf=INTERNAL_CONF)
 
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
 # rewritten string annotations resolve at call time.
-from lcm._version import __version__  # noqa: E402
-from lcm.api.ages import AgeGrid  # noqa: E402
-from lcm.api.categorical import categorical  # noqa: E402
-from lcm.api.grids import (  # noqa: E402
+from _lcm.utils.containers import invert_regime_ids  # noqa: E402
+from _lcm.variables import (  # noqa: E402
+    _bind_forward_refs as _bind_variables_forward_refs,
+)
+from _lcm.version import __version__  # noqa: E402
+from lcm.ages import AgeGrid  # noqa: E402
+from lcm.categorical import categorical  # noqa: E402
+from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -58,18 +65,18 @@ from lcm.api.grids import (  # noqa: E402
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
-from lcm.api.model import Model  # noqa: E402
-from lcm.api.persistence import (  # noqa: E402
+from lcm.model import Model  # noqa: E402
+from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
     SolveSnapshot,
     load_snapshot,
     load_solution,
     save_solution,
 )
-from lcm.api.persistence import (  # noqa: E402
+from lcm.persistence import (  # noqa: E402
     _bind_forward_refs as _bind_persistence_forward_refs,
 )
-from lcm.api.processes import (  # noqa: E402
+from lcm.processes import (  # noqa: E402
     LogNormalIIDProcess,
     NormalIIDProcess,
     NormalMixtureIIDProcess,
@@ -78,16 +85,12 @@ from lcm.api.processes import (  # noqa: E402
     TauchenNormalMixtureAR1Process,
     UniformIIDProcess,
 )
-from lcm.api.regime import (  # noqa: E402
+from lcm.regime import (  # noqa: E402
     MarkovTransition,
     Regime,
     SolveSimulateFunctionPair,
 )
-from lcm.api.result import SimulationResult  # noqa: E402
-from lcm.utils.containers import invert_regime_ids  # noqa: E402
-from lcm.variables import (  # noqa: E402
-    _bind_forward_refs as _bind_variables_forward_refs,
-)
+from lcm.result import SimulationResult  # noqa: E402
 
 _bind_variables_forward_refs(regime_cls=Regime)
 _bind_persistence_forward_refs(model_cls=Model, simulation_result_cls=SimulationResult)

@@ -8,7 +8,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.api.regime import Regime as UserRegime
+from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
 
 

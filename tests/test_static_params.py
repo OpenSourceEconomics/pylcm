@@ -8,7 +8,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
-from lcm.api.regime import Regime as UserRegime
+from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
 from tests.test_models.regime_markov import Health
 from tests.test_models.regime_markov import RegimeId as MarkovRegimeId

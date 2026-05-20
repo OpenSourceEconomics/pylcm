@@ -8,6 +8,8 @@ from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
+from _lcm.config import TEST_DATA
+from _lcm.grids import UniformContinuousGrid
 from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -16,8 +18,6 @@ from lcm import (
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
-from lcm._config import TEST_DATA
-from lcm._grids import UniformContinuousGrid
 from lcm.typing import FloatND
 from lcm_examples import mortality as mortality_example
 from lcm_examples import precautionary_savings as ps_example

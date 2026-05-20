@@ -6,9 +6,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.ages import _parse_step
 from lcm import Model
-from lcm._ages import _parse_step
-from lcm.api.ages import AgeGrid
+from lcm.ages import AgeGrid
 from lcm.exceptions import GridInitializationError
 from tests.test_models.deterministic.base import (
     RegimeId,

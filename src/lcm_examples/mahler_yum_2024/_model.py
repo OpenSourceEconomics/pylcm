@@ -15,6 +15,7 @@ import numpy as np
 from jax import random
 from scipy.interpolate import interp1d
 
+from _lcm.utils.dispatchers import productmap
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -38,7 +39,6 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from lcm.utils.dispatchers import productmap
 
 _DATA_DIR = Path(__file__).parent / "data"
 

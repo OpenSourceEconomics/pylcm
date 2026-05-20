@@ -5,14 +5,14 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm._grids import Grid
-from lcm.api.ages import AgeGrid
-from lcm.engine import Regime, StateActionSpace
-from lcm.regime_building.max_Q_over_a import get_max_Q_over_a
-from lcm.regime_building.ndimage import map_coordinates
-from lcm.solution.solve_brute import solve
-from lcm.typing import MaxQOverAFunction, StateOrActionName
-from lcm.utils.logging import get_logger
+from _lcm.engine import Regime, StateActionSpace
+from _lcm.grids import Grid
+from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
+from _lcm.regime_building.ndimage import map_coordinates
+from _lcm.solution.solve_brute import solve
+from _lcm.typing import MaxQOverAFunction, StateOrActionName
+from _lcm.utils.logging import get_logger
+from lcm.ages import AgeGrid
 
 
 @dataclasses.dataclass(frozen=True)

@@ -5,9 +5,8 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
-from lcm import LinSpacedGrid
-from lcm._grids import ContinuousGrid, DiscreteGrid
-from lcm.regime_building.V import (
+from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.regime_building.V import (
     VInterpolationInfo,
     _fail_if_interpolation_axes_are_not_last,
     _get_coordinate_finder,
@@ -15,8 +14,9 @@ from lcm.regime_building.V import (
     _get_lookup_function,
     get_V_interpolator,
 )
+from _lcm.utils.dispatchers import productmap
+from lcm import LinSpacedGrid
 from lcm.typing import ScalarInt
-from lcm.utils.dispatchers import productmap
 
 
 @pytest.fixture

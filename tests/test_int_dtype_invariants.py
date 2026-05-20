@@ -8,18 +8,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lcm import Model
-from lcm.api.ages import AgeGrid
-from lcm.params import MappingLeaf
-from lcm.params.processing import process_params
-from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.simulation.initial_conditions import (
+from _lcm.params.processing import process_params
+from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
 )
-from lcm.simulation.transitions import _advance_states_for_subjects
-from lcm.typing import ParamsTemplate
-from lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.simulation.transitions import _advance_states_for_subjects
+from _lcm.typing import ParamsTemplate
+from _lcm.utils.containers import ensure_containers_are_immutable
+from lcm import Model
+from lcm.ages import AgeGrid
+from lcm.params import MappingLeaf
 from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,

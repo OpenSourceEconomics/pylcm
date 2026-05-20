@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm._config import TEST_DATA
+from _lcm.config import TEST_DATA
 from lcm.typing import FloatND
 from tests.test_models.deterministic.base import get_model, get_params
 

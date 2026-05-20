@@ -6,6 +6,9 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
+from _lcm import variables as _variables
+from _lcm.persistence import snapshots as _snapshot_module
+from _lcm.persistence.io import _get_platform
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -15,17 +18,14 @@ from lcm import (
     categorical,
     load_snapshot,
 )
-from lcm import variables as _variables
-from lcm._persistence import _snapshots as _snapshot_module
-from lcm._persistence._io import _get_platform
-from lcm.api.persistence import load_solution, save_solution
-from lcm.api.regime import Regime as UserRegime
-from lcm.api.result import SimulationResult as _PublicSimulationResult
+from lcm.persistence import load_solution, save_solution
+from lcm.regime import Regime as UserRegime
+from lcm.result import SimulationResult as _PublicSimulationResult
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
 def test_forward_refs_bound_after_import() -> None:
-    """`Model` and `SimulationResult` are bound in `lcm._persistence._snapshots`.
+    """`Model` and `SimulationResult` are bound in `_lcm.persistence.snapshots`.
 
     The package claw rewrites their string annotations on `_save_simulate_snapshot`
     into runtime forward references resolved against that module's globals at
@@ -304,8 +304,8 @@ def test_load_snapshot_warns_on_platform_mismatch(tmp_path, model_and_params, ca
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
 
     with (
-        patch("lcm.api.persistence._get_platform", return_value="fake_arch-FakeOS"),
-        caplog.at_level(logging.WARNING, logger="lcm.api.persistence"),
+        patch("lcm.persistence._get_platform", return_value="fake_arch-FakeOS"),
+        caplog.at_level(logging.WARNING, logger="lcm.persistence"),
     ):
         load_snapshot(snap_dir)
     assert "environment may not match" in caplog.text

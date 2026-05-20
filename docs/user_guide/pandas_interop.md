@@ -184,7 +184,7 @@ is controlled by `log_level` — see [Solving and Simulating](solving_and_simula
 ## Under the Hood
 
 Internally, `solve()` and `simulate()` call `convert_series_in_params` (in
-`lcm.pandas_utils`) to walk the already-broadcast params and convert each `pd.Series`
+`_lcm.pandas_utils`) to walk the already-broadcast params and convert each `pd.Series`
 via `array_from_series`. For initial conditions, `initial_conditions_from_dataframe`
 handles the DataFrame-to-dict conversion. Both are internal helpers — you don't need to
 call them directly.

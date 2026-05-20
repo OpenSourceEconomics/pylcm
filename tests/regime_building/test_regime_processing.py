@@ -5,17 +5,17 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
 
-from lcm import categorical
-from lcm._grids import DiscreteGrid, LinSpacedGrid
-from lcm.api.ages import AgeGrid
-from lcm.api.regime import Regime as UserRegime
-from lcm.engine import Regime, VariableInfo, Variables
-from lcm.regime_building.processing import (
+from _lcm.engine import Regime, VariableInfo, Variables
+from _lcm.grids import DiscreteGrid, LinSpacedGrid
+from _lcm.regime_building.processing import (
     _rename_params_to_qnames,
     process_regimes,
 )
+from _lcm.variables import from_regime, get_grids
+from lcm import categorical
+from lcm.ages import AgeGrid
+from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
-from lcm.variables import from_regime, get_grids
 from tests.mock_regime import MockRegime
 from tests.test_models.deterministic.base import dead, working_life
 

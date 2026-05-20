@@ -7,16 +7,16 @@ import jax.numpy as jnp
 import pytest
 from dags.tree import QNAME_DELIMITER
 
-from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
-from lcm._grids import IrregSpacedGrid
-from lcm.api.ages import AgeGrid
-from lcm.api.regime import MarkovTransition
-from lcm.api.regime import Regime as UserRegime
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.regime_building.transitions import (
+from _lcm.grids import IrregSpacedGrid
+from _lcm.regime_building.transitions import (
     _IdentityTransition,
     collect_state_transitions,
 )
+from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm.ages import AgeGrid
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.regime import MarkovTransition
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,

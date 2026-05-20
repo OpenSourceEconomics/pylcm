@@ -7,17 +7,17 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm._grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
-from lcm.dtypes import canonical_float_dtype
-from lcm.params import MappingLeaf
-from lcm.params.processing import process_params
-from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.simulation.initial_conditions import (
+from _lcm.dtypes import canonical_float_dtype
+from _lcm.grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
+from _lcm.params.processing import process_params
+from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.simulation.initial_conditions import (
     build_initial_states,
     canonicalize_initial_conditions,
 )
-from lcm.typing import ParamsTemplate
-from lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.typing import ParamsTemplate
+from _lcm.utils.containers import ensure_containers_are_immutable
+from lcm.params import MappingLeaf
 from tests.test_models.deterministic.regression import (
     RegimeId,
     get_model,

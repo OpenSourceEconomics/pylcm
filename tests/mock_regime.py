@@ -1,11 +1,11 @@
 from types import MappingProxyType
 from typing import Literal, cast
 
-from lcm._grids import Grid
-from lcm._regime._helpers import _default_H
-from lcm.api.regime import Regime as UserRegime
-from lcm.api.regime import SolveSimulateFunctionPair
-from lcm.regime_building.transitions import collect_state_transitions
+from _lcm.grids import Grid
+from _lcm.regime.helpers import _default_H
+from _lcm.regime_building.transitions import collect_state_transitions
+from lcm.regime import Regime as UserRegime
+from lcm.regime import SolveSimulateFunctionPair
 from lcm.typing import UserFunction
 
 

@@ -1,4 +1,4 @@
-"""Tests for lcm.pandas_utils and categorical.to_categorical_dtype."""
+"""Tests for _lcm.pandas_utils and categorical.to_categorical_dtype."""
 
 import dataclasses
 
@@ -8,15 +8,15 @@ import pandas as pd
 import pytest
 from pandas.api.types import CategoricalDtype
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
-from lcm.api.regime import Regime as UserRegime
-from lcm.pandas_utils import (
+from _lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     array_from_series,
     convert_series_in_params,
     initial_conditions_from_dataframe,
 )
-from lcm.params.processing import broadcast_to_template
+from _lcm.params.processing import broadcast_to_template
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
 from tests.test_models.basic_discrete import (
     Health,
@@ -1706,10 +1706,10 @@ def test_convert_series_per_target_transition() -> None:
 
 def test_build_outcome_mapping_qualified_func_name() -> None:
     """`_build_outcome_mapping` should handle qualified names."""
-    from lcm.pandas_utils import _build_outcome_mapping  # noqa: PLC0415
+    from _lcm.pandas_utils import _build_outcome_mapping  # noqa: PLC0415
 
     model = get_stochastic_model(3)
-    from lcm.pandas_utils import _build_discrete_grid_lookup  # noqa: PLC0415
+    from _lcm.pandas_utils import _build_discrete_grid_lookup  # noqa: PLC0415
 
     grids = _build_discrete_grid_lookup(model.user_regimes)
     result = _build_outcome_mapping(
@@ -1846,7 +1846,7 @@ def test_convert_series_runtime_grid_param() -> None:
 
 def test_convert_series_sequence_leaf_traversal() -> None:
     """Series inside a `UserSequenceLeaf` should be converted to JAX arrays."""
-    from lcm.params.sequence_leaf import UserSequenceLeaf  # noqa: PLC0415
+    from _lcm.params.sequence_leaf import UserSequenceLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     sr = pd.Series([10.0])
@@ -1869,7 +1869,7 @@ def test_convert_series_sequence_leaf_traversal() -> None:
 
 def test_resolve_categoricals_conflict_raises() -> None:
     """Derived categoricals that conflict with model grids raise ValueError."""
-    from lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
+    from _lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
 
     model = get_stochastic_model(3)
 
@@ -1992,7 +1992,7 @@ def test_convert_series_cross_grid_transition() -> None:
 
 def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:
     """derived_categoricals are included even when regime_name is None."""
-    from lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
+    from _lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
 
     model = get_stochastic_model(3)
 
