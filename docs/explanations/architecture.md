@@ -95,7 +95,7 @@ The mapping of public names to files:
 | File             | What lives there                                                                                                                                                                                          |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `model.py`       | `Model`                                                                                                                                                                                                   |
-| `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`. Validators and the default Bellman aggregator live in `_lcm/regime/`.                                                                          |
+| `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/regime/`.                                                    |
 | `ages.py`        | `AgeGrid`. Step parser, validators, and `PSEUDO_STATE_NAMES` live in `_lcm/ages.py`.                                                                                                                      |
 | `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`                                                           |
 | `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
@@ -161,7 +161,6 @@ validators, helpers, and I/O plumbing that internal code is free to refactor.
 _lcm/ages.py            ← STEP_UNITS, PSEUDO_STATE_NAMES, _parse_step,
                           _validate_age_grid / _validate_range / _validate_values
 _lcm/regime/
-├── helpers.py          ← _default_H (default Bellman aggregator)
 └── validation.py       ← the validators called from Regime.__post_init__
 
 _lcm/persistence/

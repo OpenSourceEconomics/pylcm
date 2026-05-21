@@ -25,7 +25,6 @@ import pytest
 from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.engine import _build_regime_sharding
-from _lcm.regime.helpers import _default_H
 from _lcm.simulation.simulate import _compute_starting_periods
 from _lcm.solution.solve_brute import _log_per_period_stats
 from _lcm.state_action_space import _validate_all_states_present
@@ -38,6 +37,7 @@ from lcm.exceptions import (
 )
 from lcm.model import _contains_nan
 from lcm.regime import Regime as UserRegime
+from lcm.regime import _default_H
 
 
 def test_claw_checks_lcm_simulation() -> None:
@@ -92,7 +92,7 @@ def test_claw_checks_lcm_engine() -> None:
 
 
 def test_claw_checks_lcm_regime() -> None:
-    """Type-violating arguments to `_lcm.regime` helpers raise."""
+    """Type-violating arguments to `lcm.regime` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _default_H(
             utility=np.array([1.0]),  # ty: ignore[invalid-argument-type]

@@ -1,9 +1,10 @@
 """User-facing regime types: `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`.
 
-The validators, the default Bellman aggregator, and the identity transition
-live behind a leading underscore in `_lcm.regime` and
-`_lcm.regime_building.transitions`. This module is intentionally a thin layer
-of public class definitions.
+The validators and the identity transition live behind a leading underscore in
+`_lcm.regime` and `_lcm.regime_building.transitions`. This module is
+intentionally thin: the public class definitions plus the private default
+Bellman aggregator (`_default_H`), which `Regime` injects when a non-terminal
+regime supplies no `H`.
 
 """
 
@@ -17,7 +18,6 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.grids import DiscreteGrid, Grid
-from _lcm.regime.helpers import _default_H
 from _lcm.regime.validation import (
     _validate_logical_consistency,
     _validate_mapping_contents,
@@ -29,7 +29,7 @@ from _lcm.utils.containers import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.transition import MarkovTransition, SolveSimulateFunctionPair
-from lcm.typing import UserFunction
+from lcm.typing import FloatND, UserFunction
 
 
 @beartype(conf=REGIME_CONF)
@@ -187,3 +187,10 @@ class Regime:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
+
+
+def _default_H(
+    utility: FloatND, E_next_V: FloatND, discount_factor: FloatND
+) -> FloatND:
+    """Default Bellman aggregator: `U + β · E[V_next]`."""
+    return utility + discount_factor * E_next_V

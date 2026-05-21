@@ -18,7 +18,7 @@ from lcm import (
 )
 from lcm.exceptions import GridInitializationError
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
-from tests.test_models.shock_grids import (
+from tests.test_models.processes import (
     MultiRegimeId,
     RegimeId,
     get_model,
@@ -32,7 +32,7 @@ from tests.test_models.shock_grids import (
 @pytest.mark.parametrize(
     "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
-def test_model_with_shock(distribution_type):
+def test_model_with_process(distribution_type):
     model = get_model(n_periods=4, distribution_type=distribution_type)
     params = get_params(distribution_type)
 
@@ -56,10 +56,10 @@ def test_model_with_shock(distribution_type):
     ).to_dataframe()
 
     expected_simulate = pd.read_pickle(
-        TEST_DATA / "shocks" / f"simulation_{distribution_type}.pkl"
+        TEST_DATA / "processes" / f"simulation_{distribution_type}.pkl"
     )
     expected_solve = pd.read_pickle(
-        TEST_DATA / "shocks" / f"solution_{distribution_type}.pkl"
+        TEST_DATA / "processes" / f"solution_{distribution_type}.pkl"
     )
     # Compare solution (iterate over expected regimes — got may have additional ones)
     for period in expected_solve:
@@ -81,10 +81,10 @@ def test_model_with_shock(distribution_type):
 @pytest.mark.parametrize(
     "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
-def test_model_with_cross_regime_shocks(distribution_type: str) -> None:
-    """Verify cross-regime transitions work when both regimes have shock grids.
+def test_model_with_cross_regime_processes(distribution_type: str) -> None:
+    """Verify cross-regime transitions work when both regimes have process grids.
 
-    Reproducer for a crash where shock-state `lambda: None` stubs leak from the
+    Reproducer for a crash where process-state `lambda: None` stubs leak from the
     source regime into cross-regime transition dicts, causing a `vmap` error in
     `joint_weights_from_marginals` (receives `None` instead of arrays).
     """
@@ -119,8 +119,8 @@ _GRID_CLASSES_WITH_GH_KWARG = [
 
 
 @pytest.mark.parametrize(("grid_cls", "extra_kw"), _GRID_CLASSES_WITH_GH_KWARG)
-def test_shock_grid_correct_shape_without_params(grid_cls, extra_kw):
-    """ShockGrid without params returns correct-shape arrays."""
+def test_process_grid_correct_shape_without_params(grid_cls, extra_kw):
+    """A process grid without params returns correct-shape arrays."""
     grid = grid_cls(n_points=3, **extra_kw)
     assert not grid.is_fully_specified
     assert grid.params_to_pass_at_runtime
@@ -185,8 +185,8 @@ def test_shock_grid_correct_shape_without_params(grid_cls, extra_kw):
         ),
     ],
 )
-def test_shock_grid_fully_specified_with_all_params(grid_cls, kwargs):
-    """ShockGrid with all params provided is fully specified."""
+def test_process_grid_fully_specified_with_all_params(grid_cls, kwargs):
+    """A process grid with all params provided is fully specified."""
     grid = grid_cls(n_points=3, **kwargs)
     assert grid.is_fully_specified
     result = grid.get_gridpoints()
@@ -319,7 +319,7 @@ def test_normal_gauss_hermite_n_std_not_in_params():
     ],
     ids=["normal", "lognormal", "uniform", "tauchen"],
 )
-def test_shock_grid_params_excludes_distributed(grid):
+def test_process_grid_params_excludes_distributed(grid):
     """`distributed` is a placement flag, not a distribution parameter.
 
     `ContinuousGrid` exposes `distributed` as a field, but it must not leak

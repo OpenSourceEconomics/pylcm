@@ -27,8 +27,8 @@ from tests.test_models.basic_discrete import (
 from tests.test_models.basic_discrete import (
     get_model as get_basic_model,
 )
+from tests.test_models.processes import get_model as get_process_model
 from tests.test_models.regime_markov import get_model as get_regime_markov_model
-from tests.test_models.shock_grids import get_model as get_shock_model
 from tests.test_models.stochastic import get_model as get_stochastic_model
 
 
@@ -330,9 +330,9 @@ def test_missing_state_column_raises():
         )
 
 
-def test_shock_state_columns_accepted():
-    """Shock grid columns are accepted as continuous float columns."""
-    model = get_shock_model(n_periods=4, distribution_type="uniform")
+def test_process_state_columns_accepted():
+    """Process grid columns are accepted as continuous float columns."""
+    model = get_process_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
             "regime_name": ["alive", "alive"],
@@ -352,9 +352,9 @@ def test_shock_state_columns_accepted():
     assert "regime_id" in conditions
 
 
-def test_shock_state_columns_required():
-    """DataFrame without shock columns raises (shocks are required)."""
-    model = get_shock_model(n_periods=4, distribution_type="uniform")
+def test_process_state_columns_required():
+    """DataFrame without process columns raises (process states are required)."""
+    model = get_process_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
             "regime_name": ["alive", "alive"],
@@ -590,8 +590,8 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
     assert jnp.allclose(result["wealth"], jnp.array([10.0, 20.0, 30.0]))
 
 
-def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
-    """A shock state (income) only present in one regime is NaN-filled elsewhere."""
+def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
+    """A process state (income) only present in one regime is NaN-filled elsewhere."""
     from lcm import UniformIIDProcess  # noqa: PLC0415
 
     @categorical(ordered=False)

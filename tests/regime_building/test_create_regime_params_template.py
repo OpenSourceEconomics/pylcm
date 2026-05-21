@@ -7,7 +7,7 @@ from lcm.regime import SolveSimulateFunctionPair
 from tests.mock_regime import MockRegime
 
 
-def test_create_params_without_shocks(binary_category_class):
+def test_create_params_without_processes(binary_category_class):
     regime = MockRegime(
         actions={
             "a": DiscreteGrid(binary_category_class),

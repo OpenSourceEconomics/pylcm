@@ -325,8 +325,8 @@ def test_passing_same_params_to_regimes_with_different_templates():
         process_params(params=params, params_template=params_template)
 
 
-def test_shock_params_via_regular_params():
-    """Test that ShockGrid params can be passed via regular params.
+def test_process_params_via_regular_params():
+    """Test that stochastic-process params can be passed via regular params.
 
     ShockGrid discretization parameters now appear in the params_template under the
     state name (e.g., "adjustment_cost"), so users can pass them via regular params.
