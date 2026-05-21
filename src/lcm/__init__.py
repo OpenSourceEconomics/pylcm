@@ -51,7 +51,6 @@ from _lcm.variables import (  # noqa: E402
 )
 from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
-from lcm.categorical import categorical  # noqa: E402
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
@@ -60,6 +59,7 @@ from lcm.grids import (  # noqa: E402
     PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
+    categorical,
 )
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402

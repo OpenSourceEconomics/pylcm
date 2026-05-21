@@ -32,10 +32,9 @@ anything else loads.
 lcm/
 ├── __init__.py       ← re-export façade for the public symbols
 ├── ages.py           ← AgeGrid
-├── categorical.py    ← the @categorical class decorator
 ├── grids.py          ← LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid, DiscreteGrid,
 │                       PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid,
-│                       PiecewiseGridSegment
+│                       PiecewiseGridSegment, and the @categorical decorator
 ├── model.py          ← Model
 ├── params.py         ← as_leaf + the MappingLeaf / SequenceLeaf re-exports
 ├── persistence.py    ← SolveSnapshot, SimulateSnapshot, load_snapshot,
@@ -97,9 +96,8 @@ The mapping of public names to files:
 | `model.py`       | `Model`                                                                                                                                                                                                   |
 | `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`.                                  |
 | `ages.py`        | `AgeGrid`. Step parser and validators live in `_lcm/ages.py`.                                                                                                                                             |
-| `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`                                                           |
+| `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`, and the `@categorical` decorator                         |
 | `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
-| `categorical.py` | The `@categorical` class decorator                                                                                                                                                                        |
 | `persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, `save_solution`, `load_solution`. Snapshot writers and atomic-dump live in `_lcm/persistence/`.                                                     |
 | `result.py`      | `SimulationResult`. DataFrame assembly, metadata, and additional-targets computation live in `_lcm/simulation/result_*.py` and `_lcm/simulation/additional_targets.py`.                                   |
 | `params.py`      | `as_leaf` plus the `MappingLeaf` / `SequenceLeaf` re-exports. The leaf-class definitions and the engine params machinery live in `_lcm/params/`.                                                          |
