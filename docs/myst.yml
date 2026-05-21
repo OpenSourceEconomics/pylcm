@@ -51,13 +51,13 @@ project:
     - file: explanations/index.md
       title: Explanations
       children:
-        - file: explanations/architecture.md
         - file: explanations/function_representation.ipynb
         - file: explanations/interpolation.ipynb
         - file: explanations/approximating_continuous_shocks.ipynb
         - file: explanations/stochastic_transitions.ipynb
         - file: explanations/dispatchers.ipynb
         - file: explanations/beta_delta.ipynb
+        - file: explanations/architecture.md
     - file: examples/index.md
       title: Examples
       children:
