@@ -46,15 +46,11 @@ from _lcm.beartype_conf import INTERNAL_CONF
 beartype_package("_lcm", conf=INTERNAL_CONF)
 beartype_package("lcm", conf=INTERNAL_CONF)
 
-# Modules with TYPE_CHECKING-only forward references expose a
-# `_bind_forward_refs` helper; calling it here makes the claw's
-# rewritten string annotations resolve at call time.
-from _lcm.version import __version__  # noqa: E402
-
 from _lcm.utils.containers import invert_regime_ids  # noqa: E402
 from _lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,
 )
+from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.categorical import categorical  # noqa: E402
 from lcm.grids import (  # noqa: E402
@@ -93,6 +89,9 @@ from lcm.regime import (  # noqa: E402
 )
 from lcm.result import SimulationResult  # noqa: E402
 
+# Modules with TYPE_CHECKING-only forward references expose a
+# `_bind_forward_refs` helper; calling it here makes the claw's
+# rewritten string annotations resolve at call time.
 _bind_variables_forward_refs(regime_cls=Regime)
 _bind_persistence_forward_refs(model_cls=Model, simulation_result_cls=SimulationResult)
 del _bind_persistence_forward_refs, _bind_variables_forward_refs
