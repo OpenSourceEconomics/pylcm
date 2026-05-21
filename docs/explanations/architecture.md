@@ -62,12 +62,12 @@ _lcm/
 ├── state_action_space.py  ← state / action space validators
 ├── transition_checks.py   ← pre-solve regime + state transition prob checks
 ├── typing.py              ← engine-side type aliases and protocols
+├── user_regime_validation.py ← validators for the user-facing Regime
 ├── variables.py           ← factories that build `Variables` from `Regime`
 ├── version.py             ← generated version string (hatch-vcs)
 ├── grids/                 ← grid infrastructure
 ├── processes/             ← stochastic-process infrastructure
 ├── persistence/           ← snapshot I/O and writer internals
-├── regime/                ← Regime validators, default H
 ├── regime_building/       ← per-regime canonicalisation
 ├── solution/              ← backward induction (solve) + validate_V
 ├── simulation/            ← forward sampling (simulate) + result helpers
@@ -95,7 +95,7 @@ The mapping of public names to files:
 | File             | What lives there                                                                                                                                                                                          |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `model.py`       | `Model`                                                                                                                                                                                                   |
-| `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/regime/`.                                                    |
+| `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`.                                  |
 | `ages.py`        | `AgeGrid`. Step parser, validators, and `PSEUDO_STATE_NAMES` live in `_lcm/ages.py`.                                                                                                                      |
 | `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`                                                           |
 | `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
@@ -160,8 +160,7 @@ validators, helpers, and I/O plumbing that internal code is free to refactor.
 ```
 _lcm/ages.py            ← STEP_UNITS, PSEUDO_STATE_NAMES, _parse_step,
                           _validate_age_grid / _validate_range / _validate_values
-_lcm/regime/
-└── validation.py       ← the validators called from Regime.__post_init__
+_lcm/user_regime_validation.py  ← the validators called from Regime.__post_init__
 
 _lcm/persistence/
 ├── io.py               ← _atomic_dump, _save_pkl, _save_h5, _load_h5,
@@ -190,9 +189,9 @@ Why split these out? Two reasons:
   signature, and existence can change without bumping the user surface.
 
 A note on shadowing: the canonical `Regime` lives in `_lcm/engine.py`. The validators in
-`_lcm/regime/validation.py` operate on the user-facing `lcm.regime.Regime` and reach it
-through TYPE_CHECKING-guarded imports to break the circular dependency at import time;
-beartype resolves the forward references at first call.
+`_lcm/user_regime_validation.py` operate on the user-facing `lcm.regime.Regime` and
+reach it through TYPE_CHECKING-guarded imports to break the circular dependency at
+import time; beartype resolves the forward references at first call.
 
 ## Engine-side: `_lcm/engine.py`
 

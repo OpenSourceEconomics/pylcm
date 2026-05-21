@@ -1,10 +1,10 @@
 """User-facing regime types: `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`.
 
 The validators and the identity transition live behind a leading underscore in
-`_lcm.regime` and `_lcm.regime_building.transitions`. This module is
-intentionally thin: the public class definitions plus the private default
-Bellman aggregator (`_default_H`), which `Regime` injects when a non-terminal
-regime supplies no `H`.
+`_lcm.user_regime_validation` and `_lcm.regime_building.transitions`. This
+module is intentionally thin: the public class definitions plus the private
+default Bellman aggregator (`_default_H`), which `Regime` injects when a
+non-terminal regime supplies no `H`.
 
 """
 
@@ -18,12 +18,12 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.grids import DiscreteGrid, Grid
-from _lcm.regime.validation import (
+from _lcm.regime_building.transitions import collect_state_transitions
+from _lcm.typing import ActionName, ActiveFunction, FunctionName, RegimeName, StateName
+from _lcm.user_regime_validation import (
     _validate_logical_consistency,
     _validate_mapping_contents,
 )
-from _lcm.regime_building.transitions import collect_state_transitions
-from _lcm.typing import ActionName, ActiveFunction, FunctionName, RegimeName, StateName
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
 )
