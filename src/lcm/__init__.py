@@ -57,7 +57,7 @@ from lcm.grids import (  # noqa: E402
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    Piece,
+    PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
@@ -114,7 +114,7 @@ __all__ = [
     "Model",
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
-    "Piece",
+    "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "Regime",

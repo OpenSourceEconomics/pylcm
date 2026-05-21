@@ -10,14 +10,14 @@ take. They are passed via the `states` and `actions` mappings on a
 
 ## Quick Reference
 
-| Grid Type                | Use Case                  | Key Parameters              |
-| ------------------------ | ------------------------- | --------------------------- |
-| `DiscreteGrid`           | Categorical choices       | `category_class`            |
-| `LinSpacedGrid`          | Evenly spaced continuous  | `start`, `stop`, `n_points` |
-| `LogSpacedGrid`          | Log-spaced continuous     | `start`, `stop`, `n_points` |
-| `IrregSpacedGrid`        | Custom point placement    | `points` or `n_points`      |
-| `PiecewiseLinSpacedGrid` | Dense in some regions     | `pieces` (tuple of `Piece`) |
-| `PiecewiseLogSpacedGrid` | Log-dense in some regions | `pieces` (tuple of `Piece`) |
+| Grid Type                | Use Case                  | Key Parameters                               |
+| ------------------------ | ------------------------- | -------------------------------------------- |
+| `DiscreteGrid`           | Categorical choices       | `category_class`                             |
+| `LinSpacedGrid`          | Evenly spaced continuous  | `start`, `stop`, `n_points`                  |
+| `LogSpacedGrid`          | Log-spaced continuous     | `start`, `stop`, `n_points`                  |
+| `IrregSpacedGrid`        | Custom point placement    | `points` or `n_points`                       |
+| `PiecewiseLinSpacedGrid` | Dense in some regions     | `segments` (tuple of `PiecewiseGridSegment`) |
+| `PiecewiseLogSpacedGrid` | Log-dense in some regions | `segments` (tuple of `PiecewiseGridSegment`) |
 
 All grid classes are imported from `lcm`:
 
@@ -27,9 +27,9 @@ from lcm import (
     LinSpacedGrid,
     LogSpacedGrid,
     IrregSpacedGrid,
+    PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
-    Piece,
     categorical,
 )
 ```
@@ -104,29 +104,31 @@ Multiple linearly spaced segments joined at breakpoints. Dense where you need pr
 sparse elsewhere:
 
 ```python
-from lcm import Piece, PiecewiseLinSpacedGrid
+from lcm import PiecewiseGridSegment, PiecewiseLinSpacedGrid
 
 PiecewiseLinSpacedGrid(
-    pieces=(
-        Piece(interval="[0, 10)", n_points=20),
-        Piece(interval="[10, 100]", n_points=10),
+    segments=(
+        PiecewiseGridSegment(interval="[0, 10)", n_points=20),
+        PiecewiseGridSegment(interval="[10, 100]", n_points=10),
     ),
 )
 ```
 
-Pieces must be adjacent: the upper bound of each piece must equal the lower bound of the
-next, with compatible open/closed boundaries (e.g., `[0, 10)` followed by `[10, 100]`).
+Segments must be adjacent: the upper bound of each segment must equal the lower bound of
+the next, with compatible open/closed boundaries (e.g., `[0, 10)` followed by
+`[10, 100]`).
 
 ### PiecewiseLogSpacedGrid
 
-Same structure as `PiecewiseLinSpacedGrid` but with log spacing within each piece. Good
-for wealth grids spanning orders of magnitude. All boundary values must be positive.
+Same structure as `PiecewiseLinSpacedGrid` but with log spacing within each segment.
+Good for wealth grids spanning orders of magnitude. All boundary values must be
+positive.
 
 ```python
 PiecewiseLogSpacedGrid(
-    pieces=(
-        Piece(interval="[0.1, 10)", n_points=50),
-        Piece(interval="[10, 1000]", n_points=30),
+    segments=(
+        PiecewiseGridSegment(interval="[0.1, 10)", n_points=50),
+        PiecewiseGridSegment(interval="[10, 1000]", n_points=30),
     ),
 )
 ```

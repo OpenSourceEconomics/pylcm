@@ -1,9 +1,9 @@
 """Functions to generate and work with different kinds of grids.
 
 The `get_*_coordinate` helpers take JAX arrays of any rank: a `Grid`
-method passes a 0-d value, while a piecewise dispatch selects pieces via
-`searchsorted` and passes `start` / `stop` / `n_points` indexed by an
-N-d `piece_idx`. `linspace` / `logspace` build a grid and take JAX
+method passes a 0-d value, while a piecewise dispatch selects segments
+via `searchsorted` and passes `start` / `stop` / `n_points` indexed by
+an N-d `segment_idx`. `linspace` / `logspace` build a grid and take JAX
 scalars.
 """
 

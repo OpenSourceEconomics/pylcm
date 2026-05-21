@@ -34,7 +34,8 @@ lcm/
 ├── ages.py           ← AgeGrid
 ├── categorical.py    ← the @categorical class decorator
 ├── grids.py          ← LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid, DiscreteGrid,
-│                       PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid, Piece
+│                       PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid,
+│                       PiecewiseGridSegment
 ├── model.py          ← Model
 ├── params.py         ← as_leaf + the MappingLeaf / SequenceLeaf re-exports
 ├── persistence.py    ← SolveSnapshot, SimulateSnapshot, load_snapshot,
@@ -96,7 +97,7 @@ The mapping of public names to files:
 | `model.py`       | `Model`                                                                                                                                                                                                   |
 | `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`. Validators and the default Bellman aggregator live in `_lcm/regime/`.                                                                          |
 | `ages.py`        | `AgeGrid`. Step parser, validators, and `PSEUDO_STATE_NAMES` live in `_lcm/ages.py`.                                                                                                                      |
-| `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `Piece`                                                                          |
+| `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`                                                           |
 | `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
 | `categorical.py` | The `@categorical` class decorator                                                                                                                                                                        |
 | `persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, `save_solution`, `load_solution`. Snapshot writers and atomic-dump live in `_lcm/persistence/`.                                                     |
@@ -121,7 +122,8 @@ _lcm/grids/
 ├── base.py            ← Grid, ContinuousGrid, UniformContinuousGrid (ABCs)
 ├── continuous.py      ← LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid
 ├── discrete.py        ← DiscreteGrid
-├── piecewise.py       ← PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid, Piece
+├── piecewise.py       ← PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid,
+│                         PiecewiseGridSegment
 ├── categorical.py     ← @categorical decorator + validators
 └── coordinates.py     ← coordinate lookup helpers used by interpolation
 

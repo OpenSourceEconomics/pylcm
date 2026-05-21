@@ -12,7 +12,7 @@ from _lcm.grids.continuous import (
 )
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.grids.piecewise import (
-    Piece,
+    PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
@@ -22,7 +22,7 @@ __all__ = [
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogSpacedGrid",
-    "Piece",
+    "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
 ]
