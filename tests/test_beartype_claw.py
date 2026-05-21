@@ -35,7 +35,6 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.model import _contains_nan
 from lcm.regime import Regime as UserRegime
 from lcm.regime import _default_H
 
@@ -109,12 +108,6 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
             states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
             functions="not a mapping",  # ty: ignore[invalid-argument-type]
         )
-
-
-def test_claw_checks_lcm_model() -> None:
-    """Type-violating arguments to internal `lcm.model` helpers raise."""
-    with pytest.raises(BeartypeCallHintViolation):
-        _contains_nan(123)  # ty: ignore[invalid-argument-type]
 
 
 def test_model_with_bad_arg_raises_project_exception() -> None:

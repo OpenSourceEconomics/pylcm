@@ -17,7 +17,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace
-from _lcm.typing import FlatRegimeParams, RegimeName
+from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeName
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
@@ -266,3 +266,12 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
                 lines.append(f"    {dim_name:24s} [{formatted}]")
 
     return "\n".join(lines)
+
+
+def contains_nan(period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> bool:
+    """Return whether any value-function array holds a NaN."""
+    return any(
+        bool(jnp.any(jnp.isnan(V_arr)))
+        for regime_to_V_arr in period_to_regime_to_V_arr.values()
+        for V_arr in regime_to_V_arr.values()
+    )

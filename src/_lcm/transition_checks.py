@@ -45,6 +45,34 @@ from lcm.exceptions import (
 from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
 
 
+def validate_transitions(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    logger: logging.Logger,
+) -> None:
+    """Validate regime and state transition probabilities before solve / simulate.
+
+    Runs the regime-transition check then the state-transition check. Both
+    self-gate on the logger's runtime-validation policy (`log_level="off"`
+    skips, `"warning"` / `"progress"` warn, `"debug"` raises).
+
+    Args:
+        regimes: Immutable mapping of regime names to regimes.
+        flat_params: Immutable mapping of regime names to flat parameter mappings.
+        ages: Age grid for the model.
+        logger: Logger carrying the runtime-validation policy.
+
+    """
+    validate_regime_transitions_all_periods(
+        regimes=regimes, flat_params=flat_params, ages=ages, logger=logger
+    )
+    validate_state_transitions_all_periods(
+        regimes=regimes, flat_params=flat_params, ages=ages, logger=logger
+    )
+
+
 def validate_regime_transitions_all_periods(
     *,
     regimes: MappingProxyType[RegimeName, Regime],

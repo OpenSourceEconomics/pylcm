@@ -1,13 +1,11 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
-import dataclasses
 import logging
 import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
-import jax.numpy as jnp
 import pandas as pd
 from beartype import beartype
 
@@ -16,6 +14,7 @@ from _lcm.grids import DiscreteGrid
 from _lcm.model_processing import (
     _validate_param_types,
     build_regimes_and_template,
+    merge_derived_categoricals,
     validate_model_inputs,
 )
 from _lcm.pandas_utils import (
@@ -40,10 +39,8 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.solve_brute import solve
-from _lcm.transition_checks import (
-    validate_regime_transitions_all_periods,
-    validate_state_transitions_all_periods,
-)
+from _lcm.solution.validate_V import contains_nan
+from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
     FlatParams,
     FunctionName,
@@ -68,7 +65,6 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidValueFunctionError,
-    ModelInitializationError,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
@@ -211,7 +207,7 @@ class Model:
                 )
             )
         )
-        self.user_regimes = _merge_derived_categoricals(
+        self.user_regimes = merge_derived_categoricals(
             user_regimes=regimes,
             derived_categoricals=derived_categoricals,
         )
@@ -315,13 +311,7 @@ class Model:
         """
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
-        validate_regime_transitions_all_periods(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-            logger=log,
-        )
-        validate_state_transitions_all_periods(
+        validate_transitions(
             regimes=self._regimes,
             flat_params=flat_params,
             ages=self.ages,
@@ -376,7 +366,7 @@ class Model:
         if (
             log_path is not None
             and validation_enabled(log)
-            and (validation_raises(log) or _contains_nan(period_to_regime_to_V_arr))
+            and (validation_raises(log) or contains_nan(period_to_regime_to_V_arr))
         ):
             _save_solve_snapshot(
                 model=self,
@@ -510,13 +500,7 @@ class Model:
                 )
             except InvalidInitialConditionsError as error:
                 raise_or_warn(logger=log, error=error)
-        validate_regime_transitions_all_periods(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-            logger=log,
-        )
-        validate_state_transitions_all_periods(
+        validate_transitions(
             regimes=self._regimes,
             flat_params=flat_params,
             ages=self.ages,
@@ -602,53 +586,3 @@ class Model:
         flat_params = cast_params_to_canonical_dtypes(flat_params)
         _validate_param_types(flat_params)
         return flat_params
-
-
-def _merge_derived_categoricals(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
-) -> MappingProxyType[RegimeName, UserRegime]:
-    """Merge model-level derived_categoricals into each regime.
-
-    Args:
-        user_regimes: Mapping of regime names to user-provided `Regime`
-            instances.
-        derived_categoricals: Model-level categorical grids to broadcast.
-
-    Returns:
-        Immutable mapping of regime names to (possibly updated) Regime instances.
-
-    Raises:
-        ModelInitializationError: If a regime already has a conflicting entry
-            (same key, different categories).
-
-    """
-    if not derived_categoricals:
-        return MappingProxyType(dict(user_regimes))
-    result: dict[RegimeName, UserRegime] = {}
-    for regime_name, user_regime in user_regimes.items():
-        merged = dict(user_regime.derived_categoricals)
-        for var, grid in derived_categoricals.items():
-            existing = merged.get(var)
-            if existing is not None and existing.categories != grid.categories:
-                msg = (
-                    f"Model-level derived_categoricals['{var}'] conflicts "
-                    f"with regime '{regime_name}': {grid.categories} vs "
-                    f"{existing.categories}."
-                )
-                raise ModelInitializationError(msg)
-            merged[var] = grid
-        result[regime_name] = dataclasses.replace(
-            user_regime, derived_categoricals=MappingProxyType(merged)
-        )
-    return MappingProxyType(result)
-
-
-def _contains_nan(period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> bool:
-    """Return whether any value function array holds a NaN."""
-    return any(
-        bool(jnp.any(jnp.isnan(V_arr)))
-        for regime_to_V_arr in period_to_regime_to_V_arr.values()
-        for V_arr in regime_to_V_arr.values()
-    )
