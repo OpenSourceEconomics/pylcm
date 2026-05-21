@@ -56,8 +56,8 @@ CATEGORICAL_CONF = _conf(CategoricalDefinitionError)
 # Used on `Model.solve`, `Model.simulate`, and the `as_leaf` factory.
 PARAMS_CONF = _conf(InvalidParamsError)
 
-# Default conf for the package-wide claw on `lcm` registered in
-# `lcm/__init__.py`. A type violation in any internal helper surfaces as
+# Default conf for the package-wide claw on `lcm` and `_lcm` registered
+# in `lcm/__init__.py`. A type violation in any internal helper surfaces as
 # beartype's own `BeartypeCallHintViolation` rather than a project
 # exception. User-facing constructors layer their own
 # `@beartype(conf=...)` decorators on top to map violations to project

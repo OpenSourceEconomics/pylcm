@@ -51,7 +51,7 @@ lcm/
 _lcm/
 ├── __init__.py            ← applies the jaxtyping patch + registers the beartype claw
 ├── ages.py                ← AgeGrid validators and step parsing
-├── beartype_conf.py       ← the two beartype configurations
+├── beartype_conf.py       ← the beartype configurations
 ├── config.py              ← build-time configuration constants
 ├── dtypes.py              ← canonical-dtype resolution
 ├── engine.py              ← canonical / engine-side dataclasses
@@ -388,8 +388,8 @@ grouping:
 - `jaxtyping_patch.py` — Bootstrap patch that has to run before any
   `jaxtyping`-annotated type is created. `_lcm/__init__.py` applies it as its first
   statement.
-- `beartype_conf.py` — Holds the two beartype configurations used in the package
-  (internal claw + user-facing constructor decorators).
+- `beartype_conf.py` — Holds the beartype configurations used in the package (the
+  internal-claw conf + the user-facing constructor-decorator confs).
 - `config.py` — Build-time configuration constants (paths to test data, etc.).
 - `dtypes.py` — Canonical-dtype resolution (`canonical_float_dtype()`), which depends on
   the JAX x64 setting.
