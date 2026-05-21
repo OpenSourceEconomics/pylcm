@@ -28,11 +28,11 @@ from tests.test_models.deterministic.base import (
         ("Q", Fraction(1, 4)),
     ],
 )
-def test__parse_step_valid_formats(step, expected):
+def test_parse_step_valid_formats(step, expected):
     assert _parse_step(step) == expected
 
 
-def test__parse_step_invalid():
+def test_parse_step_invalid():
     with pytest.raises(GridInitializationError, match="Invalid step format"):
         _parse_step("X")
 

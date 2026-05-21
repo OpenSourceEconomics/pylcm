@@ -44,6 +44,12 @@ type Age = ScalarInt | ScalarFloat
 type UserAge = int | Fraction
 
 
+# Boundary form accepted by `AgeGrid.__init__` for `step`: a string matching
+# the grammar `(\d+)?[YQM]` — an optional positive-integer multiplier followed
+# by a unit (`Y` year, `Q` quarter, `M` month). Examples: `"Y"`, `"2Q"`, `"6M"`.
+type AgeStep = str
+
+
 # Boundary form of initial conditions — accepted by `Model.simulate` and
 # canonicalized by `canonicalize_initial_conditions`. Keys are state names plus
 # the literal `"regime_id"`.

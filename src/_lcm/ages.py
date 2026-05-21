@@ -7,18 +7,18 @@ from types import MappingProxyType
 
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
-from lcm.typing import UserAge
+from lcm.typing import AgeStep, UserAge
 
 STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
     {
         "Y": Fraction(1, 1),
-        "M": Fraction(1, 12),
         "Q": Fraction(1, 4),
+        "M": Fraction(1, 12),
     }
 )
 
 
-def _parse_step(step: str) -> int | Fraction:
+def _parse_step(step: AgeStep) -> int | Fraction:
     """Parse a step string like 'Y', '2Y', 'M', '3M', 'Q' into int or Fraction."""
     match = re.match(r"^(\d+)?([YMQ])$", step, re.IGNORECASE)
     if not match:
@@ -44,7 +44,7 @@ def _validate_age_grid(
     *,
     start: UserAge | None,
     stop: UserAge | None,
-    step: str | None,
+    step: AgeStep | None,
     exact_values: Iterable[UserAge] | None,
 ) -> None:
     error_messages: list[str] = []
@@ -70,7 +70,7 @@ def _validate_age_grid(
         raise GridInitializationError(format_messages(error_messages))
 
 
-def _validate_range(*, start: UserAge, stop: UserAge, step: str) -> list[str]:
+def _validate_range(*, start: UserAge, stop: UserAge, step: AgeStep) -> list[str]:
     errors: list[str] = []
 
     if start >= stop:

@@ -11,15 +11,28 @@ from beartype import beartype
 from _lcm.ages import _is_integer_valued, _parse_step, _validate_age_grid
 from _lcm.beartype_conf import GRID_CONF
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, Int1D, UserAge
+from lcm.typing import AgeStep, Float1D, Int1D, UserAge
 
 
 class AgeGrid:
-    """Age grid for life-cycle models.
+    r"""Age grid for life-cycle models.
 
-    Automatically produces integer ages (`int32` array, `int` scalars) when all
-    values are integer-valued, and float ages (`float32` array, `float` scalars)
-    otherwise.
+    Construct an `AgeGrid` in one of two mutually exclusive ways:
+
+    - **Range** — pass `start`, `stop`, and `step`. Ages run from `start` to
+      `stop` inclusive in increments of `step`; `step` must divide the range
+      evenly. `step` is a string matching `(\d+)?[YQM]`: an optional
+      positive-integer multiplier followed by a unit — `Y` (year), `Q`
+      (quarter), `M` (month). Examples: `"Y"`, `"2Y"`, `"2Q"`, `"6M"`. This
+      parallels pandas offset aliases, restricted to these three units.
+    - **Explicit values** — pass `exact_values`, a strictly increasing,
+      non-negative iterable of ages. Use this for irregular spacing that no
+      single `step` produces.
+
+    The grid automatically produces integer ages (`int32` array, `int`
+    scalars) when all values are integer-valued, and float ages (`float32`
+    array, `float` scalars) otherwise — e.g. a quarterly or monthly `step`
+    yields fractional years.
 
     """
 
@@ -29,7 +42,7 @@ class AgeGrid:
         *,
         start: UserAge,
         stop: UserAge,
-        step: str,
+        step: AgeStep,
     ) -> None: ...
 
     @overload
@@ -45,7 +58,7 @@ class AgeGrid:
         *,
         start: UserAge | None = None,
         stop: UserAge | None = None,
-        step: str | None = None,
+        step: AgeStep | None = None,
         exact_values: Iterable[UserAge] | None = None,
     ) -> None:
         _validate_age_grid(start=start, stop=stop, step=step, exact_values=exact_values)
