@@ -480,10 +480,11 @@ prose hides cases.
 
 #### Domain string aliases
 
-The following PEP 695 aliases (`type X = str`) live in `src/_lcm/typing.py` and exist
-purely to make signatures self-documenting. They are runtime-equivalent to `str`; ty
-erases them, so misuse never crashes — it just hides intent. Prefer the alias over bare
-`str` whenever a string slot has a fixed semantic role.
+The following PEP 695 aliases (`type X = str`) live in `src/lcm/typing.py` (re-exported
+from `src/_lcm/typing.py`, so `from _lcm.typing import RegimeName` keeps working) and
+exist purely to make signatures self-documenting. They are runtime-equivalent to `str`;
+ty erases them, so misuse never crashes — it just hides intent. Prefer the alias over
+bare `str` whenever a string slot has a fixed semantic role.
 
 | Alias                    | Use for                                                                                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -1,8 +1,10 @@
 """Engine-internal type aliases and protocols.
 
-String-label aliases, compound mapping aliases, canonical post-processing
-forms, and the structural `Protocol` classes used for type checking and
-beartype runtime checks. The user-facing aliases live in `lcm.typing`.
+Compound mapping aliases, canonical post-processing forms, and the structural
+`Protocol` classes used for type checking and beartype runtime checks. The
+string-label aliases and the other user-facing aliases live in `lcm.typing`;
+they are re-exported here so engine-internal code can import everything from
+`_lcm.typing`.
 """
 
 from collections.abc import Mapping
@@ -14,26 +16,29 @@ from jaxtyping import Key
 
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
+
+# String-label and array aliases are defined in `lcm.typing`. The `noqa`-marked
+# labels are re-exported here — not referenced in this module's body — so
+# `from _lcm.typing import ActionName` etc. keeps working engine-wide.
 from lcm.typing import (
+    ActionName,  # noqa: F401
     Age,
     BoolND,
     ContinuousState,
     DiscreteState,
     Float1D,
     FloatND,
+    FunctionName,
     Int1D,
     IntND,
     Period,
+    ProcessName,  # noqa: F401
+    RegimeName,
     ScalarInt,
+    StateName,
+    StateOrActionName,  # noqa: F401
+    TransitionFunctionName,
 )
-
-type RegimeName = str
-type StateName = str
-type ActionName = str
-type StateOrActionName = str
-type ProcessName = str
-type FunctionName = str
-type TransitionFunctionName = str
 
 type RegimeNamesToIds = MappingProxyType[RegimeName, ScalarInt]
 type RegimeIdsToNames = MappingProxyType[int, RegimeName]

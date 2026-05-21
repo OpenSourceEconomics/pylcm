@@ -1,14 +1,16 @@
 """User-facing type aliases.
 
-The model-authoring aliases — jaxtyping array shapes, `Period`, `Age` — and the
-boundary `User*` forms accepted by user-constructor methods (`Model.__init__`,
-`Model.solve`, `Model.simulate`, `AgeGrid.__init__`). Engine-internal aliases
-and the structural protocols live in `_lcm.typing`.
+The model-authoring aliases — jaxtyping array shapes, `Period`, `Age` — the
+string-label aliases (`RegimeName`, `StateName`, ...) that document which kind
+of name a string slot carries, and the boundary `User*` forms accepted by
+user-constructor methods (`Model.__init__`, `Model.solve`, `Model.simulate`,
+`AgeGrid.__init__`). The compound mapping aliases and the structural protocols
+live in `_lcm.typing`.
 """
 
 from collections.abc import Mapping
 from fractions import Fraction
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -39,6 +41,17 @@ type Period = ScalarInt
 type Age = ScalarInt | ScalarFloat
 
 
+# String-label aliases. Runtime-equivalent to `str`; they exist purely to make
+# signatures self-documenting about which kind of name a string slot carries.
+type RegimeName = str
+type StateName = str
+type ActionName = str
+type StateOrActionName = str
+type ProcessName = str
+type FunctionName = str
+type TransitionFunctionName = str
+
+
 # Boundary form accepted by `AgeGrid.__init__` for `start`, `stop`, and
 # `exact_values` entries — converted to canonical JAX scalars internally.
 type UserAge = int | Fraction
@@ -53,7 +66,9 @@ type AgeStep = str
 # Boundary form of initial conditions — accepted by `Model.simulate` and
 # canonicalized by `canonicalize_initial_conditions`. Keys are state names plus
 # the literal `"regime_id"`.
-type UserInitialConditions = Mapping[str, Array | np.ndarray]
+type UserInitialConditions = Mapping[
+    StateName | Literal["regime_id"], Array | np.ndarray
+]
 
 
 # Boundary leaf type — accepted by `Model.__init__` / `Model.solve` /
@@ -78,7 +93,7 @@ type UserParams = Mapping[
 
 # User-facing template; types rendered as strings. Keys are regime names, then
 # function names.
-type UserFacingParamsTemplate = dict[str, dict[str, dict[str, str]]]
+type UserFacingParamsTemplate = dict[RegimeName, dict[FunctionName, dict[str, str]]]
 
 
 @runtime_checkable
