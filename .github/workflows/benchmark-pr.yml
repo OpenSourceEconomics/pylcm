@@ -36,10 +36,10 @@ jobs:
         run: git fetch origin main:main || true
       - name: Install environment
         run: pixi install -e benchmarks-cuda12
-      - name: Regenerate _version.py
+      - name: Regenerate version.py
         run: >-
           echo "__version__ = '$(git describe --tags --always)'"
-          > src/lcm/_version.py
+          > src/_lcm/version.py
       - name: Setup ASV machine
         run: pixi run -e benchmarks-cuda12 asv machine --yes
       - name: Run benchmarks and post PR comment
