@@ -100,7 +100,7 @@ tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "fbf1722fea48a6999c249fa40f6949cd23ec6f57" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "2e5e3a6815910131b95df749053e8915accf98f7" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }
