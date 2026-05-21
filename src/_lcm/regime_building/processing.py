@@ -1270,7 +1270,7 @@ def _wrap_regime_transition_probs(
     *,
     func: TransitionFunction,
     regime_names_to_ids: RegimeNamesToIds,
-) -> Callable[..., MappingProxyType[str, Any]]:
+) -> Callable[..., MappingProxyType[RegimeName, FloatND]]:
     """Wrap next_regime function to convert array output to dict format.
 
     The next_regime function returns a JAX array of probabilities indexed by
@@ -1294,8 +1294,13 @@ def _wrap_regime_transition_probs(
     )
     regime_names = [name for _, name in regime_names_by_id]
 
+    # `wrapped` converts `func`'s probability array into a regime-name → prob
+    # mapping. The return annotation describes that mapping; `func`'s own
+    # return annotation (a bare probability array) does not survive the
+    # conversion and must not be carried through.
     annotations = get_annotations(func)
-    return_annotation = annotations.pop("return", "dict[str, Any]")
+    annotations.pop("return", None)
+    return_annotation = MappingProxyType[RegimeName, FloatND]
 
     @with_signature(
         args=annotations,
@@ -1305,7 +1310,7 @@ def _wrap_regime_transition_probs(
     def wrapped(
         *args: FloatND | IntND | int,
         **kwargs: FloatND | IntND | int,
-    ) -> MappingProxyType[str, Any]:
+    ) -> MappingProxyType[RegimeName, FloatND]:
         result = func(*args, **kwargs)
         # Convert array to dict using ordering by regime id
         return MappingProxyType(

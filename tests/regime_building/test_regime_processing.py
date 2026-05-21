@@ -3,19 +3,21 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
+from beartype import beartype
 from numpy.testing import assert_array_equal
 
 from _lcm.engine import Regime, VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, LinSpacedGrid
 from _lcm.regime_building.processing import (
     _rename_params_to_qnames,
+    _wrap_regime_transition_probs,
     process_regimes,
 )
 from _lcm.variables import from_regime, get_grids
 from lcm import categorical
 from lcm.ages import AgeGrid
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ScalarInt
+from lcm.typing import FloatND, ScalarInt
 from tests.mock_regime import MockRegime
 from tests.test_models.deterministic.base import dead, working_life
 
@@ -249,3 +251,29 @@ def test_rename_params_to_qnames_with_partial():
     # 2. The qualified name must be usable to override the default. This fails if
     #    _rename_params_to_qnames is a no-op (no renaming happened).
     assert result(consumption=5.0, utility__risk_aversion=3.0) == 5.0 ** (1 - 3.0)
+
+
+def test_wrap_regime_transition_probs_return_annotation_accepts_mapping():
+    """The regime-transition-probs wrapper returns a regime-name → probability
+    mapping, so its return annotation describes that mapping.
+
+    The wrapper turns a `next_regime` function's probability array into a
+    `MappingProxyType` keyed by regime name. Its return annotation must match
+    that mapping rather than the array type carried by `next_regime`, so a
+    beartype check on the wrapper accepts the value it genuinely returns.
+    """
+
+    def next_regime() -> FloatND:
+        return jnp.array([0.3, 0.7])
+
+    regime_names_to_ids = MappingProxyType(
+        {"working": jnp.int32(0), "retired": jnp.int32(1)}
+    )
+    wrapped = _wrap_regime_transition_probs(
+        func=next_regime,  # ty: ignore[invalid-argument-type]
+        regime_names_to_ids=regime_names_to_ids,
+    )
+
+    result = beartype(wrapped)()
+
+    assert set(result) == {"working", "retired"}
