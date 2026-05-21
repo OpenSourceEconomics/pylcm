@@ -592,10 +592,10 @@ def _process_regime_core(
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
         )
 
-    # Process transitions bypass the stub pipeline entirely. Build weight and
-    # next functions for reachable target regimes from each target's grid.
-    # Scope to targets already present in non-process transitions to avoid
-    # spurious entries for unreachable regimes.
+    # Transitions of continuous stochastic processes bypass the stub pipeline
+    # entirely. Build weight and next functions for reachable target regimes
+    # from each target's grid. Scope to targets already present in non-process
+    # transitions to avoid spurious entries for unreachable regimes.
     process_names = variables.process_names
     reachable_targets = {
         tree_path_from_qname(k)[0]
