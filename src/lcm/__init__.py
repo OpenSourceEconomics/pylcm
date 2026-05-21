@@ -46,11 +46,10 @@ from _lcm.beartype_conf import INTERNAL_CONF
 beartype_package("_lcm", conf=INTERNAL_CONF)
 beartype_package("lcm", conf=INTERNAL_CONF)
 
-from _lcm.version import __version__  # noqa: E402
-
 from _lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,
 )
+from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.categorical import categorical  # noqa: E402
 from lcm.grids import (  # noqa: E402

@@ -268,6 +268,8 @@ per-file-ignores."tests/test_Q_and_F.py" = [
 pydocstyle.convention = "google"
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = [ "_lcm.utils.containers.Unset", "Unset" ]
+[tool.ruff.lint.isort]
+known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 
 [tool.pyproject-fmt]
 column_width = 88
