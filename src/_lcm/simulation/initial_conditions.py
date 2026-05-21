@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 from jax import numpy as jnp
 
-from _lcm.ages import PSEUDO_STATE_NAMES
 from _lcm.dtypes import (
     canonical_float_dtype,
     safe_to_float_dtype,
@@ -45,6 +44,10 @@ from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserInitialCondit
 # instead of -1 so that JAX indexing produces obviously wrong values rather than
 # silently returning the last element.
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
+
+# Names that behave like states in initial conditions but are not declared on
+# any `Regime.states`. `age` is required for every subject regardless of regime.
+PSEUDO_STATE_NAMES: frozenset[str] = frozenset({"age"})
 
 
 def canonicalize_initial_conditions(

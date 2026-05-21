@@ -17,10 +17,6 @@ STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
     }
 )
 
-# Names that behave like states in initial conditions but are not declared on
-# any `Regime.states`. `age` is required for every subject regardless of regime.
-PSEUDO_STATE_NAMES: frozenset[str] = frozenset({"age"})
-
 
 def _parse_step(step: str) -> int | Fraction:
     """Parse a step string like 'Y', '2Y', 'M', '3M', 'Q' into int or Fraction."""

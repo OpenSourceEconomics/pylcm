@@ -96,7 +96,7 @@ The mapping of public names to files:
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `model.py`       | `Model`                                                                                                                                                                                                   |
 | `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`.                                  |
-| `ages.py`        | `AgeGrid`. Step parser, validators, and `PSEUDO_STATE_NAMES` live in `_lcm/ages.py`.                                                                                                                      |
+| `ages.py`        | `AgeGrid`. Step parser and validators live in `_lcm/ages.py`.                                                                                                                                             |
 | `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`                                                           |
 | `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
 | `categorical.py` | The `@categorical` class decorator                                                                                                                                                                        |
@@ -158,9 +158,13 @@ definitions and the public top-level functions; the `_lcm/` counterpart holds
 validators, helpers, and I/O plumbing that internal code is free to refactor.
 
 ```
-_lcm/ages.py            ← STEP_UNITS, PSEUDO_STATE_NAMES, _parse_step,
+_lcm/ages.py            ← STEP_UNITS, _parse_step,
                           _validate_age_grid / _validate_range / _validate_values
 _lcm/user_regime_validation.py  ← the validators called from Regime.__post_init__
+
+_lcm/simulation/initial_conditions.py
+                        ← MISSING_CAT_CODE, PSEUDO_STATE_NAMES, and the
+                          build / validate helpers for initial conditions
 
 _lcm/persistence/
 ├── io.py               ← _atomic_dump, _save_pkl, _save_h5, _load_h5,

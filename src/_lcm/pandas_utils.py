@@ -10,11 +10,10 @@ import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
-from _lcm.ages import PSEUDO_STATE_NAMES
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import DiscreteGrid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
+from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
 from _lcm.typing import (
     FlatParams,
     FunctionName,
