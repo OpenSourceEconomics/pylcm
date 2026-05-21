@@ -270,7 +270,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.23.1-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-1.3.2-h25fd6f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb78ec9c_6.conda
-      - pypi: git+https://github.com/OpenSourceEconomics/aca-model.git?rev=a31c7fd0127dde1eaf8cd8d02b4697bcf6108d4d#a31c7fd0127dde1eaf8cd8d02b4697bcf6108d4d
+      - pypi: git+https://github.com/OpenSourceEconomics/aca-model.git?rev=fbf1722fea48a6999c249fa40f6949cd23ec6f57#fbf1722fea48a6999c249fa40f6949cd23ec6f57
       - pypi: https://files.pythonhosted.org/packages/78/b6/6307fbef88d9b5ee7421e68d78a9f162e0da4900bc5f5793f6d3d0e34fb8/annotated_types-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/71/cc/18245721fa7747065ab478316c7fea7c74777d07f37ae60db2e84f8172e8/beartype-0.22.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ee/ae/8e92f8058baf87f6c7d86ee7e457668690195cc77efedb8d3797a06e3940/click-8.4.0-py3-none-any.whl
@@ -5349,9 +5349,9 @@ packages:
   purls: []
   size: 8191
   timestamp: 1744137672556
-- pypi: git+https://github.com/OpenSourceEconomics/aca-model.git?rev=a31c7fd0127dde1eaf8cd8d02b4697bcf6108d4d#a31c7fd0127dde1eaf8cd8d02b4697bcf6108d4d
+- pypi: git+https://github.com/OpenSourceEconomics/aca-model.git?rev=fbf1722fea48a6999c249fa40f6949cd23ec6f57#fbf1722fea48a6999c249fa40f6949cd23ec6f57
   name: aca-model
-  version: 0.1.dev88+ga31c7fd01
+  version: 0.1.dev89+gfbf1722fe
   requires_dist:
   - attrs
   - beartype
@@ -14139,8 +14139,8 @@ packages:
   timestamp: 1774796815820
 - pypi: ./
   name: pylcm
-  version: 0.0.2.dev195+g3153deb47.d20260520
-  sha256: c4be9e0cd018273869df2a5ab42b8b25a1046130c4af6ca0b46c21560c15048b
+  version: 0.0.2.dev196+gaf9b81abd.d20260521
+  sha256: 66ce09d4d2432786a9f866a3f281e0ad9d486bb9747ca4f7ebb74db744b7f868
   requires_dist:
   - beartype>=0.21
   - cloudpickle>=3.1.2
