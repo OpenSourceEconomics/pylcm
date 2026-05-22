@@ -34,6 +34,8 @@ jobs:
           fetch-depth: 0
       - name: Ensure main ref exists
         run: git fetch origin main:main || true
+      - name: Put the runner's pixi on PATH
+        run: echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
       - name: Install environment
         run: pixi install -e benchmarks-cuda12
       - name: Regenerate _version.py
