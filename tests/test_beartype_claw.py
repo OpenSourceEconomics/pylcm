@@ -25,6 +25,7 @@ import pytest
 from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.engine import _build_regime_sharding
+from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
 from _lcm.simulation.simulate import _compute_starting_periods
 from _lcm.solution.solve_brute import _log_per_period_stats
 from _lcm.state_action_space import _validate_all_states_present
@@ -98,6 +99,44 @@ def test_claw_checks_lcm_regime() -> None:
             E_next_V=jnp.array([1.0]),
             discount_factor=jnp.array([0.95]),
         )
+
+
+def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:
+    """A `with_signature` wrapper over a function with named parameters stays
+    callable under the package claw.
+
+    `get_argmax_and_max_Q_over_a` returns a `dags.with_signature` wrapper
+    around a function whose parameters — `next_regime_to_V_arr` plus the
+    `**states_actions_params` it expands — are named explicitly rather than
+    being a bare `*args, **kwargs` forwarder. The claw decorates that
+    wrapper. The wrapper advertises a permissive forwarder via its
+    `__annotations__`, so the claw must enforce nothing against the
+    synthetic, annotation-free `__signature__`; otherwise every call fails
+    because each parameter is checked against the `inspect.Parameter.empty`
+    sentinel.
+    """
+
+    def Q_and_F(
+        next_regime_to_V_arr: MappingProxyType[str, jnp.ndarray],  # noqa: ARG001
+        action: jnp.ndarray,
+        state: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        return action, action >= state
+
+    argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
+        Q_and_F=Q_and_F,
+        action_names=("action",),
+        state_names=("state",),
+    )
+
+    argmax, maximum = argmax_and_max_Q_over_a(
+        next_regime_to_V_arr=MappingProxyType({"working": jnp.arange(3.0)}),
+        action=jnp.array([0.0, 1.0, 2.0]),
+        state=jnp.array(0.0),
+    )
+
+    assert int(argmax) == 2
+    assert float(maximum) == 2.0
 
 
 def test_regime_with_bad_arg_raises_project_exception() -> None:
