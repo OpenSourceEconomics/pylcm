@@ -26,9 +26,9 @@ jobs:
           - '3.14'
     steps:
       - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.5
+      - uses: prefix-dev/setup-pixi@v0.9.6
         with:
-          pixi-version: v0.68.1
+          pixi-version: v0.69.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -57,9 +57,9 @@ jobs:
           - '3.14'
     steps:
       - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.5
+      - uses: prefix-dev/setup-pixi@v0.9.6
         with:
-          pixi-version: v0.68.1
+          pixi-version: v0.69.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: type-checking
@@ -80,9 +80,9 @@ jobs:
           nvidia-smi
           nvcc --version || echo "nvcc not found"
       - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.5
+      - uses: prefix-dev/setup-pixi@v0.9.6
         with:
-          pixi-version: v0.68.1
+          pixi-version: v0.69.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
@@ -99,9 +99,9 @@ jobs:
           nvidia-smi
           nvcc --version || echo "nvcc not found"
       - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.5
+      - uses: prefix-dev/setup-pixi@v0.9.6
         with:
-          pixi-version: v0.68.1
+          pixi-version: v0.69.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
@@ -114,9 +114,9 @@ jobs:
   #   runs-on: ubuntu-latest
   #   steps:
   #     - uses: actions/checkout@v6
-  #     - uses: prefix-dev/setup-pixi@v0.9.5
+  #     - uses: prefix-dev/setup-pixi@v0.9.6
   #       with:
-  #         pixi-version: v0.68.1
+  #         pixi-version: v0.69.0
   #         cache: true
   #         cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
   #         environments: tests-cpu
