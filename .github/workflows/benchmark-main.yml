@@ -27,8 +27,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Put the runner's pixi on PATH
-        run: echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
       - name: Install environment
         run: pixi install -e benchmarks-cuda12
       - name: Regenerate _version.py
