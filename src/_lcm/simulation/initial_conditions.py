@@ -124,20 +124,7 @@ def build_initial_states(
 
     for regime_name, regime in regimes.items():
         regime_states: dict[StateName, Float1D | Int1D] = {}
-        # Logic for distribution of subjects over devices
-        distributed = any(grid.distributed for grid in regime.grids.values())
-        devices = jax.devices()
-        if distributed:
-            if n_subjects % len(devices) != 0:
-                raise PyLCMError(
-                    "When using distributed grids, the number of subjects during the"
-                    " simulation needs to be a multiple of the available devices. "
-                    f"Subjects: {n_subjects} Available Devices: {len(devices)}"
-                )
-            mesh = jax.make_mesh(
-                (len(devices),), ("X"), (jax.sharding.AxisType.Auto,), devices=devices
-            )
-            sharding = jax.NamedSharding(mesh=mesh, spec=jax.P("X"))
+        sharding = subject_array_sharding(regime=regime, n_subjects=n_subjects)
         for state_name in regime.variables.state_names:
             grid = regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
@@ -164,13 +151,46 @@ def build_initial_states(
                 regime_states[state_name] = jnp.full(
                     n_subjects, jnp.nan, dtype=canonical_float_dtype()
                 )
-            if distributed:
+            if sharding is not None:
                 regime_states[state_name] = jax.device_put(
                     regime_states[state_name], device=sharding
                 )
         states_per_regime[regime_name] = MappingProxyType(regime_states)
 
     return MappingProxyType(states_per_regime)
+
+
+def subject_array_sharding(
+    *, regime: Regime, n_subjects: int
+) -> jax.NamedSharding | None:
+    """Return the device sharding for a regime's per-subject simulation arrays.
+
+    When any grid in the regime is distributed, the `n_subjects` subjects are
+    scattered across all available devices along a single mesh axis. When no
+    grid is distributed the arrays stay on the default device.
+
+    Args:
+        regime: Internal regime instance.
+        n_subjects: Number of simulated subjects.
+
+    Returns:
+        The `NamedSharding` over the device mesh, or `None` when no grid in
+        the regime is distributed.
+
+    """
+    if not any(grid.distributed for grid in regime.grids.values()):
+        return None
+    devices = jax.devices()
+    if n_subjects % len(devices) != 0:
+        raise PyLCMError(
+            "When using distributed grids, the number of subjects during the"
+            " simulation needs to be a multiple of the available devices. "
+            f"Subjects: {n_subjects} Available Devices: {len(devices)}"
+        )
+    mesh = jax.make_mesh(
+        (len(devices),), ("X"), (jax.sharding.AxisType.Auto,), devices=devices
+    )
+    return jax.NamedSharding(mesh=mesh, spec=jax.P("X"))
 
 
 def validate_initial_conditions(

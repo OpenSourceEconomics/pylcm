@@ -23,9 +23,13 @@ import jax.numpy as jnp
 from dags.tree import qname_from_tree_path
 
 from _lcm.engine import Regime
+from _lcm.simulation.initial_conditions import subject_array_sharding
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.solution.solve_brute import (
+    _build_zero_V_arr,
     _func_dedup_key,
+    _get_regime_V_shapes_and_shardings,
+    _RegimeVTopology,
     _resolve_compilation_workers,
 )
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName
@@ -60,10 +64,12 @@ def compile_all_simulate_functions(
         AOT-compiled programs.
 
     """
-    # Per-regime V-shape lookup for building period-specific templates that
-    # match the *sparse* mapping `simulate.simulate(...)` actually dispatches:
-    # `period_to_regime_to_V_arr.get(P+1, {})` — only regimes active at P+1.
-    regime_V_shapes = _get_regime_V_shapes(
+    # Per-regime V-shape and -sharding lookup for building period-specific
+    # templates that match the *sparse* mapping `simulate.simulate(...)`
+    # actually dispatches: `period_to_regime_to_V_arr.get(P+1, {})` — only
+    # regimes active at P+1. The sharding must match what `solve(...)`
+    # produces, so the AOT program accepts the runtime value-function arrays.
+    regime_V_topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
         flat_params=flat_params,
     )
@@ -73,7 +79,7 @@ def compile_all_simulate_functions(
         flat_params=flat_params,
         ages=ages,
         n_subjects=n_subjects,
-        regime_V_shapes=regime_V_shapes,
+        regime_V_topology=regime_V_topology,
     )
 
     n_workers = _resolve_compilation_workers(
@@ -148,7 +154,7 @@ def _collect_unique_simulate_functions(
     flat_params: FlatParams,
     ages: AgeGrid,
     n_subjects: int,
-    regime_V_shapes: dict[RegimeName, tuple[int, ...]],
+    regime_V_topology: dict[RegimeName, _RegimeVTopology],
 ) -> tuple[
     dict[Hashable, tuple[Callable, dict | None, str]],
     dict[tuple[RegimeName, str, int | None], Hashable],
@@ -180,7 +186,10 @@ def _collect_unique_simulate_functions(
             argmax_func = sf.argmax_and_max_Q_over_a[period]
             active_next = _active_regimes_at_period(regimes=regimes, period=period + 1)
             next_regime_to_V_arr = MappingProxyType(
-                {name: jnp.zeros(regime_V_shapes[name]) for name in active_next}
+                {
+                    name: _build_zero_V_arr(topology=regime_V_topology[name])
+                    for name in active_next
+                }
             )
             args = _build_argmax_args(
                 regime=regime,
@@ -290,26 +299,6 @@ def _swap_in_compiled(
     return MappingProxyType(new_regimes)
 
 
-def _get_regime_V_shapes(
-    *,
-    regimes: MappingProxyType[RegimeName, Regime],
-    flat_params: FlatParams,
-) -> dict[RegimeName, tuple[int, ...]]:
-    """Return per-regime V-array shape (one length per state grid).
-
-    Used to construct zero-shaped templates for `next_regime_to_V_arr`
-    when lowering each period's argmax — the abstract signature only
-    needs the shapes, not the values.
-    """
-    shapes: dict[RegimeName, tuple[int, ...]] = {}
-    for regime_name, regime in regimes.items():
-        space = regime.state_action_space(
-            regime_params=flat_params.get(regime_name, MappingProxyType({}))
-        )
-        shapes[regime_name] = tuple(len(v) for v in space.states.values())
-    return shapes
-
-
 def _active_regimes_at_period(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -337,7 +326,10 @@ def _build_argmax_args(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
 ) -> dict[str, object]:
     base = regime.state_action_space(regime_params=regime_params)
-    subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
+    sharding = subject_array_sharding(regime=regime, n_subjects=n_subjects)
+    subject_states = _subject_shape_arrays(
+        base.states, n_subjects=n_subjects, sharding=sharding
+    )
     return {
         **subject_states,
         **base.discrete_actions,
@@ -357,10 +349,14 @@ def _build_next_state_args(
     n_subjects: int,
 ) -> dict[str, object]:
     base = regime.state_action_space(regime_params=regime_params)
-    subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
+    sharding = subject_array_sharding(regime=regime, n_subjects=n_subjects)
+    subject_states = _subject_shape_arrays(
+        base.states, n_subjects=n_subjects, sharding=sharding
+    )
     subject_actions = _subject_shape_arrays(
         {**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
+        sharding=sharding,
     )
 
     stoch_transition_names = regime.simulate_functions.stochastic_transition_names
@@ -396,10 +392,14 @@ def _build_crtp_args(
     n_subjects: int,
 ) -> dict[str, object]:
     base = regime.state_action_space(regime_params=regime_params)
-    subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
+    sharding = subject_array_sharding(regime=regime, n_subjects=n_subjects)
+    subject_states = _subject_shape_arrays(
+        base.states, n_subjects=n_subjects, sharding=sharding
+    )
     subject_actions = _subject_shape_arrays(
         {**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
+        sharding=sharding,
     )
     return {
         **subject_states,
@@ -414,14 +414,21 @@ def _subject_shape_arrays(
     base_arrays: Mapping[str, FloatND | IntND],
     *,
     n_subjects: int,
+    sharding: jax.NamedSharding | None,
 ) -> dict[str, FloatND | IntND]:
     """Return zeros of shape `(n_subjects,)` mirroring each base array's dtype.
 
     With `build_initial_states` casting discrete states to the grid dtype,
     runtime states (initial + post-transition) share the grid's dtype, so
     using `arr.dtype` from the regime's grid here matches runtime.
+
+    When the regime distributes its grids, `sharding` scatters the zeros
+    across the device mesh exactly as `build_initial_states` scatters the
+    runtime per-subject arrays, so the AOT-compiled program is lowered for
+    the device layout it is dispatched with.
     """
-    return {
-        name: jnp.zeros((n_subjects,), dtype=arr.dtype)
-        for name, arr in base_arrays.items()
-    }
+    arrays: dict[str, FloatND | IntND] = {}
+    for name, arr in base_arrays.items():
+        zeros = jnp.zeros((n_subjects,), dtype=arr.dtype)
+        arrays[name] = zeros if sharding is None else jax.device_put(zeros, sharding)
+    return arrays
