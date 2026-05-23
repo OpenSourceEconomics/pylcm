@@ -11,7 +11,7 @@ from lcm._beartype_conf import GRID_CONF
 from lcm.dtypes import canonical_float_dtype
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.grids import coordinates as grid_coordinates
-from lcm.grids.base import Grid
+from lcm.grids.base import Grid, _fail_if_batch_size_combined_with_distributed
 from lcm.typing import (
     Float1D,
     FloatND,
@@ -194,6 +194,9 @@ def _init_uniform_grid(
     `ScalarInt` types and only check value invariants (finiteness, ordering,
     positivity).
     """
+    _fail_if_batch_size_combined_with_distributed(
+        batch_size=batch_size, distributed=distributed
+    )
     dtype = canonical_float_dtype()
     start_jax = jnp.asarray(start, dtype=dtype)
     stop_jax = jnp.asarray(stop, dtype=dtype)
@@ -245,6 +248,9 @@ class IrregSpacedGrid(ContinuousGrid):
         batch_size: int = 0,
         distributed: bool = False,
     ) -> None:
+        _fail_if_batch_size_combined_with_distributed(
+            batch_size=batch_size, distributed=distributed
+        )
         if points is not None:
             _validate_irreg_spaced_grid(points)
             derived_n = len(points)

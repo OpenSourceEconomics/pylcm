@@ -812,3 +812,65 @@ def test_piecewise_log_spaced_grid_get_coordinate_with_array():
     coords = grid.get_coordinate(values)
     expected = jnp.array([0.0, 1.0, 2.0])
     aaae(coords, expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize(
+    "make_grid",
+    [
+        pytest.param(
+            lambda **kw: LinSpacedGrid(start=1, stop=10, n_points=4, **kw),
+            id="LinSpacedGrid",
+        ),
+        pytest.param(
+            lambda **kw: LogSpacedGrid(start=1, stop=10, n_points=4, **kw),
+            id="LogSpacedGrid",
+        ),
+        pytest.param(
+            lambda **kw: IrregSpacedGrid(points=[1.0, 2.0, 3.0, 4.0], **kw),
+            id="IrregSpacedGrid",
+        ),
+        pytest.param(
+            lambda **kw: DiscreteGrid(
+                _make_dc("_BS", ("a", jnp.int32(0)), ("b", jnp.int32(1))), **kw
+            ),
+            id="DiscreteGrid",
+        ),
+    ],
+)
+def test_grid_rejects_batch_size_combined_with_distributed(make_grid):
+    """`batch_size > 0` and `distributed=True` on one axis is rejected at init.
+
+    Each Python-level batch triggers its own per-period cross-device
+    collective in the sharded solve, so the combination multiplies the
+    sync count by `ceil(n_per_device / batch_size)` and inverts the
+    compute/communication ratio. Construction-time rejection prevents
+    the foot-gun.
+    """
+    with pytest.raises(GridInitializationError, match="distributed=True"):
+        make_grid(batch_size=1, distributed=True)
+
+
+@pytest.mark.parametrize(
+    "make_grid",
+    [
+        pytest.param(
+            lambda: LinSpacedGrid(
+                start=1, stop=10, n_points=4, batch_size=0, distributed=True
+            ),
+            id="LinSpacedGrid",
+        ),
+        pytest.param(
+            lambda: DiscreteGrid(
+                _make_dc("_OK", ("a", jnp.int32(0)), ("b", jnp.int32(1))),
+                batch_size=0,
+                distributed=True,
+            ),
+            id="DiscreteGrid",
+        ),
+    ],
+)
+def test_grid_accepts_batch_size_zero_with_distributed(make_grid):
+    """`batch_size=0` with `distributed=True` is the canonical sharded setting."""
+    grid = make_grid()
+    assert grid.distributed is True
+    assert grid.batch_size == 0
