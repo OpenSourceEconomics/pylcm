@@ -196,6 +196,31 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
         )
 
 
+def test_simulate_with_log_level_off_skips_nan_value_function_check(
+    nan_value_model: Model, params: UserParams
+) -> None:
+    """`log_level="off"` opts simulate out of the per-period NaN check.
+
+    With validation off, `simulate` runs against a NaN-bearing V without
+    raising — the caller-side gate in `_simulate_regime_in_period`
+    skips `validate_V` entirely, and the per-period `log_nan_in_V`
+    warning is suppressed for the same reason.
+    """
+    initial_conditions = {
+        "wealth": jnp.array([1.5, 2.0]),
+        "health": jnp.array([1.0, 1.0]),
+        "age": jnp.array([0.0, 0.0]),
+        "regime_id": jnp.array([RegimeId.non_terminal] * 2),
+    }
+
+    nan_value_model.simulate(
+        log_level="off",
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+    )
+
+
 def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
     inf_value_model: Model, params: UserParams
 ) -> None:

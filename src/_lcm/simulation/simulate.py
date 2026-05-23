@@ -39,6 +39,7 @@ from _lcm.utils.logging import (
     log_period_header,
     log_period_timing,
     log_regime_transitions,
+    validation_enabled,
 )
 from lcm.ages import AgeGrid
 from lcm.result import SimulationResult
@@ -156,14 +157,19 @@ def simulate(
                     regime_names_to_ids=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
+                    logger=logger,
                 )
             )
             states = new_states
             simulation_results[regime_name][period] = result
 
-            log_nan_in_V(
-                logger=logger, regime_name=regime_name, age=age, V_arr=result.V_arr
-            )
+            if validation_enabled(logger):
+                log_nan_in_V(
+                    logger=logger,
+                    regime_name=regime_name,
+                    age=age,
+                    V_arr=result.V_arr,
+                )
 
         subject_regime_ids = new_subject_regime_ids
 
@@ -214,6 +220,7 @@ def _simulate_regime_in_period(
     regime_names_to_ids: RegimeNamesToIds,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
+    logger: logging.Logger,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -234,6 +241,8 @@ def _simulate_regime_in_period(
         regime_names_to_ids: Mapping from regime names to integer IDs.
         active_regimes_next_period: Tuple of active regime names in the next period.
         key: JAX random key for stochastic operations.
+        logger: Logger carrying the runtime-validation policy. `validate_V`
+            on the produced V-array is skipped when `log_level="off"`.
 
     Returns:
         Tuple containing:
@@ -275,7 +284,8 @@ def _simulate_regime_in_period(
         period=jnp.int32(period),
         age=age,
     )
-    validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
+    if validation_enabled(logger):
+        validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
 
     optimal_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_actions,
