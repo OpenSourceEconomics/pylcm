@@ -40,12 +40,12 @@ ASV wiring notes:
 - `AcaBaselineDebugLog` subclasses `AcaBaseline`, overriding only the
   `log_level` and the per-run temporary `log_path`; it reuses the same
   `setup_cache` / metric methods.
-- `AcaBaselineGpuPeakMem` runs in a separate subprocess via `_gpu_mem`
-  that does not go through ASV's `setup_cache` pipeline. It calls
-  `setup_for_gpu_measurement()` (rebuild fresh, no warm-up) then
-  `time_execution()` to measure cold peak memory. Both methods
-  accept `cache=None` so the same callable serves ASV (cache passed
-  in) and the subprocess (cache omitted).
+- `AcaBaselineGpuPeakMem` and `AcaBaselineDebugLogGpuPeakMem` run in a
+  separate subprocess via `_gpu_mem` that does not go through ASV's
+  `setup_cache` pipeline. They call `setup_for_gpu_measurement()`
+  (rebuild fresh, no warm-up) then `time_execution()` to measure cold
+  peak memory. Both methods accept `cache=None` so the same callable
+  serves ASV (cache passed in) and the subprocess (cache omitted).
 """
 
 import gc
@@ -174,6 +174,13 @@ class AcaBaselineDebugLog(AcaBaseline):
         self.log_path = tempfile.mkdtemp(prefix="aca-bench-debug-log-")
         super().setup(cache)
 
+    def setup_for_gpu_measurement(self) -> None:
+        # Mirror `setup`'s log_path setup so the cold-measurement
+        # subprocess exercises snapshot writing too. The tmpdir leaks
+        # when the subprocess exits — acceptable since /tmp is OS-cleaned.
+        self.log_path = tempfile.mkdtemp(prefix="aca-bench-debug-log-")
+        super().setup_for_gpu_measurement()
+
     def teardown(self, cache: bytes | None = None) -> None:
         super().teardown(cache)
         if self.log_path is not None:
@@ -184,4 +191,10 @@ class AcaBaselineDebugLog(AcaBaseline):
 class AcaBaselineGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.bench_aca_baseline"
     bench_class = "AcaBaseline"
+    timeout = 3600
+
+
+class AcaBaselineDebugLogGpuPeakMem(_gpu_mem.GpuPeakMem):
+    bench_module = "benchmarks.bench_aca_baseline"
+    bench_class = "AcaBaselineDebugLog"
     timeout = 3600
