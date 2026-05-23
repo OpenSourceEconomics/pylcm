@@ -73,6 +73,39 @@ def validate_transitions(
     )
 
 
+def _params_callable_for_state_transition(
+    *,
+    regime: Regime,
+    flat_params_for_regime: FlatRegimeParams,
+    transition: _StochasticStateTransition,
+) -> FlatRegimeParams:
+    """Return un-qualified params for calling a state-transition function.
+
+    Both `regime.resolved_fixed_params` and `flat_params_for_regime` key
+    their entries by qualified names like `next_<state>__<param>` (or
+    `next_<state>__<target>__<param>` for per-target dicts). The
+    `MarkovTransition`'s user function is called with the raw parameter
+    names from its signature, so the validator must strip that qualifier
+    before lookup. Without the strip, every transition-function
+    parameter that isn't a grid axis falls through to the "not
+    numerically validated" skip branch and the per-transition numerical
+    check never runs.
+    """
+    prefix = f"next_{transition.state_name}"
+    if transition.target_regime_name is not None:
+        prefix = f"{prefix}__{transition.target_regime_name}"
+    prefix = f"{prefix}__"
+
+    merged = {**regime.resolved_fixed_params, **flat_params_for_regime}
+    return MappingProxyType(
+        {
+            name.removeprefix(prefix): value
+            for name, value in merged.items()
+            if name.startswith(prefix)
+        }
+    )
+
+
 def validate_regime_transitions_all_periods(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -453,7 +486,11 @@ def validate_state_transitions_all_periods(
                 try:
                     _validate_state_transition_single(
                         transition=transition,
-                        regime_params=flat_params[regime_name],
+                        regime_params=_params_callable_for_state_transition(
+                            regime=regime,
+                            flat_params_for_regime=flat_params[regime_name],
+                            transition=transition,
+                        ),
                         state_action_space=state_action_space,
                         regime_name=regime_name,
                         age=age,
