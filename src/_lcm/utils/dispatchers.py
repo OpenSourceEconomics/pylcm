@@ -33,6 +33,7 @@ def simulation_spacemap(
     func: FunctionWithArrayReturn,
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
+    subjects_batch_size: int = 0,
 ) -> FunctionWithArrayReturn:
     """Apply jax.lax.map so func can be evaluated on actions and simulated states.
 
@@ -52,6 +53,11 @@ def simulation_spacemap(
         func: The function to be dispatched.
         action_names: Names of the action variables.
         state_names: Names of the state variables.
+        subjects_batch_size: Per-device chunk size for the per-subject vmap. `0`
+            (default) keeps a single big vmap over the entire subjects axis. `>0`
+            replaces the vmap with `jax.lax.map(..., batch_size=subjects_batch_size)`
+            so each device's local shard is iterated in chunks of this size, with
+            JAX handling any non-divisible remainder.
 
     Returns:
         A callable with the same arguments as func (but with an additional leading
@@ -83,7 +89,15 @@ def simulation_spacemap(
             batch_sizes=dict.fromkeys(action_names, 0),
         )
     )
-    mapped = vmap_1d(func=mapped, variables=state_names, callable_with="only_args")
+    if subjects_batch_size > 0:
+        mapped = chunked_map_1d(
+            func=mapped,
+            variables=state_names,
+            batch_size=subjects_batch_size,
+            callable_with="only_args",
+        )
+    else:
+        mapped = vmap_1d(func=mapped, variables=state_names, callable_with="only_args")
 
     # Callables do not necessarily have a __signature__ attribute.
     mapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
@@ -154,6 +168,79 @@ def vmap_1d(
         out = allow_only_kwargs(vmapped, enforce=False)
     else:
         out = vmapped
+
+    return cast("FunctionWithArrayReturn", out)
+
+
+def chunked_map_1d(
+    *,
+    func: FunctionWithArrayReturn,
+    variables: tuple[str, ...],
+    batch_size: int,
+    callable_with: Literal["only_args", "only_kwargs"] = "only_kwargs",
+) -> FunctionWithArrayReturn:
+    """Apply `jax.lax.map` so func is mapped over the leading axis of `variables` in
+    chunks of size `batch_size`.
+
+    Same calling contract as `vmap_1d` (parameter named in `variables` are mapped
+    along their leading axis simultaneously; the rest are closed over), but the
+    leading axis is iterated in chunks of `batch_size` via `jax.lax.map`. Within
+    each chunk JAX vmaps; across chunks it scans. JAX handles a non-divisible
+    leading dim by making the last chunk smaller.
+
+    Used by `simulation_spacemap` when `subjects_batch_size > 0` so each device's
+    per-subject simulate dispatch is iterated in fixed-size chunks — shrinks the
+    per-iteration intermediate by `n_per_device / batch_size` and lets production
+    grid sizes fit within per-device HBM budgets.
+
+    Args:
+        func: The function to be dispatched.
+        variables: Tuple with names of arguments mapped along their leading axis.
+        batch_size: Chunk size for `jax.lax.map`. Must be >= 1.
+        callable_with: Whether the returned function accepts only positional or
+            only keyword arguments.
+
+    Returns:
+        A callable with the same arguments as `func` (with an additional leading
+        dimension on each mapped variable) that returns a jax.Array or pytree of
+        arrays with that leading dimension preserved.
+
+    """
+    if duplicates := find_duplicates(variables):
+        raise ValueError(
+            f"Same argument provided more than once in variables: {duplicates}",
+        )
+
+    signature = inspect.signature(func)
+    parameters = list(signature.parameters)
+
+    if not variables:
+        # Nothing to map over — match vmap_1d's empty-vars behaviour.
+        mapped = func
+    else:
+        positions = tuple(parameters.index(var) for var in variables)
+
+        def chunked(*args: Any) -> Any:  # noqa: ANN401
+            # Split args: variables to chunk over go through jax.lax.map; the
+            # rest are closed over as broadcast arguments.
+            mapped_args = tuple(args[p] for p in positions)
+
+            def one_step(chunk_slice: tuple[Any, ...]) -> Any:  # noqa: ANN401
+                full = list(args)
+                for i, p in enumerate(positions):
+                    full[p] = chunk_slice[i]
+                return func(*full)
+
+            return jax.lax.map(one_step, mapped_args, batch_size=batch_size)
+
+        mapped = chunked
+
+    mapped.__signature__ = signature  # ty: ignore[invalid-assignment]
+
+    if callable_with == "only_kwargs":
+        out = allow_only_kwargs(mapped, enforce=False)
+    else:
+        out = mapped
 
     return cast("FunctionWithArrayReturn", out)
 

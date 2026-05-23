@@ -386,6 +386,76 @@ def test_stochastic_regime_transition_active_at_last_period_raises():
         model.solve(log_level="debug", params=mortality.get_params(n_periods=4))
 
 
+def _build_stochastic_model(n_periods: int, subjects_batch_size: int) -> Model:
+    """Build the stochastic test model with a configurable `subjects_batch_size`."""
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    return Model(
+        regimes={
+            "working_life": working_life.replace(
+                active=lambda age, la=last_age: age < la
+            ),
+            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "dead": dead,
+        },
+        ages=ages,
+        regime_id_class=RegimeId,
+        subjects_batch_size=subjects_batch_size,
+    )
+
+
+def test_simulate_with_subjects_batch_size_matches_unbatched_V_arr():
+    """`Model(subjects_batch_size>0)` chunks the per-device simulate dispatch and
+    produces V_arrs that match the unchunked baseline within float tolerance.
+
+    Exact equality is not expected: chunked dispatch via `jax.lax.map` reorders
+    XLA reductions vs. a single big `vmap`, and the resulting 1-ULP drift in V
+    can flip individual `argmax` decisions when two actions are nearly tied,
+    which then changes downstream stochastic transitions. This is the same
+    cross-configuration determinism caveat that running on different hardware
+    has — the user-visible invariant is that V values agree within `atol`.
+    """
+    n_periods = 4
+    params = get_params(n_periods=n_periods)
+    initial_conditions = {
+        "health": jnp.array([1, 1, 0, 0], dtype=jnp.int32),
+        "partner": jnp.array([0, 0, 1, 0], dtype=jnp.int32),
+        "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+        "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
+        "regime_id": jnp.array([RegimeId.working_life] * 4),
+    }
+    baseline = _build_stochastic_model(
+        n_periods=n_periods, subjects_batch_size=0
+    ).simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+    )
+    batched = _build_stochastic_model(
+        n_periods=n_periods, subjects_batch_size=2
+    ).simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+    )
+    # Only the first period is float-comparable: per-subject initial state is
+    # identical, so chunked vs vmapped Q evaluations agree within XLA reduction
+    # tolerance. From period 1 onwards, the 1-ULP drift propagates through
+    # `argmax`-on-close-Qs to different action choices and from there to
+    # different stochastic-transition outcomes — by-design divergence.
+    for regime_name, baseline_periods in baseline.raw_results.items():
+        baseline_data = baseline_periods[0]
+        batched_data = batched.raw_results[regime_name][0]
+        assert baseline_data.V_arr.shape == batched_data.V_arr.shape
+        assert_allclose(
+            jnp.where(jnp.isnan(baseline_data.V_arr), 0.0, baseline_data.V_arr),
+            jnp.where(jnp.isnan(batched_data.V_arr), 0.0, batched_data.V_arr),
+            atol=1e-5,
+        )
+
+
 def test_solve_with_stochastic_batch_size_matches_unbatched():
     """`batch_size>0` on a stochastic DiscreteGrid chunks the shock-integration
     productmap but yields the same V_arrs as the unchunked baseline.

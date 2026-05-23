@@ -50,6 +50,7 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    subjects_batch_size: int = 0,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
 
@@ -63,6 +64,8 @@ def build_regimes_and_template(
             indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
+        subjects_batch_size: Per-device chunk size for simulate-side per-subject
+            dispatch; forwarded to `process_regimes`.
 
     Returns:
         Tuple of (regimes, params_template).
@@ -74,6 +77,7 @@ def build_regimes_and_template(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
+            subjects_batch_size=subjects_batch_size,
         )
         params_template = create_params_template(regimes)
     else:
@@ -83,6 +87,7 @@ def build_regimes_and_template(
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=fixed_params,
+            subjects_batch_size=subjects_batch_size,
         )
 
     return regimes, params_template
@@ -95,6 +100,7 @@ def _build_regimes_and_template_with_fixed_params(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    subjects_batch_size: int = 0,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
 
@@ -116,6 +122,7 @@ def _build_regimes_and_template_with_fixed_params(
         user_regimes=user_regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
+        subjects_batch_size=subjects_batch_size,
     )
     raw_params_template = create_params_template(raw_regimes)
 

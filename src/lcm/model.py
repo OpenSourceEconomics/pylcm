@@ -160,6 +160,7 @@ class Model:
             {}
         ),
         n_subjects: int | None = None,
+        subjects_batch_size: int = 0,
     ) -> None:
         """Initialize the Model.
 
@@ -182,13 +183,29 @@ class Model:
                 `simulate(...)` call AOT-compiles all simulate functions for
                 batch shape `n_subjects` before backward induction starts.
                 `None` keeps the purely lazy behaviour.
+            subjects_batch_size: Per-device chunk size for the simulate-side
+                per-subject dispatch. `0` (default) keeps the single big vmap
+                over the entire subjects axis. `>0` iterates each device's
+                local shard in chunks of this size via `jax.lax.map` — shrinks
+                the per-iteration intermediate by roughly
+                `n_subjects_per_device / subjects_batch_size`, which lets
+                production grid sizes fit in per-device HBM budgets. JAX
+                handles non-divisible remainders.
 
         """
+        if subjects_batch_size < 0:
+            msg = (
+                f"subjects_batch_size must be >= 0, got {subjects_batch_size}. "
+                "Use 0 for no chunking; pick a positive value to bound the "
+                "per-device intermediate at simulate dispatch."
+            )
+            raise ValueError(msg)
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self.n_subjects = n_subjects
+        self.subjects_batch_size = subjects_batch_size
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
@@ -217,6 +234,7 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
+            subjects_batch_size=self.subjects_batch_size,
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(

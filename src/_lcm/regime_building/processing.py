@@ -80,6 +80,7 @@ def process_regimes(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
+    subjects_batch_size: int = 0,
 ) -> MappingProxyType[RegimeName, Regime]:
     """Process user regimes into canonical regimes.
 
@@ -94,6 +95,9 @@ def process_regimes(
         ages: The AgeGrid for the model.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         enable_jit: Whether to jit the functions of the canonical regime.
+        subjects_batch_size: Per-device chunk size for the simulate-side per-subject
+            dispatch. `0` (default) keeps a single big vmap; `>0` chunks via
+            `jax.lax.map`.
 
     Returns:
         The processed canonical regimes.
@@ -190,6 +194,7 @@ def process_regimes(
             solve_transitions=solve_functions.transitions,
             solve_stochastic_transition_names=solve_functions.stochastic_transition_names,
             solve_compute_regime_transition_probs=solve_functions.compute_regime_transition_probs,
+            subjects_batch_size=subjects_batch_size,
         )
 
         stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -348,6 +353,7 @@ def _build_simulate_functions(
     solve_transitions: TransitionFunctionsMapping,
     solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
+    subjects_batch_size: int,
 ) -> SimulateFunctions:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -437,6 +443,7 @@ def _build_simulate_functions(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         enable_jit=enable_jit,
+        subjects_batch_size=subjects_batch_size,
     )
 
     # State transitions are phase-independent (only utility/H have phase variants),
@@ -1485,10 +1492,13 @@ def _build_argmax_and_max_Q_over_a_per_period(
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
+    subjects_batch_size: int,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
     """Build argmax-and-max-Q-over-a closures for each period.
 
     Periods sharing the same Q_and_F object reuse a single compiled function.
+    `subjects_batch_size` forwards to `simulation_spacemap` so the per-subject
+    dispatch is chunked when set.
     """
     built: dict[int, ArgmaxQOverAFunction] = {}
     result: dict[int, ArgmaxQOverAFunction] = {}
@@ -1506,6 +1516,7 @@ def _build_argmax_and_max_Q_over_a_per_period(
                 func=func,
                 action_names=(),
                 state_names=tuple(state_action_space.states),
+                subjects_batch_size=subjects_batch_size,
             )
         result[period] = built[q_id]
     return MappingProxyType(result)
