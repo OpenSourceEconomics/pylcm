@@ -84,6 +84,44 @@ def _make_correct_distributed_model(*, n_subjects: int | None = None) -> Model:
     )
 
 
+def _make_distributed_batched_model() -> Model:
+    """A model whose distributed state grid also sets `batch_size`."""
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working_life: ScalarInt
+        retirement: ScalarInt
+
+    def wealth():
+        return LinSpacedGrid(
+            start=1, stop=100, n_points=8, distributed=True, batch_size=1
+        )
+
+    working_life = UserRegime(
+        functions={
+            "utility": lambda wealth, consumption: jnp.log(consumption) + wealth * 0.001
+        },
+        states={"wealth": wealth()},
+        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transition=lambda age: jnp.where(
+            age >= 4, RegimeId.retirement, RegimeId.working_life
+        ),
+        active=lambda age: age < 5,
+    )
+    retirement = UserRegime(
+        transition=None,
+        functions={"utility": lambda wealth: wealth * 0.5},
+        states={"wealth": wealth()},
+        active=lambda age: age >= 5,
+    )
+    return Model(
+        regimes={"working_life": working_life, "retirement": retirement},
+        ages=AgeGrid(start=0, stop=5, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
 @pytest.fixture
 def correct_distributed_model():
     return _make_correct_distributed_model()
@@ -154,6 +192,25 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
     """Test that distribution over multiple CPU's works for solution."""
 
     period_to_regime_to_V_arr = correct_distributed_model.solve(
+        log_level="debug",
+        params={"discount_factor": 0.95},
+    )
+
+    assert period_to_regime_to_V_arr[0]["working_life"].sharding.num_devices == 4
+
+
+@_skip_pytest_parallel
+def test_solution_with_distributed_and_batched_grid():
+    """Solve emits sharded V-arrays when a distributed grid also batches.
+
+    A grid that is both `distributed=True` and `batch_size > 0` must still
+    produce V-arrays carrying the regime's declared device sharding, so they
+    match the `next_regime_to_V_arr` template the AOT-compiled consumers were
+    lowered against.
+    """
+    model = _make_distributed_batched_model()
+
+    period_to_regime_to_V_arr = model.solve(
         log_level="debug",
         params={"discount_factor": 0.95},
     )
