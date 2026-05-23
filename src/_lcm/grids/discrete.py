@@ -2,7 +2,7 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import GRID_CONF
-from _lcm.grids.base import Grid
+from _lcm.grids.base import Grid, _fail_if_batch_size_combined_with_distributed
 from _lcm.grids.categorical import _validate_discrete_grid
 from _lcm.utils.containers import get_field_names_and_values
 from lcm.typing import Int1D

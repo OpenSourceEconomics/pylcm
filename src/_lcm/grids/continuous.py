@@ -10,7 +10,7 @@ from beartype import beartype
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import coordinates as grid_coordinates
-from _lcm.grids.base import Grid
+from _lcm.grids.base import Grid, _fail_if_batch_size_combined_with_distributed
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
 from lcm.typing import (
