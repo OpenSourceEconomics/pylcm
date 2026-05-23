@@ -11,6 +11,11 @@ on:
   pull_request:
     branches:
       - '**'
+    paths-ignore:
+      - docs/**
+      - benchmarks/**
+      - '**.md'
+      - '**.ipynb'
 jobs:
   run-tests:
     name: Run tests for ${{ matrix.os }} on ${{ matrix.python-version }}

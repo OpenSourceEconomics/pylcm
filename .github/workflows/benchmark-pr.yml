@@ -7,6 +7,10 @@ on:
   pull_request:
     branches:
       - '**'
+    paths-ignore:
+      - docs/**
+      - '**.md'
+      - '**.ipynb'
   workflow_dispatch: null
 jobs:
   run-benchmarks:
