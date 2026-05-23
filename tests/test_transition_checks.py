@@ -412,3 +412,93 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         regime_id_class=_RegimeId,
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
+def _model_with_fixed_param_health_probs() -> Model:
+    """Build a model whose `health` MarkovTransition reads from `fixed_params`.
+
+    `transition_bias` lives in `fixed_params`, not the per-iteration
+    `params` dict. Solve sees it via `regime.resolved_fixed_params`; the
+    pre-solve numerical validator must do the same merge.
+    """
+
+    def health_probs(health: DiscreteState, transition_bias: float) -> FloatND:
+        good_row = jnp.array([0.5 - transition_bias, 0.5 + transition_bias])
+        bad_row = jnp.array([0.5, 0.5])
+        return jnp.where(health == _Health.good, good_row, bad_row)
+
+    alive = UserRegime(
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(_Health)},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": MarkovTransition(health_probs),
+        },
+        functions={"utility": _utility_alive},
+        constraints={"budget": _budget},
+        transition=_next_regime,
+        active=lambda age: age < 1,
+    )
+    return Model(
+        regimes={"alive": alive, "terminal": _terminal_regime()},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+        fixed_params={"transition_bias": 0.1},
+    )
+
+
+def test_state_validator_resolves_params_from_fixed_params(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A MarkovTransition reading a `fixed_params` entry is numerically validated.
+
+    The skip-and-warn branch must not fire just because the parameter
+    sits in `fixed_params` rather than the per-iteration `params` dict —
+    both belong to the namespace solve resolves against.
+    """
+    model = _model_with_fixed_param_health_probs()
+
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.solve(log_level="warning", params={"discount_factor": 0.95})
+
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert not skips, f"Validator skipped: {skips[0].message}"
+
+
+def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
+    """Invalid probs are still surfaced when the transition reads from `fixed_params`.
+
+    Proves the merged-namespace fix doesn't just silence the skip-warning
+    but actually runs the numerical check.
+    """
+
+    def bad_health_probs(health: DiscreteState, transition_bias: float) -> FloatND:
+        # Bias is added to row 0 only, so `transition_bias=0.6` makes the
+        # `good` row sum to 1.6 — well outside the row-sum tolerance.
+        return jnp.where(
+            health == _Health.good,
+            jnp.array([0.5 + transition_bias, 0.5]),
+            jnp.array([0.5, 0.5]),
+        )
+
+    alive = UserRegime(
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(_Health)},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": MarkovTransition(bad_health_probs),
+        },
+        functions={"utility": _utility_alive},
+        constraints={"budget": _budget},
+        transition=_next_regime,
+        active=lambda age: age < 1,
+    )
+    model = Model(
+        regimes={"alive": alive, "terminal": _terminal_regime()},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+        fixed_params={"transition_bias": 0.6},
+    )
+
+    with pytest.raises(InvalidStateTransitionProbabilitiesError):
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
