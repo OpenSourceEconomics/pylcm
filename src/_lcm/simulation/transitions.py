@@ -75,6 +75,7 @@ def calculate_next_states(
     state_action_space: StateActionSpace,
     key: PRNGKeyND,
     subjects_in_regime: Bool1D,
+    original_n_subjects: int | None = None,
 ) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
 
@@ -113,6 +114,7 @@ def calculate_next_states(
         key=key,
         names=stochastic_next_function_names,
         n_initial_states=subjects_in_regime.shape[0],
+        original_n_subjects=original_n_subjects,
     )
 
     # Compute next states using regime's transition functions
@@ -164,6 +166,7 @@ def calculate_next_regime_membership(
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
     subjects_in_regime: Bool1D,
+    original_n_subjects: int | None = None,
 ) -> Int1D:
     """Calculate next period regime membership for subjects in a regime.
 
@@ -211,6 +214,7 @@ def calculate_next_regime_membership(
         key=key,
         names=["regime_transition"],
         n_initial_states=subjects_in_regime.shape[0],
+        original_n_subjects=original_n_subjects,
     )
 
     next_regime_ids = draw_key_from_dict(

@@ -15,6 +15,7 @@ from _lcm.engine import (
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
+    trim_pad_from_raw_results,
 )
 from _lcm.simulation.random import draw_random_seed
 from _lcm.simulation.transitions import (
@@ -59,6 +60,7 @@ def simulate(
     ages: AgeGrid,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
+    original_n_subjects: int | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -158,6 +160,7 @@ def simulate(
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
                     logger=logger,
+                    original_n_subjects=original_n_subjects,
                 )
             )
             states = new_states
@@ -193,6 +196,14 @@ def simulate(
             for regime_name, period_results in simulation_results.items()
         }
     )
+    # Drop any device-alignment pad rows so `SimulationResult` exposes only the
+    # user's real subjects (see `pad_initial_conditions_for_devices`). No-op when
+    # `original_n_subjects` already matched the dispatched shape.
+    if original_n_subjects is not None:
+        wrapped_results = trim_pad_from_raw_results(
+            raw_results=wrapped_results,
+            original_n_subjects=original_n_subjects,
+        )
 
     return SimulationResult(
         raw_results=wrapped_results,
@@ -221,6 +232,7 @@ def _simulate_regime_in_period(
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
     logger: logging.Logger,
+    original_n_subjects: int | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -319,6 +331,7 @@ def _simulate_regime_in_period(
             state_action_space=state_action_space,
             key=next_states_key,
             subjects_in_regime=subject_ids_in_regime,
+            original_n_subjects=original_n_subjects,
         )
         states = next_states
         new_subject_regime_ids = calculate_next_regime_membership(
@@ -333,6 +346,7 @@ def _simulate_regime_in_period(
             active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
             subjects_in_regime=subject_ids_in_regime,
+            original_n_subjects=original_n_subjects,
         )
 
     return simulation_result, states, new_subject_regime_ids, key

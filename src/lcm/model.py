@@ -34,6 +34,7 @@ from _lcm.regime_building.processing import Regime
 from _lcm.simulation.compile import compile_all_simulate_functions
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
+    pad_initial_conditions_for_devices,
     validate_initial_conditions,
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
@@ -399,6 +400,7 @@ class Model:
         self,
         *,
         actual_n_subjects: int,
+        padded_n_subjects: int,
         log: logging.Logger,
     ) -> MappingProxyType[RegimeName, Regime]:
         """Return regimes to use for simulate; AOT cache when matching.
@@ -408,9 +410,12 @@ class Model:
         - `n_subjects is None`: return the original `regimes`
           (purely lazy path).
         - `actual_n_subjects != n_subjects`: warn once per mismatching size,
-          return the original `regimes`.
+          return the original `regimes`. Warning compares user-facing counts
+          (pre-pad) so the message reads in user terms.
         - `actual_n_subjects == n_subjects`: return the cached compiled
-          regimes (caller must have populated the cache before calling).
+          regimes keyed on `padded_n_subjects` — that's the shape the
+          dispatched binaries operate on, and two different user inputs that
+          pad to the same shape share one cache entry.
         """
         if self.n_subjects is None:
             return self._regimes
@@ -428,7 +433,7 @@ class Model:
                 )
             return self._regimes
         with self._simulate_compile_lock:
-            return self._simulate_compile_cache[self.n_subjects]
+            return self._simulate_compile_cache[padded_n_subjects]
 
     @beartype(conf=PARAMS_CONF)
     def simulate(
@@ -506,6 +511,16 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
         )
+        # Relax the `n_subjects % n_devices == 0` constraint at the user
+        # boundary: when any grid is `distributed=True`, pad the leading axis
+        # by duplicating the last subject up to the next multiple of
+        # `n_devices`. Pad rows pass validation automatically (the last real
+        # row already did) and are trimmed back inside `simulate()` before
+        # the `SimulationResult` is returned.
+        initial_conditions, original_n_subjects = pad_initial_conditions_for_devices(
+            initial_conditions=initial_conditions,
+            regimes=self._regimes,
+        )
         flat_params = self._process_params(params)
         if validation_enabled(log):
             try:
@@ -524,22 +539,28 @@ class Model:
             ages=self.ages,
             logger=log,
         )
-        actual_n_subjects = len(next(iter(initial_conditions.values())))
+        # `actual_n_subjects` is the user's real subject count (pre-pad), the
+        # number the user sees in the resulting DataFrame. `padded_n_subjects`
+        # is what the simulate dispatch actually compiles and runs against;
+        # both are equal when no grid is distributed or when n_subjects already
+        # divides n_devices.
+        actual_n_subjects = original_n_subjects
+        padded_n_subjects = len(next(iter(initial_conditions.values())))
         n_subjects = self.n_subjects
         if n_subjects is not None and n_subjects == actual_n_subjects:
             with self._simulate_compile_lock:
-                needs_compile = n_subjects not in self._simulate_compile_cache
+                needs_compile = padded_n_subjects not in self._simulate_compile_cache
             if needs_compile:
                 compiled = compile_all_simulate_functions(
                     regimes=self._regimes,
                     flat_params=flat_params,
                     ages=self.ages,
-                    n_subjects=n_subjects,
+                    n_subjects=padded_n_subjects,
                     max_compilation_workers=max_compilation_workers,
                     logger=log,
                 )
                 with self._simulate_compile_lock:
-                    self._simulate_compile_cache[n_subjects] = compiled
+                    self._simulate_compile_cache[padded_n_subjects] = compiled
         if period_to_regime_to_V_arr is None:
             period_to_regime_to_V_arr = self._solve_compiled(
                 flat_params=flat_params,
@@ -551,6 +572,7 @@ class Model:
             )
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
+            padded_n_subjects=padded_n_subjects,
             log=log,
         )
         result = simulate(
@@ -563,6 +585,7 @@ class Model:
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
+            original_n_subjects=original_n_subjects,
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads

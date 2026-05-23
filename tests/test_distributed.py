@@ -221,6 +221,36 @@ def test_solution_with_distributed_and_batched_grid():
 
 
 @_skip_pytest_parallel
+def test_simulate_pads_when_n_subjects_not_multiple_of_n_devices():
+    """`n_subjects` not divisible by `n_devices` is accepted: pylcm pads the
+    leading axis up to the next multiple internally and trims the pad rows
+    before returning, so the DataFrame has exactly `n_subjects` rows.
+
+    With 4 CPU devices and 5 subjects, the dispatched shape is 8 (pad by 3
+    duplicates of the last subject). After trim the user sees 5 subjects.
+    """
+    n_subjects = 5
+    model = _make_correct_distributed_model()
+    res = model.simulate(
+        log_level="debug",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(n_subjects, 0),
+            "wealth": jnp.full(n_subjects, 100.0),
+            "type1": jnp.full(n_subjects, 1),
+            "type2": jnp.full(n_subjects, 1),
+            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+    assert res.n_subjects == n_subjects
+    for period_data in res._raw_results["working_life"].values():
+        assert period_data.V_arr.shape == (n_subjects,)
+        assert period_data.in_regime.shape == (n_subjects,)
+
+
+@_skip_pytest_parallel
 def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     """Test that distribution over multiple CPU's works for simulation."""
 
@@ -284,26 +314,6 @@ def test_solution_error_if_grid_product_exceeds_devices(wrong_distributed_model)
         wrong_distributed_model.solve(
             log_level="debug",
             params={"discount_factor": 0.95},
-        )
-
-
-@_skip_pytest_parallel
-def test_simulation_error_if_not_multiple(correct_distributed_model):
-    """Test that simulation throws error if too many subjects for num cpus."""
-
-    with pytest.raises(PyLCMError, match="multiple"):
-        correct_distributed_model.simulate(
-            log_level="debug",
-            params={"discount_factor": 0.95},
-            initial_conditions={
-                "age": jnp.full(5, 0),
-                "wealth": jnp.full(5, 100.0),
-                "type1": jnp.full(5, 1),
-                "type2": jnp.full(5, 1),
-                "regime_id": jnp.zeros(5, dtype=jnp.int32),
-            },
-            period_to_regime_to_V_arr=None,
-            seed=12345,
         )
 
 

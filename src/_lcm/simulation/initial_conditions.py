@@ -5,6 +5,7 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 """
 
+import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import NoReturn, cast
@@ -19,7 +20,7 @@ from _lcm.dtypes import (
     safe_to_float_dtype,
     safe_to_int_dtype,
 )
-from _lcm.engine import Regime
+from _lcm.engine import PeriodRegimeSimulationData, Regime
 from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.Q_and_F import _get_feasibility
 from _lcm.typing import (
@@ -158,6 +159,110 @@ def build_initial_states(
         states_per_regime[regime_name] = MappingProxyType(regime_states)
 
     return MappingProxyType(states_per_regime)
+
+
+def pad_initial_conditions_for_devices(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+) -> tuple[InitialConditions, int]:
+    """Pad `initial_conditions` to the next multiple of `n_devices`.
+
+    When any grid in any regime is `distributed=True`, simulate shards the
+    per-subject arrays across the visible JAX devices along a single mesh
+    axis. The shard size must divide the leading axis evenly, so an
+    arbitrary `n_subjects` would otherwise fail at the `subject_array_sharding`
+    guard. Padding the leading axis up to the next multiple of `n_devices`
+    (at most `n_devices - 1` extra rows) relaxes the user-facing constraint:
+    callers can pick any `n_subjects` and pylcm handles the alignment
+    internally, dropping the pad rows again on the way out.
+
+    Pad rows duplicate the last real subject — they pass validation
+    automatically (the last real row already did) and produce identical
+    simulate-side outputs in their assigned regime, which are then trimmed
+    in `Model.simulate` before constructing `SimulationResult`.
+
+    Args:
+        initial_conditions: Canonicalized initial conditions (state arrays
+            keyed by name, plus `regime_id`).
+        regimes: Immutable mapping of regime names to internal regime
+            instances. Used to detect whether any grid is distributed.
+
+    Returns:
+        Tuple of `(padded_initial_conditions, original_n_subjects)`. When no
+        regime has a distributed grid, returns the original mapping unchanged
+        and the existing length as `original_n_subjects`.
+
+    """
+    original_n_subjects = len(next(iter(initial_conditions.values())))
+    any_distributed = any(
+        grid.distributed
+        for regime in regimes.values()
+        for grid in regime.grids.values()
+    )
+    if not any_distributed:
+        return initial_conditions, original_n_subjects
+    n_devices = len(jax.devices())
+    if original_n_subjects % n_devices == 0:
+        return initial_conditions, original_n_subjects
+    pad = n_devices - (original_n_subjects % n_devices)
+    padded: dict[str, jax.Array] = {}
+    for name, arr in initial_conditions.items():
+        # Duplicate the last subject's row `pad` times along the leading axis.
+        last = arr[-1:]
+        pad_block = jnp.repeat(last, pad, axis=0)
+        padded[name] = jnp.concatenate([arr, pad_block], axis=0)
+    return cast("InitialConditions", MappingProxyType(padded)), original_n_subjects
+
+
+def trim_pad_from_raw_results(
+    *,
+    raw_results: MappingProxyType[
+        RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
+    ],
+    original_n_subjects: int,
+) -> MappingProxyType[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]]:
+    """Slice every per-subject array in `raw_results` to `original_n_subjects`.
+
+    The simulate dispatch runs against a padded leading axis (see
+    `pad_initial_conditions_for_devices`); this helper drops the trailing
+    pad rows on the way out so `SimulationResult` and any downstream
+    consumer see only the user's real subjects.
+
+    No-op when the dispatched shape already matched the original (i.e. no
+    pad was applied — the leading-axis length equals `original_n_subjects`).
+
+    Args:
+        raw_results: Immutable nested mapping `regime_name -> period ->
+            PeriodRegimeSimulationData` produced by the simulate loop.
+        original_n_subjects: Subject count from the user's
+            `initial_conditions` before any pylcm-internal padding.
+
+    Returns:
+        New immutable mapping with the trailing pad rows removed from
+        every per-subject array (`V_arr`, `actions`, `states`, `in_regime`).
+
+    """
+    trimmed: dict[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]] = {}
+    for regime_name, periods in raw_results.items():
+        new_periods: dict[int, PeriodRegimeSimulationData] = {}
+        for period, data in periods.items():
+            if data.V_arr.shape[0] == original_n_subjects:
+                new_periods[period] = data
+                continue
+            new_periods[period] = dataclasses.replace(
+                data,
+                V_arr=data.V_arr[:original_n_subjects],
+                actions=MappingProxyType(
+                    {k: v[:original_n_subjects] for k, v in data.actions.items()}
+                ),
+                states=MappingProxyType(
+                    {k: v[:original_n_subjects] for k, v in data.states.items()}
+                ),
+                in_regime=data.in_regime[:original_n_subjects],
+            )
+        trimmed[regime_name] = MappingProxyType(new_periods)
+    return MappingProxyType(trimmed)
 
 
 def subject_array_sharding(
