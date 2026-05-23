@@ -1,10 +1,12 @@
 import jax
 import pytest
 from jax import numpy as jnp
+from jax.sharding import NamedSharding, PartitionSpec
 
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
+from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
@@ -371,6 +373,43 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
     )
     assert period_to_regime_to_V_arr[0]["working_life"].sharding.num_devices == 4
     assert period_to_regime_to_V_arr[5]["retirement"].sharding.num_devices == 1
+
+
+@_skip_pytest_parallel
+def test_v_array_has_nan_keeps_reduction_sharded_on_distributed_input():
+    """`v_array_has_nan` returns a mesh-replicated scalar, not a single-device one.
+
+    The reduction stays inside `@jax.jit` so XLA partitions it across the
+    V-array's devices (per-device any → all-reduce → replicated scalar)
+    instead of gathering the full V-array onto the default device first.
+    """
+    mesh = jax.make_mesh((4,), ("dev",))
+    sharded = jax.device_put(
+        jnp.zeros((8,), dtype=jnp.float32),
+        NamedSharding(mesh, PartitionSpec("dev")),
+    )
+
+    result = v_array_has_nan(sharded)
+
+    assert bool(result) is False
+    assert result.sharding.num_devices == 4
+    assert result.sharding.is_fully_replicated
+
+
+@_skip_pytest_parallel
+def test_v_array_has_inf_keeps_reduction_sharded_on_distributed_input():
+    """`v_array_has_inf` returns a mesh-replicated scalar, not a single-device one."""
+    mesh = jax.make_mesh((4,), ("dev",))
+    sharded = jax.device_put(
+        jnp.array([0.0, jnp.inf, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32),
+        NamedSharding(mesh, PartitionSpec("dev")),
+    )
+
+    result = v_array_has_inf(sharded)
+
+    assert bool(result) is True
+    assert result.sharding.num_devices == 4
+    assert result.sharding.is_fully_replicated
 
 
 def test_distributed_action_grid_raises_at_regime_init():
