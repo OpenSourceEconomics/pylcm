@@ -82,19 +82,23 @@ def _params_callable_for_state_transition(
     """Return un-qualified params for calling a state-transition function.
 
     Both `regime.resolved_fixed_params` and `flat_params_for_regime` key
-    their entries by qualified names like `next_<state>__<param>` (or
-    `next_<state>__<target>__<param>` for per-target dicts). The
-    `MarkovTransition`'s user function is called with the raw parameter
-    names from its signature, so the validator must strip that qualifier
-    before lookup. Without the strip, every transition-function
-    parameter that isn't a grid axis falls through to the "not
-    numerically validated" skip branch and the per-transition numerical
-    check never runs.
+    their entries by the qualified names produced by
+    `create_regime_params_template`:
+
+    - simple transitions ⇒ `next_<state>__<param>`
+    - per-target dicts   ⇒ `to_<target>_next_<state>__<param>`
+
+    The `MarkovTransition`'s user function is called with the raw
+    parameter names from its signature, so the validator must strip
+    the same qualifier the template builder applied before lookup.
+    Without the strip, every transition-function parameter that isn't
+    a grid axis falls through to the "not numerically validated" skip
+    branch and the per-transition numerical check never runs.
     """
-    prefix = f"next_{transition.state_name}"
-    if transition.target_regime_name is not None:
-        prefix = f"{prefix}__{transition.target_regime_name}"
-    prefix = f"{prefix}__"
+    if transition.target_regime_name is None:
+        prefix = f"next_{transition.state_name}__"
+    else:
+        prefix = f"to_{transition.target_regime_name}_next_{transition.state_name}__"
 
     merged = {**regime.resolved_fixed_params, **flat_params_for_regime}
     return MappingProxyType(
