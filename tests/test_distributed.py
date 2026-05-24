@@ -27,7 +27,9 @@ _skip_pytest_parallel = pytest.mark.skipif(
 )
 
 
-def _make_correct_distributed_model(*, n_subjects: int | None = None) -> Model:
+def _make_correct_distributed_model(
+    *, n_subjects: int | None = None, subjects_batch_size: int = 0
+) -> Model:
     @categorical(ordered=False)
     class RegimeId:
         working_life: ScalarInt
@@ -83,6 +85,7 @@ def _make_correct_distributed_model(*, n_subjects: int | None = None) -> Model:
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         n_subjects=n_subjects,
+        subjects_batch_size=subjects_batch_size,
     )
 
 
@@ -273,6 +276,72 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     assert (
         res._raw_results["working_life"][2].states["wealth"].sharding.num_devices == 4
     )
+
+
+@_skip_pytest_parallel
+def test_aot_compiled_simulation_with_subjects_batch_size_on_distributed_grid():
+    """AOT-compiled chunked-dispatch simulate runs on device-sharded inputs.
+
+    `Model(subjects_batch_size=B)` swaps the per-subject vmap for
+    `jax.lax.map(..., batch_size=B)`. The AOT-compiled program for the
+    chunked path must still expect device-sharded inputs when a grid
+    distributes — same contract as the single-vmap path. Without this,
+    runtime hands sharded `assets` / `pref_type` arrays to a program
+    compiled for `SingleDeviceSharding`, and JAX refuses to re-shard.
+    """
+    model = _make_correct_distributed_model(n_subjects=36, subjects_batch_size=2)
+
+    res = model.simulate(
+        log_level="debug",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(36, 0),
+            "wealth": jnp.full(36, 100.0),
+            "type1": jnp.full(36, 1),
+            "type2": jnp.full(36, 1),
+            "regime_id": jnp.zeros(36, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+
+    assert (
+        res._raw_results["working_life"][2].states["wealth"].sharding.num_devices == 4
+    )
+
+
+@_skip_pytest_parallel
+def test_simulate_with_partial_distribution_accepts_sharded_inputs(
+    partially_distributed_model,
+):
+    """Mixed-regime simulate handles cross-regime sharding transitions.
+
+    `partially_distributed_model` has one regime where state grids are
+    `distributed=True` (working_life) and one where they aren't
+    (retirement). The simulate loop transitions subjects from the
+    distributed regime to the undistributed one at age 5; the
+    undistributed regime's AOT-compiled program must still accept the
+    sharded per-subject arrays that come out of the distributed regime,
+    or it raises a sharding-mismatch ValueError.
+    """
+    n_subjects = 36
+    res = partially_distributed_model.simulate(
+        log_level="debug",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(n_subjects, 0),
+            "wealth": jnp.full(n_subjects, 100.0),
+            "type1": jnp.full(n_subjects, 1),
+            "type2": jnp.full(n_subjects, 1),
+            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+
+    # Period 5 is in the retirement regime; its arrays should round-trip
+    # through the simulate loop without a sharding-spec error.
+    assert "wealth" in res._raw_results["retirement"][5].states
 
 
 @_skip_pytest_parallel
