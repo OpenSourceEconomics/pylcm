@@ -25,11 +25,6 @@ if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
 
 import jax
 
-# Import the private implementation package first: `_lcm.__init__` applies the
-# jaxtyping `"..."`-sentinel patch, which must run before any
-# jaxtyping-subscripted type is created.
-import _lcm  # noqa: F401
-
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
