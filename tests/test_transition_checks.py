@@ -465,6 +465,72 @@ def test_state_validator_resolves_params_from_fixed_params(
     assert not skips, f"Validator skipped: {skips[0].message}"
 
 
+def _model_with_per_target_fixed_param_health_probs() -> Model:
+    """Build a model whose per-target `health` transition reads from `fixed_params`.
+
+    `health` exists only in the `terminal` regime; the source `alive`
+    regime declares its initialisation via a per-target dict keyed by
+    target regime name. The transition function takes `transition_bias`
+    from `fixed_params`. Solve resolves it via the per-target qualified
+    name `to_terminal_next_health__transition_bias`; the validator must
+    strip the same prefix or fall through to the skip-and-warn branch.
+    """
+
+    def health_probs(transition_bias: float) -> FloatND:
+        return jnp.array([0.5 - transition_bias, 0.5 + transition_bias])
+
+    def _utility_terminal_with_health(
+        wealth: ContinuousState,
+        health: DiscreteState,  # noqa: ARG001
+    ) -> FloatND:
+        return jnp.log(wealth)
+
+    alive = UserRegime(
+        states={"wealth": WEALTH_GRID},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": {"terminal": MarkovTransition(health_probs)},
+        },
+        functions={"utility": _utility_alive},
+        constraints={"budget": _budget},
+        transition=_next_regime,
+        active=lambda age: age < 1,
+    )
+    terminal = UserRegime(
+        transition=None,
+        functions={"utility": _utility_terminal_with_health},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(_Health)},
+        active=lambda age: age >= 1,
+    )
+    return Model(
+        regimes={"alive": alive, "terminal": terminal},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+        fixed_params={"transition_bias": 0.1},
+    )
+
+
+def test_per_target_state_validator_resolves_params_from_fixed_params(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Per-target dict MarkovTransitions are numerically validated like simple ones.
+
+    The skip-and-warn branch must not fire just because the source regime
+    declares the transition under a per-target dict — the validator
+    strips the per-target qualified prefix
+    `to_<target>_next_<state>__` the same way it strips the simple
+    `next_<state>__` prefix for non-per-target transitions.
+    """
+    model = _model_with_per_target_fixed_param_health_probs()
+
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.solve(log_level="warning", params={"discount_factor": 0.95})
+
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert not skips, f"Validator skipped: {skips[0].message}"
+
+
 def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
     """Invalid probs are still surfaced when the transition reads from `fixed_params`.
 
