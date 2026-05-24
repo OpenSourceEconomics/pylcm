@@ -59,6 +59,18 @@ class GridInitializationError(PyLCMError):
     """Raised when there is an error in the grid initialization."""
 
 
+class ShardingConsistencyError(PyLCMError):
+    """Raised when a model's regimes disagree on per-state device sharding.
+
+    Subjects flow through the simulate loop with a single device-sharding
+    topology; AOT-compiled per-regime programs must accept that topology
+    regardless of which regime hosts a subject at a given period. The
+    constraint is satisfied iff every state name shared across regimes
+    carries the same `distributed` flag wherever it is declared. Violations
+    are collected across the whole model and reported as one exception.
+    """
+
+
 class CategoricalDefinitionError(PyLCMError):
     """Raised when an `@categorical`-decorated class fails the contract.
 

@@ -6,9 +6,14 @@ from jax.sharding import NamedSharding, PartitionSpec
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
+from _lcm.simulation.initial_conditions import subject_array_sharding
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm.ages import AgeGrid
-from lcm.exceptions import PyLCMError, RegimeInitializationError
+from lcm.exceptions import (
+    PyLCMError,
+    RegimeInitializationError,
+    ShardingConsistencyError,
+)
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
@@ -345,6 +350,67 @@ def test_simulate_with_partial_distribution_accepts_sharded_inputs(
 
 
 @_skip_pytest_parallel
+def test_subject_array_sharding_is_model_wide_when_any_regime_distributes(
+    partially_distributed_model,
+):
+    """Mesh sharding is decided model-wide, not per regime.
+
+    Subjects flow through the simulate loop with one device-sharding
+    topology, so the AOT-compiled programs for every regime must lower
+    their per-subject placeholder inputs against the same `NamedSharding`.
+    When any regime declares any `distributed=True` grid,
+    `subject_array_sharding` returns that mesh sharding for the whole
+    model — including regimes whose own grids declare nothing distributed.
+    """
+    sharding = subject_array_sharding(
+        regimes=partially_distributed_model._regimes,
+        n_subjects=36,
+    )
+    assert isinstance(sharding, jax.NamedSharding)
+    assert sharding.num_devices == 4
+
+
+@_skip_pytest_parallel
+def test_subject_array_sharding_is_none_when_no_regime_distributes():
+    """No distributed grid anywhere ⇒ per-subject arrays stay on the default device."""
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working_life: ScalarInt
+        retirement: ScalarInt
+
+    working_life = UserRegime(
+        functions={
+            "utility": lambda wealth, consumption: (
+                jnp.log(consumption) + wealth * 0.001
+            ),
+        },
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        state_transitions={
+            "wealth": lambda wealth, consumption: wealth - consumption,
+        },
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transition=lambda age: jnp.where(
+            age >= 4, RegimeId.retirement, RegimeId.working_life
+        ),
+        active=lambda age: age < 5,
+    )
+    retirement = UserRegime(
+        transition=None,
+        functions={"utility": lambda wealth: wealth * 0.5},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        active=lambda age: age >= 5,
+    )
+    model = Model(
+        regimes={"working_life": working_life, "retirement": retirement},
+        ages=AgeGrid(start=0, stop=5, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+    assert subject_array_sharding(regimes=model._regimes, n_subjects=12) is None
+
+
+@_skip_pytest_parallel
 def test_aot_compiled_simulation_running_on_multiple_cpus():
     """AOT-compiled simulate functions run on multi-device-sharded inputs.
 
@@ -489,6 +555,71 @@ def test_v_array_has_inf_keeps_reduction_sharded_on_distributed_input():
     assert bool(result) is True
     assert result.sharding.num_devices == 4
     assert result.sharding.is_fully_replicated
+
+
+@pytest.fixture
+def model_inputs_with_mixed_distributed_flags():
+    """Model kwargs whose regimes disagree on a shared state's `distributed` flag.
+
+    `wealth` is `distributed=True` in `working_life` but `distributed=False`
+    in `retirement`. Returned as kwargs so a test can call `Model(**...)` inside
+    `pytest.raises` and exercise the construction-time validator directly.
+    """
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working_life: ScalarInt
+        retirement: ScalarInt
+
+    working_life = UserRegime(
+        functions={
+            "utility": lambda wealth, consumption: (
+                jnp.log(consumption) + wealth * 0.001
+            ),
+        },
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, distributed=True),
+        },
+        state_transitions={
+            "wealth": lambda wealth, consumption: wealth - consumption,
+        },
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transition=lambda age: jnp.where(
+            age >= 4, RegimeId.retirement, RegimeId.working_life
+        ),
+        active=lambda age: age < 5,
+    )
+
+    retirement = UserRegime(
+        transition=None,
+        functions={"utility": lambda wealth: wealth * 0.5},
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, distributed=False),
+        },
+        active=lambda age: age >= 5,
+    )
+
+    return {
+        "regimes": {"working_life": working_life, "retirement": retirement},
+        "ages": AgeGrid(start=0, stop=5, step="Y"),
+        "regime_id_class": RegimeId,
+    }
+
+
+def test_model_rejects_mixed_distributed_flag_on_shared_state(
+    model_inputs_with_mixed_distributed_flags,
+):
+    """A state name declared with disagreeing `distributed` flags raises.
+
+    Per-subject arrays carry one device-sharding topology through the
+    simulate loop; a state declared `distributed=True` in one regime and
+    `distributed=False` in another would force the AOT-compiled programs
+    on either side of the transition to disagree about the input sharding.
+    The constructor rejects the inconsistency so the misconfiguration
+    surfaces in the model definition.
+    """
+    with pytest.raises(ShardingConsistencyError, match="wealth"):
+        Model(**model_inputs_with_mixed_distributed_flags)
 
 
 def test_distributed_action_grid_raises_at_regime_init():

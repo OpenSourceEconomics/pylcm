@@ -123,9 +123,9 @@ def build_initial_states(
         RegimeName, MappingProxyType[StateName, Float1D | Int1D]
     ] = {}
 
+    sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
     for regime_name, regime in regimes.items():
         regime_states: dict[StateName, Float1D | Int1D] = {}
-        sharding = subject_array_sharding(regime=regime, n_subjects=n_subjects)
         for state_name in regime.variables.state_names:
             grid = regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
@@ -266,24 +266,36 @@ def trim_pad_from_raw_results(
 
 
 def subject_array_sharding(
-    *, regime: Regime, n_subjects: int
+    *, regimes: MappingProxyType[RegimeName, Regime], n_subjects: int
 ) -> jax.NamedSharding | None:
-    """Return the device sharding for a regime's per-subject simulation arrays.
+    """Return the model-wide device sharding for per-subject simulation arrays.
 
-    When any grid in the regime is distributed, the `n_subjects` subjects are
-    scattered across all available devices along a single mesh axis. When no
-    grid is distributed the arrays stay on the default device.
+    Subjects propagate across regime transitions inside the simulate loop,
+    so every regime's per-subject arrays must carry the same device
+    sharding — otherwise an AOT-compiled program lowered with a different
+    sharding rejects the inputs it receives from another regime.
+
+    When any grid in any regime is `distributed=True`, the `n_subjects`
+    subjects are scattered across all available devices along a single
+    mesh axis. When no regime distributes any grid the arrays stay on
+    the default device.
 
     Args:
-        regime: Internal regime instance.
+        regimes: Immutable mapping of regime names to internal regime
+            instances.
         n_subjects: Number of simulated subjects.
 
     Returns:
-        The `NamedSharding` over the device mesh, or `None` when no grid in
-        the regime is distributed.
+        The `NamedSharding` over the device mesh, or `None` when no grid
+        in any regime is distributed.
 
     """
-    if not any(grid.distributed for grid in regime.grids.values()):
+    distributes_any = any(
+        grid.distributed
+        for regime in regimes.values()
+        for grid in regime.grids.values()
+    )
+    if not distributes_any:
         return None
     devices = jax.devices()
     if n_subjects % len(devices) != 0:

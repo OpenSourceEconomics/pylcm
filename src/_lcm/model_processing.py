@@ -33,11 +33,16 @@ from _lcm.typing import (
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    StateName,
 )
 from _lcm.utils.containers import get_field_names_and_values
 from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidParamsError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidParamsError,
+    ModelInitializationError,
+    ShardingConsistencyError,
+)
 from lcm.params import MappingLeaf
 from lcm.regime import Regime as UserRegime
 from lcm.typing import UserParams
@@ -212,6 +217,55 @@ def validate_model_inputs(
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
+
+
+def validate_sharding_consistency(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> None:
+    """Reject models whose regimes disagree on a state's `distributed` flag.
+
+    Per-subject arrays carry one device-sharding topology through the
+    simulate loop: when any state grid is `distributed=True` in any regime,
+    every regime's AOT-compiled program must accept inputs scattered along
+    that mesh axis, because subjects can be transitioned into the regime
+    from another regime that already sharded them. A state declared
+    `distributed=True` in one regime and `distributed=False` in another
+    breaks that contract.
+
+    The check walks every `(regime_name, state_name)` declaration once,
+    groups by state name, and aggregates every conflict before raising —
+    so a single error names all the mismatched states at once.
+
+    Args:
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances.
+
+    Raises:
+        ShardingConsistencyError: If any state name carries disagreeing
+            `distributed` flags across regimes.
+
+    """
+    flags_by_state: dict[StateName, dict[RegimeName, bool]] = {}
+    for regime_name, regime in user_regimes.items():
+        for state_name, grid in regime.states.items():
+            flags_by_state.setdefault(state_name, {})[regime_name] = grid.distributed
+
+    violations: list[str] = []
+    for state_name in sorted(flags_by_state):
+        flags = flags_by_state[state_name]
+        if len(set(flags.values())) > 1:
+            details = ", ".join(
+                f"{name}: distributed={flag}" for name, flag in sorted(flags.items())
+            )
+            violations.append(
+                f"State {state_name!r} declared with conflicting `distributed` "
+                f"flags across regimes: {details}. All regimes that declare "
+                f"this state must agree."
+            )
+
+    if violations:
+        raise ShardingConsistencyError(format_messages(violations))
 
 
 def merge_derived_categoricals(

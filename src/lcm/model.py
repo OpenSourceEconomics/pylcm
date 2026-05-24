@@ -16,6 +16,7 @@ from _lcm.model_processing import (
     build_regimes_and_template,
     merge_derived_categoricals,
     validate_model_inputs,
+    validate_sharding_consistency,
 )
 from _lcm.pandas_utils import (
     convert_series_in_params,
@@ -229,6 +230,7 @@ class Model:
             user_regimes=regimes,
             derived_categoricals=derived_categoricals,
         )
+        validate_sharding_consistency(user_regimes=self.user_regimes)
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
             user_regimes=self.user_regimes,
