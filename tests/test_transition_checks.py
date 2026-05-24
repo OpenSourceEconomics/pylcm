@@ -285,6 +285,82 @@ def test_ast_check_is_permissive_when_no_probs_array_subscript() -> None:
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
+def test_per_target_dict_skips_unreachable_targets() -> None:
+    """Per-target entries to regimes inactive at the next period are skipped.
+
+    `solve()` and `simulate()` only dispatch a per-target transition for
+    targets in `active_regimes_next_period` at the source's period; the
+    pre-solve validator mirrors that gate so an unreachable target's
+    function — whose output shape might not even match the (always-zero-
+    weighted) target's outcome grid — is not numerically evaluated.
+    """
+
+    @categorical(ordered=False)
+    class _Heir:
+        no: ScalarInt
+        yes: ScalarInt
+
+    @categorical(ordered=False)
+    class _RegId:
+        alive: ScalarInt
+        unreachable: ScalarInt
+        dead: ScalarInt
+
+    def bad_heir_probs(wealth: ContinuousState) -> FloatND:  # noqa: ARG001
+        # Would fail sum-to-1 if the validator ran it; the test asserts
+        # it does NOT run because `unreachable` deactivates before `alive`
+        # can transition into it.
+        return jnp.array([0.5, 0.3])
+
+    def next_wealth_passthrough(wealth: ContinuousState) -> ContinuousState:
+        return wealth
+
+    def _utility(wealth: ContinuousState) -> FloatND:
+        return wealth
+
+    def _utility_with_heir(
+        wealth: ContinuousState, heir_present: DiscreteState
+    ) -> FloatND:
+        return wealth * heir_present
+
+    def _to_dead(age: float) -> ScalarInt:  # noqa: ARG001
+        return jnp.asarray(_RegId.dead)
+
+    alive = UserRegime(
+        functions={"utility": _utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
+        state_transitions={
+            "wealth": next_wealth_passthrough,
+            "heir_present": {"unreachable": MarkovTransition(bad_heir_probs)},
+        },
+        transition=_to_dead,
+        active=lambda age: age < 1,
+    )
+    unreachable = UserRegime(
+        transition=None,
+        functions={"utility": _utility_with_heir},
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=10, n_points=3),
+            "heir_present": DiscreteGrid(_Heir),
+        },
+        # Active only at age 0 — never the next period of `alive`.
+        active=lambda age: age < 1,
+    )
+    dead = UserRegime(
+        transition=None,
+        functions={"utility": _utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
+        active=lambda age: age >= 1,
+    )
+    model = Model(
+        regimes={"alive": alive, "unreachable": unreachable, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RegId,
+    )
+
+    model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
 def test_per_target_dict_validates_each_entry() -> None:
     """Each MarkovTransition inside a per-target dict is validated independently."""
 

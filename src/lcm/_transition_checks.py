@@ -411,7 +411,7 @@ def _validate_no_reachable_incomplete_targets(
         )
 
 
-def validate_state_transitions_all_periods(
+def validate_state_transitions_all_periods(  # noqa: C901
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -467,6 +467,10 @@ def validate_state_transitions_all_periods(
             )
             age = ages.values[period]  # noqa: PD011
             for transition in regime.stochastic_state_transitions.values():
+                if _per_target_unreachable_at_next_period(
+                    transition=transition, regimes=regimes, period=period
+                ):
+                    continue
                 try:
                     _validate_state_transition_single(
                         transition=transition,
@@ -483,6 +487,28 @@ def validate_state_transitions_all_periods(
                     )
                 except InvalidStateTransitionProbabilitiesError as error:
                     raise_or_warn(logger=logger, error=error)
+
+
+def _per_target_unreachable_at_next_period(
+    *,
+    transition: _StochasticStateTransition,
+    regimes: MappingProxyType[RegimeName, Regime],
+    period: int,
+) -> bool:
+    """Return True when a per-target transition's target deactivates before reach.
+
+    `solve()` and `simulate()` only dispatch a per-target MarkovTransition
+    for targets in `active_regimes_next_period` at the source's period;
+    targets that deactivate before the source can reach them never fire at
+    runtime. The pre-solve validator mirrors that gate so a per-target
+    function whose output shape only needs to match the (always-zero-
+    weighted) target's outcome grid in principle is not numerically
+    evaluated against the source's state grid.
+    """
+    if transition.target_regime_name is None:
+        return False
+    target = regimes[transition.target_regime_name]
+    return period + 1 not in target.active_periods
 
 
 def _validate_state_transition_single(
