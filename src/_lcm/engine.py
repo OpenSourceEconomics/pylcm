@@ -7,7 +7,7 @@ from typing import Literal, cast
 import jax
 from jax import Array
 
-from _lcm.grids import Grid, IrregSpacedGrid
+from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import (
     ActionName,
@@ -15,6 +15,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatRegimeParams,
+    FunctionName,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     RegimeName,
@@ -408,6 +409,18 @@ class Regime:
     dict entries appear under qualified names like `next_health__working`.
     Empty for terminal regimes and for regimes whose state transitions
     are all deterministic.
+    """
+
+    derived_categoricals: MappingProxyType[FunctionName, DiscreteGrid] = (
+        MappingProxyType({})
+    )
+    """Discrete-grid declarations for DAG-output (or constant-param) categoricals.
+
+    Mirrors the user-facing `Regime.derived_categoricals` mapping so the
+    simulate-side machinery (`available_targets`, `to_dataframe`) can
+    expose declared categorical names as extractable targets even when
+    the underlying value comes from a `regime_params` constant rather
+    than a DAG function output.
     """
 
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)

@@ -476,6 +476,116 @@ def test_additional_targets_all_with_stochastic_transitions():
     assert set(result.available_targets) <= set(df.columns)
 
 
+def _build_derived_categorical_constant_model(*, fixed_params):
+    """2-regime model declaring `his` as derived_categorical with no DAG function.
+
+    `his` is consumed by `utility` as a regime-level constant param. The
+    caller supplies `fixed_params` so each test can place `his` at the
+    model level (same constant everywhere) or per-regime (different
+    constants per regime).
+    """
+    from lcm import DiscreteGrid, categorical  # noqa: PLC0415
+    from lcm.grids import LinSpacedGrid  # noqa: PLC0415
+    from lcm.regime import Regime as UserRegime  # noqa: PLC0415
+    from lcm.typing import ContinuousState, FloatND, ScalarInt  # noqa: PLC0415
+
+    @categorical(ordered=False)
+    class _HIS:
+        retiree: ScalarInt
+        tied: ScalarInt
+
+    @categorical(ordered=False)
+    class _RegId:
+        alive: ScalarInt
+        terminal: ScalarInt
+
+    def _utility(wealth: ContinuousState, his: ScalarInt) -> FloatND:
+        return wealth + 0.0 * his
+
+    def _next_wealth(wealth: ContinuousState) -> FloatND:
+        return wealth
+
+    def _next_regime(age: float) -> ScalarInt:  # noqa: ARG001
+        return jnp.asarray(_RegId.terminal)
+
+    alive = UserRegime(
+        functions={"utility": _utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
+        state_transitions={"wealth": _next_wealth},
+        transition=_next_regime,
+        active=lambda age: age < 1,
+    )
+    terminal = UserRegime(
+        transition=None,
+        functions={"utility": _utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
+        active=lambda age: age >= 1,
+    )
+    model = Model(
+        regimes={"alive": alive, "terminal": terminal},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RegId,
+        derived_categoricals={"his": DiscreteGrid(_HIS)},
+        fixed_params=fixed_params,
+    )
+    return model, _HIS, _RegId
+
+
+def _simulate_alive_subject(model, reg_id):
+    return model.simulate(
+        log_level="debug",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.array([0.0]),
+            "wealth": jnp.array([5.0]),
+            "regime_id": jnp.array([reg_id.alive]),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+
+
+def test_derived_categorical_constant_param_is_available_target():
+    """A `derived_categorical` declared with no DAG function but backed by a
+    regime-level `fixed_params` constant appears in `available_targets`.
+
+    Declaration of a `derived_categorical` is the explicit opt-in to
+    exposing the name in `available_targets`; once the value also
+    resolves from the regime's flat params, `to_dataframe` consumers
+    can materialize the constant per row without aca-side users having
+    to write a passthrough function.
+    """
+    model, _his, reg_id = _build_derived_categorical_constant_model(
+        fixed_params={"his": 0},
+    )
+
+    result = _simulate_alive_subject(model, reg_id)
+
+    assert "his" in result.available_targets
+
+
+def test_derived_categorical_constant_param_materializes_per_regime():
+    """`to_dataframe(additional_targets=[<name>])` returns the regime-specific
+    constant for a `derived_categorical` backed by per-regime fixed_params.
+
+    Each row's column value matches the constant of the regime that row
+    sits in.
+    """
+    model, his_class, reg_id = _build_derived_categorical_constant_model(
+        fixed_params={
+            "alive": {"his": 0},
+            "terminal": {"his": 1},
+        },
+    )
+
+    result = _simulate_alive_subject(model, reg_id)
+    df = result.to_dataframe(additional_targets=["his"], use_labels=False)
+
+    alive_rows = df.loc[df["regime_name"] == "alive"]
+    terminal_rows = df.loc[df["regime_name"] == "terminal"]
+    assert (alive_rows["his"] == int(his_class.retiree)).all()
+    assert (terminal_rows["his"] == int(his_class.tied)).all()
+
+
 def test_retrieve_actions():
     got = _lookup_values_from_indices(
         flat_indices=jnp.array([0, 3, 7], dtype=jnp.int32),

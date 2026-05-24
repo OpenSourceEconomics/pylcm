@@ -212,6 +212,9 @@ def process_regimes(
             solve_functions=solve_functions,
             simulate_functions=simulate_functions,
             stochastic_state_transitions=stochastic_state_transitions,
+            derived_categoricals=MappingProxyType(
+                dict(user_regime.derived_categoricals)
+            ),
             _base_state_action_space=state_action_spaces[regime_name],
         )
 
