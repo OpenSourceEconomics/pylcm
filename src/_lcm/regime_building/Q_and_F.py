@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
+from jax import lax
 
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.next_state import (
@@ -163,40 +164,53 @@ def get_Q_and_F(
             {r: regime_transition_probs[r] for r in complete_targets}
         )
 
-        E_next_V = jnp.zeros_like(U_arr)
-        for target_regime_name in complete_targets:
-            next_states = state_transitions[target_regime_name](
-                **states_actions_params,
-            )
-            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
-                target_regime_name
-            ](**states_actions_params)
-            joint_next_stochastic_states_weights = joint_weights_from_marginals[
-                target_regime_name
-            ](**marginal_next_stochastic_states_weights)
+        # Serialize the per-target contributions via `lax.scan` so XLA cannot
+        # schedule them as concurrent live buffers — each iteration's
+        # per-stochastic-states intermediate is freed before the next runs.
+        if complete_targets:
 
-            # As we productmap'd the value function over the stochastic variables, the
-            # resulting next value function gets a new dimension for each stochastic
-            # variable.
-            extra_kw = {
-                k: states_actions_params[k]
-                for k in next_V_extra_param_names[target_regime_name]
-            }
-            next_V_at_stochastic_states_arr = next_V[target_regime_name](
-                **next_states,
-                next_V_arr=next_regime_to_V_arr[target_regime_name],
-                **extra_kw,
-            )
+            def _make_contribution(
+                target_regime_name: RegimeName,
+            ) -> Callable[[], FloatND]:
+                def _contribution() -> FloatND:
+                    next_states = state_transitions[target_regime_name](
+                        **states_actions_params,
+                    )
+                    marginal_weights = next_stochastic_states_weights[
+                        target_regime_name
+                    ](**states_actions_params)
+                    joint_weights = joint_weights_from_marginals[target_regime_name](
+                        **marginal_weights,
+                    )
+                    extra_kw = {
+                        k: states_actions_params[k]
+                        for k in next_V_extra_param_names[target_regime_name]
+                    }
+                    next_V_at_stochastic_states_arr = next_V[target_regime_name](
+                        **next_states,
+                        next_V_arr=next_regime_to_V_arr[target_regime_name],
+                        **extra_kw,
+                    )
+                    next_V_expected_arr = jnp.average(
+                        next_V_at_stochastic_states_arr,
+                        weights=joint_weights,
+                    )
+                    return active_regime_probs[target_regime_name] * next_V_expected_arr
 
-            # We then take the weighted average of the next value function at the
-            # stochastic states to get the expected next value function.
-            next_V_expected_arr = jnp.average(
-                next_V_at_stochastic_states_arr,
-                weights=joint_next_stochastic_states_weights,
-            )
-            E_next_V = (
-                E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
-            )
+                return _contribution
+
+            contributions = [_make_contribution(t) for t in complete_targets]
+
+            def _body(carry: FloatND, idx: IntND) -> tuple[FloatND, None]:
+                return carry + lax.switch(idx, contributions), None
+
+            E_next_V = lax.scan(
+                _body,
+                jnp.zeros_like(U_arr),
+                jnp.arange(len(complete_targets), dtype=jnp.int32),
+            )[0]
+        else:
+            E_next_V = jnp.zeros_like(U_arr)
 
         Q_arr = functions["H"](
             utility=U_arr,
@@ -332,26 +346,48 @@ def get_compute_intermediates(
             {r: regime_transition_probs[r] for r in complete_targets}
         )
 
-        E_next_V = jnp.zeros_like(U_arr)
-        for target_regime_name in complete_targets:
-            next_states = state_transitions[target_regime_name](
-                **states_actions_params,
-            )
-            marginal = next_stochastic_states_weights[target_regime_name](
-                **states_actions_params,
-            )
-            joint = joint_weights_from_marginals[target_regime_name](**marginal)
-            extra_kw = {
-                k: states_actions_params[k]
-                for k in next_V_extra_param_names[target_regime_name]
-            }
-            next_V_stoch = next_V[target_regime_name](
-                **next_states,
-                next_V_arr=next_regime_to_V_arr[target_regime_name],
-                **extra_kw,
-            )
-            contribution = jnp.average(next_V_stoch, weights=joint)
-            E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
+        # See `get_Q_and_F` for the rationale behind serializing per-target
+        # contributions via `lax.scan` instead of a Python for-loop.
+        if complete_targets:
+
+            def _make_contribution(
+                target_regime_name: RegimeName,
+            ) -> Callable[[], FloatND]:
+                def _contribution() -> FloatND:
+                    next_states = state_transitions[target_regime_name](
+                        **states_actions_params,
+                    )
+                    marginal = next_stochastic_states_weights[target_regime_name](
+                        **states_actions_params,
+                    )
+                    joint = joint_weights_from_marginals[target_regime_name](**marginal)
+                    extra_kw = {
+                        k: states_actions_params[k]
+                        for k in next_V_extra_param_names[target_regime_name]
+                    }
+                    next_V_stoch = next_V[target_regime_name](
+                        **next_states,
+                        next_V_arr=next_regime_to_V_arr[target_regime_name],
+                        **extra_kw,
+                    )
+                    return active_regime_probs[target_regime_name] * jnp.average(
+                        next_V_stoch, weights=joint
+                    )
+
+                return _contribution
+
+            contributions = [_make_contribution(t) for t in complete_targets]
+
+            def _body(carry: FloatND, idx: IntND) -> tuple[FloatND, None]:
+                return carry + lax.switch(idx, contributions), None
+
+            E_next_V = lax.scan(
+                _body,
+                jnp.zeros_like(U_arr),
+                jnp.arange(len(complete_targets), dtype=jnp.int32),
+            )[0]
+        else:
+            E_next_V = jnp.zeros_like(U_arr)
 
         Q_arr = functions["H"](
             utility=U_arr,
