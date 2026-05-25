@@ -5,9 +5,12 @@ module is the factory side: turn a user-facing `Regime` into the canonical
 `Variables` instance and accompanying grid mapping, ordering names so the
 state-action space iteration is stable.
 
-Iteration order: discrete states (sorted by `batch_size`), continuous states
-(sorted by `batch_size`), then actions in declaration order. Within each
-state-topology group, `batch_size == 0` sorts last (treated as +inf).
+Iteration order: discrete states, continuous states, then actions in
+declaration order. Within each state group the sort key is
+`(not distributed, batch_size)` — `distributed=True` states sort first
+(outermost productmap axis, so the cross-device collective wraps the inner
+per-device kernel); within each distributed / non-distributed slice, ties
+break by `batch_size` with 0 last (treated as +∞).
 
 """
 
@@ -41,9 +44,11 @@ def _bind_forward_refs(*, regime_cls: type) -> None:
 def from_regime(user_regime: UserRegime) -> Variables:
     """Build `Variables` from a regime, ordering names canonically.
 
-    Order: discrete states (by `batch_size`), continuous states (by
-    `batch_size`), then actions in declaration order. Within each topology
-    group, `batch_size == 0` sorts last.
+    Order: discrete states, continuous states, then actions in declaration
+    order. Within each state topology group, the sort key is
+    `(not distributed, batch_size)` — `distributed=True` states come first
+    (sharded axes outermost in productmap), and `batch_size == 0` sorts
+    last (treated as +∞).
 
     Args:
         user_regime: User-form `Regime` instance.
@@ -103,14 +108,18 @@ def _ordered_state_action_names(
 ) -> list[StateOrActionName]:
     """Order variables: discrete states, continuous states, actions.
 
-    States are sorted by `batch_size` within each topology group; batch size 0
-    sorts last (treated as +inf). Actions keep declaration order.
+    Within each state topology group, the sort key is
+    `(not distributed, batch_size)`. `distributed=True` sorts first so the
+    sharded axis is the outermost productmap axis (the cross-device collective
+    wraps the inner per-device kernel). Ties break by `batch_size`, with
+    `batch_size == 0` last (treated as +inf). Actions keep declaration order.
 
     """
 
-    def state_batch_size(name: StateOrActionName) -> float:
-        batch_size = user_regime.states[name].batch_size
-        return batch_size if batch_size != 0 else math.inf
+    def state_sort_key(name: StateOrActionName) -> tuple[bool, float]:
+        grid = user_regime.states[name]
+        batch_size = grid.batch_size
+        return (not grid.distributed, batch_size if batch_size != 0 else math.inf)
 
     discrete_states = sorted(
         (
@@ -118,7 +127,7 @@ def _ordered_state_action_names(
             for name, var_info in info.items()
             if var_info.kind == "state" and var_info.topology == "discrete"
         ),
-        key=state_batch_size,
+        key=state_sort_key,
     )
     continuous_states = sorted(
         (
@@ -126,7 +135,7 @@ def _ordered_state_action_names(
             for name, var_info in info.items()
             if var_info.kind == "state" and var_info.topology == "continuous"
         ),
-        key=state_batch_size,
+        key=state_sort_key,
     )
     actions = [name for name, var_info in info.items() if var_info.kind == "action"]
 
