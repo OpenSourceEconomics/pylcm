@@ -279,7 +279,6 @@ result.available_targets  # list[str] - computable additional targets
 # Access raw data for advanced users
 result.raw_results  # dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
 result.flat_params  # FlatParams
-result.period_to_regime_to_V_arr  # dict[int, dict[RegimeName, FloatND]]
 
 # Serialization (requires cloudpickle)
 result.to_pickle("path/to/file.pkl")

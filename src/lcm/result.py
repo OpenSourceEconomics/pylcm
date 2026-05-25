@@ -22,7 +22,6 @@ from _lcm.simulation.result_dataframe import (
 from _lcm.simulation.result_metadata import _compute_metadata
 from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
 from lcm.ages import AgeGrid
-from lcm.typing import FloatND
 
 
 class SimulationResult:
@@ -36,16 +35,12 @@ class SimulationResult:
         ],
         regimes: MappingProxyType[RegimeName, Regime],
         flat_params: FlatParams,
-        period_to_regime_to_V_arr: MappingProxyType[
-            int, MappingProxyType[RegimeName, FloatND]
-        ],
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ) -> None:
         self._raw_results = raw_results
         self._regimes = regimes
         self._flat_params = flat_params
-        self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._metadata = _compute_metadata(
             regimes=regimes,
@@ -68,13 +63,6 @@ class SimulationResult:
     def flat_params(self) -> FlatParams:
         """Model parameters used in simulation."""
         return self._flat_params
-
-    @property
-    def period_to_regime_to_V_arr(
-        self,
-    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
-        """Value function arrays from the solution."""
-        return self._period_to_regime_to_V_arr
 
     @property
     def regime_names(self) -> list[RegimeName]:

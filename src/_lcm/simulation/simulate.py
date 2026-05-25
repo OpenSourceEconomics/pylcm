@@ -209,7 +209,6 @@ def simulate(
         raw_results=wrapped_results,
         regimes=regimes,
         flat_params=flat_params,
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         ages=ages,
         simulation_output_dtypes=simulation_output_dtypes,
     )
