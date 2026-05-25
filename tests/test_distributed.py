@@ -283,6 +283,7 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     )
 
 
+@_skip_pytest_parallel
 def test_simulate_materialises_V_arr_eagerly(correct_distributed_model):
     """`PeriodRegimeSimulationData.V_arr` is fully computed after `simulate()`.
 
