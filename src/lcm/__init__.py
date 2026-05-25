@@ -34,9 +34,16 @@ with contextlib.suppress(ImportError):
 # `INTERNAL_CONF`. User-facing constructors stack an explicit
 # `@beartype(conf=...)` decorator that maps violations to the relevant project
 # exception (see `_lcm.beartype_conf`).
+# beartype 0.22.9 ships a stray `print(f'Detecting C-based callable {func!r}
+# isomorphism...')` at `beartype._util.func.utilfunctest:1083`. It fires once
+# per imported pseudo-callable (jaxlib PjitFunction at every pylcm import),
+# polluting every pytask / test invocation. Silence it before the claw runs.
+import beartype._util.func.utilfunctest as _beartype_utilfunctest
 from beartype.claw import beartype_package
 
 from _lcm.beartype_conf import INTERNAL_CONF
+
+_beartype_utilfunctest.print = lambda *_args, **_kwargs: None
 
 beartype_package("_lcm", conf=INTERNAL_CONF)
 beartype_package("lcm", conf=INTERNAL_CONF)
