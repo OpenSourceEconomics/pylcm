@@ -1,13 +1,13 @@
-from lcm.grids import DiscreteGrid
-from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.params.regime_template import (
+from _lcm.grids import DiscreteGrid
+from _lcm.params.regime_template import (
     create_regime_params_template,
 )
-from lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.utils.containers import ensure_containers_are_immutable
+from lcm.regime import SolveSimulateFunctionPair
 from tests.mock_regime import MockRegime
 
 
-def test_create_params_without_shocks(binary_category_class):
+def test_create_params_without_processes(binary_category_class):
     regime = MockRegime(
         actions={
             "a": DiscreteGrid(binary_category_class),

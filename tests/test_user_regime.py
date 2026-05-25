@@ -7,11 +7,16 @@ import jax.numpy as jnp
 import pytest
 from dags.tree import QNAME_DELIMITER
 
+from _lcm.grids import IrregSpacedGrid
+from _lcm.regime_building.transitions import (
+    _IdentityTransition,
+    collect_state_transitions,
+)
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.grids import IrregSpacedGrid
-from lcm.regime_building.transitions import collect_state_transitions
+from lcm.regime import MarkovTransition
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -20,11 +25,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import (
-    MarkovTransition,
-    _IdentityTransition,
-)
-from lcm.user_regime import Regime as UserRegime
 
 
 def utility(consumption):
@@ -367,9 +367,10 @@ def test_collect_state_transitions_missing_state_raises():
 
 
 def test_regime_with_fixed_states_only():
-    """Issue #152 (resolved): regimes with only fixed states (transition=None) work.
+    """A regime whose every state is fixed (`state_transitions` all `None`) builds.
 
-    Regression guard -- previously state transition functions were always required.
+    Fixed states need no transition function — identity transitions are
+    auto-generated — so a regime may omit `state_transitions` entries entirely.
     """
 
     @categorical(ordered=False)

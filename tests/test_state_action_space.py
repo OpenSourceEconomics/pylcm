@@ -3,13 +3,12 @@ from types import MappingProxyType
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
-from lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
-from lcm.interfaces import StateActionSpace
-from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
-from lcm.state_action_space import create_state_action_space
+from _lcm.engine import StateActionSpace, VariableInfo, Variables
+from _lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
+from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
+from _lcm.state_action_space import create_state_action_space
+from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
-from lcm.variables import VariableInfo, Variables
 
 
 def _create_variables(
@@ -23,13 +22,15 @@ def _create_variables(
     # states, then actions (discrete then continuous within actions in original
     # declaration order).
     for name in discrete_states:
-        info[name] = VariableInfo(kind="state", topology="discrete", is_shock=False)
+        info[name] = VariableInfo(kind="state", topology="discrete", is_process=False)
     for name in continuous_states:
-        info[name] = VariableInfo(kind="state", topology="continuous", is_shock=False)
+        info[name] = VariableInfo(kind="state", topology="continuous", is_process=False)
     for name in discrete_actions:
-        info[name] = VariableInfo(kind="action", topology="discrete", is_shock=False)
+        info[name] = VariableInfo(kind="action", topology="discrete", is_process=False)
     for name in continuous_actions:
-        info[name] = VariableInfo(kind="action", topology="continuous", is_shock=False)
+        info[name] = VariableInfo(
+            kind="action", topology="continuous", is_process=False
+        )
     return Variables(info=MappingProxyType(info))
 
 

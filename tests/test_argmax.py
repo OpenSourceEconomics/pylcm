@@ -2,7 +2,7 @@ import jax.numpy as jnp
 from jax import jit
 from numpy.testing import assert_array_equal
 
-from lcm.regime_building.argmax import (
+from _lcm.regime_building.argmax import (
     _flatten_last_n_axes,
     _move_axes_to_back,
     argmax_and_max,

@@ -31,40 +31,41 @@ automation. Python 3.14+ is required.
 
 ### Core Components
 
-**Model Definition (`src/lcm/model.py`, `src/lcm/user_regime.py`)**
+**Model Definition (`src/lcm/model.py`, `src/lcm/regime.py`)**
 
 - `Model`: User-facing class for defining dynamic choice models
-- `Regime` (from `lcm.user_regime`): User-facing regime definition with utility,
-  constraints, functions, actions, and states. State transitions live on grids; regime
-  transitions live on the regime.
+- `Regime` (from `lcm.regime`): User-facing regime definition with utility, constraints,
+  functions, actions, states, and state transitions (the `state_transitions` field). The
+  regime transition is set via the `transition` field.
 - Models must have at least one terminal regime and one non-terminal regime
 - Models support transitions between multiple regimes
 
-**Canonical Processing (`src/lcm/interfaces.py`)**
+**Canonical Processing (`src/_lcm/engine.py`)**
 
-- `Regime` (from `lcm.interfaces`): Canonical representation produced by
-  `process_regimes` from a user-facing `Regime`. Internal engine code threads this form.
-  Inside boundary files that import both, alias the user form as
-  `from lcm.user_regime import Regime as UserRegime`.
+- `Regime` (from `_lcm.engine`): Canonical representation produced by `process_regimes`
+  from a user-facing `Regime`. Internal engine code threads this form. Inside boundary
+  files that import both, alias the user form as
+  `from lcm.regime import Regime as UserRegime`.
 - `StateActionSpace`: Manages state-action combinations for solution/simulation
 - `PeriodRegimeSimulationData`: Raw simulation results for one period in one regime
 
-**Value Function Representation (`src/lcm/regime_building/V.py`)**
+**Value Function Representation (`src/_lcm/regime_building/V.py`)**
 
 - `VInterpolationInfo`: Metadata for working with function outputs on state spaces
 
-**Solution (`src/lcm/solution/`)**
+**Solution (`src/_lcm/solution/`)**
 
 - `solve_brute.py`: Brute force dynamic programming solver using backward induction
 - Entry point: `model.solve()` method
 
-**Simulation (`src/lcm/simulation/`)**
+**Simulation (`src/_lcm/simulation/`)**
 
 - `simulate.py`: Forward simulation of solved models
-- `result.py`: `SimulationResult` class with deferred DataFrame computation
+- `SimulationResult` (`lcm/result.py`): result object with deferred DataFrame
+  computation
 - Entry point: Model methods (`solve()`, `simulate()`)
 
-**Grid System (`src/lcm/grids.py`)**
+**Grid System (`src/_lcm/grids/`, `src/_lcm/processes/`)**
 
 - `DiscreteGrid`: Categorical variables with string labels (pure outcome space).
 - `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points).
@@ -77,18 +78,20 @@ automation. Python 3.14+ is required.
   auto-assigned `ScalarInt` (0-d `jnp.int32`) codes. Requires explicit `ordered=True` or
   `ordered=False`. Every field must be annotated as `ScalarInt` (from `lcm.typing`) —
   other annotations raise `CategoricalDefinitionError` at decoration time.
-- **ShockGrids** (in `src/lcm/shocks/`): `Rouwenhorst`, `Tauchen`, `Normal`, `Uniform`.
-  These have intrinsic transitions — do NOT accept entries in `state_transitions`.
-  Import as modules (`import lcm.shocks.iid`) and use qualified access
-  (`lcm.shocks.iid.Uniform(...)`), never `from lcm.shocks.iid import Uniform`.
+- **Stochastic processes** (in `src/_lcm/processes/`): `UniformIIDProcess`,
+  `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`,
+  `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. These
+  bundle a discretized grid and its transition mechanism — they go in `states` and must
+  NOT appear in `state_transitions`. Import directly from `lcm`
+  (`from lcm import NormalIIDProcess`).
 
 Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the base for
 continuous grids with `get_coordinate` method. `UniformContinuousGrid(ContinuousGrid)`
 is for grids with start/stop/n_points (LinSpacedGrid, LogSpacedGrid inherit from it).
 Other continuous grids (IrregSpacedGrid, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid)
-inherit directly from ContinuousGrid. `_ShockGrid(ContinuousGrid)` is the base for
-stochastic continuous grids. `DiscreteGrid` supports stochastic transitions via
-`MarkovTransition`-wrapped callables in `state_transitions`.
+inherit directly from ContinuousGrid. `_ContinuousStochasticProcess(ContinuousGrid)` is
+the base for the stochastic process classes. `DiscreteGrid` supports stochastic
+transitions via `MarkovTransition`-wrapped callables in `state_transitions`.
 
 Grids are pure outcome-space definitions — they define what values a variable can take.
 **State transitions** live on the `Regime` via the `state_transitions` field, which maps
@@ -101,7 +104,7 @@ to transition functions for target-dependent transitions.
 1. User defines `Regime`(s) with grids, functions, states/actions
 1. User creates `Model` from a dict of regimes with `ages` and `regime_id_class`
 1. `process_regimes()` converts user-facing `Regime` instances into canonical
-   `lcm.interfaces.Regime` objects and pre-compiles optimization functions
+   `_lcm.engine.Regime` objects and pre-compiles optimization functions
 1. `model.solve()` performs backward induction using dynamic programming
 1. `model.simulate()` performs forward simulation using solved policy functions
 1. `SimulationResult.to_dataframe()` creates flat DataFrame output
@@ -177,13 +180,14 @@ Regime(
   regimes. `terminal` is a derived property (`self.transition is None`).
 - `active` is optional; defaults to `lambda _age: True` (always active)
 - `functions` must contain a `"utility"` entry (the utility function)
-- `state_transitions` maps state names to transition functions. Every non-shock state in
-  a non-terminal regime must have an entry. `None` marks a fixed state (identity
+- `state_transitions` maps state names to transition functions. Every non-process state
+  in a non-terminal regime must have an entry. `None` marks a fixed state (identity
   auto-generated). Wrap in `MarkovTransition` for stochastic transitions.
 - Per-target dicts in `state_transitions` map target regime names to transition
   functions — every reachable target must be listed. Within a per-target dict,
   stochasticity must be consistent (all `MarkovTransition` or none).
-- ShockGrids have intrinsic transitions and must NOT appear in `state_transitions`.
+- Stochastic processes have intrinsic transitions and must NOT appear in
+  `state_transitions`.
 - Terminal regimes must have empty `state_transitions`.
 - Regime names (dict keys) cannot contain the reserved separator `__`
 
@@ -299,9 +303,10 @@ initial_conditions = {
 - `model.get_params_template()` - Mutable copy of the parameter template (dict by regime
   name)
 - `model.user_regimes` - Immutable mapping of regime names to user-facing `Regime`
-  objects (`lcm.user_regime.Regime`)
-- `model.regimes` - Immutable mapping of regime names to canonical `Regime` objects
-  (`lcm.interfaces.Regime`) produced by `process_regimes`
+  objects (`lcm.regime.Regime`)
+- `model._regimes` - Immutable mapping of regime names to canonical `Regime` objects
+  (`_lcm.engine.Regime`) produced by `process_regimes`. Private — the canonical form is
+  engine-internal; user code should read `user_regimes`.
 - `model.ages` - The AgeGrid defining the lifecycle
 - `model.n_periods` - Number of periods in the model (derived from `ages`)
 - `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices
@@ -467,17 +472,19 @@ prose hides cases.
 
 ### Type System
 
-- Extensive use of typing with custom types in `src/lcm/typing.py`
+- Extensive use of typing with custom types: user-facing aliases in `src/lcm/typing.py`,
+  engine-side aliases and protocols in `src/_lcm/typing.py`
 - Type checking with ty (pixi run ty)
 - Use `# ty: ignore[error-code]` for type suppression, never `# type: ignore`
 - JAX typing integration via jaxtyping
 
 #### Domain string aliases
 
-The following PEP 695 aliases (`type X = str`) live in `src/lcm/typing.py` and exist
-purely to make signatures self-documenting. They are runtime-equivalent to `str`; ty
-erases them, so misuse never crashes — it just hides intent. Prefer the alias over bare
-`str` whenever a string slot has a fixed semantic role.
+The following PEP 695 aliases (`type X = str`) live in `src/lcm/typing.py` (re-exported
+from `src/_lcm/typing.py`, so `from _lcm.typing import RegimeName` keeps working) and
+exist purely to make signatures self-documenting. They are runtime-equivalent to `str`;
+ty erases them, so misuse never crashes — it just hides intent. Prefer the alias over
+bare `str` whenever a string slot has a fixed semantic role.
 
 | Alias                    | Use for                                                                                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -485,7 +492,7 @@ erases them, so misuse never crashes — it just hides intent. Prefer the alias 
 | `StateName`              | Names of states — entries of `state_names`, keys of `regime.states`, `states_per_regime` values.                                                        |
 | `ActionName`             | Names of actions — entries of `action_names`, keys of `regime.actions`.                                                                                 |
 | `StateOrActionName`      | Mixed flat keys covering both states and actions — `flat_grids`, `all_grids[regime]` values, `state_and_discrete_action_names`.                         |
-| `ShockName`              | Subset of `StateName` for shock grids — keys of `_ShockGrid`-typed mappings, stochastic-transition helpers.                                             |
+| `ProcessName`            | Subset of `StateName` for stochastic processes — keys of `_ContinuousStochasticProcess`-typed mappings, process-transition helpers.                     |
 | `FunctionName`           | User-supplied function names — `"utility"`, `"H"`, helpers; keys of `Regime.functions`, `derived_categoricals`.                                         |
 | `TransitionFunctionName` | Names of transition callables — `next_<state>`, `weight_next_<state>`; keys of `state_transitions` and per-target dicts.                                |
 

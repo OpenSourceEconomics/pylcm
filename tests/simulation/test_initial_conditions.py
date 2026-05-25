@@ -3,24 +3,24 @@
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, categorical
-from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidInitialConditionsError
-from lcm.params.processing import process_params
-from lcm.simulation.initial_conditions import (
+from _lcm.params.processing import process_params
+from _lcm.simulation.initial_conditions import (
     build_initial_states,
     validate_initial_conditions,
 )
+from _lcm.typing import FlatParams
+from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, categorical
+from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidInitialConditionsError
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
-    FlatParams,
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 # Regime-id codes are canonical `int32`; `validate_initial_conditions` is an
 # internal function that receives already-canonicalized initial conditions.
@@ -96,7 +96,7 @@ def test_build_initial_states_single_regime(model: Model) -> None:
         "wealth": jnp.array([10.0, 50.0]),
         "health": jnp.array([0, 1]),
     }
-    result = build_initial_states(initial_states=initial, regimes=model.regimes)
+    result = build_initial_states(initial_states=initial, regimes=model._regimes)
 
     assert "wealth" in result["active"]
     assert "health" in result["active"]
@@ -115,7 +115,7 @@ def test_validate_initial_conditions_valid_input(
             "health": jnp.array([0, 1]),
             "regime_id": jnp.array([_ACTIVE, _ACTIVE]),
         },
-        regimes=model.regimes,
+        regimes=model._regimes,
         regime_names_to_ids=model.regime_names_to_ids,
         flat_params=flat_params,
         ages=model.ages,
@@ -135,7 +135,7 @@ def test_validate_initial_conditions_missing_state(
                 "wealth": jnp.array([10.0, 50.0]),
                 "regime_id": jnp.array([_ACTIVE, _ACTIVE]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,
@@ -155,7 +155,7 @@ def test_validate_initial_conditions_extra_state(
                 "unknown": jnp.array([1.0]),
                 "regime_id": jnp.array([_ACTIVE]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,
@@ -174,7 +174,7 @@ def test_validate_initial_conditions_inconsistent_lengths(
                 "health": jnp.array([0]),
                 "regime_id": jnp.array([_ACTIVE, _ACTIVE]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,
@@ -193,7 +193,7 @@ def test_validate_initial_conditions_invalid_discrete_value(
                 "health": jnp.array([5]),
                 "regime_id": jnp.array([_ACTIVE]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,
@@ -212,7 +212,7 @@ def test_validate_initial_conditions_invalid_regime_id(
                 "health": jnp.array([0]),
                 "regime_id": jnp.array([99]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,
@@ -231,7 +231,7 @@ def test_validate_initial_conditions_invalid_age_values(
                 "health": jnp.array([0, 1]),
                 "regime_id": jnp.array([_ACTIVE, _ACTIVE]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,
@@ -427,7 +427,7 @@ def test_missing_age_error_message(model: Model, flat_params: FlatParams) -> Non
                 "health": jnp.array([0]),
                 "regime_id": jnp.array([_ACTIVE]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,
@@ -566,7 +566,7 @@ def test_subject_in_inactive_regime_at_starting_age() -> None:
                 "wealth": jnp.array([10.0]),
                 "regime_id": jnp.array([_dead]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,
@@ -587,7 +587,7 @@ def test_all_subjects_in_regime_with_fewer_states() -> None:
             "wealth": jnp.array([10.0, 50.0]),
             "regime_id": jnp.array([_dead, _dead]),
         },
-        regimes=model.regimes,
+        regimes=model._regimes,
         regime_names_to_ids=model.regime_names_to_ids,
         flat_params=flat_params,
         ages=model.ages,
@@ -613,7 +613,7 @@ def test_mixed_regimes_all_union_states_provided() -> None:
             "health": jnp.array([0, 0]),
             "regime_id": jnp.array([_alive, _dead]),
         },
-        regimes=model.regimes,
+        regimes=model._regimes,
         regime_names_to_ids=model.regime_names_to_ids,
         flat_params=flat_params,
         ages=model.ages,
@@ -634,7 +634,7 @@ def test_constraint_not_checked_for_unused_regime() -> None:
             "wealth": jnp.array([40.0]),
             "regime_id": jnp.array([_dead]),
         },
-        regimes=model.regimes,
+        regimes=model._regimes,
         regime_names_to_ids=model.regime_names_to_ids,
         flat_params=flat_params,
         ages=model.ages,
@@ -656,7 +656,7 @@ def test_constraint_checked_for_starting_regime() -> None:
                 "wealth": jnp.array([40.0]),
                 "regime_id": jnp.array([_alive]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,
@@ -682,7 +682,7 @@ def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
                 "wealth": jnp.array([40.0, 40.0]),
                 "regime_id": jnp.array([_alive, _dead]),
             },
-            regimes=model.regimes,
+            regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=flat_params,
             ages=model.ages,

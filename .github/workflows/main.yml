@@ -114,18 +114,18 @@ jobs:
       - name: Run pytest on GPU with 32-bit precision
         shell: bash {0}
         run: pixi run -e tests-cuda12 tests-32bit
-  # run-explanation-notebooks:
-  #   name: Run explanation notebooks on Python 3.14
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: prefix-dev/setup-pixi@v0.9.6
-  #       with:
-  #         pixi-version: v0.69.0
-  #         cache: true
-  #         cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-  #         environments: tests-cpu
-  #         frozen: true
-  #     - name: Run explanation notebooks
-  #       shell: bash {0}
-  #       run: pixi run -e tests-cpu explanation-notebooks
+  run-explanation-notebooks:
+    name: Run explanation notebooks on Python 3.14
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: v0.69.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: docs
+          frozen: false
+      - name: Run explanation notebooks
+        shell: bash {0}
+        run: pixi run -e docs explanation-notebooks

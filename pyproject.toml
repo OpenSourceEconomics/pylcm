@@ -66,7 +66,7 @@ Repository = "https://github.com/opensourceeconomics/pylcm"
 Tracker = "https://github.com/opensourceeconomics/pylcm/issues"
 
 [tool.hatch]
-build.hooks.vcs.version-file = "src/lcm/_version.py"
+build.hooks.vcs.version-file = "src/_lcm/version.py"
 build.targets.sdist.exclude = [ "tests" ]
 build.targets.sdist.only-packages = true
 build.targets.wheel.only-include = [ "src" ]
@@ -100,7 +100,7 @@ tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "72b621cce39ddd104bb451fde7b0f0ea7c9847e5" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "39ac270b21dbff97821ea20ea26b065f2e4d02e3" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }
@@ -230,10 +230,10 @@ per-file-ignores."explanations/*" = [
   "T201",   # print found
   "T203",   # pprint found
 ]
-per-file-ignores."src/lcm/utils/functools.py" = [
+per-file-ignores."src/_lcm/utils/functools.py" = [
   "ANN401", # Dynamically typed expressions (Any)
 ]
-per-file-ignores."src/lcm/**/*[A-Z]*.py" = [
+per-file-ignores."src/_lcm/**/*[A-Z]*.py" = [
   "N999", # Module name mixing uppercase and lowercase (Q_and_F.py, V.py, max_Q_over_a.py)
 ]
 per-file-ignores."tests/*" = [
@@ -267,7 +267,9 @@ per-file-ignores."tests/test_Q_and_F.py" = [
 ]
 pydocstyle.convention = "google"
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = [ "lcm.utils.containers.Unset", "Unset" ]
+extend-immutable-calls = [ "_lcm.utils.containers.Unset", "Unset" ]
+[tool.ruff.lint.isort]
+known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 
 [tool.pyproject-fmt]
 column_width = 88

@@ -6,6 +6,7 @@ configurable grid types for testing various grid classes.
 
 import jax.numpy as jnp
 
+from _lcm.grids import UniformContinuousGrid
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -16,13 +17,12 @@ from lcm import (
     PiecewiseLogSpacedGrid,
     categorical,
 )
-from lcm.grids import UniformContinuousGrid
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     FloatND,
     ScalarInt,
     UserParams,
 )
-from lcm.user_regime import Regime as UserRegime
 from lcm_examples.mortality import (
     LaborSupply,
     borrowing_constraint,

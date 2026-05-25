@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.processing import _merge_ordered_categories
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -15,7 +16,7 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
 )
-from lcm.regime_building.processing import _merge_ordered_categories
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -23,7 +24,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

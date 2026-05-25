@@ -1,4 +1,4 @@
-"""Tests for lcm.pandas_utils and categorical.to_categorical_dtype."""
+"""Tests for _lcm.pandas_utils and categorical.to_categorical_dtype."""
 
 import dataclasses
 
@@ -8,16 +8,16 @@ import pandas as pd
 import pytest
 from pandas.api.types import CategoricalDtype
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
-from lcm.pandas_utils import (
+from _lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     array_from_series,
     convert_series_in_params,
     initial_conditions_from_dataframe,
 )
-from lcm.params.processing import broadcast_to_template
+from _lcm.params.processing import broadcast_to_template
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
 from tests.test_models.basic_discrete import (
     Health,
 )
@@ -27,8 +27,8 @@ from tests.test_models.basic_discrete import (
 from tests.test_models.basic_discrete import (
     get_model as get_basic_model,
 )
+from tests.test_models.processes import get_model as get_process_model
 from tests.test_models.regime_markov import get_model as get_regime_markov_model
-from tests.test_models.shock_grids import get_model as get_shock_model
 from tests.test_models.stochastic import get_model as get_stochastic_model
 
 
@@ -330,9 +330,9 @@ def test_missing_state_column_raises():
         )
 
 
-def test_shock_state_columns_accepted():
-    """Shock grid columns are accepted as continuous float columns."""
-    model = get_shock_model(n_periods=4, distribution_type="uniform")
+def test_process_state_columns_accepted():
+    """Process grid columns are accepted as continuous float columns."""
+    model = get_process_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
             "regime_name": ["alive", "alive"],
@@ -352,9 +352,9 @@ def test_shock_state_columns_accepted():
     assert "regime_id" in conditions
 
 
-def test_shock_state_columns_required():
-    """DataFrame without shock columns raises (shocks are required)."""
-    model = get_shock_model(n_periods=4, distribution_type="uniform")
+def test_process_state_columns_required():
+    """DataFrame without process columns raises (process states are required)."""
+    model = get_process_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
             "regime_name": ["alive", "alive"],
@@ -590,9 +590,9 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
     assert jnp.allclose(result["wealth"], jnp.array([10.0, 20.0, 30.0]))
 
 
-def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
-    """A shock state (income) only present in one regime is NaN-filled elsewhere."""
-    import lcm.shocks.iid  # noqa: PLC0415
+def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
+    """A process state (income) only present in one regime is NaN-filled elsewhere."""
+    from lcm import UniformIIDProcess  # noqa: PLC0415
 
     @categorical(ordered=False)
     class _Rid:
@@ -613,7 +613,7 @@ def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
         transition=_next_regime,
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-            "income": lcm.shocks.iid.Uniform(n_points=5),
+            "income": UniformIIDProcess(n_points=5),
         },
         state_transitions={"wealth": None},
         functions={"utility": _earner_utility},
@@ -1706,10 +1706,10 @@ def test_convert_series_per_target_transition() -> None:
 
 def test_build_outcome_mapping_qualified_func_name() -> None:
     """`_build_outcome_mapping` should handle qualified names."""
-    from lcm.pandas_utils import _build_outcome_mapping  # noqa: PLC0415
+    from _lcm.pandas_utils import _build_outcome_mapping  # noqa: PLC0415
 
     model = get_stochastic_model(3)
-    from lcm.pandas_utils import _build_discrete_grid_lookup  # noqa: PLC0415
+    from _lcm.pandas_utils import _build_discrete_grid_lookup  # noqa: PLC0415
 
     grids = _build_discrete_grid_lookup(model.user_regimes)
     result = _build_outcome_mapping(
@@ -1846,7 +1846,7 @@ def test_convert_series_runtime_grid_param() -> None:
 
 def test_convert_series_sequence_leaf_traversal() -> None:
     """Series inside a `UserSequenceLeaf` should be converted to JAX arrays."""
-    from lcm.params.sequence_leaf import UserSequenceLeaf  # noqa: PLC0415
+    from _lcm.params.sequence_leaf import UserSequenceLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     sr = pd.Series([10.0])
@@ -1869,7 +1869,7 @@ def test_convert_series_sequence_leaf_traversal() -> None:
 
 def test_resolve_categoricals_conflict_raises() -> None:
     """Derived categoricals that conflict with model grids raise ValueError."""
-    from lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
+    from _lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
 
     model = get_stochastic_model(3)
 
@@ -1992,7 +1992,7 @@ def test_convert_series_cross_grid_transition() -> None:
 
 def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:
     """derived_categoricals are included even when regime_name is None."""
-    from lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
+    from _lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
 
     model = get_stochastic_model(3)
 

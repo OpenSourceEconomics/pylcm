@@ -5,13 +5,13 @@ import pytest
 from beartype.roar import BeartypeCallHintViolation
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.exceptions import FunctionDispatchError
-from lcm.utils.dispatchers import (
+from _lcm.utils.dispatchers import (
     productmap,
     simulation_spacemap,
     vmap_1d,
 )
-from lcm.utils.functools import allow_args
+from _lcm.utils.functools import allow_args
+from lcm.exceptions import FunctionDispatchError
 
 
 def f(a, *, b, c):

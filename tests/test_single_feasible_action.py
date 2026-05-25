@@ -24,10 +24,11 @@ points to also exercise the runtime-action-grids substitution path.
 import jax.numpy as jnp
 import pytest
 
+from _lcm.grids import IrregSpacedGrid
+from _lcm.grids.coordinates import get_irreg_coordinate
+from _lcm.regime_building.ndimage import map_coordinates
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
-from lcm.grids import IrregSpacedGrid
-from lcm.grids.coordinates import get_irreg_coordinate
-from lcm.regime_building.ndimage import map_coordinates
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -35,7 +36,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

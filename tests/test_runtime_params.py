@@ -4,10 +4,10 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.grids import IrregSpacedGrid
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
-from lcm.grids import IrregSpacedGrid
+from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

@@ -2,14 +2,14 @@ import jax
 import pytest
 from jax import numpy as jnp
 
+from _lcm.grids import categorical
+from _lcm.grids.continuous import LinSpacedGrid
+from _lcm.grids.discrete import DiscreteGrid
 from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
-from lcm.grids import categorical
-from lcm.grids.continuous import LinSpacedGrid
-from lcm.grids.discrete import DiscreteGrid
 from lcm.model import Model
+from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 # Run these tests on the CPU for parallelization, does not work if pytest runs
 # multiple workers, because jax will be initialized already
@@ -25,8 +25,7 @@ _skip_pytest_parallel = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-def correct_distributed_model():
+def _make_correct_distributed_model(*, n_subjects: int | None = None) -> Model:
     @categorical(ordered=False)
     class RegimeId:
         working_life: ScalarInt
@@ -81,7 +80,13 @@ def correct_distributed_model():
         regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
+        n_subjects=n_subjects,
     )
+
+
+@pytest.fixture
+def correct_distributed_model():
+    return _make_correct_distributed_model()
 
 
 @pytest.fixture
@@ -176,6 +181,37 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
 
     assert res._raw_results["working_life"][2].states["type1"].sharding.num_devices == 4
     assert res._raw_results["working_life"][2].states["type2"].sharding.num_devices == 4
+    assert (
+        res._raw_results["working_life"][2].states["wealth"].sharding.num_devices == 4
+    )
+
+
+@_skip_pytest_parallel
+def test_aot_compiled_simulation_running_on_multiple_cpus():
+    """AOT-compiled simulate functions run on multi-device-sharded inputs.
+
+    Setting `n_subjects` makes the first matching `simulate(...)` AOT-compile
+    every simulate function for that batch shape. With distributed grids the
+    runtime state and value-function arrays are device-sharded, so the
+    compiled programs must be lowered with shardings matching what runtime
+    dispatches rather than single-device defaults.
+    """
+    model = _make_correct_distributed_model(n_subjects=36)
+
+    res = model.simulate(
+        log_level="debug",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(36, 0),
+            "wealth": jnp.full(36, 100.0),
+            "type1": jnp.full(36, 1),
+            "type2": jnp.full(36, 1),
+            "regime_id": jnp.zeros(36, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+
     assert (
         res._raw_results["working_life"][2].states["wealth"].sharding.num_devices == 4
     )

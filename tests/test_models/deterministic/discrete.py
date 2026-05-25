@@ -13,6 +13,7 @@ import functools
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, Model, categorical
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -21,7 +22,6 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
-from lcm.user_regime import Regime as UserRegime
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     is_working,

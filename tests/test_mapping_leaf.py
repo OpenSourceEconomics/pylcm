@@ -5,6 +5,11 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from _lcm.utils.containers import (
+    ensure_containers_are_immutable,
+    ensure_containers_are_mutable,
+)
+from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.exceptions import InvalidParamsError
 from lcm.params import (
     MappingLeaf,
@@ -13,11 +18,6 @@ from lcm.params import (
     UserSequenceLeaf,
     as_leaf,
 )
-from lcm.utils.containers import (
-    ensure_containers_are_immutable,
-    ensure_containers_are_mutable,
-)
-from lcm.utils.namespace import flatten_regime_namespace
 
 
 def test_construction_from_dict():

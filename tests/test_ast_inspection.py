@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from lcm.utils.ast_inspection import _get_func_indexing_params
+from _lcm.utils.ast_inspection import _get_func_indexing_params
 
 
 def _good_multi(period: int, health: int, probs_array: Any) -> Any:

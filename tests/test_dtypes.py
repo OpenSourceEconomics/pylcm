@@ -1,10 +1,10 @@
-"""Tests for `lcm.dtypes` boundary-cast helpers."""
+"""Tests for `_lcm.dtypes` boundary-cast helpers."""
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm.dtypes import canonical_float_dtype, safe_to_float_dtype, safe_to_int_dtype
+from _lcm.dtypes import canonical_float_dtype, safe_to_float_dtype, safe_to_int_dtype
 
 # Several tests here pass `int64` / `float64` inputs to verify the
 # barrier helpers cast them correctly. Re-allow the JAX truncation

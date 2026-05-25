@@ -8,16 +8,16 @@ from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
+from _lcm.config import TEST_DATA
+from _lcm.grids import UniformContinuousGrid
 from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    Piece,
+    PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
-from lcm._config import TEST_DATA
-from lcm.grids import UniformContinuousGrid
 from lcm.typing import FloatND
 from lcm_examples import mortality as mortality_example
 from lcm_examples import precautionary_savings as ps_example
@@ -221,18 +221,22 @@ def _create_grid(
         # More points in lower part, cutoff at 100
         n_lower = n_points // 3 * 2
         return PiecewiseLinSpacedGrid(
-            pieces=(
-                Piece(interval=f"[{start}, 100)", n_points=n_lower),
-                Piece(interval=f"[100, {stop}]", n_points=n_points - n_lower + 1),
+            segments=(
+                PiecewiseGridSegment(interval=f"[{start}, 100)", n_points=n_lower),
+                PiecewiseGridSegment(
+                    interval=f"[100, {stop}]", n_points=n_points - n_lower + 1
+                ),
             )
         )
     if grid_type == "PiecewiseLogSpacedGrid":
         # Different cutoff at 50, more points in upper part
         n_upper = n_points // 3 * 2
         return PiecewiseLogSpacedGrid(
-            pieces=(
-                Piece(interval=f"[{start}, 50)", n_points=n_points - n_upper + 1),
-                Piece(interval=f"[50, {stop}]", n_points=n_upper),
+            segments=(
+                PiecewiseGridSegment(
+                    interval=f"[{start}, 50)", n_points=n_points - n_upper + 1
+                ),
+                PiecewiseGridSegment(interval=f"[50, {stop}]", n_points=n_upper),
             )
         )
     if grid_type == "IrregSpacedGrid":

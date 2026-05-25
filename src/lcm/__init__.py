@@ -28,34 +28,41 @@ import jax
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
-# Register beartype's package claw before any submodule import so every
-# `lcm.*` module loads with runtime type checks installed via
+# Register beartype's package claw on both the private implementation package
+# `_lcm` and the public `lcm` package before any of their submodules are
+# imported, so every module loads with runtime type checks installed via
 # `INTERNAL_CONF`. User-facing constructors stack an explicit
-# `@beartype(conf=...)` decorator that maps violations to the relevant
-# project exception (see `lcm._beartype_conf`).
+# `@beartype(conf=...)` decorator that maps violations to the relevant project
+# exception (see `_lcm.beartype_conf`).
+# beartype 0.22.9 ships a stray `print(f'Detecting C-based callable {func!r}
+# isomorphism...')` at `beartype._util.func.utilfunctest:1083`. It fires once
+# per imported pseudo-callable (jaxlib PjitFunction at every pylcm import),
+# polluting every pytask / test invocation. Silence it before the claw runs.
+import beartype._util.func.utilfunctest as _beartype_utilfunctest
 from beartype.claw import beartype_package
 
-from lcm._beartype_conf import INTERNAL_CONF
+from _lcm.beartype_conf import INTERNAL_CONF
 
+_beartype_utilfunctest.print = lambda *_args, **_kwargs: None  # ty: ignore[unresolved-attribute]
+
+beartype_package("_lcm", conf=INTERNAL_CONF)
 beartype_package("lcm", conf=INTERNAL_CONF)
 
-# Modules with TYPE_CHECKING-only forward references expose a
-# `_bind_forward_refs` helper; calling it here makes the claw's
-# rewritten string annotations resolve at call time.
-from lcm import shocks  # noqa: E402
-from lcm._version import __version__  # noqa: E402
+from _lcm.variables import (  # noqa: E402
+    _bind_forward_refs as _bind_variables_forward_refs,
+)
+from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    Piece,
+    PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
     categorical,
 )
-from lcm.interfaces import SolveSimulateFunctionPair  # noqa: E402
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
@@ -67,16 +74,25 @@ from lcm.persistence import (  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     _bind_forward_refs as _bind_persistence_forward_refs,
 )
-from lcm.simulation.result import SimulationResult  # noqa: E402
-from lcm.user_regime import (  # noqa: E402
+from lcm.processes import (  # noqa: E402
+    LogNormalIIDProcess,
+    NormalIIDProcess,
+    NormalMixtureIIDProcess,
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    TauchenNormalMixtureAR1Process,
+    UniformIIDProcess,
+)
+from lcm.regime import (  # noqa: E402
     MarkovTransition,
     Regime,
+    SolveSimulateFunctionPair,
 )
-from lcm.utils.containers import invert_regime_ids  # noqa: E402
-from lcm.variables import (  # noqa: E402
-    _bind_forward_refs as _bind_variables_forward_refs,
-)
+from lcm.result import SimulationResult  # noqa: E402
 
+# Modules with TYPE_CHECKING-only forward references expose a
+# `_bind_forward_refs` helper; calling it here makes the claw's
+# rewritten string annotations resolve at call time.
 _bind_variables_forward_refs(regime_cls=Regime)
 _bind_persistence_forward_refs(model_cls=Model, simulation_result_cls=SimulationResult)
 del _bind_persistence_forward_refs, _bind_variables_forward_refs
@@ -94,22 +110,27 @@ __all__ = [
     "DiscreteGrid",
     "IrregSpacedGrid",
     "LinSpacedGrid",
+    "LogNormalIIDProcess",
     "LogSpacedGrid",
     "MarkovTransition",
     "Model",
-    "Piece",
+    "NormalIIDProcess",
+    "NormalMixtureIIDProcess",
+    "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "Regime",
+    "RouwenhorstAR1Process",
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSimulateFunctionPair",
     "SolveSnapshot",
+    "TauchenAR1Process",
+    "TauchenNormalMixtureAR1Process",
+    "UniformIIDProcess",
     "__version__",
     "categorical",
-    "invert_regime_ids",
     "load_snapshot",
     "load_solution",
     "save_solution",
-    "shocks",
 ]

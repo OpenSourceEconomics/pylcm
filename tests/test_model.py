@@ -10,6 +10,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -18,7 +19,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 
 def test_regime_invalid_states():
@@ -242,7 +242,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
-    assert model.regimes is not None
+    assert model._regimes is not None
 
 
 def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):

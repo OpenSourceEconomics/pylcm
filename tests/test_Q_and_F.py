@@ -6,21 +6,23 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
 
-from lcm import AgeGrid
-from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
-from lcm.model import Model
-from lcm.params.processing import (
+from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
+from _lcm.params.processing import (
     create_params_template,
     get_flat_param_names,
     process_params,
 )
-from lcm.regime_building import process_regimes
-from lcm.regime_building.Q_and_F import (
+from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
     get_Q_and_F_terminal,
 )
+from lcm import AgeGrid
+from lcm.model import Model
+from lcm.regime import MarkovTransition
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -30,8 +32,6 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from lcm.user_regime import MarkovTransition
-from lcm.user_regime import Regime as UserRegime
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,

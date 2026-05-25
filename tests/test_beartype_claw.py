@@ -24,24 +24,24 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
+from _lcm.engine import _build_regime_sharding
+from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
+from _lcm.simulation.simulate import _compute_starting_periods
+from _lcm.solution.solve_brute import _log_per_period_stats
+from _lcm.state_action_space import _validate_all_states_present
+from _lcm.transition_checks import _validate_regime_transition_probs
 from lcm import AgeGrid, LinSpacedGrid, Model
-from lcm._transition_checks import _validate_regime_transition_probs
 from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.interfaces import _build_regime_sharding
-from lcm.model import _contains_nan
-from lcm.simulation.simulate import _compute_starting_periods
-from lcm.solution.solve_brute import _log_per_period_stats
-from lcm.state_action_space import _validate_all_states_present
-from lcm.user_regime import Regime as UserRegime
-from lcm.user_regime import _default_H
+from lcm.regime import Regime as UserRegime
+from lcm.regime import _default_H
 
 
 def test_claw_checks_lcm_simulation() -> None:
-    """Type-violating arguments to internal `lcm.simulation` helpers raise."""
+    """Type-violating arguments to internal `_lcm.simulation` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _compute_starting_periods(
             initial_ages=np.array([25.0]),  # ty: ignore[invalid-argument-type]
@@ -50,7 +50,7 @@ def test_claw_checks_lcm_simulation() -> None:
 
 
 def test_claw_checks_lcm_solution() -> None:
-    """Type-violating arguments to internal `lcm.solution` helpers raise."""
+    """Type-violating arguments to internal `_lcm.solution` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _log_per_period_stats(
             logger="not a logger",  # ty: ignore[invalid-argument-type]
@@ -62,7 +62,7 @@ def test_claw_checks_lcm_solution() -> None:
 
 
 def test_claw_checks_lcm_transition_checks() -> None:
-    """Type-violating arguments to `lcm._transition_checks` helpers raise."""
+    """Type-violating arguments to `_lcm.transition_checks` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _validate_regime_transition_probs(
             regime_transition_probs={"working": jnp.array([1.0])},  # ty: ignore[invalid-argument-type]
@@ -74,7 +74,7 @@ def test_claw_checks_lcm_transition_checks() -> None:
 
 
 def test_claw_checks_lcm_state_action_space() -> None:
-    """Type-violating arguments to `lcm.state_action_space` helpers raise."""
+    """Type-violating arguments to `_lcm.state_action_space` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _validate_all_states_present(
             provided_states="",  # ty: ignore[invalid-argument-type]
@@ -82,8 +82,8 @@ def test_claw_checks_lcm_state_action_space() -> None:
         )
 
 
-def test_claw_checks_lcm_interfaces() -> None:
-    """Type-violating arguments to `lcm.interfaces` helpers raise."""
+def test_claw_checks_lcm_engine() -> None:
+    """Type-violating arguments to `_lcm.engine` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
         _build_regime_sharding(
             grids=MappingProxyType({}),
@@ -101,6 +101,44 @@ def test_claw_checks_lcm_regime() -> None:
         )
 
 
+def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:
+    """A `with_signature` wrapper over a function with named parameters stays
+    callable under the package claw.
+
+    `get_argmax_and_max_Q_over_a` returns a `dags.with_signature` wrapper
+    around a function whose parameters — `next_regime_to_V_arr` plus the
+    `**states_actions_params` it expands — are named explicitly rather than
+    being a bare `*args, **kwargs` forwarder. The claw decorates that
+    wrapper. The wrapper advertises a permissive forwarder via its
+    `__annotations__`, so the claw must enforce nothing against the
+    synthetic, annotation-free `__signature__`; otherwise every call fails
+    because each parameter is checked against the `inspect.Parameter.empty`
+    sentinel.
+    """
+
+    def Q_and_F(
+        next_regime_to_V_arr: MappingProxyType[str, jnp.ndarray],  # noqa: ARG001
+        action: jnp.ndarray,
+        state: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        return action, action >= state
+
+    argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
+        Q_and_F=Q_and_F,
+        action_names=("action",),
+        state_names=("state",),
+    )
+
+    argmax, maximum = argmax_and_max_Q_over_a(
+        next_regime_to_V_arr=MappingProxyType({"working": jnp.arange(3.0)}),
+        action=jnp.array([0.0, 1.0, 2.0]),
+        state=jnp.array(0.0),
+    )
+
+    assert int(argmax) == 2
+    assert float(maximum) == 2.0
+
+
 def test_regime_with_bad_arg_raises_project_exception() -> None:
     """A bad `Regime` argument surfaces as `RegimeInitializationError`."""
     with pytest.raises(RegimeInitializationError):
@@ -109,12 +147,6 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
             states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
             functions="not a mapping",  # ty: ignore[invalid-argument-type]
         )
-
-
-def test_claw_checks_lcm_model() -> None:
-    """Type-violating arguments to internal `lcm.model` helpers raise."""
-    with pytest.raises(BeartypeCallHintViolation):
-        _contains_nan(123)  # ty: ignore[invalid-argument-type]
 
 
 def test_model_with_bad_arg_raises_project_exception() -> None:

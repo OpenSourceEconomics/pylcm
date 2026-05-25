@@ -1,0 +1,319 @@
+from abc import abstractmethod
+from dataclasses import dataclass, fields
+from math import comb
+from types import MappingProxyType
+
+import jax
+import jax.numpy as jnp
+from beartype import beartype
+from jax.scipy.stats.norm import cdf
+
+from _lcm.beartype_conf import GRID_CONF
+from _lcm.processes.base import (
+    _ContinuousStochasticProcess,
+    _gauss_hermite_normal,
+    _mixture_cdf,
+    _validate_gauss_hermite_grid,
+)
+from _lcm.typing import PRNGKeyND
+from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
+
+
+@dataclass(frozen=True, kw_only=True)
+class _AR1Process(_ContinuousStochasticProcess):
+    """Base for AR(1) processes — draw depends on previous value."""
+
+    @abstractmethod
+    def draw_shock(
+        self,
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+        current_value: ScalarFloat,
+    ) -> ScalarFloat: ...
+
+
+@beartype(conf=GRID_CONF)
+@dataclass(frozen=True, kw_only=True)
+class TauchenAR1Process(_AR1Process):
+    r"""AR(1) process discretized via Tauchen (1986).
+
+    The process is
+    $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
+    where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
+
+    When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
+    with CDF-based transition probabilities computed at midpoints between nodes.
+
+    When `gauss_hermite=False`, it uses equally spaced points spanning
+    $\pm n_\text{std}$ unconditional standard deviations, following
+    [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
+
+    """
+
+    gauss_hermite: bool
+    """Use Gauss-Hermite quadrature nodes and weights."""
+
+    rho: float | int | None = None
+    """Persistence parameter of the AR(1) process."""
+
+    sigma: float | int | None = None
+    """Standard deviation of the innovation."""
+
+    mu: float | int | None = None
+    """Intercept (drift) of the AR(1) process."""
+
+    n_std: float | int | None = None
+    """Number of standard deviations for the grid boundary."""
+
+    def __post_init__(self) -> None:
+        _validate_gauss_hermite_grid(
+            n_points=self.n_points,
+            gauss_hermite=self.gauss_hermite,
+            n_std=self.n_std,
+        )
+
+    @property
+    def _param_field_names(self) -> tuple[str, ...]:
+        exclude = self._NON_PARAM_FIELDS | {"gauss_hermite"}
+        if self.gauss_hermite:
+            exclude = exclude | {"n_std"}
+        return tuple(f.name for f in fields(self) if f.name not in exclude)
+
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+        n_points = self.n_points
+        rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
+        std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
+        if self.gauss_hermite:
+            return _gauss_hermite_normal(
+                n_points=n_points, mu=mu / (1 - rho), sigma=std_y
+            )[0]
+        n_std = kwargs["n_std"]
+        x_max = n_std * std_y
+        x = jnp.linspace(-x_max, x_max, n_points)
+        return x + mu / (1 - rho)
+
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+        n_points = self.n_points
+        rho, sigma = kwargs["rho"], kwargs["sigma"]
+        std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
+
+        if self.gauss_hermite:
+            nodes, _weights = _gauss_hermite_normal(
+                n_points=n_points, mu=jnp.asarray(0.0), sigma=std_y
+            )
+        else:
+            n_std = kwargs["n_std"]
+            x_max = n_std * std_y
+            nodes = jnp.linspace(-x_max, x_max, n_points)
+
+        # Midpoints between consecutive nodes: (n_points - 1,)
+        midpoints = (nodes[:-1] + nodes[1:]) / 2
+
+        # CDF at midpoints for each source state: (n_points, n_points - 1)
+        # Denominator is sigma (innovation std), not std_y (unconditional std),
+        # because the conditional distribution y'|y has variance sigma^2.
+        cdf_vals = cdf((midpoints[None, :] - rho * nodes[:, None]) / sigma)
+        first_col = cdf_vals[:, :1]
+        last_col = 1 - cdf_vals[:, -1:]
+        return jnp.concatenate(
+            [first_col, jnp.diff(cdf_vals, axis=1), last_col], axis=1
+        )
+
+    def draw_shock(
+        self,
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+        current_value: ScalarFloat,
+    ) -> ScalarFloat:
+        return (
+            params["mu"]
+            + params["rho"] * current_value
+            + params["sigma"] * jax.random.normal(key=key)
+        )
+
+
+@beartype(conf=GRID_CONF)
+@dataclass(frozen=True, kw_only=True)
+class RouwenhorstAR1Process(_AR1Process):
+    r"""AR(1) process discretized via Rouwenhorst (1995).
+
+    The process is
+    $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
+    where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
+
+    Implementation based on [Kopecky & Suen (2010)](https://doi.org/10.1016/j.red.2010.02.002).
+
+    """
+
+    rho: float | int | None = None
+    """Persistence parameter of the AR(1) process."""
+
+    sigma: float | int | None = None
+    """Standard deviation of the innovation."""
+
+    mu: float | int | None = None
+    """Intercept (drift) of the AR(1) process."""
+
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+        n_points = self.n_points
+        rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
+        nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma
+        long_run_mean = mu / (1.0 - rho)
+        return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)
+
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+        n_points = self.n_points
+        rho = kwargs["rho"]
+        q = (rho + 1) / 2
+
+        # Binomial coefficient lookup table
+        C = jnp.array(
+            [[comb(nr, k) for k in range(n_points)] for nr in range(n_points)]
+        )
+
+        i = jnp.arange(n_points)[:, None, None]
+        j = jnp.arange(n_points)[None, :, None]
+        k = jnp.arange(n_points)[None, None, :]
+
+        # P[i,j] = sum_k C(i,k) C(n-1-i,j-k) q^(n-1-i-j+2k) (1-q)^(i+j-2k)
+        valid = (k >= jnp.maximum(0, i + j - n_points + 1)) & (k <= jnp.minimum(i, j))
+        k_s = jnp.where(valid, k, 0)
+        jmk = jnp.where(valid, j - k, 0)
+
+        terms = (
+            C[i, k_s]
+            * C[n_points - 1 - i, jmk]
+            * q ** (n_points - 1 - i - j + 2 * k_s)
+            * (1 - q) ** (i + j - 2 * k_s)
+        )
+        return jnp.where(valid, terms, 0.0).sum(axis=-1)
+
+    def draw_shock(
+        self,
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+        current_value: ScalarFloat,
+    ) -> ScalarFloat:
+        return (
+            params["mu"]
+            + params["rho"] * current_value
+            + params["sigma"] * jax.random.normal(key=key)
+        )
+
+
+@beartype(conf=GRID_CONF)
+@dataclass(frozen=True, kw_only=True)
+class TauchenNormalMixtureAR1Process(_AR1Process):
+    r"""AR(1) process with mixture-of-normals innovations, discretized via Tauchen.
+
+    The process is
+    $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
+    where $\varepsilon_t \sim p_1 \, N(\mu_1, \sigma_1^2)
+    + (1 - p_1) \, N(\mu_2, \sigma_2^2)$.
+
+    Transition probabilities use the mixture CDF in place of the normal CDF,
+    following [Fella, Gallipoli & Pan (2019)](https://doi.org/10.1016/j.red.2019.03.013),
+    Section 4.3 / Eq. 21.
+
+    """
+
+    rho: float | int | None = None
+    """Persistence parameter of the AR(1) process."""
+
+    mu: float | int | None = None
+    """Intercept (drift) of the AR(1) process."""
+
+    n_std: float | int | None = None
+    """Number of unconditional standard deviations for the grid boundary."""
+
+    p1: float | int | None = None
+    """Probability of the first mixture component."""
+
+    mu1: float | int | None = None
+    """Mean of the first mixture component."""
+
+    sigma1: float | int | None = None
+    """Standard deviation of the first mixture component."""
+
+    mu2: float | int | None = None
+    """Mean of the second mixture component."""
+
+    sigma2: float | int | None = None
+    """Standard deviation of the second mixture component."""
+
+    @staticmethod
+    def _innovation_variance(
+        *,
+        p1: ScalarFloat,
+        mu1: ScalarFloat,
+        sigma1: ScalarFloat,
+        mu2: ScalarFloat,
+        sigma2: ScalarFloat,
+    ) -> ScalarFloat:
+        """Compute the variance of the mixture innovation."""
+        mean_eps = p1 * mu1 + (1 - p1) * mu2
+        return p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean_eps**2
+
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+        n_points = self.n_points
+        rho, mu = kwargs["rho"], kwargs["mu"]
+        n_std = kwargs["n_std"]
+        p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
+        mu2, sigma2 = kwargs["mu2"], kwargs["sigma2"]
+
+        sigma_eps_sq = self._innovation_variance(
+            p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
+        std_y = jnp.sqrt(sigma_eps_sq / (1 - rho**2))
+        mean_eps = p1 * mu1 + (1 - p1) * mu2
+        long_run_mean = (mu + mean_eps) / (1 - rho)
+        x_max = n_std * std_y
+        return jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n_points)
+
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+        n_points = self.n_points
+        rho, mu = kwargs["rho"], kwargs["mu"]
+        n_std = kwargs["n_std"]
+        p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
+        mu2, sigma2 = kwargs["mu2"], kwargs["sigma2"]
+
+        sigma_eps_sq = self._innovation_variance(
+            p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
+        std_y = jnp.sqrt(sigma_eps_sq / (1 - rho**2))
+        mean_eps = p1 * mu1 + (1 - p1) * mu2
+        long_run_mean = (mu + mean_eps) / (1 - rho)
+        x_max = n_std * std_y
+        x = jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n_points)
+        step = (2 * x_max) / (n_points - 1)
+        half_step = 0.5 * step
+
+        # z[i, j] = x[j] - mu - rho * x[i]: the innovation needed to reach x[j]
+        # from x[i], shifted by -mu to center on the innovation distribution.
+        z = x[None, :] - mu - rho * x[:, None]
+
+        upper = _mixture_cdf(
+            x=z + half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
+        lower = _mixture_cdf(
+            x=z - half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
+        P = upper - lower
+        P = P.at[:, 0].set(upper[:, 0])
+        return P.at[:, -1].set(1 - lower[:, -1])
+
+    def draw_shock(
+        self,
+        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        key: PRNGKeyND,
+        current_value: ScalarFloat,
+    ) -> ScalarFloat:
+        key1, key2 = jax.random.split(key)
+        component = jax.random.bernoulli(key1, params["p1"])
+        normal = jax.random.normal(key2)
+        eps = jnp.where(
+            component,
+            params["mu1"] + params["sigma1"] * normal,
+            params["mu2"] + params["sigma2"] * normal,
+        )
+        return params["mu"] + params["rho"] * current_value + eps

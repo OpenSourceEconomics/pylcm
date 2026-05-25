@@ -7,17 +7,17 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm.dtypes import canonical_float_dtype
-from lcm.grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
-from lcm.params import MappingLeaf
-from lcm.params.processing import process_params
-from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.simulation.initial_conditions import (
+from _lcm.dtypes import canonical_float_dtype
+from _lcm.grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
+from _lcm.params.processing import process_params
+from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.simulation.initial_conditions import (
     build_initial_states,
     canonicalize_initial_conditions,
 )
-from lcm.typing import ParamsTemplate
-from lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.typing import ParamsTemplate
+from _lcm.utils.containers import ensure_containers_are_immutable
+from lcm.params import MappingLeaf
 from tests.test_models.deterministic.regression import (
     RegimeId,
     get_model,
@@ -55,7 +55,7 @@ def test_canonicalize_initial_conditions_casts_user_float64_to_canonical(
     }
     canonical = canonicalize_initial_conditions(
         initial_conditions=initial_conditions,
-        regimes=model.regimes,
+        regimes=model._regimes,
     )
     assert canonical["wealth"].dtype == canonical_float_dtype()
 
@@ -69,7 +69,7 @@ def test_build_initial_states_casts_user_int_to_canonical(x64_disabled: None):
     }
     states_per_regime = build_initial_states(
         initial_states=initial_states,
-        regimes=model.regimes,
+        regimes=model._regimes,
     )
     assert states_per_regime["working_life"]["wealth"].dtype == canonical_float_dtype()
 
@@ -82,7 +82,7 @@ def test_build_initial_states_missing_continuous_fallback_dtype_is_canonical(
     # Supply a placeholder state to set n_subjects without touching `wealth`.
     states_per_regime = build_initial_states(
         initial_states={"placeholder": jnp.asarray([0.0, 0.0])},
-        regimes=model.regimes,
+        regimes=model._regimes,
     )
     assert states_per_regime["working_life"]["wealth"].dtype == canonical_float_dtype()
 
@@ -98,7 +98,7 @@ def test_build_initial_states_missing_continuous_fallback_values_are_nan(
     model = get_model(n_periods=3)
     states_per_regime = build_initial_states(
         initial_states={"placeholder": jnp.asarray([0.0, 0.0])},
-        regimes=model.regimes,
+        regimes=model._regimes,
     )
     assert bool(jnp.all(jnp.isnan(states_per_regime["working_life"]["wealth"])))
 

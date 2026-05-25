@@ -1,12 +1,11 @@
 from types import MappingProxyType
 from typing import Literal, cast
 
-from lcm.grids import Grid
-from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.regime_building.transitions import collect_state_transitions
+from _lcm.grids import Grid
+from _lcm.regime_building.transitions import collect_state_transitions
+from lcm.regime import Regime as UserRegime
+from lcm.regime import SolveSimulateFunctionPair, _default_H
 from lcm.typing import UserFunction
-from lcm.user_regime import Regime as UserRegime
-from lcm.user_regime import _default_H
 
 
 class MockRegime(UserRegime):

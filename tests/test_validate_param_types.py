@@ -10,10 +10,10 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from _lcm.dtypes import canonical_float_dtype
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
-from lcm.dtypes import canonical_float_dtype
+from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=True)

@@ -22,8 +22,8 @@ import pytest
 from numpy.testing import assert_allclose
 
 from lcm import AgeGrid, LinSpacedGrid, Model, SolveSimulateFunctionPair, categorical
+from lcm.regime import Regime as UserRegime
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

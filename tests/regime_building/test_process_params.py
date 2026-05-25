@@ -5,14 +5,14 @@ from typing import cast
 
 import pytest
 
-from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.interfaces import Regime
-from lcm.params.processing import (
+from _lcm.engine import Regime
+from _lcm.params.processing import (
     create_params_template,
     process_params,
 )
-from lcm.typing import ParamsTemplate
-from lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.typing import ParamsTemplate
+from _lcm.utils.containers import ensure_containers_are_immutable
+from lcm.exceptions import InvalidNameError, InvalidParamsError
 
 
 def _as_template(plain: dict) -> ParamsTemplate:
@@ -325,8 +325,8 @@ def test_passing_same_params_to_regimes_with_different_templates():
         process_params(params=params, params_template=params_template)
 
 
-def test_shock_params_via_regular_params():
-    """Test that ShockGrid params can be passed via regular params.
+def test_process_params_via_regular_params():
+    """Test that stochastic-process params can be passed via regular params.
 
     ShockGrid discretization parameters now appear in the params_template under the
     state name (e.g., "adjustment_cost"), so users can pass them via regular params.

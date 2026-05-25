@@ -6,8 +6,9 @@ from types import MappingProxyType
 
 import pytest
 
-from lcm.grids import DiscreteGrid, LinSpacedGrid, LogSpacedGrid
-from lcm.variables import VariableInfo, Variables
+from _lcm.engine import VariableInfo, Variables
+from _lcm.grids import DiscreteGrid, LinSpacedGrid, LogSpacedGrid
+from _lcm.variables import from_regime
 from tests.mock_regime import MockRegime
 
 
@@ -17,18 +18,20 @@ def _variables() -> Variables:
     return Variables(
         info=MappingProxyType(
             {
-                "edu": VariableInfo(kind="state", topology="discrete", is_shock=False),
+                "edu": VariableInfo(
+                    kind="state", topology="discrete", is_process=False
+                ),
                 "wealth": VariableInfo(
-                    kind="state", topology="continuous", is_shock=False
+                    kind="state", topology="continuous", is_process=False
                 ),
                 "wage_shock": VariableInfo(
-                    kind="state", topology="discrete", is_shock=True
+                    kind="state", topology="discrete", is_process=True
                 ),
                 "labor_supply": VariableInfo(
-                    kind="action", topology="discrete", is_shock=False
+                    kind="action", topology="discrete", is_process=False
                 ),
                 "consumption": VariableInfo(
-                    kind="action", topology="continuous", is_shock=False
+                    kind="action", topology="continuous", is_process=False
                 ),
             }
         )
@@ -85,15 +88,15 @@ def test_state_and_discrete_action_names_is_gridded_set(
     )
 
 
-def test_shock_names_filters_is_shock(variables: Variables) -> None:
-    """`shock_names` is every variable with `is_shock=True`."""
-    assert variables.shock_names == ("wage_shock",)
+def test_process_names_filters_is_process(variables: Variables) -> None:
+    """`process_names` is every variable with `is_process=True`."""
+    assert variables.process_names == ("wage_shock",)
 
 
 def test_getitem_returns_variable_info(variables: Variables) -> None:
     """`vars[name]` returns the underlying `VariableInfo` record."""
     assert variables["wealth"] == VariableInfo(
-        kind="state", topology="continuous", is_shock=False
+        kind="state", topology="continuous", is_process=False
     )
 
 
@@ -128,7 +131,7 @@ def test_items_yields_name_info_pairs(variables: Variables) -> None:
     items = list(variables.items())
     assert items[0] == (
         "edu",
-        VariableInfo(kind="state", topology="discrete", is_shock=False),
+        VariableInfo(kind="state", topology="discrete", is_process=False),
     )
 
 
@@ -143,7 +146,7 @@ def test_frozen_dataclass_rejects_field_assignment(
 def test_from_regime_orders_discrete_states_continuous_states_actions(
     binary_category_class,
 ) -> None:
-    """`Variables.from_regime` orders discrete states → continuous states → actions."""
+    """`from_regime` orders discrete states → continuous states → actions."""
 
     def next_state(x):
         return x
@@ -162,7 +165,7 @@ def test_from_regime_orders_discrete_states_continuous_states_actions(
         },
         functions={"utility": lambda c_action: 0},  # noqa: ARG005
     )
-    variables = Variables.from_regime(regime)
+    variables = from_regime(regime)
     assert list(variables) == ["a_discrete", "b_continuous", "c_action"]
 
 
@@ -188,7 +191,7 @@ def test_from_regime_within_states_orders_by_batch_size(
         actions={"a": DiscreteGrid(binary_category_class)},
         functions={"utility": lambda a: 0},  # noqa: ARG005
     )
-    variables = Variables.from_regime(regime)
+    variables = from_regime(regime)
     assert variables.discrete_state_names == ("first", "second", "third")
 
 
@@ -220,5 +223,5 @@ def test_from_regime_distributed_states_sort_outermost_within_topology_group(
         actions={"a": DiscreteGrid(binary_category_class)},
         functions={"utility": lambda a: 0},  # noqa: ARG005
     )
-    variables = Variables.from_regime(regime)
+    variables = from_regime(regime)
     assert variables.continuous_state_names == ("assets", "aime", "wage_res")

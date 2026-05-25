@@ -3,19 +3,21 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
+from beartype import beartype
 from numpy.testing import assert_array_equal
 
-from lcm import categorical
-from lcm.ages import AgeGrid
-from lcm.grids import DiscreteGrid, LinSpacedGrid
-from lcm.interfaces import Regime
-from lcm.regime_building.processing import (
+from _lcm.engine import Regime, VariableInfo, Variables
+from _lcm.grids import DiscreteGrid, LinSpacedGrid
+from _lcm.regime_building.processing import (
     _rename_params_to_qnames,
+    _wrap_regime_transition_probs,
     process_regimes,
 )
-from lcm.typing import ScalarInt
-from lcm.user_regime import Regime as UserRegime
-from lcm.variables import VariableInfo, Variables, get_grids
+from _lcm.variables import from_regime, get_grids
+from lcm import categorical
+from lcm.ages import AgeGrid
+from lcm.regime import Regime as UserRegime
+from lcm.typing import FloatND, ScalarInt
 from tests.mock_regime import MockRegime
 from tests.test_models.deterministic.base import dead, working_life
 
@@ -38,12 +40,14 @@ def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
         functions={"utility": utility},
     )
 
-    got = Variables.from_regime(mock_regime)
+    got = from_regime(mock_regime)
 
     assert isinstance(got, Variables)
     assert set(got) == {"a", "c"}
-    assert got["a"] == VariableInfo(kind="action", topology="discrete", is_shock=False)
-    assert got["c"] == VariableInfo(kind="state", topology="discrete", is_shock=False)
+    assert got["a"] == VariableInfo(
+        kind="action", topology="discrete", is_process=False
+    )
+    assert got["c"] == VariableInfo(kind="state", topology="discrete", is_process=False)
 
 
 def test_get_grids(binary_category_class):
@@ -117,13 +121,13 @@ def test_process_regimes():
     # Variable Info
     variables = working_regime.variables
     assert variables["wealth"] == VariableInfo(
-        kind="state", topology="continuous", is_shock=False
+        kind="state", topology="continuous", is_process=False
     )
     assert variables["labor_supply"] == VariableInfo(
-        kind="action", topology="discrete", is_shock=False
+        kind="action", topology="discrete", is_process=False
     )
     assert variables["consumption"] == VariableInfo(
-        kind="action", topology="continuous", is_shock=False
+        kind="action", topology="continuous", is_process=False
     )
 
     # Grids — compare the grid objects (which now include transition attributes)
@@ -166,7 +170,7 @@ def test_variables_excludes_constraint_names():
         | {"wealth_constraint": wealth_constraint}
     )
 
-    got = Variables.from_regime(working_copy)
+    got = from_regime(working_copy)
     assert "wealth_constraint" not in got
 
 
@@ -247,3 +251,29 @@ def test_rename_params_to_qnames_with_partial():
     # 2. The qualified name must be usable to override the default. This fails if
     #    _rename_params_to_qnames is a no-op (no renaming happened).
     assert result(consumption=5.0, utility__risk_aversion=3.0) == 5.0 ** (1 - 3.0)
+
+
+def test_wrap_regime_transition_probs_return_annotation_accepts_mapping():
+    """The regime-transition-probs wrapper returns a regime-name → probability
+    mapping, so its return annotation describes that mapping.
+
+    The wrapper turns a `next_regime` function's probability array into a
+    `MappingProxyType` keyed by regime name. Its return annotation must match
+    that mapping rather than the array type carried by `next_regime`, so a
+    beartype check on the wrapper accepts the value it genuinely returns.
+    """
+
+    def next_regime() -> FloatND:
+        return jnp.array([0.3, 0.7])
+
+    regime_names_to_ids = MappingProxyType(
+        {"working": jnp.int32(0), "retired": jnp.int32(1)}
+    )
+    wrapped = _wrap_regime_transition_probs(
+        func=next_regime,  # ty: ignore[invalid-argument-type]
+        regime_names_to_ids=regime_names_to_ids,
+    )
+
+    result = beartype(wrapped)()
+
+    assert set(result) == {"working", "retired"}

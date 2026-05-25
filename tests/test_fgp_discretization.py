@@ -16,8 +16,12 @@ import pytest
 from jax.scipy.stats.norm import cdf as jax_cdf
 from numpy.testing import assert_array_almost_equal as aaae
 
-import lcm
-from lcm.shocks._base import _mixture_cdf
+from _lcm.processes.base import _mixture_cdf
+from lcm import (
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    TauchenNormalMixtureAR1Process,
+)
 from tests.conftest import DECIMAL_PRECISION
 
 SIGMA_EPS_SQ = 0.0161
@@ -39,7 +43,7 @@ FGP_SIGMA2 = 0.3430
 def test_tauchen_grid_span_matches_fgp(rho, n_points):
     """Tauchen grid span matches FGP Eq. 5: +/- n_std * sigma_eps / sqrt(1 - rho^2)."""
     n_std = 3.0
-    grid = lcm.shocks.ar1.Tauchen(
+    grid = TauchenAR1Process(
         n_points=n_points,
         gauss_hermite=False,
         rho=rho,
@@ -62,9 +66,7 @@ def test_tauchen_grid_span_matches_fgp(rho, n_points):
 )
 def test_rouwenhorst_grid_span_matches_fgp(rho, n_points):
     """Rouwenhorst grid span matches FGP Eq. 13."""
-    grid = lcm.shocks.ar1.Rouwenhorst(
-        n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0
-    )
+    grid = RouwenhorstAR1Process(n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0)
     points = grid.get_gridpoints()
 
     expected_std_y = SIGMA_EPS / np.sqrt(1 - rho**2)
@@ -122,9 +124,7 @@ def test_transition_probs_nonnegative(method, rho, n_points):
 )
 def test_rouwenhorst_conditional_mean(rho, n_points):
     """Rouwenhorst conditional mean from state i equals rho * y_i (FGP Eq. 9)."""
-    grid = lcm.shocks.ar1.Rouwenhorst(
-        n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0
-    )
+    grid = RouwenhorstAR1Process(n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0)
     points = grid.get_gridpoints()
     P = grid.get_transition_probs()
 
@@ -141,9 +141,7 @@ def test_rouwenhorst_conditional_mean(rho, n_points):
 )
 def test_rouwenhorst_conditional_variance(rho, n_points):
     """Rouwenhorst conditional variance from state i equals sigma_eps^2 (FGP Eq. 11)."""
-    grid = lcm.shocks.ar1.Rouwenhorst(
-        n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0
-    )
+    grid = RouwenhorstAR1Process(n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0)
     points = grid.get_gridpoints()
     P = grid.get_transition_probs()
 
@@ -235,7 +233,7 @@ def test_rouwenhorst_more_accurate_than_tauchen(rho, n_points):
 
 def _make_fgp_mixture_grid(n_points=5, rho=0.95, n_std=3.0):
     """Create a TauchenNormalMixture grid with FGP parameters."""
-    return lcm.shocks.ar1.TauchenNormalMixture(
+    return TauchenNormalMixtureAR1Process(
         n_points=n_points,
         rho=rho,
         mu=0.0,
@@ -359,7 +357,7 @@ def test_mixture_stationary_moments():
 
 def test_mixture_without_params_returns_nan():
     """TauchenNormalMixture without params returns NaN arrays of correct shape."""
-    grid = lcm.shocks.ar1.TauchenNormalMixture(n_points=5)
+    grid = TauchenNormalMixtureAR1Process(n_points=5)
     assert not grid.is_fully_specified
     assert grid.get_gridpoints().shape == (5,)
     assert grid.get_transition_probs().shape == (5, 5)
@@ -377,7 +375,7 @@ def test_mixture_fully_specified_with_all_params():
 def _make_grid(method, rho, n_points):
     """Create a Tauchen or Rouwenhorst grid with FGP parameters."""
     if method == "tauchen":
-        return lcm.shocks.ar1.Tauchen(
+        return TauchenAR1Process(
             n_points=n_points,
             gauss_hermite=False,
             rho=rho,
@@ -385,6 +383,4 @@ def _make_grid(method, rho, n_points):
             mu=0.0,
             n_std=3.0,
         )
-    return lcm.shocks.ar1.Rouwenhorst(
-        n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0
-    )
+    return RouwenhorstAR1Process(n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0)

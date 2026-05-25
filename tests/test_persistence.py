@@ -6,6 +6,9 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
+from _lcm import variables as _variables
+from _lcm.persistence import snapshots as _snapshot_module
+from _lcm.persistence.io import _get_platform
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -15,24 +18,22 @@ from lcm import (
     categorical,
     load_snapshot,
 )
-from lcm import persistence as _persistence
-from lcm import variables as _variables
-from lcm.persistence import _get_platform, load_solution, save_solution
-from lcm.simulation.result import SimulationResult as _PublicSimulationResult
+from lcm.persistence import load_solution, save_solution
+from lcm.regime import Regime as UserRegime
+from lcm.result import SimulationResult as _PublicSimulationResult
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from lcm.user_regime import Regime as UserRegime
 
 
 def test_forward_refs_bound_after_import() -> None:
-    """`Model` and `SimulationResult` are present in `lcm.persistence`'s globals.
+    """`Model` and `SimulationResult` are bound in `_lcm.persistence.snapshots`.
 
-    The package claw rewrites their string annotations on `save_simulate_snapshot`
-    into runtime forward references resolved against this module's globals at
+    The package claw rewrites their string annotations on `_save_simulate_snapshot`
+    into runtime forward references resolved against that module's globals at
     call time. Missing the binding leaves those calls failing with
     `BeartypeCallHintForwardRefException`.
     """
-    assert _persistence.Model is lcm.Model
-    assert _persistence.SimulationResult is _PublicSimulationResult
+    assert _snapshot_module.Model is lcm.Model
+    assert _snapshot_module.SimulationResult is _PublicSimulationResult
     assert _variables.UserRegime is lcm.Regime
 
 

@@ -15,7 +15,7 @@ import numpy as np
 from jax import random
 from scipy.interpolate import interp1d
 
-import lcm
+from _lcm.utils.dispatchers import productmap
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -23,6 +23,8 @@ from lcm import (
     MarkovTransition,
     Model,
     Regime,
+    RouwenhorstAR1Process,
+    UniformIIDProcess,
     categorical,
 )
 from lcm.typing import (
@@ -37,7 +39,6 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from lcm.utils.dispatchers import productmap
 
 _DATA_DIR = Path(__file__).parent / "data"
 
@@ -316,7 +317,7 @@ def dead_is_active(age: int, initial_age: int) -> bool:
     return age > initial_age
 
 
-prod_shock_grid = lcm.shocks.ar1.Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
+prod_shock_grid = RouwenhorstAR1Process(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
     transition=MarkovTransition(next_regime),
@@ -326,7 +327,7 @@ ALIVE_REGIME = Regime(
         "health": DiscreteGrid(Health),
         "productivity_shock": prod_shock_grid,
         "effort_t_1": DiscreteGrid(Effort),
-        "adjustment_cost": lcm.shocks.iid.Uniform(n_points=5, start=0, stop=1),
+        "adjustment_cost": UniformIIDProcess(n_points=5, start=0, stop=1),
         "education": DiscreteGrid(Education),
         "productivity": DiscreteGrid(ProductivityType),
         "health_type": DiscreteGrid(HealthType),

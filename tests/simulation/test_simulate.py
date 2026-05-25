@@ -7,15 +7,16 @@ import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
-from lcm import Model
-from lcm.ages import AgeGrid
-from lcm.regime_building import process_regimes
-from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
-from lcm.simulation.simulate import (
+from _lcm.regime_building.processing import process_regimes
+from _lcm.simulation.result_metadata import _get_output_dtypes
+from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
 )
-from lcm.utils.logging import get_logger
+from _lcm.utils.logging import get_logger
+from lcm import Model
+from lcm.ages import AgeGrid
+from lcm.result import SimulationResult
 from tests.test_models.deterministic.regression import (
     START_AGE,
     RegimeId,
@@ -52,7 +53,7 @@ def simulate_inputs():
         "regimes": regimes,
         "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
-        "simulation_output_dtypes": get_simulation_output_dtypes(
+        "simulation_output_dtypes": _get_output_dtypes(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
         ),

@@ -5,12 +5,13 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
+from _lcm.engine import StateActionSpace
+from _lcm.grids import LinSpacedGrid
+from _lcm.solution.validate_V import validate_V
 from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.grids import LinSpacedGrid
-from lcm.interfaces import StateActionSpace
-from lcm.solution.validate_V import validate_V
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -18,7 +19,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 
 def _make_state_action_space(

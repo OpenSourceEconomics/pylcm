@@ -16,6 +16,7 @@ import pytest
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.exceptions import RegimeInitializationError
+from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,
     DiscreteAction,
@@ -23,7 +24,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import Regime as UserRegime
 
 
 @categorical(ordered=False)

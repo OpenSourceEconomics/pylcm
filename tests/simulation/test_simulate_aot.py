@@ -5,7 +5,7 @@ parallel-compiles all simulate functions for batch shape `N`. Subsequent calls
 with size `N` reuse the cache; calls with a mismatching size warn once per size
 and fall back to the runtime-traced path. AOT works under both `x64=False`
 and `x64=True` because integer leaves are normalised to `int32` at every
-boundary by `lcm.params.processing` and the simulate state pool.
+boundary by `_lcm.params.processing` and the simulate state pool.
 """
 
 import logging

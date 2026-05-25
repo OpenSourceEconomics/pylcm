@@ -4,12 +4,12 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
-from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.utils.containers import (
+from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
 )
-from lcm.utils.namespace import flatten_regime_namespace
+from _lcm.utils.namespace import flatten_regime_namespace
 
 
 def test_construction_from_list():
