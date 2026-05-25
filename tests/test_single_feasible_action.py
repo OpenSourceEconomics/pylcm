@@ -241,7 +241,6 @@ def test_simulate_with_constrained_action_grid(wealth_lo, consumption_lo, label)
         params=params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
-        check_initial_conditions=False,
         log_level="off",
     )
     df = result.to_dataframe()
@@ -529,13 +528,14 @@ def test_runtime_action_grid_passes_initial_conditions_validation():
             [RegimeId.alive, RegimeId.alive, RegimeId.alive], dtype=jnp.int32
         ),
     }
-    # `check_initial_conditions=True` (the default) must pass — the
-    # runtime-supplied consumption points are well-formed.
+    # `log_level="debug"` runs initial-conditions validation and raises on
+    # failure — the runtime-supplied consumption points are well-formed, so
+    # it must pass.
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     assert result.n_subjects == 3
 

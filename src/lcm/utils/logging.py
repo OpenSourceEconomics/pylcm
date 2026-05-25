@@ -15,6 +15,46 @@ _LOG_LEVEL_MAP: dict[str, int] = {
 }
 
 
+def validation_enabled(logger: logging.Logger) -> bool:
+    """Return whether runtime validation runs at all.
+
+    Runtime validation runs unless `log_level="off"`. The logger's level is
+    the single source of truth for the runtime policy: `"off"` raises the
+    logger to `CRITICAL`, every other level keeps it at `WARNING` or lower.
+    """
+    return logger.isEnabledFor(logging.WARNING)
+
+
+def validation_raises(logger: logging.Logger) -> bool:
+    """Return whether a validation failure raises (vs. logs a warning).
+
+    A failure raises at `log_level="debug"` and only warns at `"warning"` /
+    `"progress"`. `"debug"` is the one level that lowers the logger to
+    `DEBUG`, so `isEnabledFor(DEBUG)` is exactly the raise predicate.
+    """
+    return logger.isEnabledFor(logging.DEBUG)
+
+
+def raise_or_warn(*, logger: logging.Logger, error: Exception) -> None:
+    """Surface a validation failure according to the logger's policy.
+
+    Raises the error when the logger implies raise mode (`log_level="debug"`);
+    otherwise logs it as a warning and returns so the run continues. Must not
+    be called when validation is disabled (`log_level="off"`).
+
+    Args:
+        logger: Logger carrying the runtime-validation policy.
+        error: The validation error to raise or describe.
+
+    Raises:
+        Exception: The passed `error`, in raise mode.
+
+    """
+    if validation_raises(logger):
+        raise error
+    logger.warning("%s", error)
+
+
 def get_logger(*, log_level: LogLevel) -> logging.Logger:
     """Get a logger that logs to stdout.
 

@@ -1,11 +1,23 @@
 """Pre-flight numerical checks on user-supplied transition functions.
 
 Called from `Model.solve()` and `Model.simulate()` before backward induction
-runs. For each (regime, active period) pair, evaluates the regime transition
-function on the Cartesian product of the grid variables it accepts and
-verifies finiteness, [0, 1] range, sum-to-1, no probability mass to inactive
-regimes, and no positive probability to a target with incomplete stochastic
-transitions.
+runs. Two families:
+
+- **Regime transition probability check** keyed on
+  `validate_regime_transitions_all_periods`. Iterates active non-terminal
+  regimes across periods, evaluates the regime transition function on the
+  Cartesian product of its accepted grid variables, and verifies finiteness,
+  [0, 1] range, sum-to-1, no probability mass to inactive regimes, and no
+  positive probability to a target with incomplete stochastic transitions.
+- **State transition probability check** keyed on
+  `validate_state_transitions_all_periods`. Sweeps every `MarkovTransition`
+  state transition (incl. per-target dict entries), evaluates the user
+  function on the Cartesian product of the function's accepted grid
+  variables, and verifies outcome-axis size, [0, 1] range, and sum-to-1.
+
+Both checks read their policy off the `logger`: `log_level="off"` skips the
+check, `"warning"` / `"progress"` log each failure and let the run continue,
+`"debug"` raises on the first failure.
 
 These are runtime checks: they need a fully-built `Regime` plus user
 `flat_params` and evaluate the transition functions numerically. The
@@ -15,6 +27,7 @@ inspect grids, signatures, and Python source) are a separate concern.
 """
 
 import inspect
+import logging
 from types import MappingProxyType
 
 import jax
@@ -22,8 +35,11 @@ import jax.numpy as jnp
 import pandas as pd
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
-from lcm.interfaces import Regime
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    InvalidStateTransitionProbabilitiesError,
+)
+from lcm.interfaces import Regime, StateActionSpace, _StochasticStateTransition
 from lcm.typing import (
     FlatParams,
     FlatRegimeParams,
@@ -34,6 +50,44 @@ from lcm.typing import (
     ScalarInt,
     StateOrActionName,
 )
+from lcm.utils.logging import raise_or_warn, validation_enabled
+
+
+def _params_callable_for_state_transition(
+    *,
+    regime: Regime,
+    flat_params_for_regime: FlatRegimeParams,
+    transition: _StochasticStateTransition,
+) -> FlatRegimeParams:
+    """Return un-qualified params for calling a state-transition function.
+
+    Both `regime.resolved_fixed_params` and `flat_params_for_regime` key
+    their entries by the qualified names produced by
+    `create_regime_params_template`:
+
+    - simple transitions ⇒ `next_<state>__<param>`
+    - per-target dicts   ⇒ `to_<target>_next_<state>__<param>`
+
+    The `MarkovTransition`'s user function is called with the raw
+    parameter names from its signature, so the validator must strip
+    the same qualifier the template builder applied before lookup.
+    Without the strip, every transition-function parameter that isn't
+    a grid axis falls through to the "not numerically validated" skip
+    branch and the per-transition numerical check never runs.
+    """
+    if transition.target_regime_name is None:
+        prefix = f"next_{transition.state_name}__"
+    else:
+        prefix = f"to_{transition.target_regime_name}_next_{transition.state_name}__"
+
+    merged = {**regime.resolved_fixed_params, **flat_params_for_regime}
+    return MappingProxyType(
+        {
+            name.removeprefix(prefix): value
+            for name, value in merged.items()
+            if name.startswith(prefix)
+        }
+    )
 
 
 def validate_regime_transitions_all_periods(
@@ -41,6 +95,7 @@ def validate_regime_transitions_all_periods(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
+    logger: logging.Logger,
 ) -> None:
     """Validate regime transition probabilities for all periods before solve.
 
@@ -52,12 +107,18 @@ def validate_regime_transitions_all_periods(
         regimes: Immutable mapping of regime names to regimes.
         flat_params: Immutable mapping of regime names to flat parameter mappings.
         ages: Age grid for the model.
+        logger: Logger carrying the runtime-validation policy. `log_level="off"`
+            returns immediately; `"warning"` / `"progress"` log each failure and
+            continue; `"debug"` raises on the first failure.
 
     Raises:
-        InvalidRegimeTransitionProbabilitiesError: If any inactive regime receives
-            positive transition probability.
+        InvalidRegimeTransitionProbabilitiesError: If a regime transition produces
+            invalid probabilities and the logger implies raise mode.
 
     """
+    if not validation_enabled(logger):
+        return
+
     last_period = ages.n_periods - 1
     non_terminal_active_at_last = [
         regime_name
@@ -65,12 +126,15 @@ def validate_regime_transitions_all_periods(
         if not regime.terminal and last_period in regime.active_periods
     ]
     if non_terminal_active_at_last:
-        raise InvalidRegimeTransitionProbabilitiesError(
-            f"Non-terminal regime(s) {non_terminal_active_at_last} are active at the "
-            f"last period (age {ages.exact_values[last_period]}). Non-terminal regimes "
-            "must not be active at the last period because there is no next period to "
-            "transition to. Adjust the 'active' function on these regimes to exclude "
-            "the last age."
+        raise_or_warn(
+            logger=logger,
+            error=InvalidRegimeTransitionProbabilitiesError(
+                f"Non-terminal regime(s) {non_terminal_active_at_last} are active at "
+                f"the last period (age {ages.exact_values[last_period]}). Non-terminal "
+                "regimes must not be active at the last period because there is no "
+                "next period to transition to. Adjust the 'active' function on these "
+                "regimes to exclude the last age."
+            ),
         )
 
     for period in range(ages.n_periods - 1):
@@ -86,14 +150,17 @@ def validate_regime_transitions_all_periods(
             if regime.terminal:
                 continue
 
-            _validate_regime_transition_single(
-                regimes=regimes,
-                regime_params=flat_params[regime_name],
-                active_regimes_next_period=active_regimes_next_period,
-                regime_name=regime_name,
-                period=period,
-                ages=ages,
-            )
+            try:
+                _validate_regime_transition_single(
+                    regimes=regimes,
+                    regime_params=flat_params[regime_name],
+                    active_regimes_next_period=active_regimes_next_period,
+                    regime_name=regime_name,
+                    period=period,
+                    ages=ages,
+                )
+            except InvalidRegimeTransitionProbabilitiesError as error:
+                raise_or_warn(logger=logger, error=error)
 
 
 def _validate_regime_transition_single(
@@ -341,4 +408,216 @@ def _validate_no_reachable_incomplete_targets(
             f"'{target_regime_name}' (via a per-target dict if the "
             f"transition differs by target), or ensure "
             f"'{target_regime_name}' is unreachable."
+        )
+
+
+def validate_state_transitions_all_periods(  # noqa: C901
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    logger: logging.Logger,
+) -> None:
+    """Validate every `MarkovTransition` state transition before solve.
+
+    For each non-terminal active period of each active regime, iterate the
+    regime's `stochastic_state_transitions` and evaluate each
+    `MarkovTransition` function on the Cartesian product of its accepted
+    grid variables. Check:
+
+    - The output's last-axis size matches the state's outcome count.
+    - All values lie in [0, 1].
+    - Rows along the last axis sum to 1.
+
+    Fast-exits when no regime in the model has any stochastic state
+    transitions, so models without `MarkovTransition` states pay no cost.
+
+    Args:
+        regimes: Immutable mapping of regime names to canonical regimes.
+        flat_params: Immutable mapping of regime names to flat parameter
+            mappings.
+        ages: Age grid for the model.
+        logger: Logger carrying the runtime-validation policy. `log_level="off"`
+            returns immediately; `"warning"` / `"progress"` log each failure and
+            continue; `"debug"` raises on the first failure.
+
+    Raises:
+        InvalidStateTransitionProbabilitiesError: If a `MarkovTransition`
+            function returns the wrong outcome-axis size, values outside
+            [0, 1], or rows that don't sum to 1, and the logger implies raise
+            mode.
+
+    """
+    if not validation_enabled(logger):
+        return
+    if not any(r.stochastic_state_transitions for r in regimes.values()):
+        return
+
+    for period in range(ages.n_periods - 1):
+        for regime_name, regime in regimes.items():
+            if period not in regime.active_periods:
+                continue
+            if regime.terminal:
+                continue
+            if not regime.stochastic_state_transitions:
+                continue
+
+            state_action_space = regime.state_action_space(
+                regime_params=flat_params[regime_name],
+            )
+            age = ages.values[period]  # noqa: PD011
+            for transition in regime.stochastic_state_transitions.values():
+                if _per_target_unreachable_at_next_period(
+                    transition=transition, regimes=regimes, period=period
+                ):
+                    continue
+                try:
+                    _validate_state_transition_single(
+                        transition=transition,
+                        regime_params=_params_callable_for_state_transition(
+                            regime=regime,
+                            flat_params_for_regime=flat_params[regime_name],
+                            transition=transition,
+                        ),
+                        state_action_space=state_action_space,
+                        regime_name=regime_name,
+                        age=age,
+                        period=period,
+                        logger=logger,
+                    )
+                except InvalidStateTransitionProbabilitiesError as error:
+                    raise_or_warn(logger=logger, error=error)
+
+
+def _per_target_unreachable_at_next_period(
+    *,
+    transition: _StochasticStateTransition,
+    regimes: MappingProxyType[RegimeName, Regime],
+    period: int,
+) -> bool:
+    """Return True when a per-target transition's target deactivates before reach.
+
+    `solve()` and `simulate()` only dispatch a per-target MarkovTransition
+    for targets in `active_regimes_next_period` at the source's period;
+    targets that deactivate before the source can reach them never fire at
+    runtime. The pre-solve validator mirrors that gate so a per-target
+    function whose output shape only needs to match the (always-zero-
+    weighted) target's outcome grid in principle is not numerically
+    evaluated against the source's state grid.
+    """
+    if transition.target_regime_name is None:
+        return False
+    target = regimes[transition.target_regime_name]
+    return period + 1 not in target.active_periods
+
+
+def _validate_state_transition_single(
+    *,
+    transition: _StochasticStateTransition,
+    regime_params: FlatRegimeParams,
+    state_action_space: StateActionSpace,
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+    period: int,
+    logger: logging.Logger,
+) -> None:
+    """Evaluate one MarkovTransition on its grid args and validate the output."""
+    func = transition.func
+    sig_params = tuple(inspect.signature(func).parameters)
+
+    grid_args: dict[StateOrActionName, FloatND | IntND] = {}
+    scalar_kwargs: dict[str, object] = {}
+    period_int32 = jnp.int32(period)
+
+    for name in sig_params:
+        if name == "period":
+            scalar_kwargs["period"] = period_int32
+        elif name == "age":
+            scalar_kwargs["age"] = age
+        elif name in state_action_space.states:
+            grid_args[name] = state_action_space.states[name]
+        elif name in state_action_space.actions:
+            grid_args[name] = state_action_space.actions[name]
+        elif name in regime_params:
+            scalar_kwargs[name] = regime_params[name]
+        else:
+            # An indexing param the function expects is neither a regime
+            # grid nor a param. Skip numerical validation for this
+            # transition rather than raising — a raise here would conceal
+            # the real error the solve step surfaces. Warn so the skip is
+            # not silent.
+            logger.warning(
+                "MarkovTransition for state '%s' in regime '%s' not numerically "
+                "validated: parameter '%s' is not a recognized grid or model "
+                "parameter.",
+                transition.state_name,
+                regime_name,
+                name,
+            )
+            return
+
+    if grid_args:
+        grid_var_names = list(grid_args.keys())
+        grid_arrays = list(grid_args.values())
+        mesh = jnp.meshgrid(*grid_arrays, indexing="ij")
+        flat_arrays = [m.ravel() for m in mesh]
+
+        def _call(
+            *args: FloatND | IntND,
+            _names: list[str] = grid_var_names,
+            _scalar: dict[str, object] = scalar_kwargs,
+            _func: object = func,
+        ) -> FloatND:
+            kwargs = dict(zip(_names, args, strict=True))
+            return _func(**kwargs, **_scalar)  # ty: ignore[call-non-callable]
+
+        probs = jax.vmap(_call)(*flat_arrays)
+    else:
+        probs = func(**scalar_kwargs)
+
+    _check_state_probs(
+        probs=probs,
+        transition=transition,
+        regime_name=regime_name,
+        age=age,
+    )
+
+
+def _check_state_probs(
+    *,
+    probs: FloatND,
+    transition: _StochasticStateTransition,
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+) -> None:
+    """Assert outcome-axis size, [0, 1] range, and sum-to-1 on a probs array."""
+    state_label = (
+        f"state '{transition.state_name}'"
+        if transition.target_regime_name is None
+        else (
+            f"state '{transition.state_name}' (target regime "
+            f"'{transition.target_regime_name}')"
+        )
+    )
+
+    if probs.shape[-1] != transition.n_outcomes:
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} returned an outcome axis of size "
+            f"{probs.shape[-1]}; expected {transition.n_outcomes} from the "
+            f"state's DiscreteGrid."
+        )
+
+    if jnp.any(probs < 0) or jnp.any(probs > 1):
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} returned values outside [0, 1]."
+        )
+
+    row_sums = jnp.sum(probs, axis=-1)
+    if not jnp.allclose(row_sums, 1.0, atol=1e-6):
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} returned rows that do not sum to 1 along the "
+            f"outcome axis."
         )

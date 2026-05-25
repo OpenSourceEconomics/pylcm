@@ -32,7 +32,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.interfaces import _build_regime_sharding
-from lcm.model import _validate_log_args
+from lcm.model import _contains_nan
 from lcm.simulation.simulate import _compute_starting_periods
 from lcm.solution.solve_brute import _log_per_period_stats
 from lcm.state_action_space import _validate_all_states_present
@@ -114,10 +114,7 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
 def test_claw_checks_lcm_model() -> None:
     """Type-violating arguments to internal `lcm.model` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
-        _validate_log_args(
-            log_level="progress",
-            log_path=123,  # ty: ignore[invalid-argument-type]
-        )
+        _contains_nan(123)  # ty: ignore[invalid-argument-type]
 
 
 def test_model_with_bad_arg_raises_project_exception() -> None:

@@ -252,11 +252,13 @@ def test_simulate_accepts_int64_regime_initial_condition_and_round_trips() -> No
     }
 
     df_int32 = model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=None,
         initial_conditions=initial_conditions_int32,
     ).to_dataframe()
     df_int64 = model.simulate(
+        log_level="debug",
         params=params,
         period_to_regime_to_V_arr=None,
         initial_conditions=initial_conditions_int64,

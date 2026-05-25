@@ -27,38 +27,36 @@ Re-enable JIT once the issue is resolved.
 
 ## Log levels
 
-The `log_level` parameter controls both console output and disk persistence:
-
-| Level                  | Output                                                            | Persistence              |
-| ---------------------- | ----------------------------------------------------------------- | ------------------------ |
-| `"off"`                | Nothing (good for HPC batch jobs)                                 | No                       |
-| `"warning"`            | NaN/Inf warnings in value functions                               | No                       |
-| `"progress"` (default) | Progress and timing per period, total elapsed time                | No                       |
-| `"debug"`              | All above + V_arr statistics per regime, regime transition counts | Yes, requires `log_path` |
+`log_level` controls console verbosity *and* the runtime-validation policy — how
+`solve()` / `simulate()` react to an invalid transition-probability ensemble or a NaN
+value function. See [Solving and Simulating](solving_and_simulating.md) for the full
+`log_level` × `log_path` behaviour table.
 
 ```python
-# Silent — no console output at all
+# Silent — no console output, no validation
 period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
 
-# Warnings only — alerts on NaN/Inf but no progress output
+# Warnings only — invalid input is logged, the run continues
 period_to_regime_to_V_arr = model.solve(params=params, log_level="warning")
 
-# Progress (default) — timing per period
-period_to_regime_to_V_arr = model.solve(params=params)  # log_level="progress"
+# Debug — validation raises, full diagnostics
+period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
-# Debug — full diagnostics + snapshot persistence
+# Debug + snapshot persistence
 period_to_regime_to_V_arr = model.solve(
     params=params, log_level="debug", log_path="./debug/"
 )
 ```
 
-Using `log_level="debug"` without providing `log_path` raises a `ValueError`.
+`log_path` is optional at every level — including `"debug"`.
 
 ## Debug snapshots
 
-When `log_level="debug"` and `log_path` is provided, pylcm saves a **snapshot
-directory** containing all inputs and outputs. This lets you reconstruct a failed run on
-a different machine.
+When `log_path` is provided, pylcm saves a **snapshot directory** containing all inputs
+and outputs, so you can reconstruct a failed run on a different machine. In `"debug"`
+mode a snapshot is written on every solve and on a raised failure; in `"warning"` /
+`"progress"` mode one is written whenever a warned failure leaves NaN in the value
+function.
 
 ### What's saved
 
@@ -119,7 +117,9 @@ snapshot.params  # the user parameters
 snapshot.period_to_regime_to_V_arr  # value function arrays (loaded from HDF5)
 
 # Re-run the solve to reproduce the result
-period_to_regime_to_V_arr = snapshot.model.solve(params=snapshot.params)
+period_to_regime_to_V_arr = snapshot.model.solve(
+    params=snapshot.params, log_level="debug"
+)
 ```
 
 For large snapshots, skip fields you don't need:
@@ -212,7 +212,7 @@ model = Model(
 )
 
 # Call solve with the bad parameters --- the traceback will be readable
-period_to_regime_to_V_arr = model.solve(params=bad_params)
+period_to_regime_to_V_arr = model.solve(params=bad_params, log_level="debug")
 ```
 
 The traceback now points to the exact line in your user-defined functions where the NaN
@@ -229,7 +229,7 @@ import jax.numpy as jnp
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-period_to_regime_to_V_arr = model.solve(params=params)
+period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
 # Check for issues
 for period, regimes in period_to_regime_to_V_arr.items():
@@ -255,10 +255,9 @@ fig.show()
 
 ## Failure snapshots
 
-When `log_path` is set and `solve()` raises `InvalidValueFunctionError`, a snapshot is
-saved automatically --- even without `log_level="debug"`. This lets you inspect the
-partial solution (value functions for periods that completed before the error) on
-another machine.
+When `log_path` is set and `solve()` raises `InvalidValueFunctionError` (in `"debug"`
+mode), a snapshot is saved automatically. This lets you inspect the partial solution
+(value functions for periods that completed before the error) on another machine.
 
 ```python
 # log_path is enough to get a failure snapshot
@@ -266,6 +265,7 @@ result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
     period_to_regime_to_V_arr=None,
+    log_level="debug",
     log_path="./debug/",
 )
 ```

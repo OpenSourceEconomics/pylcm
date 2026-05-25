@@ -310,7 +310,6 @@ def test_simulate_with_runtime_action_grid_no_nan() -> None:
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
         log_level="off",
-        check_initial_conditions=False,
     )
     df = result.to_dataframe()
     assert not df["value"].isna().any()

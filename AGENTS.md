@@ -221,11 +221,15 @@ Model(
 
 ### Core Methods
 
-- `model.solve(params=params)` - Solve the model and return value function arrays per
-  period and regime
-- `model.simulate(params=params, initial_conditions=initial_conditions, period_to_regime_to_V_arr=period_to_regime_to_V_arr)`
+- `model.solve(params=params, log_level="debug")` - Solve the model and return value
+  function arrays per period and regime
+- `model.simulate(params=params, initial_conditions=initial_conditions, period_to_regime_to_V_arr=period_to_regime_to_V_arr, log_level="debug")`
   \- Simulate forward given solution. `period_to_regime_to_V_arr` is optional; when
   `None`, the model is solved automatically before simulating.
+- `log_level` is **required** on both `solve()` and `simulate()`
+  (`off < warning < progress < debug`). It governs all runtime validation: `"off"` skips
+  it, `"warning"` / `"progress"` warn and continue, `"debug"` raises. Start projects at
+  `"debug"`.
 
 ### Derived Categoricals
 
@@ -245,6 +249,7 @@ result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
     period_to_regime_to_V_arr=None,
+    log_level="debug",
 )
 
 # Convert to DataFrame (deferred computation)
@@ -561,6 +566,16 @@ Code structure should be self-evident from function names and ordering.
 
 - Always use **plotly** for visualizations, never matplotlib. Use `plotly.graph_objects`
   and `plotly.subplots.make_subplots`.
+
+### Notebooks
+
+Explanation notebooks live in `docs/explanations/*.ipynb`. After editing one, verify:
+
+- Each cell's `source` is a JSON array of lines (one array element per line), never a
+  single multi-line string — a one-string `source` produces an unreadable diff.
+- Outputs and execution counts are stripped (`pixi run nbstripout <file>`).
+- Markdown and code use literal UTF-8 characters (`—`, `→`, `μ`), never `\u`-style
+  escape sequences.
 
 ### Key Dependencies
 

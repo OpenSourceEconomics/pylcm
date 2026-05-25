@@ -22,6 +22,15 @@ class InvalidRegimeTransitionProbabilitiesError(PyLCMError):
     """Raised when the regime transition probabilities are invalid."""
 
 
+class InvalidStateTransitionProbabilitiesError(PyLCMError):
+    """Raised when a stochastic state transition produces invalid probabilities.
+
+    Covers a `MarkovTransition` function whose output has the wrong outcome-axis
+    size, values outside [0, 1], rows that don't sum to 1, or `probs_array[…]`
+    subscripts that don't match the signature parameter order.
+    """
+
+
 class InvalidInitialConditionsError(PyLCMError):
     """Raised when the initial conditions (states or regimes) are invalid."""
 

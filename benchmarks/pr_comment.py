@@ -35,6 +35,8 @@ _RESULTS_DIR = Path(".asv/results")
 _CLASS_DISPLAY = {
     "AcaBaseline": "aca-baseline",
     "AcaBaselineGpuPeakMem": "aca-baseline",
+    "AcaBaselineDebugLog": "aca-baseline-debug",
+    "AcaBaselineDebugLogGpuPeakMem": "aca-baseline-debug",
     "MahlerYum": "Mahler-Yum",
     "MahlerYumGpuPeakMem": "Mahler-Yum",
     "PrecautionarySavingsSolve": "Precautionary Savings - Solve",

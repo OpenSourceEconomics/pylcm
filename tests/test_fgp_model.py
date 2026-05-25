@@ -40,6 +40,7 @@ def _simulate(shock_type):
         discount_factor=BETA,
     )
     result = model.simulate(
+        log_level="debug",
         params=params,
         initial_conditions={
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
@@ -72,7 +73,7 @@ def test_model_solves(shock_type):
         interest_rate=R,
         discount_factor=BETA,
     )
-    V = model.solve(params=params)
+    V = model.solve(log_level="debug", params=params)
     assert V is not None
     # Value functions include all periods (n_periods + 1 ages from AgeGrid)
     assert len(V) == model.n_periods

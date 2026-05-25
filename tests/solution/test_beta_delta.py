@@ -196,6 +196,7 @@ def test_beta_delta_consumption(label, beta, delta):
             },
         }
         result = model.simulate(
+            log_level="debug",
             params=params,
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=None,
@@ -204,11 +205,12 @@ def test_beta_delta_consumption(label, beta, delta):
         model = _make_model()
         # Solve with exponential discounting (beta=1)
         solve_params = {"working": {"H": {"beta": 1.0, "delta": delta}}}
-        period_to_regime_to_V_arr = model.solve(params=solve_params)
+        period_to_regime_to_V_arr = model.solve(log_level="debug", params=solve_params)
 
         # Simulate with present-biased params
         sim_params = {"working": {"H": h_params}}
         result = model.simulate(
+            log_level="debug",
             params=sim_params,
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
@@ -216,6 +218,7 @@ def test_beta_delta_consumption(label, beta, delta):
     else:
         model = _make_model()
         result = model.simulate(
+            log_level="debug",
             params={"working": {"H": h_params}},
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=None,

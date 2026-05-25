@@ -7,13 +7,21 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
+import jax.numpy as jnp
 import pandas as pd
 from beartype import beartype
 
 from lcm._beartype_conf import MODEL_CONF, PARAMS_CONF
-from lcm._transition_checks import validate_regime_transitions_all_periods
+from lcm._transition_checks import (
+    validate_regime_transitions_all_periods,
+    validate_state_transitions_all_periods,
+)
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidInitialConditionsError,
+    InvalidValueFunctionError,
+    ModelInitializationError,
+)
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
     _validate_param_types,
@@ -59,7 +67,13 @@ from lcm.utils.containers import (
     ensure_containers_are_mutable,
     get_field_names_and_values,
 )
-from lcm.utils.logging import LogLevel, get_logger
+from lcm.utils.logging import (
+    LogLevel,
+    get_logger,
+    raise_or_warn,
+    validation_enabled,
+    validation_raises,
+)
 
 
 class Model:
@@ -256,8 +270,8 @@ class Model:
         self,
         *,
         params: UserParams,
+        log_level: LogLevel,
         max_compilation_workers: int | None = None,
-        log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
     ) -> PeriodToRegimeToVArr:
@@ -274,31 +288,46 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
+            log_level: Verbosity, and the runtime-validation policy it implies.
+                Required — pick deliberately for the situation:
+                - `"off"` — silent; transition-probability and NaN checks skipped.
+                - `"warning"` — validation runs, failures logged as warnings,
+                  the run continues.
+                - `"progress"` — as `"warning"`, plus timing.
+                - `"debug"` — validation runs and **raises** on the first
+                  failure; adds value-function stats.
+                Start every project at `"debug"`: fail early and gather maximum
+                diagnostics. Ease to `"warning"` / `"off"` only once the model
+                is trusted and you need the speed or the non-raising behaviour
+                for an estimation loop.
             max_compilation_workers: Maximum number of threads for parallel XLA
                 compilation. Defaults to the number of physical CPU cores.
-            log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
-                NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
-                requires `log_path`.
-            log_path: Directory for persisting debug snapshots. Required when
-                `log_level="debug"`.
-            log_keep_n_latest: Maximum number of debug snapshots to keep on disk.
+            log_path: Directory for persisting diagnostic snapshots. Optional at
+                every level; snapshots are written only when it is set.
+            log_keep_n_latest: Maximum number of snapshots to retain on disk.
 
         Returns:
             Immutable mapping of period to a value function array for each regime.
 
         """
-        _validate_log_args(log_level=log_level, log_path=log_path)
+        log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
         validate_regime_transitions_all_periods(
             regimes=self.regimes,
             flat_params=flat_params,
             ages=self.ages,
+            logger=log,
+        )
+        validate_state_transitions_all_periods(
+            regimes=self.regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            logger=log,
         )
         return self._solve_compiled(
             flat_params=flat_params,
             params=params,
-            log=get_logger(log_level=log_level),
-            log_level=log_level,
+            log=log,
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
@@ -310,12 +339,17 @@ class Model:
         flat_params: FlatParams,
         params: UserParams,
         log: logging.Logger,
-        log_level: LogLevel,
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
     ) -> PeriodToRegimeToVArr:
-        """Run backward induction, persisting a snapshot on debug or NaN failure."""
+        """Run backward induction, persisting a diagnostic snapshot when warranted.
+
+        With `log_path` set, a snapshot is written at `log_level="debug"`
+        (every solve) and at `"warning"` / `"progress"` whenever the returned
+        solution contains NaN. `_enforce_retention` caps the snapshot count at
+        `log_keep_n_latest`.
+        """
         try:
             period_to_regime_to_V_arr = solve(
                 flat_params=flat_params,
@@ -336,7 +370,11 @@ class Model:
                 )
                 exc.add_note(f"Snapshot saved to {snap_dir}")
             raise
-        if log_level == "debug" and log_path is not None:
+        if (
+            log_path is not None
+            and validation_enabled(log)
+            and (validation_raises(log) or _contains_nan(period_to_regime_to_V_arr))
+        ):
             save_solve_snapshot(
                 model=self,
                 params=params,
@@ -388,9 +426,8 @@ class Model:
         params: UserParams,
         initial_conditions: UserInitialConditions | pd.DataFrame,
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
-        check_initial_conditions: bool = True,
+        log_level: LogLevel,
         seed: int | None = None,
-        log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -420,14 +457,23 @@ class Model:
                 (auto-converted via `initial_conditions_from_dataframe`).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
-            check_initial_conditions: Whether to validate initial conditions.
             seed: Random seed.
-            log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
-                NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
-                requires `log_path`.
-            log_path: Directory for persisting debug snapshots. Required when
-                `log_level="debug"`.
-            log_keep_n_latest: Maximum number of debug snapshots to keep on disk.
+            log_level: Verbosity, and the runtime-validation policy it implies.
+                Required — pick deliberately for the situation:
+                - `"off"` — silent; initial-condition, transition-probability,
+                  and NaN checks skipped.
+                - `"warning"` — validation runs, failures logged as warnings,
+                  the run continues.
+                - `"progress"` — as `"warning"`, plus timing.
+                - `"debug"` — validation runs and **raises** on the first
+                  failure; adds value-function stats.
+                Start every project at `"debug"`: fail early and gather maximum
+                diagnostics. Ease to `"warning"` / `"off"` only once the model
+                is trusted and you need the speed or the non-raising behaviour
+                for an estimation loop.
+            log_path: Directory for persisting diagnostic snapshots. Optional at
+                every level; snapshots are written only when it is set.
+            log_keep_n_latest: Maximum number of snapshots to retain on disk.
             max_compilation_workers: Maximum number of threads for parallel XLA
                 compilation. Only used when `period_to_regime_to_V_arr` is `None`
                 (i.e. when solve runs automatically). Defaults to the number of
@@ -438,7 +484,7 @@ class Model:
             optionally with additional_targets.
 
         """
-        _validate_log_args(log_level=log_level, log_path=log_path)
+        log = get_logger(log_level=log_level)
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
@@ -450,20 +496,29 @@ class Model:
             regimes=self.regimes,
         )
         flat_params = self._process_params(params)
-        if check_initial_conditions:
-            validate_initial_conditions(
-                initial_conditions=initial_conditions,
-                regimes=self.regimes,
-                regime_names_to_ids=self.regime_names_to_ids,
-                flat_params=flat_params,
-                ages=self.ages,
-            )
+        if validation_enabled(log):
+            try:
+                validate_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    regimes=self.regimes,
+                    regime_names_to_ids=self.regime_names_to_ids,
+                    flat_params=flat_params,
+                    ages=self.ages,
+                )
+            except InvalidInitialConditionsError as error:
+                raise_or_warn(logger=log, error=error)
         validate_regime_transitions_all_periods(
             regimes=self.regimes,
             flat_params=flat_params,
             ages=self.ages,
+            logger=log,
         )
-        log = get_logger(log_level=log_level)
+        validate_state_transitions_all_periods(
+            regimes=self.regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            logger=log,
+        )
         actual_n_subjects = len(next(iter(initial_conditions.values())))
         n_subjects = self.n_subjects
         if n_subjects is not None and n_subjects == actual_n_subjects:
@@ -485,7 +540,6 @@ class Model:
                 flat_params=flat_params,
                 params=params,
                 log=log,
-                log_level=log_level,
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
                 max_compilation_workers=max_compilation_workers,
@@ -512,7 +566,7 @@ class Model:
         # the lazy regimes to keep the result cloudpickle-safe.
         if simulate_regimes is not self.regimes:
             result._regimes = self.regimes  # noqa: SLF001
-        if log_level == "debug" and log_path is not None:
+        if log_path is not None and validation_raises(log):
             save_simulate_snapshot(
                 model=self,
                 params=params,
@@ -588,8 +642,10 @@ def _merge_derived_categoricals(
     return MappingProxyType(result)
 
 
-def _validate_log_args(*, log_level: LogLevel, log_path: str | Path | None) -> None:
-    """Raise ValueError if log_level='debug' but log_path is not set."""
-    if log_level == "debug" and log_path is None:
-        msg = "log_path is required when log_level='debug'"
-        raise ValueError(msg)
+def _contains_nan(period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> bool:
+    """Return whether any value function array holds a NaN."""
+    return any(
+        bool(jnp.any(jnp.isnan(V_arr)))
+        for regime_to_V_arr in period_to_regime_to_V_arr.values()
+        for V_arr in regime_to_V_arr.values()
+    )

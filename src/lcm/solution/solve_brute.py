@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.interfaces import Regime, _build_regime_sharding
 from lcm.solution.validate_V import validate_V
 from lcm.typing import BoolND, FlatParams, FloatND, RegimeName, StateName
@@ -18,6 +19,9 @@ from lcm.utils.logging import (
     format_duration,
     log_period_header,
     log_period_timing,
+    raise_or_warn,
+    validation_enabled,
+    validation_raises,
 )
 
 
@@ -37,7 +41,11 @@ def solve(
         ages: Age grid for the model.
         regimes: The internal regimes, that contain all necessary functions
             to solve the model.
-        logger: Logger that logs to stdout.
+        logger: Logger that logs to stdout, and carries the runtime-validation
+            policy. `log_level="debug"` stops backward induction at the first
+            NaN period and raises; `"warning"` / `"progress"` let induction run
+            to completion and log a warning, so `solve` returns a complete
+            (NaN-bearing) solution; `"off"` skips the NaN check.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
@@ -97,11 +105,13 @@ def solve(
     # localisation. On a healthy solve no per-row materialisation
     # happens.
     #
-    # Gate falls out of the public log level:
-    # - `"off"` ⇒ nothing (skips even the NaN fail-fast)
-    # - `"warning"` / `"progress"` ⇒ NaN/Inf only
-    # - `"debug"` ⇒ adds the min/max/mean trio
-    diagnostics_enabled = logger.isEnabledFor(logging.WARNING)
+    # Two gates, both falling out of the public log level:
+    # - NaN/Inf tracking feeds runtime validation, so it runs whenever
+    #   validation is not `"off"` (log levels `"warning"`/`"progress"`/
+    #   `"debug"`). It skips even the NaN fail-fast when validation is off.
+    # - The min/max/mean trio is a pure logging extra, gated on the
+    #   logger's debug level.
+    diagnostics_enabled = validation_enabled(logger)
     stats_enabled = logger.isEnabledFor(logging.DEBUG)
     diagnostic_rows: list[_DiagnosticRow] = []
     diagnostic_min: list[FloatND] = []
@@ -206,26 +216,33 @@ def solve(
         # Fail-fast on NaN: surface the offending period immediately
         # instead of finishing the whole backward induction. Costs one
         # host transfer of a scalar bool per period — negligible next
-        # to the per-period `max_Q_over_a` kernel, and only paid when
-        # diagnostics are on. Inf is non-fatal so we don't break on
-        # it; the post-loop emitter still raises a warning if any
-        # period flagged Inf.
-        if diagnostics_enabled and running_any_nan.item():
+        # to the per-period `max_Q_over_a` kernel. Inf is non-fatal so
+        # we don't break on it; the post-loop emitter still raises a
+        # warning if any period flagged Inf.
+        #
+        # Only raise mode fails fast. Raise mode is the loudest level, so
+        # diagnostics are on and `running_any_nan` has been tracked. In warn
+        # mode induction runs to completion so `solve` returns a complete
+        # (NaN-bearing) solution rather than a truncated one.
+        if validation_raises(logger) and running_any_nan.item():
             break
 
     if diagnostics_enabled:
-        _emit_post_loop_diagnostics(
-            logger=logger,
-            diagnostic_rows=diagnostic_rows,
-            solution=MappingProxyType(solution),
-            regimes=regimes,
-            flat_params=flat_params,
-            running_any_nan=running_any_nan,
-            running_any_inf=running_any_inf,
-            diagnostic_min=diagnostic_min if stats_enabled else None,
-            diagnostic_max=diagnostic_max if stats_enabled else None,
-            diagnostic_mean=diagnostic_mean if stats_enabled else None,
-        )
+        try:
+            _emit_post_loop_diagnostics(
+                logger=logger,
+                diagnostic_rows=diagnostic_rows,
+                solution=MappingProxyType(solution),
+                regimes=regimes,
+                flat_params=flat_params,
+                running_any_nan=running_any_nan,
+                running_any_inf=running_any_inf,
+                diagnostic_min=diagnostic_min if stats_enabled else None,
+                diagnostic_max=diagnostic_max if stats_enabled else None,
+                diagnostic_mean=diagnostic_mean if stats_enabled else None,
+            )
+        except InvalidValueFunctionError as error:
+            raise_or_warn(logger=logger, error=error)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))

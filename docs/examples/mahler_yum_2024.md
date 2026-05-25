@@ -46,6 +46,7 @@ result = MAHLER_YUM_MODEL.simulate(
         ),
     },
     period_to_regime_to_V_arr=None,
+    log_level="debug",
     seed=8295,
 )
 ```
