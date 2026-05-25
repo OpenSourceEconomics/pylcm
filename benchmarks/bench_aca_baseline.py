@@ -95,6 +95,9 @@ def _build() -> tuple[object, object, object]:
 class AcaBaseline:
     """aca-baseline simulate with runtime validation and logging off."""
 
+    # Stable version stamp so asv keeps continuity across benchmark-body
+    # refactors that don't change what's measured.
+    version = "1"
     timeout = 3600
     # Pin every ASV sample knob to 1 so setup runs once per subprocess
     # and one warm call is timed. `timeout=3600` gives headroom for the

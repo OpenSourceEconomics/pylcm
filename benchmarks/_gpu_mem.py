@@ -94,6 +94,9 @@ class GpuPeakMem:
 
     bench_module: str
     bench_class: str
+    # Stable version stamp so asv keeps continuity across benchmark-body
+    # refactors that don't change what's measured.
+    version = "1"
     timeout = 1200
 
     def __init_subclass__(cls, **kwargs):
