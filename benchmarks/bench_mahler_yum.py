@@ -9,6 +9,9 @@ _N_SUBJECTS = 100
 
 
 class MahlerYum:
+    # Stable version stamp so asv keeps continuity across benchmark-body
+    # refactors that don't change what's measured.
+    version = "1"
     timeout = 1200
 
     def _build(self):

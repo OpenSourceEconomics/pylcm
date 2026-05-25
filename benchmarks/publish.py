@@ -41,6 +41,7 @@ def publish() -> None:
 
     subprocess.run(["asv", "publish"], check=True)
     _patch_html_title(html_dir / "index.html")
+    _pad_sparse_graphs(html_dir / "graphs")
 
     _generate_comparison(results_dir)
 
@@ -156,6 +157,57 @@ def _find_machine_dir(results_dir: Path) -> Path | None:
         if path.is_dir():
             return path
     return None
+
+
+def _pad_graphs_in_folder(folder: Path) -> int:
+    """Pad every `bench_*.json` in `folder` to the folder-wide x-range."""
+    target_revs: set[int] = set()
+    for f in folder.glob("bench_*.json"):
+        for entry in json.loads(f.read_text(encoding="utf-8")):
+            if isinstance(entry, list) and entry:
+                target_revs.add(entry[0])
+    padded = 0
+    for f in folder.glob("bench_*.json"):
+        data = json.loads(f.read_text(encoding="utf-8"))
+        have = {e[0] for e in data if isinstance(e, list) and e}
+        missing = target_revs - have
+        if not missing:
+            continue
+        data.extend([rev, None] for rev in missing)
+        data.sort(key=lambda e: e[0])
+        f.write_text(json.dumps(data), encoding="utf-8")
+        padded += len(missing)
+    return padded
+
+
+def _pad_sparse_graphs(graphs_dir: Path) -> None:
+    """Pad benchmark series with `[rev, null]` entries to the full x-range.
+
+    asv writes per-benchmark graph JSONs containing only revisions where the
+    benchmark actually ran. flot's auto-fit then sizes each chart's x-axis
+    to the benchmark's own range, so two recent measurements span the full
+    chart width even though most of the project history has no data for
+    that benchmark.
+
+    Inject `[rev, null]` markers at every revision the longest sibling
+    series covers but this series does not. flot renders null y-values as
+    gaps, so the line is still drawn only where data exists — but the
+    x-axis now matches the rest of the grid.
+
+    Runs over the summary directory (`graphs/summary/`) and every
+    per-environment leaf directory (`graphs/arch-*/.../`).
+    """
+    if not graphs_dir.is_dir():
+        return
+
+    total = _pad_graphs_in_folder(graphs_dir / "summary")
+    for env_root in graphs_dir.iterdir():
+        if env_root.name == "summary" or not env_root.is_dir():
+            continue
+        for leaf in {p.parent for p in env_root.rglob("bench_*.json")}:
+            total += _pad_graphs_in_folder(leaf)
+    if total:
+        print(f"Padded sparse benchmark graphs with {total} null entries.")
 
 
 def _patch_html_title(index_html: Path) -> None:
