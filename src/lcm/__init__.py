@@ -43,7 +43,7 @@ from beartype.claw import beartype_package
 
 from _lcm.beartype_conf import INTERNAL_CONF
 
-_beartype_utilfunctest.print = lambda *_args, **_kwargs: None
+_beartype_utilfunctest.print = lambda *_args, **_kwargs: None  # ty: ignore[unresolved-attribute]
 
 beartype_package("_lcm", conf=INTERNAL_CONF)
 beartype_package("lcm", conf=INTERNAL_CONF)
