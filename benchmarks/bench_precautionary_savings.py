@@ -45,6 +45,9 @@ def _clear_gpu_memory():
 
 
 class PrecautionarySavingsSolve:
+    # Stable version stamp so asv keeps continuity across benchmark-body
+    # refactors that don't change what's measured.
+    version = "1"
     timeout = 600
 
     def _build(self):
@@ -83,6 +86,7 @@ class PrecautionarySavingsSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
 
 
 class PrecautionarySavingsSimulate:
+    version = "1"
     timeout = 600
 
     def _build(self):
@@ -137,6 +141,7 @@ class PrecautionarySavingsSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
 
 
 class PrecautionarySavingsSimulateWithSolve:
+    version = "1"
     timeout = 600
 
     def _build(self):
@@ -191,6 +196,7 @@ class PrecautionarySavingsSimulateWithSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
 
 
 class PrecautionarySavingsSimulateWithSolveIrreg:
+    version = "1"
     timeout = 600
 
     def _build(self):
