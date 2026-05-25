@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from types import MappingProxyType
 
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
@@ -71,8 +72,8 @@ def _process_regime(
         for period, result in regime_results.items()
     ]
 
-    data: dict[str, FloatND | IntND | BoolND | Sequence[str]] = _concatenate_and_filter(
-        period_dicts
+    data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = (
+        _concatenate_and_filter(period_dicts)
     )  # ty: ignore[invalid-assignment]
 
     data["age"] = ages.values[data["period"]]  # noqa: PD011
@@ -122,16 +123,29 @@ def _extract_period_data(
 
 def _concatenate_and_filter(
     period_dicts: list[dict[str, FloatND | IntND | BoolND]],
-) -> dict[str, FloatND | IntND | BoolND]:
-    """Concatenate period data and filter to in-regime subjects."""
+) -> dict[str, np.ndarray]:
+    """Concatenate period data per key and host-filter to in-regime subjects.
+
+    The bool mask is applied host-side after a one-shot device-to-host
+    gather, not via `concatenated[key][mask]` on device. A bool-indexed
+    gather on a sharded array forces XLA to replicate the full
+    concatenated buffer across every device to materialise the
+    data-dependent output length. Per-key sequential gather keeps device
+    arrays shape-fixed (`jnp.concatenate` preserves the sharding of the
+    subject axis) and frees each key's on-device buffer as soon as its
+    host copy lands.
+    """
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
-    concatenated = {
-        key: jnp.concatenate([d[key] for d in period_dicts]) for key in period_dicts[0]
-    }
+    in_regime_host = np.asarray(
+        jnp.concatenate([d["_in_regime"] for d in period_dicts])
+    ).astype(bool)
 
-    mask = concatenated["_in_regime"].astype(bool)
-    return {key: concatenated[key][mask] for key in keys}
+    out: dict[str, np.ndarray] = {}
+    for key in keys:
+        concat = jnp.concatenate([d[key] for d in period_dicts])
+        out[key] = np.asarray(concat)[in_regime_host]
+    return out
 
 
 def _assemble_dataframe(

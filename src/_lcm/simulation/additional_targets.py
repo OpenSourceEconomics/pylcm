@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 import jax.numpy as jnp
+import numpy as np
 from dags import concatenate_functions
 
 from _lcm.engine import Regime
@@ -108,7 +109,7 @@ def _filter_targets_for_regime(
 
 def _compute_targets(
     *,
-    data: dict[str, FloatND | IntND | BoolND | Sequence[str]],
+    data: dict[str, FloatND | IntND | BoolND | np.ndarray | Sequence[str]],
     targets: list[str],
     regime: Regime,
     regime_params: FlatRegimeParams,
