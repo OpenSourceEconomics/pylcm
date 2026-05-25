@@ -181,6 +181,9 @@ State (and regime) transition probabilities are validated automatically during
 1 are checked on a sweep over the regime's grids. Whether a failure raises or only warns
 is controlled by `log_level` — see [Solving and Simulating](solving_and_simulating.md).
 
+Regime transition probabilities are validated automatically during `model.solve()` and
+`model.simulate()`, so this helper covers only state transitions.
+
 ## Under the Hood
 
 Internally, `solve()` and `simulate()` call `convert_series_in_params` (in
