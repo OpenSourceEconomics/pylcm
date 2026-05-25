@@ -5,9 +5,8 @@ import textwrap
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, TypeAliasType, cast, overload
+from typing import Any, Literal, TypeAliasType, cast, overload
 
-import jax.numpy as jnp
 from beartype import beartype
 from dags.tree import QNAME_DELIMITER
 
@@ -28,19 +27,9 @@ from lcm.typing import (
     StateName,
     UserFunction,
 )
-from lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.utils.containers import (
     ensure_containers_are_immutable,
 )
-
-# Genuine circular import: model.py imports from this module at module level.
-# The `model` parameter of `validate_transition_probs` is annotated with the
-# fully-qualified `lcm.model.Model` so the beartype claw resolves it by
-# importing `lcm.model` at first call — long after the import cycle settles —
-# rather than at module-init time. Importing `lcm.model` here keeps `lcm` a
-# bound name for the type checker.
-if TYPE_CHECKING:
-    import lcm.model
 
 
 @beartype(conf=REGIME_CONF)
