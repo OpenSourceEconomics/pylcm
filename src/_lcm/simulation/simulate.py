@@ -309,6 +309,13 @@ def _simulate_regime_in_period(
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_subjects,))
 
+    # Force V_arr to materialise here, so the lazy graph behind it is
+    # collapsed before the simulation result is built. The graph would
+    # otherwise pin the sharded SOLVE V_arr as a live operand via the
+    # Q_and_F interpolation; downstream gathers (`to_pickle`, `to_dataframe`)
+    # would then all-gather that operand onto one device.
+    V_arr.block_until_ready()
+
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
