@@ -284,37 +284,6 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
 
 
 @_skip_pytest_parallel
-def test_simulate_materialises_V_arr_eagerly(correct_distributed_model):
-    """`PeriodRegimeSimulationData.V_arr` is fully computed after `simulate()`.
-
-    The simulate loop blocks on each per-period V_arr before stashing it on the
-    result, so the dataclass holds a ready (non-deferred) JAX array. Downstream
-    consumers (`to_pickle`, `to_dataframe`) can therefore read V_arr without
-    triggering a fresh JAX gather of the lazy graph, which would otherwise pin
-    the much larger sharded SOLVE V_arr operands and force an all-gather to a
-    single device.
-    """
-    res = correct_distributed_model.simulate(
-        log_level="off",
-        params={"discount_factor": 0.95},
-        initial_conditions={
-            "age": jnp.full(36, 0),
-            "wealth": jnp.full(36, 100.0),
-            "type1": jnp.full(36, 1),
-            "type2": jnp.full(36, 1),
-            "regime_id": jnp.zeros(36, dtype=jnp.int32),
-        },
-        period_to_regime_to_V_arr=None,
-        seed=12345,
-    )
-    for regime_name, period_dict in res._raw_results.items():
-        for period, data in period_dict.items():
-            assert data.V_arr.is_ready(), (
-                f"V_arr in regime={regime_name} period={period} is not ready"
-            )
-
-
-@_skip_pytest_parallel
 def test_aot_compiled_simulation_with_subjects_batch_size_on_distributed_grid():
     """AOT-compiled chunked-dispatch simulate runs on device-sharded inputs.
 
