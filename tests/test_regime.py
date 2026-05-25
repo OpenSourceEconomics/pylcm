@@ -11,7 +11,7 @@ from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import IrregSpacedGrid
-from lcm.regime_building.validation import collect_state_transitions
+from lcm.regime_building.transitions import collect_state_transitions
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -20,8 +20,13 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from lcm.user_regime import MarkovTransition, _IdentityTransition
+from lcm.user_regime import (
+    MarkovTransition,
+    _IdentityTransition,
+    validate_transition_probs,
+)
 from lcm.user_regime import Regime as UserRegime
+from tests.test_models.stochastic import get_model as get_stochastic_model
 
 
 def utility(consumption):
@@ -421,3 +426,62 @@ def test_regime_with_fixed_states_only():
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
     )
+
+
+def _make_partner_probs_array():
+    """Build a (n_periods=3, n_work=2, n_partner=2, n_next_partner=2) array."""
+    return jnp.array(
+        [
+            [[[0.3, 0.7], [0.6, 0.4]], [[0.1, 0.9], [0.5, 0.5]]],
+            [[[0.4, 0.6], [0.8, 0.2]], [[0.2, 0.8], [0.7, 0.3]]],
+            [[[0.5, 0.5], [0.9, 0.1]], [[0.3, 0.7], [0.6, 0.4]]],
+        ]
+    )
+
+
+def test_validate_transition_probs_accepts_boundary_inputs():
+    """Inclusive [0, 1] bounds and row sums within the 1e-6 tolerance pass.
+
+    The first row is exactly `[0.0, 1.0]` — values at the inclusive bounds.
+    The last row sums to `1 - 5e-7`, just inside the `atol=1e-6` row-sum
+    tolerance. The validator must accept both without raising.
+    """
+    model = get_stochastic_model(3)
+    arr = jnp.array(
+        [
+            [[[0.0, 1.0], [1.0, 0.0]], [[0.3, 0.7], [0.6, 0.4]]],
+            [[[0.4, 0.6], [0.8, 0.2]], [[0.2, 0.8], [0.7, 0.3]]],
+            [[[0.5, 0.5], [0.9, 0.1]], [[0.3, 0.7], [0.5, 0.4999995]]],
+        ]
+    )
+    validate_transition_probs(
+        probs=arr, model=model, regime_name="working_life", state_name="partner"
+    )
+
+
+def test_validate_transition_probs_wrong_shape():
+    model = get_stochastic_model(3)
+    arr = jnp.ones((2, 2, 2)) / 2  # wrong shape
+    with pytest.raises(ValueError, match="shape"):
+        validate_transition_probs(
+            probs=arr, model=model, regime_name="working_life", state_name="partner"
+        )
+
+
+def test_validate_transition_probs_values_out_of_range():
+    model = get_stochastic_model(3)
+    arr = _make_partner_probs_array()
+    bad_arr = arr.at[0, 0, 0, 0].set(-0.1)
+    with pytest.raises(ValueError, match="\\[0, 1\\]"):
+        validate_transition_probs(
+            probs=bad_arr, model=model, regime_name="working_life", state_name="partner"
+        )
+
+
+def test_validate_transition_probs_rows_dont_sum_to_one():
+    model = get_stochastic_model(3)
+    arr = jnp.ones((3, 2, 2, 2)) * 0.3  # rows sum to 0.6, not 1
+    with pytest.raises(ValueError, match="sum to 1"):
+        validate_transition_probs(
+            probs=arr, model=model, regime_name="working_life", state_name="partner"
+        )

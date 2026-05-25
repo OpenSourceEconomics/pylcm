@@ -24,6 +24,7 @@ from lcm.simulation.transitions import (
     calculate_next_states,
     create_regime_state_action_space,
 )
+from lcm.solution.validate_V import validate_V
 from lcm.typing import (
     FlatParams,
     Float1D,
@@ -40,7 +41,6 @@ from lcm.typing import (
     StatesPerRegime,
 )
 from lcm.utils.containers import invert_regime_ids
-from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
     log_nan_in_V,

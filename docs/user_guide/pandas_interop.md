@@ -172,10 +172,10 @@ def is_good_health(health: DiscreteState) -> IntND:
     return jnp.int32(health == Health.good)
 ```
 
-## Validating Transition Probabilities
+## Validating State Transition Probabilities
 
-Check that a transition probability array has the correct shape, values in $[0, 1]$, and
-rows that sum to 1:
+Check that a state transition probability array has the correct shape, values in
+$[0, 1]$, and rows that sum to 1:
 
 ```python
 from lcm import validate_transition_probs
@@ -196,6 +196,9 @@ Raises `ValueError` if:
 - Any row (slice along the last axis) doesn't sum to 1
 
 Call this after building the array to catch mistakes early.
+
+Regime transition probabilities are validated automatically during `model.solve()` and
+`model.simulate()`, so this helper covers only state transitions.
 
 ## Under the Hood
 

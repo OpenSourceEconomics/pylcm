@@ -28,9 +28,7 @@ from lcm.typing import (
     StateName,
 )
 from lcm.user_regime import Regime as UserRegime
-from lcm.utils.error_handling import (
-    _get_func_indexing_params,
-)
+from lcm.utils.ast_inspection import _get_func_indexing_params
 
 
 def has_series(params: Mapping) -> bool:

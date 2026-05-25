@@ -11,26 +11,31 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm._transition_checks import (
+    _format_sum_violation,
+    _validate_regime_transition_probs,
+)
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from lcm.user_regime import Regime as UserRegime
-from lcm.utils.error_handling import (
-    _format_sum_violation,
-    validate_regime_transition_probs,
-)
 from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 
 
-def test_valid_probs_all_active():
-    """Valid probabilities with all regimes active pass validation."""
+def test_valid_probs_accept_boundary_inputs():
+    """Inclusive [0, 1] bounds and a sum within tolerance pass validation.
+
+    Subject 0 splits probability exactly `[1.0, 0.0]` — values at the
+    inclusive bounds. Subject 1 sums to `1 - 2.5e-6`, just inside the
+    `jnp.allclose` default tolerance. The validator must accept both.
+    """
     probs = MappingProxyType(
         {
-            "working_life": jnp.array([0.7, 0.6]),
-            "retirement": jnp.array([0.3, 0.4]),
+            "working_life": jnp.array([1.0, 0.4999975]),
+            "retirement": jnp.array([0.0, 0.5]),
         }
     )
-    validate_regime_transition_probs(
+    _validate_regime_transition_probs(
         regime_transition_probs=probs,
         active_regimes_next_period=("working_life", "retirement"),
         regime_name="working_life",
@@ -48,7 +53,7 @@ def test_valid_probs_with_inactive_regime_at_zero():
             "dead": jnp.array([0.0, 0.0]),
         }
     )
-    validate_regime_transition_probs(
+    _validate_regime_transition_probs(
         regime_transition_probs=probs,
         active_regimes_next_period=("working_life", "retirement"),
         regime_name="working_life",
@@ -69,7 +74,7 @@ def test_raises_for_probs_not_summing_to_one():
         InvalidRegimeTransitionProbabilitiesError,
         match=r"2 of 3 probability vectors do not sum to 1\.0",
     ):
-        validate_regime_transition_probs(
+        _validate_regime_transition_probs(
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",
@@ -91,7 +96,7 @@ def test_raises_for_positive_probability_on_inactive_regime():
         InvalidRegimeTransitionProbabilitiesError,
         match=r"'dead' is inactive at age 26\.0",
     ):
-        validate_regime_transition_probs(
+        _validate_regime_transition_probs(
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",
@@ -112,7 +117,7 @@ def test_raises_for_out_of_bounds_values():
         InvalidRegimeTransitionProbabilitiesError,
         match=r"values outside \[0, 1\]",
     ):
-        validate_regime_transition_probs(
+        _validate_regime_transition_probs(
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",
@@ -133,7 +138,7 @@ def test_raises_for_nan_values():
         InvalidRegimeTransitionProbabilitiesError,
         match=r"Non-finite values.*between ages 25\.0 and 26\.0",
     ):
-        validate_regime_transition_probs(
+        _validate_regime_transition_probs(
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",
@@ -154,7 +159,7 @@ def test_raises_for_inf_values():
         InvalidRegimeTransitionProbabilitiesError,
         match="Non-finite values",
     ):
-        validate_regime_transition_probs(
+        _validate_regime_transition_probs(
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",

@@ -36,8 +36,8 @@ from lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
+from lcm.regime_building.transitions import collect_state_transitions
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
-from lcm.regime_building.validation import collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
