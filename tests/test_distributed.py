@@ -182,6 +182,34 @@ def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
 
 
 @_skip_pytest_parallel
+def test_simulate_returns_eagerly_materialised_V_arrs(correct_distributed_model):
+    """Every V_arr in the `SimulationResult` is materialised before `simulate()`
+    returns.
+
+    Forward simulation must drain its lazy compute graph before returning so
+    downstream consumers (`to_dataframe`, `save`, anything that reads from
+    `raw_results`) start with concrete arrays rather than pending kernels.
+    """
+    res = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(36, 0),
+            "wealth": jnp.full(36, 100.0),
+            "type1": jnp.full(36, 1),
+            "type2": jnp.full(36, 1),
+            "regime_id": jnp.zeros(36, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+    for regime_period_data in res._raw_results.values():
+        for period_data in regime_period_data.values():
+            for shard in period_data.V_arr.addressable_shards:
+                assert shard.data.is_ready()
+
+
+@_skip_pytest_parallel
 def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     """Test that distribution over multiple CPU's works for simulation."""
 

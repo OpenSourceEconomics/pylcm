@@ -157,6 +157,11 @@ def log_regime_transitions(
 ) -> None:
     """Log regime transition counts at debug level.
 
+    Builds the full `(n_regimes, n_regimes)` transition count matrix in a
+    single fused JAX kernel, then host-transfers the matrix once. Replaces
+    a previous per-pair `jnp.sum(...).item()` loop that emitted
+    `O(n_regimes^2)` host transfers per period.
+
     Args:
         logger: Logger instance.
         prev_regime_ids: Regime IDs before the transition.
@@ -167,14 +172,21 @@ def log_regime_transitions(
     if not logger.isEnabledFor(logging.DEBUG):
         return
 
+    sorted_ids = sorted(regime_ids_to_names.keys())
+    id_array = jnp.array(sorted_ids)
+    from_one_hot = prev_regime_ids[:, None] == id_array[None, :]
+    to_one_hot = new_regime_ids[:, None] == id_array[None, :]
+    counts = (from_one_hot[:, :, None] & to_one_hot[:, None, :]).sum(axis=0)
+    counts_host = counts.tolist()
+
     parts: list[str] = []
-    for from_id, from_name in sorted(regime_ids_to_names.items()):
-        mask = prev_regime_ids == from_id
-        if not jnp.any(mask):
-            continue
-        for to_id, to_name in sorted(regime_ids_to_names.items()):
-            count = int(jnp.sum(mask & (new_regime_ids == to_id)))
+    for i, from_id in enumerate(sorted_ids):
+        for j, to_id in enumerate(sorted_ids):
+            count = counts_host[i][j]
             if count > 0:
-                parts.append(f"  - {from_name} \u2192 {to_name} = {count}")
+                parts.append(
+                    f"  - {regime_ids_to_names[from_id]} \u2192 "
+                    f"{regime_ids_to_names[to_id]} = {count}"
+                )
     if parts:
         logger.debug("  transitions:\n%s", "\n".join(parts))

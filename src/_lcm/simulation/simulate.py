@@ -39,8 +39,11 @@ from _lcm.utils.logging import (
     log_period_header,
     log_period_timing,
     log_regime_transitions,
+    raise_or_warn,
+    validation_enabled,
 )
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.result import SimulationResult
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
 
@@ -89,6 +92,10 @@ def simulate(
 
     logger.info("Starting simulation")
     total_start = time.monotonic()
+
+    # Gate per-period NaN/Inf checks on `log_level`. At `"off"` no
+    # validation fires, matching `solve(log_level="off")`'s contract.
+    diagnostics_enabled = validation_enabled(logger)
 
     # Extract state arrays from initial conditions, which include the regime on top.
     initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
@@ -156,14 +163,17 @@ def simulate(
                     regime_names_to_ids=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
+                    logger=logger,
+                    diagnostics_enabled=diagnostics_enabled,
                 )
             )
             states = new_states
             simulation_results[regime_name][period] = result
 
-            log_nan_in_V(
-                logger=logger, regime_name=regime_name, age=age, V_arr=result.V_arr
-            )
+            if diagnostics_enabled:
+                log_nan_in_V(
+                    logger=logger, regime_name=regime_name, age=age, V_arr=result.V_arr
+                )
 
         subject_regime_ids = new_subject_regime_ids
 
@@ -176,6 +186,15 @@ def simulate(
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)
+
+    # Drain the per-period compute graph before returning. Mirrors solve's
+    # `_drain_V_arr_shards`: simulation_results carries per (regime, period)
+    # V_arrs / states / actions whose kernels may still be in flight when
+    # the Python loop exits, especially at `log_level="off"` where no
+    # per-period diagnostics force materialisation. `jax.block_until_ready`
+    # walks the pytree and blocks per-shard (no host transfer, no cross-
+    # device collective).
+    jax.block_until_ready(simulation_results)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Simulation complete  (%s)", format_duration(seconds=total_elapsed))
@@ -214,6 +233,8 @@ def _simulate_regime_in_period(
     regime_names_to_ids: RegimeNamesToIds,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
+    logger: logging.Logger,
+    diagnostics_enabled: bool,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -275,7 +296,11 @@ def _simulate_regime_in_period(
         period=jnp.int32(period),
         age=age,
     )
-    validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
+    if diagnostics_enabled:
+        try:
+            validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
+        except InvalidValueFunctionError as error:
+            raise_or_warn(logger=logger, error=error)
 
     optimal_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_actions,

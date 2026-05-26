@@ -147,6 +147,106 @@ def _build_nan_model() -> tuple[Model, dict]:
     return model, params
 
 
+def _build_always_nan_model() -> tuple[Model, dict]:
+    """Build a model whose utility is unconditionally NaN.
+
+    Used to test that the NaN/Inf validation in `simulate` honours `log_level`.
+    At `log_level="off"` the NaN-bearing V_arr must flow through without
+    raising; at `"warning"`/`"debug"` validation fires.
+    """
+
+    @categorical(ordered=False)
+    class _Rid:
+        non_terminal: ScalarInt
+        terminal: ScalarInt
+
+    def utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.full_like(consumption, jnp.nan)
+
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption
+
+    def next_regime(period: int, n_periods: int) -> ScalarInt:
+        return jnp.where(period == (n_periods - 2), 1, 0)
+
+    def borrowing_constraint(
+        consumption: ContinuousAction, wealth: ContinuousState
+    ) -> BoolND:
+        return consumption <= wealth
+
+    non_terminal = UserRegime(
+        actions={"consumption": LinSpacedGrid(start=1, stop=2, n_points=3)},
+        states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=3)},
+        state_transitions={"wealth": next_wealth},
+        functions={"utility": utility},
+        constraints={"borrowing_constraint": borrowing_constraint},
+        transition=next_regime,
+        active=lambda age: age < 1,
+    )
+    terminal = UserRegime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 1,
+    )
+    model = Model(
+        regimes={"non_terminal": non_terminal, "terminal": terminal},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_Rid,
+    )
+    params = {
+        "discount_factor": 0.95,
+        "non_terminal": {"next_regime": {"n_periods": 2}},
+        "terminal": {},
+    }
+    return model, params
+
+
+def test_simulate_log_level_warning_does_not_raise_on_nan_v_arr() -> None:
+    """`simulate(log_level="warning")` warns rather than raising on NaN V_arr.
+
+    Mirrors `solve(log_level="warning")`: NaN is reported as a warning and
+    the run completes, so the caller gets back a (NaN-bearing) result rather
+    than an exception. Only `log_level="debug"` raises.
+    """
+    model, params = _build_always_nan_model()
+    initial_conditions = {
+        "wealth": jnp.array([1.5]),
+        "age": jnp.array([0.0]),
+        "regime_id": jnp.zeros(1, dtype=jnp.int32),
+    }
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        log_level="warning",
+    )
+    assert set(result._raw_results) == {"non_terminal", "terminal"}
+
+
+def test_simulate_log_level_off_skips_nan_validation() -> None:
+    """`simulate(log_level="off")` runs to completion on a NaN-bearing V_arr.
+
+    Mirrors `solve(log_level="off")`: at `"off"` no NaN check fires, so the
+    NaN flows through to the result without raising. The caller has opted
+    out of validation and is responsible for handling NaN downstream.
+    """
+    model, params = _build_always_nan_model()
+    initial_conditions = {
+        "wealth": jnp.array([1.5]),
+        "age": jnp.array([0.0]),
+        "regime_id": jnp.zeros(1, dtype=jnp.int32),
+    }
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    )
+    assert set(result._raw_results) == {"non_terminal", "terminal"}
+
+
 def test_nan_diagnostics_end_to_end() -> None:
     """Real model: `model.solve()` attaches a diagnostics dict when V has NaN.
 
