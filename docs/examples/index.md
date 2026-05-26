@@ -21,9 +21,9 @@ models live in the `lcm_examples` package and can be imported directly.
    `lcm_examples.precautionary_savings_health` 2-regime model with health & exercise.
    Multiple continuous states and actions, auxiliary functions, constraints.
 
-1. **[Mahler & Yum (2024)](mahler_yum_2024.md)** — `lcm_examples.mahler_yum_2024` Full
-   Econometrica replication. 8 states, stochastic transitions, data files,
-   discount-factor heterogeneity. **Requires GPU.**
+1. **[Mahler & Yum (2024)](mahler_yum_2024.md)** — `lcm_examples.mahler_yum_2024`
+   Econometrica lifecycle model. 9 states, stochastic transitions, data files,
+   discount-factor heterogeneity. GPU recommended.
 
 ## Customizing models
 
