@@ -162,6 +162,24 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
 
 
 @_skip_pytest_parallel
+def test_solve_returns_eagerly_materialised_v_arrs(correct_distributed_model):
+    """Every V_arr shard is materialised before `solve()` returns.
+
+    Backward induction must drain the device-side compute graph before
+    the simulate phase consumes the V_arrs, so V stays sharded but no
+    pending kernels leak from solve to simulate.
+    """
+    period_to_regime_to_V_arr = correct_distributed_model.solve(
+        log_level="off",
+        params={"discount_factor": 0.95},
+    )
+    for regime_to_V_arr in period_to_regime_to_V_arr.values():
+        for V_arr in regime_to_V_arr.values():
+            for shard in V_arr.addressable_shards:
+                assert shard.data.is_ready()
+
+
+@_skip_pytest_parallel
 def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     """Test that distribution over multiple CPU's works for simulation."""
 

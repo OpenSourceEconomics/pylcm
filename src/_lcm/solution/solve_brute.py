@@ -245,10 +245,31 @@ def solve(
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
+    _drain_v_arr_shards(solution=solution)
+
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
     return MappingProxyType(solution)
+
+
+def _drain_v_arr_shards(
+    *,
+    solution: dict[int, MappingProxyType[RegimeName, FloatND]],
+) -> None:
+    """Block until every V_arr shard is materialised on its device.
+
+    Solve → simulate barrier: backward induction returns sharded V_arrs,
+    but the simulate phase must consume materialised arrays rather than
+    in-flight kernels. Per-shard `.block_until_ready()` is a device-side
+    wait (no host transfer), free when kernels are already done and the
+    minimum necessary sync when they are not. V stays sharded across
+    devices.
+    """
+    for regime_to_V_arr in solution.values():
+        for V_arr in regime_to_V_arr.values():
+            for shard in V_arr.addressable_shards:
+                shard.data.block_until_ready()
 
 
 def _compile_all_functions(
