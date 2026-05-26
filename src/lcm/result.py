@@ -159,7 +159,7 @@ class SimulationResult:
         self,
         *,
         directory: Path,
-        df_additional_targets: list[str] | Literal["all"] | None = "all",
+        df_additional_targets: list[str] | Literal["all"] | None = None,
         df_use_labels: bool = True,
     ) -> Path:
         """Persist the result to a directory.
@@ -182,9 +182,12 @@ class SimulationResult:
                 Must not contain an existing orbax checkpoint at
                 `directory/arrays`.
             df_additional_targets: Targets passed through to `to_dataframe`
-                when projecting the on-disk arrow file. `"all"` (default)
-                bakes every available target into the artifact so
-                downstream consumers can read columns without re-computing.
+                when projecting the on-disk arrow file. `None` (default)
+                writes only the base columns (states, actions, regime, age,
+                period, V_arr). Pass a list of target names to bake specific
+                DAG outputs into the artifact, or `"all"` to include every
+                available target — the latter can grow the file by an order
+                of magnitude on large models with many DAG leaves.
             df_use_labels: Whether discrete variables are stored as
                 pandas `Categorical` labels (default) or integer codes.
                 Forwarded to `to_dataframe`.
@@ -198,7 +201,7 @@ class SimulationResult:
 
         array_tree = {
             "raw_results": _raw_results_to_array_tree(self._raw_results),
-            "period_to_regime_to_V_arr": _period_v_to_array_tree(
+            "period_to_regime_to_V_arr": _period_V_to_array_tree(
                 self._period_to_regime_to_V_arr
             ),
             "flat_params": _flat_params_to_array_tree(self._flat_params),
@@ -254,7 +257,7 @@ class SimulationResult:
         array_tree = checkpointer.restore(source / "arrays")
 
         raw_results = _array_tree_to_raw_results(array_tree["raw_results"])
-        period_to_regime_to_V_arr = _array_tree_to_period_v(
+        period_to_regime_to_V_arr = _array_tree_to_period_V(
             array_tree["period_to_regime_to_V_arr"]
         )
         flat_params = _array_tree_and_scaffold_to_flat_params(
@@ -367,7 +370,7 @@ def _array_tree_to_raw_results(
     )
 
 
-def _period_v_to_array_tree(
+def _period_V_to_array_tree(
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
@@ -379,10 +382,10 @@ def _period_v_to_array_tree(
     }
 
 
-def _array_tree_to_period_v(
+def _array_tree_to_period_V(
     tree: dict[str, dict[RegimeName, FloatND]],
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
-    """Inverse of `_period_v_to_array_tree`."""
+    """Inverse of `_period_V_to_array_tree`."""
     return MappingProxyType(
         {
             int(period): MappingProxyType(regime_dict)

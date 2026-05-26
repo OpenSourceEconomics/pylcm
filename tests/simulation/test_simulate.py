@@ -526,8 +526,10 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
     """`save(directory=...)` writes a `simulated_data.arrow` file at the directory root.
 
     The file's contents read back via `pd.read_feather` must match
-    `result.to_dataframe(additional_targets="all", use_labels=True)` — the
-    same projection that `save` applies by default.
+    `result.to_dataframe(use_labels=True)` — i.e. the base columns only.
+    `save` defaults to `df_additional_targets=None` to keep the artifact
+    small; downstream consumers needing extra targets pass them
+    explicitly or work with the full `SimulationResult` after `load`.
     """
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
@@ -551,9 +553,7 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
     # JAX-scalar coercion that `save` applies, then read both sides back.
     # That isolates pyarrow's type-promotion / null-representation rules
     # from the round-trip contract under test.
-    expected = result.to_dataframe(additional_targets="all", use_labels=True).map(
-        _coerce_jax_scalar_for_arrow
-    )
+    expected = result.to_dataframe(use_labels=True).map(_coerce_jax_scalar_for_arrow)
     expected_path = tmp_path / "expected.arrow"
     expected.to_feather(expected_path)
 

@@ -203,7 +203,7 @@ def _build_always_nan_model() -> tuple[Model, dict]:
     return model, params
 
 
-def test_simulate_log_level_warning_does_not_raise_on_nan_v_arr() -> None:
+def test_simulate_log_level_warning_does_not_raise_on_nan_V_arr() -> None:
     """`simulate(log_level="warning")` warns rather than raising on NaN V_arr.
 
     Mirrors `solve(log_level="warning")`: NaN is reported as a warning and

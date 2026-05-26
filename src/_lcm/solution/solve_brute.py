@@ -672,14 +672,14 @@ def _log_per_period_stats(
     means: FloatND,
 ) -> None:
     """Emit one debug log line per (regime, period) with V min/max/mean."""
-    for row, v_min, v_max, v_mean in zip(
+    for row, V_min, V_max, V_mean in zip(
         diagnostic_rows, mins.tolist(), maxs.tolist(), means.tolist(), strict=True
     ):
         logger.debug(
             "  %s  age %s   V min=%.3g  max=%.3g  mean=%.3g",
             row.regime_name,
             row.age,
-            v_min,
-            v_max,
-            v_mean,
+            V_min,
+            V_max,
+            V_mean,
         )
