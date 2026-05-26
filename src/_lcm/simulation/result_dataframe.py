@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -126,26 +127,47 @@ def _concatenate_and_filter(
 ) -> dict[str, np.ndarray]:
     """Concatenate period data per key and host-filter to in-regime subjects.
 
-    The bool mask is applied host-side after a one-shot device-to-host
-    gather, not via `concatenated[key][mask]` on device. A bool-indexed
-    gather on a sharded array forces XLA to replicate the full
-    concatenated buffer across every device to materialise the
-    data-dependent output length. Per-key sequential gather keeps device
-    arrays shape-fixed (`jnp.concatenate` preserves the sharding of the
-    subject axis) and frees each key's on-device buffer as soon as its
-    host copy lands.
+    Each `(period, key)` array is materialised on the host one shard at a time
+    via `jax.device_get(shard.data)`, with shards visited in subject-index
+    order. Concatenation happens host-side on the resulting numpy chunks. This
+    avoids an all-gather of a subject-sharded array onto one device — the cost
+    that turns `to_dataframe` on a sharded `SimulationResult` into a fresh
+    multi-device collective at every call.
+
+    The bool mask is applied host-side after each column lands, mirroring the
+    per-key sequential gather: each key's on-device shards are freed (in
+    principle) as soon as their host copies land.
     """
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
-    in_regime_host = np.asarray(
-        jnp.concatenate([d["_in_regime"] for d in period_dicts])
-    ).astype(bool)
+    in_regime_host = _gather_per_shard([d["_in_regime"] for d in period_dicts]).astype(
+        bool
+    )
 
     out: dict[str, np.ndarray] = {}
     for key in keys:
-        concat = jnp.concatenate([d[key] for d in period_dicts])
-        out[key] = np.asarray(concat)[in_regime_host]
+        out[key] = _gather_per_shard([d[key] for d in period_dicts])[in_regime_host]
     return out
+
+
+def _gather_per_shard(arrs: list[FloatND | IntND | BoolND]) -> np.ndarray:
+    """Materialise a list of JAX arrays into one host numpy array, one shard per pass.
+
+    Each input's `addressable_shards` are visited in subject-index order;
+    `jax.device_get(shard.data)` transfers the per-device buffer to the host
+    without an inter-device collective. Single-device or numpy inputs go
+    through the same `jax.device_get` for uniformity.
+    """
+    chunks: list[np.ndarray] = []
+    for arr in arrs:
+        if isinstance(arr, jax.Array) and len(arr.sharding.device_set) > 1:
+            ordered_shards = sorted(
+                arr.addressable_shards, key=lambda s: s.index[0].start or 0
+            )
+            chunks.extend(jax.device_get(s.data) for s in ordered_shards)
+        else:
+            chunks.append(jax.device_get(arr))
+    return np.concatenate(chunks)
 
 
 def _assemble_dataframe(

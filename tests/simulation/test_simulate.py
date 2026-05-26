@@ -615,9 +615,8 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
     )
 
     # Pickle and unpickle
-    pickle_path = tmp_path / "result.pkl"
-    result.to_pickle(pickle_path)
-    loaded = SimulationResult.from_pickle(pickle_path)
+    result.to_pickle(tmp_path)
+    loaded = SimulationResult.from_pickle(tmp_path)
 
     # Compare metadata attributes
     assert loaded.n_periods == result.n_periods

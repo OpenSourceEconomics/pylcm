@@ -12,8 +12,8 @@ from types import MappingProxyType
 
 import cloudpickle
 import h5py
+import jax
 import jax.numpy as jnp
-import numpy as np
 
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm.typing import FloatND
@@ -51,7 +51,33 @@ def _save_h5(
         for period, regime_dict in period_to_regime_to_V_arr.items():
             for regime_name, arr in regime_dict.items():
                 dataset_name = f"{period}/{regime_name}/V_arr"
-                fh.create_dataset(dataset_name, data=np.asarray(arr))
+                _write_sharded_dataset(fh, dataset_name, arr)
+
+
+def _write_sharded_dataset(parent: h5py.Group, name: str, arr: object) -> None:
+    """Materialise a possibly sharded JAX array into one h5 dataset.
+
+    Each `arr.addressable_shards[i].data` is written into the slice
+    `shard.index` of the destination dataset. The per-shard write hands
+    a single-device JAX array to h5py, whose internal conversion runs
+    on the local-device buffer only — no inter-device collective and no
+    materialisation of the full array on one device.
+
+    For single-device or non-`jax.Array` inputs the dataset is created
+    directly.
+    """
+    if not isinstance(arr, jax.Array) or len(arr.sharding.device_set) == 1:
+        parent.create_dataset(name, data=arr)
+        return
+
+    dataset = parent.create_dataset(name, shape=arr.shape, dtype=arr.dtype)
+    for shard in arr.addressable_shards:
+        dataset.write_direct(jax.device_get(shard.data), dest_sel=shard.index)
+
+
+def _read_h5_array(parent: h5py.Group, name: str) -> jnp.ndarray:
+    """Load an h5 dataset onto the JAX default device as a single-shard array."""
+    return jnp.asarray(parent[name][()])
 
 
 def _load_h5(path: Path) -> PeriodToRegimeToVArr:

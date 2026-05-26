@@ -1,4 +1,6 @@
 import jax
+import numpy as np
+import pandas as pd
 import pytest
 from jax import numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
@@ -16,6 +18,7 @@ from lcm.exceptions import (
 )
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
+from lcm.result import SimulationResult
 from lcm.typing import ScalarInt
 
 # Run these tests on the CPU for parallelization, does not work if pytest runs
@@ -281,6 +284,91 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     assert (
         res._raw_results["working_life"][2].states["wealth"].sharding.num_devices == 4
     )
+
+
+@_skip_pytest_parallel
+def test_to_dataframe_on_sharded_result_matches_roundtripped_result(
+    correct_distributed_model, tmp_path
+):
+    """`to_dataframe()` on a sharded `SimulationResult` matches the DataFrame from
+    a `from_pickle`d copy (loaded on a single device).
+
+    Catches shard-ordering bugs in the per-shard gather inside
+    `_concatenate_and_filter`: shards must contribute to each column in subject-
+    index order so the resulting DataFrame rows line up with their `subject_id`
+    column.
+    """
+    res = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(36, 0),
+            "wealth": jnp.full(36, 100.0),
+            "type1": jnp.full(36, 1),
+            "type2": jnp.full(36, 1),
+            "regime_id": jnp.zeros(36, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+    df_sharded = res.to_dataframe()
+
+    res.to_pickle(tmp_path)
+    df_loaded = SimulationResult.from_pickle(tmp_path).to_dataframe()
+
+    pd.testing.assert_frame_equal(df_sharded, df_loaded)
+
+
+@_skip_pytest_parallel
+def test_to_pickle_from_pickle_roundtrip_preserves_arrays_on_sharded_result(
+    correct_distributed_model, tmp_path
+):
+    """A sharded `SimulationResult` round-trips through `to_pickle` + `from_pickle`.
+
+    `to_pickle(dir)` writes a `simulation_result.pkl` + `simulation_result.h5` pair;
+    `from_pickle(dir)` reconstructs the full nested `_raw_results` from the h5
+    sidecar onto the default device. Per-(regime, period) array fields — `V_arr`,
+    `actions[*]`, `states[*]`, `in_regime` — match the originals value-wise after
+    the round trip.
+    """
+    res = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(36, 0),
+            "wealth": jnp.full(36, 100.0),
+            "type1": jnp.full(36, 1),
+            "type2": jnp.full(36, 1),
+            "regime_id": jnp.zeros(36, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+
+    out_dir = tmp_path / "sim_run"
+    out_dir.mkdir()
+    res.to_pickle(out_dir)
+
+    assert (out_dir / "simulation_result.pkl").exists()
+    assert (out_dir / "simulation_result.h5").exists()
+
+    loaded = SimulationResult.from_pickle(out_dir)
+
+    assert loaded.regime_names == res.regime_names
+    assert loaded.n_periods == res.n_periods
+    assert loaded.n_subjects == res.n_subjects
+
+    for regime_name, period_dict in res._raw_results.items():
+        for period, data in period_dict.items():
+            loaded_data = loaded._raw_results[regime_name][period]
+            np.testing.assert_array_equal(loaded_data.V_arr, data.V_arr)
+            np.testing.assert_array_equal(loaded_data.in_regime, data.in_regime)
+            assert set(loaded_data.actions) == set(data.actions)
+            for k, v in data.actions.items():
+                np.testing.assert_array_equal(loaded_data.actions[k], v)
+            assert set(loaded_data.states) == set(data.states)
+            for k, v in data.states.items():
+                np.testing.assert_array_equal(loaded_data.states[k], v)
 
 
 @_skip_pytest_parallel

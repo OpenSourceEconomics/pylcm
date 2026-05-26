@@ -7,10 +7,11 @@ from types import MappingProxyType
 from typing import Literal
 
 import cloudpickle
+import h5py
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
-from _lcm.persistence.io import _atomic_dump
+from _lcm.persistence.io import _atomic_dump, _read_h5_array, _write_sharded_dataset
 from _lcm.simulation.additional_targets import (
     _collect_all_available_targets,
     _resolve_targets,
@@ -22,6 +23,9 @@ from _lcm.simulation.result_dataframe import (
 from _lcm.simulation.result_metadata import _compute_metadata
 from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
 from lcm.ages import AgeGrid
+
+_RESULT_PKL_NAME = "simulation_result.pkl"
+_RESULT_H5_NAME = "simulation_result.h5"
 
 
 class SimulationResult:
@@ -42,6 +46,7 @@ class SimulationResult:
         self._regimes = regimes
         self._flat_params = flat_params
         self._ages = ages
+        self._simulation_output_dtypes = simulation_output_dtypes
         self._metadata = _compute_metadata(
             regimes=regimes,
             raw_results=raw_results,
@@ -148,40 +153,107 @@ class SimulationResult:
         *,
         protocol: int = pickle.HIGHEST_PROTOCOL,
     ) -> Path:
-        """Serialize the SimulationResult to a file.
+        """Serialize the SimulationResult to a directory.
+
+        Writes `<path>/simulation_result.pkl` (metadata: regimes, params, ages,
+        dtypes, plus the regime/period structure of the raw results) and a
+        sibling `<path>/simulation_result.h5` (per-`(regime, period, key)`
+        datasets, written shard-by-shard so a sharded `jax.Array` is
+        materialised one device at a time rather than via an all-gather to
+        a single device).
 
         Args:
-            path: File path to save the pickle.
-            protocol: Int which indicates which protocol should be used by the pickler,
-                default HIGHEST_PROTOCOL. The possible values are 0, 1, 2, 3, 4, 5. See
+            path: Directory to write the result to. Must already exist.
+            protocol: Pickle protocol for the metadata file. See
                 https://docs.python.org/3/library/pickle.html.
 
         Returns:
-            The path where the object was saved.
+            The directory the result was written to.
 
         """
-        return _atomic_dump(self, path, protocol=protocol)
+        directory = Path(path)
+        if not directory.is_dir():
+            raise NotADirectoryError(
+                f"`to_pickle` expects an existing directory; got {directory!r}."
+            )
+
+        with h5py.File(directory / _RESULT_H5_NAME, "w") as fh:
+            for regime_name, period_dict in self._raw_results.items():
+                regime_group = fh.create_group(regime_name)
+                for period, data in period_dict.items():
+                    period_group = regime_group.create_group(str(period))
+                    _write_sharded_dataset(period_group, "V_arr", data.V_arr)
+                    _write_sharded_dataset(period_group, "in_regime", data.in_regime)
+                    actions_group = period_group.create_group("actions")
+                    for action_name, arr in data.actions.items():
+                        _write_sharded_dataset(actions_group, action_name, arr)
+                    states_group = period_group.create_group("states")
+                    for state_name, arr in data.states.items():
+                        _write_sharded_dataset(states_group, state_name, arr)
+
+        metadata = {
+            "regimes": self._regimes,
+            "flat_params": self._flat_params,
+            "ages": self._ages,
+            "simulation_output_dtypes": self._simulation_output_dtypes,
+        }
+        _atomic_dump(metadata, directory / _RESULT_PKL_NAME, protocol=protocol)
+        return directory
 
     @classmethod
     def from_pickle(cls, path: str | Path) -> SimulationResult:
-        """Deserialize a SimulationResult from a pickle file.
+        """Deserialize a SimulationResult from a directory.
 
         Args:
-            path: File path to read the pickle from.
+            path: Directory previously written by `to_pickle`.
 
         Returns:
-            The unpickled SimulationResult object.
+            The reconstructed `SimulationResult`. Array fields land on the
+            JAX default device — original sharding is dropped on load.
 
         """
-        p = Path(path)
-        with p.open("rb") as f:
-            obj = cloudpickle.load(f)
-
-        if not isinstance(obj, cls):
-            raise TypeError(
-                f"Pickle at {p} is {type(obj).__name__}, expected {cls.__name__}"
+        directory = Path(path)
+        if not directory.is_dir():
+            raise NotADirectoryError(
+                f"`from_pickle` expects a directory; got {directory!r}."
             )
-        return obj
+
+        pkl_path = directory / _RESULT_PKL_NAME
+        h5_path = directory / _RESULT_H5_NAME
+        with pkl_path.open("rb") as f:
+            metadata = cloudpickle.load(f)
+
+        raw_results: dict[
+            RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
+        ] = {}
+        with h5py.File(h5_path, "r") as fh:
+            for regime_name in fh:
+                regime_group = fh[regime_name]
+                period_dict: dict[int, PeriodRegimeSimulationData] = {}
+                for period_key in regime_group:
+                    period = int(period_key)
+                    period_group = regime_group[period_key]
+                    actions_group = period_group["actions"]
+                    states_group = period_group["states"]
+                    period_dict[period] = PeriodRegimeSimulationData(
+                        V_arr=_read_h5_array(period_group, "V_arr"),
+                        in_regime=_read_h5_array(period_group, "in_regime"),
+                        actions=MappingProxyType(
+                            {k: _read_h5_array(actions_group, k) for k in actions_group}
+                        ),
+                        states=MappingProxyType(
+                            {k: _read_h5_array(states_group, k) for k in states_group}
+                        ),
+                    )
+                raw_results[regime_name] = MappingProxyType(period_dict)
+
+        return cls(
+            raw_results=MappingProxyType(raw_results),
+            regimes=metadata["regimes"],
+            flat_params=metadata["flat_params"],
+            ages=metadata["ages"],
+            simulation_output_dtypes=metadata["simulation_output_dtypes"],
+        )
 
     def __repr__(self) -> str:
         return (
