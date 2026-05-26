@@ -15,8 +15,6 @@ class MahlerYum:
     timeout = 1200
 
     def _build(self):
-        import jax.numpy as jnp
-
         from lcm_examples.mahler_yum_2024 import (
             MAHLER_YUM_MODEL,
             START_PARAMS,
@@ -24,20 +22,12 @@ class MahlerYum:
         )
 
         self.model = MAHLER_YUM_MODEL
-        common_params, initial_states = create_inputs(
+        common_params, self.initial_conditions = create_inputs(
             seed=0,
             n_simulation_subjects=_N_SUBJECTS,
-            **START_PARAMS,
+            params=START_PARAMS,
         )
         self.model_params = {"alive": common_params}
-        self.initial_conditions = {
-            **initial_states,
-            "regime_id": jnp.full(
-                _N_SUBJECTS,
-                self.model.regime_names_to_ids["alive"],
-                dtype=jnp.int32,
-            ),
-        }
 
     def setup(self):
         self._build()

@@ -236,6 +236,10 @@ per-file-ignores."src/_lcm/utils/functools.py" = [
 per-file-ignores."src/_lcm/**/*[A-Z]*.py" = [
   "N999", # Module name mixing uppercase and lowercase (Q_and_F.py, V.py, max_Q_over_a.py)
 ]
+per-file-ignores."src/lcm_examples/mahler_yum_2024/**" = [
+  "PD008", # false positive on JAX `.at[].set()` immutable updates
+  "PD011", # false positive on `AgeGrid.values`
+]
 per-file-ignores."tests/*" = [
   "ANN",     # Annotations
   "D",       # Docstrings
