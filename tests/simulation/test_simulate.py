@@ -487,10 +487,14 @@ def test_retrieve_actions():
     assert_array_equal(got["b"], jnp.array([10, 16, 12]))
 
 
-def test_simulation_result_pickle_roundtrip(tmp_path: Path):
-    """Test that SimulationResult can be pickled and unpickled."""
+def test_simulation_result_save_load_roundtrip(tmp_path: Path):
+    """`SimulationResult.save(dir)` + `SimulationResult.load(dir)` preserve content.
 
-    # Create a SimulationResult
+    A round-trip through the on-disk format must produce a result whose
+    `to_dataframe()` output matches the original, including all metadata
+    (regime / state / action names, available targets, period and subject
+    counts).
+    """
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
     result = model.simulate(
@@ -504,12 +508,10 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
         period_to_regime_to_V_arr=None,
     )
 
-    # Pickle and unpickle
-    pickle_path = tmp_path / "result.pkl"
-    result.to_pickle(pickle_path)
-    loaded = SimulationResult.from_pickle(pickle_path)
+    save_dir = tmp_path / "result"
+    result.save(save_dir)
+    loaded = SimulationResult.load(save_dir)
 
-    # Compare metadata attributes
     assert loaded.n_periods == result.n_periods
     assert loaded.n_subjects == result.n_subjects
     assert loaded.regime_names == result.regime_names
@@ -517,5 +519,4 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
     assert loaded.action_names == result.action_names
     assert loaded.available_targets == result.available_targets
 
-    # Compare DataFrames
     assert_frame_equal(loaded.to_dataframe(), result.to_dataframe())

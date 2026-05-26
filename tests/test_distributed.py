@@ -1,4 +1,5 @@
 import jax
+import pandas as pd
 import pytest
 from jax import numpy as jnp
 
@@ -9,6 +10,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
+from lcm.result import SimulationResult
 from lcm.typing import ScalarInt
 
 # Run these tests on the CPU for parallelization, does not work if pytest runs
@@ -202,6 +204,49 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     assert (
         res._raw_results["working_life"][2].states["wealth"].sharding.num_devices == 4
     )
+
+
+@_skip_pytest_parallel
+def test_save_load_preserves_sharding_and_dataframe(
+    correct_distributed_model, tmp_path
+):
+    """`save` / `load` round-trip preserves per-shard data and DataFrame output.
+
+    Arrays must travel through the on-disk format without an implicit
+    gather: each shard is written and restored on the same device mesh,
+    and the `to_dataframe()` projection is byte-identical to the
+    in-memory result.
+    """
+    res = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(36, 0),
+            "wealth": jnp.full(36, 100.0),
+            "type1": jnp.full(36, 1),
+            "type2": jnp.full(36, 1),
+            "regime_id": jnp.zeros(36, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+
+    save_dir = tmp_path / "result"
+    res.save(save_dir)
+    loaded = SimulationResult.load(save_dir)
+
+    for period, regime_dict in res._period_to_regime_to_V_arr.items():
+        for regime_name, V_arr in regime_dict.items():
+            loaded_V = loaded._period_to_regime_to_V_arr[period][regime_name]
+            assert loaded_V.sharding.num_devices == V_arr.sharding.num_devices
+            for original_shard, loaded_shard in zip(
+                V_arr.addressable_shards,
+                loaded_V.addressable_shards,
+                strict=True,
+            ):
+                assert loaded_shard.data.shape == original_shard.data.shape
+
+    pd.testing.assert_frame_equal(loaded.to_dataframe(), res.to_dataframe())
 
 
 @_skip_pytest_parallel
