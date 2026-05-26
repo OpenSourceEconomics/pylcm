@@ -16,7 +16,7 @@ from _lcm.simulation.simulate import (
 from _lcm.utils.logging import get_logger
 from lcm import Model
 from lcm.ages import AgeGrid
-from lcm.result import SimulationResult
+from lcm.result import SimulationResult, _coerce_jax_scalar_for_arrow
 from tests.test_models.deterministic.regression import (
     START_AGE,
     RegimeId,
@@ -488,7 +488,7 @@ def test_retrieve_actions():
 
 
 def test_simulation_result_save_load_roundtrip(tmp_path: Path):
-    """`SimulationResult.save(dir)` + `SimulationResult.load(dir)` preserve content.
+    """`SimulationResult.save(directory=...)` + `load(directory=...)` preserve content.
 
     A round-trip through the on-disk format must produce a result whose
     `to_dataframe()` output matches the original, including all metadata
@@ -509,8 +509,8 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
     )
 
     save_dir = tmp_path / "result"
-    result.save(save_dir)
-    loaded = SimulationResult.load(save_dir)
+    result.save(directory=save_dir)
+    loaded = SimulationResult.load(directory=save_dir)
 
     assert loaded.n_periods == result.n_periods
     assert loaded.n_subjects == result.n_subjects
@@ -520,3 +520,41 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
     assert loaded.available_targets == result.available_targets
 
     assert_frame_equal(loaded.to_dataframe(), result.to_dataframe())
+
+
+def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
+    """`save(directory=...)` writes a `simulated_data.arrow` file at the directory root.
+
+    The file's contents read back via `pd.read_feather` must match
+    `result.to_dataframe(additional_targets="all", use_labels=True)` — the
+    same projection that `save` applies by default.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+
+    save_dir = tmp_path / "result"
+    result.save(directory=save_dir)
+    arrow_path = save_dir / "simulated_data.arrow"
+    assert arrow_path.is_file()
+
+    # Apples-to-apples: write the expected frame to feather using the same
+    # JAX-scalar coercion that `save` applies, then read both sides back.
+    # That isolates pyarrow's type-promotion / null-representation rules
+    # from the round-trip contract under test.
+    expected = result.to_dataframe(additional_targets="all", use_labels=True).map(
+        _coerce_jax_scalar_for_arrow
+    )
+    expected_path = tmp_path / "expected.arrow"
+    expected.to_feather(expected_path)
+
+    assert_frame_equal(pd.read_feather(arrow_path), pd.read_feather(expected_path))

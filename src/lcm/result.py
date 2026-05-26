@@ -155,18 +155,39 @@ class SimulationResult:
 
         return df
 
-    def save(self, directory: str | Path) -> Path:
+    def save(
+        self,
+        *,
+        directory: str | Path,
+        df_additional_targets: list[str] | Literal["all"] | None = "all",
+        df_use_labels: bool = True,
+    ) -> Path:
         """Persist the result to a directory.
 
-        Arrays are written per-shard via `orbax-checkpoint` so sharded
-        V-arrays never gather to a single device. Non-array fields
-        (regimes, ages, metadata, parameter scaffolding) live in a
-        sibling `metadata.pkl` produced via `cloudpickle`.
+        Three sibling artifacts land at the directory root:
+
+        - `arrays/` — orbax checkpoint of every JAX array (raw_results, V
+          arrays, flat-params arrays), written per-shard so sharded
+          arrays never gather to a single device.
+        - `metadata.pkl` — cloudpickle of regimes, ages, pre-computed
+          result metadata, and the parameter scaffold.
+        - `simulated_data.arrow` — a feather dump of
+          `self.to_dataframe(additional_targets=df_additional_targets,
+          use_labels=df_use_labels)`, ready for downstream consumers that
+          want the flat per-subject view without re-instantiating a
+          `SimulationResult`.
 
         Args:
             directory: Target directory. Created if it does not exist.
                 Must not contain an existing orbax checkpoint at
                 `directory/arrays`.
+            df_additional_targets: Targets passed through to `to_dataframe`
+                when projecting the on-disk arrow file. `"all"` (default)
+                bakes every available target into the artifact so
+                downstream consumers can read columns without re-computing.
+            df_use_labels: Whether discrete variables are stored as
+                pandas `Categorical` labels (default) or integer codes.
+                Forwarded to `to_dataframe`.
 
         Returns:
             The directory the result was written to.
@@ -187,7 +208,8 @@ class SimulationResult:
         checkpointer.save(target / "arrays", array_tree)
         # `StandardCheckpointer.save` is asynchronous; block until the
         # on-disk checkpoint is complete so the sibling `metadata.pkl`
-        # write and any subsequent `load` observe a consistent directory.
+        # and `simulated_data.arrow` writes and any subsequent `load`
+        # observe a consistent directory.
         checkpointer.wait_until_finished()
 
         metadata = _SavedMetadata(
@@ -200,14 +222,28 @@ class SimulationResult:
         with (target / "metadata.pkl").open("wb") as fh:
             cloudpickle.dump(metadata, fh)
 
+        df = self.to_dataframe(
+            additional_targets=df_additional_targets,
+            use_labels=df_use_labels,
+        )
+        # Feather columns must be homogeneous. `to_dataframe` can leave
+        # JAX 0-d arrays in object columns (e.g. a regime whose target
+        # function returns a constant gets broadcast as a 0-d JAX scalar
+        # across the per-regime sub-frame); coerce them to Python scalars.
+        df = df.map(_coerce_jax_scalar_for_arrow)
+        df.to_feather(target / "simulated_data.arrow")
+
         return target
 
     @classmethod
-    def load(cls, directory: str | Path) -> SimulationResult:
-        """Read a result previously written by `save`.
+    def load(cls, *, directory: str | Path) -> SimulationResult:
+        """Read a result from a directory produced by `save`.
 
-        Sharded arrays are reconstructed onto a sharding identical to the
-        one used at save time, so no implicit gather happens during load.
+        Reads `arrays/` (orbax) and `metadata.pkl` (cloudpickle); the
+        `simulated_data.arrow` artifact is not consumed — `to_dataframe`
+        re-derives it on demand. Sharded arrays are restored onto the
+        same sharding they had at save time, so no implicit gather
+        happens during load.
         """
         source = Path(directory).resolve()
 
@@ -277,6 +313,13 @@ class _ArrayPlaceholder:
     """Marker for a JAX array slot in a cloudpickled scaffold."""
 
     key: str
+
+
+def _coerce_jax_scalar_for_arrow(value: object) -> object:
+    """Convert a 0-d JAX array to a Python scalar; pass everything else through."""
+    if isinstance(value, jax.Array) and value.ndim == 0:
+        return value.item()
+    return value
 
 
 def _raw_results_to_array_tree(

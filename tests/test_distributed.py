@@ -232,8 +232,8 @@ def test_save_load_preserves_sharding_and_dataframe(
     )
 
     save_dir = tmp_path / "result"
-    res.save(save_dir)
-    loaded = SimulationResult.load(save_dir)
+    res.save(directory=save_dir)
+    loaded = SimulationResult.load(directory=save_dir)
 
     for period, regime_dict in res._period_to_regime_to_V_arr.items():
         for regime_name, V_arr in regime_dict.items():
