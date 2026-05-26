@@ -33,6 +33,33 @@ def _fail_if_batch_size_combined_with_distributed(
         )
 
 
+def _fail_if_continuous_grid_distributed(
+    *,
+    grid_kind: str,
+    distributed: bool,
+) -> None:
+    """Reject `distributed=True` on a continuous grid.
+
+    Sharding a continuous state axis forces every next-period interpolation
+    lookup to read across the full grid, which compiles to an `all-gather`
+    of the full V-array per device — the same pathology that produces
+    cross-device V-array materialisation in backward induction.
+
+    Sharding is supported only on discrete state grids, where cross-shard
+    probability mass is contracted via the cheap `all-reduce` (output-sized,
+    not V-array-sized).
+    """
+    if distributed:
+        raise GridInitializationError(
+            f"`distributed=True` is not allowed on continuous grids "
+            f"(got `{grid_kind}`). Continuous-axis sharding forces an "
+            "`all-gather` of the full V-array per device on every "
+            "interpolation lookup. Shard on a discrete state grid "
+            "instead; cross-shard transitions over discrete states are "
+            "served by `all-reduce`."
+        )
+
+
 class Grid(ABC):
     """LCM Grid base class."""
 

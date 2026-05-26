@@ -321,19 +321,25 @@ def test_distributed_action_grid_raises_at_regime_init():
 
     Distribution is a property of state axes (which form the V-array shape).
     Marking an action grid as distributed has no consistent meaning under the
-    current sharding model, so it is rejected at construction time.
+    current sharding model, so it is rejected at construction time. (Continuous
+    action grids never reach this check — they are rejected at grid init by
+    `_fail_if_continuous_grid_distributed`.)
     """
+
+    @categorical(ordered=False)
+    class Choice:
+        a: ScalarInt
+        b: ScalarInt
+
     with pytest.raises(RegimeInitializationError, match="distributed=True"):
         UserRegime(
             functions={"utility": jnp.log},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             state_transitions={
-                "wealth": lambda wealth, consumption: wealth - consumption,
+                "wealth": lambda wealth, choice: wealth - choice,
             },
             actions={
-                "consumption": LinSpacedGrid(
-                    start=1, stop=50, n_points=10, distributed=True
-                ),
+                "choice": DiscreteGrid(Choice, distributed=True),
             },
             transition=lambda age: age,
         )

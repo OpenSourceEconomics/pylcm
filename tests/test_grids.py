@@ -838,63 +838,77 @@ def test_piecewise_log_spaced_grid_get_coordinate_with_array():
     aaae(coords, expected, decimal=DECIMAL_PRECISION)
 
 
-@pytest.mark.parametrize(
-    "make_grid",
-    [
-        pytest.param(
-            lambda **kw: LinSpacedGrid(start=1, stop=10, n_points=4, **kw),
-            id="LinSpacedGrid",
-        ),
-        pytest.param(
-            lambda **kw: LogSpacedGrid(start=1, stop=10, n_points=4, **kw),
-            id="LogSpacedGrid",
-        ),
-        pytest.param(
-            lambda **kw: IrregSpacedGrid(points=[1.0, 2.0, 3.0, 4.0], **kw),
-            id="IrregSpacedGrid",
-        ),
-        pytest.param(
-            lambda **kw: DiscreteGrid(
-                _make_dc("_BS", ("a", jnp.int32(0)), ("b", jnp.int32(1))), **kw
-            ),
-            id="DiscreteGrid",
-        ),
-    ],
-)
-def test_grid_rejects_batch_size_combined_with_distributed(make_grid):
-    """`batch_size > 0` and `distributed=True` on one axis is rejected at init.
+def test_discrete_grid_rejects_batch_size_combined_with_distributed():
+    """`batch_size > 0` and `distributed=True` on a discrete grid is rejected at init.
 
     Each Python-level batch triggers its own per-period cross-device
     collective in the sharded solve, so the combination multiplies the
     sync count by `ceil(n_per_device / batch_size)` and inverts the
     compute/communication ratio. Construction-time rejection prevents
-    the foot-gun.
+    the foot-gun. Continuous grids are rejected earlier — see
+    `test_continuous_grid_rejects_distributed_true`.
     """
-    with pytest.raises(GridInitializationError, match="distributed=True"):
-        make_grid(batch_size=1, distributed=True)
+    with pytest.raises(GridInitializationError, match="batch_size"):
+        DiscreteGrid(
+            _make_dc("_BS", ("a", jnp.int32(0)), ("b", jnp.int32(1))),
+            batch_size=1,
+            distributed=True,
+        )
+
+
+def test_discrete_grid_accepts_batch_size_zero_with_distributed():
+    """`batch_size=0` with `distributed=True` is the canonical sharded setting.
+
+    Sharding lives only on discrete grids; the continuous case is rejected
+    at construction via `_fail_if_continuous_grid_distributed`.
+    """
+    grid = DiscreteGrid(
+        _make_dc("_OK", ("a", jnp.int32(0)), ("b", jnp.int32(1))),
+        batch_size=0,
+        distributed=True,
+    )
+    assert grid.distributed is True
+    assert grid.batch_size == 0
 
 
 @pytest.mark.parametrize(
     "make_grid",
     [
         pytest.param(
-            lambda: LinSpacedGrid(
-                start=1, stop=10, n_points=4, batch_size=0, distributed=True
-            ),
+            lambda: LinSpacedGrid(start=1, stop=10, n_points=4, distributed=True),
             id="LinSpacedGrid",
         ),
         pytest.param(
-            lambda: DiscreteGrid(
-                _make_dc("_OK", ("a", jnp.int32(0)), ("b", jnp.int32(1))),
-                batch_size=0,
+            lambda: LogSpacedGrid(start=1, stop=10, n_points=4, distributed=True),
+            id="LogSpacedGrid",
+        ),
+        pytest.param(
+            lambda: IrregSpacedGrid(points=[1.0, 2.0, 3.0, 4.0], distributed=True),
+            id="IrregSpacedGrid",
+        ),
+        pytest.param(
+            lambda: PiecewiseLinSpacedGrid(
+                segments=(PiecewiseGridSegment(interval="[0, 10]", n_points=11),),
                 distributed=True,
             ),
-            id="DiscreteGrid",
+            id="PiecewiseLinSpacedGrid",
+        ),
+        pytest.param(
+            lambda: PiecewiseLogSpacedGrid(
+                segments=(PiecewiseGridSegment(interval="[1, 100]", n_points=3),),
+                distributed=True,
+            ),
+            id="PiecewiseLogSpacedGrid",
         ),
     ],
 )
-def test_grid_accepts_batch_size_zero_with_distributed(make_grid):
-    """`batch_size=0` with `distributed=True` is the canonical sharded setting."""
-    grid = make_grid()
-    assert grid.distributed is True
-    assert grid.batch_size == 0
+def test_continuous_grid_rejects_distributed_true(make_grid):
+    """`distributed=True` on any continuous grid is rejected at construction.
+
+    Sharding a continuous axis forces every next-period interpolation lookup
+    to read across the full grid, which compiles to an `all-gather` of the
+    full V-array per device. Only discrete grids may be sharded, where
+    cross-shard probability mass is contracted via the cheap `all-reduce`.
+    """
+    with pytest.raises(GridInitializationError, match="continuous"):
+        make_grid()
