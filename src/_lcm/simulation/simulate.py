@@ -309,6 +309,13 @@ def _simulate_regime_in_period(
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_subjects,))
 
+    # Per-shard block: force each device to finish its local part of
+    # this period's compute before the next period dispatches. Waiting
+    # on the full `V_arr` would trigger an all-gather; per-shard waits
+    # stay local and let each device's pipeline drain in parallel.
+    for shard in V_arr.addressable_shards:
+        shard.data.block_until_ready()
+
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,

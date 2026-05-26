@@ -192,22 +192,26 @@ def solve(
                     )
                 )
 
+            # Per-shard block on the just-computed V_arr forces XLA to
+            # finish this period's local-device kernel before the next
+            # period dispatches. On sharded V_arrs, waiting on the
+            # full `V_arr` would trigger an all-gather (every shard
+            # depends on cross-device data through the reduction); the
+            # per-shard wait stays device-local and lets each device's
+            # compute drain in parallel.
+            for shard in V_arr.addressable_shards:
+                shard.data.block_until_ready()
+
             period_solution[regime_name] = V_arr
 
         # Force the device-side reduction kernels to finish before the
         # next period dispatches, so each period's `isnan` / `isinf`
         # (and min/max/mean) intermediate buffers can be freed instead
-        # of stacking up. `block_until_ready` does NOT transfer to host
-        # — it is a device-side wait, cheap when the dominant
-        # per-period kernel (`max_Q_over_a`) is the actual bottleneck.
-        if diagnostics_enabled:
-            running_any_nan.block_until_ready()
-            running_any_inf.block_until_ready()
-            if stats_enabled and diagnostic_mean:
-                # Blocking on the last-appended stat suffices: XLA
-                # serialises dispatch order, so a finished `mean`
-                # implies a finished `min`/`max` too.
-                diagnostic_mean[-1].block_until_ready()
+        # of stacking up. Blocking on the last-appended stat suffices:
+        # XLA serialises dispatch order, so a finished `mean` implies
+        # a finished `min`/`max` too.
+        if diagnostics_enabled and stats_enabled and diagnostic_mean:
+            diagnostic_mean[-1].block_until_ready()
 
         # Maintain consistent pytree structure: keep all regime keys,
         # update active regimes with solved V arrays.
