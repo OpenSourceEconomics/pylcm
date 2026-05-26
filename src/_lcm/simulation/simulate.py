@@ -93,10 +93,6 @@ def simulate(
     logger.info("Starting simulation")
     total_start = time.monotonic()
 
-    # Gate per-period NaN/Inf checks on `log_level`. At `"off"` no
-    # validation fires, matching `solve(log_level="off")`'s contract.
-    diagnostics_enabled = validation_enabled(logger)
-
     # Extract state arrays from initial conditions, which include the regime on top.
     initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
 
@@ -164,16 +160,14 @@ def simulate(
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
                     logger=logger,
-                    diagnostics_enabled=diagnostics_enabled,
                 )
             )
             states = new_states
             simulation_results[regime_name][period] = result
 
-            if diagnostics_enabled:
-                log_nan_in_V(
-                    logger=logger, regime_name=regime_name, age=age, V_arr=result.V_arr
-                )
+            log_nan_in_V(
+                logger=logger, regime_name=regime_name, age=age, V_arr=result.V_arr
+            )
 
         subject_regime_ids = new_subject_regime_ids
 
@@ -234,7 +228,6 @@ def _simulate_regime_in_period(
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
     logger: logging.Logger,
-    diagnostics_enabled: bool,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -296,7 +289,7 @@ def _simulate_regime_in_period(
         period=jnp.int32(period),
         age=age,
     )
-    if diagnostics_enabled:
+    if validation_enabled(logger):
         try:
             validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
         except InvalidValueFunctionError as error:

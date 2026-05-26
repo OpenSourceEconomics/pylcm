@@ -105,6 +105,11 @@ def log_nan_in_V(
 ) -> None:
     """Log a warning if V_arr contains NaN or Inf values.
 
+    Self-gates on `validation_enabled(logger)` so callers don't have to wrap
+    every call site — at `log_level="off"` the function returns immediately
+    without touching `V_arr`, avoiding the implicit host transfer that
+    `if jnp.any(...)` would otherwise trigger.
+
     Args:
         logger: Logger instance.
         regime_name: Name of the regime.
@@ -112,6 +117,8 @@ def log_nan_in_V(
         V_arr: Value function array to check.
 
     """
+    if not validation_enabled(logger):
+        return
     if jnp.any(jnp.isnan(V_arr)) or jnp.any(jnp.isinf(V_arr)):
         logger.warning("NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age)
 
