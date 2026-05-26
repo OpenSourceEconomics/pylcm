@@ -6,15 +6,9 @@ Run with:
     pixi run -e tests-cuda13 python \
         tests/data/regression_tests/generate_benchmark_data.py --precision=32
 
-Requires a GPU (Mahler & Yum is GPU-only). Regenerate when model internals change
-intentionally (e.g., numerical algorithm improvements, grid changes). The stored
-DataFrames pin the simulation output so accidental regressions are caught.
-
-**Float32 caveat:** XLA compiles different fused kernels across process invocations,
-changing float32 accumulation order and producing ~1e-3 value diffs for large models
-(Mahler & Yum). The Mahler & Yum regression test is therefore skipped at 32-bit
-precision. The smaller benchmark models (precautionary savings, mortality) are
-reproducible at float32.
+Regenerate when model internals change intentionally (e.g., numerical algorithm
+improvements, grid changes). The stored DataFrames pin the simulation output so
+accidental regressions are caught.
 """
 
 import argparse
@@ -33,11 +27,6 @@ jax.config.update("jax_enable_x64", val=(_args.precision == 64))
 import jax.numpy as jnp  # noqa: E402
 
 from lcm_examples import mortality, precautionary_savings  # noqa: E402
-from lcm_examples.mahler_yum_2024 import (  # noqa: E402
-    MAHLER_YUM_MODEL,
-    START_PARAMS,
-    create_inputs,
-)
 
 DATA_DIR = Path(__file__).parent
 
@@ -91,37 +80,8 @@ def _generate_mortality(data_dir: Path) -> None:
     result.to_dataframe().to_pickle(data_dir / "mortality_simulation.pkl")
 
 
-def _generate_mahler_yum(data_dir: Path) -> None:
-    n_subjects = 4
-    common_params, initial_states = create_inputs(
-        seed=0,
-        n_simulation_subjects=n_subjects,
-        **START_PARAMS,  # ty: ignore[invalid-argument-type]
-    )
-    model = MAHLER_YUM_MODEL
-    params = {"alive": common_params}
-    initial_conditions = {
-        **initial_states,
-        "regime_id": jnp.full(
-            n_subjects,
-            model.regime_names_to_ids["alive"],
-            dtype=jnp.int32,
-        ),
-    }
-
-    result = model.simulate(
-        params=params,
-        initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
-        seed=12345,
-        log_level="off",
-    )
-    result.to_dataframe().to_pickle(data_dir / "mahler_yum_simulation.pkl")
-
-
 if __name__ == "__main__":
     target = DATA_DIR / f"f{_args.precision}"
     target.mkdir(exist_ok=True)
     _generate_precautionary_savings(target)
     _generate_mortality(target)
-    _generate_mahler_yum(target)

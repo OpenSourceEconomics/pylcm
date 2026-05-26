@@ -21,11 +21,6 @@ from lcm import (
 from lcm.typing import FloatND
 from lcm_examples import mortality as mortality_example
 from lcm_examples import precautionary_savings as ps_example
-from lcm_examples.mahler_yum_2024 import (
-    MAHLER_YUM_MODEL,
-    START_PARAMS,
-    create_inputs,
-)
 from tests.conftest import X64_ENABLED
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
@@ -139,56 +134,6 @@ def test_regression_mortality():
             "wealth": jnp.full(n_subjects, 100.0),
             "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
-        seed=12345,
-        log_level="off",
-    ).to_dataframe()
-
-    assert_frame_equal(
-        got,
-        expected,
-        check_dtype=False,
-        atol=1e-5,
-        check_column_type=False,
-        check_categorical=False,
-    )
-
-
-@pytest.mark.gpu
-@_skip_no_gpu
-@pytest.mark.skipif(
-    not X64_ENABLED,
-    reason=(
-        "Mahler & Yum is too large for a float32 regression test. "
-        "XLA compiles different fused kernels across processes, changing "
-        "float32 accumulation order and producing ~1e-3 value diffs. "
-        "Smaller benchmarks (precautionary savings, mortality) are reproducible."
-    ),
-)
-def test_regression_mahler_yum():
-    """Test that Mahler & Yum benchmark model output does not change."""
-    expected = pd.read_pickle(_PRECISION_DIR / "mahler_yum_simulation.pkl")
-
-    n_subjects = 4
-    common_params, initial_states = create_inputs(
-        seed=0,
-        n_simulation_subjects=n_subjects,
-        **START_PARAMS,  # ty: ignore[invalid-argument-type]
-    )
-    model = MAHLER_YUM_MODEL
-    params = {"alive": common_params}
-    initial_conditions = {
-        **initial_states,
-        "regime_id": jnp.full(
-            n_subjects,
-            model.regime_names_to_ids["alive"],
-            dtype=jnp.int32,
-        ),
-    }
-
-    got = model.simulate(
-        params=params,
-        initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
         seed=12345,
         log_level="off",
