@@ -158,7 +158,7 @@ class SimulationResult:
     def save(
         self,
         *,
-        directory: str | Path,
+        directory: Path,
         df_additional_targets: list[str] | Literal["all"] | None = "all",
         df_use_labels: bool = True,
     ) -> Path:
@@ -193,7 +193,7 @@ class SimulationResult:
             The directory the result was written to.
 
         """
-        target = Path(directory).resolve()
+        target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
 
         array_tree = {
@@ -236,7 +236,7 @@ class SimulationResult:
         return target
 
     @classmethod
-    def load(cls, *, directory: str | Path) -> SimulationResult:
+    def load(cls, *, directory: Path) -> SimulationResult:
         """Read a result from a directory produced by `save`.
 
         Reads `arrays/` (orbax) and `metadata.pkl` (cloudpickle); the
@@ -245,7 +245,7 @@ class SimulationResult:
         same sharding they had at save time, so no implicit gather
         happens during load.
         """
-        source = Path(directory).resolve()
+        source = directory.resolve()
 
         with (source / "metadata.pkl").open("rb") as fh:
             metadata: _SavedMetadata = cloudpickle.load(fh)

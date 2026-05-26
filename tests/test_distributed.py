@@ -164,7 +164,7 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
 
 
 @_skip_pytest_parallel
-def test_solve_returns_eagerly_materialised_v_arrs(correct_distributed_model):
+def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
     """Every V_arr shard is materialised before `solve()` returns.
 
     Backward induction must drain the device-side compute graph before

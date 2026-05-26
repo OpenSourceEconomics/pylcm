@@ -189,7 +189,7 @@ def test_simulate_state_pool_dtype_stable_across_periods(x64_disabled: None):
     assert not drifted, f"States drifted across periods: {drifted}"
 
 
-def test_solve_v_arrays_at_canonical_float_dtype(x64_disabled: None):
+def test_solve_V_arrays_at_canonical_float_dtype(x64_disabled: None):
     """Every V-array returned by `model.solve()` is at `canonical_float_dtype()`."""
     model = get_model(n_periods=3)
     period_to_regime_to_V_arr = model.solve(
@@ -197,10 +197,10 @@ def test_solve_v_arrays_at_canonical_float_dtype(x64_disabled: None):
     )
     target = canonical_float_dtype()
     wrong = {
-        (period, regime_name): v_arr.dtype
-        for period, period_v in period_to_regime_to_V_arr.items()
-        for regime_name, v_arr in period_v.items()
-        if v_arr.dtype != target
+        (period, regime_name): V_arr.dtype
+        for period, regime_to_V_arr in period_to_regime_to_V_arr.items()
+        for regime_name, V_arr in regime_to_V_arr.items()
+        if V_arr.dtype != target
     }
     assert not wrong, f"V-arrays not at {target}: {wrong}"
 
