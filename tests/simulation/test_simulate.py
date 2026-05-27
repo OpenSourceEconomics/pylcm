@@ -3,13 +3,13 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from _lcm.regime_building.processing import process_regimes
+from _lcm.simulation.chunk_specs import _ChunkSpec
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
@@ -20,9 +20,9 @@ from lcm import Model
 from lcm.ages import AgeGrid
 from lcm.result import (
     SimulationResult,
-    _array_tree_to_host,
-    _array_tree_to_jax,
     _coerce_jax_scalar_for_arrow,
+    _load_single_v_arr,
+    _save_single_v_arr,
 )
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -567,66 +567,46 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
     assert_frame_equal(pd.read_feather(arrow_path), pd.read_feather(expected_path))
 
 
-def test_array_tree_to_host_converts_jax_arrays_to_numpy():
-    """`_array_tree_to_host` replaces every `jax.Array` leaf with a `np.ndarray`.
+def test_save_single_v_arr_writes_one_chunk_file_per_slice_along_axis(tmp_path: Path):
+    """`_save_single_v_arr` emits one `.npy` per chunk along the spec's axis.
 
-    The save path uses this to keep orbax from staging a device-side
-    copy of each leaf before transferring it to host — orbax serialises
-    numpy inputs directly.
-
-    Non-array leaves (strings, plain Python scalars, nested dicts with no
-    arrays) pass through unchanged; numeric values are preserved
-    element-wise.
+    A `(4, 6)` array sliced along axis 1 with `chunk_size=2` yields three
+    chunks; the sidecar `meta.json` records the assembly information
+    needed for `_load_single_v_arr`.
     """
-    tree = {
-        "vector": jnp.array([1.0, 2.0, 3.0]),
-        "nested": {
-            "matrix": jnp.array([[4.0, 5.0], [6.0, 7.0]]),
-            "label": "constant",
-            "count": 42,
-        },
-    }
+    V_arr = jnp.arange(24, dtype=jnp.float32).reshape(4, 6)
+    spec = _ChunkSpec(chunk_axis=1, chunk_size=2)
 
-    host_tree = _array_tree_to_host(tree)
+    _save_single_v_arr(V_arr=V_arr, spec=spec, output_dir=tmp_path)
 
-    assert not isinstance(host_tree["vector"], jax.Array)
-    assert isinstance(host_tree["vector"], np.ndarray)
-    assert not isinstance(host_tree["nested"]["matrix"], jax.Array)
-    assert isinstance(host_tree["nested"]["matrix"], np.ndarray)
-    assert host_tree["nested"]["label"] == "constant"
-    assert host_tree["nested"]["count"] == 42
-
-    assert_array_equal(host_tree["vector"], np.array([1.0, 2.0, 3.0]))
-    assert_array_equal(
-        host_tree["nested"]["matrix"], np.array([[4.0, 5.0], [6.0, 7.0]])
-    )
+    chunk_files = sorted(tmp_path.glob("*.npy"))
+    assert [f.name for f in chunk_files] == ["00000.npy", "00001.npy", "00002.npy"]
+    assert (tmp_path / "meta.json").exists()
 
 
-def test_array_tree_to_jax_promotes_numpy_leaves_back_to_jax_array():
-    """`_array_tree_to_jax` lifts every `numpy.ndarray` leaf to a `jax.Array`.
+def test_load_single_v_arr_reassembles_chunks_value_identically(tmp_path: Path):
+    """A chunked save → load round-trip yields a value-identical `jax.Array`."""
+    V_arr = jnp.arange(24, dtype=jnp.float32).reshape(4, 6)
+    spec = _ChunkSpec(chunk_axis=1, chunk_size=2)
+    _save_single_v_arr(V_arr=V_arr, spec=spec, output_dir=tmp_path)
 
-    Already-JAX leaves pass through unchanged; non-array leaves
-    (strings, plain Python scalars) are left alone. Element values
-    match bit-for-bit.
+    loaded = _load_single_v_arr(input_dir=tmp_path)
+
+    assert isinstance(loaded, jax.Array)
+    assert_array_equal(loaded, V_arr)
+
+
+def test_save_single_v_arr_writes_one_chunk_when_axis_is_none(tmp_path: Path):
+    """`_ChunkSpec(chunk_axis=None, chunk_size=0)` materialises the leaf whole.
+
+    No splayed axis means the compute kept the whole array live; save then
+    writes a single chunk file matching the entire `V_arr`.
     """
-    tree = {
-        "from_host": np.array([1.0, 2.0, 3.0]),
-        "already_device": jnp.array([4.0, 5.0]),
-        "nested": {
-            "matrix": np.array([[6.0, 7.0], [8.0, 9.0]]),
-            "label": "constant",
-        },
-    }
+    V_arr = jnp.arange(12, dtype=jnp.float32).reshape(3, 4)
+    spec = _ChunkSpec(chunk_axis=None, chunk_size=0)
 
-    jax_tree = _array_tree_to_jax(tree)
+    _save_single_v_arr(V_arr=V_arr, spec=spec, output_dir=tmp_path)
 
-    assert isinstance(jax_tree["from_host"], jax.Array)
-    assert isinstance(jax_tree["already_device"], jax.Array)
-    assert isinstance(jax_tree["nested"]["matrix"], jax.Array)
-    assert jax_tree["nested"]["label"] == "constant"
-
-    assert_array_equal(jax_tree["from_host"], jnp.array([1.0, 2.0, 3.0]))
-    assert_array_equal(jax_tree["already_device"], jnp.array([4.0, 5.0]))
-    assert_array_equal(
-        jax_tree["nested"]["matrix"], jnp.array([[6.0, 7.0], [8.0, 9.0]])
-    )
+    assert sorted(p.name for p in tmp_path.glob("*.npy")) == ["00000.npy"]
+    loaded = _load_single_v_arr(input_dir=tmp_path)
+    assert_array_equal(loaded, V_arr)

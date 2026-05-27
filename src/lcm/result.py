@@ -1,5 +1,6 @@
 """User-facing `SimulationResult` with deferred DataFrame computation."""
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,7 @@ from _lcm.simulation.additional_targets import (
     _collect_all_available_targets,
     _resolve_targets,
 )
+from _lcm.simulation.chunk_specs import _ChunkSpec
 from _lcm.simulation.result_dataframe import (
     _convert_to_categorical,
     _create_flat_dataframe,
@@ -44,12 +46,14 @@ class SimulationResult:
         ],
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
+        chunk_specs: MappingProxyType[RegimeName, _ChunkSpec],
     ) -> None:
         self._raw_results = raw_results
         self._regimes = regimes
         self._flat_params = flat_params
         self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
+        self._chunk_specs = chunk_specs
         self._metadata = _compute_metadata(
             regimes=regimes,
             raw_results=raw_results,
@@ -166,23 +170,30 @@ class SimulationResult:
     ) -> Path:
         """Persist the result to a directory.
 
-        Three sibling artifacts land at the directory root:
+        Four sibling artifacts land at the directory root:
 
-        - `arrays/` — orbax checkpoint of every JAX array (raw_results, V
-          arrays, flat-params arrays), written per-shard so sharded
-          arrays never gather to a single device.
+        - `arrays/` — orbax checkpoint of the small array trees
+          (`raw_results` and `flat_params`), whose individual leaves
+          fit comfortably on a single device.
+        - `V_arr/` — solution value-function arrays, written per
+          `(period, regime)` as chunked `.npy` files. Each leaf is
+          sliced along its splay axis with the same `batch_size` the
+          engine used at solve time, so the per-chunk device
+          materialisation matches the compute-time peak instead of
+          requiring the full leaf in one shot.
         - `metadata.pkl` — cloudpickle of regimes, ages, pre-computed
-          result metadata, and the parameter scaffold.
+          result metadata, the parameter scaffold, and the per-regime
+          chunk specs needed to reassemble on `load`.
         - `simulated_data.arrow` — a feather dump of
           `self.to_dataframe(additional_targets=df_additional_targets,
-          use_labels=df_use_labels)`, ready for downstream consumers that
-          want the flat per-subject view without re-instantiating a
-          `SimulationResult`.
+          use_labels=df_use_labels)`, ready for downstream consumers
+          that want the flat per-subject view without re-instantiating
+          a `SimulationResult`.
 
         Args:
             directory: Target directory. Created if it does not exist.
-                Must not contain an existing orbax checkpoint at
-                `directory/arrays`.
+                Must not contain existing `arrays/` or `V_arr/`
+                subdirectories.
             df_additional_targets: Targets passed through to `to_dataframe`
                 when projecting the on-disk arrow file. `None` (default)
                 writes only the base columns (states, actions, regime, age,
@@ -201,27 +212,23 @@ class SimulationResult:
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
 
-        array_tree = {
+        small_array_tree = {
             "raw_results": _raw_results_to_array_tree(self._raw_results),
-            "period_to_regime_to_V_arr": _period_V_to_array_tree(
-                self._period_to_regime_to_V_arr
-            ),
             "flat_params": _flat_params_to_array_tree(self._flat_params),
         }
-        # orbax's serializer stages each `jax.Array` on device once
-        # more before transferring it to host, which doubles peak
-        # device usage at save time. Pulling every leaf to host first
-        # — one leaf at a time — keeps that peak at the live V_arr
-        # footprint and lets orbax write numpy arrays directly.
-        array_tree = _array_tree_to_host(array_tree)
-
         checkpointer = ocp.StandardCheckpointer()
-        checkpointer.save(target / "arrays", array_tree)
+        checkpointer.save(target / "arrays", small_array_tree)
         # `StandardCheckpointer.save` is asynchronous; block until the
-        # on-disk checkpoint is complete so the sibling `metadata.pkl`
-        # and `simulated_data.arrow` writes and any subsequent `load`
-        # observe a consistent directory.
+        # on-disk checkpoint is complete so the sibling `V_arr/`,
+        # `metadata.pkl`, and `simulated_data.arrow` writes and any
+        # subsequent `load` observe a consistent directory.
         checkpointer.wait_until_finished()
+
+        _save_period_to_regime_to_V_arr(
+            period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
+            chunk_specs=self._chunk_specs,
+            output_dir=target / "V_arr",
+        )
 
         metadata = _SavedMetadata(
             regimes=self._regimes,
@@ -229,6 +236,7 @@ class SimulationResult:
             ages=self._ages,
             result_metadata=self._metadata,
             available_targets=self._available_targets,
+            chunk_specs=self._chunk_specs,
         )
         with (target / "metadata.pkl").open("wb") as fh:
             cloudpickle.dump(metadata, fh)
@@ -250,9 +258,10 @@ class SimulationResult:
     def load(cls, *, directory: Path) -> SimulationResult:
         """Read a result from a directory produced by `save`.
 
-        Reads `arrays/` (orbax) and `metadata.pkl` (cloudpickle); the
-        `simulated_data.arrow` artifact is not consumed — `to_dataframe`
-        re-derives it on demand. Sharded arrays are restored onto the
+        Reads `arrays/` (orbax, small trees), `V_arr/` (chunked `.npy`
+        files), and `metadata.pkl` (cloudpickle). The `simulated_data.arrow`
+        artifact is not consumed — `to_dataframe` re-derives it on
+        demand. Sharded arrays inside `arrays/` are restored onto the
         same sharding they had at save time, so no implicit gather
         happens during load.
         """
@@ -262,11 +271,11 @@ class SimulationResult:
             metadata: _SavedMetadata = cloudpickle.load(fh)
 
         checkpointer = ocp.StandardCheckpointer()
-        array_tree = _array_tree_to_jax(checkpointer.restore(source / "arrays"))
+        array_tree = checkpointer.restore(source / "arrays")
 
         raw_results = _array_tree_to_raw_results(array_tree["raw_results"])
-        period_to_regime_to_V_arr = _array_tree_to_period_V(
-            array_tree["period_to_regime_to_V_arr"]
+        period_to_regime_to_V_arr = _load_period_to_regime_to_V_arr(
+            input_dir=source / "V_arr"
         )
         flat_params = _array_tree_and_scaffold_to_flat_params(
             array_tree["flat_params"], metadata.flat_params_scaffold
@@ -278,6 +287,7 @@ class SimulationResult:
         instance._flat_params = flat_params  # noqa: SLF001
         instance._period_to_regime_to_V_arr = period_to_regime_to_V_arr  # noqa: SLF001
         instance._ages = metadata.ages  # noqa: SLF001
+        instance._chunk_specs = metadata.chunk_specs  # noqa: SLF001
         instance._metadata = metadata.result_metadata  # noqa: SLF001
         instance._available_targets = metadata.available_targets  # noqa: SLF001
         return instance
@@ -318,6 +328,9 @@ class _SavedMetadata:
     available_targets: list[str]
     """Names of all additional targets exposed via `to_dataframe`."""
 
+    chunk_specs: MappingProxyType[RegimeName, _ChunkSpec]
+    """Per-regime chunk spec used to bound the save-time materialisation."""
+
 
 @dataclass(frozen=True)
 class _ArrayPlaceholder:
@@ -333,42 +346,111 @@ def _coerce_jax_scalar_for_arrow(value: object) -> object:
     return value
 
 
-def _array_tree_to_host(tree: dict[str, Any]) -> dict[str, Any]:
-    """Pull single-device `jax.Array` leaves to host as `numpy.ndarray`.
+def _save_single_v_arr(
+    *,
+    V_arr: FloatND,
+    spec: _ChunkSpec,
+    output_dir: Path,
+) -> None:
+    """Write a V_arr leaf to `output_dir`, dispatching on its sharding.
 
-    Single-device arrays go through orbax's path that stages each leaf
-    on device once more before transferring to host — the doubled peak
-    can OOM when an individual array is comparable in size to the
-    device. Copying to host upfront sidesteps that staging.
-
-    Sharded (multi-device) leaves pass through unchanged: orbax already
-    transfers their physical shards independently, and re-routing them
-    through host here would drop the on-disk sharding spec.
+    Multi-device sharded leaves go through orbax, which transfers each
+    physical shard independently and preserves the sharding spec for
+    `load`. Single-device leaves go through chunked `.npy` files
+    sliced along `spec.chunk_axis` with width `spec.chunk_size`, so
+    the per-chunk device materialisation matches the engine's
+    compute-time peak.
     """
-    return jax.tree.map(_leaf_to_host, tree)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if V_arr.sharding.num_devices > 1:
+        ocp.StandardCheckpointer().save(output_dir / "arrays.ckpt", {"V_arr": V_arr})
+        meta: dict[str, Any] = {"layout": "orbax"}
+    else:
+        n_chunks = _write_v_arr_chunks(V_arr=V_arr, spec=spec, output_dir=output_dir)
+        meta = {
+            "layout": "chunks",
+            "shape": list(V_arr.shape),
+            "dtype": str(V_arr.dtype),
+            "chunk_axis": spec.chunk_axis,
+            "chunk_size": spec.chunk_size,
+            "n_chunks": n_chunks,
+        }
+    (output_dir / "meta.json").write_text(json.dumps(meta))
 
 
-def _array_tree_to_jax(tree: dict[str, Any]) -> dict[str, Any]:
-    """Promote `numpy.ndarray` leaves back to `jax.Array`.
+def _load_single_v_arr(*, input_dir: Path) -> FloatND:
+    """Inverse of `_save_single_v_arr` — dispatches on the on-disk `layout`."""
+    meta = json.loads((input_dir / "meta.json").read_text())
+    if meta["layout"] == "orbax":
+        restored = ocp.StandardCheckpointer().restore(input_dir / "arrays.ckpt")
+        return restored["V_arr"]
+    chunk_axis = meta["chunk_axis"]
+    chunk_files = sorted(input_dir.glob("*.npy"))
+    host_chunks = [np.load(path) for path in chunk_files]
+    if chunk_axis is None:
+        assembled = host_chunks[0]
+    else:
+        assembled = np.concatenate(host_chunks, axis=chunk_axis)
+    return jnp.asarray(assembled)
 
-    Inverse of `_array_tree_to_host` on the load side: orbax restores
-    leaves in whatever type they were saved as, so any leaf written via
-    the host-transfer path comes back as numpy and must be re-promoted
-    before engine code typed against `Float1D`/`FloatND` consumes it.
+
+def _write_v_arr_chunks(
+    *,
+    V_arr: FloatND,
+    spec: _ChunkSpec,
+    output_dir: Path,
+) -> int:
+    """Slice V_arr per `spec`, transfer each slice to host, write `.npy`s.
+
+    Returns the number of chunk files written.
     """
-    return jax.tree.map(_leaf_to_jax, tree)
+    if spec.chunk_axis is None:
+        host = np.asarray(jax.device_get(V_arr))
+        np.save(output_dir / "00000.npy", host)
+        return 1
+    n = V_arr.shape[spec.chunk_axis]
+    index = 0
+    for start in range(0, n, spec.chunk_size):
+        stop = min(start + spec.chunk_size, n)
+        chunk = jax.lax.slice_in_dim(V_arr, start, stop, axis=spec.chunk_axis)
+        np.save(output_dir / f"{index:05d}.npy", np.asarray(jax.device_get(chunk)))
+        index += 1
+    return index
 
 
-def _leaf_to_host(value: object) -> object:
-    if isinstance(value, jax.Array) and len(value.sharding.device_set) == 1:
-        return np.asarray(jax.device_get(value))
-    return value
+def _save_period_to_regime_to_V_arr(
+    *,
+    period_to_regime_to_V_arr: MappingProxyType[
+        int, MappingProxyType[RegimeName, FloatND]
+    ],
+    chunk_specs: MappingProxyType[RegimeName, _ChunkSpec],
+    output_dir: Path,
+) -> None:
+    """Persist every `(period, regime)` V_arr leaf to chunked `.npy` files."""
+    for period in sorted(period_to_regime_to_V_arr):
+        for regime_name, V_arr in period_to_regime_to_V_arr[period].items():
+            leaf_dir = output_dir / f"period_{period:04d}" / f"regime_{regime_name}"
+            _save_single_v_arr(
+                V_arr=V_arr,
+                spec=chunk_specs[regime_name],
+                output_dir=leaf_dir,
+            )
 
 
-def _leaf_to_jax(value: object) -> object:
-    if isinstance(value, np.ndarray):
-        return jnp.asarray(value)
-    return value
+def _load_period_to_regime_to_V_arr(
+    *,
+    input_dir: Path,
+) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+    """Inverse of `_save_period_to_regime_to_V_arr`."""
+    period_to_regime: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
+    for period_dir in sorted(input_dir.glob("period_*")):
+        period = int(period_dir.name.removeprefix("period_"))
+        regime_to_V_arr: dict[RegimeName, FloatND] = {}
+        for regime_dir in sorted(period_dir.glob("regime_*")):
+            regime_name = regime_dir.name.removeprefix("regime_")
+            regime_to_V_arr[regime_name] = _load_single_v_arr(input_dir=regime_dir)
+        period_to_regime[period] = MappingProxyType(regime_to_V_arr)
+    return MappingProxyType(period_to_regime)
 
 
 def _raw_results_to_array_tree(
