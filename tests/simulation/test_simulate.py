@@ -21,6 +21,7 @@ from lcm.ages import AgeGrid
 from lcm.result import (
     SimulationResult,
     _coerce_jax_scalar_for_arrow,
+    _collect_array_tree_leaf_sizes,
     _load_single_v_arr,
     _save_single_v_arr,
 )
@@ -610,3 +611,40 @@ def test_save_single_v_arr_writes_one_chunk_when_axis_is_none(tmp_path: Path):
     assert sorted(p.name for p in tmp_path.glob("*.npy")) == ["00000.npy"]
     loaded = _load_single_v_arr(input_dir=tmp_path)
     assert_array_equal(loaded, V_arr)
+
+
+def test_collect_array_tree_leaf_sizes_orders_leaves_by_size_descending():
+    """Leaves come back biggest-first with shape, dtype, and byte count.
+
+    A `(100,)` float32 leaf at the same depth as a `(2,)` float32 leaf yields
+    two entries ordered by descending byte count: 400 then 8.
+    """
+    tree = {
+        "regime_A": {"big": jnp.zeros((100,), dtype=jnp.float32)},
+        "regime_B": {"small": jnp.zeros((2,), dtype=jnp.float32)},
+    }
+
+    leaves = _collect_array_tree_leaf_sizes(tree=tree)
+
+    assert [(leaf.shape, leaf.n_bytes) for leaf in leaves] == [((100,), 400), ((2,), 8)]
+
+
+def test_collect_array_tree_leaf_sizes_records_path_dtype_and_size():
+    """Each leaf carries the full dotted path, shape, dtype, and byte count.
+
+    For a `(3, 4)` int32 leaf nested under `"raw_results.r.7.actions.foo"`,
+    the helper records `n_bytes = 3 * 4 * 4`, `shape = (3, 4)`, and `dtype`
+    matching `jnp.int32`.
+    """
+    tree = {
+        "raw_results": {
+            "r": {"7": {"actions": {"foo": jnp.zeros((3, 4), dtype=jnp.int32)}}}
+        }
+    }
+
+    [leaf] = _collect_array_tree_leaf_sizes(tree=tree)
+
+    assert leaf.path == "raw_results.r.7.actions.foo"
+    assert leaf.shape == (3, 4)
+    assert leaf.dtype == jnp.int32
+    assert leaf.n_bytes == 3 * 4 * 4

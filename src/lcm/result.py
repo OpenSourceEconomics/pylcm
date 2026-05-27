@@ -1,6 +1,7 @@
 """User-facing `SimulationResult` with deferred DataFrame computation."""
 
 import json
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -216,6 +217,9 @@ class SimulationResult:
             "raw_results": _raw_results_to_array_tree(self._raw_results),
             "flat_params": _flat_params_to_array_tree(self._flat_params),
         }
+        _log_top_array_tree_leaves(
+            tree=small_array_tree, top_k=20, label="save: small_array_tree"
+        )
         checkpointer = ocp.StandardCheckpointer()
         checkpointer.save(target / "arrays", small_array_tree)
         # `StandardCheckpointer.save` is asynchronous; block until the
@@ -339,11 +343,98 @@ class _ArrayPlaceholder:
     key: str
 
 
+@dataclass(frozen=True)
+class _ArrayTreeLeaf:
+    """Size record for one `jax.Array` leaf in a save-time array tree."""
+
+    path: str
+    """Dotted path from the tree root, e.g. `raw_results.regime_A.7.V_arr`."""
+
+    shape: tuple[int, ...]
+    """Leaf array shape."""
+
+    dtype: jnp.dtype
+    """Leaf array dtype."""
+
+    n_bytes: int
+    """`prod(shape) * dtype.itemsize` — what orbax must stage to host."""
+
+
 def _coerce_jax_scalar_for_arrow(value: object) -> object:
     """Convert a 0-d JAX array to a Python scalar; pass everything else through."""
     if isinstance(value, jax.Array) and value.ndim == 0:
         return value.item()
     return value
+
+
+def _collect_array_tree_leaf_sizes(
+    *,
+    tree: dict[str, Any],
+) -> list[_ArrayTreeLeaf]:
+    """Walk `tree` and return one `_ArrayTreeLeaf` per `jax.Array` leaf.
+
+    Results come back sorted by `n_bytes` descending so callers can log the
+    biggest offenders first. Non-array leaves are skipped silently — orbax
+    serialises only the array entries.
+    """
+    leaves: list[_ArrayTreeLeaf] = []
+    _walk_tree(node=tree, path_parts=(), leaves=leaves)
+    leaves.sort(key=lambda leaf: leaf.n_bytes, reverse=True)
+    return leaves
+
+
+def _walk_tree(
+    *,
+    node: object,
+    path_parts: tuple[str, ...],
+    leaves: list[_ArrayTreeLeaf],
+) -> None:
+    """Recursively collect `jax.Array` leaves into `leaves`."""
+    if isinstance(node, jax.Array):
+        leaves.append(
+            _ArrayTreeLeaf(
+                path=".".join(path_parts),
+                shape=tuple(node.shape),
+                dtype=node.dtype,
+                n_bytes=int(node.size) * node.dtype.itemsize,
+            )
+        )
+        return
+    if isinstance(node, Mapping):
+        for key, value in node.items():
+            _walk_tree(node=value, path_parts=(*path_parts, str(key)), leaves=leaves)
+
+
+def _log_top_array_tree_leaves(
+    *,
+    tree: dict[str, Any],
+    top_k: int,
+    label: str,
+) -> None:
+    """Emit the `top_k` biggest `jax.Array` leaves plus aggregate tree size.
+
+    Writes directly to `sys.stderr` so the lines surface even when the
+    `lcm` logger is silenced (`log_level="off"` raises it to CRITICAL).
+    Each line carries path, shape, dtype, and size in GiB; the leading
+    line reports total leaf count and aggregate bytes.
+    """
+    leaves = _collect_array_tree_leaf_sizes(tree=tree)
+    total_bytes = sum(leaf.n_bytes for leaf in leaves)
+    total_gib = total_bytes / (1024**3)
+    print(  # noqa: T201
+        f"[{label}] total: {len(leaves)} jax.Array leaves, "
+        f"{total_bytes:,} bytes ({total_gib:.3f} GiB). Top {top_k}:",
+        file=sys.stderr,
+        flush=True,
+    )
+    for leaf in leaves[:top_k]:
+        gib = leaf.n_bytes / (1024**3)
+        print(  # noqa: T201
+            f"  {gib:>8.4f} GiB  shape={leaf.shape!s:<24} "
+            f"dtype={leaf.dtype!s:<10} path={leaf.path}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _save_single_v_arr(
