@@ -1,7 +1,9 @@
 from pathlib import Path
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
@@ -16,7 +18,12 @@ from _lcm.simulation.simulate import (
 from _lcm.utils.logging import get_logger
 from lcm import Model
 from lcm.ages import AgeGrid
-from lcm.result import SimulationResult, _coerce_jax_scalar_for_arrow
+from lcm.result import (
+    SimulationResult,
+    _array_tree_to_host,
+    _array_tree_to_jax,
+    _coerce_jax_scalar_for_arrow,
+)
 from tests.test_models.deterministic.regression import (
     START_AGE,
     RegimeId,
@@ -558,3 +565,68 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
     expected.to_feather(expected_path)
 
     assert_frame_equal(pd.read_feather(arrow_path), pd.read_feather(expected_path))
+
+
+def test_array_tree_to_host_converts_jax_arrays_to_numpy():
+    """`_array_tree_to_host` replaces every `jax.Array` leaf with a `np.ndarray`.
+
+    The save path uses this to keep orbax from staging a device-side
+    copy of each leaf before transferring it to host — orbax serialises
+    numpy inputs directly.
+
+    Non-array leaves (strings, plain Python scalars, nested dicts with no
+    arrays) pass through unchanged; numeric values are preserved
+    element-wise.
+    """
+    tree = {
+        "vector": jnp.array([1.0, 2.0, 3.0]),
+        "nested": {
+            "matrix": jnp.array([[4.0, 5.0], [6.0, 7.0]]),
+            "label": "constant",
+            "count": 42,
+        },
+    }
+
+    host_tree = _array_tree_to_host(tree)
+
+    assert not isinstance(host_tree["vector"], jax.Array)
+    assert isinstance(host_tree["vector"], np.ndarray)
+    assert not isinstance(host_tree["nested"]["matrix"], jax.Array)
+    assert isinstance(host_tree["nested"]["matrix"], np.ndarray)
+    assert host_tree["nested"]["label"] == "constant"
+    assert host_tree["nested"]["count"] == 42
+
+    assert_array_equal(host_tree["vector"], np.array([1.0, 2.0, 3.0]))
+    assert_array_equal(
+        host_tree["nested"]["matrix"], np.array([[4.0, 5.0], [6.0, 7.0]])
+    )
+
+
+def test_array_tree_to_jax_promotes_numpy_leaves_back_to_jax_array():
+    """`_array_tree_to_jax` lifts every `numpy.ndarray` leaf to a `jax.Array`.
+
+    Already-JAX leaves pass through unchanged; non-array leaves
+    (strings, plain Python scalars) are left alone. Element values
+    match bit-for-bit.
+    """
+    tree = {
+        "from_host": np.array([1.0, 2.0, 3.0]),
+        "already_device": jnp.array([4.0, 5.0]),
+        "nested": {
+            "matrix": np.array([[6.0, 7.0], [8.0, 9.0]]),
+            "label": "constant",
+        },
+    }
+
+    jax_tree = _array_tree_to_jax(tree)
+
+    assert isinstance(jax_tree["from_host"], jax.Array)
+    assert isinstance(jax_tree["already_device"], jax.Array)
+    assert isinstance(jax_tree["nested"]["matrix"], jax.Array)
+    assert jax_tree["nested"]["label"] == "constant"
+
+    assert_array_equal(jax_tree["from_host"], jnp.array([1.0, 2.0, 3.0]))
+    assert_array_equal(jax_tree["already_device"], jnp.array([4.0, 5.0]))
+    assert_array_equal(
+        jax_tree["nested"]["matrix"], jnp.array([[6.0, 7.0], [8.0, 9.0]])
+    )

@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 import cloudpickle
 import jax
+import jax.numpy as jnp
+import numpy as np
 import orbax.checkpoint as ocp
 import pandas as pd
 
@@ -206,6 +208,12 @@ class SimulationResult:
             ),
             "flat_params": _flat_params_to_array_tree(self._flat_params),
         }
+        # orbax's serializer stages each `jax.Array` on device once
+        # more before transferring it to host, which doubles peak
+        # device usage at save time. Pulling every leaf to host first
+        # — one leaf at a time — keeps that peak at the live V_arr
+        # footprint and lets orbax write numpy arrays directly.
+        array_tree = _array_tree_to_host(array_tree)
 
         checkpointer = ocp.StandardCheckpointer()
         checkpointer.save(target / "arrays", array_tree)
@@ -254,7 +262,7 @@ class SimulationResult:
             metadata: _SavedMetadata = cloudpickle.load(fh)
 
         checkpointer = ocp.StandardCheckpointer()
-        array_tree = checkpointer.restore(source / "arrays")
+        array_tree = _array_tree_to_jax(checkpointer.restore(source / "arrays"))
 
         raw_results = _array_tree_to_raw_results(array_tree["raw_results"])
         period_to_regime_to_V_arr = _array_tree_to_period_V(
@@ -322,6 +330,44 @@ def _coerce_jax_scalar_for_arrow(value: object) -> object:
     """Convert a 0-d JAX array to a Python scalar; pass everything else through."""
     if isinstance(value, jax.Array) and value.ndim == 0:
         return value.item()
+    return value
+
+
+def _array_tree_to_host(tree: object) -> object:
+    """Pull single-device `jax.Array` leaves to host as `numpy.ndarray`.
+
+    Single-device arrays go through orbax's path that stages each leaf
+    on device once more before transferring to host — the doubled peak
+    can OOM when an individual array is comparable in size to the
+    device. Copying to host upfront sidesteps that staging.
+
+    Sharded (multi-device) leaves pass through unchanged: orbax already
+    transfers their physical shards independently, and re-routing them
+    through host here would drop the on-disk sharding spec.
+    """
+    return jax.tree.map(_leaf_to_host, tree)
+
+
+def _array_tree_to_jax(tree: object) -> object:
+    """Promote `numpy.ndarray` leaves back to `jax.Array`.
+
+    Inverse of `_array_tree_to_host` on the load side: orbax restores
+    leaves in whatever type they were saved as, so any leaf written via
+    the host-transfer path comes back as numpy and must be re-promoted
+    before engine code typed against `Float1D`/`FloatND` consumes it.
+    """
+    return jax.tree.map(_leaf_to_jax, tree)
+
+
+def _leaf_to_host(value: object) -> object:
+    if isinstance(value, jax.Array) and len(value.sharding.device_set) == 1:
+        return np.asarray(jax.device_get(value))
+    return value
+
+
+def _leaf_to_jax(value: object) -> object:
+    if isinstance(value, np.ndarray):
+        return jnp.asarray(value)
     return value
 
 
