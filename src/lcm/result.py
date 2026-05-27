@@ -333,7 +333,7 @@ def _coerce_jax_scalar_for_arrow(value: object) -> object:
     return value
 
 
-def _array_tree_to_host(tree: object) -> object:
+def _array_tree_to_host(tree: dict[str, Any]) -> dict[str, Any]:
     """Pull single-device `jax.Array` leaves to host as `numpy.ndarray`.
 
     Single-device arrays go through orbax's path that stages each leaf
@@ -348,7 +348,7 @@ def _array_tree_to_host(tree: object) -> object:
     return jax.tree.map(_leaf_to_host, tree)
 
 
-def _array_tree_to_jax(tree: object) -> object:
+def _array_tree_to_jax(tree: dict[str, Any]) -> dict[str, Any]:
     """Promote `numpy.ndarray` leaves back to `jax.Array`.
 
     Inverse of `_array_tree_to_host` on the load side: orbax restores
