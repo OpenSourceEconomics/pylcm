@@ -261,10 +261,12 @@ class SimulationResult:
         # - grid V-array (largest contiguous buffer)
         # - compiled simulate/solve programs inside `self._regimes`,
         #   whose XLA workspaces stay live until the Python refs go.
+        # `gc.collect` reaps them deterministically; `jax.clear_caches`
+        # is deliberately avoided here — clearing JAX's compile cache
+        # ahead of orbax's serialization invalidates the topology
+        # metadata orbax records on the saved arrays.
         self._period_to_regime_to_V_arr = MappingProxyType({})
         self._regimes = MappingProxyType({})
-        gc.collect()
-        jax.clear_caches()
         gc.collect()
 
         small_array_tree = {
