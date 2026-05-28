@@ -211,49 +211,36 @@ class SimulationResult:
             The directory the result was written to.
 
         Notes:
-            On exit `self.period_to_regime_to_V_arr` is an empty mapping.
-            The grid V-array is the largest device-resident artifact at
-            save time; orbax's subsequent transfer of the per-subject
-            tree triggers a device-side staging allocation that needs
-            the device near-empty. `save` therefore writes V-array
-            chunks to disk first, drops the Python references, and
-            forces `gc.collect` + `jax.clear_caches` before invoking
-            orbax. Callers that still need the in-memory V-array after
-            `save` returns must reload via `SimulationResult.load`.
+            `save` consumes the in-memory result: on exit both
+            `self.period_to_regime_to_V_arr` and `self._regimes` are
+            empty mappings. The grid V-array (largest device-resident
+            artifact) and the regimes' compiled `simulate_functions` /
+            `solve_functions` (which pin XLA program workspaces on the
+            device) are released before orbax stages the per-subject
+            tree; otherwise the post-V-array D2H allocations exhaust
+            the device on smaller GPUs. Callers needing further
+            in-memory access after `save` must reload via
+            `SimulationResult.load`. `to_dataframe` and `metadata.pkl`
+            are produced upfront so the regimes are still available
+            for their construction.
 
         """
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
 
-        _save_period_to_regime_to_V_arr(
-            period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
-            chunk_specs=self._chunk_specs,
-            output_dir=target / "V_arr",
+        # Build the dataframe and the metadata snapshot while `self._regimes`
+        # is still populated; both depend on it. Defer the actual arrow
+        # write until after orbax succeeds so a partial save doesn't leave
+        # stale per-subject data on disk.
+        df = self.to_dataframe(
+            additional_targets=df_additional_targets,
+            use_labels=df_use_labels,
         )
-        # Drop on-device references to the grid V-array so JAX returns
-        # those buffers to the allocator before orbax stages the small
-        # array tree. Without this, ~12-14 GiB of solve-grid memory
-        # stays resident and orbax's `data.copy_to_host_async` triggers
-        # a device-side scratch alloc that exhausts the device.
-        self._period_to_regime_to_V_arr = MappingProxyType({})
-        gc.collect()
-        jax.clear_caches()
-
-        small_array_tree = {
-            "raw_results": _raw_results_to_array_tree(self._raw_results),
-            "flat_params": _flat_params_to_array_tree(self._flat_params),
-        }
-        _log_top_array_tree_leaves(
-            tree=small_array_tree, top_k=20, label="save: small_array_tree"
-        )
-        checkpointer = ocp.StandardCheckpointer()
-        checkpointer.save(target / "arrays", small_array_tree)
-        # `StandardCheckpointer.save` is asynchronous; block until the
-        # on-disk checkpoint is complete so the sibling `metadata.pkl`
-        # and `simulated_data.arrow` writes and any subsequent `load`
-        # observe a consistent directory.
-        checkpointer.wait_until_finished()
-
+        # Feather columns must be homogeneous. `to_dataframe` can leave
+        # JAX 0-d arrays in object columns (e.g. a regime whose target
+        # function returns a constant gets broadcast as a 0-d JAX scalar
+        # across the per-regime sub-frame); coerce them to Python scalars.
+        df = df.map(_coerce_jax_scalar_for_arrow)
         metadata = _SavedMetadata(
             regimes=self._regimes,
             flat_params_scaffold=_flat_params_to_scaffold(self._flat_params),
@@ -265,15 +252,35 @@ class SimulationResult:
         with (target / "metadata.pkl").open("wb") as fh:
             cloudpickle.dump(metadata, fh)
 
-        df = self.to_dataframe(
-            additional_targets=df_additional_targets,
-            use_labels=df_use_labels,
+        _save_period_to_regime_to_V_arr(
+            period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
+            chunk_specs=self._chunk_specs,
+            output_dir=target / "V_arr",
         )
-        # Feather columns must be homogeneous. `to_dataframe` can leave
-        # JAX 0-d arrays in object columns (e.g. a regime whose target
-        # function returns a constant gets broadcast as a 0-d JAX scalar
-        # across the per-regime sub-frame); coerce them to Python scalars.
-        df = df.map(_coerce_jax_scalar_for_arrow)
+        # Drop on-device references that pin device memory for orbax:
+        # - grid V-array (largest contiguous buffer)
+        # - compiled simulate/solve programs inside `self._regimes`,
+        #   whose XLA workspaces stay live until the Python refs go.
+        self._period_to_regime_to_V_arr = MappingProxyType({})
+        self._regimes = MappingProxyType({})
+        gc.collect()
+        jax.clear_caches()
+        gc.collect()
+
+        small_array_tree = {
+            "raw_results": _raw_results_to_array_tree(self._raw_results),
+            "flat_params": _flat_params_to_array_tree(self._flat_params),
+        }
+        _log_top_array_tree_leaves(
+            tree=small_array_tree, top_k=20, label="save: small_array_tree"
+        )
+        checkpointer = ocp.StandardCheckpointer()
+        checkpointer.save(target / "arrays", small_array_tree)
+        # `StandardCheckpointer.save` is asynchronous; block until the
+        # on-disk checkpoint is complete so the sibling
+        # `simulated_data.arrow` write and any subsequent `load`
+        # observe a consistent directory.
+        checkpointer.wait_until_finished()
         df.to_feather(target / "simulated_data.arrow")
 
         return target

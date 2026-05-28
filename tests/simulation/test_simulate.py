@@ -516,6 +516,10 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
         period_to_regime_to_V_arr=None,
     )
 
+    # `save` releases device-pinned state including `self._regimes`, so any
+    # property derived from regimes must be captured before save runs.
+    expected_df = result.to_dataframe()
+
     save_dir = tmp_path / "result"
     result.save(directory=save_dir)
     loaded = SimulationResult.load(directory=save_dir)
@@ -527,7 +531,7 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
     assert loaded.action_names == result.action_names
     assert loaded.available_targets == result.available_targets
 
-    assert_frame_equal(loaded.to_dataframe(), result.to_dataframe())
+    assert_frame_equal(loaded.to_dataframe(), expected_df)
 
 
 def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
@@ -552,16 +556,19 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
         period_to_regime_to_V_arr=None,
     )
 
-    save_dir = tmp_path / "result"
-    result.save(directory=save_dir)
-    arrow_path = save_dir / "simulated_data.arrow"
-    assert arrow_path.is_file()
-
+    # Capture the expected frame before save; `save` releases device-pinned
+    # state including `self._regimes`, so `to_dataframe` won't work post-save.
     # Apples-to-apples: write the expected frame to feather using the same
     # JAX-scalar coercion that `save` applies, then read both sides back.
     # That isolates pyarrow's type-promotion / null-representation rules
     # from the round-trip contract under test.
     expected = result.to_dataframe(use_labels=True).map(_coerce_jax_scalar_for_arrow)
+
+    save_dir = tmp_path / "result"
+    result.save(directory=save_dir)
+    arrow_path = save_dir / "simulated_data.arrow"
+    assert arrow_path.is_file()
+
     expected_path = tmp_path / "expected.arrow"
     expected.to_feather(expected_path)
 
@@ -611,6 +618,38 @@ def test_save_single_v_arr_writes_one_chunk_when_axis_is_none(tmp_path: Path):
     assert sorted(p.name for p in tmp_path.glob("*.npy")) == ["00000.npy"]
     loaded = _load_single_v_arr(input_dir=tmp_path)
     assert_array_equal(loaded, V_arr)
+
+
+def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Path):
+    """`save` drops `self._regimes` after pickling metadata to free the JIT cache.
+
+    Each `Regime` holds the compiled `simulate_functions`
+    (`argmax_and_max_Q_over_a[period]`, `next_state`, `compute_regime_transition_probs`)
+    and `solve_functions` whose XLA workspaces stay pinned on the
+    device for as long as a Python reference exists. Once `save` has
+    serialised the regimes into `metadata.pkl`, the in-memory mapping
+    is replaced with an empty `MappingProxyType` so the next allocator
+    pressure (orbax's per-leaf D2H transfers) has a near-empty pool to
+    work with. Callers needing the regimes after `save` must reload
+    via `SimulationResult.load`.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+    assert len(result._regimes) > 0
+
+    result.save(directory=tmp_path / "result")
+
+    assert dict(result._regimes) == {}
 
 
 def test_save_clears_period_to_regime_to_V_arr_to_free_device_memory(tmp_path: Path):
