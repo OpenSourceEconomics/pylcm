@@ -228,9 +228,21 @@ class SimulationResult:
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
 
-        # Build the dataframe and the metadata snapshot while `self._regimes`
-        # is still populated; both depend on it. Defer the actual arrow
-        # write until after orbax succeeds so a partial save doesn't leave
+        # Save V-array chunks to disk and then drop the in-memory grid
+        # immediately. `to_dataframe` (below) materialises boolean masks
+        # via D2H gathers whose staging allocations otherwise compete
+        # with the still-resident V-array for the BFC pool.
+        _save_period_to_regime_to_V_arr(
+            period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
+            chunk_specs=self._chunk_specs,
+            output_dir=target / "V_arr",
+        )
+        self._period_to_regime_to_V_arr = MappingProxyType({})
+        gc.collect()
+
+        # Build the dataframe + metadata snapshot while `self._regimes`
+        # is still populated; both depend on it. Defer the arrow write
+        # until after orbax succeeds so a partial save doesn't leave
         # stale per-subject data on disk.
         df = self.to_dataframe(
             additional_targets=df_additional_targets,
@@ -252,20 +264,10 @@ class SimulationResult:
         with (target / "metadata.pkl").open("wb") as fh:
             cloudpickle.dump(metadata, fh)
 
-        _save_period_to_regime_to_V_arr(
-            period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
-            chunk_specs=self._chunk_specs,
-            output_dir=target / "V_arr",
-        )
-        # Drop on-device references that pin device memory for orbax:
-        # - grid V-array (largest contiguous buffer)
-        # - compiled simulate/solve programs inside `self._regimes`,
-        #   whose XLA workspaces stay live until the Python refs go.
-        # `gc.collect` reaps them deterministically; `jax.clear_caches`
-        # is deliberately avoided here — clearing JAX's compile cache
-        # ahead of orbax's serialization invalidates the topology
-        # metadata orbax records on the saved arrays.
-        self._period_to_regime_to_V_arr = MappingProxyType({})
+        # Drop the compiled `simulate_functions` / `solve_functions`
+        # programs inside `self._regimes`; their XLA workspaces stay
+        # live until the Python refs go, and orbax's per-leaf D2H
+        # transfers need a near-empty pool.
         self._regimes = MappingProxyType({})
         gc.collect()
 
