@@ -1,5 +1,6 @@
 """User-facing `SimulationResult` with deferred DataFrame computation."""
 
+import gc
 import json
 import sys
 from collections.abc import Mapping
@@ -209,9 +210,34 @@ class SimulationResult:
         Returns:
             The directory the result was written to.
 
+        Notes:
+            On exit `self.period_to_regime_to_V_arr` is an empty mapping.
+            The grid V-array is the largest device-resident artifact at
+            save time; orbax's subsequent transfer of the per-subject
+            tree triggers a device-side staging allocation that needs
+            the device near-empty. `save` therefore writes V-array
+            chunks to disk first, drops the Python references, and
+            forces `gc.collect` + `jax.clear_caches` before invoking
+            orbax. Callers that still need the in-memory V-array after
+            `save` returns must reload via `SimulationResult.load`.
+
         """
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
+
+        _save_period_to_regime_to_V_arr(
+            period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
+            chunk_specs=self._chunk_specs,
+            output_dir=target / "V_arr",
+        )
+        # Drop on-device references to the grid V-array so JAX returns
+        # those buffers to the allocator before orbax stages the small
+        # array tree. Without this, ~12-14 GiB of solve-grid memory
+        # stays resident and orbax's `data.copy_to_host_async` triggers
+        # a device-side scratch alloc that exhausts the device.
+        self._period_to_regime_to_V_arr = MappingProxyType({})
+        gc.collect()
+        jax.clear_caches()
 
         small_array_tree = {
             "raw_results": _raw_results_to_array_tree(self._raw_results),
@@ -223,16 +249,10 @@ class SimulationResult:
         checkpointer = ocp.StandardCheckpointer()
         checkpointer.save(target / "arrays", small_array_tree)
         # `StandardCheckpointer.save` is asynchronous; block until the
-        # on-disk checkpoint is complete so the sibling `V_arr/`,
-        # `metadata.pkl`, and `simulated_data.arrow` writes and any
-        # subsequent `load` observe a consistent directory.
+        # on-disk checkpoint is complete so the sibling `metadata.pkl`
+        # and `simulated_data.arrow` writes and any subsequent `load`
+        # observe a consistent directory.
         checkpointer.wait_until_finished()
-
-        _save_period_to_regime_to_V_arr(
-            period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
-            chunk_specs=self._chunk_specs,
-            output_dir=target / "V_arr",
-        )
 
         metadata = _SavedMetadata(
             regimes=self._regimes,

@@ -613,6 +613,35 @@ def test_save_single_v_arr_writes_one_chunk_when_axis_is_none(tmp_path: Path):
     assert_array_equal(loaded, V_arr)
 
 
+def test_save_clears_period_to_regime_to_V_arr_to_free_device_memory(tmp_path: Path):
+    """`save` drops the in-memory `period_to_regime_to_V_arr` after persisting it.
+
+    The grid V-array is the largest device-resident artifact at save time. The
+    orbax checkpoint that follows needs the device to be near-empty, so `save`
+    chunks the V-array to disk first, releases the references, and only then
+    invokes orbax. After `save` returns, `result.period_to_regime_to_V_arr`
+    is therefore an empty mapping; callers that still need the values must
+    reload from disk via `SimulationResult.load`.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+    assert len(result.period_to_regime_to_V_arr) > 0
+
+    result.save(directory=tmp_path / "result")
+
+    assert dict(result.period_to_regime_to_V_arr) == {}
+
+
 def test_collect_array_tree_leaf_sizes_orders_leaves_by_size_descending():
     """Leaves come back biggest-first with shape, dtype, and byte count.
 
