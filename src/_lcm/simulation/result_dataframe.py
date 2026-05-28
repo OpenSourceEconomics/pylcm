@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from types import MappingProxyType
 
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
@@ -71,9 +72,9 @@ def _process_regime(
         for period, result in regime_results.items()
     ]
 
-    data: dict[str, FloatND | IntND | BoolND | Sequence[str]] = _concatenate_and_filter(
-        period_dicts
-    )  # ty: ignore[invalid-assignment]
+    data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = dict(
+        _concatenate_and_filter(period_dicts)
+    )
 
     data["age"] = ages.values[data["period"]]  # noqa: PD011
     data["regime_name"] = [regime.name] * len(data["period"])
@@ -122,12 +123,25 @@ def _extract_period_data(
 
 def _concatenate_and_filter(
     period_dicts: list[dict[str, FloatND | IntND | BoolND]],
-) -> dict[str, FloatND | IntND | BoolND]:
-    """Concatenate period data and filter to in-regime subjects."""
+) -> dict[str, np.ndarray]:
+    """Concatenate period data on host and filter to in-regime subjects.
+
+    Per-period leaves are pulled to host via `np.asarray` before
+    concatenation, so the filter runs as a pure-numpy boolean index. This
+    avoids JAX's `expand_bool_indices` path, which materialises a
+    device-side staging buffer of the full concatenated shape per key —
+    enough to OOM on small devices when the V-array workspaces are
+    still resident in the BFC pool.
+    """
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
+    host_per_period = [
+        {key: np.asarray(value) for key, value in d.items()} for d in period_dicts
+    ]
+
     concatenated = {
-        key: jnp.concatenate([d[key] for d in period_dicts]) for key in period_dicts[0]
+        key: np.concatenate([d[key] for d in host_per_period])
+        for key in host_per_period[0]
     }
 
     mask = concatenated["_in_regime"].astype(bool)
