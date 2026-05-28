@@ -229,9 +229,8 @@ class SimulationResult:
         target.mkdir(parents=True, exist_ok=True)
 
         # Save V-array chunks to disk and then drop the in-memory grid
-        # immediately. `to_dataframe` (below) materialises boolean masks
-        # via D2H gathers whose staging allocations otherwise compete
-        # with the still-resident V-array for the BFC pool.
+        # immediately. The post-V-array D2H transfers (`to_dataframe`,
+        # orbax staging) need the device pool the V-array was occupying.
         _save_period_to_regime_to_V_arr(
             period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
             chunk_specs=self._chunk_specs,
@@ -240,19 +239,9 @@ class SimulationResult:
         self._period_to_regime_to_V_arr = MappingProxyType({})
         gc.collect()
 
-        # Build the dataframe + metadata snapshot while `self._regimes`
-        # is still populated; both depend on it. Defer the arrow write
-        # until after orbax succeeds so a partial save doesn't leave
-        # stale per-subject data on disk.
-        df = self.to_dataframe(
-            additional_targets=df_additional_targets,
-            use_labels=df_use_labels,
-        )
-        # Feather columns must be homogeneous. `to_dataframe` can leave
-        # JAX 0-d arrays in object columns (e.g. a regime whose target
-        # function returns a constant gets broadcast as a 0-d JAX scalar
-        # across the per-regime sub-frame); coerce them to Python scalars.
-        df = df.map(_coerce_jax_scalar_for_arrow)
+        # Snapshot metadata while `self._regimes` is still populated;
+        # the on-disk pickle captures the regime objects so the
+        # in-memory copy can be released afterwards.
         metadata = _SavedMetadata(
             regimes=self._regimes,
             flat_params_scaffold=_flat_params_to_scaffold(self._flat_params),
@@ -266,10 +255,30 @@ class SimulationResult:
 
         # Drop the compiled `simulate_functions` / `solve_functions`
         # programs inside `self._regimes`; their XLA workspaces stay
-        # live until the Python refs go, and orbax's per-leaf D2H
-        # transfers need a near-empty pool.
-        self._regimes = MappingProxyType({})
-        gc.collect()
+        # live until the Python refs go, and the per-period D2H gathers
+        # inside `to_dataframe` need a near-empty pool. When
+        # `df_additional_targets` is set, the targets DAG needs the
+        # compiled programs, so the drop is deferred until after the
+        # dataframe is built.
+        if df_additional_targets is None:
+            self._regimes = MappingProxyType({})
+            gc.collect()
+
+        # Defer the arrow write until after orbax succeeds so a partial
+        # save doesn't leave stale per-subject data on disk.
+        df = self.to_dataframe(
+            additional_targets=df_additional_targets,
+            use_labels=df_use_labels,
+        )
+        # Feather columns must be homogeneous. `to_dataframe` can leave
+        # JAX 0-d arrays in object columns (e.g. a regime whose target
+        # function returns a constant gets broadcast as a 0-d JAX scalar
+        # across the per-regime sub-frame); coerce them to Python scalars.
+        df = df.map(_coerce_jax_scalar_for_arrow)
+
+        if self._regimes:
+            self._regimes = MappingProxyType({})
+            gc.collect()
 
         small_array_tree = {
             "raw_results": _raw_results_to_array_tree(self._raw_results),

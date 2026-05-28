@@ -29,10 +29,19 @@ def _create_flat_dataframe(
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:
-    """Create a single flat DataFrame from all regime results."""
+    """Create a single flat DataFrame from all regime results.
+
+    `regimes` may be empty (or missing entries) when `additional_targets`
+    is `None` — in that case only the regime *name* is needed and the
+    compiled `Regime` objects can be released ahead of the dataframe
+    construction to free their XLA program workspaces. When
+    `additional_targets` is set the matching regime objects must be
+    present.
+    """
     regime_dfs = [
         _process_regime(
-            regime=regimes[name],
+            regime_name=name,
+            regime=regimes.get(name),
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
@@ -53,7 +62,8 @@ def _create_flat_dataframe(
 
 def _process_regime(
     *,
-    regime: Regime,
+    regime_name: RegimeName,
+    regime: Regime | None,
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
@@ -61,7 +71,13 @@ def _process_regime(
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:
-    """Process results for a single regime into a DataFrame."""
+    """Process results for a single regime into a DataFrame.
+
+    `regime` is required only when `additional_targets` is set. With
+    `additional_targets=None`, only `regime_name` is read, so callers
+    may pass `regime=None` after dropping compiled `Regime` objects to
+    free device workspaces.
+    """
     period_dicts = [
         _extract_period_data(
             result=result,
@@ -77,9 +93,16 @@ def _process_regime(
     )
 
     data["age"] = ages.values[data["period"]]  # noqa: PD011
-    data["regime_name"] = [regime.name] * len(data["period"])
+    data["regime_name"] = [regime_name] * len(data["period"])
 
     if additional_targets:
+        if regime is None:
+            msg = (
+                f"additional_targets requested for regime {regime_name!r} but "
+                "the Regime object is unavailable. Pass the regime when "
+                "constructing the dataframe."
+            )
+            raise ValueError(msg)
         targets_for_regime = _filter_targets_for_regime(
             targets=additional_targets, regime=regime
         )
