@@ -5,6 +5,7 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 import jax
+import numpy as np
 from jax import Array
 
 from _lcm.grids import Grid, IrregSpacedGrid
@@ -30,6 +31,7 @@ from _lcm.utils.containers import first_non_none
 from lcm.exceptions import PyLCMError
 from lcm.typing import (
     Bool1D,
+    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
@@ -643,16 +645,29 @@ class PeriodRegimeSimulationData:
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
 
+    intermediates: MappingProxyType[str, np.ndarray | FloatND | IntND | BoolND] = (
+        MappingProxyType({})
+    )
+    """Per-subject DAG function outputs evaluated at the realised optimal actions.
+
+    Populated during simulate with every user function and constraint in the
+    regime (excluding `H` and stochastic-weight helpers), pulled to host as
+    `np.ndarray`. `to_dataframe` selects from these by name when the caller
+    passes `additional_targets`. Restored from an orbax checkpoint they may
+    come back as `jax.Array`, hence the union.
+    """
+
 
 # Register as a JAX pytree so traversals like `jax.block_until_ready` and
 # `jax.tree.map` recurse into the fields instead of treating the dataclass
 # as an opaque leaf. Without registration, an outer drain over a
 # `dict[regime][period] -> PeriodRegimeSimulationData` skips the inner
-# `V_arr` / `in_regime` / `actions` / `states` — the per-subject lazy
-# compute graphs build up across periods and only fire at access time,
-# whose materialisation workspace dwarfs the per-period output.
+# `V_arr` / `in_regime` / `actions` / `states` / `intermediates` — the
+# per-subject lazy compute graphs build up across periods and only fire
+# at access time, whose materialisation workspace dwarfs the per-period
+# output.
 jax.tree_util.register_dataclass(
     PeriodRegimeSimulationData,
-    data_fields=("V_arr", "actions", "states", "in_regime"),
+    data_fields=("V_arr", "actions", "states", "in_regime", "intermediates"),
     meta_fields=(),
 )

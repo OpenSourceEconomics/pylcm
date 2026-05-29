@@ -17,16 +17,16 @@ import orbax.checkpoint as ocp
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
-from _lcm.simulation.additional_targets import (
-    _collect_all_available_targets,
-    _resolve_targets,
-)
 from _lcm.simulation.chunk_specs import _ChunkSpec
 from _lcm.simulation.result_dataframe import (
     _convert_to_categorical,
     _create_flat_dataframe,
 )
 from _lcm.simulation.result_metadata import ResultMetadata, _compute_metadata
+from _lcm.simulation.targets import (
+    _collect_all_available_targets,
+    _resolve_targets,
+)
 from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
 from lcm.ages import AgeGrid
 from lcm.typing import FloatND
@@ -151,8 +151,6 @@ class SimulationResult:
 
         df = _create_flat_dataframe(
             raw_results=self._raw_results,
-            regimes=self._regimes,
-            flat_params=self._flat_params,
             metadata=self._metadata,
             additional_targets=resolved_targets,
             ages=self._ages,
@@ -220,21 +218,14 @@ class SimulationResult:
             tree; otherwise the post-V-array D2H allocations exhaust
             the device on smaller GPUs. Callers needing further
             in-memory access after `save` must reload via
-            `SimulationResult.load`. `to_dataframe` and `metadata.pkl`
-            are produced upfront so the regimes are still available
-            for their construction.
+            `SimulationResult.load`. `metadata.pkl` is written before
+            the regimes are dropped, since it captures them; the
+            dataframe reads additional targets from each period's
+            pre-computed `intermediates`, so it needs no regimes.
 
         """
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
-
-        # Force any deferred simulation kernels backing `raw_results` to
-        # complete now, while the V-array and compiled regimes are still
-        # resident and the kernels can run against full inputs. Deferred
-        # dispatch would otherwise re-fire inside `to_dataframe`'s D2H
-        # gathers, where the BFC pool is already carrying per-key host
-        # staging buffers and driver headroom is at its tightest.
-        jax.block_until_ready(self._raw_results)
 
         # Save V-array chunks to disk and then drop the in-memory grid
         # immediately. The post-V-array D2H transfers (`to_dataframe`,
@@ -263,14 +254,12 @@ class SimulationResult:
 
         # Drop the compiled `simulate_functions` / `solve_functions`
         # programs inside `self._regimes`; their XLA workspaces stay
-        # live until the Python refs go, and the per-period D2H gathers
-        # inside `to_dataframe` need a near-empty pool. When
-        # `df_additional_targets` is set, the targets DAG needs the
-        # compiled programs, so the drop is deferred until after the
-        # dataframe is built.
-        if df_additional_targets is None:
-            self._regimes = MappingProxyType({})
-            gc.collect()
+        # live until the Python refs go, and orbax's per-leaf D2H
+        # transfers need a near-empty pool. `to_dataframe` reads its
+        # target columns from `intermediates`, not the regimes, so the
+        # drop is unconditional and happens before it.
+        self._regimes = MappingProxyType({})
+        gc.collect()
 
         # Defer the arrow write until after orbax succeeds so a partial
         # save doesn't leave stale per-subject data on disk.
@@ -283,10 +272,6 @@ class SimulationResult:
         # function returns a constant gets broadcast as a 0-d JAX scalar
         # across the per-regime sub-frame); coerce them to Python scalars.
         df = df.map(_coerce_jax_scalar_for_arrow)
-
-        if self._regimes:
-            self._regimes = MappingProxyType({})
-            gc.collect()
 
         small_array_tree = {
             "raw_results": _raw_results_to_array_tree(self._raw_results),
@@ -608,6 +593,7 @@ def _raw_results_to_array_tree(
                 "actions": dict(data.actions),
                 "states": dict(data.states),
                 "in_regime": data.in_regime,
+                "intermediates": dict(data.intermediates),
             }
             for period, data in regime_dict.items()
         }
@@ -628,6 +614,9 @@ def _array_tree_to_raw_results(
                         actions=MappingProxyType(period_dict["actions"]),
                         states=MappingProxyType(period_dict["states"]),
                         in_regime=period_dict["in_regime"],
+                        intermediates=MappingProxyType(
+                            period_dict.get("intermediates", {})
+                        ),
                     )
                     for period, period_dict in regime_dict.items()
                 }

@@ -3,6 +3,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
@@ -139,6 +140,31 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         return period_to_regime_to_V_arr, params, model
 
     return _model_solution
+
+
+def test_raw_results_intermediates_exposes_dag_outputs_as_host_arrays(
+    iskhakov_et_al_2017_stripped_down_model_solution,
+):
+    """Per-period `intermediates` maps each DAG function name to a host
+    `np.ndarray` of that function evaluated at the realised optimal action."""
+    period_to_regime_to_V_arr, params, model = (
+        iskhakov_et_al_2017_stripped_down_model_solution(n_periods=4)
+    )
+
+    result = model.simulate(
+        log_level="off",
+        params=params,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 150, 250, 320]),
+            "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 4),
+        },
+    )
+
+    utility = result.raw_results["working_life"][0].intermediates["utility"]
+
+    assert isinstance(utility, np.ndarray)
 
 
 def test_simulate_using_model_methods(
@@ -532,6 +558,35 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
     assert loaded.available_targets == result.available_targets
 
     assert_frame_equal(loaded.to_dataframe(), expected_df)
+
+
+def test_loaded_result_serves_additional_targets_matching_fresh(tmp_path: Path):
+    """A reloaded result serves `additional_targets` identically to a fresh one.
+
+    `to_dataframe(additional_targets=[...])` on a result restored via
+    `SimulationResult.load` produces the same target columns as the
+    in-memory result it was saved from.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+    targets = ["utility", "borrowing_constraint"]
+    expected_df = result.to_dataframe(additional_targets=targets)
+
+    save_dir = tmp_path / "result"
+    result.save(directory=save_dir)
+    loaded = SimulationResult.load(directory=save_dir)
+
+    assert_frame_equal(loaded.to_dataframe(additional_targets=targets), expected_df)
 
 
 def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):

@@ -1,11 +1,15 @@
+import inspect
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
+from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
+from dags import concatenate_functions
 from jax import vmap
 
 from _lcm.engine import (
@@ -18,6 +22,7 @@ from _lcm.simulation.initial_conditions import (
     build_initial_states,
 )
 from _lcm.simulation.random import draw_random_seed
+from _lcm.simulation.targets import _target_names_for_regime
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
@@ -26,6 +31,7 @@ from _lcm.simulation.transitions import (
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import (
     FlatParams,
+    FlatRegimeParams,
     InitialConditions,
     PRNGKeyND,
     RegimeName,
@@ -34,6 +40,7 @@ from _lcm.typing import (
     StatesPerRegime,
 )
 from _lcm.utils.containers import invert_regime_ids
+from _lcm.utils.dispatchers import vmap_1d
 from _lcm.utils.logging import (
     format_duration,
     log_nan_in_V,
@@ -310,11 +317,22 @@ def _simulate_regime_in_period(
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_subjects,))
 
+    intermediates = _evaluate_dag_at_optimum(
+        regime=regime,
+        regime_params=flat_params[regime_name],
+        regime_states=states[regime_name],
+        optimal_actions=optimal_actions,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
         states=states[regime_name],
         in_regime=subject_ids_in_regime,
+        intermediates=intermediates,
     )
 
     # Update states and regime membership for next period
@@ -348,6 +366,75 @@ def _simulate_regime_in_period(
         )
 
     return simulation_result, states, new_subject_regime_ids, key
+
+
+def _evaluate_dag_at_optimum(
+    *,
+    regime: Regime,
+    regime_params: FlatRegimeParams,
+    regime_states: MappingProxyType[StateOrActionName, FloatND | IntND],
+    optimal_actions: MappingProxyType[StateOrActionName, FloatND | IntND],
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+) -> MappingProxyType[str, np.ndarray]:
+    """Evaluate every user function and constraint at the realised actions.
+
+    Returns a host-resident mapping of function name to per-subject output.
+    The target set is `_target_names_for_regime` — every user function and
+    constraint minus `H` and the internal stochastic-weight helpers, i.e.
+    exactly the set `to_dataframe(additional_targets="all")` exposes. The
+    DAG is composed via `dags.concatenate_functions(targets=...)` and
+    vmapped over subjects, so one call evaluates every target in a single
+    fused pass. Each output is pulled to host immediately, so the
+    `intermediates` mapping a regime-period hands back holds plain numpy
+    arrays and pins no device memory across the simulation loop.
+    """
+    sim_funcs = regime.simulate_functions
+    pool: dict[str, Callable[..., Any]] = {
+        **{k: v for k, v in sim_funcs.functions.items() if k != "H"},
+        **sim_funcs.constraints,
+    }
+    if sim_funcs.compute_regime_transition_probs is not None:
+        # Available in the pool for dependency resolution, but not a target —
+        # its dict-shaped return clashes with the per-subject scalar contract
+        # the other DAG outputs satisfy.
+        pool["regime_transition_probs"] = sim_funcs.compute_regime_transition_probs
+    targets = sorted(_target_names_for_regime(regime))
+    if not targets:
+        return MappingProxyType({})
+
+    combined = concatenate_functions(
+        functions=pool,
+        targets=targets,
+        return_type="dict",
+        set_annotations=True,
+    )
+    all_params = {**regime.resolved_fixed_params, **regime_params}
+    flat_param_names = frozenset(all_params.keys())
+    variables = tuple(
+        p for p in inspect.signature(combined).parameters if p not in flat_param_names
+    )
+    vectorized = vmap_1d(func=combined, variables=variables)
+
+    per_subject_data: dict[str, object] = {
+        **regime_states,
+        **optimal_actions,
+        "period": jnp.full((n_subjects,), period, dtype=jnp.int32),
+        "age": jnp.full((n_subjects,), age),
+    }
+    call_kwargs = {k: per_subject_data[k] for k in variables if k in per_subject_data}
+    intermediates_jax = vectorized(**all_params, **call_kwargs)
+    # A target with no per-subject dependency (e.g. a terminal regime's
+    # constant utility) evaluates to a scalar; broadcast every output to
+    # the subject axis so `intermediates` is uniformly one value per
+    # subject and concatenates cleanly across periods downstream.
+    return MappingProxyType(
+        {
+            name: np.asarray(jnp.broadcast_to(jnp.squeeze(value), (n_subjects,)))
+            for name, value in intermediates_jax.items()
+        }
+    )
 
 
 def _lookup_values_from_indices(
