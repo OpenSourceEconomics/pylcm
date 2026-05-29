@@ -197,7 +197,7 @@ def _concatenate_and_filter(
     return result
 
 
-def _to_host(value: object) -> np.ndarray:
+def _to_host(value: FloatND | IntND | BoolND) -> np.ndarray:
     """Copy a jax.Array (or numpy array) to a host-resident `np.ndarray`.
 
     For a value with at most one addressable shard the call collapses

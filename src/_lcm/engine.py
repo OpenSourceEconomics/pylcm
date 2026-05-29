@@ -642,3 +642,17 @@ class PeriodRegimeSimulationData:
 
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
+
+
+# Register as a JAX pytree so traversals like `jax.block_until_ready` and
+# `jax.tree.map` recurse into the fields instead of treating the dataclass
+# as an opaque leaf. Without registration, an outer drain over a
+# `dict[regime][period] -> PeriodRegimeSimulationData` skips the inner
+# `V_arr` / `in_regime` / `actions` / `states` — the per-subject lazy
+# compute graphs build up across periods and only fire at access time,
+# whose materialisation workspace dwarfs the per-period output.
+jax.tree_util.register_dataclass(
+    PeriodRegimeSimulationData,
+    data_fields=("V_arr", "actions", "states", "in_regime"),
+    meta_fields=(),
+)
