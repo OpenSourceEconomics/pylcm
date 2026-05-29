@@ -424,6 +424,7 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
+        subject_batch_size: int | None = None,
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
@@ -471,6 +472,12 @@ class Model:
                 compilation. Only used when `period_to_regime_to_V_arr` is `None`
                 (i.e. when solve runs automatically). Defaults to the number of
                 physical CPU cores.
+            subject_batch_size: Number of subjects per chunk when evaluating the
+                per-period target DAG that backs `to_dataframe`'s additional
+                targets. `None` (default) evaluates all subjects in one fused
+                pass; a smaller value bounds that evaluation's peak device
+                workspace on memory-tight GPUs, trading a few extra passes for a
+                lower memory ceiling.
 
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
@@ -545,6 +552,7 @@ class Model:
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
+            subject_batch_size=subject_batch_size,
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads

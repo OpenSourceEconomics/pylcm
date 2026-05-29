@@ -69,6 +69,7 @@ def simulate(
     ages: AgeGrid,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
+    subject_batch_size: int | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -90,6 +91,10 @@ def simulate(
             used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
+        subject_batch_size: Number of subjects per chunk when evaluating the
+            per-period target DAG. `None` (default) evaluates all subjects in
+            one fused pass; a smaller value bounds the peak device workspace of
+            that evaluation on memory-tight devices at the cost of more passes.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -168,6 +173,7 @@ def simulate(
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
                     logger=logger,
+                    subject_batch_size=subject_batch_size,
                 )
             )
             states = new_states
@@ -239,6 +245,7 @@ def _simulate_regime_in_period(
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
     logger: logging.Logger,
+    subject_batch_size: int | None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -325,6 +332,7 @@ def _simulate_regime_in_period(
         period=period,
         age=age,
         n_subjects=n_subjects,
+        subject_batch_size=subject_batch_size,
     )
 
     simulation_result = PeriodRegimeSimulationData(
@@ -377,6 +385,7 @@ def _evaluate_dag_at_optimum(
     period: int,
     age: ScalarFloat | ScalarInt,
     n_subjects: int,
+    subject_batch_size: int | None,
 ) -> MappingProxyType[str, np.ndarray]:
     """Evaluate every user function and constraint at the realised actions.
 
@@ -385,10 +394,16 @@ def _evaluate_dag_at_optimum(
     constraint minus `H` and the internal stochastic-weight helpers, i.e.
     exactly the set `to_dataframe(additional_targets="all")` exposes. The
     DAG is composed via `dags.concatenate_functions(targets=...)` and
-    vmapped over subjects, so one call evaluates every target in a single
-    fused pass. Each output is pulled to host immediately, so the
-    `intermediates` mapping a regime-period hands back holds plain numpy
-    arrays and pins no device memory across the simulation loop.
+    vmapped over subjects.
+
+    The vmap runs over subject chunks of `subject_batch_size` (the whole
+    population in one pass when `None`), each chunk's outputs pulled to
+    host before the next runs. The fused all-target program carries the
+    subject axis through every intermediate, so its peak device workspace
+    scales with the chunk size; chunking bounds that peak, which on a
+    memory-tight device is the difference between fitting and an
+    out-of-memory abort. The returned arrays are plain numpy and pin no
+    device memory across the simulation loop.
     """
     sim_funcs = regime.simulate_functions
     pool: dict[str, Callable[..., Any]] = {
@@ -430,23 +445,32 @@ def _evaluate_dag_at_optimum(
     )
     vectorized = vmap_1d(func=combined, variables=variables)
 
-    per_subject_data: dict[str, object] = {
+    per_subject_data: dict[str, FloatND | IntND] = {
         **regime_states,
         **optimal_actions,
         "period": jnp.full((n_subjects,), period, dtype=jnp.int32),
         "age": jnp.full((n_subjects,), age),
     }
-    call_kwargs = {k: per_subject_data[k] for k in variables if k in per_subject_data}
-    intermediates_jax = vectorized(**all_params, **call_kwargs)
-    # A target with no per-subject dependency (e.g. a terminal regime's
-    # constant utility) evaluates to a scalar; broadcast every output to
-    # the subject axis so `intermediates` is uniformly one value per
-    # subject and concatenates cleanly across periods downstream.
+    call_keys = [k for k in variables if k in per_subject_data]
+
+    batch = n_subjects if subject_batch_size is None else subject_batch_size
+    batch = max(1, min(batch, n_subjects))
+    host_chunks: dict[str, list[np.ndarray]] = {name: [] for name in targets}
+    for start in range(0, n_subjects, batch):
+        stop = min(start + batch, n_subjects)
+        chunk_kwargs = {k: per_subject_data[k][start:stop] for k in call_keys}
+        chunk_intermediates = vectorized(**all_params, **chunk_kwargs)
+        # A target with no per-subject dependency (e.g. a terminal regime's
+        # constant utility) evaluates to a scalar; broadcast every output to
+        # the chunk's subject axis so the per-chunk arrays concatenate into
+        # one value per subject.
+        for name, value in chunk_intermediates.items():
+            host_chunks[name].append(
+                np.asarray(jnp.broadcast_to(jnp.squeeze(value), (stop - start,)))
+            )
+
     return MappingProxyType(
-        {
-            name: np.asarray(jnp.broadcast_to(jnp.squeeze(value), (n_subjects,)))
-            for name, value in intermediates_jax.items()
-        }
+        {name: np.concatenate(host_chunks[name]) for name in targets}
     )
 
 

@@ -8,6 +8,7 @@ mathematically expected next-period values in solve and simulate.
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.regime import Regime as UserRegime
@@ -182,6 +183,55 @@ def test_to_dataframe_target_depending_on_next_state_resolves_the_transition() -
             params=params,
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=None,
+        )
+        .to_dataframe(additional_targets=["pension_proxy_next_period"])
+        .query('regime_name == "active"')
+        .reset_index(drop=True)
+    )
+
+    work = (df["labor_supply"] == "work").to_numpy().astype(float)
+    expected = 2.0 * (df["aime"].to_numpy() + work)
+    np.testing.assert_allclose(
+        df["pension_proxy_next_period"].to_numpy(), expected, atol=1e-6
+    )
+
+
+@pytest.mark.parametrize("subject_batch_size", [None, 2, 3])
+def test_eager_target_values_are_invariant_to_subject_batch_size(
+    subject_batch_size: int | None,
+) -> None:
+    """Chunking the subject axis during eager target evaluation preserves values.
+
+    Across a single pass (`None`), an even split (batch 2 over 4 subjects), and
+    an uneven one (batch 3 → chunks of 3 and 1), `pension_proxy_next_period`
+    must still equal `2 * (aime + work)` for every subject-period.
+    """
+    active = _active.replace(
+        functions={
+            **_active.functions,
+            "pension_proxy_next_period": _pension_proxy_next_period,
+        },
+    )
+    model = Model(
+        regimes={"active": active, "dead": _dead},
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+    params = {"discount_factor": 0.9, "final_age_alive": 1.0}
+    initial_conditions = {
+        "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
+        "aime": jnp.array([0.0, 1.0, 2.0, 3.0]),
+        "wealth": jnp.array([2.0, 3.0, 4.0, 5.0]),
+        "regime_id": jnp.array([_RegimeId.active] * 4),
+    }
+
+    df = (
+        model.simulate(
+            log_level="off",
+            params=params,
+            initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=None,
+            subject_batch_size=subject_batch_size,
         )
         .to_dataframe(additional_targets=["pension_proxy_next_period"])
         .query('regime_name == "active"')
