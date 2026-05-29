@@ -400,6 +400,19 @@ def _evaluate_dag_at_optimum(
         # its dict-shaped return clashes with the per-subject scalar contract
         # the other DAG outputs satisfy.
         pool["regime_transition_probs"] = sim_funcs.compute_regime_transition_probs
+    # Deterministic state transitions enter the pool so a target that consumes
+    # a next-period state (e.g. `next_aime`) resolves the chain — they are not
+    # targets themselves. Recomputing a deterministic transition from the
+    # realised optimal action reproduces the value the simulation stores, so
+    # the intermediate stays consistent with the forward path. Stochastic
+    # transitions are excluded: their realised draw lives in the simulation
+    # loop's random key, not in states + actions, so they cannot be reproduced
+    # here.
+    for target_transitions in sim_funcs.transitions.values():
+        for transition_name, transition_func in target_transitions.items():
+            if transition_name in sim_funcs.stochastic_transition_names:
+                continue
+            pool.setdefault(transition_name, transition_func)
     targets = sorted(_target_names_for_regime(regime))
     if not targets:
         return MappingProxyType({})

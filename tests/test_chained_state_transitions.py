@@ -142,3 +142,54 @@ def test_simulate_with_chained_transitions_yields_expected_next_wealth() -> None
             np.testing.assert_allclose(
                 float(curr["wealth"]), expected_next_wealth, atol=1e-6
             )
+
+
+def _pension_proxy_next_period(next_aime: FloatND) -> FloatND:
+    """A reporting function that consumes a next-period state."""
+    return 2.0 * next_aime
+
+
+def test_to_dataframe_target_depending_on_next_state_resolves_the_transition() -> None:
+    """A reporting function consuming `next_aime` resolves the transition chain.
+
+    `pension_proxy_next_period = 2 * next_aime` and `next_aime = aime + work`,
+    so each subject-period's column value must equal `2 * (aime + work)` — which
+    holds only if the eager target evaluation can reach the (deterministic)
+    `next_aime` transition.
+    """
+    active = _active.replace(
+        functions={
+            **_active.functions,
+            "pension_proxy_next_period": _pension_proxy_next_period,
+        },
+    )
+    model = Model(
+        regimes={"active": active, "dead": _dead},
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+    params = {"discount_factor": 0.9, "final_age_alive": 1.0}
+    initial_conditions = {
+        "age": jnp.array([0.0, 0.0]),
+        "aime": jnp.array([0.0, 1.0]),
+        "wealth": jnp.array([2.0, 3.0]),
+        "regime_id": jnp.array([_RegimeId.active, _RegimeId.active]),
+    }
+
+    df = (
+        model.simulate(
+            log_level="debug",
+            params=params,
+            initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=None,
+        )
+        .to_dataframe(additional_targets=["pension_proxy_next_period"])
+        .query('regime_name == "active"')
+        .reset_index(drop=True)
+    )
+
+    work = (df["labor_supply"] == "work").to_numpy().astype(float)
+    expected = 2.0 * (df["aime"].to_numpy() + work)
+    np.testing.assert_allclose(
+        df["pension_proxy_next_period"].to_numpy(), expected, atol=1e-6
+    )
