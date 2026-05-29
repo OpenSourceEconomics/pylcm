@@ -28,6 +28,7 @@ from lcm.result import (
 )
 from tests.test_models.deterministic.regression import (
     START_AGE,
+    LaborSupply,
     RegimeId,
     dead,
     get_model,
@@ -162,9 +163,21 @@ def test_raw_results_intermediates_exposes_dag_outputs_as_host_arrays(
         },
     )
 
-    utility = result.raw_results["working_life"][0].intermediates["utility"]
+    period_zero = result.raw_results["working_life"][0]
+    utility = period_zero.intermediates["utility"]
+
+    consumption = np.asarray(period_zero.actions["consumption"])
+    is_working = np.asarray(period_zero.actions["labor_supply"]) == int(
+        LaborSupply.work
+    )
+    disutility_of_work = params["working_life"]["utility"]["disutility_of_work"]
+    expected_utility = np.log(consumption) - np.where(
+        is_working, disutility_of_work, 0.0
+    )
 
     assert isinstance(utility, np.ndarray)
+    assert utility.shape == (4,)
+    np.testing.assert_allclose(utility, expected_utility, atol=1e-6)
 
 
 def test_simulate_using_model_methods(
@@ -771,3 +784,30 @@ def test_collect_array_tree_leaf_sizes_records_path_dtype_and_size():
     assert leaf.shape == (3, 4)
     assert leaf.dtype == jnp.int32
     assert leaf.n_bytes == 3 * 4 * 4
+
+
+def test_collect_array_tree_leaf_sizes_counts_host_numpy_leaves():
+    """Host `np.ndarray` leaves count toward the census alongside `jax.Array`.
+
+    The simulation `intermediates` orbax persists are host numpy arrays; the
+    save-time size census must include them so its reported byte total matches
+    what orbax actually stages to disk.
+    """
+    tree = {
+        "raw_results": {
+            "r": {
+                "0": {
+                    "V_arr": jnp.zeros((10,), dtype=jnp.float32),
+                    "intermediates": {"utility": np.zeros((10,), dtype=np.float32)},
+                }
+            }
+        }
+    }
+
+    leaves = _collect_array_tree_leaf_sizes(tree=tree)
+
+    assert {leaf.path for leaf in leaves} == {
+        "raw_results.r.0.V_arr",
+        "raw_results.r.0.intermediates.utility",
+    }
+    assert sum(leaf.n_bytes for leaf in leaves) == 80

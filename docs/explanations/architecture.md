@@ -91,18 +91,18 @@ similar implementation detail live in `_lcm/` and are imported back in.
 
 The mapping of public names to files:
 
-| File             | What lives there                                                                                                                                                                                          |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `model.py`       | `Model`                                                                                                                                                                                                   |
-| `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`.                                  |
-| `ages.py`        | `AgeGrid`. Step parser and validators live in `_lcm/ages.py`.                                                                                                                                             |
-| `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`, and the `@categorical` decorator                         |
-| `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
-| `persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, `save_solution`, `load_solution`. Snapshot writers and atomic-dump live in `_lcm/persistence/`.                                                     |
-| `result.py`      | `SimulationResult`. DataFrame assembly, metadata, and additional-targets computation live in `_lcm/simulation/result_*.py` and `_lcm/simulation/additional_targets.py`.                                   |
-| `params.py`      | `as_leaf` plus the `MappingLeaf` / `SequenceLeaf` re-exports. The leaf-class definitions and the engine params machinery live in `_lcm/params/`.                                                          |
-| `typing.py`      | The model-authoring aliases (`FloatND`, `ScalarInt`, `Period`, `Age`, ...) and the `User*` boundary aliases.                                                                                              |
-| `exceptions.py`  | Every project-specific exception class.                                                                                                                                                                   |
+| File             | What lives there                                                                                                                                                                                                                                                                                                  |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model.py`       | `Model`                                                                                                                                                                                                                                                                                                           |
+| `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`.                                                                                                                                          |
+| `ages.py`        | `AgeGrid`. Step parser and validators live in `_lcm/ages.py`.                                                                                                                                                                                                                                                     |
+| `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`, and the `@categorical` decorator                                                                                                                                 |
+| `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`.                                                                                                         |
+| `persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, `save_solution`, `load_solution`. Snapshot writers and atomic-dump live in `_lcm/persistence/`.                                                                                                                                                             |
+| `result.py`      | `SimulationResult`. DataFrame assembly and metadata live in `_lcm/simulation/result_*.py`; additional-target name resolution lives in `_lcm/simulation/targets.py`. The targets themselves are evaluated eagerly during simulation (`_lcm/simulation/simulate.py`) and served from each period's `intermediates`. |
+| `params.py`      | `as_leaf` plus the `MappingLeaf` / `SequenceLeaf` re-exports. The leaf-class definitions and the engine params machinery live in `_lcm/params/`.                                                                                                                                                                  |
+| `typing.py`      | The model-authoring aliases (`FloatND`, `ScalarInt`, `Period`, `Age`, ...) and the `User*` boundary aliases.                                                                                                                                                                                                      |
+| `exceptions.py`  | Every project-specific exception class.                                                                                                                                                                                                                                                                           |
 
 ### Why a package boundary, not just naming?
 
@@ -176,9 +176,12 @@ _lcm/simulation/result_metadata.py
 _lcm/simulation/result_dataframe.py
                         ← _create_flat_dataframe and the per-regime / per-period
                           assembly helpers, plus categorical conversion
-_lcm/simulation/additional_targets.py
-                        ← _resolve_targets, _compute_targets, and DAG helpers
-                          for to_dataframe(additional_targets=...)
+_lcm/simulation/targets.py
+                        ← _resolve_targets, _collect_all_available_targets,
+                          _target_names_for_regime — the additional-target names
+                          to_dataframe(additional_targets=...) can serve. The
+                          values are evaluated eagerly in simulate.py and stored
+                          per period in PeriodRegimeSimulationData.intermediates
 ```
 
 Why split these out? Two reasons:

@@ -174,7 +174,14 @@ class SimulationResult:
 
         - `arrays/` — orbax checkpoint of the small array trees
           (`raw_results` and `flat_params`), whose individual leaves
-          fit comfortably on a single device.
+          fit comfortably on a single device. `raw_results` carries
+          each period's full `intermediates` — every DAG target (user
+          functions + constraints) evaluated at the realised optimal
+          actions — so a loaded result can serve any `additional_targets`
+          without the regimes. These are persisted regardless of
+          `df_additional_targets` (which scopes only the arrow
+          projection below), so this artifact's size scales with
+          `n_subjects * n_targets * n_periods`.
         - `V_arr/` — solution value-function arrays, written per
           `(period, regime)` as chunked `.npy` files. Each leaf is
           sliced along its splay axis with the same `batch_size` the
@@ -378,7 +385,13 @@ class _ArrayPlaceholder:
 
 @dataclass(frozen=True)
 class _ArrayTreeLeaf:
-    """Size record for one `jax.Array` leaf in a save-time array tree."""
+    """Size record for one array leaf (`jax.Array` or `np.ndarray`).
+
+    The save-time array tree mixes both: device-resident `jax.Array`
+    leaves (V-arrays, actions, states) and host `np.ndarray` leaves
+    (the per-period `intermediates`). orbax serialises both, so both
+    are recorded.
+    """
 
     path: str
     """Dotted path from the tree root, e.g. `raw_results.regime_A.7.V_arr`."""
@@ -404,11 +417,12 @@ def _collect_array_tree_leaf_sizes(
     *,
     tree: dict[str, Any],
 ) -> list[_ArrayTreeLeaf]:
-    """Walk `tree` and return one `_ArrayTreeLeaf` per `jax.Array` leaf.
+    """Walk `tree` and return one `_ArrayTreeLeaf` per array leaf.
 
-    Results come back sorted by `n_bytes` descending so callers can log the
-    biggest offenders first. Non-array leaves are skipped silently — orbax
-    serialises only the array entries.
+    Both `jax.Array` and host `np.ndarray` leaves are recorded. Results
+    come back sorted by `n_bytes` descending so callers can log the
+    biggest offenders first. Non-array leaves are skipped silently —
+    orbax serialises only the array entries.
     """
     leaves: list[_ArrayTreeLeaf] = []
     _walk_tree(node=tree, path_parts=(), leaves=leaves)
@@ -422,8 +436,8 @@ def _walk_tree(
     path_parts: tuple[str, ...],
     leaves: list[_ArrayTreeLeaf],
 ) -> None:
-    """Recursively collect `jax.Array` leaves into `leaves`."""
-    if isinstance(node, jax.Array):
+    """Recursively collect `jax.Array` and `np.ndarray` leaves into `leaves`."""
+    if isinstance(node, (jax.Array, np.ndarray)):
         leaves.append(
             _ArrayTreeLeaf(
                 path=".".join(path_parts),
@@ -444,7 +458,7 @@ def _log_top_array_tree_leaves(
     top_k: int,
     label: str,
 ) -> None:
-    """Emit the `top_k` biggest `jax.Array` leaves plus aggregate tree size.
+    """Emit the `top_k` biggest array leaves plus aggregate tree size.
 
     Writes directly to `sys.stderr` so the lines surface even when the
     `lcm` logger is silenced (`log_level="off"` raises it to CRITICAL).
@@ -455,7 +469,7 @@ def _log_top_array_tree_leaves(
     total_bytes = sum(leaf.n_bytes for leaf in leaves)
     total_gib = total_bytes / (1024**3)
     print(  # noqa: T201
-        f"[{label}] total: {len(leaves)} jax.Array leaves, "
+        f"[{label}] total: {len(leaves)} array leaves, "
         f"{total_bytes:,} bytes ({total_gib:.3f} GiB). Top {top_k}:",
         file=sys.stderr,
         flush=True,
