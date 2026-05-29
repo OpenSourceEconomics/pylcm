@@ -228,14 +228,6 @@ class SimulationResult:
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
 
-        # Force any deferred simulation kernels backing `raw_results` to
-        # complete now, while the V-array and compiled regimes are still
-        # resident and the kernels can run against full inputs. Deferred
-        # dispatch would otherwise re-fire inside `to_dataframe`'s D2H
-        # gathers, where the BFC pool is already carrying per-key host
-        # staging buffers and driver headroom is at its tightest.
-        jax.block_until_ready(self._raw_results)
-
         # Save V-array chunks to disk and then drop the in-memory grid
         # immediately. The post-V-array D2H transfers (`to_dataframe`,
         # orbax staging) need the device pool the V-array was occupying.
