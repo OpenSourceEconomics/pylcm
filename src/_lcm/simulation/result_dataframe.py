@@ -1,5 +1,7 @@
 """DataFrame assembly for `SimulationResult.to_dataframe`."""
 
+import os
+import sys
 from collections.abc import Sequence
 from types import MappingProxyType
 
@@ -149,26 +151,100 @@ def _concatenate_and_filter(
 ) -> dict[str, np.ndarray]:
     """Concatenate period data on host and filter to in-regime subjects.
 
-    Per-period leaves are pulled to host via `np.asarray` before
-    concatenation, so the filter runs as a pure-numpy boolean index. This
-    avoids JAX's `expand_bool_indices` path, which materialises a
-    device-side staging buffer of the full concatenated shape per key —
-    enough to OOM on small devices when the V-array workspaces are
-    still resident in the BFC pool.
+    Streams one column at a time: materialise the boolean mask first,
+    then for each key walk all periods, pulling each per-period chunk
+    to host via `np.asarray` and dropping the device reference before
+    the next chunk. Peak device residency is one per-period leaf; peak
+    host residency is one full column. The single-key, single-period
+    `np.asarray` call is the only spot a gather buffer can materialise,
+    and freeing each chunk between iterations keeps the BFC pool from
+    accumulating staging buffers across the column.
     """
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
-    host_per_period = [
-        {key: np.asarray(value) for key, value in d.items()} for d in period_dicts
-    ]
+    if _SHAPE_CENSUS_ENABLED:
+        _log_shape_census(period_dicts=period_dicts)
 
-    concatenated = {
-        key: np.concatenate([d[key] for d in host_per_period])
-        for key in host_per_period[0]
-    }
+    mask_chunks = [np.asarray(d["_in_regime"]).astype(bool) for d in period_dicts]
+    mask = np.concatenate(mask_chunks)
+    del mask_chunks
 
-    mask = concatenated["_in_regime"].astype(bool)
-    return {key: concatenated[key][mask] for key in keys}
+    result: dict[str, np.ndarray] = {}
+    for key in keys:
+        column_chunks: list[np.ndarray] = []
+        for period_index, d in enumerate(period_dicts):
+            value = d[key]
+            if _SHAPE_CENSUS_ENABLED:
+                _log_pre_asarray(
+                    key=key,
+                    period_index=period_index,
+                    value=value,
+                )
+            column_chunks.append(np.asarray(value))
+        column = np.concatenate(column_chunks)
+        del column_chunks
+        result[key] = column[mask]
+        del column
+
+    return result
+
+
+_SHAPE_CENSUS_ENABLED = bool(int(os.environ.get("LCM_DATAFRAME_SHAPE_CENSUS", "0")))
+
+
+def _describe_value(value: object) -> str:
+    """Render a per-leaf shape / dtype / sharding summary for logging."""
+    shape = getattr(value, "shape", "?")
+    dtype = getattr(value, "dtype", type(value).__name__)
+    sharding = getattr(value, "sharding", None)
+    return f"shape={shape} dtype={dtype} sharding={sharding!r}"
+
+
+def _log_shape_census(
+    *,
+    period_dicts: list[dict[str, FloatND | IntND | BoolND]],
+) -> None:
+    """Print a per-key shape summary for the first period's dict.
+
+    Gated by `LCM_DATAFRAME_SHAPE_CENSUS=1`. Writes to stderr so the
+    output lands in the run log even with `ACA_LOG_LEVEL=off`. Only the
+    first period is dumped; all other periods are expected to mirror it.
+    """
+    if not period_dicts:
+        print("[shape-census] empty period_dicts", file=sys.stderr, flush=True)  # noqa: T201
+        return
+    print(  # noqa: T201
+        f"[shape-census] {len(period_dicts)} periods, sampling period 0:",
+        file=sys.stderr,
+        flush=True,
+    )
+    for key, value in period_dicts[0].items():
+        print(  # noqa: T201
+            f"[shape-census]   key={key!r} {_describe_value(value)}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _log_pre_asarray(
+    *,
+    key: str,
+    period_index: int,
+    value: object,
+) -> None:
+    """Print the value about to be pulled to host.
+
+    Gated by `LCM_DATAFRAME_SHAPE_CENSUS=1`. The last line emitted
+    before a `np.asarray` OOM identifies the offending leaf — `key`
+    and `period_index` localise it within the per-regime walk, and
+    `sharding` distinguishes a flat single-device leaf from a sharded
+    one that triggers a gather.
+    """
+    print(  # noqa: T201
+        f"[pre-asarray] key={key!r} period={period_index} {_describe_value(value)}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def _assemble_dataframe(
