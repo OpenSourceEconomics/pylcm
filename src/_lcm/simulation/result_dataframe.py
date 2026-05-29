@@ -151,42 +151,71 @@ def _concatenate_and_filter(
 ) -> dict[str, np.ndarray]:
     """Concatenate period data on host and filter to in-regime subjects.
 
-    Streams one column at a time: materialise the boolean mask first,
-    then for each key walk all periods, pulling each per-period chunk
-    to host via `np.asarray` and dropping the device reference before
-    the next chunk. Peak device residency is one per-period leaf; peak
-    host residency is one full column. The single-key, single-period
-    `np.asarray` call is the only spot a gather buffer can materialise,
-    and freeing each chunk between iterations keeps the BFC pool from
-    accumulating staging buffers across the column.
+    Walks `period_dicts` one period at a time. For each leaf the
+    transfer goes through `_to_host`, which falls back to `np.asarray`
+    for single-device arrays and uses shard iteration for sharded ones
+    (each shard transfers its local data independently, side-stepping
+    the implicit XLA all-gather that a `np.asarray` on a sharded array
+    would trigger). After each period's leaves are on host, that
+    period's dict is cleared so the device buffers become
+    GC-eligible — peak device residency is one per-period dict's
+    leaves, regardless of how many periods the result spans.
+
+    The function mutates `period_dicts` (every dict is emptied on
+    completion). The caller treats the list as consumed.
     """
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
     if _SHAPE_CENSUS_ENABLED:
         _log_shape_census(period_dicts=period_dicts)
 
-    mask_chunks = [np.asarray(d["_in_regime"]).astype(bool) for d in period_dicts]
+    mask_chunks: list[np.ndarray] = []
+    host_chunks: dict[str, list[np.ndarray]] = {key: [] for key in keys}
+
+    for period_index, d in enumerate(period_dicts):
+        if _SHAPE_CENSUS_ENABLED:
+            for census_key, census_value in d.items():
+                _log_pre_to_host(
+                    key=census_key,
+                    period_index=period_index,
+                    value=census_value,
+                )
+        mask_chunks.append(_to_host(d["_in_regime"]).astype(bool))
+        for key in keys:
+            host_chunks[key].append(_to_host(d[key]))
+        d.clear()
+
     mask = np.concatenate(mask_chunks)
     del mask_chunks
 
     result: dict[str, np.ndarray] = {}
     for key in keys:
-        column_chunks: list[np.ndarray] = []
-        for period_index, d in enumerate(period_dicts):
-            value = d[key]
-            if _SHAPE_CENSUS_ENABLED:
-                _log_pre_asarray(
-                    key=key,
-                    period_index=period_index,
-                    value=value,
-                )
-            column_chunks.append(np.asarray(value))
-        column = np.concatenate(column_chunks)
-        del column_chunks
+        column = np.concatenate(host_chunks.pop(key))
         result[key] = column[mask]
         del column
 
     return result
+
+
+def _to_host(value: object) -> np.ndarray:
+    """Copy a jax.Array (or numpy array) to a host-resident `np.ndarray`.
+
+    For a value with at most one addressable shard the call collapses
+    to `np.asarray`, which on a single-device jax.Array is a direct
+    D2H copy. For a sharded value the loop walks
+    `addressable_shards`, pulls each shard's local data to host, and
+    drops it into the right slice of a host-allocated output via
+    `shard.index`. This skips XLA's implicit all-gather into a
+    contiguous device buffer — the contiguous reassembly happens in
+    host memory, where the multi-GiB output is cheap.
+    """
+    shards = getattr(value, "addressable_shards", ())
+    if len(shards) <= 1:
+        return np.asarray(value)
+    out = np.empty(value.shape, dtype=value.dtype)
+    for shard in shards:
+        out[shard.index] = np.asarray(shard.data)
+    return out
 
 
 _SHAPE_CENSUS_ENABLED = bool(int(os.environ.get("LCM_DATAFRAME_SHAPE_CENSUS", "0")))
@@ -226,7 +255,7 @@ def _log_shape_census(
         )
 
 
-def _log_pre_asarray(
+def _log_pre_to_host(
     *,
     key: str,
     period_index: int,
@@ -235,13 +264,14 @@ def _log_pre_asarray(
     """Print the value about to be pulled to host.
 
     Gated by `LCM_DATAFRAME_SHAPE_CENSUS=1`. The last line emitted
-    before a `np.asarray` OOM identifies the offending leaf — `key`
-    and `period_index` localise it within the per-regime walk, and
-    `sharding` distinguishes a flat single-device leaf from a sharded
-    one that triggers a gather.
+    before a transfer OOM identifies the offending leaf — `key` and
+    `period_index` localise it within the per-regime walk, and
+    `sharding` distinguishes a single-device leaf (which `_to_host`
+    routes through `np.asarray`) from a sharded one (which it walks
+    shard-by-shard).
     """
     print(  # noqa: T201
-        f"[pre-asarray] key={key!r} period={period_index} {_describe_value(value)}",
+        f"[pre-to-host] key={key!r} period={period_index} {_describe_value(value)}",
         file=sys.stderr,
         flush=True,
     )
