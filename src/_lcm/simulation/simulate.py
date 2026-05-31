@@ -187,6 +187,7 @@ def simulate(
         ages=ages,
         simulation_output_dtypes=simulation_output_dtypes,
         chunk_specs=chunk_specs,
+        subject_batch_size=subject_batch_size,
     )
 
 

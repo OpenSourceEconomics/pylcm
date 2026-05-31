@@ -49,6 +49,7 @@ class SimulationResult:
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
         chunk_specs: MappingProxyType[RegimeName, _ChunkSpec],
+        subject_batch_size: int | None = None,
     ) -> None:
         self._raw_results = raw_results
         self._regimes = regimes
@@ -56,6 +57,7 @@ class SimulationResult:
         self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._chunk_specs = chunk_specs
+        self._subject_batch_size = subject_batch_size
         self._metadata = _compute_metadata(
             regimes=regimes,
             raw_results=raw_results,
@@ -140,7 +142,9 @@ class SimulationResult:
                 - "all": Compute all available targets (see `available_targets`)
                 Targets can be any function defined in a regime. Each target is
                 computed for the regimes where it exists; rows from regimes without
-                that target will have NaN.
+                that target will have NaN. When `simulate` ran with
+                `subject_batch_size` set, target evaluation is chunked over subjects
+                with that batch size (bounding device memory; values are unchanged).
             use_labels: If True (default), discrete variables (states, actions, and
                 regime) are returned as pandas Categorical dtype with string labels.
                 If False, discrete variables are returned as integer codes.
@@ -161,6 +165,7 @@ class SimulationResult:
             metadata=self._metadata,
             additional_targets=resolved_targets,
             ages=self._ages,
+            subject_batch_size=self._subject_batch_size,
         )
 
         if use_labels:
@@ -254,6 +259,7 @@ class SimulationResult:
             result_metadata=self._metadata,
             available_targets=self._available_targets,
             chunk_specs=self._chunk_specs,
+            subject_batch_size=self._subject_batch_size,
         )
         with (target / "metadata.pkl").open("wb") as fh:
             cloudpickle.dump(metadata, fh)
@@ -339,6 +345,7 @@ class SimulationResult:
         instance._chunk_specs = metadata.chunk_specs  # noqa: SLF001
         instance._metadata = metadata.result_metadata  # noqa: SLF001
         instance._available_targets = metadata.available_targets  # noqa: SLF001
+        instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
         return instance
 
     def __repr__(self) -> str:
@@ -379,6 +386,9 @@ class _SavedMetadata:
 
     chunk_specs: MappingProxyType[RegimeName, _ChunkSpec]
     """Per-regime chunk spec used to bound the save-time materialisation."""
+
+    subject_batch_size: int | None = None
+    """Subject chunk size from `simulate`, reused to bound `to_dataframe` targets."""
 
 
 @dataclass(frozen=True)

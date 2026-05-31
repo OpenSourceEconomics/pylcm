@@ -31,7 +31,11 @@ _INITIAL_CONDITIONS = {
 }
 
 
-def _simulate_df(*, subject_batch_size: int | None) -> pd.DataFrame:
+def _simulate_df(
+    *,
+    subject_batch_size: int | None,
+    additional_targets: list[str] | None = None,
+) -> pd.DataFrame:
     model = get_multi_regime_model(n_periods=6, distribution_type="normal")
     params = get_multi_regime_params("normal")
     result = model.simulate(
@@ -43,7 +47,7 @@ def _simulate_df(*, subject_batch_size: int | None) -> pd.DataFrame:
         subject_batch_size=subject_batch_size,
     )
     return (
-        result.to_dataframe()
+        result.to_dataframe(additional_targets=additional_targets)
         .sort_values(["subject_id", "period"])
         .reset_index(drop=True)
     )
@@ -78,6 +82,23 @@ def test_simulation_output_is_invariant_to_subject_batch_size(
     """
     baseline = _simulate_df(subject_batch_size=None)
     batched = _simulate_df(subject_batch_size=subject_batch_size)
+    _assert_columns_invariant(baseline, batched)
+
+
+@pytest.mark.parametrize("subject_batch_size", [2, 3, 100])
+def test_to_dataframe_targets_are_invariant_to_subject_batch_size(
+    subject_batch_size: int,
+) -> None:
+    """Eagerly computed `additional_targets` are invariant to the chunk size.
+
+    The target DAG (`utility`) is evaluated over the in-regime rows in chunks of
+    `subject_batch_size` when set; an uneven split must still reproduce the
+    single-pass `utility` column for every subject-period.
+    """
+    baseline = _simulate_df(subject_batch_size=None, additional_targets=["utility"])
+    batched = _simulate_df(
+        subject_batch_size=subject_batch_size, additional_targets=["utility"]
+    )
     _assert_columns_invariant(baseline, batched)
 
 
