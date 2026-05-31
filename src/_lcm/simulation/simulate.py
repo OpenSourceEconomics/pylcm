@@ -12,7 +12,6 @@ from _lcm.engine import (
     PeriodRegimeSimulationData,
     Regime,
 )
-from _lcm.simulation.chunk_specs import _build_chunk_specs
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
@@ -177,8 +176,6 @@ def simulate(
         }
     )
 
-    chunk_specs = _build_chunk_specs(regimes=regimes, flat_params=flat_params)
-
     return SimulationResult(
         raw_results=wrapped_results,
         regimes=regimes,
@@ -186,7 +183,6 @@ def simulate(
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         ages=ages,
         simulation_output_dtypes=simulation_output_dtypes,
-        chunk_specs=chunk_specs,
         subject_batch_size=subject_batch_size,
     )
 

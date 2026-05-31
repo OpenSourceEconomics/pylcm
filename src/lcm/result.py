@@ -19,7 +19,6 @@ from _lcm.simulation.additional_targets import (
     _collect_all_available_targets,
     _resolve_targets,
 )
-from _lcm.simulation.chunk_specs import _ChunkSpec
 from _lcm.simulation.result_dataframe import (
     _convert_to_categorical,
     _create_flat_dataframe,
@@ -46,7 +45,6 @@ class SimulationResult:
         ],
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
-        chunk_specs: MappingProxyType[RegimeName, _ChunkSpec],
         subject_batch_size: int | None = None,
     ) -> None:
         self._raw_results = raw_results
@@ -54,7 +52,6 @@ class SimulationResult:
         self._flat_params = flat_params
         self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
-        self._chunk_specs = chunk_specs
         self._subject_batch_size = subject_batch_size
         self._metadata = _compute_metadata(
             regimes=regimes,
@@ -186,12 +183,10 @@ class SimulationResult:
           (`raw_results` and `flat_params`), whose individual leaves
           fit comfortably on a single device.
         - `V_arr/` — an orbax checkpoint of the solution value-function
-          arrays. Each leaf is moved to host first; single-device leaves
-          are copied in chunks along their splay axis (width = the
-          engine's solve-time `batch_size`), so the device-to-host
-          transfer never needs the full leaf as one contiguous device
-          buffer. Sharded leaves are transferred shard by shard by orbax,
-          preserving their sharding on `load`.
+          arrays. orbax streams each leaf's device-to-host transfer (a
+          single-device leaf in place, a sharded leaf shard by shard), so
+          a near-device-cap leaf does not need a second contiguous device
+          buffer at save time.
         - `metadata.pkl` — cloudpickle of regimes, ages, pre-computed
           result metadata, the parameter scaffold, and the per-regime
           chunk specs needed to reassemble on `load`.
@@ -237,12 +232,11 @@ class SimulationResult:
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
 
-        # Save V-array chunks to disk and then drop the in-memory grid
-        # immediately. The post-V-array D2H transfers (`to_dataframe`,
-        # orbax staging) need the device pool the V-array was occupying.
+        # Save the solution and then drop the in-memory grid immediately. The
+        # post-V-array D2H transfers (`to_dataframe`, orbax staging) need the
+        # device pool the V-array was occupying.
         _save_period_to_regime_to_V_arr(
             period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
-            chunk_specs=self._chunk_specs,
             output_dir=target / "V_arr",
         )
         self._period_to_regime_to_V_arr = MappingProxyType({})
@@ -257,7 +251,6 @@ class SimulationResult:
             ages=self._ages,
             result_metadata=self._metadata,
             available_targets=self._available_targets,
-            chunk_specs=self._chunk_specs,
             subject_batch_size=self._subject_batch_size,
         )
         with (target / "metadata.pkl").open("wb") as fh:
@@ -341,7 +334,6 @@ class SimulationResult:
         instance._flat_params = flat_params  # noqa: SLF001
         instance._period_to_regime_to_V_arr = period_to_regime_to_V_arr  # noqa: SLF001
         instance._ages = metadata.ages  # noqa: SLF001
-        instance._chunk_specs = metadata.chunk_specs  # noqa: SLF001
         instance._metadata = metadata.result_metadata  # noqa: SLF001
         instance._available_targets = metadata.available_targets  # noqa: SLF001
         instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
@@ -382,9 +374,6 @@ class _SavedMetadata:
 
     available_targets: list[str]
     """Names of all additional targets exposed via `to_dataframe`."""
-
-    chunk_specs: MappingProxyType[RegimeName, _ChunkSpec]
-    """Per-regime chunk spec used to bound the save-time materialisation."""
 
     subject_batch_size: int | None = None
     """Subject chunk size from `simulate`, reused to bound `to_dataframe` targets."""
@@ -491,59 +480,23 @@ def _log_top_array_tree_leaves(
         )
 
 
-def _to_host_for_save(*, V_arr: FloatND, spec: _ChunkSpec) -> FloatND:
-    """Copy a solution V_arr leaf to host so orbax can serialise it off-device.
-
-    Multi-device sharded leaves are returned unchanged — orbax transfers each
-    physical shard independently and preserves the sharding spec on `load`.
-    Single-device leaves are copied to a host (CPU) `jax.Array` in bounded chunks
-    along `spec.chunk_axis`, so a leaf approaching the device cap never needs a
-    full contiguous device copy for the device-to-host transfer.
-    """
-    if V_arr.sharding.num_devices > 1:
-        return V_arr
-    host_device = jax.devices("cpu")[0]
-    if spec.chunk_axis is None:
-        return jax.device_put(V_arr, host_device)
-    n = V_arr.shape[spec.chunk_axis]
-    host_chunks = []
-    for start in range(0, n, spec.chunk_size):
-        stop = min(start + spec.chunk_size, n)
-        device_slice = jax.lax.slice_in_dim(V_arr, start, stop, axis=spec.chunk_axis)
-        host_chunks.append(jax.device_put(device_slice, host_device))
-    return jnp.concatenate(host_chunks, axis=spec.chunk_axis)
-
-
 def _save_period_to_regime_to_V_arr(
     *,
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
-    chunk_specs: MappingProxyType[RegimeName, _ChunkSpec],
     output_dir: Path,
 ) -> None:
-    """Persist the solution as a single orbax checkpoint of host-resident leaves.
+    """Persist the solution as a single orbax checkpoint.
 
-    Every leaf goes through `_to_host_for_save` first, so the device-to-host
-    transfer is bounded for single-device leaves and orbax never has to stage a
-    near-device-cap leaf as one contiguous device buffer. Periods are stringified
-    so orbax can use them as path components.
+    orbax serialises each leaf with a streaming device-to-host transfer — a
+    single-device leaf is read in place (no second contiguous device buffer) and a
+    sharded leaf is transferred shard by shard — so a near-device-cap leaf does not
+    blow up at save time. Periods are stringified so orbax can use them as path
+    components.
     """
-    host_tree = MappingProxyType(
-        {
-            period: MappingProxyType(
-                {
-                    regime_name: _to_host_for_save(
-                        V_arr=V_arr, spec=chunk_specs[regime_name]
-                    )
-                    for regime_name, V_arr in regime_dict.items()
-                }
-            )
-            for period, regime_dict in period_to_regime_to_V_arr.items()
-        }
-    )
     checkpointer = ocp.StandardCheckpointer()
-    checkpointer.save(output_dir, _period_V_to_array_tree(host_tree))
+    checkpointer.save(output_dir, _period_V_to_array_tree(period_to_regime_to_V_arr))
     checkpointer.wait_until_finished()
 
 
@@ -553,24 +506,11 @@ def _load_period_to_regime_to_V_arr(
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Inverse of `_save_period_to_regime_to_V_arr`.
 
-    Single-device leaves were saved host-resident; bring them onto the default
-    device. Sharded leaves keep the sharding orbax restored.
+    Each leaf is restored onto the sharding it was saved with; loading runs on the
+    same backend the checkpoint was written from (a GPU box for solve/simulate).
     """
     array_tree = ocp.StandardCheckpointer().restore(input_dir)
-    period_to_regime = _array_tree_to_period_V(array_tree)
-    return MappingProxyType(
-        {
-            period: MappingProxyType(
-                {
-                    regime_name: jnp.asarray(V_arr)
-                    if V_arr.sharding.num_devices == 1
-                    else V_arr
-                    for regime_name, V_arr in regime_dict.items()
-                }
-            )
-            for period, regime_dict in period_to_regime.items()
-        }
-    )
+    return _array_tree_to_period_V(array_tree)
 
 
 def _raw_results_to_array_tree(
@@ -623,7 +563,10 @@ def _period_V_to_array_tree(
         int, MappingProxyType[RegimeName, FloatND]
     ],
 ) -> dict[str, dict[RegimeName, FloatND]]:
-    """Convert the per-period V-array dict into orbax-friendly form."""
+    """Convert the per-period V-array dict into orbax-friendly form.
+
+    Periods are stringified so orbax can use them as path components.
+    """
     return {
         str(period): dict(regime_dict)
         for period, regime_dict in period_to_regime_to_V_arr.items()

@@ -1,7 +1,6 @@
 from pathlib import Path
 from types import MappingProxyType
 
-import jax
 import jax.numpy as jnp
 import pandas as pd
 import pytest
@@ -9,7 +8,6 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from _lcm.regime_building.processing import process_regimes
-from _lcm.simulation.chunk_specs import _ChunkSpec
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
@@ -22,7 +20,6 @@ from lcm.result import (
     SimulationResult,
     _coerce_jax_scalar_for_arrow,
     _collect_array_tree_leaf_sizes,
-    _to_host_for_save,
 )
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -572,34 +569,6 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
     expected.to_feather(expected_path)
 
     assert_frame_equal(pd.read_feather(arrow_path), pd.read_feather(expected_path))
-
-
-def test_to_host_for_save_chunked_along_axis_preserves_values() -> None:
-    """`_to_host_for_save` copies a single-device leaf to host value-identically.
-
-    A `(4, 6)` array sliced along axis 1 with `chunk_size=2` (three chunks)
-    reassembles to the same values on the host CPU device, so the bounded
-    device-to-host transfer never alters the leaf.
-    """
-    V_arr = jnp.arange(24, dtype=jnp.float32).reshape(4, 6)
-    spec = _ChunkSpec(chunk_axis=1, chunk_size=2)
-
-    host = _to_host_for_save(V_arr=V_arr, spec=spec)
-
-    assert isinstance(host, jax.Array)
-    assert host.devices() == {jax.devices("cpu")[0]}
-    assert_array_equal(host, V_arr)
-
-
-def test_to_host_for_save_whole_leaf_when_axis_is_none() -> None:
-    """`_ChunkSpec(chunk_axis=None, chunk_size=0)` copies the leaf whole to host."""
-    V_arr = jnp.arange(12, dtype=jnp.float32).reshape(3, 4)
-    spec = _ChunkSpec(chunk_axis=None, chunk_size=0)
-
-    host = _to_host_for_save(V_arr=V_arr, spec=spec)
-
-    assert host.devices() == {jax.devices("cpu")[0]}
-    assert_array_equal(host, V_arr)
 
 
 def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Path):
