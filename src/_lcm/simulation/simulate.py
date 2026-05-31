@@ -120,28 +120,38 @@ def simulate(
     # directly; `invert_regime_ids` coerces them to Python `int`.
     regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
+    # When chunking, offload each chunk's results to host as it finishes so the
+    # device frees them before the next chunk's period loop allocates — bounding
+    # device residency to a single chunk. Unbatched runs keep results on the compute
+    # device (no memory pressure, and no host round-trip for downstream targets).
+    host_device = jax.devices("cpu")[0] if subject_batch_size is not None else None
+
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
     for chunk_start in range(0, n_subjects, batch_size):
         subject_slice = slice(chunk_start, min(chunk_start + batch_size, n_subjects))
-        chunk_results.append(
-            _simulate_subject_chunk(
-                initial_states={
-                    name: array[subject_slice] for name, array in initial_states.items()
-                },
-                initial_regime_ids=initial_conditions["regime_id"][subject_slice],
-                starting_periods=starting_periods[subject_slice],
-                n_subjects=n_subjects,
-                subject_slice=subject_slice,
-                regimes=regimes,
-                regime_names_to_ids=regime_names_to_ids,
-                regime_ids_to_names=regime_ids_to_names,
-                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                flat_params=flat_params,
-                ages=ages,
-                seed=seed,
-                logger=logger,
-            )
+        chunk = _simulate_subject_chunk(
+            initial_states={
+                name: array[subject_slice] for name, array in initial_states.items()
+            },
+            initial_regime_ids=initial_conditions["regime_id"][subject_slice],
+            starting_periods=starting_periods[subject_slice],
+            n_subjects=n_subjects,
+            subject_slice=subject_slice,
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            regime_ids_to_names=regime_ids_to_names,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            flat_params=flat_params,
+            ages=ages,
+            seed=seed,
+            logger=logger,
         )
+        if host_device is not None:
+            # `block_until_ready` forces the D2H copy to complete before the loop
+            # continues, so the chunk's device buffers become free for the next
+            # chunk; the host-resident copies stay `jax.Array` (CPU-backed).
+            chunk = jax.block_until_ready(jax.device_put(chunk, host_device))
+        chunk_results.append(chunk)
 
     simulation_results = _concatenate_chunk_results(
         chunk_results=chunk_results, regimes=regimes

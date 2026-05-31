@@ -70,7 +70,12 @@ class SimulationResult:
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ]:
-        """Raw simulation results by regime and period."""
+        """Raw simulation results by regime and period.
+
+        Leaves are `jax.Array`. When `simulate` ran with `subject_batch_size` set,
+        they are host-resident (CPU-backed), since each chunk is offloaded to host
+        as it completes; otherwise they live on the compute device.
+        """
         return self._raw_results
 
     @property

@@ -9,6 +9,7 @@ process (income), so the per-subject RNG feeds both `jax.random.choice` and
 the chunk it lands in.
 """
 
+import jax
 import pandas as pd
 import pytest
 from jax import numpy as jnp
@@ -78,3 +79,25 @@ def test_simulation_output_is_invariant_to_subject_batch_size(
     baseline = _simulate_df(subject_batch_size=None)
     batched = _simulate_df(subject_batch_size=subject_batch_size)
     _assert_columns_invariant(baseline, batched)
+
+
+def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
+    """With `subject_batch_size` set, `raw_results` leaves are host-backed jax.Arrays.
+
+    Each chunk is offloaded to host as it completes, so the leaves stay `jax.Array`
+    (not numpy) and live on the CPU device.
+    """
+    model = get_multi_regime_model(n_periods=6, distribution_type="normal")
+    params = get_multi_regime_params("normal")
+    result = model.simulate(
+        log_level="off",
+        params=params,
+        initial_conditions=_INITIAL_CONDITIONS,
+        period_to_regime_to_V_arr=None,
+        seed=42,
+        subject_batch_size=2,
+    )
+
+    v_arr = result.raw_results["work"][0].V_arr
+    assert isinstance(v_arr, jax.Array)
+    assert v_arr.devices() == {jax.devices("cpu")[0]}
