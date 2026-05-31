@@ -109,7 +109,11 @@ def simulate(
     # subject axis. Chunking bounds the per-period device workspace; the chunk size
     # is `subject_batch_size` (the whole population in one pass when `None`).
     n_subjects = int(initial_conditions["regime_id"].shape[0])
-    batch_size = n_subjects if subject_batch_size is None else subject_batch_size
+    batch_size = (
+        n_subjects
+        if subject_batch_size is None
+        else min(subject_batch_size, n_subjects)
+    )
 
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
@@ -127,7 +131,15 @@ def simulate(
 
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
     for chunk_start in range(0, n_subjects, batch_size):
-        subject_slice = slice(chunk_start, min(chunk_start + batch_size, n_subjects))
+        # Every chunk runs exactly `batch_size` subjects so they all match the
+        # program compiled for that shape. A short final chunk slides its window
+        # back to end at the population tail; the overlapped subjects were already
+        # simulated in the previous chunk and are recomputed bit-identically
+        # (per-subject keys depend only on the global index), so trimming the
+        # leading overlap leaves each subject represented once, in global order.
+        slice_start = min(chunk_start, n_subjects - batch_size)
+        n_overlap = chunk_start - slice_start
+        subject_slice = slice(slice_start, slice_start + batch_size)
         chunk = _simulate_subject_chunk(
             initial_states={
                 name: array[subject_slice] for name, array in initial_states.items()
@@ -145,6 +157,8 @@ def simulate(
             seed=seed,
             logger=logger,
         )
+        if n_overlap:
+            chunk = _trim_chunk_subjects(chunk=chunk, n_overlap=n_overlap)
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
             # continues, so the chunk's device buffers become free for the next
@@ -292,6 +306,35 @@ def _simulate_subject_chunk(
         log_period_timing(logger=logger, elapsed=elapsed)
 
     return simulation_results
+
+
+def _trim_chunk_subjects(
+    *,
+    chunk: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
+    n_overlap: int,
+) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
+    """Drop the first `n_overlap` subjects from every leaf of a chunk's results.
+
+    A short final chunk overlaps the tail of the previous chunk to stay the
+    compiled batch size. The overlapped subjects at the front duplicate that tail;
+    dropping them leaves each subject represented once, in global order.
+    """
+    return {
+        regime_name: {
+            period: PeriodRegimeSimulationData(
+                V_arr=data.V_arr[n_overlap:],
+                actions=MappingProxyType(
+                    {name: arr[n_overlap:] for name, arr in data.actions.items()}
+                ),
+                states=MappingProxyType(
+                    {name: arr[n_overlap:] for name, arr in data.states.items()}
+                ),
+                in_regime=data.in_regime[n_overlap:],
+            )
+            for period, data in period_data.items()
+        }
+        for regime_name, period_data in chunk.items()
+    }
 
 
 def _concatenate_chunk_results(

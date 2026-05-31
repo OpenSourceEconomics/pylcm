@@ -108,20 +108,21 @@ class Model:
     """Parameters fixed at model initialization."""
 
     n_subjects: int | None = None
-    """Expected simulate batch size; enables AOT compile of simulate functions.
+    """Expected simulate population size; enables AOT compile of simulate functions.
 
     Dispatch by call shape:
 
     - `None`: purely lazy behaviour, no AOT.
     - First `simulate(...)` with `actual_n == n_subjects`: AOT-compiles all
-      simulate functions for that batch shape (blocks before solve runs)
-      and caches them.
-    - Subsequent `simulate(...)` with the same matching size: reuses the
-      cached compiled programs.
-    - `simulate(...)` with a mismatching size: warns once per size and falls
-      back to the runtime-traced path.
+      simulate functions for the chunk shape (`subject_batch_size`, clamped to
+      the population, or the whole population when unbatched), blocking before
+      solve runs, and caches them.
+    - Subsequent `simulate(...)` with the same population and chunk shape:
+      reuses the cached compiled programs.
+    - `simulate(...)` with a mismatching population size: warns once per size
+      and falls back to the runtime-traced path.
 
-    Param-shape contract: the cache is keyed only on `n_subjects`. The shapes
+    Param-shape contract: the cache is keyed on the chunk shape. The shapes
     and dtypes of `flat_params` leaves at the first matching call become
     part of the AOT signature; subsequent calls must keep them stable. MSM-
     style estimation (varying values, fixed shapes) is the target use case;
@@ -132,7 +133,8 @@ class Model:
     """Template for the model parameters."""
 
     _simulate_compile_cache: dict[int, MappingProxyType[RegimeName, Regime]]
-    """AOT-compiled `regimes` per matching `n_subjects`."""
+    """AOT-compiled `regimes` keyed by chunk shape (`subject_batch_size`, or the
+    full population when unbatched)."""
 
     _warned_n_subjects: set[int]
     """Mismatching `actual_n_subjects` already warned about (one warning each)."""
@@ -381,6 +383,7 @@ class Model:
         self,
         *,
         actual_n_subjects: int,
+        compile_batch_size: int,
         log: logging.Logger,
     ) -> MappingProxyType[RegimeName, Regime]:
         """Return regimes to use for simulate; AOT cache when matching.
@@ -391,8 +394,9 @@ class Model:
           (purely lazy path).
         - `actual_n_subjects != n_subjects`: warn once per mismatching size,
           return the original `regimes`.
-        - `actual_n_subjects == n_subjects`: return the cached compiled
-          regimes (caller must have populated the cache before calling).
+        - `actual_n_subjects == n_subjects`: return the regimes compiled for
+          `compile_batch_size` (the chunk shape; caller must have populated the
+          cache before calling).
         """
         if self.n_subjects is None:
             return self._regimes
@@ -410,7 +414,7 @@ class Model:
                 )
             return self._regimes
         with self._simulate_compile_lock:
-            return self._simulate_compile_cache[self.n_subjects]
+            return self._simulate_compile_cache[compile_batch_size]
 
     @beartype(conf=PARAMS_CONF)
     def simulate(
@@ -513,20 +517,29 @@ class Model:
         )
         actual_n_subjects = len(next(iter(initial_conditions.values())))
         n_subjects = self.n_subjects
+        # The simulate functions are dispatched at the chunk shape, so AOT-compile
+        # for the chunk size (`subject_batch_size`, clamped to the population)
+        # rather than the full population. With no batching the chunk is the whole
+        # population, recovering the single-pass shape.
+        compile_batch_size = (
+            actual_n_subjects
+            if subject_batch_size is None
+            else min(subject_batch_size, actual_n_subjects)
+        )
         if n_subjects is not None and n_subjects == actual_n_subjects:
             with self._simulate_compile_lock:
-                needs_compile = n_subjects not in self._simulate_compile_cache
+                needs_compile = compile_batch_size not in self._simulate_compile_cache
             if needs_compile:
                 compiled = compile_all_simulate_functions(
                     regimes=self._regimes,
                     flat_params=flat_params,
                     ages=self.ages,
-                    n_subjects=n_subjects,
+                    n_subjects=compile_batch_size,
                     max_compilation_workers=max_compilation_workers,
                     logger=log,
                 )
                 with self._simulate_compile_lock:
-                    self._simulate_compile_cache[n_subjects] = compiled
+                    self._simulate_compile_cache[compile_batch_size] = compiled
         if period_to_regime_to_V_arr is None:
             period_to_regime_to_V_arr = self._solve_compiled(
                 flat_params=flat_params,
@@ -538,6 +551,7 @@ class Model:
             )
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
+            compile_batch_size=compile_batch_size,
             log=log,
         )
         result = simulate(

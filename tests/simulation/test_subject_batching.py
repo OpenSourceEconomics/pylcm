@@ -15,6 +15,7 @@ import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 
+from lcm import Model
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.processes import (
     MultiRegimeId,
@@ -35,8 +36,22 @@ def _simulate_df(
     *,
     subject_batch_size: int | None,
     additional_targets: list[str] | None = None,
+    n_subjects: int | None = None,
 ) -> pd.DataFrame:
-    model = get_multi_regime_model(n_periods=6, distribution_type="normal")
+    base = get_multi_regime_model(n_periods=6, distribution_type="normal")
+    if n_subjects is None:
+        model = base
+    else:
+        # Setting `n_subjects` makes `simulate` AOT-compile the simulate functions
+        # for the chunk shape. Rebuild the same model with it so the chunked path
+        # runs through the compiled programs rather than the lazy fallback.
+        model = Model(
+            regimes=dict(base.user_regimes),
+            regime_id_class=MultiRegimeId,
+            ages=base.ages,
+            fixed_params=dict(base.fixed_params),
+            n_subjects=n_subjects,
+        )
     params = get_multi_regime_params("normal")
     result = model.simulate(
         log_level="off",
@@ -99,6 +114,23 @@ def test_to_dataframe_targets_are_invariant_to_subject_batch_size(
     batched = _simulate_df(
         subject_batch_size=subject_batch_size, additional_targets=["utility"]
     )
+    _assert_columns_invariant(baseline, batched)
+
+
+@pytest.mark.parametrize("subject_batch_size", [2, 3, 4])
+def test_aot_compiled_simulation_is_invariant_to_subject_batch_size(
+    subject_batch_size: int,
+) -> None:
+    """A model with `n_subjects` set chunks subjects through one AOT-compiled program.
+
+    The simulate functions are compiled once for the chunk shape. With a batch size
+    that does not divide the 7-subject population, the final chunk overlaps the
+    population tail so every chunk is exactly the compiled size; the overlapped
+    subjects are recomputed bit-identically and trimmed. The `to_dataframe()` output
+    matches the unbatched, lazily-compiled run for every subject-period.
+    """
+    baseline = _simulate_df(subject_batch_size=None)
+    batched = _simulate_df(subject_batch_size=subject_batch_size, n_subjects=7)
     _assert_columns_invariant(baseline, batched)
 
 
