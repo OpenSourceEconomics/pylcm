@@ -421,6 +421,7 @@ class Model:
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         log_level: LogLevel,
         seed: int | None = None,
+        subject_batch_size: int | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -451,6 +452,10 @@ class Model:
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
             seed: Random seed.
+            subject_batch_size: Number of subjects to push through the forward
+                simulation at once. `None` simulates the whole population in a single
+                pass. Smaller values bound the per-period device workspace; results
+                are invariant to this knob.
             log_level: Verbosity, and the runtime-validation policy it implies.
                 Required — pick deliberately for the situation:
                 - `"off"` — silent; initial-condition, transition-probability,
@@ -545,6 +550,7 @@ class Model:
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
+            subject_batch_size=subject_batch_size,
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads
