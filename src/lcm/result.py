@@ -1,7 +1,6 @@
 """User-facing `SimulationResult` with deferred DataFrame computation."""
 
 import gc
-import json
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,7 +11,6 @@ from typing import Any, Literal
 import cloudpickle
 import jax
 import jax.numpy as jnp
-import numpy as np
 import orbax.checkpoint as ocp
 import pandas as pd
 
@@ -187,12 +185,13 @@ class SimulationResult:
         - `arrays/` — orbax checkpoint of the small array trees
           (`raw_results` and `flat_params`), whose individual leaves
           fit comfortably on a single device.
-        - `V_arr/` — solution value-function arrays, written per
-          `(period, regime)` as chunked `.npy` files. Each leaf is
-          sliced along its splay axis with the same `batch_size` the
-          engine used at solve time, so the per-chunk device
-          materialisation matches the compute-time peak instead of
-          requiring the full leaf in one shot.
+        - `V_arr/` — an orbax checkpoint of the solution value-function
+          arrays. Each leaf is moved to host first; single-device leaves
+          are copied in chunks along their splay axis (width = the
+          engine's solve-time `batch_size`), so the device-to-host
+          transfer never needs the full leaf as one contiguous device
+          buffer. Sharded leaves are transferred shard by shard by orbax,
+          preserving their sharding on `load`.
         - `metadata.pkl` — cloudpickle of regimes, ages, pre-computed
           result metadata, the parameter scaffold, and the per-regime
           chunk specs needed to reassemble on `load`.
@@ -492,76 +491,27 @@ def _log_top_array_tree_leaves(
         )
 
 
-def _save_single_v_arr(
-    *,
-    V_arr: FloatND,
-    spec: _ChunkSpec,
-    output_dir: Path,
-) -> None:
-    """Write a V_arr leaf to `output_dir`, dispatching on its sharding.
+def _to_host_for_save(*, V_arr: FloatND, spec: _ChunkSpec) -> FloatND:
+    """Copy a solution V_arr leaf to host so orbax can serialise it off-device.
 
-    Multi-device sharded leaves go through orbax, which transfers each
-    physical shard independently and preserves the sharding spec for
-    `load`. Single-device leaves go through chunked `.npy` files
-    sliced along `spec.chunk_axis` with width `spec.chunk_size`, so
-    the per-chunk device materialisation matches the engine's
-    compute-time peak.
+    Multi-device sharded leaves are returned unchanged — orbax transfers each
+    physical shard independently and preserves the sharding spec on `load`.
+    Single-device leaves are copied to a host (CPU) `jax.Array` in bounded chunks
+    along `spec.chunk_axis`, so a leaf approaching the device cap never needs a
+    full contiguous device copy for the device-to-host transfer.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
     if V_arr.sharding.num_devices > 1:
-        ocp.StandardCheckpointer().save(output_dir / "arrays.ckpt", {"V_arr": V_arr})
-        meta: dict[str, Any] = {"layout": "orbax"}
-    else:
-        n_chunks = _write_v_arr_chunks(V_arr=V_arr, spec=spec, output_dir=output_dir)
-        meta = {
-            "layout": "chunks",
-            "shape": list(V_arr.shape),
-            "dtype": str(V_arr.dtype),
-            "chunk_axis": spec.chunk_axis,
-            "chunk_size": spec.chunk_size,
-            "n_chunks": n_chunks,
-        }
-    (output_dir / "meta.json").write_text(json.dumps(meta))
-
-
-def _load_single_v_arr(*, input_dir: Path) -> FloatND:
-    """Inverse of `_save_single_v_arr` — dispatches on the on-disk `layout`."""
-    meta = json.loads((input_dir / "meta.json").read_text())
-    if meta["layout"] == "orbax":
-        restored = ocp.StandardCheckpointer().restore(input_dir / "arrays.ckpt")
-        return restored["V_arr"]
-    chunk_axis = meta["chunk_axis"]
-    chunk_files = sorted(input_dir.glob("*.npy"))
-    host_chunks = [np.load(path) for path in chunk_files]
-    if chunk_axis is None:
-        assembled = host_chunks[0]
-    else:
-        assembled = np.concatenate(host_chunks, axis=chunk_axis)
-    return jnp.asarray(assembled)
-
-
-def _write_v_arr_chunks(
-    *,
-    V_arr: FloatND,
-    spec: _ChunkSpec,
-    output_dir: Path,
-) -> int:
-    """Slice V_arr per `spec`, transfer each slice to host, write `.npy`s.
-
-    Returns the number of chunk files written.
-    """
+        return V_arr
+    host_device = jax.devices("cpu")[0]
     if spec.chunk_axis is None:
-        host = np.asarray(jax.device_get(V_arr))
-        np.save(output_dir / "00000.npy", host)
-        return 1
+        return jax.device_put(V_arr, host_device)
     n = V_arr.shape[spec.chunk_axis]
-    index = 0
+    host_chunks = []
     for start in range(0, n, spec.chunk_size):
         stop = min(start + spec.chunk_size, n)
-        chunk = jax.lax.slice_in_dim(V_arr, start, stop, axis=spec.chunk_axis)
-        np.save(output_dir / f"{index:05d}.npy", np.asarray(jax.device_get(chunk)))
-        index += 1
-    return index
+        device_slice = jax.lax.slice_in_dim(V_arr, start, stop, axis=spec.chunk_axis)
+        host_chunks.append(jax.device_put(device_slice, host_device))
+    return jnp.concatenate(host_chunks, axis=spec.chunk_axis)
 
 
 def _save_period_to_regime_to_V_arr(
@@ -572,31 +522,55 @@ def _save_period_to_regime_to_V_arr(
     chunk_specs: MappingProxyType[RegimeName, _ChunkSpec],
     output_dir: Path,
 ) -> None:
-    """Persist every `(period, regime)` V_arr leaf to chunked `.npy` files."""
-    for period in sorted(period_to_regime_to_V_arr):
-        for regime_name, V_arr in period_to_regime_to_V_arr[period].items():
-            leaf_dir = output_dir / f"period_{period:04d}" / f"regime_{regime_name}"
-            _save_single_v_arr(
-                V_arr=V_arr,
-                spec=chunk_specs[regime_name],
-                output_dir=leaf_dir,
+    """Persist the solution as a single orbax checkpoint of host-resident leaves.
+
+    Every leaf goes through `_to_host_for_save` first, so the device-to-host
+    transfer is bounded for single-device leaves and orbax never has to stage a
+    near-device-cap leaf as one contiguous device buffer. Periods are stringified
+    so orbax can use them as path components.
+    """
+    host_tree = MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime_name: _to_host_for_save(
+                        V_arr=V_arr, spec=chunk_specs[regime_name]
+                    )
+                    for regime_name, V_arr in regime_dict.items()
+                }
             )
+            for period, regime_dict in period_to_regime_to_V_arr.items()
+        }
+    )
+    checkpointer = ocp.StandardCheckpointer()
+    checkpointer.save(output_dir, _period_V_to_array_tree(host_tree))
+    checkpointer.wait_until_finished()
 
 
 def _load_period_to_regime_to_V_arr(
     *,
     input_dir: Path,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
-    """Inverse of `_save_period_to_regime_to_V_arr`."""
-    period_to_regime: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
-    for period_dir in sorted(input_dir.glob("period_*")):
-        period = int(period_dir.name.removeprefix("period_"))
-        regime_to_V_arr: dict[RegimeName, FloatND] = {}
-        for regime_dir in sorted(period_dir.glob("regime_*")):
-            regime_name = regime_dir.name.removeprefix("regime_")
-            regime_to_V_arr[regime_name] = _load_single_v_arr(input_dir=regime_dir)
-        period_to_regime[period] = MappingProxyType(regime_to_V_arr)
-    return MappingProxyType(period_to_regime)
+    """Inverse of `_save_period_to_regime_to_V_arr`.
+
+    Single-device leaves were saved host-resident; bring them onto the default
+    device. Sharded leaves keep the sharding orbax restored.
+    """
+    array_tree = ocp.StandardCheckpointer().restore(input_dir)
+    period_to_regime = _array_tree_to_period_V(array_tree)
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime_name: jnp.asarray(V_arr)
+                    if V_arr.sharding.num_devices == 1
+                    else V_arr
+                    for regime_name, V_arr in regime_dict.items()
+                }
+            )
+            for period, regime_dict in period_to_regime.items()
+        }
+    )
 
 
 def _raw_results_to_array_tree(

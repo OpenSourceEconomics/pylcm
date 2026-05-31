@@ -22,8 +22,7 @@ from lcm.result import (
     SimulationResult,
     _coerce_jax_scalar_for_arrow,
     _collect_array_tree_leaf_sizes,
-    _load_single_v_arr,
-    _save_single_v_arr,
+    _to_host_for_save,
 )
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -575,49 +574,32 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
     assert_frame_equal(pd.read_feather(arrow_path), pd.read_feather(expected_path))
 
 
-def test_save_single_v_arr_writes_one_chunk_file_per_slice_along_axis(tmp_path: Path):
-    """`_save_single_v_arr` emits one `.npy` per chunk along the spec's axis.
+def test_to_host_for_save_chunked_along_axis_preserves_values() -> None:
+    """`_to_host_for_save` copies a single-device leaf to host value-identically.
 
-    A `(4, 6)` array sliced along axis 1 with `chunk_size=2` yields three
-    chunks; the sidecar `meta.json` records the assembly information
-    needed for `_load_single_v_arr`.
+    A `(4, 6)` array sliced along axis 1 with `chunk_size=2` (three chunks)
+    reassembles to the same values on the host CPU device, so the bounded
+    device-to-host transfer never alters the leaf.
     """
     V_arr = jnp.arange(24, dtype=jnp.float32).reshape(4, 6)
     spec = _ChunkSpec(chunk_axis=1, chunk_size=2)
 
-    _save_single_v_arr(V_arr=V_arr, spec=spec, output_dir=tmp_path)
+    host = _to_host_for_save(V_arr=V_arr, spec=spec)
 
-    chunk_files = sorted(tmp_path.glob("*.npy"))
-    assert [f.name for f in chunk_files] == ["00000.npy", "00001.npy", "00002.npy"]
-    assert (tmp_path / "meta.json").exists()
-
-
-def test_load_single_v_arr_reassembles_chunks_value_identically(tmp_path: Path):
-    """A chunked save → load round-trip yields a value-identical `jax.Array`."""
-    V_arr = jnp.arange(24, dtype=jnp.float32).reshape(4, 6)
-    spec = _ChunkSpec(chunk_axis=1, chunk_size=2)
-    _save_single_v_arr(V_arr=V_arr, spec=spec, output_dir=tmp_path)
-
-    loaded = _load_single_v_arr(input_dir=tmp_path)
-
-    assert isinstance(loaded, jax.Array)
-    assert_array_equal(loaded, V_arr)
+    assert isinstance(host, jax.Array)
+    assert host.devices() == {jax.devices("cpu")[0]}
+    assert_array_equal(host, V_arr)
 
 
-def test_save_single_v_arr_writes_one_chunk_when_axis_is_none(tmp_path: Path):
-    """`_ChunkSpec(chunk_axis=None, chunk_size=0)` materialises the leaf whole.
-
-    No splayed axis means the compute kept the whole array live; save then
-    writes a single chunk file matching the entire `V_arr`.
-    """
+def test_to_host_for_save_whole_leaf_when_axis_is_none() -> None:
+    """`_ChunkSpec(chunk_axis=None, chunk_size=0)` copies the leaf whole to host."""
     V_arr = jnp.arange(12, dtype=jnp.float32).reshape(3, 4)
     spec = _ChunkSpec(chunk_axis=None, chunk_size=0)
 
-    _save_single_v_arr(V_arr=V_arr, spec=spec, output_dir=tmp_path)
+    host = _to_host_for_save(V_arr=V_arr, spec=spec)
 
-    assert sorted(p.name for p in tmp_path.glob("*.npy")) == ["00000.npy"]
-    loaded = _load_single_v_arr(input_dir=tmp_path)
-    assert_array_equal(loaded, V_arr)
+    assert host.devices() == {jax.devices("cpu")[0]}
+    assert_array_equal(host, V_arr)
 
 
 def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Path):
