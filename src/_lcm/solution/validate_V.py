@@ -18,6 +18,7 @@ import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace
 from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeName
+from _lcm.utils.logging import v_array_has_nan
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
@@ -54,11 +55,15 @@ def validate_V(
         flat_params: Flat regime parameters.
         period: The current period index (forwarded to diagnostic closure).
 
+    The NaN reduction stays sharded via `v_array_has_nan` (jit-wrapped so GSPMD
+    partitions it across the V-array's devices instead of gathering V onto the
+    default device).
+
     Raises:
         InvalidValueFunctionError: If the value function array contains NaN values.
 
     """
-    if not jnp.any(jnp.isnan(V_arr)):
+    if not bool(v_array_has_nan(V_arr)):
         return
 
     n_nan = int(jnp.sum(jnp.isnan(V_arr)))
@@ -271,7 +276,7 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
 def contains_nan(period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> bool:
     """Return whether any value-function array holds a NaN."""
     return any(
-        bool(jnp.any(jnp.isnan(V_arr)))
+        bool(v_array_has_nan(V_arr))
         for regime_to_V_arr in period_to_regime_to_V_arr.values()
         for V_arr in regime_to_V_arr.values()
     )

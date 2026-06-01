@@ -18,6 +18,8 @@ from _lcm.utils.logging import (
     log_period_header,
     log_period_timing,
     raise_or_warn,
+    v_array_has_inf,
+    v_array_has_nan,
     validation_enabled,
     validation_raises,
 )
@@ -84,12 +86,14 @@ def solve(
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
 
-    # Async diagnostics accumulators: per-period `jnp.any(isnan)` /
-    # `jnp.any(isinf)` (and the debug min/max/mean trio) live here as
-    # device-side scalars during the hot loop. The two NaN/Inf flags
-    # are folded into single running scalars; the per-period min/max/
-    # mean trio is appended to a list (only emitted at debug, where
-    # we genuinely want every number on host).
+    # Async diagnostics accumulators: per-period NaN/Inf flags (and the
+    # debug min/max/mean trio) live here as device-side scalars during
+    # the hot loop. The two NaN/Inf flags are folded into single running
+    # scalars via `v_array_has_nan` / `v_array_has_inf` — both jit-wrapped,
+    # so XLA partitions each reduction across the V-array's devices instead
+    # of gathering V onto the default device. The per-period min/max/mean
+    # trio is appended to a list (only emitted at debug, where we genuinely
+    # want every number on host).
     #
     # Per-period `block_until_ready()` after the running update forces
     # the device kernel to finish before the next period dispatches.
@@ -172,8 +176,8 @@ def solve(
                     diagnostic_min.append(jnp.min(V_arr))
                     diagnostic_max.append(jnp.max(V_arr))
                     diagnostic_mean.append(jnp.mean(V_arr))
-                running_any_nan = running_any_nan | jnp.any(jnp.isnan(V_arr))
-                running_any_inf = running_any_inf | jnp.any(jnp.isinf(V_arr))
+                running_any_nan = running_any_nan | v_array_has_nan(V_arr)
+                running_any_inf = running_any_inf | v_array_has_inf(V_arr)
                 diagnostic_rows.append(
                     _DiagnosticRow(
                         regime_name=regime_name,
