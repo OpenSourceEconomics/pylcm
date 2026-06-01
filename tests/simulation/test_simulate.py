@@ -530,6 +530,34 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
     assert_frame_equal(loaded.to_dataframe(), expected_df)
 
 
+def test_loaded_result_computes_additional_targets_matching_original(tmp_path: Path):
+    """A loaded result computes `additional_targets` identically to the original.
+
+    The target DAG is evaluated against the regime's `flat_params`, so this is the
+    on-load consumer of the persisted parameters: `to_dataframe(additional_targets=
+    ["utility"])` on the reloaded result must match the original run.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+    expected_df = result.to_dataframe(additional_targets=["utility"])
+
+    save_dir = tmp_path / "result"
+    result.save(directory=save_dir, df_additional_targets=["utility"])
+    loaded = SimulationResult.load(directory=save_dir)
+
+    assert_frame_equal(loaded.to_dataframe(additional_targets=["utility"]), expected_df)
+
+
 def test_save_overwrites_existing_output_directory(tmp_path: Path):
     """`save` into a directory that already holds a checkpoint overwrites it.
 

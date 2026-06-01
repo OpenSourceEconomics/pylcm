@@ -247,7 +247,7 @@ class SimulationResult:
         # in-memory copy can be released afterwards.
         metadata = _SavedMetadata(
             regimes=self._regimes,
-            flat_params_scaffold=_flat_params_to_scaffold(self._flat_params),
+            flat_params=self._flat_params,
             ages=self._ages,
             result_metadata=self._metadata,
             available_targets=self._available_targets,
@@ -285,7 +285,6 @@ class SimulationResult:
 
         small_array_tree = {
             "raw_results": _raw_results_to_array_tree(self._raw_results),
-            "flat_params": _flat_params_to_array_tree(self._flat_params),
         }
         _log_top_array_tree_leaves(
             tree=small_array_tree, top_k=20, label="save: small_array_tree"
@@ -324,14 +323,11 @@ class SimulationResult:
         period_to_regime_to_V_arr = _load_period_to_regime_to_V_arr(
             input_dir=source / "V_arr"
         )
-        flat_params = _array_tree_and_scaffold_to_flat_params(
-            array_tree["flat_params"], metadata.flat_params_scaffold
-        )
 
         instance = cls.__new__(cls)
         instance._raw_results = raw_results  # noqa: SLF001
         instance._regimes = metadata.regimes  # noqa: SLF001
-        instance._flat_params = flat_params  # noqa: SLF001
+        instance._flat_params = metadata.flat_params  # noqa: SLF001
         instance._period_to_regime_to_V_arr = period_to_regime_to_V_arr  # noqa: SLF001
         instance._ages = metadata.ages  # noqa: SLF001
         instance._metadata = metadata.result_metadata  # noqa: SLF001
@@ -358,13 +354,10 @@ class _SavedMetadata:
     regimes: MappingProxyType[RegimeName, Regime]
     """Canonical regimes used to assemble the original result."""
 
-    flat_params_scaffold: dict[RegimeName, dict[str, Any]]
-    """`flat_params` with every JAX array replaced by an `_ArrayPlaceholder`.
-
-    Non-array leaves (e.g. `MappingLeaf`, `SequenceLeaf`) survive the
-    cloudpickle round-trip directly; placeholders mark slots filled in by
-    `flat_params` arrays loaded via orbax.
-    """
+    flat_params: FlatParams
+    """Model parameters, cloudpickled whole. They are small scalars / short
+    arrays (never the sharded grid- or subject-sized arrays), so the cloudpickle
+    round-trip is cheap and keeps the JAX-array leaves intact."""
 
     ages: AgeGrid
     """Lifecycle age grid of the original model."""
@@ -377,13 +370,6 @@ class _SavedMetadata:
 
     subject_batch_size: int | None = None
     """Subject chunk size from `simulate`, reused to bound `to_dataframe` targets."""
-
-
-@dataclass(frozen=True)
-class _ArrayPlaceholder:
-    """Marker for a JAX array slot in a cloudpickled scaffold."""
-
-    key: str
 
 
 @dataclass(frozen=True)
@@ -588,52 +574,3 @@ def _array_tree_to_period_V(
             for period, regime_dict in tree.items()
         }
     )
-
-
-def _flat_params_to_array_tree(
-    flat_params: FlatParams,
-) -> dict[RegimeName, dict[str, Any]]:
-    """Extract only the JAX-array leaves of `flat_params`.
-
-    Non-array leaves (`MappingLeaf`, `SequenceLeaf`, plain Python scalars)
-    are skipped here and persisted in the scaffold instead.
-    """
-    return {
-        regime_name: {
-            name: value
-            for name, value in params.items()
-            if isinstance(value, jax.Array)
-        }
-        for regime_name, params in flat_params.items()
-    }
-
-
-def _flat_params_to_scaffold(
-    flat_params: FlatParams,
-) -> dict[RegimeName, dict[str, Any]]:
-    """Build a scaffold of `flat_params` with array leaves marked by placeholders."""
-    return {
-        regime_name: {
-            name: _ArrayPlaceholder(key=name) if isinstance(value, jax.Array) else value
-            for name, value in params.items()
-        }
-        for regime_name, params in flat_params.items()
-    }
-
-
-def _array_tree_and_scaffold_to_flat_params(
-    array_tree: dict[RegimeName, dict[str, Any]],
-    scaffold: dict[RegimeName, dict[str, Any]],
-) -> FlatParams:
-    """Reassemble `flat_params` from the array tree and the scaffold."""
-    out: dict[RegimeName, MappingProxyType[str, Any]] = {}
-    for regime_name, regime_scaffold in scaffold.items():
-        regime_arrays = array_tree.get(regime_name, {})
-        regime_params: dict[str, Any] = {}
-        for name, value in regime_scaffold.items():
-            if isinstance(value, _ArrayPlaceholder):
-                regime_params[name] = regime_arrays[value.key]
-            else:
-                regime_params[name] = value
-        out[regime_name] = MappingProxyType(regime_params)
-    return MappingProxyType(out)
