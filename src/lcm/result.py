@@ -197,9 +197,9 @@ class SimulationResult:
           a `SimulationResult`.
 
         Args:
-            directory: Target directory. Created if it does not exist.
-                Must not contain existing `arrays/` or `V_arr/`
-                subdirectories.
+            directory: Target directory. Created if it does not exist;
+                any `arrays/` or `V_arr/` checkpoint already present is
+                overwritten, so re-running into the same directory is safe.
             df_additional_targets: Targets passed through to `to_dataframe`
                 when projecting the on-disk arrow file. `None` (default)
                 writes only the base columns (states, actions, regime, age,
@@ -291,7 +291,7 @@ class SimulationResult:
             tree=small_array_tree, top_k=20, label="save: small_array_tree"
         )
         checkpointer = ocp.StandardCheckpointer()
-        checkpointer.save(target / "arrays", small_array_tree)
+        checkpointer.save(target / "arrays", small_array_tree, force=True)
         # `StandardCheckpointer.save` is asynchronous; block until the
         # on-disk checkpoint is complete so the sibling
         # `simulated_data.arrow` write and any subsequent `load`
@@ -305,8 +305,8 @@ class SimulationResult:
     def load(cls, *, directory: Path) -> SimulationResult:
         """Read a result from a directory produced by `save`.
 
-        Reads `arrays/` (orbax, small trees), `V_arr/` (chunked `.npy`
-        files), and `metadata.pkl` (cloudpickle). The `simulated_data.arrow`
+        Reads `arrays/` (orbax, small trees), `V_arr/` (orbax solution
+        checkpoint), and `metadata.pkl` (cloudpickle). The `simulated_data.arrow`
         artifact is not consumed — `to_dataframe` re-derives it on
         demand. Sharded arrays inside `arrays/` are restored onto the
         same sharding they had at save time, so no implicit gather
@@ -493,10 +493,15 @@ def _save_period_to_regime_to_V_arr(
     single-device leaf is read in place (no second contiguous device buffer) and a
     sharded leaf is transferred shard by shard — so a near-device-cap leaf does not
     blow up at save time. Periods are stringified so orbax can use them as path
-    components.
+    components. `force=True` overwrites any checkpoint already at `output_dir`, so
+    re-running into an existing output directory replaces it rather than failing.
     """
     checkpointer = ocp.StandardCheckpointer()
-    checkpointer.save(output_dir, _period_V_to_array_tree(period_to_regime_to_V_arr))
+    checkpointer.save(
+        output_dir,
+        _period_V_to_array_tree(period_to_regime_to_V_arr),
+        force=True,
+    )
     checkpointer.wait_until_finished()
 
 

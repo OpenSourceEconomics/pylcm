@@ -530,6 +530,47 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
     assert_frame_equal(loaded.to_dataframe(), expected_df)
 
 
+def test_save_overwrites_existing_output_directory(tmp_path: Path):
+    """`save` into a directory that already holds a checkpoint overwrites it.
+
+    Re-running a pipeline writes into the same output directory, so `save` must
+    replace any `V_arr/` / `arrays/` checkpoint already present (and tolerate an
+    orphaned `.orbax-checkpoint-tmp` left by an interrupted prior save) rather than
+    failing. The reloaded result reflects the second run.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    initial_conditions = {
+        "wealth": jnp.array([20.0, 50.0]),
+        "age": jnp.array([18.0, 18.0]),
+        "regime_id": jnp.array([RegimeId.working_life] * 2),
+    }
+    save_dir = tmp_path / "result"
+
+    first = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+    )
+    first.save(directory=save_dir)
+
+    # An interrupted prior save can leave an orphaned orbax staging directory.
+    (save_dir / "arrays.orbax-checkpoint-tmp-stale").mkdir()
+
+    second = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+    )
+    expected_df = second.to_dataframe()
+    second.save(directory=save_dir)
+
+    loaded = SimulationResult.load(directory=save_dir)
+    assert_frame_equal(loaded.to_dataframe(), expected_df)
+
+
 def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
     """`save(directory=...)` writes a `simulated_data.arrow` file at the directory root.
 
