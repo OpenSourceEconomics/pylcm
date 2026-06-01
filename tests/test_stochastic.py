@@ -25,10 +25,16 @@ from lcm.typing import (
     UserParams,
 )
 from tests.test_models.stochastic import (
+    WEALTH_GRID,
+    Health,
+    PartnerStatus,
     RegimeId,
     dead,
     get_model,
     get_params,
+    next_health,
+    next_partner,
+    next_wealth,
     retirement,
     working_life,
 )
@@ -378,3 +384,49 @@ def test_stochastic_regime_transition_active_at_last_period_raises():
         match=r"Non-terminal regime.*active at the last period",
     ):
         model.solve(log_level="debug", params=mortality.get_params(n_periods=4))
+
+
+def test_solve_with_stochastic_batch_size_matches_unbatched():
+    """`batch_size>0` on a stochastic DiscreteGrid chunks the shock-integration
+    productmap but yields the same V_arrs as the unchunked baseline.
+    """
+
+    def build_model(health_batch_size: int) -> Model:
+        wl = working_life.replace(
+            states={
+                "health": DiscreteGrid(Health, batch_size=health_batch_size),
+                "partner": DiscreteGrid(PartnerStatus),
+                "wealth": WEALTH_GRID,
+            },
+            state_transitions={
+                "health": MarkovTransition(next_health),
+                "partner": MarkovTransition(next_partner),
+                "wealth": next_wealth,
+            },
+        )
+        n_periods = 4
+        ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+        last_age = ages.exact_values[-1]
+        return Model(
+            regimes={
+                "working_life": wl.replace(active=lambda age, la=last_age: age < la),
+                "retirement": retirement.replace(
+                    active=lambda age, la=last_age: age < la
+                ),
+                "dead": dead,
+            },
+            ages=ages,
+            regime_id_class=RegimeId,
+        )
+
+    params = get_params(n_periods=4)
+    baseline = build_model(health_batch_size=0).solve(log_level="debug", params=params)
+    batched = build_model(health_batch_size=1).solve(log_level="debug", params=params)
+
+    for period in baseline:
+        for regime_name in baseline[period]:
+            assert_allclose(
+                baseline[period][regime_name],
+                batched[period][regime_name],
+                atol=1e-10,
+            )

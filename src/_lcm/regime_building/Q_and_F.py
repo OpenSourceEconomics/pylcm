@@ -110,7 +110,10 @@ def get_Q_and_F(
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
             variables=stochastic_variables,
-            batch_sizes=dict.fromkeys(stochastic_variables, 0),
+            batch_sizes=_get_stochastic_batch_sizes(
+                stochastic_variables=stochastic_variables,
+                v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
+            ),
         )
 
     # ----------------------------------------------------------------------------------
@@ -290,7 +293,10 @@ def get_compute_intermediates(
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
             variables=stochastic_variables,
-            batch_sizes=dict.fromkeys(stochastic_variables, 0),
+            batch_sizes=_get_stochastic_batch_sizes(
+                stochastic_variables=stochastic_variables,
+                v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
+            ),
         )
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
@@ -489,6 +495,39 @@ def _get_arg_names_of_Q_and_F(
 
     """
     return tuple((get_union_of_args(deps) | include) - exclude)
+
+
+def _get_stochastic_batch_sizes(
+    *,
+    stochastic_variables: tuple[TransitionFunctionName, ...],
+    v_interpolation_info: VInterpolationInfo,
+) -> dict[TransitionFunctionName, int]:
+    """Map each stochastic variable to its grid's `batch_size`.
+
+    Each entry in `stochastic_variables` has the form `next_<state_name>`. The
+    corresponding grid lives in `v_interpolation_info.discrete_states` (both
+    `DiscreteGrid` and `_ContinuousStochasticProcess` expose `batch_size`); read
+    it directly so a user-configured `batch_size > 0` actually chunks the inner
+    shock-integration loop in the Q-and-F productmap instead of being silently
+    dropped.
+
+    Args:
+        stochastic_variables: Stochastic transition names (each of the form
+            `next_<state_name>`).
+        v_interpolation_info: Holds the discrete-state grids that back the
+            stochastic transitions, keyed by state name.
+
+    Returns:
+        Mapping of each stochastic variable name to the `batch_size` of its
+        underlying grid.
+
+    """
+    return {
+        var_name: v_interpolation_info.discrete_states[
+            var_name.removeprefix("next_")
+        ].batch_size
+        for var_name in stochastic_variables
+    }
 
 
 def _get_joint_weights_function(
