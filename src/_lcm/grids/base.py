@@ -48,6 +48,15 @@ def _fail_if_continuous_grid_distributed(
     Sharding is supported only on discrete state grids, where cross-shard
     probability mass is contracted via the cheap `all-reduce` (output-sized,
     not V-array-sized).
+
+    Should we ever want to enable continuous-axis sharding, lifting this guard
+    is not sufficient on its own: the solve-side `max_Q_over_a` lowering in
+    backward induction would also need an explicit `out_shardings` so the
+    emitted V-array carries the declared sharding. Natural jit output inference
+    reproduces the declared sharding for discrete-axis distribution, but not for
+    a sharded continuous axis — there the solved V would otherwise come back on
+    a layout its next-period consumers were not lowered against. The abandoned
+    PR #364 carries a reference implementation of that `out_shardings` path.
     """
     if distributed:
         raise GridInitializationError(
