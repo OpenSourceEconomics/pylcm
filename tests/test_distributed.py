@@ -320,22 +320,91 @@ def test_solution_error_if_grid_product_exceeds_devices(wrong_distributed_model)
 
 
 @_skip_pytest_parallel
-def test_simulation_error_if_not_multiple(correct_distributed_model):
-    """Test that simulation throws error if too many subjects for num cpus."""
+def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_model):
+    """A subject count that is not a multiple of the device count simulates cleanly.
 
+    Distributed grids shard subjects across devices, which needs the leading axis to
+    divide evenly. pylcm pads internally (duplicating the last subject up to the next
+    device multiple) and trims the pad rows back out, so 5 subjects on 4 devices
+    yields a result with exactly 5 subjects.
+    """
+    result = correct_distributed_model.simulate(
+        log_level="debug",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(5, 0),
+            "wealth": jnp.full(5, 100.0),
+            "type1": jnp.full(5, 1),
+            "type2": jnp.full(5, 1),
+            "regime_id": jnp.zeros(5, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+
+    assert result.n_subjects == 5
+    assert result.to_dataframe()["subject_id"].nunique() == 5
+
+
+@_skip_pytest_parallel
+def test_distributed_simulation_invariant_to_subject_batch_size(
+    correct_distributed_model,
+):
+    """Chunking subjects under distributed grids reproduces the single-pass result.
+
+    With distributed grids, each chunk shards across devices independently. A batch
+    size that is a multiple of the device count must yield exactly the unbatched
+    `to_dataframe()` output.
+    """
+    initial_conditions = {
+        "age": jnp.full(8, 0),
+        "wealth": jnp.linspace(50.0, 120.0, 8),
+        "type1": jnp.ones(8, dtype=jnp.int32),
+        "type2": jnp.ones(8, dtype=jnp.int32),
+        "regime_id": jnp.zeros(8, dtype=jnp.int32),
+    }
+
+    def _simulate(subject_batch_size):
+        return (
+            correct_distributed_model.simulate(
+                log_level="debug",
+                params={"discount_factor": 0.95},
+                initial_conditions=initial_conditions,
+                period_to_regime_to_V_arr=None,
+                seed=12345,
+                subject_batch_size=subject_batch_size,
+            )
+            .to_dataframe()
+            .sort_values(["subject_id", "period"])
+            .reset_index(drop=True)
+        )
+
+    pd.testing.assert_frame_equal(_simulate(None), _simulate(4))
+
+
+@_skip_pytest_parallel
+def test_distributed_simulation_errors_on_non_device_multiple_batch_size(
+    correct_distributed_model,
+):
+    """A subject_batch_size that does not divide the device count is rejected.
+
+    Each chunk must shard evenly across devices, so the batch size itself must be a
+    multiple of the device count when any grid is distributed.
+    """
     with pytest.raises(PyLCMError, match="multiple"):
         correct_distributed_model.simulate(
             log_level="debug",
             params={"discount_factor": 0.95},
             initial_conditions={
-                "age": jnp.full(5, 0),
-                "wealth": jnp.full(5, 100.0),
-                "type1": jnp.full(5, 1),
-                "type2": jnp.full(5, 1),
-                "regime_id": jnp.zeros(5, dtype=jnp.int32),
+                "age": jnp.full(8, 0),
+                "wealth": jnp.full(8, 100.0),
+                "type1": jnp.ones(8, dtype=jnp.int32),
+                "type2": jnp.ones(8, dtype=jnp.int32),
+                "regime_id": jnp.zeros(8, dtype=jnp.int32),
             },
             period_to_regime_to_V_arr=None,
             seed=12345,
+            subject_batch_size=3,
         )
 
 

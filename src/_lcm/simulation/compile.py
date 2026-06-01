@@ -74,12 +74,17 @@ def compile_all_simulate_functions(
         flat_params=flat_params,
     )
 
+    # One model-wide subject sharding: subjects propagate across regimes, so
+    # every AOT program must be lowered with the same per-subject sharding.
+    subject_sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
+
     unique, func_keys = _collect_unique_simulate_functions(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
         n_subjects=n_subjects,
         regime_V_topology=regime_V_topology,
+        subject_sharding=subject_sharding,
     )
 
     n_workers = _resolve_compilation_workers(
@@ -155,6 +160,7 @@ def _collect_unique_simulate_functions(
     ages: AgeGrid,
     n_subjects: int,
     regime_V_topology: dict[RegimeName, _RegimeVTopology],
+    subject_sharding: jax.NamedSharding | None,
 ) -> tuple[
     dict[Hashable, tuple[Callable, dict | None, str]],
     dict[tuple[RegimeName, str, int | None], Hashable],
@@ -198,6 +204,7 @@ def _collect_unique_simulate_functions(
                 period=period,
                 n_subjects=n_subjects,
                 next_regime_to_V_arr=next_regime_to_V_arr,
+                subject_sharding=subject_sharding,
             )
             key = ("argmax", _func_dedup_key(func=argmax_func), active_next)
             func_keys[(regime_name, "argmax", period)] = key
@@ -217,6 +224,7 @@ def _collect_unique_simulate_functions(
                 regime_params=regime_params,
                 ages=ages,
                 n_subjects=n_subjects,
+                subject_sharding=subject_sharding,
             )
             key = ("next_state", regime_name, _func_dedup_key(func=sf.next_state))
             func_keys[(regime_name, "next_state", None)] = key
@@ -236,6 +244,7 @@ def _collect_unique_simulate_functions(
                 regime_params=regime_params,
                 ages=ages,
                 n_subjects=n_subjects,
+                subject_sharding=subject_sharding,
             )
             key = (
                 "crtp",
@@ -324,11 +333,11 @@ def _build_argmax_args(
     period: int,
     n_subjects: int,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    subject_sharding: jax.NamedSharding | None,
 ) -> dict[str, object]:
     base = regime.state_action_space(regime_params=regime_params)
-    sharding = subject_array_sharding(regime=regime, n_subjects=n_subjects)
     subject_states = _subject_shape_arrays(
-        base.states, n_subjects=n_subjects, sharding=sharding
+        base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
     return {
         **subject_states,
@@ -347,16 +356,16 @@ def _build_next_state_args(
     regime_params: FlatRegimeParams,
     ages: AgeGrid,
     n_subjects: int,
+    subject_sharding: jax.NamedSharding | None,
 ) -> dict[str, object]:
     base = regime.state_action_space(regime_params=regime_params)
-    sharding = subject_array_sharding(regime=regime, n_subjects=n_subjects)
     subject_states = _subject_shape_arrays(
-        base.states, n_subjects=n_subjects, sharding=sharding
+        base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
     subject_actions = _subject_shape_arrays(
         {**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
-        sharding=sharding,
+        sharding=subject_sharding,
     )
 
     stoch_transition_names = regime.simulate_functions.stochastic_transition_names
@@ -390,16 +399,16 @@ def _build_crtp_args(
     regime_params: FlatRegimeParams,
     ages: AgeGrid,
     n_subjects: int,
+    subject_sharding: jax.NamedSharding | None,
 ) -> dict[str, object]:
     base = regime.state_action_space(regime_params=regime_params)
-    sharding = subject_array_sharding(regime=regime, n_subjects=n_subjects)
     subject_states = _subject_shape_arrays(
-        base.states, n_subjects=n_subjects, sharding=sharding
+        base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
     subject_actions = _subject_shape_arrays(
         {**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
-        sharding=sharding,
+        sharding=subject_sharding,
     )
     return {
         **subject_states,

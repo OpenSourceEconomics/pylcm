@@ -34,6 +34,7 @@ from _lcm.regime_building.processing import Regime
 from _lcm.simulation.compile import compile_all_simulate_functions
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
+    pad_initial_conditions_for_devices,
     validate_initial_conditions,
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
@@ -497,6 +498,14 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
         )
+        # With distributed grids, pad the leading axis up to a multiple of the
+        # device count so every per-subject array shards evenly. Pad rows
+        # duplicate the last real subject and are trimmed inside `simulate`. No-op
+        # when no grid is distributed or the count already divides.
+        initial_conditions, original_n_subjects = pad_initial_conditions_for_devices(
+            initial_conditions=initial_conditions,
+            regimes=self._regimes,
+        )
         flat_params = self._process_params(params)
         if validation_enabled(log):
             try:
@@ -515,16 +524,20 @@ class Model:
             ages=self.ages,
             logger=log,
         )
-        actual_n_subjects = len(next(iter(initial_conditions.values())))
+        # `actual_n_subjects` is the user's real population (matched against the
+        # declared `n_subjects`); `padded_n_subjects` is the leading axis the
+        # dispatch actually sees. They are equal unless distributed padding ran.
+        actual_n_subjects = original_n_subjects
+        padded_n_subjects = len(next(iter(initial_conditions.values())))
         n_subjects = self.n_subjects
         # The simulate functions are dispatched at the chunk shape, so AOT-compile
-        # for the chunk size (`subject_batch_size`, clamped to the population)
-        # rather than the full population. With no batching the chunk is the whole
-        # population, recovering the single-pass shape.
+        # for the chunk size (`subject_batch_size`, clamped to the padded
+        # population) rather than the full population. With no batching the chunk
+        # is the whole padded population, recovering the single-pass shape.
         compile_batch_size = (
-            actual_n_subjects
+            padded_n_subjects
             if subject_batch_size is None
-            else min(subject_batch_size, actual_n_subjects)
+            else min(subject_batch_size, padded_n_subjects)
         )
         if n_subjects is not None and n_subjects == actual_n_subjects:
             with self._simulate_compile_lock:
@@ -565,6 +578,7 @@ class Model:
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
             subject_batch_size=subject_batch_size,
+            original_n_subjects=original_n_subjects,
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads

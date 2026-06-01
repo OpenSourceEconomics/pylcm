@@ -15,6 +15,7 @@ from _lcm.engine import (
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
+    trim_pad_from_raw_results,
 )
 from _lcm.simulation.random import draw_random_seed
 from _lcm.simulation.transitions import (
@@ -63,6 +64,7 @@ def simulate(
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
     subject_batch_size: int | None = None,
+    original_n_subjects: int | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -89,6 +91,10 @@ def simulate(
             values bound the per-period device workspace at the cost of re-running the
             period loop per chunk. Results are invariant to this knob: per-subject RNG
             keys are generated for the full population and sliced by global index.
+        original_n_subjects: Subject count before any per-device padding applied by
+            `pad_initial_conditions_for_devices`. When set, RNG keys are sized to it
+            and the trailing pad rows are trimmed from the results before they are
+            returned. `None` means no padding was applied.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -148,6 +154,7 @@ def simulate(
             starting_periods=starting_periods[subject_slice],
             n_subjects=n_subjects,
             subject_slice=subject_slice,
+            original_n_subjects=original_n_subjects,
             regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
             regime_ids_to_names=regime_ids_to_names,
@@ -190,6 +197,15 @@ def simulate(
         }
     )
 
+    # Drop any device-alignment pad rows so `SimulationResult` exposes only the
+    # user's real subjects (see `pad_initial_conditions_for_devices`). No-op when
+    # `original_n_subjects` already matched the dispatched leading axis.
+    if original_n_subjects is not None:
+        wrapped_results = trim_pad_from_raw_results(
+            raw_results=wrapped_results,
+            original_n_subjects=original_n_subjects,
+        )
+
     return SimulationResult(
         raw_results=wrapped_results,
         regimes=regimes,
@@ -208,6 +224,7 @@ def _simulate_subject_chunk(
     starting_periods: Int1D,
     n_subjects: int,
     subject_slice: slice,
+    original_n_subjects: int | None = None,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_ids_to_names: RegimeIdsToNames,
@@ -284,6 +301,7 @@ def _simulate_subject_chunk(
                     logger=logger,
                     n_subjects=n_subjects,
                     subject_slice=subject_slice,
+                    original_n_subjects=original_n_subjects,
                 )
             )
             states = new_states
@@ -398,6 +416,7 @@ def _simulate_regime_in_period(
     logger: logging.Logger,
     n_subjects: int,
     subject_slice: slice,
+    original_n_subjects: int | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -502,6 +521,7 @@ def _simulate_regime_in_period(
             subjects_in_regime=subject_ids_in_regime,
             n_subjects=n_subjects,
             subject_slice=subject_slice,
+            original_n_subjects=original_n_subjects,
         )
         states = next_states
         new_subject_regime_ids = calculate_next_regime_membership(
@@ -518,6 +538,7 @@ def _simulate_regime_in_period(
             subjects_in_regime=subject_ids_in_regime,
             n_subjects=n_subjects,
             subject_slice=subject_slice,
+            original_n_subjects=original_n_subjects,
         )
 
     return simulation_result, states, new_subject_regime_ids, key
