@@ -3,7 +3,16 @@
 ASV runs all benchmarks in one process, so ``peak_bytes_in_use`` accumulates
 across runs and warm-up calls.  This module spawns a fresh Python process that
 builds the model, runs it once cold (compilation + execution), and reports the
-true peak.
+peak.  A single cold run in a fresh process is the production footprint: the
+production launcher solves + simulates exactly once per process.
+
+XLA autotuning is disabled in the subprocess (``--xla_gpu_autotune_level=0``).
+Autotuning benchmarks candidate kernels at compile time, allocating large,
+run-to-run-variable scratch buffers; for big models that transient dwarfs and
+masks the execution working set, so the reported peak swings several-fold
+between otherwise-identical runs. Turning it off makes the compile footprint
+deterministic and matches how the model is run in production (the sbatch
+already sets ``--xla_gpu_autotune_level=0``).
 
 The ``GpuPeakMem`` base class provides a ready-made ASV benchmark with a no-op
 ``setup`` so the parent process does not touch the GPU before spawning the
@@ -21,6 +30,7 @@ warm-up) followed by ``time_execution()`` (cold = compile + run), then prints
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 # Project root: the directory containing the benchmarks/ package.
@@ -32,6 +42,23 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _PEAK_MARKER = "__PEAK_BYTES_IN_USE__"
 
 
+def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
+    """Build the GPU-mem subprocess environment from a base mapping.
+
+    - Drops ``XLA_PYTHON_CLIENT_MEM_FRACTION`` so the isolated subprocess can
+      use all device memory (the parent ASV process may cap itself).
+    - Disables preallocation so ``peak_bytes_in_use`` tracks real demand.
+    - Appends ``--xla_gpu_autotune_level=0`` to ``XLA_FLAGS`` (preserving any
+      existing flags) so the compile footprint is deterministic.
+    """
+    env = {k: v for k, v in base_env.items() if k != "XLA_PYTHON_CLIENT_MEM_FRACTION"}
+    env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    autotune_off = "--xla_gpu_autotune_level=0"
+    existing = env.get("XLA_FLAGS", "")
+    env["XLA_FLAGS"] = f"{existing} {autotune_off}".strip()
+    return env
+
+
 def measure_gpu_peak(bench_module: str, bench_class: str) -> int:
     """Run a benchmark in a subprocess and return peak GPU bytes.
 
@@ -40,21 +67,17 @@ def measure_gpu_peak(bench_module: str, bench_class: str) -> int:
         bench_class: Class name within the module (e.g. ``"MahlerYum"``).
 
     Returns:
-        Peak GPU memory in bytes (including compilation).
+        Peak GPU memory in bytes over a single cold run (compile + execute),
+        with autotuning disabled.
 
     """
-    # Remove MEM_FRACTION so the subprocess can use all available GPU memory.
-    # The parent ASV process may limit itself (e.g. 0.3), but the subprocess
-    # needs full access since it runs in isolation.
-    env = {k: v for k, v in os.environ.items() if k != "XLA_PYTHON_CLIENT_MEM_FRACTION"}
-    env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
     result = subprocess.run(
         [sys.executable, "-m", "benchmarks._gpu_mem", bench_module, bench_class],
         capture_output=True,
         text=True,
         check=False,
         cwd=_PROJECT_ROOT,
-        env=env,
+        env=_subprocess_env(os.environ),
     )
     if result.returncode != 0:
         msg = (
