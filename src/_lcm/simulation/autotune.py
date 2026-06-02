@@ -27,7 +27,7 @@ class _MemoryStats(Protocol):
     alias_size_in_bytes: int
 
 
-def estimate_peak_bytes(stats: _MemoryStats) -> int:
+def estimate_peak_bytes(*, stats: _MemoryStats) -> int:
     """Estimate a compiled program's peak device memory in bytes.
 
     Sums the temporary, argument, and output buffers and subtracts the aliased
@@ -75,15 +75,21 @@ def pick_batch_size(
 
     """
     ordered = sorted(probes)
-    if len(ordered) == 1:
-        batch, peak = ordered[0]
-        slope = peak / batch
+    (b_lo, p_lo), (b_hi, p_hi) = ordered[0], ordered[-1]
+    if b_hi == b_lo:
+        # One probe, or several at the same batch size (a one-subject population
+        # makes the full- and half-population probes coincide). The fixed offset
+        # can't be separated from the per-subject slope, so model peak as
+        # proportional to batch (zero offset); use the largest observed peak to
+        # stay conservative.
+        slope = p_hi / b_hi
         intercept = 0.0
     else:
-        (b_lo, p_lo), (b_hi, p_hi) = ordered[0], ordered[-1]
         slope = (p_hi - p_lo) / (b_hi - b_lo)
         intercept = p_hi - slope * b_hi
     if slope <= 0:
+        # Peak doesn't grow with batch (or shrinks) — nothing to bound, so fill
+        # the population in one pass.
         return max_batch
     batch = int((budget_bytes - intercept) / slope)
     return max(1, min(max_batch, batch))

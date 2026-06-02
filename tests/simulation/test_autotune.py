@@ -23,7 +23,7 @@ def test_estimate_peak_bytes_subtracts_aliased_buffers():
         output_size_in_bytes=30,
         alias_size_in_bytes=20,
     )
-    assert estimate_peak_bytes(stats) == 160
+    assert estimate_peak_bytes(stats=stats) == 160
 
 
 def test_pick_batch_size_fits_line_through_two_probes():
@@ -53,5 +53,20 @@ def test_pick_batch_size_floors_at_one():
         probes=((1000, 5000), (500, 4500)),
         budget_bytes=100,
         max_batch=1000,
+    )
+    assert batch == 1
+
+
+def test_pick_batch_size_handles_degenerate_identical_batch_probes():
+    """Two probes at the same batch size don't divide by zero (population of 1).
+
+    A one-subject population makes the full- and half-population probes identical,
+    so the picker must fall back to a proportional model instead of fitting a line
+    through a zero-width interval — and clamp to the single available batch.
+    """
+    batch = pick_batch_size(
+        probes=((1, 1000), (1, 800)),
+        budget_bytes=500,
+        max_batch=1,
     )
     assert batch == 1

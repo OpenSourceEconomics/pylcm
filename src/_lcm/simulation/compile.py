@@ -163,7 +163,7 @@ def compile_all_simulate_functions(
         except AttributeError, RuntimeError, ValueError, jax.errors.JaxRuntimeError:
             continue
         if stats is not None:
-            max_peak_bytes = max(max_peak_bytes, estimate_peak_bytes(stats))
+            max_peak_bytes = max(max_peak_bytes, estimate_peak_bytes(stats=stats))
 
     compiled_regimes = _swap_in_compiled(
         regimes=regimes,

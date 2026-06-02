@@ -376,6 +376,42 @@ def test_distributed_simulation_rejects_subject_batching(
         )
 
 
+@_skip_pytest_parallel
+def test_distributed_simulation_auto_subject_batch_size_runs_one_pass(
+    correct_distributed_model,
+):
+    """`subject_batch_size="auto"` is a one-pass no-op under multi-device distribution.
+
+    The value-function array is sharded across the devices, so the subject axis
+    can't be chunked; `"auto"` falls back to a single sharded pass rather than
+    raising, reproducing the explicit single-pass result.
+    """
+    initial_conditions = {
+        "age": jnp.full(8, 0),
+        "wealth": jnp.linspace(50.0, 120.0, 8),
+        "type1": jnp.ones(8, dtype=jnp.int32),
+        "type2": jnp.ones(8, dtype=jnp.int32),
+        "regime_id": jnp.zeros(8, dtype=jnp.int32),
+    }
+
+    def _simulate(subject_batch_size):
+        return (
+            correct_distributed_model.simulate(
+                log_level="debug",
+                params={"discount_factor": 0.95},
+                initial_conditions=initial_conditions,
+                period_to_regime_to_V_arr=None,
+                seed=12345,
+                subject_batch_size=subject_batch_size,
+            )
+            .to_dataframe()
+            .sort_values(["subject_id", "period"])
+            .reset_index(drop=True)
+        )
+
+    pd.testing.assert_frame_equal(_simulate(0), _simulate("auto"))
+
+
 @pytest.fixture
 def partially_distributed_model():
     """Model where one regime has distributed grids and the other does not."""

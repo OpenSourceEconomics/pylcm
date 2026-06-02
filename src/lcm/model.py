@@ -742,6 +742,10 @@ class Model:
         if peak_full <= budget_bytes:
             return padded_n_subjects
         half = max(1, padded_n_subjects // 2)
+        if half >= padded_n_subjects:
+            # Population too small to split — the half-probe would coincide with
+            # the full one, leaving nothing to chunk.
+            return padded_n_subjects
         peak_half = self._ensure_simulate_compiled(
             compile_batch_size=half,
             flat_params=flat_params,
