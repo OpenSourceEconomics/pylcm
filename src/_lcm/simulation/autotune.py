@@ -10,11 +10,16 @@ XLA's static buffer accounting, and the margin on the budget absorbs its slack.
 """
 
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
+@runtime_checkable
 class _MemoryStats(Protocol):
-    """Subset of `jax.stages.Compiled.memory_analysis()` we read."""
+    """Subset of `jax.stages.Compiled.memory_analysis()` we read.
+
+    `runtime_checkable` so the beartype claw can validate the annotation by
+    structural `isinstance` (attribute presence) rather than rejecting it.
+    """
 
     temp_size_in_bytes: int
     argument_size_in_bytes: int

@@ -63,7 +63,7 @@ def simulate(
     ages: AgeGrid,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
-    subject_batch_size: int | None = None,
+    subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
@@ -86,11 +86,14 @@ def simulate(
             used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
-        subject_batch_size: Number of subjects to push through the forward simulation
-            at once. `None` simulates the whole population in a single pass. Smaller
-            values bound the per-period device workspace at the cost of re-running the
-            period loop per chunk. Results are invariant to this knob: per-subject RNG
-            keys are generated for the full population and sliced by global index.
+        subject_batch_size: Concrete subject chunk size, already resolved by the
+            caller (`Model.simulate` maps the user-facing `0`/`>0`/`"auto"` knob to
+            an int here). `0` or a value `>= n_subjects` simulates the whole
+            population in a single pass; a smaller value chunks the subjects,
+            bounding the per-period device workspace at the cost of re-running the
+            period loop per chunk. Results are invariant to this knob: per-subject
+            RNG keys are generated for the full population and sliced by global
+            index.
         original_n_subjects: Subject count before any per-device padding applied by
             `pad_initial_conditions_for_devices`. When set, RNG keys are sized to it
             and the trailing pad rows are trimmed from the results before they are
@@ -116,9 +119,7 @@ def simulate(
     # is `subject_batch_size` (the whole population in one pass when `None`).
     n_subjects = int(initial_conditions["regime_id"].shape[0])
     batch_size = (
-        n_subjects
-        if subject_batch_size is None
-        else min(subject_batch_size, n_subjects)
+        n_subjects if subject_batch_size == 0 else min(subject_batch_size, n_subjects)
     )
 
     starting_periods = _compute_starting_periods(
@@ -131,9 +132,10 @@ def simulate(
 
     # When chunking, offload each chunk's results to host as it finishes so the
     # device frees them before the next chunk's period loop allocates — bounding
-    # device residency to a single chunk. Unbatched runs keep results on the compute
-    # device (no memory pressure, and no host round-trip for downstream targets).
-    host_device = jax.devices("cpu")[0] if subject_batch_size is not None else None
+    # device residency to a single chunk. A single pass (batch_size == n_subjects)
+    # keeps results on the compute device (no memory pressure, and no host
+    # round-trip for downstream targets).
+    host_device = jax.devices("cpu")[0] if batch_size < n_subjects else None
 
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
     for chunk_start in range(0, n_subjects, batch_size):

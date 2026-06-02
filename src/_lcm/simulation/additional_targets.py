@@ -106,10 +106,11 @@ def _compute_targets(
     """Compute additional targets for a regime.
 
     The target DAG is vmapped over the regime's in-regime subject-period rows. When
-    `subject_batch_size` is set, the rows are processed in chunks and each chunk's
-    outputs are pulled to host before the next runs, so the fused-DAG device
-    workspace is bounded by the chunk rather than the full population. Values are
-    identical to the single-pass evaluation.
+    `subject_batch_size` is a positive value below the row count, the rows are
+    processed in chunks and each chunk's outputs are pulled to host before the next
+    runs, so the fused-DAG device workspace is bounded by the chunk rather than the
+    full population. `0`/`None` (or any value at least the row count) evaluates in a
+    single pass. Values are identical to the single-pass evaluation.
     """
     functions_pool = _build_functions_pool(regime)
     target_func = _create_target_function(
@@ -125,7 +126,7 @@ def _compute_targets(
     inputs = {k: v for k, v in data.items() if k in variables}
     n_rows = len(data["period"])
 
-    if subject_batch_size is None or subject_batch_size >= n_rows:
+    if not subject_batch_size or subject_batch_size >= n_rows:
         kwargs = {k: jnp.asarray(v) for k, v in inputs.items()}
         result = vectorized_func(**all_params, **kwargs)
         return {k: jnp.squeeze(v) for k, v in result.items()}
