@@ -349,14 +349,44 @@ def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_m
 
 
 @_skip_pytest_parallel
-def test_distributed_simulation_invariant_to_subject_batch_size(
+@pytest.mark.parametrize("subject_batch_size", [3, 4])
+def test_distributed_simulation_rejects_subject_batching(
+    correct_distributed_model,
+    subject_batch_size,
+):
+    """Subject-batching is rejected under multi-device distribution.
+
+    The value-function array is sharded across the devices and cannot be gathered
+    onto one, so chunking the subject axis (a single-device operation) cannot be
+    combined with distributed grids on more than one device — rejected even at a
+    batch size that divides the device count (4), not only a non-multiple (3).
+    """
+    with pytest.raises(PyLCMError, match="distributed grids"):
+        correct_distributed_model.simulate(
+            log_level="debug",
+            params={"discount_factor": 0.95},
+            initial_conditions={
+                "age": jnp.full(8, 0),
+                "wealth": jnp.full(8, 100.0),
+                "type1": jnp.ones(8, dtype=jnp.int32),
+                "type2": jnp.ones(8, dtype=jnp.int32),
+                "regime_id": jnp.zeros(8, dtype=jnp.int32),
+            },
+            period_to_regime_to_V_arr=None,
+            seed=12345,
+            subject_batch_size=subject_batch_size,
+        )
+
+
+@_skip_pytest_parallel
+def test_distributed_simulation_auto_subject_batch_size_runs_one_pass(
     correct_distributed_model,
 ):
-    """Chunking subjects under distributed grids reproduces the single-pass result.
+    """`subject_batch_size="auto"` is a one-pass no-op under multi-device distribution.
 
-    With distributed grids, each chunk shards across devices independently. A batch
-    size that is a multiple of the device count must yield exactly the unbatched
-    `to_dataframe()` output.
+    The value-function array is sharded across the devices, so the subject axis
+    can't be chunked; `"auto"` falls back to a single sharded pass rather than
+    raising, reproducing the explicit single-pass result.
     """
     initial_conditions = {
         "age": jnp.full(8, 0),
@@ -381,33 +411,7 @@ def test_distributed_simulation_invariant_to_subject_batch_size(
             .reset_index(drop=True)
         )
 
-    pd.testing.assert_frame_equal(_simulate(None), _simulate(4))
-
-
-@_skip_pytest_parallel
-def test_distributed_simulation_errors_on_non_device_multiple_batch_size(
-    correct_distributed_model,
-):
-    """A subject_batch_size that does not divide the device count is rejected.
-
-    Each chunk must shard evenly across devices, so the batch size itself must be a
-    multiple of the device count when any grid is distributed.
-    """
-    with pytest.raises(PyLCMError, match="multiple"):
-        correct_distributed_model.simulate(
-            log_level="debug",
-            params={"discount_factor": 0.95},
-            initial_conditions={
-                "age": jnp.full(8, 0),
-                "wealth": jnp.full(8, 100.0),
-                "type1": jnp.ones(8, dtype=jnp.int32),
-                "type2": jnp.ones(8, dtype=jnp.int32),
-                "regime_id": jnp.zeros(8, dtype=jnp.int32),
-            },
-            period_to_regime_to_V_arr=None,
-            seed=12345,
-            subject_batch_size=3,
-        )
+    pd.testing.assert_frame_equal(_simulate(0), _simulate("auto"))
 
 
 @pytest.fixture

@@ -15220,6 +15220,7 @@ packages:
   - orbax-checkpoint>=0.11
   - pandas
   - portion>=2.6
+  - pyarrow
   requires_python: '>=3.14'
 - pypi: git+https://github.com/opensourceeconomics/aca-model?rev=7af96820b1289c71adc70ea3d2d6320c646703d0#7af96820b1289c71adc70ea3d2d6320c646703d0
   name: aca-model

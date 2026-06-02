@@ -23,6 +23,7 @@ import jax.numpy as jnp
 from dags.tree import qname_from_tree_path
 
 from _lcm.engine import Regime
+from _lcm.simulation.autotune import estimate_peak_bytes
 from _lcm.simulation.initial_conditions import subject_array_sharding
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.solution.solve_brute import (
@@ -46,7 +47,7 @@ def compile_all_simulate_functions(
     n_subjects: int,
     max_compilation_workers: int | None,
     logger: logging.Logger,
-) -> MappingProxyType[RegimeName, Regime]:
+) -> tuple[MappingProxyType[RegimeName, Regime], int]:
     """AOT-compile every unique simulate function for batch shape `n_subjects`.
 
     Args:
@@ -59,9 +60,12 @@ def compile_all_simulate_functions(
         logger: Logger.
 
     Returns:
-        Immutable mapping of regime names to Regime where each
-        regime's `simulate_functions` has its callables replaced by
-        AOT-compiled programs.
+        Tuple of the compiled regimes and the peak-memory estimate. The first
+        element is an immutable mapping of regime names to Regime where each
+        regime's `simulate_functions` has its callables replaced by AOT-compiled
+        programs. The second is the maximum estimated peak device memory (bytes)
+        across those programs — the figure `subject_batch_size="auto"` sizes
+        against — or `0` when `memory_analysis()` is unavailable (CPU backend).
 
     """
     # Per-regime V-shape and -sharding lookup for building period-specific
@@ -146,11 +150,27 @@ def compile_all_simulate_functions(
             # finishes.
             del lowered[k]
 
-    return _swap_in_compiled(
+    # Peak device memory for the largest compiled program — the figure
+    # `subject_batch_size="auto"` sizes against. The simulate programs run one
+    # at a time in the period loop, so the peak is the max over programs, not
+    # the sum. `memory_analysis()` is unsupported on the CPU backend (and may
+    # fail on some XLA modules), so fall back to 0 — the sentinel that disables
+    # autotuning and leaves the run at one pass.
+    max_peak_bytes = 0
+    for compiled_program in compiled.values():
+        try:
+            stats = compiled_program.memory_analysis()
+        except AttributeError, RuntimeError, ValueError, jax.errors.JaxRuntimeError:
+            continue
+        if stats is not None:
+            max_peak_bytes = max(max_peak_bytes, estimate_peak_bytes(stats=stats))
+
+    compiled_regimes = _swap_in_compiled(
         regimes=regimes,
         compiled=compiled,
         func_keys=func_keys,
     )
+    return compiled_regimes, max_peak_bytes
 
 
 def _collect_unique_simulate_functions(

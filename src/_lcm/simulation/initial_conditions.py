@@ -294,10 +294,13 @@ def subject_array_sharding(
         return None
     devices = jax.devices()
     if n_subjects % len(devices) != 0:
+        # Defensive: with distributed grids the dispatch runs one pass over the
+        # device-padded population, so this divides evenly. `Model.simulate`
+        # rejects subject_batch_size > 0 under multi-device distribution before
+        # reaching here, so a non-multiple count signals direct/internal misuse.
         raise PyLCMError(
             "When using distributed grids, the number of subjects per simulate "
-            "dispatch (the subject_batch_size when batching, else the population) "
-            "must be a multiple of the available devices. "
+            "dispatch must be a multiple of the available devices. "
             f"Subjects: {n_subjects} Available Devices: {len(devices)}"
         )
     mesh = jax.make_mesh(
