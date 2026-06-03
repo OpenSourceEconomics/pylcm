@@ -35,7 +35,7 @@ from _lcm.regime_building.processing import Regime
 from _lcm.simulation.compile import compile_all_simulate_functions
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
-    pad_initial_conditions_for_devices,
+    pad_initial_conditions_to_multiple,
     validate_initial_conditions,
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
@@ -504,13 +504,24 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
         )
-        # With distributed grids, pad the leading axis up to a multiple of the
-        # device count so every per-subject array shards evenly. Pad rows
-        # duplicate the last real subject and are trimmed inside `simulate`. No-op
-        # when no grid is distributed or the count already divides.
-        initial_conditions, original_n_subjects = pad_initial_conditions_for_devices(
+        # Align the subject axis to the block size the simulate path needs: the
+        # device count when grids are distributed (sharding must divide it
+        # evenly), or the chunk size when chunking on a single device (every chunk
+        # must match the AOT-compiled shape). The two are mutually exclusive —
+        # chunking under multi-device distribution is rejected in
+        # `_resolve_compile_batch_size`. Pad rows duplicate the last real subject
+        # and are trimmed inside `simulate`; a multiple of 1 (single pass) is a
+        # no-op.
+        if self._distributes_subjects() and len(jax.devices()) > 1:
+            alignment = len(jax.devices())
+        elif subject_batch_size > 0:
+            raw_n_subjects = len(next(iter(initial_conditions.values())))
+            alignment = min(subject_batch_size, raw_n_subjects)
+        else:
+            alignment = 1
+        initial_conditions, original_n_subjects = pad_initial_conditions_to_multiple(
             initial_conditions=initial_conditions,
-            regimes=self._regimes,
+            multiple=alignment,
         )
         flat_params = self._process_params(params)
         if validation_enabled(log):

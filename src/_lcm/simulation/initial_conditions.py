@@ -161,21 +161,20 @@ def build_initial_states(
     return MappingProxyType(states_per_regime)
 
 
-def pad_initial_conditions_for_devices(
+def pad_initial_conditions_to_multiple(
     *,
     initial_conditions: InitialConditions,
-    regimes: MappingProxyType[RegimeName, Regime],
+    multiple: int,
 ) -> tuple[InitialConditions, int]:
-    """Pad `initial_conditions` to the next multiple of `n_devices`.
+    """Pad `initial_conditions`' leading axis up to the next multiple of `multiple`.
 
-    When any grid in any regime is `distributed=True`, simulate shards the
-    per-subject arrays across the visible JAX devices along a single mesh axis.
-    The shard size must divide the leading axis evenly, so an arbitrary
-    `n_subjects` would otherwise fail the `subject_array_sharding` guard. Padding
-    the leading axis up to the next multiple of `n_devices` (at most
-    `n_devices - 1` extra rows) relaxes the user-facing constraint: callers pick
-    any `n_subjects` and pylcm handles the alignment internally, dropping the pad
-    rows again on the way out.
+    Two simulate paths need the subject axis aligned to a fixed block size:
+    distributed grids shard it across the visible devices (the shard must divide
+    the axis evenly), and single-device chunking runs fixed-size passes (every
+    chunk must match the AOT-compiled shape). Both reduce to padding the leading
+    axis up to the next multiple of one number — the device count or the chunk
+    size — adding at most `multiple - 1` rows. Callers pick any `n_subjects` and
+    pylcm aligns it internally, dropping the pad rows on the way out.
 
     Pad rows duplicate the last real subject — they pass validation automatically
     (the last real row already did) and produce identical simulate-side outputs
@@ -185,27 +184,20 @@ def pad_initial_conditions_for_devices(
     Args:
         initial_conditions: Canonicalized initial conditions (state arrays keyed
             by name, plus `regime_id`).
-        regimes: Immutable mapping of regime names to internal regime instances.
-            Used to detect whether any grid is distributed.
+        multiple: Block size the leading axis is padded up to a multiple of. A
+            `multiple` of `1` (single-device, single pass) — or any value that
+            already divides the count — is a no-op.
 
     Returns:
-        Tuple of `(padded_initial_conditions, original_n_subjects)`. When no
-        regime has a distributed grid (or the count already divides), returns the
-        original mapping unchanged and the existing length.
+        Tuple of `(padded_initial_conditions, original_n_subjects)`. Returns the
+        original mapping unchanged and the existing length when `multiple` already
+        divides the count.
 
     """
     original_n_subjects = len(next(iter(initial_conditions.values())))
-    any_distributed = any(
-        grid.distributed
-        for regime in regimes.values()
-        for grid in regime.grids.values()
-    )
-    if not any_distributed:
+    if multiple <= 1 or original_n_subjects % multiple == 0:
         return initial_conditions, original_n_subjects
-    n_devices = len(jax.devices())
-    if original_n_subjects % n_devices == 0:
-        return initial_conditions, original_n_subjects
-    pad = n_devices - (original_n_subjects % n_devices)
+    pad = multiple - (original_n_subjects % multiple)
     padded: dict[str, jax.Array] = {}
     for name, arr in initial_conditions.items():
         # Duplicate the last subject's row `pad` times along the leading axis.
@@ -224,7 +216,7 @@ def trim_pad_from_raw_results(
     """Slice every per-subject array in `raw_results` back to `original_n_subjects`.
 
     The simulate dispatch runs against a padded leading axis (see
-    `pad_initial_conditions_for_devices`); this drops the trailing pad rows so
+    `pad_initial_conditions_to_multiple`); this drops the trailing pad rows so
     `SimulationResult` and downstream consumers see only the user's real subjects.
     No-op for any period whose leading-axis length already equals
     `original_n_subjects`.

@@ -124,10 +124,11 @@ def test_aot_compiled_simulation_is_invariant_to_subject_batch_size(
     """A model with `n_subjects` set chunks subjects through one AOT-compiled program.
 
     The simulate functions are compiled once for the chunk shape. With a batch size
-    that does not divide the 7-subject population, the final chunk overlaps the
-    population tail so every chunk is exactly the compiled size; the overlapped
-    subjects are recomputed bit-identically and trimmed. The `to_dataframe()` output
-    matches the unbatched, lazily-compiled run for every subject-period.
+    that does not divide the 7-subject population, the population is padded up to a
+    multiple of the batch size with duplicate last-subject rows so every chunk is
+    exactly the compiled size; the pad rows are trimmed before output. The
+    `to_dataframe()` result matches the unbatched, lazily-compiled run for every
+    subject-period.
     """
     baseline = _simulate_df(subject_batch_size=0)
     batched = _simulate_df(subject_batch_size=subject_batch_size, n_subjects=7)
