@@ -16,7 +16,11 @@ from _lcm.simulation.simulate import (
 from _lcm.utils.logging import get_logger
 from lcm import Model
 from lcm.ages import AgeGrid
-from lcm.result import SimulationResult
+from lcm.result import (
+    SimulationResult,
+    _coerce_jax_scalar_for_arrow,
+    _collect_array_tree_leaf_sizes,
+)
 from tests.test_models.deterministic.regression import (
     START_AGE,
     RegimeId,
@@ -487,10 +491,14 @@ def test_retrieve_actions():
     assert_array_equal(got["b"], jnp.array([10, 16, 12]))
 
 
-def test_simulation_result_pickle_roundtrip(tmp_path: Path):
-    """Test that SimulationResult can be pickled and unpickled."""
+def test_simulation_result_save_load_roundtrip(tmp_path: Path):
+    """`SimulationResult.save(directory=...)` + `load(directory=...)` preserve content.
 
-    # Create a SimulationResult
+    A round-trip through the on-disk format must produce a result whose
+    `to_dataframe()` output matches the original, including all metadata
+    (regime / state / action names, available targets, period and subject
+    counts).
+    """
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
     result = model.simulate(
@@ -504,12 +512,14 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
         period_to_regime_to_V_arr=None,
     )
 
-    # Pickle and unpickle
-    pickle_path = tmp_path / "result.pkl"
-    result.to_pickle(pickle_path)
-    loaded = SimulationResult.from_pickle(pickle_path)
+    # `save` releases device-pinned state including `self._regimes`, so any
+    # property derived from regimes must be captured before save runs.
+    expected_df = result.to_dataframe()
 
-    # Compare metadata attributes
+    save_dir = tmp_path / "result"
+    result.save(directory=save_dir)
+    loaded = SimulationResult.load(directory=save_dir)
+
     assert loaded.n_periods == result.n_periods
     assert loaded.n_subjects == result.n_subjects
     assert loaded.regime_names == result.regime_names
@@ -517,5 +527,212 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
     assert loaded.action_names == result.action_names
     assert loaded.available_targets == result.available_targets
 
-    # Compare DataFrames
-    assert_frame_equal(loaded.to_dataframe(), result.to_dataframe())
+    assert_frame_equal(loaded.to_dataframe(), expected_df)
+
+
+def test_loaded_result_computes_additional_targets_matching_original(tmp_path: Path):
+    """A loaded result computes `additional_targets` identically to the original.
+
+    The target DAG is evaluated against the regime's `flat_params`, so this is the
+    on-load consumer of the persisted parameters: `to_dataframe(additional_targets=
+    ["utility"])` on the reloaded result must match the original run.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+    expected_df = result.to_dataframe(additional_targets=["utility"])
+
+    save_dir = tmp_path / "result"
+    result.save(directory=save_dir, df_additional_targets=["utility"])
+    loaded = SimulationResult.load(directory=save_dir)
+
+    assert_frame_equal(loaded.to_dataframe(additional_targets=["utility"]), expected_df)
+
+
+def test_save_overwrites_existing_output_directory(tmp_path: Path):
+    """`save` into a directory that already holds a checkpoint overwrites it.
+
+    Re-running a pipeline writes into the same output directory, so `save` must
+    replace any `V_arr/` / `arrays/` checkpoint already present (and tolerate an
+    orphaned `.orbax-checkpoint-tmp` left by an interrupted prior save) rather than
+    failing. The reloaded result reflects the second run.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    initial_conditions = {
+        "wealth": jnp.array([20.0, 50.0]),
+        "age": jnp.array([18.0, 18.0]),
+        "regime_id": jnp.array([RegimeId.working_life] * 2),
+    }
+    save_dir = tmp_path / "result"
+
+    first = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+    )
+    first.save(directory=save_dir)
+
+    # An interrupted prior save can leave an orphaned orbax staging directory.
+    (save_dir / "arrays.orbax-checkpoint-tmp-stale").mkdir()
+
+    second = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+    )
+    expected_df = second.to_dataframe()
+    second.save(directory=save_dir)
+
+    loaded = SimulationResult.load(directory=save_dir)
+    assert_frame_equal(loaded.to_dataframe(), expected_df)
+
+
+def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
+    """`save(directory=...)` writes a `simulated_data.arrow` file at the directory root.
+
+    The file's contents read back via `pd.read_feather` must match
+    `result.to_dataframe(use_labels=True)` — i.e. the base columns only.
+    `save` defaults to `df_additional_targets=None` to keep the artifact
+    small; downstream consumers needing extra targets pass them
+    explicitly or work with the full `SimulationResult` after `load`.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+
+    # Capture the expected frame before save; `save` releases device-pinned
+    # state including `self._regimes`, so `to_dataframe` won't work post-save.
+    # Apples-to-apples: write the expected frame to feather using the same
+    # JAX-scalar coercion that `save` applies, then read both sides back.
+    # That isolates pyarrow's type-promotion / null-representation rules
+    # from the round-trip contract under test.
+    expected = result.to_dataframe(use_labels=True).map(_coerce_jax_scalar_for_arrow)
+
+    save_dir = tmp_path / "result"
+    result.save(directory=save_dir)
+    arrow_path = save_dir / "simulated_data.arrow"
+    assert arrow_path.is_file()
+
+    expected_path = tmp_path / "expected.arrow"
+    expected.to_feather(expected_path)
+
+    assert_frame_equal(pd.read_feather(arrow_path), pd.read_feather(expected_path))
+
+
+def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Path):
+    """`save` drops `self._regimes` after pickling metadata to free the JIT cache.
+
+    Each `Regime` holds the compiled `simulate_functions`
+    (`argmax_and_max_Q_over_a[period]`, `next_state`, `compute_regime_transition_probs`)
+    and `solve_functions` whose XLA workspaces stay pinned on the
+    device for as long as a Python reference exists. Once `save` has
+    serialised the regimes into `metadata.pkl`, the in-memory mapping
+    is replaced with an empty `MappingProxyType` so the next allocator
+    pressure (orbax's per-leaf D2H transfers) has a near-empty pool to
+    work with. Callers needing the regimes after `save` must reload
+    via `SimulationResult.load`.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+    assert len(result._regimes) > 0
+
+    result.save(directory=tmp_path / "result")
+
+    assert dict(result._regimes) == {}
+
+
+def test_save_clears_period_to_regime_to_V_arr_to_free_device_memory(tmp_path: Path):
+    """`save` drops the in-memory `period_to_regime_to_V_arr` after persisting it.
+
+    The grid V-array is the largest device-resident artifact at save time. The
+    orbax checkpoint that follows needs the device to be near-empty, so `save`
+    chunks the V-array to disk first, releases the references, and only then
+    invokes orbax. After `save` returns, `result.period_to_regime_to_V_arr`
+    is therefore an empty mapping; callers that still need the values must
+    reload from disk via `SimulationResult.load`.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+    assert len(result.period_to_regime_to_V_arr) > 0
+
+    result.save(directory=tmp_path / "result")
+
+    assert dict(result.period_to_regime_to_V_arr) == {}
+
+
+def test_collect_array_tree_leaf_sizes_orders_leaves_by_size_descending():
+    """Leaves come back biggest-first with shape, dtype, and byte count.
+
+    A `(100,)` float32 leaf at the same depth as a `(2,)` float32 leaf yields
+    two entries ordered by descending byte count: 400 then 8.
+    """
+    tree = {
+        "regime_A": {"big": jnp.zeros((100,), dtype=jnp.float32)},
+        "regime_B": {"small": jnp.zeros((2,), dtype=jnp.float32)},
+    }
+
+    leaves = _collect_array_tree_leaf_sizes(tree=tree)
+
+    assert [(leaf.shape, leaf.n_bytes) for leaf in leaves] == [((100,), 400), ((2,), 8)]
+
+
+def test_collect_array_tree_leaf_sizes_records_path_dtype_and_size():
+    """Each leaf carries the full dotted path, shape, dtype, and byte count.
+
+    For a `(3, 4)` int32 leaf nested under `"raw_results.r.7.actions.foo"`,
+    the helper records `n_bytes = 3 * 4 * 4`, `shape = (3, 4)`, and `dtype`
+    matching `jnp.int32`.
+    """
+    tree = {
+        "raw_results": {
+            "r": {"7": {"actions": {"foo": jnp.zeros((3, 4), dtype=jnp.int32)}}}
+        }
+    }
+
+    [leaf] = _collect_array_tree_leaf_sizes(tree=tree)
+
+    assert leaf.path == "raw_results.r.7.actions.foo"
+    assert leaf.shape == (3, 4)
+    assert leaf.dtype == jnp.int32
+    assert leaf.n_bytes == 3 * 4 * 4

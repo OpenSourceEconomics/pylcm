@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
+import jax
 import pandas as pd
 from beartype import beartype
 
@@ -34,6 +35,7 @@ from _lcm.regime_building.processing import Regime
 from _lcm.simulation.compile import compile_all_simulate_functions
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
+    pad_initial_conditions_to_multiple,
     validate_initial_conditions,
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
@@ -65,6 +67,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidValueFunctionError,
+    PyLCMError,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
@@ -108,20 +111,21 @@ class Model:
     """Parameters fixed at model initialization."""
 
     n_subjects: int | None = None
-    """Expected simulate batch size; enables AOT compile of simulate functions.
+    """Expected simulate population size; enables AOT compile of simulate functions.
 
     Dispatch by call shape:
 
     - `None`: purely lazy behaviour, no AOT.
     - First `simulate(...)` with `actual_n == n_subjects`: AOT-compiles all
-      simulate functions for that batch shape (blocks before solve runs)
-      and caches them.
-    - Subsequent `simulate(...)` with the same matching size: reuses the
-      cached compiled programs.
-    - `simulate(...)` with a mismatching size: warns once per size and falls
-      back to the runtime-traced path.
+      simulate functions for the chunk shape (`subject_batch_size`, clamped to
+      the population, or the whole population when unbatched), blocking before
+      solve runs, and caches them.
+    - Subsequent `simulate(...)` with the same population and chunk shape:
+      reuses the cached compiled programs.
+    - `simulate(...)` with a mismatching population size: warns once per size
+      and falls back to the runtime-traced path.
 
-    Param-shape contract: the cache is keyed only on `n_subjects`. The shapes
+    Param-shape contract: the cache is keyed on the chunk shape. The shapes
     and dtypes of `flat_params` leaves at the first matching call become
     part of the AOT signature; subsequent calls must keep them stable. MSM-
     style estimation (varying values, fixed shapes) is the target use case;
@@ -132,7 +136,8 @@ class Model:
     """Template for the model parameters."""
 
     _simulate_compile_cache: dict[int, MappingProxyType[RegimeName, Regime]]
-    """AOT-compiled `regimes` per matching `n_subjects`."""
+    """AOT-compiled `regimes` keyed by chunk shape (`subject_batch_size`, or the
+    full population when unbatched)."""
 
     _warned_n_subjects: set[int]
     """Mismatching `actual_n_subjects` already warned about (one warning each)."""
@@ -381,6 +386,7 @@ class Model:
         self,
         *,
         actual_n_subjects: int,
+        compile_batch_size: int,
         log: logging.Logger,
     ) -> MappingProxyType[RegimeName, Regime]:
         """Return regimes to use for simulate; AOT cache when matching.
@@ -391,8 +397,9 @@ class Model:
           (purely lazy path).
         - `actual_n_subjects != n_subjects`: warn once per mismatching size,
           return the original `regimes`.
-        - `actual_n_subjects == n_subjects`: return the cached compiled
-          regimes (caller must have populated the cache before calling).
+        - `actual_n_subjects == n_subjects`: return the regimes compiled for
+          `compile_batch_size` (the chunk shape; caller must have populated the
+          cache before calling).
         """
         if self.n_subjects is None:
             return self._regimes
@@ -410,7 +417,7 @@ class Model:
                 )
             return self._regimes
         with self._simulate_compile_lock:
-            return self._simulate_compile_cache[self.n_subjects]
+            return self._simulate_compile_cache[compile_batch_size]
 
     @beartype(conf=PARAMS_CONF)
     def simulate(
@@ -421,6 +428,7 @@ class Model:
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         log_level: LogLevel,
         seed: int | None = None,
+        subject_batch_size: int = 0,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -451,6 +459,14 @@ class Model:
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
             seed: Random seed.
+            subject_batch_size: How to partition the subject axis of the forward
+                simulation. Results are invariant to this knob — per-subject RNG
+                keys are drawn for the full population and sliced by global index.
+                - `0` (default): one pass over the whole (padded) population.
+                - `> 0`: chunk the subjects into passes of this size, bounding the
+                  per-period device workspace. Raises `PyLCMError` if any grid is
+                  distributed and more than one device is visible — there the
+                  subject axis is sharded across devices, not chunked.
             log_level: Verbosity, and the runtime-validation policy it implies.
                 Required — pick deliberately for the situation:
                 - `"off"` — silent; initial-condition, transition-probability,
@@ -488,6 +504,25 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
         )
+        # Align the subject axis to the block size the simulate path needs: the
+        # device count when grids are distributed (sharding must divide it
+        # evenly), or the chunk size when chunking on a single device (every chunk
+        # must match the AOT-compiled shape). The two are mutually exclusive —
+        # chunking under multi-device distribution is rejected in
+        # `_resolve_compile_batch_size`. Pad rows duplicate the last real subject
+        # and are trimmed inside `simulate`; a multiple of 1 (single pass) is a
+        # no-op.
+        if self._distributes_subjects() and len(jax.devices()) > 1:
+            alignment = len(jax.devices())
+        elif subject_batch_size > 0:
+            raw_n_subjects = len(next(iter(initial_conditions.values())))
+            alignment = min(subject_batch_size, raw_n_subjects)
+        else:
+            alignment = 1
+        initial_conditions, original_n_subjects = pad_initial_conditions_to_multiple(
+            initial_conditions=initial_conditions,
+            multiple=alignment,
+        )
         flat_params = self._process_params(params)
         if validation_enabled(log):
             try:
@@ -506,22 +541,19 @@ class Model:
             ages=self.ages,
             logger=log,
         )
-        actual_n_subjects = len(next(iter(initial_conditions.values())))
-        n_subjects = self.n_subjects
-        if n_subjects is not None and n_subjects == actual_n_subjects:
-            with self._simulate_compile_lock:
-                needs_compile = n_subjects not in self._simulate_compile_cache
-            if needs_compile:
-                compiled = compile_all_simulate_functions(
-                    regimes=self._regimes,
-                    flat_params=flat_params,
-                    ages=self.ages,
-                    n_subjects=n_subjects,
-                    max_compilation_workers=max_compilation_workers,
-                    logger=log,
-                )
-                with self._simulate_compile_lock:
-                    self._simulate_compile_cache[n_subjects] = compiled
+        # `actual_n_subjects` is the user's real population (matched against the
+        # declared `n_subjects`); `padded_n_subjects` is the leading axis the
+        # dispatch actually sees. They are equal unless distributed padding ran.
+        actual_n_subjects = original_n_subjects
+        padded_n_subjects = len(next(iter(initial_conditions.values())))
+        compile_batch_size = self._resolve_compile_batch_size(
+            subject_batch_size=subject_batch_size,
+            padded_n_subjects=padded_n_subjects,
+            actual_n_subjects=actual_n_subjects,
+            flat_params=flat_params,
+            max_compilation_workers=max_compilation_workers,
+            log=log,
+        )
         if period_to_regime_to_V_arr is None:
             period_to_regime_to_V_arr = self._solve_compiled(
                 flat_params=flat_params,
@@ -533,6 +565,7 @@ class Model:
             )
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
+            compile_batch_size=compile_batch_size,
             log=log,
         )
         result = simulate(
@@ -545,6 +578,8 @@ class Model:
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
+            subject_batch_size=compile_batch_size,
+            original_n_subjects=original_n_subjects,
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads
@@ -564,6 +599,88 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
             )
         return result
+
+    def _resolve_compile_batch_size(
+        self,
+        *,
+        subject_batch_size: int,
+        padded_n_subjects: int,
+        actual_n_subjects: int,
+        flat_params: FlatParams,
+        max_compilation_workers: int | None,
+        log: logging.Logger,
+    ) -> int:
+        """Map the `subject_batch_size` knob to a concrete chunk shape.
+
+        - `0` ⇒ the whole padded population (single pass).
+        - `> 0` ⇒ that size, clamped to the population. Forbidden under
+          multi-device distribution: subject-chunking is single-device, but the
+          value-function array is sharded across the devices and can't be
+          gathered onto one.
+
+        Also AOT-compiles (and caches) the simulate functions for the resolved
+        shape when `n_subjects` matches the population.
+        """
+        aot_active = (
+            self.n_subjects is not None and self.n_subjects == actual_n_subjects
+        )
+        distributed_multidevice = (
+            self._distributes_subjects() and len(jax.devices()) > 1
+        )
+        if subject_batch_size > 0:
+            if distributed_multidevice:
+                msg = (
+                    "subject_batch_size > 0 chunks the subject axis on a single "
+                    "device, which cannot be combined with distributed grids "
+                    f"across multiple devices ({len(jax.devices())} visible): the "
+                    "value-function array is sharded across them and cannot be "
+                    "gathered onto one. Use subject_batch_size=0 with distributed "
+                    "grids, or run on a single device."
+                )
+                raise PyLCMError(msg)
+            compile_batch_size = min(subject_batch_size, padded_n_subjects)
+        else:
+            compile_batch_size = padded_n_subjects
+        if aot_active:
+            self._ensure_simulate_compiled(
+                compile_batch_size=compile_batch_size,
+                flat_params=flat_params,
+                max_compilation_workers=max_compilation_workers,
+                log=log,
+            )
+        return compile_batch_size
+
+    def _distributes_subjects(self) -> bool:
+        """Return whether any grid in any regime is distributed across devices."""
+        return any(
+            grid.distributed
+            for regime in self._regimes.values()
+            for grid in regime.grids.values()
+        )
+
+    def _ensure_simulate_compiled(
+        self,
+        *,
+        compile_batch_size: int,
+        flat_params: FlatParams,
+        max_compilation_workers: int | None,
+        log: logging.Logger,
+    ) -> None:
+        """Compile and cache the simulate functions for a chunk shape."""
+        with self._simulate_compile_lock:
+            cached = compile_batch_size in self._simulate_compile_cache
+        if cached:
+            return
+        compiled = compile_all_simulate_functions(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            n_subjects=compile_batch_size,
+            max_compilation_workers=max_compilation_workers,
+            logger=log,
+        )
+        with self._simulate_compile_lock:
+            self._simulate_compile_cache[compile_batch_size] = compiled
 
     def _process_params(self, params: UserParams) -> FlatParams:
         """Broadcast, convert Series, dtype-cast, and validate user params.

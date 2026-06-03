@@ -281,9 +281,10 @@ result.raw_results  # dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
 result.flat_params  # FlatParams
 result.period_to_regime_to_V_arr  # dict[int, dict[RegimeName, FloatND]]
 
-# Serialization (requires cloudpickle)
-result.to_pickle("path/to/file.pkl")
-loaded = SimulationResult.from_pickle("path/to/file.pkl")
+# Persistence: writes `arrays/` (orbax), `metadata.pkl` (cloudpickle),
+# and `simulated_data.arrow` (feather of `to_dataframe`).
+result.save(directory="path/to/dir")
+loaded = SimulationResult.load(directory="path/to/dir")
 ```
 
 ### Initial Conditions Format

@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from types import MappingProxyType
 
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
@@ -27,17 +28,28 @@ def _create_flat_dataframe(
     metadata: ResultMetadata,
     additional_targets: list[str] | None,
     ages: AgeGrid,
+    subject_batch_size: int | None = None,
 ) -> pd.DataFrame:
-    """Create a single flat DataFrame from all regime results."""
+    """Create a single flat DataFrame from all regime results.
+
+    `regimes` may be empty (or missing entries) when `additional_targets`
+    is `None` — in that case only the regime *name* is needed and the
+    compiled `Regime` objects can be released ahead of the dataframe
+    construction to free their XLA program workspaces. When
+    `additional_targets` is set the matching regime objects must be
+    present.
+    """
     regime_dfs = [
         _process_regime(
-            regime=regimes[name],
+            regime_name=name,
+            regime=regimes.get(name),
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
             regime_params=flat_params[name],
             additional_targets=additional_targets,
             ages=ages,
+            subject_batch_size=subject_batch_size,
         )
         for name in metadata.regime_names
         if raw_results[name]
@@ -52,15 +64,23 @@ def _create_flat_dataframe(
 
 def _process_regime(
     *,
-    regime: Regime,
+    regime_name: RegimeName,
+    regime: Regime | None,
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
     regime_params: FlatRegimeParams,
     additional_targets: list[str] | None,
     ages: AgeGrid,
+    subject_batch_size: int | None = None,
 ) -> pd.DataFrame:
-    """Process results for a single regime into a DataFrame."""
+    """Process results for a single regime into a DataFrame.
+
+    `regime` is required only when `additional_targets` is set. With
+    `additional_targets=None`, only `regime_name` is read, so callers
+    may pass `regime=None` after dropping compiled `Regime` objects to
+    free device workspaces.
+    """
     period_dicts = [
         _extract_period_data(
             result=result,
@@ -71,14 +91,21 @@ def _process_regime(
         for period, result in regime_results.items()
     ]
 
-    data: dict[str, FloatND | IntND | BoolND | Sequence[str]] = _concatenate_and_filter(
-        period_dicts
-    )  # ty: ignore[invalid-assignment]
+    data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = dict(
+        _concatenate_and_filter(period_dicts)
+    )
 
     data["age"] = ages.values[data["period"]]  # noqa: PD011
-    data["regime_name"] = [regime.name] * len(data["period"])
+    data["regime_name"] = [regime_name] * len(data["period"])
 
     if additional_targets:
+        if regime is None:
+            msg = (
+                f"additional_targets requested for regime {regime_name!r} but "
+                "the Regime object is unavailable. Pass the regime when "
+                "constructing the dataframe."
+            )
+            raise ValueError(msg)
         targets_for_regime = _filter_targets_for_regime(
             targets=additional_targets, regime=regime
         )
@@ -88,6 +115,7 @@ def _process_regime(
                 targets=targets_for_regime,
                 regime=regime,
                 regime_params=regime_params,
+                subject_batch_size=subject_batch_size,
             )
             data.update(target_values)
 
@@ -122,16 +150,64 @@ def _extract_period_data(
 
 def _concatenate_and_filter(
     period_dicts: list[dict[str, FloatND | IntND | BoolND]],
-) -> dict[str, FloatND | IntND | BoolND]:
-    """Concatenate period data and filter to in-regime subjects."""
+) -> dict[str, np.ndarray]:
+    """Concatenate period data on host and filter to in-regime subjects.
+
+    Walks `period_dicts` one period at a time. For each leaf the
+    transfer goes through `_to_host`, which falls back to `np.asarray`
+    for single-device arrays and uses shard iteration for sharded ones
+    (each shard transfers its local data independently, side-stepping
+    the implicit XLA all-gather that a `np.asarray` on a sharded array
+    would trigger). After each period's leaves are on host, that
+    period's dict is cleared so the device buffers become
+    GC-eligible — peak device residency is one per-period dict's
+    leaves, regardless of how many periods the result spans.
+
+    The function mutates `period_dicts` (every dict is emptied on
+    completion). The caller treats the list as consumed.
+    """
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
-    concatenated = {
-        key: jnp.concatenate([d[key] for d in period_dicts]) for key in period_dicts[0]
-    }
+    mask_chunks: list[np.ndarray] = []
+    host_chunks: dict[str, list[np.ndarray]] = {key: [] for key in keys}
 
-    mask = concatenated["_in_regime"].astype(bool)
-    return {key: concatenated[key][mask] for key in keys}
+    for d in period_dicts:
+        mask_chunks.append(_to_host(d["_in_regime"]).astype(bool))
+        for key in keys:
+            host_chunks[key].append(_to_host(d[key]))
+        d.clear()
+
+    mask = np.concatenate(mask_chunks)
+    del mask_chunks
+
+    result: dict[str, np.ndarray] = {}
+    for key in keys:
+        column = np.concatenate(host_chunks.pop(key))
+        result[key] = column[mask]
+        del column
+
+    return result
+
+
+def _to_host(value: FloatND | IntND | BoolND) -> np.ndarray:
+    """Copy a jax.Array (or numpy array) to a host-resident `np.ndarray`.
+
+    For a value with at most one addressable shard the call collapses
+    to `np.asarray`, which on a single-device jax.Array is a direct
+    D2H copy. For a sharded value the loop walks
+    `addressable_shards`, pulls each shard's local data to host, and
+    drops it into the right slice of a host-allocated output via
+    `shard.index`. This skips XLA's implicit all-gather into a
+    contiguous device buffer — the contiguous reassembly happens in
+    host memory, where the multi-GiB output is cheap.
+    """
+    shards = getattr(value, "addressable_shards", ())
+    if len(shards) <= 1:
+        return np.asarray(value)
+    out = np.empty(value.shape, dtype=value.dtype)
+    for shard in shards:
+        out[shard.index] = np.asarray(shard.data)
+    return out
 
 
 def _assemble_dataframe(

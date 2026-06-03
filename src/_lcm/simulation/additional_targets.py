@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 import jax.numpy as jnp
+import numpy as np
 from dags import concatenate_functions
 
 from _lcm.engine import Regime
@@ -96,12 +97,21 @@ def _filter_targets_for_regime(
 
 def _compute_targets(
     *,
-    data: dict[str, FloatND | IntND | BoolND | Sequence[str]],
+    data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]],
     targets: list[str],
     regime: Regime,
     regime_params: FlatRegimeParams,
-) -> dict[str, FloatND | IntND | BoolND]:
-    """Compute additional targets for a regime."""
+    subject_batch_size: int | None = None,
+) -> dict[str, FloatND | IntND | BoolND | np.ndarray]:
+    """Compute additional targets for a regime.
+
+    The target DAG is vmapped over the regime's in-regime subject-period rows. When
+    `subject_batch_size` is a positive value below the row count, the rows are
+    processed in chunks and each chunk's outputs are pulled to host before the next
+    runs, so the fused-DAG device workspace is bounded by the chunk rather than the
+    full population. `0`/`None` (or any value at least the row count) evaluates in a
+    single pass. Values are identical to the single-pass evaluation.
+    """
     functions_pool = _build_functions_pool(regime)
     target_func = _create_target_function(
         functions_pool=functions_pool, targets=targets
@@ -112,9 +122,36 @@ def _compute_targets(
     flat_param_names = frozenset(all_params.keys())
     variables = _get_function_variables(func=target_func, param_names=flat_param_names)
     vectorized_func = vmap_1d(func=target_func, variables=variables)
-    kwargs = {k: jnp.asarray(v) for k, v in data.items() if k in variables}
-    result = vectorized_func(**all_params, **kwargs)
-    return {k: jnp.squeeze(v) for k, v in result.items()}
+
+    inputs = {k: v for k, v in data.items() if k in variables}
+    n_rows = len(data["period"])
+
+    if not subject_batch_size or subject_batch_size >= n_rows:
+        kwargs = {k: jnp.asarray(v) for k, v in inputs.items()}
+        result = vectorized_func(**all_params, **kwargs)
+        return {k: jnp.squeeze(v) for k, v in result.items()}
+
+    # Slice the (host-resident) inputs and move only one chunk to the device at a
+    # time. Squeeze the *concatenated* result, never a chunk — an uneven final
+    # chunk of one row would otherwise lose its row axis.
+    chunk_outputs: list[dict[str, np.ndarray]] = []
+    for start in range(0, n_rows, subject_batch_size):
+        stop = min(start + subject_batch_size, n_rows)
+        chunk_kwargs = {k: jnp.asarray(v[start:stop]) for k, v in inputs.items()}
+        chunk_result = vectorized_func(**all_params, **chunk_kwargs)
+        chunk_outputs.append({k: np.asarray(v) for k, v in chunk_result.items()})
+
+    result: dict[str, FloatND | IntND | BoolND | np.ndarray] = {}
+    for name in chunk_outputs[0]:
+        per_chunk = [out[name] for out in chunk_outputs]
+        # A target with no per-subject variable (a constant, e.g. a terminal-regime
+        # `utility`) yields the same scalar from every chunk; keep one as a 0-d
+        # jax.Array to match the single-pass dtype rather than concatenating scalars.
+        if per_chunk[0].ndim == 0:
+            result[name] = jnp.asarray(per_chunk[0])
+        else:
+            result[name] = np.squeeze(np.concatenate(per_chunk))
+    return result
 
 
 def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:

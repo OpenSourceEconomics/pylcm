@@ -75,6 +75,9 @@ def calculate_next_states(
     state_action_space: StateActionSpace,
     key: PRNGKeyND,
     subjects_in_regime: Bool1D,
+    n_subjects: int,
+    subject_slice: slice,
+    original_n_subjects: int | None = None,
 ) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
 
@@ -89,6 +92,13 @@ def calculate_next_states(
             every regime and state, indexed by regime name then state name.
         state_action_space: State-action space for subjects in this regime.
         key: JAX random key.
+        n_subjects: Total number of subjects the dispatch sees (the full
+            population, possibly padded for sharding). Keys are generated for
+            the full population so each subject's draw is independent of how
+            subjects are chunked.
+        subject_slice: Global-index slice of the subjects in this chunk.
+        original_n_subjects: Subject count before per-device padding; threaded to
+            keep real subjects' draws device-count-invariant.
 
     Returns:
         Updated carrier with next-period state values for subjects in this regime;
@@ -112,7 +122,9 @@ def calculate_next_states(
     key, stochastic_variables_keys = generate_simulation_keys(
         key=key,
         names=stochastic_next_function_names,
-        n_initial_states=subjects_in_regime.shape[0],
+        n_initial_states=n_subjects,
+        subject_slice=subject_slice,
+        original_n_subjects=original_n_subjects,
     )
 
     # Compute next states using regime's transition functions
@@ -164,6 +176,9 @@ def calculate_next_regime_membership(
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
     subjects_in_regime: Bool1D,
+    n_subjects: int,
+    subject_slice: slice,
+    original_n_subjects: int | None = None,
 ) -> Int1D:
     """Calculate next period regime membership for subjects in a regime.
 
@@ -182,6 +197,13 @@ def calculate_next_regime_membership(
         active_regimes_next_period: Tuple of active regime names in the next period.
         key: JAX random key.
         subjects_in_regime: Boolean array indicating if subject is in regime.
+        n_subjects: Total number of subjects the dispatch sees (the full
+            population, possibly padded for sharding). Keys are generated for
+            the full population so each subject's draw is independent of how
+            subjects are chunked.
+        subject_slice: Global-index slice of the subjects in this chunk.
+        original_n_subjects: Subject count before per-device padding; threaded to
+            keep real subjects' draws device-count-invariant.
 
 
     Returns:
@@ -210,7 +232,9 @@ def calculate_next_regime_membership(
     key, regime_transition_key = generate_simulation_keys(
         key=key,
         names=["regime_transition"],
-        n_initial_states=subjects_in_regime.shape[0],
+        n_initial_states=n_subjects,
+        subject_slice=subject_slice,
+        original_n_subjects=original_n_subjects,
     )
 
     next_regime_ids = draw_key_from_dict(

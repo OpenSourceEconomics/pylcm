@@ -5,6 +5,7 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 """
 
+import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import NoReturn, cast
@@ -19,7 +20,7 @@ from _lcm.dtypes import (
     safe_to_float_dtype,
     safe_to_int_dtype,
 )
-from _lcm.engine import Regime
+from _lcm.engine import PeriodRegimeSimulationData, Regime
 from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.Q_and_F import _get_feasibility
 from _lcm.typing import (
@@ -122,9 +123,9 @@ def build_initial_states(
         RegimeName, MappingProxyType[StateName, Float1D | Int1D]
     ] = {}
 
+    sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
     for regime_name, regime in regimes.items():
         regime_states: dict[StateName, Float1D | Int1D] = {}
-        sharding = subject_array_sharding(regime=regime, n_subjects=n_subjects)
         for state_name in regime.variables.state_names:
             grid = regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
@@ -160,31 +161,138 @@ def build_initial_states(
     return MappingProxyType(states_per_regime)
 
 
-def subject_array_sharding(
-    *, regime: Regime, n_subjects: int
-) -> jax.NamedSharding | None:
-    """Return the device sharding for a regime's per-subject simulation arrays.
+def pad_initial_conditions_to_multiple(
+    *,
+    initial_conditions: InitialConditions,
+    multiple: int,
+) -> tuple[InitialConditions, int]:
+    """Pad `initial_conditions`' leading axis up to the next multiple of `multiple`.
 
-    When any grid in the regime is distributed, the `n_subjects` subjects are
-    scattered across all available devices along a single mesh axis. When no
-    grid is distributed the arrays stay on the default device.
+    Two simulate paths need the subject axis aligned to a fixed block size:
+    distributed grids shard it across the visible devices (the shard must divide
+    the axis evenly), and single-device chunking runs fixed-size passes (every
+    chunk must match the AOT-compiled shape). Both reduce to padding the leading
+    axis up to the next multiple of one number — the device count or the chunk
+    size — adding at most `multiple - 1` rows. Callers pick any `n_subjects` and
+    pylcm aligns it internally, dropping the pad rows on the way out.
+
+    Pad rows duplicate the last real subject — they pass validation automatically
+    (the last real row already did) and produce identical simulate-side outputs
+    in their assigned regime, which are then trimmed in `simulate` before
+    constructing `SimulationResult`.
 
     Args:
-        regime: Internal regime instance.
-        n_subjects: Number of simulated subjects.
+        initial_conditions: Canonicalized initial conditions (state arrays keyed
+            by name, plus `regime_id`).
+        multiple: Block size the leading axis is padded up to a multiple of. A
+            `multiple` of `1` (single-device, single pass) — or any value that
+            already divides the count — is a no-op.
 
     Returns:
-        The `NamedSharding` over the device mesh, or `None` when no grid in
-        the regime is distributed.
+        Tuple of `(padded_initial_conditions, original_n_subjects)`. Returns the
+        original mapping unchanged and the existing length when `multiple` already
+        divides the count.
 
     """
-    if not any(grid.distributed for grid in regime.grids.values()):
+    original_n_subjects = len(next(iter(initial_conditions.values())))
+    if multiple <= 1 or original_n_subjects % multiple == 0:
+        return initial_conditions, original_n_subjects
+    pad = multiple - (original_n_subjects % multiple)
+    padded: dict[str, jax.Array] = {}
+    for name, arr in initial_conditions.items():
+        # Duplicate the last subject's row `pad` times along the leading axis.
+        pad_block = jnp.repeat(arr[-1:], pad, axis=0)
+        padded[name] = jnp.concatenate([arr, pad_block], axis=0)
+    return cast("InitialConditions", MappingProxyType(padded)), original_n_subjects
+
+
+def trim_pad_from_raw_results(
+    *,
+    raw_results: MappingProxyType[
+        RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
+    ],
+    original_n_subjects: int,
+) -> MappingProxyType[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]]:
+    """Slice every per-subject array in `raw_results` back to `original_n_subjects`.
+
+    The simulate dispatch runs against a padded leading axis (see
+    `pad_initial_conditions_to_multiple`); this drops the trailing pad rows so
+    `SimulationResult` and downstream consumers see only the user's real subjects.
+    No-op for any period whose leading-axis length already equals
+    `original_n_subjects`.
+
+    Args:
+        raw_results: Immutable nested mapping `regime_name -> period ->
+            PeriodRegimeSimulationData` produced by the simulate loop.
+        original_n_subjects: Subject count from the user's `initial_conditions`
+            before any pylcm-internal padding.
+
+    Returns:
+        New immutable mapping with the trailing pad rows removed from every
+        per-subject array (`V_arr`, `actions`, `states`, `in_regime`).
+
+    """
+    trimmed: dict[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]] = {}
+    for regime_name, periods in raw_results.items():
+        new_periods: dict[int, PeriodRegimeSimulationData] = {}
+        for period, data in periods.items():
+            if data.V_arr.shape[0] == original_n_subjects:
+                new_periods[period] = data
+                continue
+            new_periods[period] = dataclasses.replace(
+                data,
+                V_arr=data.V_arr[:original_n_subjects],
+                actions=MappingProxyType(
+                    {k: v[:original_n_subjects] for k, v in data.actions.items()}
+                ),
+                states=MappingProxyType(
+                    {k: v[:original_n_subjects] for k, v in data.states.items()}
+                ),
+                in_regime=data.in_regime[:original_n_subjects],
+            )
+        trimmed[regime_name] = MappingProxyType(new_periods)
+    return MappingProxyType(trimmed)
+
+
+def subject_array_sharding(
+    *, regimes: MappingProxyType[RegimeName, Regime], n_subjects: int
+) -> jax.NamedSharding | None:
+    """Return the model-wide device sharding for per-subject simulation arrays.
+
+    Subjects propagate across regime transitions inside the simulate loop, so
+    every regime's per-subject arrays must carry the same device sharding —
+    otherwise an AOT-compiled program lowered with one regime's sharding rejects
+    the inputs it receives from another. When any grid in any regime is
+    distributed, the `n_subjects` subjects are scattered across all available
+    devices along a single mesh axis. When no grid is distributed the arrays
+    stay on the default device.
+
+    Args:
+        regimes: Immutable mapping of regime names to internal regime instances.
+        n_subjects: Number of simulated subjects (per simulate dispatch — the
+            chunk size when subject-batching).
+
+    Returns:
+        The `NamedSharding` over the device mesh, or `None` when no grid in any
+        regime is distributed.
+
+    """
+    distributes_any = any(
+        grid.distributed
+        for regime in regimes.values()
+        for grid in regime.grids.values()
+    )
+    if not distributes_any:
         return None
     devices = jax.devices()
     if n_subjects % len(devices) != 0:
+        # Defensive: with distributed grids the dispatch runs one pass over the
+        # device-padded population, so this divides evenly. `Model.simulate`
+        # rejects subject_batch_size > 0 under multi-device distribution before
+        # reaching here, so a non-multiple count signals direct/internal misuse.
         raise PyLCMError(
-            "When using distributed grids, the number of subjects during the"
-            " simulation needs to be a multiple of the available devices. "
+            "When using distributed grids, the number of subjects per simulate "
+            "dispatch must be a multiple of the available devices. "
             f"Subjects: {n_subjects} Available Devices: {len(devices)}"
         )
     mesh = jax.make_mesh(

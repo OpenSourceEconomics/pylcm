@@ -36,8 +36,10 @@ dependencies = [
   "h5py>=3.12",
   "jax>=0.9",
   "jaxtyping>=0.3.10",
+  "orbax-checkpoint>=0.11",
   "pandas",
   "portion>=2.6",
+  "pyarrow",
 ]
 [[project.authors]]
 name = "Tim Mensinger"
@@ -100,7 +102,7 @@ tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "39ac270b21dbff97821ea20ea26b065f2e4d02e3" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "7af96820b1289c71adc70ea3d2d6320c646703d0" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }

@@ -245,10 +245,28 @@ def solve(
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
+    _drain_V_arr_shards(solution=solution)
+
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
     return MappingProxyType(solution)
+
+
+def _drain_V_arr_shards(
+    *,
+    solution: dict[int, MappingProxyType[RegimeName, FloatND]],
+) -> None:
+    """Block until every V_arr shard is materialised on its device.
+
+    Solve → simulate barrier: backward induction returns sharded V_arrs,
+    but the simulate phase must consume materialised arrays rather than
+    in-flight kernels. `jax.block_until_ready` walks the pytree of V_arrs
+    and blocks per-shard (no host transfer, no cross-device collective);
+    free when kernels are already done, the minimum necessary sync when
+    they are not. V stays sharded across devices.
+    """
+    jax.block_until_ready(solution)
 
 
 def _compile_all_functions(
@@ -654,14 +672,14 @@ def _log_per_period_stats(
     means: FloatND,
 ) -> None:
     """Emit one debug log line per (regime, period) with V min/max/mean."""
-    for row, v_min, v_max, v_mean in zip(
+    for row, V_min, V_max, V_mean in zip(
         diagnostic_rows, mins.tolist(), maxs.tolist(), means.tolist(), strict=True
     ):
         logger.debug(
             "  %s  age %s   V min=%.3g  max=%.3g  mean=%.3g",
             row.regime_name,
             row.age,
-            v_min,
-            v_max,
-            v_mean,
+            V_min,
+            V_max,
+            V_mean,
         )

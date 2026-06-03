@@ -44,8 +44,9 @@ ASV wiring notes:
   separate subprocess via `_gpu_mem` that does not go through ASV's
   `setup_cache` pipeline. They call `setup_for_gpu_measurement()`
   (rebuild fresh, no warm-up) then `time_execution()` to measure cold
-  peak memory. Both methods accept `cache=None` so the same callable
-  serves ASV (cache passed in) and the subprocess (cache omitted).
+  peak memory with autotuning disabled. Both methods accept `cache=None`
+  so the same callable serves ASV (cache passed in) and the subprocess
+  (cache omitted).
 """
 
 import gc
@@ -131,8 +132,8 @@ class AcaBaseline:
 
     def setup_for_gpu_measurement(self) -> None:
         # Called by the _gpu_mem subprocess; bypasses ASV's setup_cache
-        # pipeline so the subprocess can measure cold peak memory
-        # (build + compile + run, no warm-up).
+        # pipeline. The subprocess warms up (compiles) before sampling the
+        # measured run, so this only needs to build the model + params.
         self.model, self.model_params, self.initial_conditions = _build()
 
     def _simulate(self) -> None:
@@ -178,9 +179,9 @@ class AcaBaselineDebugLog(AcaBaseline):
         super().setup(cache)
 
     def setup_for_gpu_measurement(self) -> None:
-        # Mirror `setup`'s log_path setup so the cold-measurement
-        # subprocess exercises snapshot writing too. The tmpdir leaks
-        # when the subprocess exits — acceptable since /tmp is OS-cleaned.
+        # Mirror `setup`'s log_path setup so the measurement subprocess
+        # exercises snapshot writing too. The tmpdir leaks when the
+        # subprocess exits — acceptable since /tmp is OS-cleaned.
         self.log_path = tempfile.mkdtemp(prefix="aca-bench-debug-log-")
         super().setup_for_gpu_measurement()
 

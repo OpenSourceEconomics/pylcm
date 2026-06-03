@@ -7,6 +7,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.grids import coordinates as grid_coordinates
+from _lcm.grids.base import _fail_if_continuous_grid_distributed
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
@@ -84,6 +85,9 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        _fail_if_continuous_grid_distributed(
+            grid_kind="PiecewiseLinSpacedGrid", distributed=self.distributed
+        )
         _validate_piecewise_lin_spaced_grid(self.segments)
         _init_piecewise_grid_cache(self)
 
@@ -148,6 +152,9 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        _fail_if_continuous_grid_distributed(
+            grid_kind="PiecewiseLogSpacedGrid", distributed=self.distributed
+        )
         _validate_piecewise_log_spaced_grid(self.segments)
         _init_piecewise_grid_cache(self)
 

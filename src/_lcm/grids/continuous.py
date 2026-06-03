@@ -10,7 +10,11 @@ from beartype import beartype
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import coordinates as grid_coordinates
-from _lcm.grids.base import Grid, _fail_if_batch_size_combined_with_distributed
+from _lcm.grids.base import (
+    Grid,
+    _fail_if_batch_size_combined_with_distributed,
+    _fail_if_continuous_grid_distributed,
+)
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
 from lcm.typing import (
@@ -195,6 +199,9 @@ def _init_uniform_grid(
     `ScalarInt` types and only check value invariants (finiteness, ordering,
     positivity).
     """
+    _fail_if_continuous_grid_distributed(
+        grid_kind=type(grid).__name__, distributed=distributed
+    )
     _fail_if_batch_size_combined_with_distributed(
         batch_size=batch_size, distributed=distributed
     )
@@ -249,6 +256,9 @@ class IrregSpacedGrid(ContinuousGrid):
         batch_size: int = 0,
         distributed: bool = False,
     ) -> None:
+        _fail_if_continuous_grid_distributed(
+            grid_kind="IrregSpacedGrid", distributed=distributed
+        )
         _fail_if_batch_size_combined_with_distributed(
             batch_size=batch_size, distributed=distributed
         )

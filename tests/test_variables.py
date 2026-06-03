@@ -7,7 +7,7 @@ from types import MappingProxyType
 import pytest
 
 from _lcm.engine import VariableInfo, Variables
-from _lcm.grids import DiscreteGrid, LinSpacedGrid, LogSpacedGrid
+from _lcm.grids import DiscreteGrid, LinSpacedGrid
 from _lcm.variables import from_regime
 from tests.mock_regime import MockRegime
 
@@ -195,15 +195,14 @@ def test_from_regime_within_states_orders_by_batch_size(
     assert variables.discrete_state_names == ("first", "second", "third")
 
 
-def test_from_regime_distributed_states_sort_outermost_within_topology_group(
+def test_from_regime_distributed_discrete_state_sorts_outermost(
     binary_category_class,
 ) -> None:
-    """`distributed=True` states sort before all non-distributed states in their group.
+    """`distributed=True` discrete states sort before non-distributed discrete states.
 
     Sharded axes belong at the outermost productmap position so the cross-device
-    collective wraps the inner per-device kernel. Batch size is the secondary sort
-    key (0 still last) so batched, non-distributed states keep their relative
-    order.
+    collective wraps the inner per-device kernel. Sharding lives only on discrete
+    state grids — continuous-grid sharding is rejected at construction.
     """
 
     def next_state(x):
@@ -211,17 +210,21 @@ def test_from_regime_distributed_states_sort_outermost_within_topology_group(
 
     regime = MockRegime(
         states={
-            "aime": LinSpacedGrid(start=0, stop=1, n_points=4, batch_size=1),
-            "assets": LogSpacedGrid(start=1, stop=10, n_points=4, distributed=True),
-            "wage_res": LinSpacedGrid(start=0, stop=1, n_points=3),
+            "first_discrete": DiscreteGrid(binary_category_class),
+            "sharded_discrete": DiscreteGrid(binary_category_class, distributed=True),
+            "third_discrete": DiscreteGrid(binary_category_class),
         },
         state_transitions={
-            "aime": next_state,
-            "assets": next_state,
-            "wage_res": next_state,
+            "first_discrete": None,
+            "sharded_discrete": None,
+            "third_discrete": None,
         },
         actions={"a": DiscreteGrid(binary_category_class)},
         functions={"utility": lambda a: 0},  # noqa: ARG005
     )
     variables = from_regime(regime)
-    assert variables.continuous_state_names == ("assets", "aime", "wage_res")
+    assert variables.discrete_state_names == (
+        "sharded_discrete",
+        "first_discrete",
+        "third_discrete",
+    )

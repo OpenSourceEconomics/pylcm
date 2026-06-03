@@ -226,18 +226,25 @@ result.n_periods  # 50
 result.n_subjects  # 1000
 ```
 
-### Serialization
+### Persistence
 
-Save and load results (requires `cloudpickle`):
+`SimulationResult.save(directory=...)` writes three sibling artifacts:
+
+- `arrays/` — orbax checkpoint of every JAX array (per-shard, no gathering of sharded
+  V-arrays to a single device).
+- `metadata.pkl` — `cloudpickle` of regimes, ages, and the parameter scaffold.
+- `simulated_data.arrow` — a `feather` dump of `to_dataframe`, ready for downstream
+  consumers that want the flat per-subject view without re-instantiating a
+  `SimulationResult`.
 
 ```python
 # Save
-result.to_pickle("my_results.pkl")
+result.save(directory="my_results/")
 
-# Load
+# Load (reads arrays + metadata; the arrow file is for downstream consumers)
 from lcm import SimulationResult
 
-loaded = SimulationResult.from_pickle("my_results.pkl")
+loaded = SimulationResult.load(directory="my_results/")
 ```
 
 ### Raw data (advanced)

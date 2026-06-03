@@ -65,20 +65,23 @@ def test_analytical_solution(model_name, model_and_params):
         for period in sorted(period_to_regime_to_V_arr.keys())
     ]
 
-    v_arr_worker = np.stack(
+    V_arr_worker = np.stack(
         [
-            v_arr_dict["working_life"]
-            for v_arr_dict in period_to_regime_to_V_arr_list[:-1]
+            regime_to_V_arr["working_life"]
+            for regime_to_V_arr in period_to_regime_to_V_arr_list[:-1]
         ]
     )
 
-    v_arr_retired = np.stack(
-        [v_arr_dict["retirement"] for v_arr_dict in period_to_regime_to_V_arr_list[:-1]]
+    V_arr_retired = np.stack(
+        [
+            regime_to_V_arr["retirement"]
+            for regime_to_V_arr in period_to_regime_to_V_arr_list[:-1]
+        ]
     )
 
     numerical = {
-        "worker": v_arr_worker,
-        "retired": v_arr_retired,
+        "worker": V_arr_worker,
+        "retired": V_arr_retired,
     }
 
     # Load analytical solution

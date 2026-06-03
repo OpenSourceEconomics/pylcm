@@ -1,4 +1,5 @@
 import jax
+import pandas as pd
 import pytest
 from jax import numpy as jnp
 
@@ -9,6 +10,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
+from lcm.result import SimulationResult
 from lcm.typing import ScalarInt
 
 # Run these tests on the CPU for parallelization, does not work if pytest runs
@@ -162,6 +164,52 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
 
 
 @_skip_pytest_parallel
+def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
+    """Every V_arr shard is materialised before `solve()` returns.
+
+    Backward induction must drain the device-side compute graph before
+    the simulate phase consumes the V_arrs, so V stays sharded but no
+    pending kernels leak from solve to simulate.
+    """
+    period_to_regime_to_V_arr = correct_distributed_model.solve(
+        log_level="off",
+        params={"discount_factor": 0.95},
+    )
+    for regime_to_V_arr in period_to_regime_to_V_arr.values():
+        for V_arr in regime_to_V_arr.values():
+            for shard in V_arr.addressable_shards:
+                assert shard.data.is_ready()
+
+
+@_skip_pytest_parallel
+def test_simulate_returns_eagerly_materialised_V_arrs(correct_distributed_model):
+    """Every V_arr in the `SimulationResult` is materialised before `simulate()`
+    returns.
+
+    Forward simulation must drain its lazy compute graph before returning so
+    downstream consumers (`to_dataframe`, `save`, anything that reads from
+    `raw_results`) start with concrete arrays rather than pending kernels.
+    """
+    res = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(36, 0),
+            "wealth": jnp.full(36, 100.0),
+            "type1": jnp.full(36, 1),
+            "type2": jnp.full(36, 1),
+            "regime_id": jnp.zeros(36, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+    for regime_period_data in res._raw_results.values():
+        for period_data in regime_period_data.values():
+            for shard in period_data.V_arr.addressable_shards:
+                assert shard.data.is_ready()
+
+
+@_skip_pytest_parallel
 def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     """Test that distribution over multiple CPU's works for simulation."""
 
@@ -184,6 +232,49 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
     assert (
         res._raw_results["working_life"][2].states["wealth"].sharding.num_devices == 4
     )
+
+
+@_skip_pytest_parallel
+def test_save_load_preserves_sharding_and_dataframe(
+    correct_distributed_model, tmp_path
+):
+    """`save` / `load` round-trip preserves per-shard data and DataFrame output.
+
+    Arrays must travel through the on-disk format without an implicit
+    gather: each shard is written and restored on the same device mesh,
+    and the `to_dataframe()` projection is byte-identical to the
+    in-memory result.
+    """
+    res = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(36, 0),
+            "wealth": jnp.full(36, 100.0),
+            "type1": jnp.full(36, 1),
+            "type2": jnp.full(36, 1),
+            "regime_id": jnp.zeros(36, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+
+    save_dir = tmp_path / "result"
+    res.save(directory=save_dir)
+    loaded = SimulationResult.load(directory=save_dir)
+
+    for period, regime_dict in res._period_to_regime_to_V_arr.items():
+        for regime_name, V_arr in regime_dict.items():
+            loaded_V = loaded._period_to_regime_to_V_arr[period][regime_name]
+            assert loaded_V.sharding.num_devices == V_arr.sharding.num_devices
+            for original_shard, loaded_shard in zip(
+                V_arr.addressable_shards,
+                loaded_V.addressable_shards,
+                strict=True,
+            ):
+                assert loaded_shard.data.shape == original_shard.data.shape
+
+    pd.testing.assert_frame_equal(loaded.to_dataframe(), res.to_dataframe())
 
 
 @_skip_pytest_parallel
@@ -229,22 +320,59 @@ def test_solution_error_if_grid_product_exceeds_devices(wrong_distributed_model)
 
 
 @_skip_pytest_parallel
-def test_simulation_error_if_not_multiple(correct_distributed_model):
-    """Test that simulation throws error if too many subjects for num cpus."""
+def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_model):
+    """A subject count that is not a multiple of the device count simulates cleanly.
 
-    with pytest.raises(PyLCMError, match="multiple"):
+    Distributed grids shard subjects across devices, which needs the leading axis to
+    divide evenly. pylcm pads internally (duplicating the last subject up to the next
+    device multiple) and trims the pad rows back out, so 5 subjects on 4 devices
+    yields a result with exactly 5 subjects.
+    """
+    result = correct_distributed_model.simulate(
+        log_level="debug",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(5, 0),
+            "wealth": jnp.full(5, 100.0),
+            "type1": jnp.full(5, 1),
+            "type2": jnp.full(5, 1),
+            "regime_id": jnp.zeros(5, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+
+    assert result.n_subjects == 5
+    assert result.to_dataframe()["subject_id"].nunique() == 5
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("subject_batch_size", [3, 4])
+def test_distributed_simulation_rejects_subject_batching(
+    correct_distributed_model,
+    subject_batch_size,
+):
+    """Subject-batching is rejected under multi-device distribution.
+
+    The value-function array is sharded across the devices and cannot be gathered
+    onto one, so chunking the subject axis (a single-device operation) cannot be
+    combined with distributed grids on more than one device — rejected even at a
+    batch size that divides the device count (4), not only a non-multiple (3).
+    """
+    with pytest.raises(PyLCMError, match="distributed grids"):
         correct_distributed_model.simulate(
             log_level="debug",
             params={"discount_factor": 0.95},
             initial_conditions={
-                "age": jnp.full(5, 0),
-                "wealth": jnp.full(5, 100.0),
-                "type1": jnp.full(5, 1),
-                "type2": jnp.full(5, 1),
-                "regime_id": jnp.zeros(5, dtype=jnp.int32),
+                "age": jnp.full(8, 0),
+                "wealth": jnp.full(8, 100.0),
+                "type1": jnp.ones(8, dtype=jnp.int32),
+                "type2": jnp.ones(8, dtype=jnp.int32),
+                "regime_id": jnp.zeros(8, dtype=jnp.int32),
             },
             period_to_regime_to_V_arr=None,
             seed=12345,
+            subject_batch_size=subject_batch_size,
         )
 
 
@@ -321,19 +449,25 @@ def test_distributed_action_grid_raises_at_regime_init():
 
     Distribution is a property of state axes (which form the V-array shape).
     Marking an action grid as distributed has no consistent meaning under the
-    current sharding model, so it is rejected at construction time.
+    current sharding model, so it is rejected at construction time. (Continuous
+    action grids never reach this check — they are rejected at grid init by
+    `_fail_if_continuous_grid_distributed`.)
     """
+
+    @categorical(ordered=False)
+    class Choice:
+        a: ScalarInt
+        b: ScalarInt
+
     with pytest.raises(RegimeInitializationError, match="distributed=True"):
         UserRegime(
             functions={"utility": jnp.log},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             state_transitions={
-                "wealth": lambda wealth, consumption: wealth - consumption,
+                "wealth": lambda wealth, choice: wealth - choice,
             },
             actions={
-                "consumption": LinSpacedGrid(
-                    start=1, stop=50, n_points=10, distributed=True
-                ),
+                "choice": DiscreteGrid(Choice, distributed=True),
             },
             transition=lambda age: age,
         )
