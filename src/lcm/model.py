@@ -5,7 +5,6 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal
 
 import jax
 import pandas as pd
@@ -33,11 +32,10 @@ from _lcm.persistence.snapshots import (
     _save_solve_snapshot,
 )
 from _lcm.regime_building.processing import Regime
-from _lcm.simulation.autotune import pick_batch_size
 from _lcm.simulation.compile import compile_all_simulate_functions
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
-    pad_initial_conditions_for_devices,
+    pad_initial_conditions_to_multiple,
     validate_initial_conditions,
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
@@ -141,11 +139,6 @@ class Model:
     """AOT-compiled `regimes` keyed by chunk shape (`subject_batch_size`, or the
     full population when unbatched)."""
 
-    _simulate_peak_cache: dict[int, int]
-    """Max estimated peak device memory (bytes) per chunk shape, keyed as
-    `_simulate_compile_cache`. Populated alongside each AOT compile and read by
-    `subject_batch_size="auto"` to size the chunk without a separate pass."""
-
     _warned_n_subjects: set[int]
     """Mismatching `actual_n_subjects` already warned about (one warning each)."""
 
@@ -202,7 +195,6 @@ class Model:
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self.n_subjects = n_subjects
         self._simulate_compile_cache = {}
-        self._simulate_peak_cache = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
 
@@ -242,14 +234,12 @@ class Model:
 
         Drops `_simulate_compile_lock` (a `threading.Lock`, not pickleable),
         `_simulate_compile_cache` (compiled XLA programs that can't survive
-        a process boundary), `_simulate_peak_cache` (its memory-estimate
-        companion), and `_warned_n_subjects` (its companion set).
+        a process boundary), and `_warned_n_subjects` (its companion set).
         `__setstate__` restores all three to their fresh state.
         """
         state = self.__dict__.copy()
         state.pop("_simulate_compile_lock", None)
         state.pop("_simulate_compile_cache", None)
-        state.pop("_simulate_peak_cache", None)
         state.pop("_warned_n_subjects", None)
         return state
 
@@ -257,7 +247,6 @@ class Model:
         """Restore AOT compile state to a fresh empty cache."""
         self.__dict__.update(state)
         self._simulate_compile_cache = {}
-        self._simulate_peak_cache = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
 
@@ -439,7 +428,7 @@ class Model:
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         log_level: LogLevel,
         seed: int | None = None,
-        subject_batch_size: int | Literal["auto"] = 0,
+        subject_batch_size: int = 0,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -478,10 +467,6 @@ class Model:
                   per-period device workspace. Raises `PyLCMError` if any grid is
                   distributed and more than one device is visible — there the
                   subject axis is sharded across devices, not chunked.
-                - `"auto"`: size the chunk to the device via XLA `memory_analysis()`.
-                  Falls back to one pass when grids are distributed across multiple
-                  devices, on CPU / when the device exposes no memory limit, or when
-                  the model is not AOT-configured (`n_subjects` unset).
             log_level: Verbosity, and the runtime-validation policy it implies.
                 Required — pick deliberately for the situation:
                 - `"off"` — silent; initial-condition, transition-probability,
@@ -519,13 +504,24 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
         )
-        # With distributed grids, pad the leading axis up to a multiple of the
-        # device count so every per-subject array shards evenly. Pad rows
-        # duplicate the last real subject and are trimmed inside `simulate`. No-op
-        # when no grid is distributed or the count already divides.
-        initial_conditions, original_n_subjects = pad_initial_conditions_for_devices(
+        # Align the subject axis to the block size the simulate path needs: the
+        # device count when grids are distributed (sharding must divide it
+        # evenly), or the chunk size when chunking on a single device (every chunk
+        # must match the AOT-compiled shape). The two are mutually exclusive —
+        # chunking under multi-device distribution is rejected in
+        # `_resolve_compile_batch_size`. Pad rows duplicate the last real subject
+        # and are trimmed inside `simulate`; a multiple of 1 (single pass) is a
+        # no-op.
+        if self._distributes_subjects() and len(jax.devices()) > 1:
+            alignment = len(jax.devices())
+        elif subject_batch_size > 0:
+            raw_n_subjects = len(next(iter(initial_conditions.values())))
+            alignment = min(subject_batch_size, raw_n_subjects)
+        else:
+            alignment = 1
+        initial_conditions, original_n_subjects = pad_initial_conditions_to_multiple(
             initial_conditions=initial_conditions,
-            regimes=self._regimes,
+            multiple=alignment,
         )
         flat_params = self._process_params(params)
         if validation_enabled(log):
@@ -607,7 +603,7 @@ class Model:
     def _resolve_compile_batch_size(
         self,
         *,
-        subject_batch_size: int | Literal["auto"],
+        subject_batch_size: int,
         padded_n_subjects: int,
         actual_n_subjects: int,
         flat_params: FlatParams,
@@ -621,8 +617,6 @@ class Model:
           multi-device distribution: subject-chunking is single-device, but the
           value-function array is sharded across the devices and can't be
           gathered onto one.
-        - `"auto"` ⇒ sized to the device, or one pass when probing isn't
-          possible (not AOT-configured, multi-device-distributed, CPU).
 
         Also AOT-compiles (and caches) the simulate functions for the resolved
         shape when `n_subjects` matches the population.
@@ -633,27 +627,18 @@ class Model:
         distributed_multidevice = (
             self._distributes_subjects() and len(jax.devices()) > 1
         )
-        if isinstance(subject_batch_size, int) and subject_batch_size > 0:
+        if subject_batch_size > 0:
             if distributed_multidevice:
                 msg = (
                     "subject_batch_size > 0 chunks the subject axis on a single "
                     "device, which cannot be combined with distributed grids "
                     f"across multiple devices ({len(jax.devices())} visible): the "
                     "value-function array is sharded across them and cannot be "
-                    "gathered onto one. Use subject_batch_size=0 (or 'auto') with "
-                    "distributed grids, or run on a single device."
+                    "gathered onto one. Use subject_batch_size=0 with distributed "
+                    "grids, or run on a single device."
                 )
                 raise PyLCMError(msg)
             compile_batch_size = min(subject_batch_size, padded_n_subjects)
-        elif (
-            subject_batch_size == "auto" and aot_active and not distributed_multidevice
-        ):
-            compile_batch_size = self._autotune_compile_batch_size(
-                padded_n_subjects=padded_n_subjects,
-                flat_params=flat_params,
-                max_compilation_workers=max_compilation_workers,
-                log=log,
-            )
         else:
             compile_batch_size = padded_n_subjects
         if aot_active:
@@ -680,92 +665,22 @@ class Model:
         flat_params: FlatParams,
         max_compilation_workers: int | None,
         log: logging.Logger,
-    ) -> int:
-        """Compile and cache the simulate functions for a chunk shape.
-
-        Returns the max estimated peak device memory (bytes) across the
-        compiled programs at that shape — `0` when `memory_analysis()` is
-        unavailable (CPU backend).
-        """
+    ) -> None:
+        """Compile and cache the simulate functions for a chunk shape."""
         with self._simulate_compile_lock:
             cached = compile_batch_size in self._simulate_compile_cache
-        if not cached:
-            compiled, max_peak_bytes = compile_all_simulate_functions(
-                regimes=self._regimes,
-                flat_params=flat_params,
-                ages=self.ages,
-                n_subjects=compile_batch_size,
-                max_compilation_workers=max_compilation_workers,
-                logger=log,
-            )
-            with self._simulate_compile_lock:
-                self._simulate_compile_cache[compile_batch_size] = compiled
-                self._simulate_peak_cache[compile_batch_size] = max_peak_bytes
+        if cached:
+            return
+        compiled = compile_all_simulate_functions(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            n_subjects=compile_batch_size,
+            max_compilation_workers=max_compilation_workers,
+            logger=log,
+        )
         with self._simulate_compile_lock:
-            return self._simulate_peak_cache[compile_batch_size]
-
-    def _autotune_compile_batch_size(
-        self,
-        *,
-        padded_n_subjects: int,
-        flat_params: FlatParams,
-        max_compilation_workers: int | None,
-        log: logging.Logger,
-    ) -> int:
-        """Size the subject chunk to the device from compile-time estimates.
-
-        Compiles the one-pass program first (reused verbatim when it fits). If
-        its estimated peak exceeds the budget, compiles a half-population probe
-        and fits the affine peak-vs-batch line through the two points. Falls back
-        to one pass when the device exposes no memory limit or no estimate is
-        available.
-        """
-        budget_bytes = _device_budget_bytes()
-        if budget_bytes is None:
-            log.info(
-                "subject_batch_size='auto': device exposes no memory limit; "
-                "running one pass."
-            )
-            return padded_n_subjects
-        peak_full = self._ensure_simulate_compiled(
-            compile_batch_size=padded_n_subjects,
-            flat_params=flat_params,
-            max_compilation_workers=max_compilation_workers,
-            log=log,
-        )
-        if peak_full == 0:
-            log.info(
-                "subject_batch_size='auto': no memory estimate available; "
-                "running one pass."
-            )
-            return padded_n_subjects
-        if peak_full <= budget_bytes:
-            return padded_n_subjects
-        half = max(1, padded_n_subjects // 2)
-        if half >= padded_n_subjects:
-            # Population too small to split — the half-probe would coincide with
-            # the full one, leaving nothing to chunk.
-            return padded_n_subjects
-        peak_half = self._ensure_simulate_compiled(
-            compile_batch_size=half,
-            flat_params=flat_params,
-            max_compilation_workers=max_compilation_workers,
-            log=log,
-        )
-        chosen = pick_batch_size(
-            probes=((padded_n_subjects, peak_full), (half, peak_half)),
-            budget_bytes=budget_bytes,
-            max_batch=padded_n_subjects,
-        )
-        log.info(
-            "subject_batch_size='auto': one-pass peak %.2f GiB exceeds the "
-            "%.2f GiB budget; chunking %d subjects into batches of %d.",
-            peak_full / 1024**3,
-            budget_bytes / 1024**3,
-            padded_n_subjects,
-            chosen,
-        )
-        return chosen
+            self._simulate_compile_cache[compile_batch_size] = compiled
 
     def _process_params(self, params: UserParams) -> FlatParams:
         """Broadcast, convert Series, dtype-cast, and validate user params.
@@ -788,32 +703,3 @@ class Model:
         flat_params = cast_params_to_canonical_dtypes(flat_params)
         _validate_param_types(flat_params)
         return flat_params
-
-
-def _device_budget_bytes(*, margin: float = 0.2) -> int | None:
-    """Return the device memory the simulate working set may use, net of margin.
-
-    Reads the default device's `bytes_limit` and keeps `1 - margin` of it; the
-    margin absorbs allocator fragmentation and the static-estimate slack in
-    `memory_analysis()`. Returns `None` when no device or no limit is exposed
-    (e.g. the CPU backend), signalling `subject_batch_size="auto"` to fall back
-    to one pass.
-
-    Args:
-        margin: Fraction of `bytes_limit` held back as headroom.
-
-    Returns:
-        Usable bytes, or `None` when the device exposes no limit.
-
-    """
-    devices = jax.local_devices()
-    if not devices:
-        return None
-    try:
-        stats = devices[0].memory_stats()
-    except AttributeError, RuntimeError, ValueError:
-        return None
-    limit = (stats or {}).get("bytes_limit")
-    if not limit:
-        return None
-    return int(limit * (1.0 - margin))

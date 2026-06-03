@@ -87,15 +87,15 @@ def simulate(
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
         subject_batch_size: Concrete subject chunk size, already resolved by the
-            caller (`Model.simulate` maps the user-facing `0`/`>0`/`"auto"` knob to
+            caller (`Model.simulate` maps the user-facing `0`/`>0` knob to
             an int here). `0` or a value `>= n_subjects` simulates the whole
             population in a single pass; a smaller value chunks the subjects,
             bounding the per-period device workspace at the cost of re-running the
             period loop per chunk. Results are invariant to this knob: per-subject
             RNG keys are generated for the full population and sliced by global
             index.
-        original_n_subjects: Subject count before any per-device padding applied by
-            `pad_initial_conditions_for_devices`. When set, RNG keys are sized to it
+        original_n_subjects: Subject count before any subject-axis padding applied
+            by `pad_initial_conditions_to_multiple`. When set, RNG keys are sized to it
             and the trailing pad rows are trimmed from the results before they are
             returned. `None` means no padding was applied.
 
@@ -139,15 +139,11 @@ def simulate(
 
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
     for chunk_start in range(0, n_subjects, batch_size):
-        # Every chunk runs exactly `batch_size` subjects so they all match the
-        # program compiled for that shape. A short final chunk slides its window
-        # back to end at the population tail; the overlapped subjects were already
-        # simulated in the previous chunk and are recomputed bit-identically
-        # (per-subject keys depend only on the global index), so trimming the
-        # leading overlap leaves each subject represented once, in global order.
-        slice_start = min(chunk_start, n_subjects - batch_size)
-        n_overlap = chunk_start - slice_start
-        subject_slice = slice(slice_start, slice_start + batch_size)
+        # `n_subjects` is padded up to a multiple of `batch_size` upstream (see
+        # `pad_initial_conditions_to_multiple`), so every chunk — including the
+        # last — is exactly `batch_size` rows; the trailing pad rows are dropped
+        # once, after the loop, by `trim_pad_from_raw_results`.
+        subject_slice = slice(chunk_start, chunk_start + batch_size)
         chunk = _simulate_subject_chunk(
             initial_states={
                 name: array[subject_slice] for name, array in initial_states.items()
@@ -166,8 +162,6 @@ def simulate(
             seed=seed,
             logger=logger,
         )
-        if n_overlap:
-            chunk = _trim_chunk_subjects(chunk=chunk, n_overlap=n_overlap)
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
             # continues, so the chunk's device buffers become free for the next
@@ -199,8 +193,8 @@ def simulate(
         }
     )
 
-    # Drop any device-alignment pad rows so `SimulationResult` exposes only the
-    # user's real subjects (see `pad_initial_conditions_for_devices`). No-op when
+    # Drop any subject-axis alignment pad rows so `SimulationResult` exposes only
+    # the user's real subjects (see `pad_initial_conditions_to_multiple`). No-op when
     # `original_n_subjects` already matched the dispatched leading axis.
     if original_n_subjects is not None:
         wrapped_results = trim_pad_from_raw_results(
@@ -326,35 +320,6 @@ def _simulate_subject_chunk(
         log_period_timing(logger=logger, elapsed=elapsed)
 
     return simulation_results
-
-
-def _trim_chunk_subjects(
-    *,
-    chunk: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
-    n_overlap: int,
-) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
-    """Drop the first `n_overlap` subjects from every leaf of a chunk's results.
-
-    A short final chunk overlaps the tail of the previous chunk to stay the
-    compiled batch size. The overlapped subjects at the front duplicate that tail;
-    dropping them leaves each subject represented once, in global order.
-    """
-    return {
-        regime_name: {
-            period: PeriodRegimeSimulationData(
-                V_arr=data.V_arr[n_overlap:],
-                actions=MappingProxyType(
-                    {name: arr[n_overlap:] for name, arr in data.actions.items()}
-                ),
-                states=MappingProxyType(
-                    {name: arr[n_overlap:] for name, arr in data.states.items()}
-                ),
-                in_regime=data.in_regime[n_overlap:],
-            )
-            for period, data in period_data.items()
-        }
-        for regime_name, period_data in chunk.items()
-    }
 
 
 def _concatenate_chunk_results(
