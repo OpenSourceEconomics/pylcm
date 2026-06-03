@@ -16,11 +16,9 @@ from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
-    _get_stochastic_batch_sizes,
     _get_U_and_F,
     get_Q_and_F_terminal,
 )
-from _lcm.regime_building.V import VInterpolationInfo
 from lcm import AgeGrid
 from lcm.model import Model
 from lcm.regime import MarkovTransition
@@ -364,31 +362,3 @@ def test_incomplete_target_zero_prob_succeeds():
     for regime_to_V_arr in period_to_regime_to_V_arr.values():
         for V_arr in regime_to_V_arr.values():
             assert not jnp.any(jnp.isnan(V_arr))
-
-
-@categorical(ordered=True)
-class _StochBatchHealth:
-    bad: ScalarInt
-    good: ScalarInt
-
-
-def test_get_stochastic_batch_sizes_pulls_from_grid_attr():
-    """Helper returns the `batch_size` set on each stochastic variable's grid.
-
-    The Q-and-F productmap over stochastic shocks must honor the user-configured
-    `batch_size` on the underlying grid so a `batch_size>0` setting actually
-    chunks the inner shock-integration loop instead of being silently dropped.
-    """
-    health_grid = DiscreteGrid(_StochBatchHealth, batch_size=2)
-    info = VInterpolationInfo(
-        state_names=("health",),
-        discrete_states=MappingProxyType({"health": health_grid}),
-        continuous_states=MappingProxyType({}),
-    )
-
-    result = _get_stochastic_batch_sizes(
-        stochastic_variables=("next_health",),
-        v_interpolation_info=info,
-    )
-
-    assert result == {"next_health": 2}
