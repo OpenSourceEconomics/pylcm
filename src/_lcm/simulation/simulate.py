@@ -87,7 +87,7 @@ def simulate(
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
         subject_batch_size: Concrete subject chunk size, already resolved by the
-            caller (`Model.simulate` maps the user-facing `0`/`>0`/`"auto"` knob to
+            caller (`Model.simulate` maps the user-facing `0`/`>0` knob to
             an int here). `0` or a value `>= n_subjects` simulates the whole
             population in a single pass; a smaller value chunks the subjects,
             bounding the per-period device workspace at the cost of re-running the

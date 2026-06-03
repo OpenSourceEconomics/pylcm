@@ -2,15 +2,12 @@
 
 `subject_batch_size` controls how many subjects are pushed through the forward
 simulation at once. It is a pure memory knob: the `to_dataframe()` output must be
-identical whether subjects run in a single pass (`0`), in chunks (`> 0`), or at an
-autotuned size (`"auto"`). The model
+identical whether subjects run in a single pass (`0`) or in chunks (`> 0`). The model
 used here has both a categorical `MarkovTransition` (health) and a continuous shock
 process (income), so the per-subject RNG feeds both `jax.random.choice` and
 `draw_shock` — the case that would silently diverge if a subject's draws depended on
 the chunk it lands in.
 """
-
-from typing import Literal
 
 import jax
 import pandas as pd
@@ -37,7 +34,7 @@ _INITIAL_CONDITIONS = {
 
 def _simulate_df(
     *,
-    subject_batch_size: int | Literal["auto"],
+    subject_batch_size: int,
     additional_targets: list[str] | None = None,
     n_subjects: int | None = None,
 ) -> pd.DataFrame:
@@ -135,17 +132,6 @@ def test_aot_compiled_simulation_is_invariant_to_subject_batch_size(
     baseline = _simulate_df(subject_batch_size=0)
     batched = _simulate_df(subject_batch_size=subject_batch_size, n_subjects=7)
     _assert_columns_invariant(baseline, batched)
-
-
-def test_simulation_output_is_invariant_to_auto_subject_batch_size() -> None:
-    """`subject_batch_size="auto"` reproduces the single-pass `to_dataframe()`.
-
-    On the CPU backend the device exposes no memory limit, so autotuning resolves
-    to one pass; the output is identical to an explicit single pass.
-    """
-    baseline = _simulate_df(subject_batch_size=0)
-    auto = _simulate_df(subject_batch_size="auto", n_subjects=7)
-    _assert_columns_invariant(baseline, auto)
 
 
 def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
