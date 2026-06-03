@@ -101,7 +101,6 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
     error_messages.extend(_validate_state_transitions(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
-    error_messages.extend(_validate_stochastic_grid_batch_sizes(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -134,51 +133,6 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
         "to the corresponding state grid. Offending actions: "
         f"{offending_actions}.",
     ]
-
-
-def _validate_stochastic_grid_batch_sizes(regime: lcm.regime.Regime) -> list[str]:
-    """Reject `batch_size > 0` on a stochastic (Markov) state.
-
-    On a stochastic state, `batch_size` chunks the next-period shock-integration
-    map. Chunking there de-fuses the expected-continuation-value reduction from
-    the value-function interpolation, so the full joint next-stochastic
-    cross-product is materialized instead of streamed — peak memory grows with
-    the stochastic cardinality rather than shrinking. On a deterministic state
-    the same knob splays the state-action axis and only reduces memory, so the
-    guard fires only for stochastic transitions.
-    """
-    offending = [
-        name
-        for name, transition in regime.state_transitions.items()
-        if name in regime.states
-        and _is_stochastic_transition(transition)
-        and regime.states[name].batch_size > 0
-    ]
-    if not offending:
-        return []
-    return [
-        "States with a stochastic (Markov) transition cannot carry "
-        "`batch_size > 0`: a positive batch size chunks the next-period "
-        "shock-integration map, which de-fuses the expected-continuation-value "
-        "reduction and increases peak memory instead of reducing it. Set "
-        "`batch_size=0` on these states and reduce memory by sharding the "
-        "current axis (`distributed=True`) or splaying a continuous state "
-        f"instead. Offending stochastic states: {offending}.",
-    ]
-
-
-def _is_stochastic_transition(transition: object) -> bool:
-    """Return whether a `state_transitions` entry is stochastic (Markov).
-
-    A plain `MarkovTransition` is stochastic; a per-target dict is stochastic
-    when any of its targets is a `MarkovTransition` (the regime validator
-    elsewhere enforces that per-target stochasticity is all-or-none).
-    """
-    if isinstance(transition, MarkovTransition):
-        return True
-    if isinstance(transition, Mapping):
-        return any(isinstance(value, MarkovTransition) for value in transition.values())
-    return False
 
 
 def _validate_function_output_grid_indexing(
