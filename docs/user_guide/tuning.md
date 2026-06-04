@@ -158,9 +158,14 @@ pylcm sets two JAX defaults at import and leaves the rest to the environment.
 - `XLA_PYTHON_CLIENT_ALLOCATOR=default` — keep JAX's pooled BFC allocator. The
   `platform` setting (per-op `cudaMalloc`/`cudaFree`) is dramatically slower; avoid it.
 - `XLA_FLAGS=--xla_gpu_autotune_level=0` — disable kernel autotuning. Off gives a
-  deterministic, lower-memory compile; on searches for faster kernels but reserves the
-  largest candidate's scratch at compile time, which can re-trigger an OOM on a model
-  that barely fits. A speed-versus-headroom trade-off worth measuring per model.
+  deterministic, lower-memory compile; on searches for faster GEMM/conv kernels but
+  reserves the largest candidate's scratch at compile time, which can re-trigger an OOM
+  on a model that barely fits. **Default to off.** Backward induction is dominated by
+  gather/scatter and interpolation over the state-action grid, not dense GEMMs, so
+  autotuning has little to optimize: head-to-head, the per-period execution time is
+  unchanged on/off (matched to logging precision), while compile time and peak memory
+  both rise. Turn it on only if a measurement on your model shows an actual per-period
+  speedup.
 - `XLA_FLAGS=--xla_gpu_enable_command_buffer=` (empty, i.e. disabled) — turn off CUDA
   graphs. Command buffers batch kernel launches but consume non-pool driver memory;
   disabling them frees that headroom at the cost of per-launch overhead. That overhead
@@ -168,10 +173,13 @@ pylcm sets two JAX defaults at import and leaves the rest to the environment.
   pays more for disabling them.
 
 ```{warning}
-Sharding only helps if the devices are actually visible to the process. If your launcher
-grants N GPUs but `CUDA_VISIBLE_DEVICES` exposes only one, a model declared
-`distributed=True` silently runs on a single device — the classic "allocated 3, saw 1".
-Assert `jax.device_count()` matches what you sharded for at startup, before the solve.
+Sharding only helps if the devices are actually visible *and* exclusively yours. If your
+launcher grants N GPUs but `CUDA_VISIBLE_DEVICES` exposes only one, a model declared
+`distributed=True` silently runs on a single device — the classic "allocated 3, saw 1";
+assert `jax.device_count()` matches what you sharded for at startup, before the solve.
+And with `PREALLOCATE=true`, a GPU that another job or a leaked process is already using
+fails the pool preallocation outright — an `OUT_OF_MEMORY` on device 0 within seconds of
+startup (not mid-solve) — so request GPUs exclusively.
 ```
 
 **A stable multi-GPU configuration.** One environment that holds up at production scale,
@@ -184,9 +192,10 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
 export XLA_FLAGS='--xla_gpu_autotune_level=0 --xla_gpu_enable_command_buffer='
 ```
 
-Autotuning and command buffers are the two to revisit once a model fits comfortably:
-turning them back on can speed the solve, at the cost of the compile-time and non-pool
-memory they consume.
+Command buffers are the one knob to revisit once a model fits comfortably: re-enabling
+them amortizes launch overhead, at the cost of the non-pool driver memory they consume.
+Autotuning, by contrast, has not been observed to speed these gather-bound solves, so
+leaving it off costs nothing and keeps the memory headroom.
 
 ## Checklist
 
