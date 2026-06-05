@@ -320,7 +320,7 @@ def _remap_codes_per_regime(
     merged_categories: tuple[str, ...],
     ordered: bool,
     metadata: ResultMetadata,
-) -> pd.Categorical[str]:
+) -> pd.Categorical:
     """Map per-regime integer codes to labels, then build a merged Categorical.
 
     When regimes define different categories for the same variable, the raw integer
@@ -346,7 +346,9 @@ def _remap_codes_per_regime(
         mapped = int_codes.map(dict(enumerate(regime_cats))).to_numpy()
         labels[mask & valid] = mapped
 
-    return pd.Categorical(labels, categories=list(merged_categories), ordered=ordered)
+    return pd.Categorical(  # ty: ignore[invalid-return-type]
+        labels, categories=list(merged_categories), ordered=ordered
+    )
 
 
 def _codes_to_categorical(
@@ -354,7 +356,7 @@ def _codes_to_categorical(
     codes: pd.Series,
     categories: tuple[str, ...],
     ordered: bool = False,
-) -> pd.Categorical[str] | pd.Series:
+) -> pd.Categorical | pd.Series:
     """Convert integer codes to Categorical, handling NaN and out-of-range values.
 
     If values are outside the valid category range, returns the original series
@@ -373,13 +375,13 @@ def _codes_to_categorical(
 
     if has_nan.any():
         int_codes = [-1 if pd.isna(c) else int(c) for c in codes_array]
-        return pd.Categorical.from_codes(
+        return pd.Categorical.from_codes(  # ty: ignore[invalid-return-type]
             int_codes,
             categories=pd.Index(categories),
             ordered=ordered,
         )
 
-    return pd.Categorical.from_codes(
+    return pd.Categorical.from_codes(  # ty: ignore[invalid-return-type]
         codes_array.astype(int),
         categories=pd.Index(categories),
         ordered=ordered,
