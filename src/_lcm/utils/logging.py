@@ -1,10 +1,37 @@
 import logging
 from typing import Literal
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.typing import RegimeIdsToNames
-from lcm.typing import FloatND, Int1D, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, Int1D, ScalarBool, ScalarFloat, ScalarInt
+
+
+@jax.jit
+def v_array_has_nan(V_arr: FloatND) -> ScalarBool:
+    """Return whether `V_arr` contains any NaN, sharded-safe.
+
+    Putting the reduction inside `@jax.jit` keeps it in the XLA compiled graph, so
+    GSPMD partitions it across the V-array's devices (per-device `any` → all-reduce
+    → replicated scalar) and XLA fuses `isnan`+`any` into one pass. The
+    eager-dispatch alternative `jnp.any(jnp.isnan(V))` materialises a full V-shaped
+    bool intermediate and, on a sharded V-array, can fall back to gathering V onto
+    the default device before reducing — a path that exhausts device memory at
+    production grid sizes.
+    """
+    return jnp.any(jnp.isnan(V_arr))
+
+
+@jax.jit
+def v_array_has_inf(V_arr: FloatND) -> ScalarBool:
+    """Return whether `V_arr` contains any +/-Inf, sharded-safe.
+
+    Same compiled-graph rationale as `v_array_has_nan` — keeps the reduction
+    partitioned across the V-array's devices instead of falling through a gather.
+    """
+    return jnp.any(jnp.isinf(V_arr))
+
 
 type LogLevel = Literal["off", "warning", "progress", "debug"]
 
@@ -108,7 +135,9 @@ def log_nan_in_V(
     Self-gates on `validation_enabled(logger)` so callers don't have to wrap
     every call site — at `log_level="off"` the function returns immediately
     without touching `V_arr`, avoiding the implicit host transfer that
-    `if jnp.any(...)` would otherwise trigger.
+    `if jnp.any(...)` would otherwise trigger. The reductions go through
+    `v_array_has_nan` / `v_array_has_inf` so they stay sharded on distributed
+    V-arrays.
 
     Args:
         logger: Logger instance.
@@ -119,7 +148,7 @@ def log_nan_in_V(
     """
     if not validation_enabled(logger):
         return
-    if jnp.any(jnp.isnan(V_arr)) or jnp.any(jnp.isinf(V_arr)):
+    if bool(v_array_has_nan(V_arr)) or bool(v_array_has_inf(V_arr)):
         logger.warning("NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age)
 
 

@@ -68,13 +68,13 @@ Repository = "https://github.com/opensourceeconomics/pylcm"
 Tracker = "https://github.com/opensourceeconomics/pylcm/issues"
 
 [tool.hatch]
+version.source = "vcs"
+metadata.allow-direct-references = true
 build.hooks.vcs.version-file = "src/_lcm/version.py"
 build.targets.sdist.exclude = [ "tests" ]
 build.targets.sdist.only-packages = true
 build.targets.wheel.only-include = [ "src" ]
 build.targets.wheel.sources = [ "src" ]
-metadata.allow-direct-references = true
-version.source = "vcs"
 
 [tool.pixi.dependencies]
 asv = "*"
@@ -102,7 +102,7 @@ tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "7af96820b1289c71adc70ea3d2d6320c646703d0" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", branch = "main" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }
@@ -295,6 +295,8 @@ expand_tables = [
 ]
 
 [tool.ty]
+src.exclude = [ "docs/**/*.ipynb" ]
+src.include = [ "src/", "tests/" ]
 rules.ambiguous-protocol-member = "error"
 rules.deprecated = "error"
 rules.division-by-zero = "error"
@@ -306,14 +308,17 @@ rules.invalid-legacy-positional-parameter = "error"
 rules.redundant-cast = "error"
 rules.unused-awaitable = "error"
 rules.unused-ignore-comment = "error"
-src.exclude = [ "docs/**/*.ipynb" ]
-src.include = [ "src/", "tests/" ]
 
 [tool.pytest]
+ini_options.norecursedirs = [ "docs" ]
 ini_options.addopts = [
   "--pdbcls=pdbp:Pdb",
   "--dist",
   "loadfile",
+]
+ini_options.markers = [
+  "gpu: Tests that require a GPU (skipped on CPU-only machines)",
+  "illustrative: Tests are designed for illustrative purposes",
 ]
 ini_options.filterwarnings = [
   # JAX emits this UserWarning when user code asks for a dtype wider
@@ -324,11 +329,6 @@ ini_options.filterwarnings = [
   # `pytestmark` filter.
   "error:Explicitly requested dtype.*:UserWarning",
 ]
-ini_options.markers = [
-  "illustrative: Tests are designed for illustrative purposes",
-  "gpu: Tests that require a GPU (skipped on CPU-only machines)",
-]
-ini_options.norecursedirs = [ "docs" ]
 
 [tool.yamlfix]
 line_length = 88

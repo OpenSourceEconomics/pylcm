@@ -346,7 +346,9 @@ def _remap_codes_per_regime(
         mapped = int_codes.map(dict(enumerate(regime_cats))).to_numpy()
         labels[mask & valid] = mapped
 
-    return pd.Categorical(labels, categories=list(merged_categories), ordered=ordered)
+    return pd.Categorical(  # ty: ignore[invalid-return-type]
+        labels, categories=list(merged_categories), ordered=ordered
+    )
 
 
 def _codes_to_categorical(
@@ -373,13 +375,13 @@ def _codes_to_categorical(
 
     if has_nan.any():
         int_codes = [-1 if pd.isna(c) else int(c) for c in codes_array]
-        return pd.Categorical.from_codes(
+        return pd.Categorical.from_codes(  # ty: ignore[invalid-return-type]
             int_codes,
             categories=pd.Index(categories),
             ordered=ordered,
         )
 
-    return pd.Categorical.from_codes(
+    return pd.Categorical.from_codes(  # ty: ignore[invalid-return-type]
         codes_array.astype(int),
         categories=pd.Index(categories),
         ordered=ordered,

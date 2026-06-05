@@ -222,7 +222,9 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     )
 
 
-def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
+def _make_minimal_stochastic_model(
+    next_draw: Callable[..., FloatND], *, draw_batch_size: int = 0
+) -> Model:
     """Create a minimal stochastic model with a discrete state `draw`."""
 
     final_age = 1
@@ -259,7 +261,7 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
     working_regime = UserRegime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
-            "draw": DiscreteGrid(ShockStatus),
+            "draw": DiscreteGrid(ShockStatus, batch_size=draw_batch_size),
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         state_transitions={
@@ -353,6 +355,34 @@ def test_stochastic_weight_on_continuous_state_varies_continuation_by_wealth() -
     expected_per_wealth = discount_factor * jnp.clip(wealth_grid / 10.0, 0.1, 0.9)
     expected = jnp.broadcast_to(expected_per_wealth, extra_continuation_value.shape)
     assert_allclose(extra_continuation_value, expected, atol=1e-6)
+
+
+def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
+    """Splaying a stochastic state leaves the value function unchanged.
+
+    `batch_size` on a stochastic state splays the outer state-loop axis — a pure
+    memory knob that chunks the solve over that state's current values. It does
+    not touch the fused shock integration, so the solved value function matches
+    an unsplayed solve at every state grid point.
+    """
+    params = {
+        "discount_factor": 0.95,
+        "working_life": {"next_regime": {"final_age_alive": 1}},
+    }
+
+    def next_draw_5050() -> FloatND:
+        return jnp.array([0.5, 0.5])
+
+    V_unsplayed = _make_minimal_stochastic_model(next_draw_5050).solve(
+        log_level="debug", params=params
+    )
+    V_splayed = _make_minimal_stochastic_model(next_draw_5050, draw_batch_size=1).solve(
+        log_level="debug", params=params
+    )
+
+    assert_allclose(
+        V_splayed[0]["working_life"], V_unsplayed[0]["working_life"], atol=1e-10
+    )
 
 
 def test_stochastic_regime_transition_active_at_last_period_raises():

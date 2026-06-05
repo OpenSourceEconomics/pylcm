@@ -20,4 +20,5 @@ philosophy. The remaining pages cover individual topics in depth.
 - [Parameters](parameters.md)
 - [Working with DataFrames and Series](pandas_interop.md)
 - [Solving and Simulating](solving_and_simulating.md)
+- [Performance and Memory Tuning](tuning.md)
 - [Debugging](debugging.md)
