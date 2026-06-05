@@ -320,7 +320,7 @@ def _remap_codes_per_regime(
     merged_categories: tuple[str, ...],
     ordered: bool,
     metadata: ResultMetadata,
-) -> pd.Categorical:
+) -> pd.Categorical[str]:
     """Map per-regime integer codes to labels, then build a merged Categorical.
 
     When regimes define different categories for the same variable, the raw integer
@@ -354,7 +354,7 @@ def _codes_to_categorical(
     codes: pd.Series,
     categories: tuple[str, ...],
     ordered: bool = False,
-) -> pd.Categorical | pd.Series:
+) -> pd.Categorical[str] | pd.Series:
     """Convert integer codes to Categorical, handling NaN and out-of-range values.
 
     If values are outside the valid category range, returns the original series
