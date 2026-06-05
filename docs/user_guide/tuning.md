@@ -98,9 +98,14 @@ Two guards make this concrete — both raise `GridInitializationError` at constr
 - **You cannot splay and shard the same axis.** `batch_size > 0` together with
   `distributed=True` is rejected: each batch is its own dispatch, and on a sharded axis
   every dispatch carries a per-period cross-device collective, so batching multiplies
-  the synchronisation count and inverts the compute/communication ratio. On a sharded
-  axis keep `batch_size=0`; if its per-device chunk is still too big, add devices or
-  shard a second axis rather than batching it.
+  the synchronisation count (`×ceil(n_per_device / batch_size)`) and inverts the
+  compute/communication ratio. Keep `batch_size=0` on the sharded axis. When a device's
+  chunk is too big, shed memory by splaying a *different*, non-sharded axis — usually
+  the practical fix, since it needs no extra devices. If you do have spare devices,
+  shard the same axis across more of them: that helps precisely when a device holds more
+  than one block (`n_points / n_devices > 1`), the only case where splaying the sharded
+  axis would have helped anyway, and it shrinks the per-device chunk *and* adds
+  parallelism with no extra collectives.
 
 ```{note}
 Sharding divides the state space across devices, so it also *reduces* per-device memory — a

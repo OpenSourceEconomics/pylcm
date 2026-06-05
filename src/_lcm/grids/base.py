@@ -28,8 +28,8 @@ def _fail_if_batch_size_combined_with_distributed(
             "the synchronisation count by ceil(n_per_device / batch_size) "
             "and inverting the compute/communication ratio. Use "
             "`batch_size=0` (one kernel per period over the full "
-            "per-device chunk) and, if memory is tight, reduce the chunk "
-            "by adding devices or another distributed axis."
+            "per-device chunk). To shed memory, splay a different "
+            "(non-sharded) axis, or shard this axis across more devices."
         )
 
 
