@@ -78,11 +78,13 @@ def canonicalize_initial_conditions(
     discrete_state_names = {
         state_name
         for regime in regimes.values()
-        for state_name, grid in regime.grids.items()
+        for state_name, grid in regime.simulate_grids.items()
         if isinstance(grid, DiscreteGrid)
     }
     known_state_names = {
-        state_name for regime in regimes.values() for state_name in regime.grids
+        state_name
+        for regime in regimes.values()
+        for state_name in regime.simulate_grids
     }
     canonical: dict[str, FloatND | IntND] = {}
     for name, value in initial_conditions.items():
@@ -126,8 +128,8 @@ def build_initial_states(
     sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
     for regime_name, regime in regimes.items():
         regime_states: dict[StateName, Float1D | Int1D] = {}
-        for state_name in regime.variables.state_names:
-            grid = regime.grids[state_name]
+        for state_name in regime.simulate_state_names:
+            grid = regime.simulate_grids[state_name]
             if isinstance(grid, DiscreteGrid):
                 # Cast user-supplied discrete states to the grid's index
                 # dtype so every period's argmax sees a single signature
@@ -450,7 +452,7 @@ def _collect_state_name_errors(
     # All known states (union across all regimes) — used for the "extra" check
     all_known_states: set[str] = set(PSEUDO_STATE_NAMES)
     for regime in regimes.values():
-        all_known_states.update(regime.variables.state_names)
+        all_known_states.update(regime.simulate_state_names)
 
     # Required states — only from regimes subjects actually start in
     required_states: set[str] = set(PSEUDO_STATE_NAMES)
@@ -459,7 +461,7 @@ def _collect_state_name_errors(
         regime_ids_to_names[int(i)] for i in used_ids if int(i) in regime_ids_to_names
     } & valid_regime_names
     for regime_name in used_regime_names:
-        required_states.update(regimes[regime_name].variables.state_names)
+        required_states.update(regimes[regime_name].simulate_state_names)
 
     provided_states = set(initial_states.keys())
 

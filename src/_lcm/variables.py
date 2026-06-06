@@ -16,7 +16,7 @@ break by `batch_size` with 0 last (treated as +∞).
 
 import math
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from _lcm.engine import VariableInfo, Variables
 from _lcm.grids import ContinuousGrid, Grid
@@ -53,6 +53,20 @@ def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
         name: spec
         for name, spec in user_regime.states.items()
         if not isinstance(spec, SolveSimulateStatePair)
+    }
+
+
+def state_pair_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
+    """Return the simulate-phase grids of the regime's `SolveSimulateStatePair`s.
+
+    These states are absent from the solve grid (they are derived functions
+    there); their grid is the simulate-phase domain used to seed, classify, and
+    validate the carried-forward value.
+    """
+    return {
+        name: cast("Grid", spec.grid)
+        for name, spec in user_regime.states.items()
+        if isinstance(spec, SolveSimulateStatePair)
     }
 
 

@@ -416,6 +416,25 @@ class Regime:
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
 
+    simulate_only_grids: MappingProxyType[StateName, Grid] = MappingProxyType({})
+    """Grids for states that exist only in the simulate phase.
+
+    Populated for `SolveSimulateStatePair` states: the name is a derived
+    function in solve (absent from `grids` and `variables`) but a seeded,
+    evolved state in simulate, carried under this grid. Empty for every regime
+    without such a pair, so the simulate views below collapse to the solve sets.
+    """
+
+    @property
+    def simulate_state_names(self) -> tuple[StateName, ...]:
+        """State names carried in simulation: solve states plus state pairs."""
+        return (*self.variables.state_names, *self.simulate_only_grids)
+
+    @property
+    def simulate_grids(self) -> MappingProxyType[StateOrActionName, Grid]:
+        """Grids for every simulate-phase state and action (solve grids plus pairs)."""
+        return MappingProxyType({**self.grids, **self.simulate_only_grids})
+
     def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
         """Return the state-action space with runtime grids filled in.
 

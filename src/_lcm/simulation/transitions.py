@@ -131,8 +131,18 @@ def calculate_next_states(
     # ---------------------------------------------------------------------------------
     next_state_vmapped = regime.simulate_functions.next_state
 
+    # `SolveSimulateStatePair` states are carried (true) values that the decision's
+    # state-action space deliberately excludes. Feed them to the realized
+    # transition so it reads each pair as a leaf — the actual carried value —
+    # rather than the solve-phase imputation.
+    simulate_only_states = {
+        name: states_per_regime[regime.name][name]
+        for name in regime.simulate_only_grids
+    }
+
     states_with_next_prefix = next_state_vmapped(
         **state_action_space.states,
+        **simulate_only_states,
         **optimal_actions,
         **stochastic_variables_keys,
         period=jnp.int32(period),

@@ -160,10 +160,13 @@ def _collect_all_functions_for_template(
     ] = dict(user_regime.functions)
     result |= dict(user_regime.constraints)
     # A SolveSimulateStatePair contributes its `solve` variant as a derived
-    # function under the state's name, so its parameters surface in the template.
+    # function under the state's name (solve-phase imputation) and its
+    # `transition` under `next_<name>` (simulate-phase law of motion), so the
+    # parameters of both surface in the template.
     for name, spec in user_regime.states.items():
         if isinstance(spec, SolveSimulateStatePair):
             result[name] = cast("UserFunction", spec.solve)
+            result[f"next_{name}"] = cast("UserFunction", spec.transition)
     if callable(user_regime.transition):
         result |= collect_state_transitions(
             user_regime.states, user_regime.state_transitions

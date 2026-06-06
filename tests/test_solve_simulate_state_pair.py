@@ -189,10 +189,6 @@ def _simulate_pension(model: Model, *, pension_seed: list[float]) -> pd.DataFram
     return working.set_index(["subject_id", "period"]).sort_index()
 
 
-@pytest.mark.xfail(
-    reason="Milestone B: true pension wealth as a simulate state not yet wired.",
-    strict=True,
-)
 def test_simulate_seeds_and_evolves_true_pension_wealth() -> None:
     """Pension wealth is seeded from the initial conditions and evolved by its own
     transition each period (the true value, not the AIME imputation)."""
@@ -206,10 +202,6 @@ def test_simulate_seeds_and_evolves_true_pension_wealth() -> None:
     np.testing.assert_allclose(pension.loc[(1, 1)], 15.0 * 1.03)
 
 
-@pytest.mark.xfail(
-    reason="Milestone B: true pension wealth as a simulate state not yet wired.",
-    strict=True,
-)
 def test_simulate_decides_on_imputed_but_accounts_on_true_pension() -> None:
     """Two subjects with equal AIME impute equal pension, so they choose the same
     consumption; their realized next wealth differs by exactly the true-pension gap."""
