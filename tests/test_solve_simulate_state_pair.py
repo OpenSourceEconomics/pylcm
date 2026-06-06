@@ -12,6 +12,8 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import jax.numpy as jnp
+import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, Model, SolveSimulateStatePair, categorical
@@ -26,8 +28,8 @@ class RegimeId:
     dead: ScalarInt
 
 
-def _next_regime() -> ScalarInt:
-    return RegimeId.dead
+def _next_regime(age: float) -> ScalarInt:
+    return jnp.where(age < 62, RegimeId.working, RegimeId.dead)
 
 
 def _impute_pension_wealth(aime: float) -> float:
@@ -165,3 +167,57 @@ def test_state_pair_solves_like_plain_function() -> None:
     for period, regime_to_V in plain_solution.items():
         for regime_name, expected_V in regime_to_V.items():
             assert bool(jnp.allclose(pair_solution[period][regime_name], expected_V))
+
+
+def _simulate_pension(model: Model, *, pension_seed: list[float]) -> pd.DataFrame:
+    params = cast("dict[str, Any]", model.get_params_template())
+    params["working"]["H"]["discount_factor"] = 0.95
+    n = len(pension_seed)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        period_to_regime_to_V_arr=None,
+        initial_conditions={
+            "wealth": jnp.full(n, 50.0),
+            "aime": jnp.full(n, 20.0),
+            "pension_wealth": jnp.asarray(pension_seed),
+            "age": jnp.full(n, 60.0),
+            "regime_id": jnp.array([RegimeId.working] * n),
+        },
+    )
+    working = result.to_dataframe().query('regime_name == "working"')
+    return working.set_index(["subject_id", "period"]).sort_index()
+
+
+@pytest.mark.xfail(
+    reason="Milestone B: true pension wealth as a simulate state not yet wired.",
+    strict=True,
+)
+def test_simulate_seeds_and_evolves_true_pension_wealth() -> None:
+    """Pension wealth is seeded from the initial conditions and evolved by its own
+    transition each period (the true value, not the AIME imputation)."""
+    sim = _simulate_pension(
+        _build_pension_model(pension_as_pair=True), pension_seed=[5.0, 15.0]
+    )
+    pension = sim["pension_wealth"]
+    np.testing.assert_allclose(pension.loc[(0, 0)], 5.0)
+    np.testing.assert_allclose(pension.loc[(1, 0)], 15.0)
+    np.testing.assert_allclose(pension.loc[(0, 1)], 5.0 * 1.03)
+    np.testing.assert_allclose(pension.loc[(1, 1)], 15.0 * 1.03)
+
+
+@pytest.mark.xfail(
+    reason="Milestone B: true pension wealth as a simulate state not yet wired.",
+    strict=True,
+)
+def test_simulate_decides_on_imputed_but_accounts_on_true_pension() -> None:
+    """Two subjects with equal AIME impute equal pension, so they choose the same
+    consumption; their realized next wealth differs by exactly the true-pension gap."""
+    sim = _simulate_pension(
+        _build_pension_model(pension_as_pair=True), pension_seed=[5.0, 15.0]
+    )
+    consumption = sim["consumption"]
+    np.testing.assert_allclose(consumption.loc[(0, 0)], consumption.loc[(1, 0)])
+
+    wealth = sim["wealth"]
+    np.testing.assert_allclose(wealth.loc[(1, 1)] - wealth.loc[(0, 1)], 15.0 - 5.0)
