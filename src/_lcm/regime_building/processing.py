@@ -70,7 +70,11 @@ from _lcm.variables import from_regime, get_grids
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.transition import MarkovTransition, SolveSimulateFunctionPair
+from lcm.transition import (
+    MarkovTransition,
+    SolveSimulateFunctionPair,
+    SolveSimulateStatePair,
+)
 from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
 
@@ -525,6 +529,13 @@ def _process_regime_core(
             )
         else:
             resolved_functions[name] = func
+
+    # A SolveSimulateStatePair contributes its `solve` variant as a derived
+    # function under the state's name, so the function DAG computes the imputed
+    # value (e.g. pension wealth from AIME).
+    for name, spec in user_regime.states.items():
+        if isinstance(spec, SolveSimulateStatePair):
+            resolved_functions[name] = cast("UserFunction", spec.solve)
 
     all_functions: dict[str, UserFunction] = {
         **resolved_functions,

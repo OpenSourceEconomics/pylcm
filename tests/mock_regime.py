@@ -5,6 +5,7 @@ from _lcm.grids import Grid
 from _lcm.regime_building.transitions import collect_state_transitions
 from lcm.regime import Regime as UserRegime
 from lcm.regime import SolveSimulateFunctionPair, _default_H
+from lcm.transition import SolveSimulateStatePair
 from lcm.typing import UserFunction
 
 
@@ -72,6 +73,9 @@ class MockRegime(UserRegime):
                 )
             else:
                 result[name] = func
+        for name, spec in self.states.items():
+            if isinstance(spec, SolveSimulateStatePair):
+                result[name] = cast("UserFunction", spec.solve)
         result |= dict(self.constraints)
         if self.states:
             result |= collect_state_transitions(

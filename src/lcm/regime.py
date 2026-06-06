@@ -28,7 +28,11 @@ from _lcm.utils.containers import (
     ensure_containers_are_immutable,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.transition import MarkovTransition, SolveSimulateFunctionPair
+from lcm.transition import (
+    MarkovTransition,
+    SolveSimulateFunctionPair,
+    SolveSimulateStatePair,
+)
 from lcm.typing import FloatND, UserFunction
 
 
@@ -62,10 +66,15 @@ class Regime:
     active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active."""
 
-    states: Mapping[StateName, Grid] = field(
+    states: Mapping[StateName, Grid | SolveSimulateStatePair] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Mapping of state variable names to grid objects."""
+    """Mapping of state variable names to grids or phase-variant state pairs.
+
+    A plain `Grid` value is a state shared by both phases. A
+    `SolveSimulateStatePair` value is a derived function in the solve phase and a
+    seeded, evolved state in the simulate phase.
+    """
 
     state_transitions: Mapping[
         StateName,
@@ -147,7 +156,8 @@ class Regime:
         - The regime transition (`self.transition`, keyed as `"next_regime"`)
 
         For `SolveSimulateFunctionPair` entries, the variant matching `phase` is
-        used.
+        used. A `SolveSimulateStatePair` in `states` contributes its `solve`
+        variant as a derived function under the state's name.
 
         Args:
             phase: Which variant to use for `SolveSimulateFunctionPair` entries.
@@ -165,6 +175,9 @@ class Regime:
                 )
             else:
                 result[name] = func
+        for name, spec in self.states.items():
+            if isinstance(spec, SolveSimulateStatePair):
+                result[name] = cast("UserFunction", spec.solve)
         result |= dict(self.constraints)
         if callable(self.transition):
             result |= collect_state_transitions(self.states, self.state_transitions)

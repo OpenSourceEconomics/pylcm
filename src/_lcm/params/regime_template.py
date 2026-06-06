@@ -1,4 +1,5 @@
 from types import MappingProxyType
+from typing import cast
 
 import dags.tree as dt
 from dags.tree import tree_path_from_qname
@@ -10,6 +11,7 @@ from _lcm.typing import FunctionName, RegimeParamsTemplate, TransitionFunctionNa
 from lcm.exceptions import InvalidNameError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import SolveSimulateFunctionPair
+from lcm.transition import SolveSimulateStatePair
 from lcm.typing import UserFunction
 
 
@@ -157,6 +159,11 @@ def _collect_all_functions_for_template(
         UserFunction | SolveSimulateFunctionPair,
     ] = dict(user_regime.functions)
     result |= dict(user_regime.constraints)
+    # A SolveSimulateStatePair contributes its `solve` variant as a derived
+    # function under the state's name, so its parameters surface in the template.
+    for name, spec in user_regime.states.items():
+        if isinstance(spec, SolveSimulateStatePair):
+            result[name] = cast("UserFunction", spec.solve)
     if callable(user_regime.transition):
         result |= collect_state_transitions(
             user_regime.states, user_regime.state_transitions

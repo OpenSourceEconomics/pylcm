@@ -1,5 +1,6 @@
 import functools
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
@@ -7,7 +8,7 @@ from beartype import beartype
 from numpy.testing import assert_array_equal
 
 from _lcm.engine import Regime, VariableInfo, Variables
-from _lcm.grids import DiscreteGrid, LinSpacedGrid
+from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid
 from _lcm.regime_building.processing import (
     _rename_params_to_qnames,
     _wrap_regime_transition_probs,
@@ -148,7 +149,7 @@ def test_process_regimes():
     )
     assert_array_equal(
         working_regime.grids["wealth"].to_jax(),
-        working_life.states["wealth"].to_jax(),
+        cast("Grid", working_life.states["wealth"]).to_jax(),
     )
 
     assert (working_regime.grids["labor_supply"].to_jax() == jnp.array([0, 1])).all()

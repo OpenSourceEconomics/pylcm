@@ -20,10 +20,44 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
-from lcm.transition import MarkovTransition, SolveSimulateFunctionPair
+from lcm.transition import (
+    MarkovTransition,
+    SolveSimulateFunctionPair,
+    SolveSimulateStatePair,
+)
 
 if TYPE_CHECKING:
     import lcm.regime
+
+
+def _grid_mapping_errors(
+    attr_name: str, mapping: Mapping[str, object], *, allow_state_pair: bool
+) -> list[str]:
+    """Collect key/value type errors for a grid-valued mapping (states/actions)."""
+    allowed = Grid | SolveSimulateStatePair if allow_state_pair else Grid
+    suffix = " or SolveSimulateStatePair" if allow_state_pair else ""
+    error_messages: list[str] = []
+    for k, v in mapping.items():
+        if not isinstance(k, str):
+            error_messages.append(f"{attr_name} key {k!r} must be a string.")
+        if not isinstance(v, allowed):
+            error_messages.append(
+                f"{attr_name} value {v!r} must be an LCM grid{suffix}."
+            )
+    return error_messages
+
+
+def _callable_mapping_errors(
+    attr_name: str, mapping: Mapping[str, object]
+) -> list[str]:
+    """Collect key/value type errors for a callable-valued mapping."""
+    error_messages: list[str] = []
+    for k, v in mapping.items():
+        if not isinstance(k, str):
+            error_messages.append(f"{attr_name} key {k!r} must be a string.")
+        if not callable(v) and not isinstance(v, SolveSimulateFunctionPair):
+            error_messages.append(f"{attr_name} value {v!r} must be a callable.")
+    return error_messages
 
 
 def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
@@ -37,21 +71,12 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
     the standard `error_messages` aggregator.
 
     """
-    error_messages: list[str] = []
-
-    for attr_name in ("states", "actions"):
-        for k, v in getattr(regime, attr_name).items():
-            if not isinstance(k, str):
-                error_messages.append(f"{attr_name} key {k!r} must be a string.")
-            if not isinstance(v, Grid):
-                error_messages.append(f"{attr_name} value {v!r} must be an LCM grid.")
-
-    for attr_name in ("functions", "constraints"):
-        for k, v in getattr(regime, attr_name).items():
-            if not isinstance(k, str):
-                error_messages.append(f"{attr_name} key {k!r} must be a string.")
-            if not callable(v) and not isinstance(v, SolveSimulateFunctionPair):
-                error_messages.append(f"{attr_name} value {v!r} must be a callable.")
+    error_messages = [
+        *_grid_mapping_errors("states", regime.states, allow_state_pair=True),
+        *_grid_mapping_errors("actions", regime.actions, allow_state_pair=False),
+        *_callable_mapping_errors("functions", regime.functions),
+        *_callable_mapping_errors("constraints", regime.constraints),
+    ]
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -247,6 +272,28 @@ def _validate_active(active: ActiveFunction) -> list[str]:
     return []
 
 
+def _state_pair_names(regime: lcm.regime.Regime) -> set[StateName]:
+    """Return the names of states declared as `SolveSimulateStatePair`."""
+    return {
+        name
+        for name, grid in regime.states.items()
+        if isinstance(grid, SolveSimulateStatePair)
+    }
+
+
+def _state_pair_transition_errors(
+    regime: lcm.regime.Regime, state_pair_names: set[StateName]
+) -> list[str]:
+    """Error if a state pair is also listed in `state_transitions`."""
+    pairs_in_transitions = state_pair_names & set(regime.state_transitions)
+    if pairs_in_transitions:
+        return [
+            "SolveSimulateStatePair states carry their own transition and must "
+            f"not appear in state_transitions: {pairs_in_transitions}."
+        ]
+    return []
+
+
 def _validate_state_transitions(regime: lcm.regime.Regime) -> list[str]:
     """Validate state_transitions against states."""
     error_messages: list[str] = []
@@ -256,7 +303,13 @@ def _validate_state_transitions(regime: lcm.regime.Regime) -> list[str]:
         for name, grid in regime.states.items()
         if isinstance(grid, _ContinuousStochasticProcess)
     }
-    non_process_names: set[StateName] = set(regime.states) - process_names
+    # Phase-variant state pairs carry their own transition (`pair.transition`),
+    # so they neither belong in `state_transitions` nor count as missing one.
+    state_pair_names = _state_pair_names(regime)
+    error_messages.extend(_state_pair_transition_errors(regime, state_pair_names))
+    non_process_names: set[StateName] = (
+        set(regime.states) - process_names - state_pair_names
+    )
 
     # Keys not in states are allowed only with actual transitions (not None).
     # None means identity, which requires the state to exist in this regime.

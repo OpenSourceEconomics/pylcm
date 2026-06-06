@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING
 from _lcm.engine import VariableInfo, Variables
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.typing import StateOrActionName
+from _lcm.typing import StateName, StateOrActionName
+from lcm.transition import SolveSimulateStatePair
 
 if TYPE_CHECKING:
     from lcm.regime import Regime as UserRegime
@@ -39,6 +40,20 @@ def _bind_forward_refs(*, regime_cls: type) -> None:
     """
     global UserRegime  # noqa: PLW0603
     UserRegime = regime_cls  # ty: ignore[invalid-assignment]
+
+
+def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
+    """Return the regime's states that are plain grids, excluding state pairs.
+
+    A `SolveSimulateStatePair` in `states` is a derived function in the solve
+    phase, not a grid dimension, so it is omitted from the solve-phase state
+    grids and variable info.
+    """
+    return {
+        name: spec
+        for name, spec in user_regime.states.items()
+        if not isinstance(spec, SolveSimulateStatePair)
+    }
 
 
 def from_regime(user_regime: UserRegime) -> Variables:
@@ -80,7 +95,7 @@ def get_grids(
 
     """
     variables = from_regime(user_regime)
-    raw_variables = dict(user_regime.states) | dict(user_regime.actions)
+    raw_variables = _grid_states(user_regime) | dict(user_regime.actions)
     return MappingProxyType({name: raw_variables[name] for name in variables})
 
 
@@ -88,7 +103,7 @@ def _raw_variable_info(
     user_regime: UserRegime,
 ) -> dict[StateOrActionName, VariableInfo]:
     """Derive `VariableInfo` for every state and action variable."""
-    variables = dict(user_regime.states) | dict(user_regime.actions)
+    variables = _grid_states(user_regime) | dict(user_regime.actions)
     info: dict[StateOrActionName, VariableInfo] = {}
     for name, spec in variables.items():
         is_state = name in user_regime.states
@@ -116,8 +131,10 @@ def _ordered_state_action_names(
 
     """
 
+    grid_states = _grid_states(user_regime)
+
     def state_sort_key(name: StateOrActionName) -> tuple[bool, float]:
-        grid = user_regime.states[name]
+        grid = grid_states[name]
         batch_size = grid.batch_size
         return (not grid.distributed, batch_size if batch_size != 0 else math.inf)
 
