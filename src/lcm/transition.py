@@ -1,4 +1,6 @@
-"""User-facing transition wrappers: `MarkovTransition`, `SolveSimulateFunctionPair`.
+"""User-facing transition wrappers.
+
+`MarkovTransition`, `SolveSimulateFunctionPair`, and `SolveSimulateStatePair`.
 
 A thin leaf module — class definitions only, with no dependency on `Regime`,
 the validators, or the regime-building code. Keeping these types here lets the
@@ -36,6 +38,34 @@ class SolveSimulateFunctionPair[S, T]:
     def __init__(self, *, solve: S, simulate: T) -> None:
         self.solve = solve
         self.simulate = simulate
+
+
+class SolveSimulateStatePair[S, G, T]:
+    """Container for a quantity that is a derived function in solve but a state in
+    simulate.
+
+    Place this in `Regime.states` to give a quantity two phase-specific roles:
+
+    - In the **solve** phase the name is a derived DAG function (`solve`): it is
+      computed from other states/actions and never becomes a grid dimension, so
+      the solve grid (and its cost) is unchanged.
+    - In the **simulate** phase the name is a genuine state: seeded from the
+      initial conditions on `grid` and carried forward each period via
+      `transition`. Simulate-phase functions read this carried-forward value
+      instead of the solve-phase imputation.
+
+    The canonical use is pension wealth: imputed from AIME during backward
+    induction, but seeded to its true value and evolved in simulation so the
+    realized budget reflects the actual carried-forward wealth.
+
+    """
+
+    __slots__ = ("grid", "solve", "transition")
+
+    def __init__(self, *, solve: S, grid: G, transition: T) -> None:
+        self.solve = solve
+        self.grid = grid
+        self.transition = transition
 
 
 @beartype(conf=REGIME_CONF)
