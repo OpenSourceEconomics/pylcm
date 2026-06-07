@@ -14,7 +14,14 @@ to take `g`).
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    SolveSimulateFunctionPair,
+    categorical,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
@@ -274,6 +281,82 @@ def test_constraint_indexing_function_output_by_state_raises():
             state_transitions={"pref_type": None},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             constraints={"feasibility": _constraint_indexing_function_output},
+            transition=_next_regime,
+            active=lambda age: age < 2,
+        )
+
+
+def _scale_solve(per_type_scale: FloatND) -> FloatND:
+    # Safe: consumes per_type_scale as a scalar, no `[pref_type]` indexing.
+    return per_type_scale
+
+
+def _scale_simulate(per_type_scale: FloatND) -> FloatND:
+    return per_type_scale * 2.0
+
+
+def test_function_pair_in_functions_does_not_crash_validation():
+    """A `SolveSimulateFunctionPair` entry in `functions` builds fine.
+
+    The indexing validator scans every regime function; a phase-specific
+    function pair is two callables and must be unwrapped, not handed to the
+    scanner whole.
+    """
+    alive = UserRegime(
+        functions={  # ty: ignore[invalid-argument-type]
+            "utility": _utility_consumes_scalar,
+            "per_type_scale": _per_type_scale_takes_pref_type,
+            "scaled": SolveSimulateFunctionPair(
+                solve=_scale_solve, simulate=_scale_simulate
+            ),
+        },
+        states={"pref_type": DiscreteGrid(PrefType)},
+        state_transitions={"pref_type": None},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
+        transition=_next_regime,
+        active=lambda age: age < 2,
+    )
+    dead = UserRegime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 2,
+    )
+    Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def _scale_solve_unsafe(
+    pref_type: DiscreteState,
+    per_type_scale: FloatND,
+) -> FloatND:
+    # Unsafe: indexes the per-cell-scalar output `per_type_scale` by pref_type.
+    return per_type_scale[pref_type]
+
+
+def test_function_pair_solve_variant_unsafe_indexing_raises():
+    """The validator scans both variants of a function pair, not just one.
+
+    An unsafe `func_output[grid]` pattern hidden in a pair's solve variant is
+    caught on construction, exactly as it would be in a plain function.
+    """
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"per_type_scale.*pref_type",
+    ):
+        UserRegime(
+            functions={  # ty: ignore[invalid-argument-type]
+                "utility": _utility_consumes_scalar,
+                "per_type_scale": _per_type_scale_takes_pref_type,
+                "scaled": SolveSimulateFunctionPair(
+                    solve=_scale_solve_unsafe, simulate=_scale_simulate
+                ),
+            },
+            states={"pref_type": DiscreteGrid(PrefType)},
+            state_transitions={"pref_type": None},
+            actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             transition=_next_regime,
             active=lambda age: age < 2,
         )

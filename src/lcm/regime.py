@@ -157,7 +157,9 @@ class Regime:
 
         For `SolveSimulateFunctionPair` entries, the variant matching `phase` is
         used. A `SolveSimulateStatePair` in `states` contributes its `solve`
-        variant as a derived function under the state's name.
+        variant as a derived function under the state's name and its
+        `transition` under `next_<name>` (the simulate-phase law of motion),
+        mirroring how ordinary state transitions are keyed.
 
         Args:
             phase: Which variant to use for `SolveSimulateFunctionPair` entries.
@@ -178,6 +180,7 @@ class Regime:
         for name, spec in self.states.items():
             if isinstance(spec, SolveSimulateStatePair):
                 result[name] = cast("UserFunction", spec.solve)
+                result[f"next_{name}"] = cast("UserFunction", spec.transition)
         result |= dict(self.constraints)
         if callable(self.transition):
             result |= collect_state_transitions(self.states, self.state_transitions)

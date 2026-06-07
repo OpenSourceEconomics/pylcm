@@ -124,6 +124,18 @@ def test_regime_accepts_state_pair_in_states() -> None:
     assert isinstance(regime.states["pension_wealth"], SolveSimulateStatePair)
 
 
+def test_get_all_functions_exposes_state_pair_transition() -> None:
+    """`get_all_functions` exposes a state pair's transition under `next_<name>`.
+
+    The params template lists the transition's parameters under `next_<name>`,
+    so Series-parameter conversion (which looks each template function up by
+    that name) requires the transition to be resolvable there as well.
+    """
+    regime = _build_pension_regime()
+    funcs = regime.get_all_functions()
+    assert funcs["next_pension_wealth"] is _evolve_pension_wealth
+
+
 def test_state_pair_in_state_transitions_raises() -> None:
     """A pair carries its own transition; listing it in `state_transitions` errors."""
     with pytest.raises(RegimeInitializationError, match="carry their own transition"):
@@ -213,3 +225,40 @@ def test_simulate_decides_on_imputed_but_accounts_on_true_pension() -> None:
 
     wealth = sim["wealth"]
     np.testing.assert_allclose(wealth.loc[(1, 1)] - wealth.loc[(0, 1)], 15.0 - 5.0)
+
+
+def test_simulate_aot_compiled_carries_state_pair() -> None:
+    """A state pair survives the AOT-compiled simulate path.
+
+    Setting `n_subjects` AOT-compiles every simulate program for that batch.
+    The compiled `next_state` program reads the pair's simulate-only state, so
+    its lower-args must seed that state — otherwise compilation fails before
+    the first period runs.
+    """
+    model = Model(
+        regimes={"working": _build_pension_regime(), "dead": _DEAD},
+        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        regime_id_class=RegimeId,
+        n_subjects=2,
+    )
+    params = cast("dict[str, Any]", model.get_params_template())
+    params["working"]["H"]["discount_factor"] = 0.95
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        period_to_regime_to_V_arr=None,
+        initial_conditions={
+            "wealth": jnp.full(2, 50.0),
+            "aime": jnp.full(2, 20.0),
+            "pension_wealth": jnp.asarray([5.0, 15.0]),
+            "age": jnp.full(2, 60.0),
+            "regime_id": jnp.array([RegimeId.working] * 2),
+        },
+    )
+    sim = (
+        result.to_dataframe()
+        .query('regime_name == "working"')
+        .set_index(["subject_id", "period"])
+        .sort_index()
+    )
+    np.testing.assert_allclose(sim["pension_wealth"].loc[(0, 1)], 5.0 * 1.03)

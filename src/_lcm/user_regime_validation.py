@@ -11,7 +11,7 @@ import ast
 import inspect
 import textwrap
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
 
@@ -197,18 +197,8 @@ def _validate_function_output_grid_indexing(
     # producing function does not take `grid`, its output shape is
     # whatever it computed (typically an array indexable by `grid`) and
     # the consumer pattern is correct.
-    function_inputs: dict[str, set[str]] = {}
-    for name, func in regime.functions.items():
-        try:
-            function_inputs[name] = set(inspect.signature(func).parameters)
-        except ValueError, TypeError:
-            function_inputs[name] = set()
-
-    consumers: list[tuple[str, Callable]] = []
-    consumers.extend(regime.functions.items())
-    consumers.extend(regime.constraints.items())
-    if callable(regime.transition):
-        consumers.append(("regime_transition", regime.transition))
+    function_inputs = _function_input_names(regime.functions)
+    consumers = _collect_indexing_consumers(regime)
 
     errors: list[str] = []
     for consumer_name, func in consumers:
@@ -231,6 +221,57 @@ def _validate_function_output_grid_indexing(
                 f"as input."
             )
     return errors
+
+
+def _function_input_names(
+    functions: Mapping[str, Callable | SolveSimulateFunctionPair],
+) -> dict[str, set[str]]:
+    """Return each regime function's input-parameter names.
+
+    A `SolveSimulateFunctionPair` contributes the union of both variants'
+    parameters; unintrospectable callables contribute the empty set.
+    """
+    result: dict[str, set[str]] = {}
+    for name, func in functions.items():
+        params: set[str] = set()
+        for variant in _function_variants(func):
+            try:
+                params |= set(inspect.signature(variant).parameters)
+            except ValueError, TypeError:
+                continue
+        result[name] = params
+    return result
+
+
+def _collect_indexing_consumers(
+    regime: lcm.regime.Regime,
+) -> list[tuple[str, Callable]]:
+    """Return `(name, callable)` pairs whose bodies are scanned for the clash.
+
+    Functions and constraints contribute every variant of a
+    `SolveSimulateFunctionPair`; the regime transition contributes itself.
+    """
+    consumers: list[tuple[str, Callable]] = []
+    for name, func in regime.functions.items():
+        consumers.extend((name, variant) for variant in _function_variants(func))
+    for name, constraint in regime.constraints.items():
+        consumers.extend((name, variant) for variant in _function_variants(constraint))
+    if callable(regime.transition):
+        consumers.append(("regime_transition", regime.transition))
+    return consumers
+
+
+def _function_variants(
+    func: Callable | SolveSimulateFunctionPair,
+) -> tuple[Callable, ...]:
+    """Return the callable variants of a regime-function entry.
+
+    A plain function is itself; a `SolveSimulateFunctionPair` yields its
+    `solve` and `simulate` callables so both phases are scanned.
+    """
+    if isinstance(func, SolveSimulateFunctionPair):
+        return (cast("Callable", func.solve), cast("Callable", func.simulate))
+    return (func,)
 
 
 def _find_function_output_grid_indexing(
