@@ -820,7 +820,10 @@ def _check_regime_feasibility(  # noqa: C901
     )
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
-    state_names = list(regime.solution.state_names)
+    # Simulate state set: a carried pair state is a leaf of the feasibility
+    # function, so the constraint is checked against the seeded true value,
+    # not the solve-phase imputation.
+    state_names = list(regime.simulation.state_names)
     needs_age = "age" in accepted
     needs_period = "period" in accepted
 

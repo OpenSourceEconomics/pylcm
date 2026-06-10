@@ -58,6 +58,13 @@ class SolveSimulateStatePair[S, G, T]:
     induction, but seeded to its true value and evolved in simulation so the
     realized budget reflects the actual carried-forward wealth.
 
+    In the simulate phase every published consumer — state transitions,
+    feasibility checks, `to_dataframe` additional targets — reads the carried
+    value; only the decision (the argmax over the solved policy and the
+    regime-transition probabilities) reads the imputation. To expose the
+    imputed value as a simulate output as well, declare the `solve` callable
+    under a second name in `Regime.functions`.
+
     """
 
     __slots__ = ("grid", "solve", "transition")

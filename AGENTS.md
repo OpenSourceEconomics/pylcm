@@ -46,6 +46,16 @@ automation. Python 3.14+ is required.
   from a user-facing `Regime`. Internal engine code threads this form. Inside boundary
   files that import both, alias the user form as
   `from lcm.regime import Regime as UserRegime`.
+- The canonical `Regime` carries only phase-invariant data plus two frozen phase
+  namespaces — every phase-dependent read names its phase in the access path:
+  - `regime.solution` (`SolutionPhase`): solve variables and grids (a
+    `SolveSimulateStatePair` contributes no axis; productmap order), compiled solve
+    function sets, `state_action_space()`.
+  - `regime.simulation` (`SimulationPhase`): carried variables (solve states plus pair
+    states, appended — not a productmap order), grids including each pair's domain,
+    `pair_state_names` / `pair_grids`, compiled simulate function sets. Its published
+    `functions` are pair-free (pairs are leaves fed with carried values); only the
+    decision functions keep the solve imputation.
 - `StateActionSpace`: Manages state-action combinations for solution/simulation
 - `PeriodRegimeSimulationData`: Raw simulation results for one period in one regime
 

@@ -25,7 +25,7 @@ from lcm import (
     SolveSimulateStatePair,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import InvalidInitialConditionsError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
 
@@ -520,3 +520,87 @@ def test_solve_V_axis_order_follows_canonical_state_order() -> None:
         if "working" in regime_to_V:
             # wealth has 10 points, aime 5; pension_wealth contributes no axis.
             assert regime_to_V["working"].shape == (10, 5)
+
+
+def _pension_double(pension_wealth: float) -> float:
+    return pension_wealth * 2.0
+
+
+def test_additional_targets_read_carried_pair_value() -> None:
+    """`to_dataframe(additional_targets=...)` evaluates on the carried value.
+
+    Simulate-phase consumers must see the pair as the agent's true carried
+    state, not the solve-phase imputation — only the decision (argmax over
+    the solved policy) reads the imputed value.
+    """
+    regime = _build_pension_regime()
+    regime = regime.replace(
+        functions={**regime.functions, "pension_double": _pension_double}
+    )
+    model = Model(
+        regimes={"working": regime, "dead": _DEAD},
+        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        regime_id_class=RegimeId,
+    )
+    params = cast("dict[str, Any]", model.get_params_template())
+    params["working"]["H"]["discount_factor"] = 0.95
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        period_to_regime_to_V_arr=None,
+        initial_conditions={
+            "wealth": jnp.full(1, 50.0),
+            "aime": jnp.full(1, 20.0),
+            "pension_wealth": jnp.asarray([5.0]),
+            "age": jnp.full(1, 60.0),
+            "regime_id": jnp.array([RegimeId.working]),
+        },
+    )
+    sim = (
+        result.to_dataframe(additional_targets=["pension_double"])
+        .query('regime_name == "working"')
+        .set_index(["subject_id", "period"])
+        .sort_index()
+    )
+    np.testing.assert_allclose(
+        float(cast("float", sim.loc[(0, 0), "pension_double"])), 2.0 * 5.0
+    )
+
+
+def _pension_leq_four(pension_wealth: float) -> bool:
+    return pension_wealth <= 4.0
+
+
+def test_initial_feasibility_checks_seeded_pair_value() -> None:
+    """A constraint on the pair is checked against the seeded carried value.
+
+    The solve-phase imputation may be feasible while the agent's true carried
+    value violates the constraint; the initial-conditions feasibility check
+    must catch that.
+    """
+    regime = _build_pension_regime()
+    regime = regime.replace(
+        constraints={**regime.constraints, "pension_cap": _pension_leq_four}
+    )
+    model = Model(
+        regimes={"working": regime, "dead": _DEAD},
+        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        regime_id_class=RegimeId,
+    )
+    params = cast("dict[str, Any]", model.get_params_template())
+    params["working"]["H"]["discount_factor"] = 0.95
+    # Imputed pension is aime * 0.1 = 2.0 (feasible); the carried value 5.0
+    # violates the cap and must be rejected.
+    with pytest.raises(InvalidInitialConditionsError):
+        model.simulate(
+            log_level="debug",
+            params=params,
+            period_to_regime_to_V_arr=None,
+            initial_conditions={
+                "wealth": jnp.full(1, 50.0),
+                "aime": jnp.full(1, 20.0),
+                "pension_wealth": jnp.asarray([5.0]),
+                "age": jnp.full(1, 60.0),
+                "regime_id": jnp.array([RegimeId.working]),
+            },
+        )

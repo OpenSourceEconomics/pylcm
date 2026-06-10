@@ -458,30 +458,33 @@ def _build_simulation_phase(
         enable_jit=enable_jit,
     )
 
-    # The realized next_state reads each `SolveSimulateStatePair` as its carried
-    # true value, not the solve-phase imputation. Dropping the pair's solve
-    # function turns the name into a leaf supplied by the simulator, and
+    # Every published simulate-phase consumer (next_state, the feasibility
+    # check, additional targets) reads each `SolveSimulateStatePair` as its
+    # carried true value, not the solve-phase imputation. Dropping the pair's
+    # solve function turns the name into a leaf supplied by the simulator, and
     # `core.transitions` (built from the pair-augmented nested transitions)
-    # carries each pair's `next_<name>` evolution. Without pairs the solve
-    # transitions are reused unchanged, leaving the function set identical.
+    # carries each pair's `next_<name>` evolution. Only the decision functions
+    # built above (Q_and_F / argmax / regime-transition probs) keep the
+    # imputation — the agent decides on the value the solved policy was
+    # computed for. Without pairs the solve sets are reused unchanged.
     pair_state_names = frozenset(
         name
         for name, spec in user_regime.states.items()
         if isinstance(spec, SolveSimulateStatePair)
     )
     if pair_state_names:
-        next_state_functions: EconFunctionsMapping = MappingProxyType(
+        simulate_functions: EconFunctionsMapping = MappingProxyType(
             {k: v for k, v in core.functions.items() if k not in pair_state_names}
         )
         next_state_transitions = core.transitions
         next_state_stochastic_names = core.stochastic_transition_names
     else:
-        next_state_functions = core.functions
+        simulate_functions = core.functions
         next_state_transitions = solve_transitions
         next_state_stochastic_names = solve_stochastic_transition_names
 
     next_state = _build_next_state_vmapped(
-        functions=next_state_functions,
+        functions=simulate_functions,
         transitions=next_state_transitions,
         stochastic_transition_names=next_state_stochastic_names,
         all_grids=all_grids,
@@ -495,7 +498,7 @@ def _build_simulation_phase(
         variables=simulate_variables_from_regime(user_regime),
         grids=MappingProxyType({**all_grids[regime_name], **pair_grids}),
         pair_state_names=frozenset(pair_grids),
-        functions=functions,
+        functions=simulate_functions,
         constraints=constraints,
         transitions=next_state_transitions,
         stochastic_transition_names=next_state_stochastic_names,
