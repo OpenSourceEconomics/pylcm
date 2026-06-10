@@ -280,6 +280,16 @@ def draw_key_from_dict(
     """
     regime_names = list(d)
     regime_transition_probs = jnp.array(list(d.values())).T
+    # A regime whose transition reads no per-subject state or action (e.g. its
+    # only state is a carried `SolveSimulateStatePair`, which the decision
+    # machinery replaces with its solve imputation) yields one unbatched
+    # distribution shared by every subject. Broadcast it across the subjects'
+    # keys so the per-subject draw below sees a probability vector per key.
+    if regime_transition_probs.ndim == 1:
+        regime_transition_probs = jnp.broadcast_to(
+            regime_transition_probs,
+            (keys.shape[0], regime_transition_probs.shape[0]),
+        )
     regime_ids = jnp.asarray(
         [regime_names_to_ids[regime_name] for regime_name in regime_names],
         dtype=jnp.int32,

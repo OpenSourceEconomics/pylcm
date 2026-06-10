@@ -10,12 +10,14 @@ from numpy.testing import assert_array_equal
 from _lcm.engine import Regime, VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid
 from _lcm.regime_building.processing import (
+    _augment_nested_transitions_with_state_pairs,
+    _extract_transitions_from_regime,
     _rename_params_to_qnames,
     _wrap_regime_transition_probs,
     process_regimes,
 )
 from _lcm.variables import from_regime, get_grids
-from lcm import categorical
+from lcm import SolveSimulateStatePair, categorical
 from lcm.ages import AgeGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
@@ -278,3 +280,132 @@ def test_wrap_regime_transition_probs_return_annotation_accepts_mapping():
     result = beartype(wrapped)()
 
     assert set(result) == {"working", "retired"}
+
+
+def _pair_handover_regime() -> UserRegime:
+    """A regime whose only handover to `retired` is its carried state pair."""
+
+    def impute_pension_wealth(wealth: float) -> float:
+        return wealth * 0.1
+
+    def evolve_pension_wealth(pension_wealth: float) -> float:
+        return pension_wealth * 1.03
+
+    def next_wealth(wealth: float) -> float:
+        return wealth
+
+    def next_regime(_age: float) -> ScalarInt:
+        return jnp.int32(0)
+
+    def utility(wealth: float) -> FloatND:
+        return jnp.asarray(wealth)
+
+    return UserRegime(
+        transition=next_regime,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
+            "pension_wealth": SolveSimulateStatePair(
+                solve=impute_pension_wealth,
+                grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
+                transition=evolve_pension_wealth,
+            ),
+        },
+        state_transitions={"wealth": next_wealth},
+        actions={},
+        functions={"utility": utility},
+    )
+
+
+def test_pair_transition_registered_for_pair_only_target():
+    """A target regime sharing only the pair still receives `next_<pair>`.
+
+    A regime can hand over nothing but its carried pair state (retirement
+    keeps pension wealth, drops the working states). The pair's simulate
+    transition must be registered for that target — otherwise the simulation
+    silently freezes the carried value on the crossing.
+    """
+    working = _pair_handover_regime()
+    states_per_regime = {
+        "working": {"wealth", "pension_wealth"},
+        "retired": {"pension_wealth"},
+        "dead": set(),
+    }
+    nested = _extract_transitions_from_regime(
+        user_regime=working, states_per_regime=states_per_regime
+    )
+    augmented = _augment_nested_transitions_with_state_pairs(
+        nested_transitions=nested,
+        user_regime=working,
+        states_per_regime=states_per_regime,
+    )
+    retired_entry = augmented.get("retired")
+    assert isinstance(retired_entry, dict)
+    assert "next_pension_wealth" in retired_entry
+
+
+def test_pair_state_counts_as_covered_for_reachability():
+    """A pair-carrying target stays reachable when per-target transitions exist.
+
+    With per-target transitions present, a target not explicitly named in any
+    per-target dict is reachable when simple transitions cover its state
+    needs. The pair supplies its own transition, so the pair state must count
+    as covered — requiring a `next_<pair>` entry among the simple transitions
+    would exclude every pair-carrying target.
+    """
+
+    def impute_pension_wealth(wealth: float) -> float:
+        return wealth * 0.1
+
+    def evolve_pension_wealth(pension_wealth: float) -> float:
+        return pension_wealth * 1.03
+
+    def next_wealth(wealth: float) -> float:
+        return wealth
+
+    def next_health_working(health: float) -> float:
+        return health
+
+    def next_regime(_age: float) -> ScalarInt:
+        return jnp.int32(0)
+
+    def utility(wealth: float) -> FloatND:
+        return jnp.asarray(wealth)
+
+    working = UserRegime(
+        transition=next_regime,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
+            "health": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+            "pension_wealth": SolveSimulateStatePair(
+                solve=impute_pension_wealth,
+                grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
+                transition=evolve_pension_wealth,
+            ),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "health": {"working": next_health_working},
+        },
+        actions={},
+        functions={"utility": utility},
+    )
+    # `retired` is not named in any per-target dict; its ordinary state need
+    # (wealth) is covered by a simple transition and the pair covers itself,
+    # so it must be reachable and receive next_wealth + next_pension_wealth.
+    states_per_regime = {
+        "working": {"wealth", "health", "pension_wealth"},
+        "retired": {"wealth", "pension_wealth"},
+        "dead": set(),
+    }
+    nested = _extract_transitions_from_regime(
+        user_regime=working, states_per_regime=states_per_regime
+    )
+    augmented = _augment_nested_transitions_with_state_pairs(
+        nested_transitions=nested,
+        user_regime=working,
+        states_per_regime=states_per_regime,
+    )
+    retired_entry = augmented.get("retired")
+    assert isinstance(retired_entry, dict)
+    assert "next_wealth" in retired_entry
+    assert "next_pension_wealth" in retired_entry

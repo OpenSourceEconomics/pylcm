@@ -262,3 +262,103 @@ def test_simulate_aot_compiled_carries_state_pair() -> None:
         .sort_index()
     )
     np.testing.assert_allclose(sim["pension_wealth"].loc[(0, 1)], 5.0 * 1.03)
+
+
+@categorical(ordered=False)
+class _ThreeRegimeId:
+    working: ScalarInt
+    retired: ScalarInt
+    dead: ScalarInt
+
+
+def _next_regime_from_working(age: float) -> ScalarInt:
+    return jnp.where(age < 62, _ThreeRegimeId.working, _ThreeRegimeId.retired)
+
+
+def _next_regime_from_retired(age: float) -> ScalarInt:
+    return jnp.where(age < 64, _ThreeRegimeId.retired, _ThreeRegimeId.dead)
+
+
+def _retired_imputed_pension_wealth() -> float:
+    return 12.0
+
+
+def _retired_utility(pension_wealth: float) -> FloatND:
+    return jnp.log(pension_wealth)
+
+
+_DEAD3 = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+
+
+def _build_handover_model() -> Model:
+    """Three regimes where retirement keeps only the carried pension wealth.
+
+    The working regime hands over nothing but the pair state to `retired`
+    (no ordinary state is shared), so the pair's transition is the only
+    state hand-over on the crossing.
+    """
+    working = UserRegime(
+        transition=_next_regime_from_working,
+        active=lambda age: age < 64,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
+            "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
+            "pension_wealth": SolveSimulateStatePair(
+                solve=_impute_pension_wealth,
+                grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
+                transition=_evolve_pension_wealth,
+            ),
+        },
+        state_transitions={"wealth": _next_wealth, "aime": _next_aime},
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        constraints={"feasible_consumption": _consumption_leq_wealth},
+        functions={"utility": _utility},
+    )
+    retired = UserRegime(
+        transition=_next_regime_from_retired,
+        active=lambda age: 64 <= age < 66,
+        states={
+            "pension_wealth": SolveSimulateStatePair(
+                solve=_retired_imputed_pension_wealth,
+                grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
+                transition=_evolve_pension_wealth,
+            ),
+        },
+        state_transitions={},
+        functions={"utility": _retired_utility},
+    )
+    return Model(
+        regimes={"working": working, "retired": retired, "dead": _DEAD3},
+        ages=AgeGrid(start=60, stop=66, step="2Y"),
+        regime_id_class=_ThreeRegimeId,
+    )
+
+
+def test_simulate_evolves_pair_across_pair_only_handover() -> None:
+    """The carried pair value is evolved, not frozen, on a pair-only crossing.
+
+    Retirement keeps only pension wealth; entering it, the working regime's
+    pair transition must apply, so the carried value grows by its factor
+    instead of being copied unchanged.
+    """
+    model = _build_handover_model()
+    params = cast("dict[str, Any]", model.get_params_template())
+    params["working"]["H"]["discount_factor"] = 0.95
+    params["retired"]["H"]["discount_factor"] = 0.95
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        period_to_regime_to_V_arr=None,
+        initial_conditions={
+            "wealth": jnp.full(1, 50.0),
+            "aime": jnp.full(1, 20.0),
+            "pension_wealth": jnp.asarray([10.0]),
+            "age": jnp.full(1, 60.0),
+            "regime_id": jnp.array([_ThreeRegimeId.working]),
+        },
+    )
+    sim = result.to_dataframe().set_index(["subject_id", "period"]).sort_index()
+    assert sim.loc[(0, 2), "regime_name"] == "retired"
+    np.testing.assert_allclose(
+        float(cast("float", sim.loc[(0, 2), "pension_wealth"])), 10.0 * 1.03**2
+    )

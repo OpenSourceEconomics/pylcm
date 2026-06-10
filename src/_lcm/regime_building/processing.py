@@ -748,6 +748,7 @@ def _extract_transitions_from_regime(
         per_target_transitions=per_target_transitions,
         simple_transitions=simple_transitions,
         states_per_regime=states_per_regime,
+        pair_state_names=_pair_state_names(user_regime),
     )
 
     for target_regime_name in reachable_targets:
@@ -784,13 +785,18 @@ def _augment_nested_transitions_with_state_pairs(
     The solve phase omits `SolveSimulateStatePair` transitions (the name is a
     derived function there). The simulate phase carries the pair as a true state
     and evolves it via `pair.transition`, registered as `next_<name>` for every
-    target regime that also declares the pair as a state. Returns the input
-    unchanged when the regime has no state pairs.
+    reachable target regime that also declares the pair as a state. Returns the
+    input unchanged when the regime has no state pairs.
 
-    A target only receives `next_<name>` if it already has a transition entry —
-    i.e. some other state transitions there. A pair coexisting with ordinary
-    states (pension wealth alongside wealth/AIME) always satisfies this.
+    A reachable target absent from the input (no ordinary state transitions
+    land there — e.g. retirement keeps only the carried pension wealth) gets a
+    fresh entry holding just the pair's `next_<name>`, so the carried value is
+    evolved rather than silently frozen on the crossing. Such targets stay
+    absent from the solve-phase transitions, which is correct: in solve the
+    pair is a derived function in the target regime, not a handed-over state.
     """
+    if user_regime.terminal:
+        return nested_transitions
     pair_transitions = {
         name: cast("UserFunction", spec.transition)
         for name, spec in user_regime.states.items()
@@ -817,6 +823,26 @@ def _augment_nested_transitions_with_state_pairs(
             if name in target_states:
                 merged[f"next_{name}"] = func
         augmented[key] = merged
+
+    simple_transitions, per_target_transitions = _classify_transitions(
+        collect_state_transitions(user_regime.states, user_regime.state_transitions)
+    )
+    reachable_targets = _get_reachable_targets(
+        per_target_transitions=per_target_transitions,
+        simple_transitions=simple_transitions,
+        states_per_regime=states_per_regime,
+        pair_state_names=set(pair_transitions),
+    )
+    for target_regime_name in reachable_targets:
+        if target_regime_name in augmented:
+            continue
+        carried = {
+            f"next_{name}": func
+            for name, func in pair_transitions.items()
+            if name in states_per_regime[target_regime_name]
+        }
+        if carried:
+            augmented[target_regime_name] = carried
     return augmented
 
 
@@ -827,13 +853,15 @@ def _get_reachable_targets(
     ],
     simple_transitions: dict[TransitionFunctionName, UserFunction],
     states_per_regime: Mapping[RegimeName, set[StateName]],
+    pair_state_names: set[StateName],
 ) -> set[RegimeName]:
     """Determine which target regimes need transition entries.
 
     When per-target transitions exist, start from the explicitly named targets
     and add any target whose state needs are fully covered by simple
-    (non-per-target) transitions. Without per-target transitions, all regimes
-    are reachable.
+    (non-per-target) transitions. A `SolveSimulateStatePair` state supplies its
+    own transition, so it never counts toward a target's needs. Without
+    per-target transitions, all regimes are reachable.
 
     """
     if not per_target_transitions:
@@ -844,10 +872,19 @@ def _get_reachable_targets(
         targets |= variants.keys()
     for target_name, target_states in states_per_regime.items():
         if target_name not in targets:
-            needed = {f"next_{s}" for s in target_states}
+            needed = {f"next_{s}" for s in target_states - pair_state_names}
             if needed and needed.issubset(simple_transitions):
                 targets.add(target_name)
     return targets
+
+
+def _pair_state_names(user_regime: UserRegime) -> set[StateName]:
+    """Return the names of the regime's `SolveSimulateStatePair` states."""
+    return {
+        name
+        for name, spec in user_regime.states.items()
+        if isinstance(spec, SolveSimulateStatePair)
+    }
 
 
 def _classify_transitions(
