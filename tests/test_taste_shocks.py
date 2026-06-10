@@ -19,7 +19,7 @@ pytest.importorskip("lcm.taste_shocks", reason="Taste shocks not yet implemented
 logsum = pytest.importorskip("_lcm.logsum", reason="Logsum kernel not yet implemented")
 
 from lcm.exceptions import ModelInitializationError  # noqa: E402
-from lcm.taste_shocks import (  # noqa: E402  # ty: ignore[unresolved-import]
+from lcm.taste_shocks import (  # noqa: E402
     ExtremeValueTasteShocks,
 )
 from tests.test_models import taste_shocks_toy  # noqa: E402

@@ -62,6 +62,7 @@ def test_simulated_work_frequency_converges_to_softmax_probability():
     result = model.simulate(
         params=params,
         initial_conditions={
+            "age": jnp.full(N_SUBJECTS, 40.0),
             "wealth": jnp.full(N_SUBJECTS, initial_wealth),
             "regime_id": jnp.full(
                 N_SUBJECTS, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
@@ -87,6 +88,7 @@ def test_scale_zero_simulation_is_deterministic():
     result = model.simulate(
         params=params,
         initial_conditions={
+            "age": jnp.full(500, 40.0),
             "wealth": jnp.full(500, 4.6),
             "regime_id": jnp.full(
                 500, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32

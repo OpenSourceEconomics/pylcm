@@ -208,6 +208,7 @@ def process_regimes(
             simulate_functions=simulate_functions,
             stochastic_state_transitions=stochastic_state_transitions,
             _base_state_action_space=state_action_spaces[regime_name],
+            has_taste_shocks=user_regime.taste_shocks is not None,
         )
 
     return ensure_containers_are_immutable(canonical_regimes)
@@ -315,6 +316,7 @@ def _build_solve_functions(
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
         enable_jit=enable_jit,
+        has_taste_shocks=user_regime.taste_shocks is not None,
     )
 
     return SolveFunctions(
@@ -437,6 +439,7 @@ def _build_simulate_functions(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         enable_jit=enable_jit,
+        has_taste_shocks=user_regime.taste_shocks is not None,
     )
 
     # State transitions are phase-independent (only utility/H have phase variants),
@@ -1455,6 +1458,7 @@ def _build_max_Q_over_a_per_period(
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     grids: MappingProxyType[StateOrActionName, Grid],
     enable_jit: bool,
+    has_taste_shocks: bool = False,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
     """Build max-Q-over-a closures for each period.
 
@@ -1474,6 +1478,8 @@ def _build_max_Q_over_a_per_period(
                 },
                 action_names=state_action_space.action_names,
                 state_names=state_action_space.state_names,
+                n_discrete_action_axes=len(state_action_space.discrete_actions),
+                has_taste_shocks=has_taste_shocks,
             )
             built[q_id] = jax.jit(func) if enable_jit else func
         result[period] = built[q_id]
@@ -1485,11 +1491,18 @@ def _build_argmax_and_max_Q_over_a_per_period(
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
+    has_taste_shocks: bool = False,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
     """Build argmax-and-max-Q-over-a closures for each period.
 
     Periods sharing the same Q_and_F object reuse a single compiled function.
+    With taste shocks, the per-subject Gumbel key is vmapped alongside the
+    simulated states.
     """
+    spacemapped_names = tuple(state_action_space.states)
+    if has_taste_shocks:
+        spacemapped_names = (*spacemapped_names, "taste_shock_key")
+
     built: dict[int, ArgmaxQOverAFunction] = {}
     result: dict[int, ArgmaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
@@ -1499,13 +1512,15 @@ def _build_argmax_and_max_Q_over_a_per_period(
                 Q_and_F=Q_and_F,
                 action_names=state_action_space.action_names,
                 state_names=state_action_space.state_names,
+                n_discrete_action_axes=len(state_action_space.discrete_actions),
+                has_taste_shocks=has_taste_shocks,
             )
             if enable_jit:
                 func = jax.jit(func)
             built[q_id] = simulation_spacemap(
                 func=func,
                 action_names=(),
-                state_names=tuple(state_action_space.states),
+                state_names=spacemapped_names,
             )
         result[period] = built[q_id]
     return MappingProxyType(result)

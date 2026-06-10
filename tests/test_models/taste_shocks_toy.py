@@ -19,7 +19,7 @@ import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.regime import Regime as UserRegime
-from lcm.taste_shocks import ExtremeValueTasteShocks  # ty: ignore[unresolved-import]
+from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -86,7 +86,7 @@ alive = UserRegime(
     },
     constraints={"budget_constraint": budget_constraint},
     functions={"utility": utility_alive},
-    taste_shocks=ExtremeValueTasteShocks(),  # ty: ignore[unknown-argument]
+    taste_shocks=ExtremeValueTasteShocks(),
     active=lambda age: age < 41,
 )
 

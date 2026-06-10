@@ -28,6 +28,7 @@ from _lcm.utils.containers import (
     ensure_containers_are_immutable,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import MarkovTransition, SolveSimulateFunctionPair
 from lcm.typing import FloatND, UserFunction
 
@@ -101,6 +102,15 @@ class Regime:
         default_factory=lambda: MappingProxyType({})
     )
     """Categorical grids for DAG function outputs not in states/actions."""
+
+    taste_shocks: ExtremeValueTasteShocks | None = None
+    """EV1 taste shocks on the regime's discrete-action combinations.
+
+    When set, the shock scale becomes the runtime param
+    `{"taste_shocks": {"scale": ...}}` and the solve aggregates discrete
+    actions via the smoothed expected maximum instead of the hard maximum.
+    Requires at least one discrete action.
+    """
 
     description: str = ""
     """Description of the regime."""

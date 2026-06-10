@@ -202,6 +202,16 @@ def validate_model_inputs(
         )
     error_messages.extend(_validate_all_variables_used(user_regimes))
 
+    for name, user_regime in user_regimes.items():
+        if user_regime.taste_shocks is not None and not any(
+            isinstance(grid, DiscreteGrid) for grid in user_regime.actions.values()
+        ):
+            error_messages.append(
+                f"Regime '{name}' declares taste_shocks but has no discrete "
+                f"action. EV1 taste shocks are drawn per discrete-action "
+                f"combination, so at least one discrete action is required."
+            )
+
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
