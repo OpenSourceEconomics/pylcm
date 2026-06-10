@@ -303,8 +303,14 @@ def _simulate_subject_chunk(
             states = new_states
             simulation_results[regime_name][period] = result
 
+            # Out-of-regime subjects carry placeholder entries (possibly -inf,
+            # when their state is infeasible under this regime's problem);
+            # validate only the subjects simulated in this regime.
             log_nan_in_V(
-                logger=logger, regime_name=regime_name, age=age, V_arr=result.V_arr
+                logger=logger,
+                regime_name=regime_name,
+                age=age,
+                V_arr=jnp.where(result.in_regime, result.V_arr, 0.0),
             )
 
         subject_regime_ids = new_subject_regime_ids
