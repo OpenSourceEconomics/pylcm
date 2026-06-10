@@ -11,6 +11,7 @@ from lcm import (
     MarkovTransition,
     Model,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
@@ -112,7 +113,7 @@ def test_discrete_state_different_categories_across_regimes():
             "health": DiscreteGrid(HealthRetirement),
         },
         state_transitions={
-            "health": None,
+            "health": fixed_transition("health"),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retirement},
@@ -335,7 +336,7 @@ def test_per_target_dict_transitions():
             "health": DiscreteGrid(HealthRetirement),
         },
         state_transitions={
-            "health": None,
+            "health": fixed_transition("health"),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retirement},
@@ -426,7 +427,7 @@ def test_discrete_state_same_count_different_names():
 
     retire = UserRegime(
         states={"status": DiscreteGrid(StatusB)},
-        state_transitions={"status": None},
+        state_transitions={"status": fixed_transition("status")},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={
             "utility": lambda consumption, status: jnp.log(consumption) + status
@@ -469,13 +470,13 @@ def test_mixed_ordered_flags_raises():
 
     a = UserRegime(
         states={"health": DiscreteGrid(HealthOrdered)},
-        state_transitions={"health": None},
+        state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
     b = UserRegime(
         states={"health": DiscreteGrid(HealthUnordered)},
-        state_transitions={"health": None},
+        state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
@@ -513,13 +514,13 @@ def test_both_ordered_same_categories_passes():
 
     a = UserRegime(
         states={"health": DiscreteGrid(HealthA)},
-        state_transitions={"health": None},
+        state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
     b = UserRegime(
         states={"health": DiscreteGrid(HealthB)},
-        state_transitions={"health": None},
+        state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
@@ -665,7 +666,10 @@ def test_incomplete_per_target_reachable_target():
             "health": DiscreteGrid(HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
-        state_transitions={"health": None, "wealth": _next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _next_wealth,
+        },
         actions={"consumption": _CONSUMPTION_GRID},
         constraints=_BORROWING_CONSTRAINT,
         functions={
@@ -741,7 +745,10 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
             "health": DiscreteGrid(HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
-        state_transitions={"health": None, "wealth": _next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _next_wealth,
+        },
         actions={"consumption": _CONSUMPTION_GRID},
         constraints=_BORROWING_CONSTRAINT,
         functions={
@@ -851,7 +858,10 @@ def test_incomplete_per_target_unreachable_target() -> None:
             "health": DiscreteGrid(HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
-        state_transitions={"health": None, "wealth": _next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _next_wealth,
+        },
         actions={"consumption": _CONSUMPTION_GRID},
         constraints=_BORROWING_CONSTRAINT,
         functions={

@@ -194,7 +194,7 @@ def test_simulate_debug_persists_snapshot_with_aot_compiled_regimes(tmp_path):
     """Debug snapshot saves successfully when `n_subjects` triggers AOT compile.
 
     AOT compilation produces `jax.stages.Compiled` callables on each
-    `Regime.simulate_functions`; their backing `LoadedExecutable`
+    `Regime.simulation`; their backing `LoadedExecutable`
     cannot be pickled. The snapshot path must strip those before pickling
     `result.pkl`.
     """

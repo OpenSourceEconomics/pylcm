@@ -5,7 +5,15 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from _lcm.regime_building.effective import EffectiveUserRegime
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -131,7 +139,7 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
     dead_states: dict = {}
     if with_pref_type:
         working_life_states["pref_type"] = DiscreteGrid(PrefType, batch_size=1)
-        working_life_state_transitions["pref_type"] = None
+        working_life_state_transitions["pref_type"] = fixed_transition("pref_type")
         dead_states["pref_type"] = DiscreteGrid(PrefType, batch_size=1)
 
     working_life_regime = UserRegime(
@@ -214,11 +222,13 @@ def test_custom_ces_aggregator_differs_from_default():
 
 
 def test_default_H_injected_for_non_terminal():
-    """The default H function should be in non-terminal Regime.functions."""
-    r = UserRegime(
-        functions={"utility": lambda: 0.0},
-        transition=lambda: {"a": 1.0},
-        active=lambda age: age < 1,
+    """The default H is injected on the non-terminal effective regime."""
+    r = EffectiveUserRegime(
+        user_regime=UserRegime(
+            functions={"utility": lambda: 0.0},
+            transition=lambda: {"a": 1.0},
+            active=lambda age: age < 1,
+        ),
     )
     assert "H" in r.functions
 

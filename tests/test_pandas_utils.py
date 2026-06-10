@@ -1,6 +1,7 @@
 """Tests for _lcm.pandas_utils and categorical.to_categorical_dtype."""
 
 import dataclasses
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +16,15 @@ from _lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from _lcm.params.processing import broadcast_to_template
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Phased,
+    categorical,
+    fixed_transition,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
 from tests.test_models.basic_discrete import (
@@ -461,7 +470,10 @@ def _get_heterogeneous_health_model() -> Model:
             "health": DiscreteGrid(HealthWithDisability),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
         },
-        state_transitions={"health": None, "wealth": _het_next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _het_next_wealth,
+        },
         functions={"utility": _het_utility},
     )
     post65 = UserRegime(
@@ -471,7 +483,10 @@ def _get_heterogeneous_health_model() -> Model:
             "health": DiscreteGrid(Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
         },
-        state_transitions={"health": None, "wealth": _het_next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _het_next_wealth,
+        },
         functions={"utility": _het_utility},
     )
     dead = UserRegime(
@@ -547,13 +562,16 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "status": DiscreteGrid(_Status),
         },
-        state_transitions={"wealth": None, "status": None},
+        state_transitions={
+            "wealth": fixed_transition("wealth"),
+            "status": fixed_transition("status"),
+        },
         functions={"utility": _utility_with_status},
     )
     without_status = UserRegime(
         transition=_next_regime,
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
-        state_transitions={"wealth": None},
+        state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility_without_status},
     )
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
@@ -615,13 +633,13 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "income": UniformIIDProcess(n_points=5),
         },
-        state_transitions={"wealth": None},
+        state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _earner_utility},
     )
     retiree = UserRegime(
         transition=_next_regime,
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
-        state_transitions={"wealth": None},
+        state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _retiree_utility},
     )
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
@@ -2012,3 +2030,65 @@ def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:
         regime_name=None,
     )
     assert "extra" in grids
+
+
+def _next_regime_stub(_age: float) -> ScalarInt:
+    return jnp.int32(0)
+
+
+def _impute_occupation() -> ScalarInt:
+    return jnp.int32(0)
+
+
+def _evolve_occupation(occupation: ScalarInt) -> ScalarInt:
+    return occupation
+
+
+def _occupation_pair_regime() -> UserRegime:
+    return UserRegime(
+        transition=_next_regime_stub,
+        states={
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
+            "occupation": Phased(
+                solve=_impute_occupation,
+                simulate=DiscreteGrid(Occupation),
+            ),
+        },
+        state_transitions={
+            "wealth": lambda wealth: wealth,
+            "occupation": _evolve_occupation,
+        },
+        functions={"utility": lambda wealth: wealth},
+    )
+
+
+def test_build_discrete_grid_lookup_unwraps_carried_state():
+    """A carried state's discrete grid appears in the lookup.
+
+    The carried value is a categorical state in simulation output, so its
+    label/code mapping must be discoverable like any other discrete grid.
+    """
+    lookup = _build_discrete_grid_lookup({"a": _occupation_pair_regime()})
+    assert "occupation" in lookup
+    assert lookup["occupation"].categories == ("blue_collar", "white_collar")
+
+
+def test_initial_conditions_map_discrete_pair_labels_to_codes():
+    """String labels seed a discrete carried state as integer codes."""
+    df = pd.DataFrame(
+        {
+            "regime_name": ["a", "a"],
+            "wealth": [10.0, 50.0],
+            "occupation": ["white_collar", "blue_collar"],
+            "age": [25.0, 25.0],
+        }
+    )
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        user_regimes={"a": _occupation_pair_regime()},
+        regime_names_to_ids=MappingProxyType({"a": jnp.int32(0)}),
+    )
+    assert jnp.array_equal(
+        conditions["occupation"],
+        jnp.array([Occupation.white_collar, Occupation.blue_collar]),
+    )
