@@ -8,7 +8,7 @@ import jax
 from jax import Array
 
 from _lcm.egm.carry import EgmCarry
-from _lcm.grids import Grid, IrregSpacedGrid
+from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import (
     ActionName,
@@ -278,8 +278,21 @@ class StateActionSpace:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class SolveFunctions:
-    """Compiled functions for the backward-induction (solve) phase."""
+class SolutionPhase:
+    """Solve-phase view of a canonical regime.
+
+    Owns everything backward induction reads: the solve variables and grids
+    (a carried state contributes no axis here — its name is a
+    derived function), the compiled function sets, and the state-action
+    space. Reading phase-dependent data through this namespace makes the
+    phase explicit at every call site.
+    """
+
+    variables: Variables
+    """Solve states and actions, with kind/topology/process tags."""
+
+    grids: MappingProxyType[StateOrActionName, Grid]
+    """Immutable mapping of variable names to grid objects (productmap order)."""
 
     functions: EconFunctionsMapping
     """Immutable mapping of function names to internal user functions."""
@@ -298,18 +311,6 @@ class SolveFunctions:
 
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
-
-    compute_intermediates: MappingProxyType[int, Callable]
-    """Immutable mapping of period to intermediate-computation closures.
-
-    Productmap-wrapped and fused with on-device reductions inside a single
-    `jax.jit`; invoked only in the error path when `validate_V` detects
-    NaN. Each closure returns a flat dict of reductions — scalar
-    `{U_nan,E_nan,Q_nan,F_feasible}_overall` entries, per-dimension
-    `{...}_by_{name}` vectors, and `regime_probs` as a dict of per-target
-    scalar means — so full-shape U/F/E/Q arrays never materialise in
-    host-visible memory.
-    """
 
     egm_step: MappingProxyType[int, EgmStepFunction] | None = None
     """Immutable mapping of period to DC-EGM kernels, or `None`.
@@ -335,113 +336,39 @@ class SolveFunctions:
     when AOT-compiling EGM kernels.
     """
 
+    compute_intermediates: MappingProxyType[int, Callable]
+    """Immutable mapping of period to intermediate-computation closures.
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class SimulateFunctions:
-    """Compiled functions for the forward-simulation phase."""
-
-    functions: EconFunctionsMapping
-    """Immutable mapping of function names to internal user functions."""
-
-    constraints: ConstraintFunctionsMapping
-    """Immutable mapping of constraint names to feasibility predicates."""
-
-    transitions: TransitionFunctionsMapping
-    """Immutable mapping of transition names to transition functions."""
-
-    stochastic_transition_names: frozenset[TransitionFunctionName]
-    """Frozenset of stochastic transition function names."""
-
-    compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
-    """Regime transition probability function for simulate, or `None`."""
-
-    argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
-    """Immutable mapping of period to argmax-and-max-Q functions."""
-
-    next_state: NextStateSimulationFunction
-    """Compiled function to compute next-period states."""
-
-
-@dataclasses.dataclass(frozen=True)
-class _StochasticStateTransition:
-    """Metadata for a stochastic state transition, used by automatic validation.
-
-    One entry exists for every `MarkovTransition` state — and for each target
-    of a per-target dict. The pre-solve state-transition validator consumes
-    these to evaluate the function on the regime's grid Cartesian product and
-    check that the output has the expected outcome-axis size, lies in [0, 1],
-    and has rows summing to 1.
+    Productmap-wrapped and fused with on-device reductions inside a single
+    `jax.jit`; invoked only in the error path when `validate_V` detects
+    NaN. Each closure returns a flat dict of reductions — scalar
+    `{U_nan,E_nan,Q_nan,F_feasible}_overall` entries, per-dimension
+    `{...}_by_{name}` vectors, and `regime_probs` as a dict of per-target
+    scalar means — so full-shape U/F/E/Q arrays never materialise in
+    host-visible memory.
     """
 
-    func: Callable[..., FloatND]
-    """The `MarkovTransition`'s wrapped function."""
-
-    state_name: StateName
-    """Name of the state being transitioned."""
-
-    target_regime_name: RegimeName | None
-    """Target regime for per-target dicts; `None` for a plain `MarkovTransition`."""
-
-    n_outcomes: int
-    """Size of the outcome axis (always the last axis of the function output)."""
-
-    indexing_params: tuple[str, ...]
-    """Parameters used to index `probs_array`, in subscript order.
-
-    Derived statically at process time from the function's AST. Empty
-    when the function doesn't use the `probs_array[...]` pattern, in
-    which case the AST subscript-order check is permissively skipped.
-    """
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class Regime:
-    """Canonical regime produced by `process_regimes` from a user-facing `Regime`.
-
-    Threaded through the solver and simulator as the engine-side representation.
-    The user-facing counterpart with the same name lives in `lcm.regime`.
-    """
-
-    name: RegimeName
-    """Regime name (key in the regimes dict)."""
-
-    terminal: bool
-    """Whether this is a terminal regime."""
-
-    grids: MappingProxyType[StateOrActionName, Grid]
-    """Immutable mapping of variable names to grid objects."""
-
-    variables: Variables
-    """States and actions of the regime, with kind/topology/process tags."""
-
-    active_periods: tuple[int, ...]
-    """Period indices during which this regime is active."""
-
-    regime_params_template: RegimeParamsTemplate
-    """Template for the parameter structure expected by this regime."""
-
-    solve_functions: SolveFunctions
-    """Compiled functions for the backward-induction (solve) phase."""
-
-    simulate_functions: SimulateFunctions
-    """Compiled functions for the forward-simulation phase."""
-
-    stochastic_state_transitions: MappingProxyType[
-        TransitionFunctionName, _StochasticStateTransition
-    ]
-    """Immutable mapping of qualified transition name to validation metadata.
-
-    Populated for every `MarkovTransition` state transition. Per-target
-    dict entries appear under qualified names like `next_health__working`.
-    Empty for terminal regimes and for regimes whose state transitions
-    are all deterministic.
-    """
+    resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
+    """Flat resolved fixed params, consulted for runtime grid substitution."""
 
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 
-    resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
-    """Flat resolved fixed params for this regime, used by to_dataframe targets."""
+    @property
+    def state_names(self) -> tuple[StateOrActionName, ...]:
+        """Solve-phase state names in canonical (productmap) order."""
+        return self.variables.state_names
+
+    @property
+    def discrete_grids(self) -> MappingProxyType[StateOrActionName, DiscreteGrid]:
+        """Discrete grids (states and actions), for label/code mapping."""
+        return MappingProxyType(
+            {
+                name: grid
+                for name, grid in self.grids.items()
+                if isinstance(grid, DiscreteGrid)
+            }
+        )
 
     def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
         """Return the state-action space with runtime grids filled in.
@@ -521,6 +448,154 @@ class Regime:
             states=distributed_states,
             continuous_actions=MappingProxyType(new_continuous_actions),
         )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SimulationPhase:
+    """Simulate-phase view of a canonical regime.
+
+    Owns everything forward simulation reads: the per-subject state set
+    (solve states plus carried-only states), the per-subject grids, and the
+    compiled function sets. Reading phase-dependent data through this
+    namespace makes the phase explicit at every call site.
+    """
+
+    variables: Variables
+    """Simulate states (solve states plus carried-only states, appended) and
+    actions.
+
+    NOT a productmap order — carried-only states are appended after the solve
+    states, so this ordering carries no dispatch meaning; it only fixes column
+    order in simulation output.
+    """
+
+    grids: MappingProxyType[StateOrActionName, Grid]
+    """Solve grids plus each carried-only state's simulate-phase grid."""
+
+    carried_only_state_names: frozenset[StateName]
+    """States carried only in simulation: derived functions (no grid axis)
+    during backward induction, genuine seeded-and-evolved states here."""
+
+    functions: EconFunctionsMapping
+    """Immutable mapping of function names to internal user functions."""
+
+    constraints: ConstraintFunctionsMapping
+    """Immutable mapping of constraint names to feasibility predicates."""
+
+    transitions: TransitionFunctionsMapping
+    """Immutable mapping of transition names to transition functions."""
+
+    stochastic_transition_names: frozenset[TransitionFunctionName]
+    """Frozenset of stochastic transition function names."""
+
+    compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
+    """Regime transition probability function for simulate, or `None`."""
+
+    argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
+    """Immutable mapping of period to argmax-and-max-Q functions."""
+
+    next_state: NextStateSimulationFunction
+    """Compiled function to compute next-period states."""
+
+    @property
+    def state_names(self) -> tuple[StateOrActionName, ...]:
+        """States carried per subject: solve states plus carried-only states."""
+        return self.variables.state_names
+
+    @property
+    def discrete_grids(self) -> MappingProxyType[StateOrActionName, DiscreteGrid]:
+        """Discrete grids (states and actions), for label/code mapping."""
+        return MappingProxyType(
+            {
+                name: grid
+                for name, grid in self.grids.items()
+                if isinstance(grid, DiscreteGrid)
+            }
+        )
+
+    @property
+    def carried_grids(self) -> MappingProxyType[StateName, Grid]:
+        """Grids of the carried-only states (the simulate-phase domains)."""
+        return MappingProxyType(
+            {
+                name: self.grids[name]
+                for name in self.state_names
+                if name in self.carried_only_state_names
+            }
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class _StochasticStateTransition:
+    """Metadata for a stochastic state transition, used by automatic validation.
+
+    One entry exists for every `MarkovTransition` state — and for each target
+    of a per-target dict. The pre-solve state-transition validator consumes
+    these to evaluate the function on the regime's grid Cartesian product and
+    check that the output has the expected outcome-axis size, lies in [0, 1],
+    and has rows summing to 1.
+    """
+
+    func: Callable[..., FloatND]
+    """The `MarkovTransition`'s wrapped function."""
+
+    state_name: StateName
+    """Name of the state being transitioned."""
+
+    target_regime_name: RegimeName | None
+    """Target regime for per-target dicts; `None` for a plain `MarkovTransition`."""
+
+    n_outcomes: int
+    """Size of the outcome axis (always the last axis of the function output)."""
+
+    indexing_params: tuple[str, ...]
+    """Parameters used to index `probs_array`, in subscript order.
+
+    Derived statically at process time from the function's AST. Empty
+    when the function doesn't use the `probs_array[...]` pattern, in
+    which case the AST subscript-order check is permissively skipped.
+    """
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class Regime:
+    """Canonical regime produced by `process_regimes` from a user-facing `Regime`.
+
+    Threaded through the solver and simulator as the engine-side representation.
+    The user-facing counterpart with the same name lives in `lcm.regime`.
+    """
+
+    name: RegimeName
+    """Regime name (key in the regimes dict)."""
+
+    terminal: bool
+    """Whether this is a terminal regime."""
+
+    active_periods: tuple[int, ...]
+    """Period indices during which this regime is active."""
+
+    regime_params_template: RegimeParamsTemplate
+    """Template for the parameter structure expected by this regime."""
+
+    solution: SolutionPhase
+    """Solve-phase view: variables, grids, compiled functions, state-action space."""
+
+    simulation: SimulationPhase
+    """Simulate-phase view: carried states (incl. pairs), grids, compiled functions."""
+
+    stochastic_state_transitions: MappingProxyType[
+        TransitionFunctionName, _StochasticStateTransition
+    ]
+    """Immutable mapping of qualified transition name to validation metadata.
+
+    Populated for every `MarkovTransition` state transition. Per-target
+    dict entries appear under qualified names like `next_health__working`.
+    Empty for terminal regimes and for regimes whose state transitions
+    are all deterministic.
+    """
+
+    resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
+    """Flat resolved fixed params for this regime, used by to_dataframe targets."""
 
 
 @dataclasses.dataclass(frozen=True)

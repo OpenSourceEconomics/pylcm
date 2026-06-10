@@ -37,15 +37,61 @@ automation. Python 3.14+ is required.
 - `Regime` (from `lcm.regime`): User-facing regime definition with utility, constraints,
   functions, actions, states, and state transitions (the `state_transitions` field). The
   regime transition is set via the `transition` field.
+- `Phased(solve=..., simulate=...)`: phase-specific variants of a regime-slot value
+  (functions, states, state transitions, the regime transition). A bare value broadcasts
+  to both phases.
 - Models must have at least one terminal regime and one non-terminal regime
 - Models support transitions between multiple regimes
 
 **Canonical Processing (`src/_lcm/engine.py`)**
 
+- The pipeline from user input to engine form: `Regime` → `EffectiveUserRegime` (merge +
+  completeness) → `PhasedRegimeSpec` (phase split + canonical laws) →
+  `_lcm.engine.Regime` (compiled function sets).
+- `EffectiveUserRegime` (`src/_lcm/regime_building/effective.py`): the regime as the
+  model actually runs it — model-level `derived_categoricals` merged in, default `H`
+  injected, completeness validated (a `utility` entry, state-transition coverage,
+  state/action overlap, distributed-grid rules). Still user vocabulary, so the params
+  template reads the user's coarseness off it. Subclasses the user `Regime`; constructed
+  only by `build_effective_regimes`. A bare `Regime` validates only local, value-shape
+  properties at construction — completeness may be satisfied only at the model level.
+- `canonicalize_regimes` (`src/_lcm/regime_building/canonicalize.py`): the model-level
+  canonicalization stage. Rewrites every phase slice's laws into the canonical
+  target-granular form `Mapping[RegimeName, law]` over exactly the reachable targets
+  carrying the state in that phase — bare laws broadcast, per-target dicts pass through,
+  `fixed_transition` entries desugar into per-target identities. Reachability is
+  resolved here, once; the engine-side extraction is a pure transpose. Rule: the params
+  template reads the user (effective) spec, the engine reads the canonical spec.
 - `Regime` (from `_lcm.engine`): Canonical representation produced by `process_regimes`
   from a user-facing `Regime`. Internal engine code threads this form. Inside boundary
   files that import both, alias the user form as
   `from lcm.regime import Regime as UserRegime`.
+- The canonical `Regime` carries only phase-invariant data plus two frozen phase
+  namespaces — every phase-dependent read names its phase in the access path:
+  - `regime.solution` (`SolutionPhase`): solve variables and grids (a carried state
+    contributes no axis; productmap order), compiled solve function sets,
+    `state_action_space()`.
+  - `regime.simulation` (`SimulationPhase`): per-subject variables (solve states plus
+    carried-only states, appended — not a productmap order), grids including each
+    carried state's domain, `carried_only_state_names` / `carried_grids`, compiled
+    simulate function sets. Its published `functions` are imputation-free (carried
+    states are leaves fed with carried values); only the decision functions (Q_and_F /
+    argmax) keep the solve imputation.
+- `normalize_regime_phases` (`src/_lcm/regime_building/phases.py`) is the single
+  phase-resolution boundary: it expands every regime slot into per-phase
+  `RegimePhaseSpec` slices (`PhasedRegimeSpec.solution` / `.simulation`) and applies the
+  phase grammar. Phase is a broadcast dimension of the user spec — a bare slot value
+  applies to both phases, `Phased(solve=..., simulate=...)` specifies each phase
+  explicitly:
+  - `functions` and `state_transitions` accept `Phased` (per-phase implementations /
+    laws of motion); `transition` accepts `Phased` with matching stochasticity.
+  - `states` accept `Phased(solve=callable, simulate=Grid)` — the carried state: derived
+    (no grid axis) during backward induction, a genuine seeded-and-evolved state in
+    simulation, with its law of motion in the regular `state_transitions` slot. All
+    other solve/simulate combinations are rejected.
+  - `constraints`, `actions`, `active`, and `derived_categoricals` are phase-invariant;
+    `Phased` is rejected there with an explanation. `Phased` is outermost-only (never
+    inside a per-target dict) and never nested.
 - `StateActionSpace`: Manages state-action combinations for solution/simulation
 - `PeriodRegimeSimulationData`: Raw simulation results for one period in one regime
 
@@ -95,9 +141,9 @@ transitions via `MarkovTransition`-wrapped callables in `state_transitions`.
 
 Grids are pure outcome-space definitions — they define what values a variable can take.
 **State transitions** live on the `Regime` via the `state_transitions` field, which maps
-state names to transition functions (or `None` for fixed states). Wrap in
-`MarkovTransition` for stochastic transitions. Per-target dicts map target regime names
-to transition functions for target-dependent transitions.
+state names to transition functions (`fixed_transition(state_name)` for fixed states).
+Wrap in `MarkovTransition` for stochastic transitions. Per-target dicts map target
+regime names to transition functions for target-dependent transitions.
 
 ### Processing Pipeline
 
@@ -143,7 +189,7 @@ Regime(
     },
     state_transitions={                          # How states evolve over time
         "wealth": next_wealth,                   # Deterministic transition
-        "education": None,                       # Fixed state (identity auto-generated)
+        "education": fixed_transition("education"),  # Fixed state (identity law)
     },
     actions={"action_name": Grid, ...},          # Action grids (can be empty)
     functions={                                  # Must include "utility"; other functions optional
@@ -179,10 +225,13 @@ Regime(
 - `transition` is required: the regime transition function, or `None` for terminal
   regimes. `terminal` is a derived property (`self.transition is None`).
 - `active` is optional; defaults to `lambda _age: True` (always active)
-- `functions` must contain a `"utility"` entry (the utility function)
+- `functions` must contain a `"utility"` entry (the utility function); checked when the
+  model builds its effective regimes, not at `Regime` construction
 - `state_transitions` maps state names to transition functions. Every non-process state
-  in a non-terminal regime must have an entry. `None` marks a fixed state (identity
-  auto-generated). Wrap in `MarkovTransition` for stochastic transitions.
+  in a non-terminal regime must have an entry (checked at model build).
+  `fixed_transition(state_name)` marks a fixed state (identity law; its argument must
+  match the dict key). `None` is rejected. Wrap in `MarkovTransition` for stochastic
+  transitions.
 - Per-target dicts in `state_transitions` map target regime names to transition
   functions — every reachable target must be listed. Within a per-target dict,
   stochasticity must be consistent (all `MarkovTransition` or none).
@@ -303,8 +352,9 @@ initial_conditions = {
 
 - `model.get_params_template()` - Mutable copy of the parameter template (dict by regime
   name)
-- `model.user_regimes` - Immutable mapping of regime names to user-facing `Regime`
-  objects (`lcm.regime.Regime`)
+- `model.user_regimes` - Immutable mapping of regime names to `EffectiveUserRegime`
+  objects: the regimes as the model runs them (model-level slots merged, default `H`
+  injected), still in user vocabulary
 - `model._regimes` - Immutable mapping of regime names to canonical `Regime` objects
   (`_lcm.engine.Regime`) produced by `process_regimes`. Private — the canonical form is
   engine-internal; user code should read `user_regimes`.
@@ -529,6 +579,15 @@ Code structure should be self-evident from function names and ordering.
 
 ### Naming and Docstring Conventions
 
+- **Noun vs verb for phase vocabulary — "the name tells you what you get."** Use the
+  noun (`solution`, `simulation`) when the name yields a *thing* — an artifact or bundle
+  of phase artifacts: `regime.solution`, `SolutionPhase`, `SimulationResult`,
+  `PhasedRegimeSpec.solution`. Use the verb (`solve`, `simulate`) when the name denotes
+  the *act* or selects a variant to be used when acting: `model.solve()`,
+  `Phased(solve=f, simulate=g)`, `phase: Literal["solve", "simulate"]`, and all
+  attributive compounds in identifiers and prose (`solve_transitions`, "the solve-phase
+  consumer", "the solve grid"). Litmus: you get a bag → noun; you get behavior or name
+  the act → verb.
 - **No unnecessary parameter aliases.** When a function has a single (or very few) call
   site(s), the parameter name should match the variable name being passed. Don't shorten
   parameter names just for brevity — e.g., use

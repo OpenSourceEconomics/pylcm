@@ -49,13 +49,15 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import (
     FunctionName,
     RegimeName,
+    StateName,
     StateOrActionName,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.regime import _default_H
 from lcm.solvers import DCEGM
-from lcm.transition import MarkovTransition, SolveSimulateFunctionPair
+from lcm.transition import MarkovTransition
 from lcm.typing import Float1D, FloatND, ScalarFloat, UserFunction
 
 
@@ -173,7 +175,7 @@ def _fail_if_state_action_classification_invalid(
     discrete dimensions. Any other continuous state would have to be a
     *passive* state, which the DCEGM solver does not support yet.
     """
-    continuous_states = _continuous_non_process_names(user_regime.states)
+    continuous_states = _continuous_non_process_names(_solve_grids(user_regime.states))
     continuous_actions = _continuous_non_process_names(user_regime.actions)
 
     if solver.continuous_state not in continuous_states:
@@ -304,9 +306,11 @@ def _fail_if_constraint_touches_continuous_variables(
     """
     forbidden = {solver.continuous_state, solver.continuous_action}
     for constraint_name, constraint_func in user_regime.constraints.items():
+        # Constraints are phase-invariant by the slot grammar (`Phased` is
+        # rejected there), so the value is always a bare callable.
         ancestors = _dag_ancestors(
             functions=functions,
-            target_func=constraint_func,
+            target_func=cast("UserFunction", constraint_func),
         )
         bad = sorted(ancestors & forbidden)
         if bad:
@@ -590,7 +594,7 @@ def _fail_if_numeric_spot_checks_fail(
     rtol = 1e-6 if x64_enabled else 1e-3
 
     grids: dict[StateOrActionName, Grid] = {
-        **dict(user_regime.states),
+        **_solve_grids(user_regime.states),
         **dict(user_regime.actions),
     }
     euler_sample = _grid_sample(grids[solver.continuous_state])
@@ -797,11 +801,23 @@ def _resolve_solve_functions(
     """Return `Regime.functions` with solve-phase variants resolved."""
     resolved: dict[FunctionName, UserFunction] = {}
     for name, func in user_regime.functions.items():
-        if isinstance(func, SolveSimulateFunctionPair):
+        if isinstance(func, Phased):
             resolved[name] = cast("UserFunction", func.solve)
         else:
             resolved[name] = func
     return resolved
+
+
+def _solve_grids(
+    states: Mapping[StateName, object],
+) -> dict[StateOrActionName, Grid]:
+    """Solve-phase grids of a `states` slot.
+
+    A `Phased` state is carried: derived (no grid axis) during backward
+    induction, so it contributes no solve-phase grid — exactly why carried
+    states are invisible to the DC-EGM state classification.
+    """
+    return {name: grid for name, grid in states.items() if isinstance(grid, Grid)}
 
 
 def _continuous_non_process_names(
@@ -821,9 +837,12 @@ def _transition_variants(
 ) -> list[tuple[str, UserFunction]]:
     """Unpack a `state_transitions` entry into labeled callables.
 
-    Handles bare callables, `MarkovTransition` wrappers (unwrapped to the
-    weight function), and per-target dicts (one entry per target regime).
+    Handles bare callables, `Phased` containers (solve variant),
+    `MarkovTransition` wrappers (unwrapped to the weight function), and
+    per-target dicts (one entry per target regime).
     """
+    if isinstance(value, Phased):
+        value = value.solve
     if isinstance(value, MarkovTransition):
         return [("", cast("UserFunction", value.func))]
     if isinstance(value, Mapping):

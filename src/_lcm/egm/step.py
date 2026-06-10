@@ -55,9 +55,9 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from _lcm.utils.functools import get_union_of_args
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
-from lcm.transition import SolveSimulateFunctionPair
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, UserFunction
 
 # Smallest constrained-segment action as a fraction of the segment's span.
@@ -810,7 +810,7 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     solver = cast("DCEGM", user_regime.solver)
     resolved: dict[str, UserFunction] = {}
     for name, func in user_regime.functions.items():
-        if isinstance(func, SolveSimulateFunctionPair):
+        if isinstance(func, Phased):
             resolved[name] = cast("UserFunction", func.solve)
         else:
             resolved[name] = func

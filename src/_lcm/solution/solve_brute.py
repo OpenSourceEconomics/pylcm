@@ -80,9 +80,9 @@ def solve(
     # every period so the pytree structure stays JIT-stable.
     next_regime_to_egm_carry = MappingProxyType(
         {
-            regime_name: regime.solve_functions.egm_carry_template
+            regime_name: regime.solution.egm_carry_template
             for regime_name, regime in regimes.items()
-            if regime.solve_functions.egm_carry_template is not None
+            if regime.solution.egm_carry_template is not None
         }
     )
 
@@ -296,10 +296,10 @@ def _solve_regime_period(
         The regime's value-function array.
 
     """
-    state_action_space = regime.state_action_space(
+    state_action_space = regime.solution.state_action_space(
         regime_params=flat_params[regime_name],
     )
-    if regime.solve_functions.egm_step is not None:
+    if regime.solution.egm_step is not None:
         V_arr, egm_carry = solve_kernel(
             **state_action_space.states,
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -319,7 +319,7 @@ def _solve_regime_period(
         period=jnp.int32(period),
         age=ages.values[period],
     )
-    egm_carry_producer = regime.solve_functions.egm_carry_producer
+    egm_carry_producer = regime.solution.egm_carry_producer
     if egm_carry_producer is not None:
         period_egm_carries[regime_name] = egm_carry_producer(
             V_arr=V_arr,
@@ -431,15 +431,15 @@ def _compile_all_functions(
     all_functions: dict[tuple[RegimeName, int], Callable] = {}
     egm_keys: set[tuple[RegimeName, int]] = set()
     for regime_name, regime in regimes.items():
-        egm_step = regime.solve_functions.egm_step
+        egm_step = regime.solution.egm_step
         for period in regime.active_periods:
             if egm_step is not None:
                 all_functions[(regime_name, period)] = egm_step[period]
                 egm_keys.add((regime_name, period))
             else:
-                all_functions[(regime_name, period)] = (
-                    regime.solve_functions.max_Q_over_a[period]
-                )
+                all_functions[(regime_name, period)] = regime.solution.max_Q_over_a[
+                    period
+                ]
 
     # If JIT is disabled, return raw functions directly.
     if not enable_jit:
@@ -537,7 +537,7 @@ def _build_lower_args(
     EGM kernels take no action grids but the rolling carry template;
     max-Q-over-a kernels take the full state-action product.
     """
-    state_action_space = regime.state_action_space(
+    state_action_space = regime.solution.state_action_space(
         regime_params=flat_params[regime_name],
     )
     common = {
@@ -623,12 +623,14 @@ def _get_regime_V_shapes_and_shardings(
     n_devices = len(jax.devices())
     topology: dict[RegimeName, _RegimeVTopology] = {}
     for regime_name, regime in regimes.items():
-        state_action_space = regime.state_action_space(
+        state_action_space = regime.solution.state_action_space(
             regime_params=flat_params[regime_name],
         )
         state_order: tuple[StateName, ...] = tuple(state_action_space.states.keys())
         shape = tuple(len(v) for v in state_action_space.states.values())
-        sharding_plan = _build_regime_sharding(grids=regime.grids, n_devices=n_devices)
+        sharding_plan = _build_regime_sharding(
+            grids=regime.solution.grids, n_devices=n_devices
+        )
         sharding = (
             sharding_plan.V_arr_sharding(state_order)
             if sharding_plan is not None
@@ -749,14 +751,14 @@ def _raise_at(
     effective_regime_params = MappingProxyType(
         {**regime.resolved_fixed_params, **regime_params}
     )
-    state_action_space = regime.state_action_space(regime_params=regime_params)
+    state_action_space = regime.solution.state_action_space(regime_params=regime_params)
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
         period=row.period,
         regimes=regimes,
         flat_params=flat_params,
         solution=solution,
     )
-    compute_intermediates = regime.solve_functions.compute_intermediates.get(row.period)
+    compute_intermediates = regime.solution.compute_intermediates.get(row.period)
     V_arr = solution[row.period][row.regime_name]
     validate_V(
         V_arr=V_arr,
