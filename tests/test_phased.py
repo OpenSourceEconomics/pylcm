@@ -628,3 +628,125 @@ def test_markov_variant_in_phased_law_is_rejected() -> None:
                 )
             }
         )
+
+
+def _plan_next_regime(age: float) -> ScalarInt:
+    """Solve-phase plan: stay working until 62."""
+    return jnp.where(age < 62, _RegimeId.working, _RegimeId.dead)
+
+
+def _realized_next_regime(age: float) -> ScalarInt:  # noqa: ARG001
+    """Simulate-phase realization: death after the first period."""
+    return jnp.asarray(_RegimeId.dead, dtype=jnp.int32)
+
+
+def _build_phased_transition_model(*, phased_transition: bool) -> Model:
+    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    working = UserRegime(
+        transition=Phased(solve=_plan_next_regime, simulate=_realized_next_regime)
+        if phased_transition
+        else _plan_next_regime,
+        active=lambda age: age < 64,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
+        state_transitions={"wealth": _next_wealth},
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        constraints={"feasible_consumption": _consumption_leq_wealth},
+        functions={"utility": _utility},
+    )
+    return Model(
+        regimes={"working": working, "dead": dead},
+        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        regime_id_class=_RegimeId,
+    )
+
+
+def test_phased_regime_transition_realized_draw_follows_simulate_variant() -> None:
+    """The realized regime draw follows the simulate variant of a `Phased`
+    regime transition, while the policy was solved under the solve variant."""
+    model = _build_phased_transition_model(phased_transition=True)
+    params = _solve_params(model)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        period_to_regime_to_V_arr=None,
+        initial_conditions={
+            "wealth": jnp.asarray([50.0]),
+            "age": jnp.asarray([60.0]),
+            "regime_id": jnp.asarray([_RegimeId.working]),
+        },
+    )
+    sim = result.to_dataframe().set_index(["subject_id", "period"]).sort_index()
+    assert sim.loc[(0, 0), "regime_name"] == "working"
+    assert sim.loc[(0, 1), "regime_name"] == "dead"
+
+
+def test_phased_regime_transition_solution_matches_bare_solve_variant() -> None:
+    """V only sees the solve variant of a `Phased` regime transition."""
+    phased_solution = _build_phased_transition_model(phased_transition=True).solve(
+        params=_solve_params(_build_phased_transition_model(phased_transition=True)),
+        log_level="debug",
+    )
+    bare_solution = _build_phased_transition_model(phased_transition=False).solve(
+        params=_solve_params(_build_phased_transition_model(phased_transition=False)),
+        log_level="debug",
+    )
+    for period, regime_to_V in bare_solution.items():
+        for regime_name, expected_V in regime_to_V.items():
+            assert bool(jnp.allclose(phased_solution[period][regime_name], expected_V))
+
+
+def _retire_when_pension_rich(pension_wealth: float, age: float) -> ScalarInt:
+    return jnp.where(
+        (pension_wealth > 10.0) | (age >= 62), _RegimeId.dead, _RegimeId.working
+    )
+
+
+def test_regime_draw_reads_carried_value() -> None:
+    """The realized regime draw reads carried values, not solve imputations.
+
+    Two subjects with equal AIME (equal imputation) but different carried
+    pension wealth get different realized regime draws when the transition
+    reads the carried state; the decision itself still follows the policy
+    solved on the imputation.
+    """
+    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    working = UserRegime(
+        transition=_retire_when_pension_rich,
+        active=lambda age: age < 64,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
+            "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
+            "pension_wealth": Phased(
+                solve=_impute_pension_wealth, simulate=_pension_grid()
+            ),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "aime": lambda aime: aime,
+            "pension_wealth": _evolve_pension_wealth,
+        },
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        constraints={"feasible_consumption": _consumption_leq_wealth},
+        functions={"utility": _utility},
+    )
+    model = Model(
+        regimes={"working": working, "dead": dead},
+        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        regime_id_class=_RegimeId,
+    )
+    params = _solve_params(model)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        period_to_regime_to_V_arr=None,
+        initial_conditions={
+            "wealth": jnp.full(2, 50.0),
+            "aime": jnp.full(2, 20.0),  # imputation = 2.0 for both subjects
+            "pension_wealth": jnp.asarray([5.0, 15.0]),
+            "age": jnp.full(2, 60.0),
+            "regime_id": jnp.asarray([_RegimeId.working] * 2),
+        },
+    )
+    sim = result.to_dataframe().set_index(["subject_id", "period"]).sort_index()
+    assert sim.loc[(0, 1), "regime_name"] == "working"
+    assert sim.loc[(1, 1), "regime_name"] == "dead"

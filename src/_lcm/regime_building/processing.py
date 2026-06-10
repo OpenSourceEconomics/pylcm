@@ -432,6 +432,30 @@ def _build_simulation_phase(
     functions = core.functions
     constraints = core.constraints
 
+    # Every published simulate-phase consumer (next_state, the realized
+    # regime draw, the feasibility check, additional targets) reads each
+    # carried state as its carried true value, not the solve-phase
+    # imputation. Dropping the imputation turns the name into a leaf supplied
+    # by the simulator, and `core.transitions` (built from the simulation
+    # slice) carries every simulate-phase law — including each carried
+    # state's `next_<name>` and any `Phased` law's simulate variant. Only the
+    # decision functions (Q_and_F / argmax) keep the imputation — the agent
+    # decides on the value the solved policy was computed for. To make the
+    # realized regime draw decide on the imputation instead, declare the
+    # imputation under a second name in `functions` and read that.
+    if carried_only:
+        simulate_functions: EconFunctionsMapping = MappingProxyType(
+            {k: v for k, v in core.functions.items() if k not in carried_only}
+        )
+    else:
+        simulate_functions = core.functions
+    carried_grids = {
+        name: grid
+        for name, grid in spec.simulation.grid_states.items()
+        if name in carried_only
+    }
+    simulate_grids = MappingProxyType({**all_grids[regime_name], **carried_grids})
+
     flat_param_names = frozenset(get_flat_param_names(regime_params_template))
 
     if spec.terminal:
@@ -446,9 +470,9 @@ def _build_simulation_phase(
         )
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
-            functions=functions,
+            functions=simulate_functions,
             compute_regime_transition_probs=core.next_regime_func,  # ty: ignore[invalid-argument-type]
-            grids=all_grids[regime_name],
+            grids=simulate_grids,
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
             is_stochastic=spec.simulation.stochastic_regime_transition,
@@ -477,22 +501,6 @@ def _build_simulation_phase(
         enable_jit=enable_jit,
     )
 
-    # Every published simulate-phase consumer (next_state, the feasibility
-    # check, additional targets) reads each carried state as its carried true
-    # value, not the solve-phase imputation. Dropping the imputation turns the
-    # name into a leaf supplied by the simulator, and `core.transitions`
-    # (built from the simulation slice) carries every simulate-phase law —
-    # including each carried state's `next_<name>` and any `Phased` law's
-    # simulate variant. Only the decision functions built above (Q_and_F /
-    # argmax / regime-transition probs) keep the imputation — the agent
-    # decides on the value the solved policy was computed for.
-    if carried_only:
-        simulate_functions: EconFunctionsMapping = MappingProxyType(
-            {k: v for k, v in core.functions.items() if k not in carried_only}
-        )
-    else:
-        simulate_functions = core.functions
-
     next_state = _build_next_state_vmapped(
         functions=simulate_functions,
         transitions=core.transitions,
@@ -503,14 +511,9 @@ def _build_simulation_phase(
         enable_jit=enable_jit,
     )
 
-    carried_grids = {
-        name: grid
-        for name, grid in spec.simulation.grid_states.items()
-        if name in carried_only
-    }
     return SimulationPhase(
         variables=simulation_variables,
-        grids=MappingProxyType({**all_grids[regime_name], **carried_grids}),
+        grids=simulate_grids,
         carried_only_state_names=frozenset(carried_grids),
         functions=simulate_functions,
         constraints=constraints,

@@ -490,7 +490,9 @@ def _simulate_regime_in_period(
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
         )
-        states = next_states
+        # The realized regime draw reads current-period carried values, so it
+        # runs against the pre-advance carrier; only then do the next-period
+        # states replace it.
         new_subject_regime_ids = calculate_next_regime_membership(
             regime=regime,
             state_action_space=state_action_space,
@@ -499,6 +501,7 @@ def _simulate_regime_in_period(
             age=age,
             regime_params=flat_params[regime_name],
             regime_names_to_ids=regime_names_to_ids,
+            states_per_regime=states,
             new_subject_regime_ids=new_subject_regime_ids,
             active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
@@ -507,6 +510,7 @@ def _simulate_regime_in_period(
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
         )
+        states = next_states
 
     return simulation_result, states, new_subject_regime_ids, key
 

@@ -180,6 +180,7 @@ def calculate_next_regime_membership(
     age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
     regime_names_to_ids: RegimeNamesToIds,
+    states_per_regime: StatesPerRegime,
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
@@ -201,6 +202,9 @@ def calculate_next_regime_membership(
         age: Age corresponding to current period.
         regime_params: Flat regime parameters.
         regime_names_to_ids: Mapping from regime names to integer IDs.
+        states_per_regime: Carrier of current-period state arrays for every
+            regime and state; supplies the carried values the realized draw
+            reads.
         new_subject_regime_ids: Array to update with next regime assignments.
         active_regimes_next_period: Tuple of active regime names in the next period.
         key: JAX random key.
@@ -222,9 +226,17 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
+    # The realized draw is built against the published pair-free pool, so it
+    # reads each carried state as the subject's true carried value — feed
+    # those values like `calculate_next_states` does.
+    simulate_only_states = {
+        name: states_per_regime[regime.name][name]
+        for name in regime.simulation.carried_grids
+    }
     regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
         regime.simulation.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
             **state_action_space.states,
+            **simulate_only_states,
             **optimal_actions,
             period=jnp.int32(period),
             age=age,
@@ -278,11 +290,10 @@ def draw_key_from_dict(
     """
     regime_names = list(d)
     regime_transition_probs = jnp.array(list(d.values())).T
-    # A regime whose transition reads no per-subject state or action (e.g. its
-    # only state is a carried `SolveSimulateStatePair`, which the decision
-    # machinery replaces with its solve imputation) yields one unbatched
-    # distribution shared by every subject. Broadcast it across the subjects'
-    # keys so the per-subject draw below sees a probability vector per key.
+    # A regime whose transition reads no per-subject state or action (e.g. it
+    # depends only on `age`) yields one unbatched distribution shared by
+    # every subject. Broadcast it across the subjects' keys so the
+    # per-subject draw below sees a probability vector per key.
     if regime_transition_probs.ndim == 1:
         regime_transition_probs = jnp.broadcast_to(
             regime_transition_probs,

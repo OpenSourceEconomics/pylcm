@@ -408,6 +408,11 @@ def _build_crtp_args(
     subject_states = _subject_shape_arrays(
         base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
+    # The realized draw reads carried states as leaves, so the lower-args
+    # must seed them like the next_state program's.
+    simulate_only_states = _simulate_only_subject_states(
+        regime, n_subjects=n_subjects, sharding=subject_sharding
+    )
     subject_actions = _subject_shape_arrays(
         {**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
@@ -415,6 +420,7 @@ def _build_crtp_args(
     )
     return {
         **subject_states,
+        **simulate_only_states,
         **subject_actions,
         "period": jnp.int32(0),
         "age": ages.values[0],
