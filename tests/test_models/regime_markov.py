@@ -7,6 +7,7 @@ from lcm import (
     MarkovTransition,
     Model,
     categorical,
+    fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
@@ -39,7 +40,7 @@ alive = UserRegime(
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
     },
     state_transitions={
-        "health": None,
+        "health": fixed_transition("health"),
         "wealth": lambda wealth: wealth,
     },
     functions={"utility": lambda wealth, health: wealth + health},

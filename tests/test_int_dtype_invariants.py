@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.grids import Grid
 from _lcm.params.processing import process_params
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.simulation.initial_conditions import (
@@ -48,6 +49,8 @@ def test_discrete_grid_to_jax_is_int32() -> None:
     model = get_model(n_periods=3)
     for regime in model.user_regimes.values():
         for grid in {**regime.states, **regime.actions}.values():
+            if not isinstance(grid, Grid):
+                continue
             jax_arr = grid.to_jax()
             if jax_arr.dtype.kind == "i":
                 assert jax_arr.dtype == jnp.int32, (

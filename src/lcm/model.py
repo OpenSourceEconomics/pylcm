@@ -15,7 +15,6 @@ from _lcm.grids import DiscreteGrid
 from _lcm.model_processing import (
     _validate_param_types,
     build_regimes_and_template,
-    merge_derived_categoricals,
     validate_model_inputs,
 )
 from _lcm.pandas_utils import (
@@ -31,8 +30,12 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.regime_building.effective import (
+    EffectiveUserRegime,
+    build_effective_regimes,
+)
 from _lcm.regime_building.processing import Regime
-from _lcm.simulation.compile import compile_all_simulate_functions
+from _lcm.simulation.compile import compile_all_simulation_phases
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
     pad_initial_conditions_to_multiple,
@@ -94,8 +97,10 @@ class Model:
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from regime names to integer indices."""
 
-    user_regimes: MappingProxyType[RegimeName, UserRegime]
-    """Boundary-form snapshot of regimes as supplied by the user."""
+    user_regimes: MappingProxyType[RegimeName, EffectiveUserRegime]
+    """The effective regimes: complete (default `H` injected, completeness
+    validated), with model-level `derived_categoricals` merged in, still in
+    user vocabulary."""
 
     _regimes: MappingProxyType[RegimeName, Regime]
     """Canonical, processed regimes used by solve and simulate.
@@ -198,9 +203,13 @@ class Model:
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
 
+        self.user_regimes = build_effective_regimes(
+            user_regimes=regimes,
+            derived_categoricals=derived_categoricals,
+        )
         validate_model_inputs(
             n_periods=self.n_periods,
-            user_regimes=regimes,
+            user_regimes=self.user_regimes,
             regime_id_class=regime_id_class,
             n_subjects=n_subjects,
         )
@@ -211,10 +220,6 @@ class Model:
                     key=lambda x: x[1],
                 )
             )
-        )
-        self.user_regimes = merge_derived_categoricals(
-            user_regimes=regimes,
-            derived_categoricals=derived_categoricals,
         )
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
@@ -584,7 +589,7 @@ class Model:
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads
         # the lazy DAG functions / constraints / transitions on
-        # `simulate_functions`, never the compiled callables — so swap in
+        # `regime.simulation`, never the compiled callables — so swap in
         # the lazy regimes to keep the result cloudpickle-safe.
         if simulate_regimes is not self._regimes:
             result._regimes = self._regimes  # noqa: SLF001
@@ -655,7 +660,7 @@ class Model:
         return any(
             grid.distributed
             for regime in self._regimes.values()
-            for grid in regime.grids.values()
+            for grid in regime.solution.grids.values()
         )
 
     def _ensure_simulate_compiled(
@@ -671,7 +676,7 @@ class Model:
             cached = compile_batch_size in self._simulate_compile_cache
         if cached:
             return
-        compiled = compile_all_simulate_functions(
+        compiled = compile_all_simulation_phases(
             regimes=self._regimes,
             flat_params=flat_params,
             ages=self.ages,

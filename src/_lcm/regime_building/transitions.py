@@ -2,8 +2,8 @@
 
 `collect_state_transitions` walks a regime's `state_transitions` and returns
 every state's transition *function* — a bare callable, a `MarkovTransition`
-(callable via `__call__`), an auto-generated identity for `None`, or the
-variants of a per-target dict.
+(callable via `__call__`), a grid-annotated identity for `fixed_transition`
+entries, or the variants of a per-target dict.
 
 The companion validation-metadata collector for the `MarkovTransition` entries
 lives in `_lcm.regime_building.stochastic_state_transitions`; keeping it
@@ -14,12 +14,13 @@ separate lets this module stay free of any dependency on the user-facing
 import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAliasType, cast, overload
+from typing import TYPE_CHECKING, TypeAliasType, cast
 
 from dags.tree import QNAME_DELIMITER
 
 from _lcm.engine import _StochasticStateTransition
 from _lcm.grids import DiscreteGrid, Grid
+from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import RegimeName, StateName, TransitionFunctionName
 from _lcm.utils.ast_inspection import _get_func_indexing_params
@@ -27,6 +28,7 @@ from lcm.exceptions import (
     InvalidStateTransitionProbabilitiesError,
     RegimeInitializationError,
 )
+from lcm.phased import Phased
 from lcm.transition import MarkovTransition
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
@@ -34,65 +36,36 @@ if TYPE_CHECKING:
     from lcm.regime import Regime as UserRegime
 
 
-class _IdentityTransition:
-    """Identity transition function for fixed states.
-
-    Used by `get_all_functions()` so the params template includes fixed states.
-    The `_is_auto_identity` attribute lets validation distinguish auto-generated
-    identities from user-provided transitions.
-
-    """
-
-    _is_auto_identity: bool = True
-
-    def __init__(self, state_name: StateName, *, annotation: TypeAliasType) -> None:
-        self._state_name = state_name
-        self.__name__ = f"next_{state_name}"
-        param = inspect.Parameter(
-            state_name,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            annotation=annotation,
-        )
-        self.__signature__ = inspect.Signature(
-            [param],
-            return_annotation=annotation,
-        )
-        self.__annotations__ = {state_name: annotation, "return": annotation}
-
-    @overload
-    def __call__(self, **kwargs: DiscreteState) -> DiscreteState: ...
-    @overload
-    def __call__(self, **kwargs: ContinuousState) -> ContinuousState: ...
-    def __call__(
-        self, **kwargs: DiscreteState | ContinuousState
-    ) -> DiscreteState | ContinuousState:
-        return kwargs[self._state_name]
-
-
 def collect_state_transitions(
-    states: Mapping[StateName, Grid | None],
+    states: Mapping[StateName, Grid | Phased | None],
     state_transitions: Mapping[
         StateName,
-        UserFunction | Callable | None | Mapping[RegimeName, UserFunction | Callable],
+        UserFunction
+        | Callable
+        | Phased
+        | None
+        | Mapping[RegimeName, UserFunction | Callable | Phased],
     ],
-) -> dict[TransitionFunctionName, UserFunction]:
+) -> dict[TransitionFunctionName, UserFunction | Phased]:
     """Collect state transition functions from `state_transitions`.
 
     For each state, produces entries keyed as `f"next_{name}"`:
     - continuous stochastic process -> skipped (process transitions are built
       directly in `_process_regime_core`)
-    - `None` -> auto-generated identity transition
+    - `fixed_transition` entry -> rebuilt with the state's grid-matched
+      annotation
     - Callable -> used directly
     - `MarkovTransition` -> used directly (callable via `__call__`)
     - Per-target dict -> ALL variants with qualified names
       (e.g., `next_health__working`, `next_health__retired`)
 
     Target-only states (in `state_transitions` but not in `states`) are also
-    collected. These have no grid in the source regime; `None` is rejected by
-    validation, so only callables, MarkovTransition, and per-target dicts remain.
+    collected. These have no grid in the source regime; `fixed_transition` is
+    rejected by validation there, so only callables, MarkovTransition, and
+    per-target dicts remain.
 
     """
-    transitions: dict[TransitionFunctionName, UserFunction] = {}
+    transitions: dict[TransitionFunctionName, UserFunction | Phased] = {}
     for name, grid in states.items():
         # Process transitions built directly in _process_regime_core
         if isinstance(grid, _ContinuousStochasticProcess):
@@ -101,17 +74,17 @@ def collect_state_transitions(
         if name not in state_transitions:
             msg = (
                 f"State '{name}' has no entry in state_transitions. "
-                "Use None for fixed states."
+                "Use `fixed_transition(state_name)` for fixed states."
             )
             raise RegimeInitializationError(msg)
 
         raw = state_transitions[name]
-        if raw is None:
+        if isinstance(raw, _IdentityTransition):
             ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
             transitions[f"next_{name}"] = _make_identity_fn(
                 state_name=name, annotation=ann
             )
-        else:
+        elif raw is not None:
             _add_raw_transition(transitions=transitions, name=name, raw=raw)
 
     # Second pass: target-only states (in state_transitions but not in states).
@@ -192,17 +165,25 @@ def _make_identity_fn(
 
 def _add_raw_transition(
     *,
-    transitions: dict[TransitionFunctionName, UserFunction],
+    transitions: dict[TransitionFunctionName, UserFunction | Phased],
     name: StateName,
-    raw: UserFunction | Callable | Mapping[RegimeName, UserFunction | Callable],
+    raw: UserFunction
+    | Callable
+    | Phased
+    | Mapping[RegimeName, UserFunction | Callable | Phased],
 ) -> None:
-    """Add a single raw transition entry to the transitions dict."""
-    if callable(raw):
-        transitions[f"next_{name}"] = raw
+    """Add a single raw transition entry to the transitions dict.
+
+    A `Phased` entry is registered as-is; consumers that need a single
+    callable resolve it for their phase (`Regime.get_all_functions`), while
+    the params-template collector unions both variants' parameters.
+    """
+    if callable(raw) or isinstance(raw, Phased):
+        transitions[f"next_{name}"] = cast("UserFunction", raw)
     elif isinstance(raw, Mapping):
         for target_name, target_value in raw.items():
             key = f"next_{name}{QNAME_DELIMITER}{target_name}"
-            transitions[key] = target_value
+            transitions[key] = cast("UserFunction", target_value)
 
 
 def _add_stochastic_entry(

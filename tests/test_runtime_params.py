@@ -74,7 +74,7 @@ def test_runtime_grid_creation():
 
 def test_runtime_grid_to_jax_raises_before_substitution():
     """`to_jax()` on a runtime grid is a bug — substitution happens at
-    solve/simulate time via `Regime.state_action_space(regime_params=...)`.
+    solve/simulate time via `regime.solution.state_action_space(regime_params=...)`.
     The error message must point the caller at that API."""
     grid = IrregSpacedGrid(n_points=5)
     with pytest.raises(Exception, match="state_action_space"):
