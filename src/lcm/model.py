@@ -40,6 +40,7 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
+from _lcm.solution.registry import DCEGM_NOT_IMPLEMENTED_MSG
 from _lcm.solution.solve_brute import solve
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
@@ -71,6 +72,7 @@ from lcm.exceptions import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
+from lcm.solvers import DCEGM
 from lcm.typing import UserFacingParamsTemplate, UserInitialConditions, UserParams
 
 
@@ -314,6 +316,7 @@ class Model:
             Immutable mapping of period to a value function array for each regime.
 
         """
+        self._fail_if_dcegm_solver_selected()
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
         validate_transitions(
@@ -493,6 +496,7 @@ class Model:
             optionally with additional_targets.
 
         """
+        self._fail_if_dcegm_solver_selected()
         log = get_logger(log_level=log_level)
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
@@ -681,6 +685,19 @@ class Model:
         )
         with self._simulate_compile_lock:
             self._simulate_compile_cache[compile_batch_size] = compiled
+
+    def _fail_if_dcegm_solver_selected(self) -> None:
+        """Raise until the DC-EGM solver is implemented.
+
+        A `DCEGM`-configured regime validates the DC-EGM model contract at
+        construction time, but solving (and hence simulating) is not
+        supported yet. Raising here, before params processing, keeps the
+        error message about the solver rather than about params the EGM
+        machinery would consume internally.
+        """
+        for user_regime in self.user_regimes.values():
+            if isinstance(user_regime.solver, DCEGM):
+                raise NotImplementedError(DCEGM_NOT_IMPLEMENTED_MSG)
 
     def _process_params(self, params: UserParams) -> FlatParams:
         """Broadcast, convert Series, dtype-cast, and validate user params.

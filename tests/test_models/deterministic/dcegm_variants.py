@@ -18,7 +18,7 @@ from typing import Literal
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM  # ty: ignore[unresolved-import]
+from lcm.solvers import DCEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
@@ -83,7 +83,7 @@ dcegm_retirement = UserRegime(
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     },
-    solver=DCEGM_SOLVER,  # ty: ignore[unknown-argument]
+    solver=DCEGM_SOLVER,
 )
 
 
@@ -103,7 +103,7 @@ dcegm_working_life = UserRegime(
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     },
-    solver=DCEGM_SOLVER,  # ty: ignore[unknown-argument]
+    solver=DCEGM_SOLVER,
 )
 
 
@@ -118,7 +118,7 @@ dcegm_retirement_full = UserRegime(
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     },
-    solver=DCEGM_SOLVER,  # ty: ignore[unknown-argument]
+    solver=DCEGM_SOLVER,
 )
 
 

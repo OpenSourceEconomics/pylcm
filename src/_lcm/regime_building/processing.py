@@ -12,6 +12,7 @@ from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.engine import (
     Regime,
     SimulateFunctions,
@@ -27,7 +28,6 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
-    get_max_Q_over_a,
 )
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.next_state import get_next_state_function_for_simulation
@@ -41,13 +41,13 @@ from _lcm.regime_building.stochastic_state_transitions import (
 )
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
+from _lcm.solution.registry import SOLVER_KERNEL_BUILDERS
 from _lcm.state_action_space import create_state_action_space
 from _lcm.typing import (
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
-    MaxQOverAFunction,
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
@@ -99,6 +99,12 @@ def process_regimes(
         The processed canonical regimes.
 
     """
+    # DC-EGM regimes must satisfy the EGM model contract before any kernel
+    # is built. `Model.__init__` validates earlier (so contract violations
+    # beat the generic unused-variable check); this call covers direct
+    # `process_regimes` callers.
+    validate_dcegm_regimes(user_regimes=user_regimes)
+
     states_per_regime: dict[RegimeName, set[StateName]] = {
         regime_name: set(user_regime.states.keys())
         for regime_name, user_regime in user_regimes.items()
@@ -310,7 +316,13 @@ def _build_solve_functions(
             enable_jit=enable_jit,
         )
 
-    max_Q_over_a = _build_max_Q_over_a_per_period(
+    # Dispatch the per-period kernel build on the regime's solver
+    # configuration. `BruteForce` builds the max-Q-over-a grid-search
+    # kernels; other solvers register their own builders in
+    # `SOLVER_KERNEL_BUILDERS`.
+    solver_kernel_builder = SOLVER_KERNEL_BUILDERS[type(user_regime.solver)]
+    max_Q_over_a = solver_kernel_builder(
+        solver=user_regime.solver,
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
@@ -1446,37 +1458,6 @@ def _build_Q_and_F_per_period(
         for period in periods:
             result[period] = built[key]
 
-    return MappingProxyType(result)
-
-
-def _build_max_Q_over_a_per_period(
-    *,
-    state_action_space: StateActionSpace,
-    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    grids: MappingProxyType[StateOrActionName, Grid],
-    enable_jit: bool,
-) -> MappingProxyType[int, MaxQOverAFunction]:
-    """Build max-Q-over-a closures for each period.
-
-    Periods sharing the same Q_and_F object reuse a single compiled function.
-    """
-    built: dict[int, MaxQOverAFunction] = {}
-    result: dict[int, MaxQOverAFunction] = {}
-    for period, Q_and_F in Q_and_F_functions.items():
-        q_id = id(Q_and_F)
-        if q_id not in built:
-            func = get_max_Q_over_a(
-                Q_and_F=Q_and_F,
-                batch_sizes={
-                    name: grid.batch_size
-                    for name, grid in grids.items()
-                    if name in state_action_space.state_names
-                },
-                action_names=state_action_space.action_names,
-                state_names=state_action_space.state_names,
-            )
-            built[q_id] = jax.jit(func) if enable_jit else func
-        result[period] = built[q_id]
     return MappingProxyType(result)
 
 

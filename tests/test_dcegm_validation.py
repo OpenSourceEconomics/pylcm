@@ -16,7 +16,7 @@ pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import BruteForce  # ty: ignore[unresolved-import]
+from lcm.solvers import BruteForce
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,

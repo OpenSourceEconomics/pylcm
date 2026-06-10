@@ -89,6 +89,7 @@ from lcm.regime import (  # noqa: E402
     SolveSimulateFunctionPair,
 )
 from lcm.result import SimulationResult  # noqa: E402
+from lcm.solvers import DCEGM, BruteForce  # noqa: E402
 
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
@@ -106,7 +107,9 @@ jax.tree_util.register_pytree_node(
 )
 
 __all__ = [
+    "DCEGM",
     "AgeGrid",
+    "BruteForce",
     "DiscreteGrid",
     "IrregSpacedGrid",
     "LinSpacedGrid",
