@@ -43,16 +43,17 @@ def _bind_forward_refs(*, regime_cls: type) -> None:
 
 
 def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
-    """Return the regime's states that are plain grids, excluding state pairs.
+    """Return the regime's states that are plain grids, excluding carried states.
 
-    A `SolveSimulateStatePair` in `states` is a derived function in the solve
-    phase, not a grid dimension, so it is omitted from the solve-phase state
-    grids and variable info.
+    A carried state (declared via `Phased(solve=..., simulate=Grid)` or the
+    legacy `SolveSimulateStatePair`) is a derived function in the solve phase,
+    not a grid dimension, so it is omitted from the solve-phase state grids
+    and variable info.
     """
     return {
         name: spec
         for name, spec in user_regime.states.items()
-        if not isinstance(spec, SolveSimulateStatePair)
+        if isinstance(spec, Grid)
     }
 
 

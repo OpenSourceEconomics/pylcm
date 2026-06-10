@@ -303,7 +303,7 @@ def test_function_pair_in_functions_does_not_crash_validation():
     scanner whole.
     """
     alive = UserRegime(
-        functions={  # ty: ignore[invalid-argument-type]
+        functions={
             "utility": _utility_consumes_scalar,
             "per_type_scale": _per_type_scale_takes_pref_type,
             "scaled": SolveSimulateFunctionPair(
@@ -347,7 +347,7 @@ def test_function_pair_solve_variant_unsafe_indexing_raises():
         match=r"per_type_scale.*pref_type",
     ):
         UserRegime(
-            functions={  # ty: ignore[invalid-argument-type]
+            functions={
                 "utility": _utility_consumes_scalar,
                 "per_type_scale": _per_type_scale_takes_pref_type,
                 "scaled": SolveSimulateFunctionPair(

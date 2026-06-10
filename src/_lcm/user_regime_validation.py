@@ -20,6 +20,7 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
+from lcm.phased import Phased
 from lcm.transition import (
     MarkovTransition,
     SolveSimulateFunctionPair,
@@ -31,16 +32,22 @@ if TYPE_CHECKING:
 
 
 def _grid_mapping_errors(
-    attr_name: str, mapping: Mapping[str, object], *, allow_state_pair: bool
+    attr_name: str, mapping: Mapping[str, object], *, allow_phase_variants: bool
 ) -> list[str]:
     """Collect key/value type errors for a grid-valued mapping (states/actions)."""
-    allowed = Grid | SolveSimulateStatePair if allow_state_pair else Grid
-    suffix = " or SolveSimulateStatePair" if allow_state_pair else ""
+    allowed = Grid | SolveSimulateStatePair | Phased if allow_phase_variants else Grid
+    suffix = ", SolveSimulateStatePair, or Phased" if allow_phase_variants else ""
     error_messages: list[str] = []
     for k, v in mapping.items():
         if not isinstance(k, str):
             error_messages.append(f"{attr_name} key {k!r} must be a string.")
-        if not isinstance(v, allowed):
+        if not allow_phase_variants and isinstance(v, Phased):
+            error_messages.append(
+                f"{attr_name}['{k}'] cannot be phase-variant: the simulated "
+                f"argmax must range over the same menu the value function was "
+                f"computed for."
+            )
+        elif not isinstance(v, allowed):
             error_messages.append(
                 f"{attr_name} value {v!r} must be an LCM grid{suffix}."
             )
@@ -48,14 +55,22 @@ def _grid_mapping_errors(
 
 
 def _callable_mapping_errors(
-    attr_name: str, mapping: Mapping[str, object]
+    attr_name: str, mapping: Mapping[str, object], *, allow_phase_variants: bool
 ) -> list[str]:
     """Collect key/value type errors for a callable-valued mapping."""
     error_messages: list[str] = []
     for k, v in mapping.items():
         if not isinstance(k, str):
             error_messages.append(f"{attr_name} key {k!r} must be a string.")
-        if not callable(v) and not isinstance(v, SolveSimulateFunctionPair):
+        if isinstance(v, Phased | SolveSimulateFunctionPair):
+            if not allow_phase_variants:
+                error_messages.append(
+                    f"{attr_name}['{k}'] cannot be phase-variant: a "
+                    f"phase-specific feasible set would let the simulated "
+                    f"argmax range over actions the value function was never "
+                    f"computed for."
+                )
+        elif not callable(v):
             error_messages.append(f"{attr_name} value {v!r} must be a callable.")
     return error_messages
 
@@ -72,10 +87,14 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
 
     """
     error_messages = [
-        *_grid_mapping_errors("states", regime.states, allow_state_pair=True),
-        *_grid_mapping_errors("actions", regime.actions, allow_state_pair=False),
-        *_callable_mapping_errors("functions", regime.functions),
-        *_callable_mapping_errors("constraints", regime.constraints),
+        *_grid_mapping_errors("states", regime.states, allow_phase_variants=True),
+        *_grid_mapping_errors("actions", regime.actions, allow_phase_variants=False),
+        *_callable_mapping_errors(
+            "functions", regime.functions, allow_phase_variants=True
+        ),
+        *_callable_mapping_errors(
+            "constraints", regime.constraints, allow_phase_variants=False
+        ),
     ]
 
     if error_messages:
@@ -225,12 +244,12 @@ def _validate_function_output_grid_indexing(
 
 
 def _function_input_names(
-    functions: Mapping[str, Callable | SolveSimulateFunctionPair],
+    functions: Mapping[str, Callable | SolveSimulateFunctionPair | Phased],
 ) -> dict[str, set[str]]:
     """Return each regime function's input-parameter names.
 
-    A `SolveSimulateFunctionPair` contributes the union of both variants'
-    parameters; unintrospectable callables contribute the empty set.
+    A `Phased` or `SolveSimulateFunctionPair` contributes the union of both
+    variants' parameters; unintrospectable callables contribute the empty set.
     """
     result: dict[str, set[str]] = {}
     for name, func in functions.items():
@@ -263,16 +282,16 @@ def _collect_indexing_consumers(
 
 
 def _function_variants(
-    func: Callable | SolveSimulateFunctionPair,
+    func: Callable | SolveSimulateFunctionPair | Phased,
 ) -> tuple[Callable, ...]:
     """Return the callable variants of a regime-function entry.
 
-    A plain function is itself; a `SolveSimulateFunctionPair` yields its
-    `solve` and `simulate` callables so both phases are scanned.
+    A plain function is itself; a `Phased` or `SolveSimulateFunctionPair`
+    yields its `solve` and `simulate` callables so both phases are scanned.
     """
-    if isinstance(func, SolveSimulateFunctionPair):
+    if isinstance(func, SolveSimulateFunctionPair | Phased):
         return (cast("Callable", func.solve), cast("Callable", func.simulate))
-    return (func,)
+    return (cast("Callable", func),)
 
 
 def _find_function_output_grid_indexing(
@@ -439,19 +458,46 @@ def _validate_state_transitions(regime: lcm.regime.Regime) -> list[str]:
         )
 
     for name, value in regime.state_transitions.items():
-        if value is None or callable(value):
+        error_messages.extend(_state_transition_value_errors(name=name, value=value))
+
+    return error_messages
+
+
+def _state_transition_value_errors(*, name: StateName, value: object) -> list[str]:
+    """Validate one `state_transitions` entry against the value vocabulary.
+
+    Each variant of a `Phased` entry is held to the same vocabulary as a bare
+    value: callable, `MarkovTransition`, `None`, or a per-target Mapping.
+    """
+    error_messages: list[str] = []
+    for variant, label in _state_transition_variants(value):
+        if variant is None or callable(variant):
             continue
-        if isinstance(value, Mapping):
+        if isinstance(variant, Mapping):
             error_messages.extend(
-                _validate_per_target_dict(state_name=name, targets=value)
+                _validate_per_target_dict(
+                    state_name=name,
+                    targets=cast("Mapping[RegimeName, object]", variant),
+                )
             )
         else:
             error_messages.append(
-                f"state_transitions['{name}'] must be callable, MarkovTransition, "
-                f"None, or a per-target Mapping, got {type(value).__name__}.",
+                f"state_transitions['{name}']{label} must be callable, "
+                f"MarkovTransition, None, or a per-target Mapping, got "
+                f"{type(variant).__name__}.",
             )
-
     return error_messages
+
+
+def _state_transition_variants(value: object) -> tuple[tuple[object, str], ...]:
+    """Return a state-transition entry's per-phase variants with display labels.
+
+    A bare value is its own single variant; a `Phased` yields its solve and
+    simulate variants, each validated against the same vocabulary.
+    """
+    if isinstance(value, Phased):
+        return ((value.solve, " solve variant"), (value.simulate, " simulate variant"))
+    return ((value, ""),)
 
 
 def _validate_per_target_dict(
@@ -466,7 +512,13 @@ def _validate_per_target_dict(
                 f"state_transitions['{state_name}'] per-target dict key "
                 f"{target_name!r} must be a string.",
             )
-        if isinstance(target_value, MarkovTransition):
+        if isinstance(target_value, Phased):
+            error_messages.append(
+                f"state_transitions['{state_name}']['{target_name}'] cannot "
+                f"be `Phased` — `Phased` is outermost-only: wrap the whole "
+                f"entry, e.g. `Phased(solve={{...}}, simulate={{...}})`.",
+            )
+        elif isinstance(target_value, MarkovTransition):
             markov_count += 1
         elif not callable(target_value):
             error_messages.append(

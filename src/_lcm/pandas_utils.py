@@ -25,6 +25,7 @@ from _lcm.typing import (
 from _lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.ages import AgeGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import SolveSimulateStatePair
 from lcm.typing import Float1D, FloatND, Int1D
@@ -880,20 +881,24 @@ def _collect_state_names(
 
 
 def _state_grids_unwrapping_pairs(
-    states: Mapping[StateName, Grid | SolveSimulateStatePair],
+    states: Mapping[StateName, Grid | SolveSimulateStatePair | Phased],
 ) -> dict[StateName, Grid]:
-    """Replace each `SolveSimulateStatePair` state by its inner grid.
+    """Replace each carried-state declaration by its simulate-phase grid.
 
-    The pair's carried value is a genuine state in simulation input and
-    output, so label/code discovery must see the inner grid like any other
-    state grid.
+    A carried value (declared via `Phased(solve=..., simulate=Grid)` or the
+    legacy `SolveSimulateStatePair`) is a genuine state in simulation input
+    and output, so label/code discovery must see the inner grid like any
+    other state grid.
     """
-    return {
-        name: cast("Grid", spec.grid)
-        if isinstance(spec, SolveSimulateStatePair)
-        else spec
-        for name, spec in states.items()
-    }
+    result: dict[StateName, Grid] = {}
+    for name, spec in states.items():
+        if isinstance(spec, SolveSimulateStatePair):
+            result[name] = cast("Grid", spec.grid)
+        elif isinstance(spec, Phased):
+            result[name] = cast("Grid", spec.simulate)
+        else:
+            result[name] = spec
+    return result
 
 
 def _build_discrete_grid_lookup(

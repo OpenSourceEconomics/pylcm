@@ -9,6 +9,7 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.typing import FunctionName, RegimeParamsTemplate, TransitionFunctionName
 from lcm.exceptions import InvalidNameError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.regime import SolveSimulateFunctionPair
 from lcm.transition import SolveSimulateStatePair
@@ -51,7 +52,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
     function_params: dict[FunctionName, dict[str, str]] = {}
 
     for name, func in _collect_all_functions_for_template(user_regime).items():
-        if isinstance(func, SolveSimulateFunctionPair):
+        if isinstance(func, SolveSimulateFunctionPair | Phased):
             tree_solve = dt.create_tree_with_input_types({name: func.solve})
             tree_sim = dt.create_tree_with_input_types({name: func.simulate})
             tree = dict(tree_solve) | dict(tree_sim)
@@ -146,28 +147,32 @@ def _fail_if_runtime_grid_shadows_function(
 def _collect_all_functions_for_template(
     user_regime: UserRegime,
 ) -> dict[
-    FunctionName | TransitionFunctionName, UserFunction | SolveSimulateFunctionPair
+    FunctionName | TransitionFunctionName,
+    UserFunction | SolveSimulateFunctionPair | Phased,
 ]:
-    """Collect all regime functions, preserving `SolveSimulateFunctionPair` entries.
+    """Collect all regime functions, preserving phase-variant entries.
 
-    Unlike `user_regime.get_all_functions(phase=...)` which resolves pairs to a
-    single variant, this returns pairs as-is so the caller can union both
-    variants' parameters.
+    Unlike `user_regime.get_all_functions(phase=...)` which resolves `Phased`
+    and `SolveSimulateFunctionPair` entries to a single variant, this returns
+    them as-is so the caller can union both variants' parameters.
     """
     result: dict[
         FunctionName | TransitionFunctionName,
-        UserFunction | SolveSimulateFunctionPair,
+        UserFunction | SolveSimulateFunctionPair | Phased,
     ] = dict(user_regime.functions)
     result |= dict(user_regime.constraints)
-    # A SolveSimulateStatePair contributes its `solve` variant as a derived
-    # function under the state's name (solve-phase imputation) and its
-    # `transition` under `next_<name>` (simulate-phase law of motion), so the
-    # parameters of both surface in the template.
+    # A carried state contributes its `solve` variant as a derived function
+    # under the state's name (solve-phase imputation), so its parameters
+    # surface in the template. The law of motion is keyed `next_<name>`: a
+    # legacy pair attaches it directly, a `Phased` declaration's law is its
+    # regular `state_transitions` entry, collected below.
     for name, spec in user_regime.states.items():
         if isinstance(spec, SolveSimulateStatePair):
             result[name] = cast("UserFunction", spec.solve)
             result[f"next_{name}"] = cast("UserFunction", spec.transition)
-    if callable(user_regime.transition):
+        elif isinstance(spec, Phased):
+            result[name] = cast("UserFunction", spec.solve)
+    if callable(user_regime.transition) or isinstance(user_regime.transition, Phased):
         result |= collect_state_transitions(
             user_regime.states, user_regime.state_transitions
         )

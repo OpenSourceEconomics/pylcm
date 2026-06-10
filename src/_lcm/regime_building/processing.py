@@ -74,6 +74,7 @@ from _lcm.variables import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import (
     MarkovTransition,
@@ -561,16 +562,16 @@ def _process_regime_core(
     flat_grids = flatten_regime_namespace(all_grids)
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
-    # Resolve function pairs for this phase.
+    # Resolve phase-variant function entries for this phase.
     resolved_functions: dict[str, UserFunction] = {}
     for name, func in user_regime.functions.items():
-        if isinstance(func, SolveSimulateFunctionPair):
+        if isinstance(func, SolveSimulateFunctionPair | Phased):
             resolved_functions[name] = cast(
                 "UserFunction",
                 func.solve if phase == "solve" else func.simulate,
             )
         else:
-            resolved_functions[name] = func
+            resolved_functions[name] = cast("UserFunction", func)
 
     # A SolveSimulateStatePair contributes its `solve` variant as a derived
     # function under the state's name, so the function DAG computes the imputed
@@ -581,7 +582,7 @@ def _process_regime_core(
 
     all_functions: dict[str, UserFunction] = {
         **resolved_functions,
-        **user_regime.constraints,
+        **cast("Mapping[str, UserFunction]", user_regime.constraints),
         **flat_nested_transitions,
     }
 

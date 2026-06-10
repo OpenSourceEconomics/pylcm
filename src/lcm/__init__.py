@@ -74,6 +74,7 @@ from lcm.persistence import (  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     _bind_forward_refs as _bind_persistence_forward_refs,
 )
+from lcm.phased import Phased  # noqa: E402
 from lcm.processes import (  # noqa: E402
     LogNormalIIDProcess,
     NormalIIDProcess,
@@ -117,6 +118,7 @@ __all__ = [
     "Model",
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
+    "Phased",
     "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",

@@ -27,6 +27,7 @@ from lcm.exceptions import (
     InvalidStateTransitionProbabilitiesError,
     RegimeInitializationError,
 )
+from lcm.phased import Phased
 from lcm.transition import MarkovTransition, SolveSimulateStatePair
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
@@ -70,10 +71,14 @@ class _IdentityTransition:
 
 
 def collect_state_transitions(
-    states: Mapping[StateName, Grid | SolveSimulateStatePair | None],
+    states: Mapping[StateName, Grid | SolveSimulateStatePair | Phased | None],
     state_transitions: Mapping[
         StateName,
-        UserFunction | Callable | None | Mapping[RegimeName, UserFunction | Callable],
+        UserFunction
+        | Callable
+        | Phased
+        | None
+        | Mapping[RegimeName, UserFunction | Callable | Phased],
     ],
 ) -> dict[TransitionFunctionName, UserFunction]:
     """Collect state transition functions from `state_transitions`.
@@ -200,15 +205,23 @@ def _add_raw_transition(
     *,
     transitions: dict[TransitionFunctionName, UserFunction],
     name: StateName,
-    raw: UserFunction | Callable | Mapping[RegimeName, UserFunction | Callable],
+    raw: UserFunction
+    | Callable
+    | Phased
+    | Mapping[RegimeName, UserFunction | Callable | Phased],
 ) -> None:
-    """Add a single raw transition entry to the transitions dict."""
-    if callable(raw):
-        transitions[f"next_{name}"] = raw
+    """Add a single raw transition entry to the transitions dict.
+
+    A `Phased` entry is registered as-is; consumers that need a single
+    callable resolve it for their phase (`Regime.get_all_functions`), while
+    the params-template collector unions both variants' parameters.
+    """
+    if callable(raw) or isinstance(raw, Phased):
+        transitions[f"next_{name}"] = cast("UserFunction", raw)
     elif isinstance(raw, Mapping):
         for target_name, target_value in raw.items():
             key = f"next_{name}{QNAME_DELIMITER}{target_name}"
-            transitions[key] = target_value
+            transitions[key] = cast("UserFunction", target_value)
 
 
 def _add_stochastic_entry(
