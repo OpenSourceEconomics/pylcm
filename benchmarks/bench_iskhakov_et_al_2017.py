@@ -25,13 +25,25 @@ _N_SUBJECTS = 100_000
 
 _SOLVE_WEALTH_N_POINTS = 1_000
 _SOLVE_CONSUMPTION_N_POINTS = 5_000
+_SOLVE_SAVINGS_N_POINTS = 1_000
 
 _SIMULATE_WEALTH_N_POINTS = 500
 _SIMULATE_CONSUMPTION_N_POINTS = 500
 
 
-def _make_model_and_params(*, wealth_n_points: int, consumption_n_points: int):
+def _make_model_and_params(
+    *,
+    wealth_n_points: int,
+    consumption_n_points: int,
+    solver: str = "brute_force",
+):
     """Build the taste-shock retirement model and its parameters.
+
+    The `"dcegm"` solver variant is the same economic model in the DC-EGM
+    contract: the wealth transition consumes the post-decision savings, the
+    borrowing constraint is dropped (the savings grid's lower bound enforces
+    it), and `resources`/`savings`/`inverse_marginal_utility` are declared as
+    regime functions. The consumption grid plays no role in the DC-EGM solve.
 
     lcm and jax imports are deferred to the function body so ASV's forkserver
     never loads the XLA backend before forking workers (see
@@ -48,7 +60,14 @@ def _make_model_and_params(*, wealth_n_points: int, consumption_n_points: int):
         Regime,
         categorical,
     )
-    from lcm.typing import DiscreteAction, ScalarInt
+    from lcm.solvers import DCEGM
+    from lcm.typing import (
+        ContinuousAction,
+        ContinuousState,
+        DiscreteAction,
+        FloatND,
+        ScalarInt,
+    )
     from lcm_examples.mortality import (
         LaborSupply,
         borrowing_constraint,
@@ -83,6 +102,20 @@ def _make_model_and_params(*, wealth_n_points: int, consumption_n_points: int):
     def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt:
         return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.retirement)
 
+    def resources(wealth: ContinuousState) -> FloatND:
+        return wealth
+
+    def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+        return resources - consumption
+
+    def next_wealth_from_savings(
+        savings: FloatND, labor_income: FloatND, interest_rate: float
+    ) -> ContinuousState:
+        return (1 + interest_rate) * savings + labor_income
+
+    def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+        return 1.0 / marginal_continuation
+
     ages = AgeGrid(start=40, stop=40 + _N_PERIODS - 1, step="Y")
     last_age = ages.exact_values[-1]
 
@@ -116,6 +149,34 @@ def _make_model_and_params(*, wealth_n_points: int, consumption_n_points: int):
         functions={"utility": utility_retirement},
         active=lambda age: age < last_age,
     )
+
+    if solver == "dcegm":
+        dcegm_solver = DCEGM(
+            continuous_state="wealth",
+            continuous_action="consumption",
+            resources="resources",
+            post_decision_function="savings",
+            savings_grid=LinSpacedGrid(
+                start=0.0, stop=400.0, n_points=_SOLVE_SAVINGS_N_POINTS
+            ),
+        )
+        dcegm_functions = {
+            "resources": resources,
+            "savings": savings,
+            "inverse_marginal_utility": inverse_marginal_utility,
+        }
+        working_life = working_life.replace(
+            state_transitions={"wealth": next_wealth_from_savings},
+            constraints={},
+            functions={**dict(working_life.functions), **dcegm_functions},
+            solver=dcegm_solver,
+        )
+        retirement = retirement.replace(
+            state_transitions={"wealth": next_wealth_from_savings},
+            constraints={},
+            functions={**dict(retirement.functions), **dcegm_functions},
+            solver=dcegm_solver,
+        )
 
     dead = Regime(
         transition=None,
@@ -209,6 +270,48 @@ class IskhakovEtAl2017Solve:
 class IskhakovEtAl2017SolveGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.bench_iskhakov_et_al_2017"
     bench_class = "IskhakovEtAl2017Solve"
+
+
+class IskhakovEtAl2017DCEGMSolve:
+    """DC-EGM solve of the same model: Euler inversion replaces the grid search."""
+
+    version = "1"
+    timeout = 600
+
+    def _build(self) -> None:
+        self.model, self.model_params = _make_model_and_params(
+            wealth_n_points=_SOLVE_WEALTH_N_POINTS,
+            consumption_n_points=_SOLVE_CONSUMPTION_N_POINTS,
+            solver="dcegm",
+        )
+
+    def setup(self) -> None:
+        self._build()
+        start = time.perf_counter()
+        self.model.solve(params=self.model_params, log_level="off")
+        self._compile_time = time.perf_counter() - start
+
+    def setup_for_gpu_measurement(self) -> None:
+        self._build()
+
+    def time_execution(self) -> None:
+        self.model.solve(params=self.model_params, log_level="off")
+
+    def peakmem_execution(self) -> None:
+        self.model.solve(params=self.model_params, log_level="off")
+
+    def teardown(self) -> None:
+        _clear_gpu_memory()
+
+    def track_compilation_time(self) -> float:
+        return self._compile_time
+
+    track_compilation_time.unit = "seconds"
+
+
+class IskhakovEtAl2017DCEGMSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
+    bench_module = "benchmarks.bench_iskhakov_et_al_2017"
+    bench_class = "IskhakovEtAl2017DCEGMSolve"
 
 
 class IskhakovEtAl2017Simulate:

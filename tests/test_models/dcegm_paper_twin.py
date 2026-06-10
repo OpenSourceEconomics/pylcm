@@ -56,9 +56,9 @@ LAST_ALIVE_AGE = MIN_AGE + N_PERIODS - 2  # 28; the final period is terminal
 # value is sharply curved at low wealth, so the grid is geometric below 0.5,
 # fine-stepped through the low fixture nodes (1, 2, 5), and 0.5-stepped above
 # — every fixture wealth point (1, 2, 5, 10, 20, 35) sits exactly on a node.
-_FLOOR_WEALTH_POINTS = tuple(0.001 * (0.5 / 0.001) ** (i / 80) for i in range(80))
-_MID_WEALTH_POINTS = tuple(0.5 + 0.1 * i for i in range(45))
-_TOP_WEALTH_POINTS = tuple(5.0 + 0.5 * i for i in range(91))
+_FLOOR_WEALTH_POINTS = tuple(0.001 * (0.5 / 0.001) ** (i / 120) for i in range(120))
+_MID_WEALTH_POINTS = tuple(0.5 + 0.05 * i for i in range(90))
+_TOP_WEALTH_POINTS = tuple(5.0 + 0.25 * i for i in range(181))
 WEALTH_GRID = IrregSpacedGrid(
     points=_FLOOR_WEALTH_POINTS + _MID_WEALTH_POINTS + _TOP_WEALTH_POINTS
 )

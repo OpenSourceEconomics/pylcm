@@ -26,15 +26,17 @@ class EgmCarry:
 
     All rows share the trailing grid axis of static, per-regime length so the
     carry has a period-invariant pytree shape (periods sharing a compiled
-    program never trigger retracing). Every array is pinned to the canonical
-    float dtype.
+    program never trigger retracing). Regimes with discrete dimensions carry
+    one row per discrete combo: leading axes are the regime's discrete
+    states (in V state order), then its discrete actions. Every array is
+    pinned to the canonical float dtype.
     """
 
     endog_grid: FloatND
     """Endogenous grid in resources space, NaN-padded in the tail.
 
-    Weakly ascending: envelope kink abscissae appear twice, carrying the
-    left- and right-extrapolated policy values.
+    Weakly ascending per row: envelope kink abscissae appear twice, carrying
+    the left- and right-extrapolated policy values.
     """
 
     policy: FloatND
@@ -82,7 +84,11 @@ def _unflatten_egm_carry(_aux: None, children: Sequence[Any]) -> EgmCarry:
 jax.tree_util.register_pytree_node(EgmCarry, _flatten_egm_carry, _unflatten_egm_carry)
 
 
-def build_template_egm_carry(*, n_rows: int) -> EgmCarry:
+def build_template_egm_carry(
+    *,
+    n_rows: int,
+    leading_shape: tuple[int, ...] = (),
+) -> EgmCarry:
     """Build a benign all-finite carry template with `n_rows` grid slots.
 
     Used to initialize the rolling `next_regime_to_egm_carry` mapping before
@@ -93,18 +99,21 @@ def build_template_egm_carry(*, n_rows: int) -> EgmCarry:
 
     Args:
         n_rows: Static length of the carry rows.
+        leading_shape: Sizes of the regime's discrete dimensions (discrete
+            states, then discrete actions); empty for regimes without
+            discrete dimensions.
 
     Returns:
         Carry with an ascending unit-interval grid and all-zero policy,
-        value, and marginal-utility rows.
+        value, and marginal-utility rows, broadcast over `leading_shape`.
 
     """
     dtype = canonical_float_dtype()
-    zeros = jnp.zeros(n_rows, dtype=dtype)
+    shape = (*leading_shape, n_rows)
     return EgmCarry(
-        endog_grid=jnp.linspace(0.0, 1.0, n_rows, dtype=dtype),
-        policy=zeros,
-        value=zeros,
-        marginal_utility=zeros,
+        endog_grid=jnp.broadcast_to(jnp.linspace(0.0, 1.0, n_rows, dtype=dtype), shape),
+        policy=jnp.zeros(shape, dtype=dtype),
+        value=jnp.zeros(shape, dtype=dtype),
+        marginal_utility=jnp.zeros(shape, dtype=dtype),
         taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
     )

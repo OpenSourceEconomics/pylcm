@@ -22,6 +22,7 @@ from _lcm.grids import Grid
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
+    ConstraintFunctionsMapping,
     EconFunctionsMapping,
     EgmStepFunction,
     MaxQOverAFunction,
@@ -68,6 +69,9 @@ class SolverBuildContext:
 
     functions: EconFunctionsMapping
     """The regime's processed functions (params renamed to qualified names)."""
+
+    constraints: ConstraintFunctionsMapping
+    """Immutable mapping of the regime's constraint names to functions."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of target regime names to transition functions."""
@@ -172,12 +176,15 @@ def _build_dcegm_kernels(
         regime_name=context.regime_name,
         user_regimes=context.user_regimes,
         functions=context.functions,
+        constraints=context.constraints,
         transitions=context.transitions,
         stochastic_transition_names=context.stochastic_transition_names,
         compute_regime_transition_probs=context.compute_regime_transition_probs,
         regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
         regimes_to_active_periods=context.regimes_to_active_periods,
         flat_param_names=context.flat_param_names,
+        state_action_space=context.state_action_space,
+        has_taste_shocks=context.has_taste_shocks,
     )
     if context.enable_jit:
         jitted_by_id: dict[int, EgmStepFunction] = {}
