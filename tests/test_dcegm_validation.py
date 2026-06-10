@@ -17,6 +17,7 @@ from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import BruteForce
+from lcm.transition import fixed_transition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -139,7 +140,7 @@ CASES = {
             },
             state_transitions={
                 **dict(VALID.state_transitions),
-                "aime": None,
+                "aime": fixed_transition("aime"),
             },
         ),
         "continuous state",

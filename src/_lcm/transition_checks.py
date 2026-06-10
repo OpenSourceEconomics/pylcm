@@ -200,9 +200,9 @@ def _validate_regime_transition_single(
     """
     regime = regimes[regime_name]
     # Non-None guaranteed: only called for non-terminal regimes
-    regime_transition_func = regime.solve_functions.compute_regime_transition_probs
+    regime_transition_func = regime.solution.compute_regime_transition_probs
 
-    state_action_space = regime.state_action_space(
+    state_action_space = regime.solution.state_action_space(
         regime_params=regime_params,
     )
 
@@ -400,15 +400,15 @@ def _validate_no_reachable_incomplete_targets(
     self-entry in a per-target dict is a common user error.
 
     """
-    solve_functions = regimes[regime_name].solve_functions
-    transitions = solve_functions.transitions
-    stochastic_names = solve_functions.stochastic_transition_names
+    solution = regimes[regime_name].solution
+    transitions = solution.transitions
+    stochastic_names = solution.stochastic_transition_names
 
     for target_regime_name in active_regimes_next_period:
         target_regime = regimes[target_regime_name]
         needs = {
             f"next_{s}"
-            for s in target_regime.variables.state_names
+            for s in target_regime.solution.state_names
             if f"next_{s}" in stochastic_names
         }
         if not needs:
@@ -482,7 +482,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
             if not regime.stochastic_state_transitions:
                 continue
 
-            state_action_space = regime.state_action_space(
+            state_action_space = regime.solution.state_action_space(
                 regime_params=flat_params[regime_name],
             )
             age = ages.values[period]  # noqa: PD011

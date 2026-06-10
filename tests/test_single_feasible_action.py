@@ -27,7 +27,14 @@ import pytest
 from _lcm.grids import IrregSpacedGrid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.regime_building.ndimage import map_coordinates
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,
@@ -325,7 +332,10 @@ def _build_alive_dead_model(
             "assets": LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
             "pref_type": DiscreteGrid(PrefType, batch_size=1),
         },
-        state_transitions={"assets": _next_assets, "pref_type": None},
+        state_transitions={
+            "assets": _next_assets,
+            "pref_type": fixed_transition("pref_type"),
+        },
         actions={"consumption": IrregSpacedGrid(n_points=5)},
         constraints={"borrowing_constraint": _alive_borrow},
         transition=_alive_to_dead,

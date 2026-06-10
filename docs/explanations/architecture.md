@@ -40,7 +40,7 @@ lcm/
 ├── persistence.py    ← SolveSnapshot, SimulateSnapshot, load_snapshot,
 │                       save_solution, load_solution
 ├── processes.py      ← the seven *Process classes
-├── regime.py         ← Regime, MarkovTransition, SolveSimulateFunctionPair
+├── regime.py         ← Regime (Phased and MarkovTransition re-exported)
 ├── result.py         ← SimulationResult
 ├── transition.py     ← transition helpers
 ├── typing.py         ← user-facing type aliases
@@ -94,7 +94,7 @@ The mapping of public names to files:
 | File             | What lives there                                                                                                                                                                                          |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `model.py`       | `Model`                                                                                                                                                                                                   |
-| `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`.                                  |
+| `regime.py`      | `Regime` and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`; the phase normalizer in `_lcm/regime_building/phases.py`.                          |
 | `ages.py`        | `AgeGrid`. Step parser and validators live in `_lcm/ages.py`.                                                                                                                                             |
 | `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`, and the `@categorical` decorator                         |
 | `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |

@@ -62,7 +62,7 @@ def _collect_all_available_targets(
 def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     """Get available target names for a single regime."""
     excluded = {"H"} | _get_stochastic_weight_function_names(regime)
-    sim = regime.simulate_functions
+    sim = regime.simulation
     return {
         name for name in sim.functions if name not in excluded
     } | sim.constraints.keys()
@@ -74,12 +74,10 @@ def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
     These are functions named `weight_{transition_name}` that return probability arrays
     for stochastic state transitions. They should not be exposed as available targets.
     """
-    stochastic_transition_names = regime.simulate_functions.stochastic_transition_names
+    stochastic_transition_names = regime.simulation.stochastic_transition_names
     return {
         f"weight_{target_regime}__{transition_name}"
-        for target_regime, target_transitions in (
-            regime.simulate_functions.transitions.items()
-        )
+        for target_regime, target_transitions in (regime.simulation.transitions.items())
         for transition_name in target_transitions
         if transition_name in stochastic_transition_names
     }
@@ -156,7 +154,7 @@ def _compute_targets(
 
 def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
     """Build pool of available functions for target computation."""
-    sim = regime.simulate_functions
+    sim = regime.simulation
     pool: dict[str, UserFunction] = {
         **{k: v for k, v in sim.functions.items() if k != "H"},
         **sim.constraints,

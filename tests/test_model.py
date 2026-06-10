@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.effective import EffectiveUserRegime
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -8,6 +9,7 @@ from lcm import (
     MarkovTransition,
     Model,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
@@ -118,21 +120,22 @@ def test_regime_invalid_utility():
 
 
 def test_regime_overlapping_states_actions(binary_category_class):
-    """Regime rejects overlapping state and action names."""
+    """The effective regime rejects overlapping state and action names."""
+    regime = UserRegime(
+        states={
+            "health": DiscreteGrid(binary_category_class),
+        },
+        state_transitions={"health": fixed_transition("health")},
+        actions={"health": DiscreteGrid(binary_category_class)},
+        functions={"utility": lambda: 0},
+        transition=lambda: 0,
+        active=lambda age: age < 5,
+    )
     with pytest.raises(
         RegimeInitializationError,
         match=r"States and actions cannot have overlapping names.",
     ):
-        UserRegime(
-            states={
-                "health": DiscreteGrid(binary_category_class),
-            },
-            state_transitions={"health": None},
-            actions={"health": DiscreteGrid(binary_category_class)},
-            functions={"utility": lambda: 0},
-            transition=lambda: 0,
-            active=lambda age: age < 5,
-        )
+        EffectiveUserRegime(user_regime=regime)
 
 
 def test_regime_transition_must_be_callable():
@@ -345,7 +348,7 @@ def test_unused_state_raises_error():
         },
         state_transitions={
             "wealth": lambda wealth, consumption: wealth - consumption,
-            "unused_state": None,
+            "unused_state": fixed_transition("unused_state"),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         transition=MarkovTransition(lambda: jnp.array([0.9, 0.1])),
@@ -631,7 +634,7 @@ def test_state_only_in_transitions_with_terminal_regime():
         },
         state_transitions={
             "wealth": next_wealth,
-            "type_var": None,
+            "type_var": fixed_transition("type_var"),
         },
         actions={
             "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
