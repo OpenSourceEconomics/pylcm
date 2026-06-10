@@ -409,3 +409,45 @@ def test_pair_state_counts_as_covered_for_reachability():
     assert isinstance(retired_entry, dict)
     assert "next_wealth" in retired_entry
     assert "next_pension_wealth" in retired_entry
+
+
+def test_mock_regime_get_all_functions_matches_real_regime():
+    """`MockRegime.get_all_functions` exposes the same keys as the real method.
+
+    The mock is the test double for canonical processing; a key set that
+    drifts from `lcm.regime.Regime.get_all_functions` (e.g. dropping a state
+    pair's `next_<name>` transition) would let mock-based tests pass against
+    behavior the real regime does not have.
+    """
+
+    def impute_pension_wealth(wealth: float) -> float:
+        return wealth * 0.1
+
+    def evolve_pension_wealth(pension_wealth: float) -> float:
+        return pension_wealth * 1.03
+
+    def next_wealth(wealth: float) -> float:
+        return wealth
+
+    def next_regime(_age: float) -> ScalarInt:
+        return jnp.int32(0)
+
+    def utility(wealth: float) -> FloatND:
+        return jnp.asarray(wealth)
+
+    kwargs: dict = {
+        "transition": next_regime,
+        "states": {
+            "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
+            "pension_wealth": SolveSimulateStatePair(
+                solve=impute_pension_wealth,
+                grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
+                transition=evolve_pension_wealth,
+            ),
+        },
+        "state_transitions": {"wealth": next_wealth},
+        "functions": {"utility": utility},
+    }
+    real = UserRegime(**kwargs)
+    mock = MockRegime(**kwargs)
+    assert set(mock.get_all_functions()) == set(real.get_all_functions())
