@@ -11,7 +11,7 @@ import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.grids import DiscreteGrid, IrregSpacedGrid
+from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
 from _lcm.typing import (
@@ -26,6 +26,7 @@ from _lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.ages import AgeGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.regime import Regime as UserRegime
+from lcm.transition import SolveSimulateStatePair
 from lcm.typing import Float1D, FloatND, Int1D
 
 
@@ -115,7 +116,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
         idx = group.index
         discrete_grids = {
             name: grid
-            for name, grid in user_regime.states.items()
+            for name, grid in _state_grids_unwrapping_pairs(user_regime.states).items()
             if isinstance(grid, DiscreteGrid)
         }
         discrete_state_names |= discrete_grids.keys()
@@ -450,7 +451,10 @@ def _resolve_categoricals(
     grids: dict[str, DiscreteGrid] = {}
     if regime_name is not None:
         user_regime = user_regimes[regime_name]
-        for grids_mapping in (user_regime.states, user_regime.actions):
+        for grids_mapping in (
+            _state_grids_unwrapping_pairs(user_regime.states),
+            user_regime.actions,
+        ):
             grids.update(
                 {n: g for n, g in grids_mapping.items() if isinstance(g, DiscreteGrid)}
             )
@@ -875,6 +879,23 @@ def _collect_state_names(
     return names
 
 
+def _state_grids_unwrapping_pairs(
+    states: Mapping[StateName, Grid | SolveSimulateStatePair],
+) -> dict[StateName, Grid]:
+    """Replace each `SolveSimulateStatePair` state by its inner grid.
+
+    The pair's carried value is a genuine state in simulation input and
+    output, so label/code discovery must see the inner grid like any other
+    state grid.
+    """
+    return {
+        name: cast("Grid", spec.grid)
+        if isinstance(spec, SolveSimulateStatePair)
+        else spec
+        for name, spec in states.items()
+    }
+
+
 def _build_discrete_grid_lookup(
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> dict[str, DiscreteGrid]:
@@ -892,7 +913,10 @@ def _build_discrete_grid_lookup(
     """
     lookup: dict[str, DiscreteGrid] = {}
     for regime_name, user_regime in user_regimes.items():
-        for grids_mapping in (user_regime.states, user_regime.actions):
+        for grids_mapping in (
+            _state_grids_unwrapping_pairs(user_regime.states),
+            user_regime.actions,
+        ):
             for var_name, grid in grids_mapping.items():
                 if isinstance(grid, DiscreteGrid):
                     if var_name in lookup:

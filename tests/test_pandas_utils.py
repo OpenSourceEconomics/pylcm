@@ -1,6 +1,7 @@
 """Tests for _lcm.pandas_utils and categorical.to_categorical_dtype."""
 
 import dataclasses
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +16,14 @@ from _lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from _lcm.params.processing import broadcast_to_template
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    SolveSimulateStatePair,
+    categorical,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
 from tests.test_models.basic_discrete import (
@@ -2012,3 +2020,63 @@ def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:
         regime_name=None,
     )
     assert "extra" in grids
+
+
+def _next_regime_stub(_age: float) -> ScalarInt:
+    return jnp.int32(0)
+
+
+def _impute_occupation() -> ScalarInt:
+    return jnp.int32(0)
+
+
+def _evolve_occupation(occupation: ScalarInt) -> ScalarInt:
+    return occupation
+
+
+def _occupation_pair_regime() -> UserRegime:
+    return UserRegime(
+        transition=_next_regime_stub,
+        states={
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
+            "occupation": SolveSimulateStatePair(
+                solve=_impute_occupation,
+                grid=DiscreteGrid(Occupation),
+                transition=_evolve_occupation,
+            ),
+        },
+        state_transitions={"wealth": lambda wealth: wealth},
+        functions={"utility": lambda wealth: wealth},
+    )
+
+
+def test_build_discrete_grid_lookup_unwraps_state_pair():
+    """A discrete grid wrapped in a `SolveSimulateStatePair` appears in the lookup.
+
+    The pair's carried value is a categorical state in simulation output, so
+    its label/code mapping must be discoverable like any other discrete grid.
+    """
+    lookup = _build_discrete_grid_lookup({"a": _occupation_pair_regime()})
+    assert "occupation" in lookup
+    assert lookup["occupation"].categories == ("blue_collar", "white_collar")
+
+
+def test_initial_conditions_map_discrete_pair_labels_to_codes():
+    """String labels seed a discrete pair state as integer codes."""
+    df = pd.DataFrame(
+        {
+            "regime_name": ["a", "a"],
+            "wealth": [10.0, 50.0],
+            "occupation": ["white_collar", "blue_collar"],
+            "age": [25.0, 25.0],
+        }
+    )
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        user_regimes={"a": _occupation_pair_regime()},
+        regime_names_to_ids=MappingProxyType({"a": jnp.int32(0)}),
+    )
+    assert jnp.array_equal(
+        conditions["occupation"],
+        jnp.array([Occupation.white_collar, Occupation.blue_collar]),
+    )
