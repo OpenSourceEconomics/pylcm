@@ -78,6 +78,20 @@ def _stochastic_next_wealth(
     return jnp.stack([probs, probs])
 
 
+def _stochastic_next_aime(
+    aime: ContinuousState,
+    interest_rate: float,
+) -> FloatND:
+    probs = jnp.where(interest_rate > 0, 0.5, 0.5) * jnp.ones_like(aime)
+    return jnp.stack([probs, probs])
+
+
+def _next_aime_depending_on_consumption(
+    aime: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return aime + 0.1 * consumption
+
+
 def _without_function(regime: UserRegime, name: str) -> UserRegime:
     functions = {k: v for k, v in regime.functions.items() if k != name}
     return regime.replace(functions=functions)
@@ -132,7 +146,7 @@ CASES = {
         ),
         "continuous action",
     ),
-    "passive_continuous_state_not_yet_supported": (
+    "stochastic_passive_state_transition": (
         lambda: VALID.replace(
             states={
                 **dict(VALID.states),
@@ -140,10 +154,23 @@ CASES = {
             },
             state_transitions={
                 **dict(VALID.state_transitions),
-                "aime": fixed_transition("aime"),
+                "aime": MarkovTransition(_stochastic_next_aime),
             },
         ),
-        "continuous state",
+        "'aime'.*is stochastic",
+    ),
+    "passive_state_transition_depends_on_consumption": (
+        lambda: VALID.replace(
+            states={
+                **dict(VALID.states),
+                "aime": LinSpacedGrid(start=0.0, stop=5.0, n_points=4),
+            },
+            state_transitions={
+                **dict(VALID.state_transitions),
+                "aime": _next_aime_depending_on_consumption,
+            },
+        ),
+        "not passive",
     ),
     "regime_transition_prob_depends_on_wealth": (
         lambda: VALID.replace(transition=_regime_transition_depending_on_wealth),
@@ -171,6 +198,22 @@ def test_dcegm_contract_violation_raises(build, match):
     """Each contract violation fails fast at Model construction."""
     with pytest.raises(ModelInitializationError, match=match):
         _build_model(build())
+
+
+def test_passive_continuous_state_constructs():
+    """A passive continuous state (deterministic, decision-independent) is valid."""
+    regime = VALID.replace(
+        states={
+            **dict(VALID.states),
+            "aime": LinSpacedGrid(start=0.0, stop=5.0, n_points=4),
+        },
+        state_transitions={
+            **dict(VALID.state_transitions),
+            "aime": fixed_transition("aime"),
+        },
+    )
+    model = _build_model(regime)
+    assert model.n_periods == N_PERIODS
 
 
 def test_non_dcegm_non_terminal_target_raises():
