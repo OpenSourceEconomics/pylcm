@@ -17,7 +17,6 @@ from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import BruteForce
-from lcm.transition import fixed_transition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -90,6 +89,10 @@ def _next_aime_depending_on_consumption(
     aime: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return aime + 0.1 * consumption
+
+
+def _next_aime_decaying(aime: ContinuousState) -> ContinuousState:
+    return 0.95 * aime
 
 
 def _without_function(regime: UserRegime, name: str) -> UserRegime:
@@ -209,7 +212,7 @@ def test_passive_continuous_state_constructs():
         },
         state_transitions={
             **dict(VALID.state_transitions),
-            "aime": fixed_transition("aime"),
+            "aime": _next_aime_decaying,
         },
     )
     model = _build_model(regime)

@@ -98,23 +98,27 @@ def budget_constraint(consumption: ContinuousAction, resources: FloatND) -> Bool
 def _get_means_tested_model(variant: str) -> Model:
     """Build the means-tested model for one solver variant (`dcegm`/`brute`)."""
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
-    common = {
-        "transition": next_regime_from_retirement,
-        "active": lambda age, la=last_age: age < la,
-        "actions": {"consumption": CONSUMPTION_GRID},
-        "states": {"wealth": WEALTH_GRID},
-    }
+    last_age = float(ages.exact_values[-1])
+
+    def active(age: int, la: float = last_age) -> bool:
+        return age < la
+
     if variant == "brute":
         regime = UserRegime(
-            **common,
+            transition=next_regime_from_retirement,
+            active=active,
+            actions={"consumption": CONSUMPTION_GRID},
+            states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_brute},
             constraints={"budget_constraint": budget_constraint},
             functions={"utility": utility, "resources": resources_with_floor},
         )
     else:
         regime = UserRegime(
-            **common,
+            transition=next_regime_from_retirement,
+            active=active,
+            actions={"consumption": CONSUMPTION_GRID},
+            states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_from_savings},
             functions={
                 "utility": utility,
@@ -148,7 +152,7 @@ def _get_corner_model() -> Model:
     solution through the constrained segment.
     """
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
+    last_age = float(ages.exact_values[-1])
     regime = UserRegime(
         transition=next_regime_from_retirement,
         active=lambda age, la=last_age: age < la,

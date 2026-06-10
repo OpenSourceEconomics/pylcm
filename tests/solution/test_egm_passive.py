@@ -161,14 +161,15 @@ def _get_model(variant: str) -> Model:
       income as the `skill_level` parameter.
     """
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
-    common = {
-        "transition": next_regime,
-        "active": lambda age, la=last_age: age < la,
-    }
+    last_age = float(ages.exact_values[-1])
+
+    def active(age: int, la: float = last_age) -> bool:
+        return age < la
+
     if variant == "brute":
         working = UserRegime(
-            **common,
+            transition=next_regime,
+            active=active,
             actions={
                 "labor_supply": DiscreteGrid(LaborChoice),
                 "consumption": CONSUMPTION_GRID,
@@ -184,7 +185,8 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "dcegm_no_skill":
         working = UserRegime(
-            **common,
+            transition=next_regime,
+            active=active,
             actions={
                 "labor_supply": DiscreteGrid(LaborChoice),
                 "consumption": CONSUMPTION_GRID,
@@ -206,7 +208,8 @@ def _get_model(variant: str) -> Model:
             fixed_transition("skill") if variant == "dcegm_fixed_skill" else next_skill
         )
         working = UserRegime(
-            **common,
+            transition=next_regime,
+            active=active,
             actions={
                 "labor_supply": DiscreteGrid(LaborChoice),
                 "consumption": CONSUMPTION_GRID,

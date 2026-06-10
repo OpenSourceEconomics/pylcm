@@ -7,7 +7,10 @@ offending piece. The rules, in the order they are checked:
 
 - exactly one continuous (*Euler*) state and one continuous action; process
   states are exempt (they enter the value function as node-valued discrete
-  dimensions); passive continuous states are not supported yet
+  dimensions); every other continuous state must be *passive*: deterministic,
+  with a transition whose DAG ancestors include neither the Euler state, the
+  continuous action, the resources function, nor the post-decision function,
+  and a grid that is neither batched nor distributed
 - the post-decision function, the resources function, and
   `inverse_marginal_utility` exist in `Regime.functions`
 - the regime uses the default Bellman aggregator `H`
@@ -120,6 +123,12 @@ def _validate_dcegm_regime(
     _fail_if_resources_depend_on_continuous_action(
         regime_name=regime_name, functions=functions, solver=solver
     )
+    _fail_if_passive_state_invalid(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=functions,
+        solver=solver,
+    )
     _fail_if_euler_transition_stochastic(
         regime_name=regime_name, user_regime=user_regime, solver=solver
     )
@@ -172,8 +181,9 @@ def _fail_if_state_action_classification_invalid(
     """Require exactly one continuous (Euler) state and one continuous action.
 
     Process states are exempt: they enter the value function as node-valued
-    discrete dimensions. Any other continuous state would have to be a
-    *passive* state, which the DCEGM solver does not support yet.
+    discrete dimensions. Other continuous states are allowed as *passive*
+    states; `_fail_if_passive_state_invalid` verifies their passivity once
+    the regime's solve functions are resolved.
     """
     continuous_states = _continuous_non_process_names(_solve_grids(user_regime.states))
     continuous_actions = _continuous_non_process_names(user_regime.actions)
@@ -183,18 +193,6 @@ def _fail_if_state_action_classification_invalid(
             f"DCEGM `continuous_state` '{solver.continuous_state}' is not a "
             f"continuous state of regime '{regime_name}'. Continuous "
             f"(non-process) states: {continuous_states}."
-        )
-        raise ModelInitializationError(msg)
-
-    extra_states = [s for s in continuous_states if s != solver.continuous_state]
-    if extra_states:
-        msg = (
-            f"Regime '{regime_name}' has continuous states {extra_states} in "
-            f"addition to the Euler continuous state "
-            f"'{solver.continuous_state}'. The DCEGM solver supports exactly "
-            "one continuous state; passive continuous states are not "
-            "supported yet (process states are — declare them via the "
-            "stochastic process grids)."
         )
         raise ModelInitializationError(msg)
 
@@ -361,6 +359,90 @@ def _fail_if_resources_depend_on_continuous_action(
             "chosen."
         )
         raise ModelInitializationError(msg)
+
+
+def _fail_if_passive_state_invalid(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: DCEGM,
+) -> None:
+    """Every non-Euler continuous state must be passive.
+
+    A passive state rides along as a grid axis of the value function and the
+    EGM carry; its next value is computed at the savings-node stage and read
+    from the child carry by interpolation on the child's passive grid. That
+    requires, per passive state:
+
+    - a deterministic transition (stochastic continuous dynamics belong in a
+      process state),
+    - transition DAG ancestors excluding the Euler state, the continuous
+      action, the resources function, and the post-decision function (none
+      of which are known at the savings-node stage),
+    - a grid that is neither batched nor distributed (the kernel enumerates
+      its nodes as discrete combos).
+    """
+    passive_names = [
+        name
+        for name in _continuous_non_process_names(_solve_grids(user_regime.states))
+        if name != solver.continuous_state
+    ]
+    opaque_functions = _without(
+        functions, names={solver.post_decision_function, solver.resources}
+    )
+    forbidden = {
+        solver.continuous_state,
+        solver.continuous_action,
+        solver.resources,
+        solver.post_decision_function,
+    }
+    for state_name in passive_names:
+        value = user_regime.state_transitions.get(state_name)
+        if value is None:
+            # Transition coverage is validated when the effective regimes are
+            # built; a missing entry gets its own error there.
+            continue
+        is_stochastic = isinstance(value, MarkovTransition) or (
+            isinstance(value, Mapping)
+            and any(isinstance(v, MarkovTransition) for v in value.values())
+        )
+        if is_stochastic:
+            msg = (
+                f"The transition of the continuous state '{state_name}' in "
+                f"regime '{regime_name}' is stochastic. A non-Euler continuous "
+                "state in a DCEGM regime must be passive (deterministic); use "
+                "a stochastic process state (e.g. Rouwenhorst or Tauchen) for "
+                "stochastic continuous dynamics."
+            )
+            raise ModelInitializationError(msg)
+        for label, transition_func in _transition_variants(value):
+            ancestors = _dag_ancestors(
+                functions=opaque_functions, target_func=transition_func
+            )
+            bad = sorted(ancestors & forbidden)
+            if bad:
+                msg = (
+                    f"The continuous state '{state_name}' of regime "
+                    f"'{regime_name}' is not passive: its transition{label} "
+                    f"depends on {bad}. A passive continuous state's "
+                    "transition must not depend on the Euler state "
+                    f"'{solver.continuous_state}', the continuous action "
+                    f"'{solver.continuous_action}', the resources function "
+                    f"'{solver.resources}', or the post-decision function "
+                    f"'{solver.post_decision_function}' — those values are "
+                    "unknown until the EGM step has run."
+                )
+                raise ModelInitializationError(msg)
+        grid = cast("ContinuousGrid", user_regime.states[state_name])
+        if grid.batch_size != 0 or grid.distributed:
+            msg = (
+                f"The grid of the passive continuous state '{state_name}' in "
+                f"regime '{regime_name}' must not be batched or distributed "
+                f"in a DCEGM regime (got batch_size={grid.batch_size}, "
+                f"distributed={grid.distributed})."
+            )
+            raise ModelInitializationError(msg)
 
 
 def _fail_if_euler_transition_stochastic(

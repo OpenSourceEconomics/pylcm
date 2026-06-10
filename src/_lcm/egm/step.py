@@ -3,14 +3,22 @@
 `build_egm_step_functions` turns a regime's processed functions, transitions,
 and `DCEGM` solver configuration into per-period kernels that replace the
 brute-force `max_Q_over_a` during backward induction. Each kernel runs the
-DC-EGM step per combination of the regime's discrete states and discrete
-actions, with the exogenous savings grid as the inner axis:
+DC-EGM step per combination of the regime's discrete states, passive
+continuous states (deterministic non-process states whose transitions are
+independent of the decision, e.g. an AIME-like skill level — one node per
+combo), and discrete actions, with the exogenous savings grid as the inner
+axis:
 
 1. compute child states at every savings node (the post-decision function is
    removed from the DAG so the savings node enters as an external input),
 2. map the child state into the child's resources space, select the carry
    rows matching the child's discrete-state values, and interpolate the
-   child's value and marginal utility there per child discrete-action combo,
+   child's value and marginal utility there per child discrete-action combo;
+   the child's passive values land off-grid, so the read is *mixed*: linear
+   weights on the two neighboring nodes of the child's passive grid
+   (edge-clamped), each neighbor's row interpolated 1-D in resources, then
+   blended per discrete-action row — before the choice aggregation, so the
+   logsum sees blended choice-specific values,
 3. aggregate over the child's discrete-action rows with the child's EV1
    taste-shock scale: the smoothed value is the logsum and the smoothed
    marginal is the choice-probability-weighted marginal
@@ -25,10 +33,21 @@ actions, with the exogenous savings grid as the inner axis:
 7. refine the candidate correspondence through the configured upper-envelope
    backend (one envelope per discrete combo),
 8. publish the value function on the regime's exogenous state grid —
-   discrete-state combos remain axes of the value-function array, the
-   regime's own discrete-action combos are aggregated with the regime's own
-   taste-shock scale — and assemble the per-combo carry rows for the
-   regime's parents.
+   discrete-state and passive-state combos remain axes of the value-function
+   array (the Euler axis is moved to its canonical position among the
+   continuous states), the regime's own discrete-action combos are
+   aggregated with the regime's own taste-shock scale — and assemble the
+   per-combo carry rows for the regime's parents. The publish step never
+   evaluates anything at off-grid passive values: each combo's rows are
+   interpolated in resources only, on the regime's own grid axes.
+
+The canonical combo-axis order — single-sourced through
+`_EgmKernelPieces.combo_names` and the carry template's leading shape — is
+discrete states (V state order), then passive states (V continuous-state
+order), then discrete actions (action-grid order), then the carry's grid
+axis. Discrete states lead so the child carry can be selected by integer
+indexing; passive axes follow so the mixed read blends them away next,
+leaving exactly the discrete-action rows the choice aggregation consumes.
 
 Discrete-only constraints mask infeasible discrete combos: their value rows
 are $-\\infty$ and their marginal-utility rows are exactly zero, so they
@@ -55,7 +74,7 @@ from dags import concatenate_functions
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EgmCarry, build_template_egm_carry
 from _lcm.egm.euler import invert_euler
-from _lcm.egm.interp import interp_on_padded_grid
+from _lcm.egm.interp import interp_on_padded_grid, locate_on_grid
 from _lcm.egm.upper_envelope import get_upper_envelope
 from _lcm.engine import StateActionSpace
 from _lcm.logsum import logsum_and_softmax
@@ -145,26 +164,38 @@ def build_egm_step_functions(
 
     Returns:
         Tuple of the per-period kernel mapping and the regime's all-finite
-        carry template (leading axes: discrete states, then discrete
-        actions).
+        carry template (leading axes: discrete states, then passive states,
+        then discrete actions).
 
     """
     n_pad = compute_egm_carry_length(solver=solver)
+    own_v_info = regime_to_v_interpolation_info[regime_name]
     own_discrete_state_names = _get_discrete_state_names(
-        v_interpolation_info=regime_to_v_interpolation_info[regime_name]
+        v_interpolation_info=own_v_info
+    )
+    own_passive_state_names = _get_passive_state_names(
+        v_interpolation_info=own_v_info,
+        euler_state_name=solver.continuous_state,
     )
     own_discrete_action_values = MappingProxyType(
         dict(state_action_space.discrete_actions)
     )
-    leading_shape = tuple(
-        int(
-            regime_to_v_interpolation_info[regime_name]
-            .discrete_states[name]
-            .to_jax()
-            .shape[0]
+    # Canonical position of the Euler axis in the published V array: after
+    # the discrete-state axes, at its slot within the continuous-state order.
+    euler_axis_in_V = len(own_discrete_state_names) + tuple(
+        own_v_info.continuous_states
+    ).index(solver.continuous_state)
+    leading_shape = (
+        tuple(
+            int(own_v_info.discrete_states[name].to_jax().shape[0])
+            for name in own_discrete_state_names
         )
-        for name in own_discrete_state_names
-    ) + tuple(int(v.shape[0]) for v in own_discrete_action_values.values())
+        + tuple(
+            int(own_v_info.continuous_states[name].to_jax().shape[0])
+            for name in own_passive_state_names
+        )
+        + tuple(int(v.shape[0]) for v in own_discrete_action_values.values())
+    )
     carry_template = build_template_egm_carry(n_rows=n_pad, leading_shape=leading_shape)
 
     configs: dict[tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]], list[int]] = {}
@@ -195,6 +226,7 @@ def build_egm_step_functions(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
             own_discrete_state_names=own_discrete_state_names,
+            own_passive_state_names=own_passive_state_names,
             own_discrete_action_names=tuple(own_discrete_action_values),
         )
         if unsupported is not None:
@@ -211,7 +243,9 @@ def build_egm_step_functions(
                 scalar_targets=scalar_targets,
                 n_pad=n_pad,
                 own_discrete_state_names=own_discrete_state_names,
+                own_passive_state_names=own_passive_state_names,
                 own_discrete_action_values=own_discrete_action_values,
+                euler_axis_in_V=euler_axis_in_V,
                 has_taste_shocks=has_taste_shocks,
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             )
@@ -309,7 +343,9 @@ def _get_egm_step(
     scalar_targets: tuple[RegimeName, ...],
     n_pad: int,
     own_discrete_state_names: tuple[StateName, ...],
+    own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_values: MappingProxyType[ActionName, Any],
+    euler_axis_in_V: int,
     has_taste_shocks: bool,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> EgmStepFunction:
@@ -325,7 +361,9 @@ def _get_egm_step(
         scalar_targets=scalar_targets,
         n_pad=n_pad,
         own_discrete_state_names=own_discrete_state_names,
+        own_passive_state_names=own_passive_state_names,
         own_discrete_action_values=own_discrete_action_values,
+        euler_axis_in_V=euler_axis_in_V,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
 
@@ -346,13 +384,17 @@ def _get_egm_step(
 
         Returns:
             Tuple of the value-function array on the exogenous state grid
-            (discrete-state axes leading, the continuous state last) and the
-            regime's carry (one row per discrete-state x discrete-action
-            combo).
+            (discrete-state axes leading, continuous states in canonical
+            order) and the regime's carry (one row per discrete-state x
+            passive-node x discrete-action combo).
 
         """
         dtype = canonical_float_dtype()
-        own_state_names = {pieces.euler_state_name, *own_discrete_state_names}
+        own_state_names = {
+            pieces.euler_state_name,
+            *own_discrete_state_names,
+            *own_passive_state_names,
+        }
         pool = {k: v for k, v in kwargs.items() if k not in own_state_names}
         state_grid = jnp.asarray(kwargs[pieces.euler_state_name], dtype=dtype)
         own_taste_shock_scale = (
@@ -369,7 +411,8 @@ def _get_egm_step(
 
         if pieces.combo_names:
             combo_grids = tuple(
-                jnp.asarray(kwargs[name]) for name in own_discrete_state_names
+                jnp.asarray(kwargs[name])
+                for name in own_discrete_state_names + own_passive_state_names
             ) + tuple(own_discrete_action_values.values())
             mesh = jnp.meshgrid(*combo_grids, indexing="ij")
             flat_combos = tuple(m.ravel() for m in mesh)
@@ -378,13 +421,17 @@ def _get_egm_step(
             )(flat_combos)
             dims = tuple(int(g.shape[0]) for g in combo_grids)
             V_stack = V_rows.reshape(*dims, state_grid.shape[0])
-            action_axes = tuple(range(len(own_discrete_state_names), len(combo_grids)))
+            n_state_axes = len(own_discrete_state_names) + len(own_passive_state_names)
+            action_axes = tuple(range(n_state_axes, len(combo_grids)))
             if action_axes:
                 V_arr, _ = logsum_and_softmax(
                     values=V_stack, scale=own_taste_shock_scale, axes=action_axes
                 )
             else:
                 V_arr = V_stack
+            # The combo layout puts the Euler axis last; the canonical V
+            # layout interleaves it with the passive axes in V state order.
+            V_arr = jnp.moveaxis(V_arr, -1, pieces.euler_axis_in_V)
             carry = EgmCarry(
                 endog_grid=grid_rows.reshape(*dims, n_pad),
                 policy=policy_rows.reshape(*dims, n_pad),
@@ -435,7 +482,10 @@ class _EgmKernelPieces:
     """Static length of the refined carry rows."""
 
     combo_names: tuple[StateName | ActionName, ...]
-    """Discrete-state names, then discrete-action names (carry-axis order)."""
+    """Discrete-state, passive-state, then discrete-action names (carry-axis order)."""
+
+    euler_axis_in_V: int
+    """Canonical axis of the Euler state in the published value-function array."""
 
     carry_targets: tuple[RegimeName, ...]
     """Targets whose continuation is interpolated from their carry rows."""
@@ -454,6 +504,12 @@ class _EgmKernelPieces:
 
     child_discrete_state_names: Mapping[RegimeName, tuple[StateName, ...]]
     """Per-target child discrete-state names in carry-axis order."""
+
+    child_passive_state_names: Mapping[RegimeName, tuple[StateName, ...]]
+    """Per-target child passive-state names in carry-axis order."""
+
+    child_passive_grids: Mapping[RegimeName, tuple[Float1D, ...]]
+    """Per-target child passive grids, aligned with `child_passive_state_names`."""
 
     utility_func: UserFunction
     """The regime's concatenated utility function."""
@@ -489,7 +545,9 @@ def _build_kernel_pieces(
     scalar_targets: tuple[RegimeName, ...],
     n_pad: int,
     own_discrete_state_names: tuple[StateName, ...],
+    own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_values: MappingProxyType[ActionName, Any],
+    euler_axis_in_V: int,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> _EgmKernelPieces:
     """Assemble the build-time statics of the EGM kernel."""
@@ -502,6 +560,8 @@ def _build_kernel_pieces(
         child_resources_funcs,
         child_next_state_keys,
         child_discrete_state_names,
+        child_passive_state_names,
+        child_passive_grids,
     ) = _build_target_closures(
         user_regimes=user_regimes,
         functions=functions,
@@ -523,13 +583,18 @@ def _build_kernel_pieces(
         constrained_ratio=(1.0 / CONSTRAINED_OFFSET_FRACTION)
         ** (1.0 / max(n_constrained - 1, 1)),
         n_pad=n_pad,
-        combo_names=own_discrete_state_names + tuple(own_discrete_action_values),
+        combo_names=own_discrete_state_names
+        + own_passive_state_names
+        + tuple(own_discrete_action_values),
+        euler_axis_in_V=euler_axis_in_V,
         carry_targets=carry_targets,
         scalar_targets=scalar_targets,
         next_state_funcs=next_state_funcs,
         child_resources_funcs=child_resources_funcs,
         child_next_state_keys=child_next_state_keys,
         child_discrete_state_names=child_discrete_state_names,
+        child_passive_state_names=child_passive_state_names,
+        child_passive_grids=child_passive_grids,
         utility_func=_concatenate_regime_function(
             functions=functions, target="utility"
         ),
@@ -555,18 +620,19 @@ def _get_solve_one_combo(
     state_grid: Float1D,
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
 ) -> Callable[
-    [tuple[ScalarInt, ...]], tuple[Float1D, Float1D, Float1D, Float1D, Float1D]
+    [tuple[ScalarInt | ScalarFloat, ...]],
+    tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
 ]:
     """Build the per-combo EGM computation for one kernel invocation."""
     dtype = state_grid.dtype
 
     def solve_one_combo(
-        combo_values: tuple[ScalarInt, ...],
+        combo_values: tuple[ScalarInt | ScalarFloat, ...],
     ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
-        """Run the EGM step for one discrete (state x action) combo.
+        """Run the EGM step for one (discrete x passive-node) combo.
 
-        Takes the combo's discrete values positionally so `jax.vmap` can
-        batch over flattened combo arrays.
+        Takes the combo's values (discrete codes and passive node values)
+        positionally so `jax.vmap` can batch over flattened combo arrays.
 
         Returns:
             Tuple of the combo's value row on the exogenous state grid and
@@ -686,12 +752,13 @@ def _get_compute_node(
 
             def composed_resources(
                 savings: ScalarFloat, *, target: RegimeName = target
-            ) -> tuple[ScalarFloat, tuple[ScalarInt, ...]]:
+            ) -> tuple[ScalarFloat, tuple[Any, ...]]:
                 """Map a savings node into the child's resources space.
 
-                Returns the child's resources (differentiated) and the
-                child's discrete-state values (auxiliary; their transitions
-                are independent of the savings node).
+                Returns the child's resources (differentiated) and, as
+                auxiliaries, the child's discrete-state values and passive
+                values (both passive by validation: their transitions are
+                independent of the savings node).
                 """
                 next_states = pieces.next_state_funcs[target](
                     **combo_pool, **{pieces.post_decision_name: savings}
@@ -706,17 +773,23 @@ def _get_compute_node(
                     cast("ScalarInt", next_states[f"next_{name}"])
                     for name in pieces.child_discrete_state_names[target]
                 )
+                child_passive_values = tuple(
+                    cast("ScalarFloat", next_states[f"next_{name}"])
+                    for name in pieces.child_passive_state_names[target]
+                )
                 return (
                     pieces.child_resources_funcs[target](next_state_value),
-                    child_index,
+                    (child_index, child_passive_values),
                 )
 
-            (child_resources, child_index), child_dr_da = jax.value_and_grad(
-                composed_resources, has_aux=True
-            )(savings_value)
+            (child_resources, (child_index, child_passive_values)), child_dr_da = (
+                jax.value_and_grad(composed_resources, has_aux=True)(savings_value)
+            )
             smoothed_value, smoothed_marginal = _aggregate_child_choices(
                 carry=carry,
                 child_index=child_index,
+                child_passive_values=child_passive_values,
+                child_passive_grids=pieces.child_passive_grids[target],
                 child_resources=child_resources,
             )
             prob = regime_transition_probs[target]
@@ -751,24 +824,35 @@ def _aggregate_child_choices(
     *,
     carry: EgmCarry,
     child_index: tuple[ScalarInt, ...],
+    child_passive_values: tuple[ScalarFloat, ...],
+    child_passive_grids: tuple[Float1D, ...],
     child_resources: ScalarFloat,
 ) -> tuple[ScalarFloat, ScalarFloat]:
-    """Interpolate one child's carry and aggregate its discrete-action rows.
+    """Read one child's carry with mixed interpolation and aggregate its choices.
 
     The carry rows matching the child's discrete-state values are selected
     by integer indexing on the leading state axes (discrete codes equal grid
-    positions); the remaining leading axes are the child's discrete-action
-    combos. Each row is interpolated at the child's resources value, then
-    aggregated with the child's taste-shock scale: the smoothed value is the
-    logsum and the smoothed marginal is $\\sum_{d'} P_{d'} \\mu_{d'}$ —
-    exact for EV1 by Danskin's theorem, no $\\partial P/\\partial R$ terms.
-    Scale zero yields the hard max / one-hot argmax through the same code
-    path. Rows that are $-\\infty$ everywhere (infeasible child combos) get
-    zero probability and contribute exactly zero marginal utility.
+    positions); the remaining leading axes are the child's passive nodes,
+    then its discrete-action combos. Every row is interpolated 1-D at the
+    child's resources value; the passive axes are then blended away with
+    edge-clamped linear weights on the two neighboring nodes of each passive
+    grid — *before* the choice aggregation, so the logsum sees blended
+    choice-specific values. Finally the discrete-action rows are aggregated
+    with the child's taste-shock scale: the smoothed value is the logsum and
+    the smoothed marginal is $\\sum_{d'} P_{d'} \\mu_{d'}$ — exact for EV1
+    by Danskin's theorem, no $\\partial P/\\partial R$ terms. Scale zero
+    yields the hard max / one-hot argmax through the same code path. Rows
+    that are $-\\infty$ everywhere (infeasible child combos) get zero
+    probability and contribute exactly zero marginal utility; a zero-weight
+    passive neighbor contributes exactly zero even when its row is
+    $-\\infty$ (`jnp.where` on results, never `0 \\cdot \\infty`).
 
     Args:
         carry: The child's EGM carry.
         child_index: The child's discrete-state values at this savings node.
+        child_passive_values: The child's passive values at this savings
+            node, aligned with `child_passive_grids`.
+        child_passive_grids: The child's passive grids in carry-axis order.
         child_resources: The child's resources value at this savings node.
 
     Returns:
@@ -777,9 +861,15 @@ def _aggregate_child_choices(
 
     """
     n_pad = carry.value.shape[-1]
-    grid_rows = carry.endog_grid[child_index].reshape(-1, n_pad)
-    value_rows = carry.value[child_index].reshape(-1, n_pad)
-    marginal_rows = carry.marginal_utility[child_index].reshape(-1, n_pad)
+    grid_block = carry.endog_grid[child_index]
+    value_block = carry.value[child_index]
+    marginal_block = carry.marginal_utility[child_index]
+    # Leading axes of the blocks: the child's passive nodes, then its
+    # discrete-action combos.
+    block_shape = value_block.shape[:-1]
+    grid_rows = grid_block.reshape(-1, n_pad)
+    value_rows = value_block.reshape(-1, n_pad)
+    marginal_rows = marginal_block.reshape(-1, n_pad)
 
     def interp_row(xp: Float1D, fp: Float1D) -> ScalarFloat:
         """Interpolate one carry row; positional per `jax.vmap`."""
@@ -792,7 +882,32 @@ def _aggregate_child_choices(
     row_infeasible = jnp.isneginf(value_rows[:, 0])
     value_at_child = jnp.where(row_infeasible, -jnp.inf, value_at_child)
     marginal_at_child = jnp.where(row_infeasible, 0.0, marginal_at_child)
+    value_at_child = value_at_child.reshape(block_shape)
+    marginal_at_child = marginal_at_child.reshape(block_shape)
 
+    for passive_value, passive_grid in zip(
+        child_passive_values, child_passive_grids, strict=True
+    ):
+        lower, upper, weight_upper = locate_on_grid(
+            x_query=passive_value, grid=passive_grid
+        )
+        weight_lower = 1.0 - weight_upper
+        # Blend on results: a zero-weight neighbor contributes exactly 0.0,
+        # so an on-node read reproduces the node rows and a -inf neighbor
+        # never turns into 0 * inf = NaN; a positive-weight -inf neighbor
+        # correctly forces the blend to -inf.
+        value_at_child = jnp.where(
+            weight_lower > 0.0, weight_lower * value_at_child[lower], 0.0
+        ) + jnp.where(weight_upper > 0.0, weight_upper * value_at_child[upper], 0.0)
+        # Marginal rows are finite everywhere (exactly 0.0 on infeasible
+        # rows), so a plain blend is safe.
+        marginal_at_child = (
+            weight_lower * marginal_at_child[lower]
+            + weight_upper * marginal_at_child[upper]
+        )
+
+    value_at_child = value_at_child.reshape(-1)
+    marginal_at_child = marginal_at_child.reshape(-1)
     smoothed_value, choice_probs = logsum_and_softmax(
         values=value_at_child, scale=carry.taste_shock_scale, axes=(0,)
     )
@@ -813,6 +928,8 @@ def _build_target_closures(
     dict[RegimeName, Callable[[ScalarFloat], ScalarFloat]],
     dict[RegimeName, str],
     dict[RegimeName, tuple[StateName, ...]],
+    dict[RegimeName, tuple[StateName, ...]],
+    dict[RegimeName, tuple[Float1D, ...]],
 ]:
     """Build the per-carry-target closures of the EGM kernel.
 
@@ -823,10 +940,11 @@ def _build_target_closures(
     silently wrong.
 
     Returns:
-        Tuple of four dicts keyed by carry-target name: the next-state
+        Tuple of six dicts keyed by carry-target name: the next-state
         function, the closed-over child resources map, the child's
-        `next_<state>` key for its continuous state, and the child's
-        discrete-state names in carry-axis order.
+        `next_<state>` key for its Euler state, the child's discrete-state
+        names in carry-axis order, the child's passive-state names in
+        carry-axis order, and the matching child passive grids.
 
     """
     functions_without_post = MappingProxyType(
@@ -853,11 +971,30 @@ def _build_target_closures(
         )
         for target in carry_targets
     }
+    child_passive_state_names = {
+        target: _get_passive_state_names(
+            v_interpolation_info=regime_to_v_interpolation_info[target],
+            euler_state_name=_get_child_state_name(user_regime=user_regimes[target]),
+        )
+        for target in carry_targets
+    }
+    child_passive_grids = {
+        target: tuple(
+            jnp.asarray(
+                regime_to_v_interpolation_info[target].continuous_states[name].to_jax(),
+                dtype=canonical_float_dtype(),
+            )
+            for name in child_passive_state_names[target]
+        )
+        for target in carry_targets
+    }
     return (
         next_state_funcs,
         child_resources_funcs,
         child_next_state_keys,
         child_discrete_state_names,
+        child_passive_state_names,
+        child_passive_grids,
     )
 
 
@@ -870,6 +1007,24 @@ def _get_discrete_state_names(
         name
         for name in v_interpolation_info.state_names
         if name in v_interpolation_info.discrete_states
+    )
+
+
+def _get_passive_state_names(
+    *,
+    v_interpolation_info: VInterpolationInfo,
+    euler_state_name: StateName,
+) -> tuple[StateName, ...]:
+    """Passive-state names of a regime in carry-axis (V continuous-state) order.
+
+    Every continuous state other than the Euler state is passive — DC-EGM
+    validation enforces this for DC-EGM regimes, and terminal carry targets
+    are restricted to a single continuous state.
+    """
+    return tuple(
+        name
+        for name in v_interpolation_info.continuous_states
+        if name != euler_state_name
     )
 
 
@@ -1075,6 +1230,7 @@ def _find_unsupported_feature(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
     own_discrete_state_names: tuple[StateName, ...],
+    own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_names: tuple[ActionName, ...],
 ) -> str | None:
     """Return a message naming the first feature outside the kernel's scope.
@@ -1107,6 +1263,7 @@ def _find_unsupported_feature(
             compute_regime_transition_probs=compute_regime_transition_probs,
             flat_param_names=flat_param_names,
             own_discrete_state_names=own_discrete_state_names,
+            own_passive_state_names=own_passive_state_names,
             own_discrete_action_names=own_discrete_action_names,
         )
 
@@ -1194,22 +1351,29 @@ def _find_unsupported_function_args(
     compute_regime_transition_probs: RegimeTransitionFunction,
     flat_param_names: frozenset[str],
     own_discrete_state_names: tuple[StateName, ...],
+    own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_names: tuple[ActionName, ...],
 ) -> str | None:
     """Return a message naming the first function with out-of-scope arguments."""
-    allowed_discrete = set(own_discrete_state_names) | set(own_discrete_action_names)
+    # Combo inputs are bound per (discrete state, passive node, discrete
+    # action) combination, so any of them may feed these functions.
+    allowed_combo_inputs = (
+        set(own_discrete_state_names)
+        | set(own_passive_state_names)
+        | set(own_discrete_action_names)
+    )
     allowed_params = flat_param_names | {"age", "period"}
     utility_func = _concatenate_regime_function(functions=functions, target="utility")
     arg_requirements: list[tuple[str, frozenset[str], set[str]]] = [
         (
             "the utility function",
             frozenset(get_union_of_args([utility_func])),
-            {solver.continuous_action} | allowed_discrete | allowed_params,
+            {solver.continuous_action} | allowed_combo_inputs | allowed_params,
         ),
         (
             "the regime transition probability function",
             frozenset(get_union_of_args([compute_regime_transition_probs])),
-            allowed_discrete | allowed_params,
+            allowed_combo_inputs | allowed_params,
         ),
     ]
     for constraint_name in constraints:
@@ -1221,7 +1385,7 @@ def _find_unsupported_function_args(
             (
                 f"the constraint '{constraint_name}'",
                 frozenset(get_union_of_args([constraint_func])),
-                allowed_discrete | allowed_params,
+                allowed_combo_inputs | allowed_params,
             )
         )
     for label, needed, allowed in arg_requirements:
