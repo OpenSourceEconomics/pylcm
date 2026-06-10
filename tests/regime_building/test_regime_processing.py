@@ -9,9 +9,10 @@ from numpy.testing import assert_array_equal
 
 from _lcm.engine import Regime, VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid
+from _lcm.regime_building.canonicalize import _canonicalize_phase_transitions
+from _lcm.regime_building.effective import EffectiveUserRegime, build_effective_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.processing import (
-    _extract_phase_transitions,
     _rename_params_to_qnames,
     _wrap_regime_transition_probs,
     process_regimes,
@@ -114,7 +115,9 @@ def test_process_regimes():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     regimes = process_regimes(
-        user_regimes=user_regimes,
+        user_regimes=build_effective_regimes(
+            user_regimes=user_regimes, derived_categoricals={}
+        ),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
@@ -212,7 +215,9 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
         active=lambda age: age >= 1,
     )
     return process_regimes(
-        user_regimes={"early": early, "late": late},
+        user_regimes=build_effective_regimes(
+            user_regimes={"early": early, "late": late}, derived_categoricals={}
+        ),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_names_to_ids=MappingProxyType(
             {"early": jnp.int32(0), "late": jnp.int32(1)}
@@ -333,17 +338,15 @@ def test_carried_law_registered_for_carried_only_target():
     """
     working = _pair_handover_regime()
     simulate_states_per_regime = {
-        "working": {"wealth", "pension_wealth"},
-        "retired": {"pension_wealth"},
-        "dead": set(),
+        "working": frozenset({"wealth", "pension_wealth"}),
+        "retired": frozenset({"pension_wealth"}),
+        "dead": frozenset(),
     }
-    nested = _extract_phase_transitions(
+    canonical = _canonicalize_phase_transitions(
         phase_slice=normalize_regime_phases(working).simulation,
         states_per_regime=simulate_states_per_regime,
     )
-    retired_entry = nested.get("retired")
-    assert isinstance(retired_entry, dict)
-    assert "next_pension_wealth" in retired_entry
+    assert "retired" in canonical["pension_wealth"]
 
 
 def test_carried_state_counts_as_covered_for_reachability():
@@ -394,22 +397,19 @@ def test_carried_state_counts_as_covered_for_reachability():
         functions={"utility": utility},
     )
     # `retired` is not named in any per-target dict; its ordinary state need
-    # (wealth) is covered by a simple transition and the carried law covers
-    # the carried state, so it must be reachable and receive
-    # next_wealth + next_pension_wealth.
+    # (wealth) is covered by a bare law and the carried law covers the
+    # carried state, so it must be reachable and receive both laws.
     simulate_states_per_regime = {
-        "working": {"wealth", "health", "pension_wealth"},
-        "retired": {"wealth", "pension_wealth"},
-        "dead": set(),
+        "working": frozenset({"wealth", "health", "pension_wealth"}),
+        "retired": frozenset({"wealth", "pension_wealth"}),
+        "dead": frozenset(),
     }
-    nested = _extract_phase_transitions(
+    canonical = _canonicalize_phase_transitions(
         phase_slice=normalize_regime_phases(working).simulation,
         states_per_regime=simulate_states_per_regime,
     )
-    retired_entry = nested.get("retired")
-    assert isinstance(retired_entry, dict)
-    assert "next_wealth" in retired_entry
-    assert "next_pension_wealth" in retired_entry
+    assert "retired" in canonical["wealth"]
+    assert "retired" in canonical["pension_wealth"]
 
 
 def test_mock_regime_get_all_functions_matches_real_regime():
@@ -451,6 +451,8 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         },
         "functions": {"utility": utility},
     }
-    real = UserRegime(**kwargs)
+    real = EffectiveUserRegime(
+        user_regime=UserRegime(**kwargs), derived_categoricals={}
+    )
     mock = MockRegime(**kwargs)
     assert set(mock.get_all_functions()) == set(real.get_all_functions())

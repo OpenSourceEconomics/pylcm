@@ -3,7 +3,7 @@ from _lcm.params.regime_template import (
     create_regime_params_template,
 )
 from _lcm.utils.containers import ensure_containers_are_immutable
-from lcm import Phased
+from lcm import Phased, fixed_transition
 from tests.mock_regime import MockRegime
 
 
@@ -63,7 +63,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
     regime = MockRegime(
         actions={"a": None},
         states={"discount_factor": None},
-        state_transitions={"discount_factor": None},
+        state_transitions={"discount_factor": fixed_transition("discount_factor")},
         functions={"utility": lambda a, discount_factor: None},  # noqa: ARG005
         transition=lambda discount_factor: discount_factor,
     )

@@ -9,6 +9,7 @@ import pytest
 from _lcm.engine import VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, LinSpacedGrid
 from _lcm.variables import from_regime
+from lcm import fixed_transition
 from tests.mock_regime import MockRegime
 
 
@@ -215,9 +216,9 @@ def test_from_regime_distributed_discrete_state_sorts_outermost(
             "third_discrete": DiscreteGrid(binary_category_class),
         },
         state_transitions={
-            "first_discrete": None,
-            "sharded_discrete": None,
-            "third_discrete": None,
+            "first_discrete": fixed_transition("first_discrete"),
+            "sharded_discrete": fixed_transition("sharded_discrete"),
+            "third_discrete": fixed_transition("third_discrete"),
         },
         actions={"a": DiscreteGrid(binary_category_class)},
         functions={"utility": lambda a: 0},  # noqa: ARG005

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, cast
 from dags.tree import QNAME_DELIMITER
 
 from _lcm.grids import DiscreteGrid, Grid
+from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
@@ -99,7 +100,13 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
 
 
 def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
-    """Validate the logical consistency of the regime."""
+    """Validate the local, value-shape consistency of a regime.
+
+    Completeness properties (a `utility` entry, state-transition coverage,
+    state/action overlap, distributed-grid rules) may be satisfied only after
+    model-level slots are merged in; `_validate_completeness` checks them when
+    the effective regime is constructed.
+    """
     error_messages: list[str] = []
 
     all_function_names = [*regime.constraints.keys(), *regime.functions.keys()]
@@ -132,13 +139,36 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
             f"{invalid_variable_names}.",
         )
 
+    error_messages.extend(_validate_active(regime.active))
+    error_messages.extend(_state_transition_grammar_errors(regime))
+
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise RegimeInitializationError(msg)
+
+
+def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
+    """Collect completeness errors for an effective (post-merge) regime.
+
+    These properties hold only for the regime the model actually runs —
+    a bare user `Regime` may legitimately lack them until model-level slots
+    are merged in:
+
+    - a `utility` entry in `functions`
+    - state-transition coverage (every non-process state has a law; terminal
+      regimes have none; identity laws refer to existing states)
+    - no state/action name overlap
+    - distributed-grid rules
+    - no function-output / discrete-grid-indexed-input name clash
+    """
+    error_messages: list[str] = []
+
     if "utility" not in regime.functions:
         error_messages.append(
             "A 'utility' function must be provided in the functions dictionary.",
         )
 
-    error_messages.extend(_validate_active(regime.active))
-    error_messages.extend(_validate_state_transitions(regime))
+    error_messages.extend(_state_transition_coverage_errors(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
 
@@ -149,9 +179,7 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
             f"are used in both states and actions: {states_and_actions_overlap}.",
         )
 
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise RegimeInitializationError(msg)
+    return error_messages
 
 
 def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
@@ -328,8 +356,16 @@ def _validate_active(active: ActiveFunction) -> list[str]:
     return []
 
 
-def _validate_state_transitions(regime: lcm.regime.Regime) -> list[str]:
-    """Validate state_transitions against states."""
+def _state_transition_grammar_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Validate each `state_transitions` entry against the value vocabulary."""
+    error_messages: list[str] = []
+    for name, value in regime.state_transitions.items():
+        error_messages.extend(_state_transition_value_errors(name=name, value=value))
+    return error_messages
+
+
+def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Validate that `state_transitions` covers exactly the regime's states."""
     error_messages: list[str] = []
 
     process_names: set[ProcessName] = {
@@ -339,15 +375,17 @@ def _validate_state_transitions(regime: lcm.regime.Regime) -> list[str]:
     }
     non_process_names: set[StateName] = set(regime.states) - process_names
 
-    # Keys not in states are allowed only with actual transitions (not None).
-    # None means identity, which requires the state to exist in this regime.
+    # Keys not in states are allowed only with actual transitions. A
+    # `fixed_transition` entry is an identity law, which requires the state
+    # to exist in this regime.
     extra_keys = set(regime.state_transitions) - set(regime.states)
     for key in extra_keys:
         value = regime.state_transitions[key]
-        if value is None:
+        if isinstance(value, _IdentityTransition):
             error_messages.append(
-                f"state_transitions['{key}'] is None but '{key}' is not in states. "
-                "Identity transitions require the state to exist in this regime.",
+                f"state_transitions['{key}'] is `fixed_transition` but '{key}' "
+                f"is not in states. Identity laws require the state to exist "
+                f"in this regime.",
             )
 
     process_in_transitions = process_names & set(regime.state_transitions)
@@ -368,11 +406,9 @@ def _validate_state_transitions(regime: lcm.regime.Regime) -> list[str]:
     if missing:
         error_messages.append(
             f"Every non-process state must have an entry in state_transitions. "
-            f"Missing: {missing}. Use None for fixed states.",
+            f"Missing: {missing}. Use `fixed_transition(state_name)` for "
+            f"fixed states.",
         )
-
-    for name, value in regime.state_transitions.items():
-        error_messages.extend(_state_transition_value_errors(name=name, value=value))
 
     return error_messages
 
@@ -381,9 +417,10 @@ def _state_transition_value_errors(*, name: StateName, value: object) -> list[st
     """Validate one `state_transitions` entry against the value vocabulary.
 
     Each variant of a `Phased` entry is held to the vocabulary of a bare
-    value — callable, `None`, or a per-target Mapping — except that a
-    stochastic (`MarkovTransition`) variant is rejected: per-phase
-    stochasticity of a law of motion is not yet supported.
+    value — callable or a per-target Mapping — except that a stochastic
+    (`MarkovTransition`) variant is rejected: per-phase stochasticity of a
+    law of motion is not yet supported. `None` is not a law of motion; the
+    error points to `fixed_transition`.
     """
     error_messages: list[str] = []
     phase_variant = isinstance(value, Phased)
@@ -395,7 +432,16 @@ def _state_transition_value_errors(*, name: StateName, value: object) -> list[st
                 f"supported.",
             )
             continue
-        if variant is None or callable(variant):
+        if variant is None:
+            error_messages.append(
+                f"state_transitions['{name}']{label}: `None` is not a law of "
+                f"motion. Use `fixed_transition('{name}')` for a fixed state.",
+            )
+            continue
+        error_messages.extend(
+            _fixed_transition_name_mismatch(state_name=name, value=variant, label=label)
+        )
+        if callable(variant):
             continue
         if isinstance(variant, Mapping):
             error_messages.extend(
@@ -407,10 +453,25 @@ def _state_transition_value_errors(*, name: StateName, value: object) -> list[st
         else:
             error_messages.append(
                 f"state_transitions['{name}']{label} must be callable, "
-                f"MarkovTransition, None, or a per-target Mapping, got "
-                f"{type(variant).__name__}.",
+                f"MarkovTransition, `fixed_transition(...)`, or a per-target "
+                f"Mapping, got {type(variant).__name__}.",
             )
     return error_messages
+
+
+def _fixed_transition_name_mismatch(
+    *, state_name: StateName, value: object, label: str
+) -> list[str]:
+    """Reject a `fixed_transition` whose argument differs from its dict key."""
+    if (
+        isinstance(value, _IdentityTransition) and value._state_name != state_name  # noqa: SLF001
+    ):
+        return [
+            f"state_transitions['{state_name}']{label}: "
+            f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
+            f"'{state_name}' — the names must match.",
+        ]
+    return []
 
 
 def _state_transition_variants(value: object) -> tuple[tuple[object, str], ...]:
@@ -444,6 +505,14 @@ def _validate_per_target_dict(
             )
         elif isinstance(target_value, MarkovTransition):
             markov_count += 1
+        elif isinstance(target_value, _IdentityTransition):
+            error_messages.extend(
+                _fixed_transition_name_mismatch(
+                    state_name=state_name,
+                    value=target_value,
+                    label=f"['{target_name}']",
+                )
+            )
         elif not callable(target_value):
             error_messages.append(
                 f"state_transitions['{state_name}']['{target_name}'] must be "

@@ -23,6 +23,7 @@ from lcm import (
     Model,
     Phased,
     categorical,
+    fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
@@ -469,7 +470,10 @@ def _get_heterogeneous_health_model() -> Model:
             "health": DiscreteGrid(HealthWithDisability),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
         },
-        state_transitions={"health": None, "wealth": _het_next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _het_next_wealth,
+        },
         functions={"utility": _het_utility},
     )
     post65 = UserRegime(
@@ -479,7 +483,10 @@ def _get_heterogeneous_health_model() -> Model:
             "health": DiscreteGrid(Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
         },
-        state_transitions={"health": None, "wealth": _het_next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _het_next_wealth,
+        },
         functions={"utility": _het_utility},
     )
     dead = UserRegime(
@@ -555,13 +562,16 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "status": DiscreteGrid(_Status),
         },
-        state_transitions={"wealth": None, "status": None},
+        state_transitions={
+            "wealth": fixed_transition("wealth"),
+            "status": fixed_transition("status"),
+        },
         functions={"utility": _utility_with_status},
     )
     without_status = UserRegime(
         transition=_next_regime,
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
-        state_transitions={"wealth": None},
+        state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility_without_status},
     )
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
@@ -623,13 +633,13 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "income": UniformIIDProcess(n_points=5),
         },
-        state_transitions={"wealth": None},
+        state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _earner_utility},
     )
     retiree = UserRegime(
         transition=_next_regime,
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
-        state_transitions={"wealth": None},
+        state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _retiree_utility},
     )
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})

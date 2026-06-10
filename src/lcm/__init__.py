@@ -89,6 +89,7 @@ from lcm.regime import (  # noqa: E402
     Regime,
 )
 from lcm.result import SimulationResult  # noqa: E402
+from lcm.transition import fixed_transition  # noqa: E402
 
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
@@ -130,6 +131,7 @@ __all__ = [
     "UniformIIDProcess",
     "__version__",
     "categorical",
+    "fixed_transition",
     "load_snapshot",
     "load_solution",
     "save_solution",

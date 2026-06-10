@@ -352,7 +352,7 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
     A carried state is a genuine simulate-phase state, so it needs a
     `state_transitions` entry like any other state (the missing-entry check
     runs with the regular state-transition validation); the supported form is
-    a plain deterministic callable or `None` (identity).
+    a plain deterministic callable, including `fixed_transition` identities.
     """
     if isinstance(law, MarkovTransition):
         return [

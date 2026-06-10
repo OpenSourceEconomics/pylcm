@@ -4,6 +4,7 @@ import jax.numpy as jnp
 
 from _lcm.engine import VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, categorical
+from _lcm.regime_building.effective import build_effective_regimes
 from _lcm.regime_building.next_state import (
     _create_discrete_stochastic_next_func,
     get_next_state_function_for_simulation,
@@ -22,7 +23,9 @@ def test_get_next_state_function_with_solve_target():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     regimes = process_regimes(
-        user_regimes=user_regimes,
+        user_regimes=build_effective_regimes(
+            user_regimes=user_regimes, derived_categoricals={}
+        ),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,

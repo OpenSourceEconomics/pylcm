@@ -45,6 +45,23 @@ automation. Python 3.14+ is required.
 
 **Canonical Processing (`src/_lcm/engine.py`)**
 
+- The pipeline from user input to engine form: `Regime` → `EffectiveUserRegime` (merge +
+  completeness) → `PhasedRegimeSpec` (phase split + canonical laws) →
+  `_lcm.engine.Regime` (compiled function sets).
+- `EffectiveUserRegime` (`src/_lcm/regime_building/effective.py`): the regime as the
+  model actually runs it — model-level `derived_categoricals` merged in, default `H`
+  injected, completeness validated (a `utility` entry, state-transition coverage,
+  state/action overlap, distributed-grid rules). Still user vocabulary, so the params
+  template reads the user's coarseness off it. Subclasses the user `Regime`; constructed
+  only by `build_effective_regimes`. A bare `Regime` validates only local, value-shape
+  properties at construction — completeness may be satisfied only at the model level.
+- `canonicalize_regimes` (`src/_lcm/regime_building/canonicalize.py`): the model-level
+  canonicalization stage. Rewrites every phase slice's laws into the canonical
+  target-granular form `Mapping[RegimeName, law]` over exactly the reachable targets
+  carrying the state in that phase — bare laws broadcast, per-target dicts pass through,
+  `fixed_transition` entries desugar into per-target identities. Reachability is
+  resolved here, once; the engine-side extraction is a pure transpose. Rule: the params
+  template reads the user (effective) spec, the engine reads the canonical spec.
 - `Regime` (from `_lcm.engine`): Canonical representation produced by `process_regimes`
   from a user-facing `Regime`. Internal engine code threads this form. Inside boundary
   files that import both, alias the user form as
@@ -124,9 +141,9 @@ transitions via `MarkovTransition`-wrapped callables in `state_transitions`.
 
 Grids are pure outcome-space definitions — they define what values a variable can take.
 **State transitions** live on the `Regime` via the `state_transitions` field, which maps
-state names to transition functions (or `None` for fixed states). Wrap in
-`MarkovTransition` for stochastic transitions. Per-target dicts map target regime names
-to transition functions for target-dependent transitions.
+state names to transition functions (`fixed_transition(state_name)` for fixed states).
+Wrap in `MarkovTransition` for stochastic transitions. Per-target dicts map target
+regime names to transition functions for target-dependent transitions.
 
 ### Processing Pipeline
 
@@ -172,7 +189,7 @@ Regime(
     },
     state_transitions={                          # How states evolve over time
         "wealth": next_wealth,                   # Deterministic transition
-        "education": None,                       # Fixed state (identity auto-generated)
+        "education": fixed_transition("education"),  # Fixed state (identity law)
     },
     actions={"action_name": Grid, ...},          # Action grids (can be empty)
     functions={                                  # Must include "utility"; other functions optional
@@ -208,10 +225,13 @@ Regime(
 - `transition` is required: the regime transition function, or `None` for terminal
   regimes. `terminal` is a derived property (`self.transition is None`).
 - `active` is optional; defaults to `lambda _age: True` (always active)
-- `functions` must contain a `"utility"` entry (the utility function)
+- `functions` must contain a `"utility"` entry (the utility function); checked when the
+  model builds its effective regimes, not at `Regime` construction
 - `state_transitions` maps state names to transition functions. Every non-process state
-  in a non-terminal regime must have an entry. `None` marks a fixed state (identity
-  auto-generated). Wrap in `MarkovTransition` for stochastic transitions.
+  in a non-terminal regime must have an entry (checked at model build).
+  `fixed_transition(state_name)` marks a fixed state (identity law; its argument must
+  match the dict key). `None` is rejected. Wrap in `MarkovTransition` for stochastic
+  transitions.
 - Per-target dicts in `state_transitions` map target regime names to transition
   functions — every reachable target must be listed. Within a per-target dict,
   stochasticity must be consistent (all `MarkovTransition` or none).
@@ -332,8 +352,9 @@ initial_conditions = {
 
 - `model.get_params_template()` - Mutable copy of the parameter template (dict by regime
   name)
-- `model.user_regimes` - Immutable mapping of regime names to user-facing `Regime`
-  objects (`lcm.regime.Regime`)
+- `model.user_regimes` - Immutable mapping of regime names to `EffectiveUserRegime`
+  objects: the regimes as the model runs them (model-level slots merged, default `H`
+  injected), still in user vocabulary
 - `model._regimes` - Immutable mapping of regime names to canonical `Regime` objects
   (`_lcm.engine.Regime`) produced by `process_regimes`. Private — the canonical form is
   engine-internal; user code should read `user_regimes`.

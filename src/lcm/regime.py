@@ -44,9 +44,9 @@ class Regime:
 
     State transitions are specified via `state_transitions`, mapping state names to
     transition functions. A bare callable is deterministic; wrap in `MarkovTransition`
-    for stochastic transitions. `None` marks a fixed state (identity auto-generated).
-    Stochastic processes have intrinsic transitions and must not appear in
-    `state_transitions`.
+    for stochastic transitions. `fixed_transition(state_name)` marks a fixed state
+    (identity law). Stochastic processes have intrinsic transitions and must not
+    appear in `state_transitions`.
 
     The `transition` field on the regime itself is the *regime* transition function.
     A regime with `transition=None` is terminal — no separate `terminal` flag is
@@ -87,10 +87,10 @@ class Regime:
         # validator can reject it with the outermost-only explanation.
         | Mapping[RegimeName, UserFunction | MarkovTransition | Phased],
     ] = field(default_factory=lambda: MappingProxyType({}))
-    """Mapping of state names to transition functions, `None`, or per-target dicts.
+    """Mapping of state names to transition functions or per-target dicts.
 
     Every non-process state must have an entry — omitting a state raises an error.
-    `None` marks a fixed state (identity auto-generated internally). Wrap in
+    `fixed_transition(state_name)` marks a fixed state (identity law). Wrap in
     `MarkovTransition` for stochastic transitions. Per-target dicts map target
     regime names to transition functions — every reachable target must be listed.
     `Phased` gives each phase its own law of motion; it wraps the whole entry
@@ -157,10 +157,9 @@ class Regime:
             value = ensure_containers_are_immutable(getattr(self, name))
             object.__setattr__(self, name, value)
 
-        # Inject default aggregation function H if not provided by user.
-        # Terminal regimes don't need H since Q = U directly (no E_next_V).
-        if not self.terminal and "H" not in self.functions:
-            object.__setattr__(self, "functions", {**self.functions, "H": _default_H})
+        # Completeness (a `utility` entry, default-`H` injection, transition
+        # coverage) is validated when the model builds its effective regimes
+        # — model-level slots may still satisfy it after merging.
         make_immutable("functions")
         make_immutable("states")
         make_immutable("state_transitions")

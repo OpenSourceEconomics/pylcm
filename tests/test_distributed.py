@@ -7,6 +7,7 @@ from jax.sharding import NamedSharding, PartitionSpec
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
+from _lcm.regime_building.effective import EffectiveUserRegime
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
@@ -447,13 +448,13 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
 
 
 def test_distributed_action_grid_raises_at_regime_init():
-    """Action grids cannot be distributed; constructing a `Regime` with one raises.
+    """Action grids cannot be distributed; the effective regime rejects one.
 
     Distribution is a property of state axes (which form the V-array shape).
     Marking an action grid as distributed has no consistent meaning under the
-    current sharding model, so it is rejected at construction time. (Continuous
-    action grids never reach this check — they are rejected at grid init by
-    `_fail_if_continuous_grid_distributed`.)
+    current sharding model, so it is rejected when the model builds its
+    effective regimes. (Continuous action grids never reach this check — they
+    are rejected at grid init by `_fail_if_continuous_grid_distributed`.)
     """
 
     @categorical(ordered=False)
@@ -461,18 +462,19 @@ def test_distributed_action_grid_raises_at_regime_init():
         a: ScalarInt
         b: ScalarInt
 
+    regime = UserRegime(
+        functions={"utility": jnp.log},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        state_transitions={
+            "wealth": lambda wealth, choice: wealth - choice,
+        },
+        actions={
+            "choice": DiscreteGrid(Choice, distributed=True),
+        },
+        transition=lambda age: age,
+    )
     with pytest.raises(RegimeInitializationError, match="distributed=True"):
-        UserRegime(
-            functions={"utility": jnp.log},
-            states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-            state_transitions={
-                "wealth": lambda wealth, choice: wealth - choice,
-            },
-            actions={
-                "choice": DiscreteGrid(Choice, distributed=True),
-            },
-            transition=lambda age: age,
-        )
+        EffectiveUserRegime(user_regime=regime)
 
 
 @_skip_pytest_parallel

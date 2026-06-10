@@ -1,6 +1,13 @@
 """Basic model with discrete + continuous states, no stochastic transitions."""
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
 
@@ -29,7 +36,7 @@ working_life = UserRegime(
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
     },
     state_transitions={
-        "health": None,
+        "health": fixed_transition("health"),
         "wealth": lambda wealth: wealth,
     },
     functions={"utility": lambda wealth, health: wealth + health},
@@ -42,7 +49,7 @@ retirement = UserRegime(
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
     },
     state_transitions={
-        "health": None,
+        "health": fixed_transition("health"),
         "wealth": lambda wealth: wealth,
     },
     functions={"utility": lambda wealth, health: wealth + health},

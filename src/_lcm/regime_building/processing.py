@@ -21,10 +21,13 @@ from _lcm.engine import (
 )
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.grids.coordinates import get_irreg_coordinate
+from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
+from _lcm.regime_building.effective import EffectiveUserRegime
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
     get_max_Q_over_a,
@@ -34,7 +37,6 @@ from _lcm.regime_building.next_state import get_next_state_function_for_simulati
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
-    normalize_regime_phases,
 )
 from _lcm.regime_building.Q_and_F import (
     get_complete_targets,
@@ -44,7 +46,6 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
-from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from _lcm.state_action_space import create_state_action_space
 from _lcm.typing import (
@@ -88,21 +89,20 @@ from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
 def process_regimes(
     *,
-    user_regimes: Mapping[RegimeName, UserRegime],
+    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Process user regimes into canonical regimes.
+    """Process effective regimes into canonical regimes.
 
-    Extract state transitions from `user_regime.state_transitions` and
-    regime transitions from `user_regime.transition`. For fixed states
-    (value `None` in `state_transitions`), an identity transition is
-    auto-generated. Stochastic process transitions are generated from the
-    grid's intrinsic transition logic.
+    Canonicalizes every regime's laws into target-granular form
+    (`canonicalize_regimes`), then compiles the per-phase function sets.
+    Stochastic process transitions are generated from the grid's intrinsic
+    transition logic.
 
     Args:
-        user_regimes: Mapping of regime names to user-provided `Regime` instances.
+        user_regimes: Mapping of regime names to effective regimes.
         ages: The AgeGrid for the model.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         enable_jit: Whether to jit the functions of the canonical regime.
@@ -111,36 +111,18 @@ def process_regimes(
         The processed canonical regimes.
 
     """
-    specs: dict[RegimeName, PhasedRegimeSpec] = {
-        regime_name: normalize_regime_phases(user_regime)
-        for regime_name, user_regime in user_regimes.items()
-    }
-    solve_states_per_regime: dict[RegimeName, set[StateName]] = {
-        regime_name: set(spec.solution.grid_states)
-        for regime_name, spec in specs.items()
-    }
-    simulate_states_per_regime: dict[RegimeName, set[StateName]] = {
-        regime_name: set(spec.simulation.grid_states)
-        for regime_name, spec in specs.items()
-    }
-
-    # Each phase's transitions come from its own slice against its own state
-    # sets: the simulate slice additionally holds every carried-only state and
-    # its law of motion, so the extraction registers the law for each
-    # reachable target that carries the state — including targets reached
+    # The canonical specs hold every law in target-granular form, resolved per
+    # phase: the simulate slice additionally holds every carried-only state
+    # and its law of motion, so the canonical mapping carries the law toward
+    # each reachable target that carries the state — including targets reached
     # through nothing but the carried state.
+    specs = canonicalize_regimes(user_regimes=user_regimes)
     nested_transitions = {
-        regime_name: _extract_phase_transitions(
-            phase_slice=spec.solution,
-            states_per_regime=solve_states_per_regime,
-        )
+        regime_name: _extract_phase_transitions(phase_slice=spec.solution)
         for regime_name, spec in specs.items()
     }
     simulate_nested_transitions = {
-        regime_name: _extract_phase_transitions(
-            phase_slice=spec.simulation,
-            states_per_regime=simulate_states_per_regime,
-        )
+        regime_name: _extract_phase_transitions(phase_slice=spec.simulation)
         for regime_name, spec in specs.items()
     }
     _validate_categoricals(user_regimes)
@@ -588,12 +570,6 @@ def _process_regime_core(
         **flat_nested_transitions,
     }
 
-    per_target_next_names = frozenset(
-        f"next_{name}"
-        for name, raw in state_transitions.items()
-        if isinstance(raw, Mapping)
-    )
-
     stochastic_transition_names = _get_stochastic_transition_names(
         state_transitions=state_transitions, variables=variables
     )
@@ -629,7 +605,7 @@ def _process_regime_core(
         )
 
     for func_name, func in deterministic_transition_functions.items():
-        param_key = _extract_param_key(func_name, per_target_next_names)
+        param_key = _extract_param_key(func_name, regime_params_template)
         processed_functions[func_name] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
@@ -637,7 +613,7 @@ def _process_regime_core(
         )
 
     for func_name, func in stochastic_transition_functions.items():
-        param_key = _extract_param_key(func_name, per_target_next_names)
+        param_key = _extract_param_key(func_name, regime_params_template)
         processed_functions[f"weight_{func_name}"] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
@@ -719,33 +695,21 @@ def _process_regime_core(
 def _extract_phase_transitions(
     *,
     phase_slice: RegimePhaseSpec,
-    states_per_regime: Mapping[RegimeName, set[StateName]],
 ) -> dict[
     RegimeName | TransitionFunctionName,
     dict[TransitionFunctionName, UserFunction] | UserFunction,
 ]:
-    """Extract one phase's nested transitions from its phase slice.
+    """Transpose one canonical phase slice into per-target transition bundles.
 
-    For non-terminal slices, reads state transitions from the slice's
-    `state_transitions` (identity transitions auto-generated for `None`
-    values) and the regime transition under `"next_regime"`. For per-target
-    dicts, selects the transition function matching each target regime.
+    The slice's `state_transitions` values are canonical per-target mappings
+    (`canonicalize_regimes` resolved reachability and desugared identities),
+    so the extraction is a pure transpose: bundle each target regime's
+    `next_<state>` laws, plus the regime transition under `"next_regime"`.
     Stochastic process transitions are handled separately during internal
     function processing.
 
-    `states_per_regime` must hold the same phase's state sets: a target's
-    transition needs are exactly the states it carries in that phase, so a
-    state carried only in simulation (no solve grid axis) is needed — and its
-    law registered — only when extracting the simulation slice. That also
-    covers targets reached through nothing but a carried state: the carried
-    law is an ordinary simple transition here, so such a target gets its
-    entry and the carried value is evolved rather than silently frozen on
-    the crossing.
-
     Args:
-        phase_slice: One phase's slice of the regime specification.
-        states_per_regime: Mapping of regime names to their state names in
-            the same phase.
+        phase_slice: One canonical phase slice of the regime specification.
 
     Returns:
         Nested transitions dict for internal processing.
@@ -754,105 +718,20 @@ def _extract_phase_transitions(
     if phase_slice.regime_transition is None:
         return {}
 
-    # Slice values are phase-resolved, so the collected transitions hold no
-    # `Phased` containers.
-    state_transitions = cast(
-        "dict[TransitionFunctionName, UserFunction]",
-        collect_state_transitions(
-            phase_slice.grid_states, phase_slice.state_transitions
-        ),
-    )
-    simple_transitions, per_target_transitions = _classify_transitions(
-        state_transitions
-    )
-
     nested: dict[
         RegimeName | TransitionFunctionName,
         dict[TransitionFunctionName, UserFunction] | UserFunction,
     ] = {"next_regime": cast("UserFunction", phase_slice.regime_transition)}
 
-    reachable_targets = _get_reachable_targets(
-        per_target_transitions=per_target_transitions,
-        simple_transitions=simple_transitions,
-        states_per_regime=states_per_regime,
-    )
-
-    for target_regime_name in reachable_targets:
-        target_regime_state_names = states_per_regime[target_regime_name]
-        target_dict: dict[TransitionFunctionName, UserFunction] = {}
-        for state_name in target_regime_state_names:
-            next_key = f"next_{state_name}"
-            if next_key in simple_transitions:
-                target_dict[next_key] = simple_transitions[next_key]
-            elif next_key in per_target_transitions:
-                variants = per_target_transitions[next_key]
-                if target_regime_name in variants:
-                    target_dict[next_key] = variants[target_regime_name]
-        if target_dict:
-            nested[target_regime_name] = target_dict
+    per_target: dict[RegimeName, dict[TransitionFunctionName, UserFunction]] = {}
+    for state_name, canonical in phase_slice.state_transitions.items():
+        for target_regime_name, law in cast(
+            "Mapping[RegimeName, UserFunction]", canonical
+        ).items():
+            per_target.setdefault(target_regime_name, {})[f"next_{state_name}"] = law
+    nested |= per_target
 
     return nested
-
-
-def _get_reachable_targets(
-    *,
-    per_target_transitions: dict[
-        TransitionFunctionName, dict[RegimeName, UserFunction]
-    ],
-    simple_transitions: dict[TransitionFunctionName, UserFunction],
-    states_per_regime: Mapping[RegimeName, set[StateName]],
-) -> set[RegimeName]:
-    """Determine which target regimes need transition entries.
-
-    When per-target transitions exist, start from the explicitly named targets
-    and add any target whose state needs are fully covered by simple
-    (non-per-target) transitions. The state sets are per-phase, so a target's
-    needs are exactly the states it carries in the phase being extracted (a
-    carried-only state needs its law in the simulate phase and nothing in the
-    solve phase). Without per-target transitions, all regimes are reachable.
-
-    """
-    if not per_target_transitions:
-        return set(states_per_regime.keys())
-
-    targets: set[RegimeName] = set()
-    for variants in per_target_transitions.values():
-        targets |= variants.keys()
-    for target_name, target_states in states_per_regime.items():
-        if target_name not in targets:
-            needed = {f"next_{s}" for s in target_states}
-            if needed and needed.issubset(simple_transitions):
-                targets.add(target_name)
-    return targets
-
-
-def _classify_transitions(
-    state_transitions: dict[TransitionFunctionName, UserFunction],
-) -> tuple[
-    dict[TransitionFunctionName, UserFunction],
-    dict[TransitionFunctionName, dict[RegimeName, UserFunction]],
-]:
-    """Split collected transitions into simple and per-target groups.
-
-    Qualified names like "next_health__working" (produced by
-    `collect_state_transitions` for per-target dicts) are decomposed via
-    `tree_path_from_qname`.
-
-    Returns:
-        Tuple of (simple_transitions, per_target_transitions).
-
-    """
-    simple: dict[TransitionFunctionName, UserFunction] = {}
-    per_target: dict[TransitionFunctionName, dict[RegimeName, UserFunction]] = {}
-    for key, func in state_transitions.items():
-        path = tree_path_from_qname(key)
-        if len(path) == 1:
-            simple[key] = func
-        else:
-            state_key = path[0]
-            target_name = qname_from_tree_path(path[1:])
-            per_target.setdefault(state_key, {})[target_name] = func
-    return simple, per_target
 
 
 def _wrap_transitions(
@@ -920,21 +799,27 @@ def _rename_params_to_qnames(
 
 def _extract_param_key(
     func_name: str,
-    per_target_next_names: frozenset[str] = frozenset(),
+    regime_params_template: RegimeParamsTemplate,
 ) -> str:
     """Extract the param template key from a possibly prefixed function name.
 
-    For prefixed names like "work__next_wealth", returns "next_wealth".
-    For per-target transitions like "work__next_health" where "next_health" is in
-    `per_target_next_names`, returns "to_work_next_health" to match the template key.
-    For unprefixed names like "next_regime", returns the name unchanged.
+    The template mirrors the user's coarseness — a per-target dict yields
+    `to_<target>_next_<state>` keys, a broadcast law a single `next_<state>`
+    key — while the engine-side function names are always target-prefixed
+    (canonical form). The template therefore decides which key applies:
+
+    - "work__next_health" with `to_work_next_health` in the template (user
+      wrote a per-target dict) ⇒ "to_work_next_health"
+    - "work__next_wealth" without such a key (broadcast law) ⇒ "next_wealth"
+    - unprefixed names like "next_regime" ⇒ unchanged
 
     """
     path = tree_path_from_qname(func_name)
     if len(path) > 1:
         suffix = qname_from_tree_path(path[1:])
-        if suffix in per_target_next_names:
-            return f"to_{path[0]}_{suffix}"
+        per_target_key = f"to_{path[0]}_{suffix}"
+        if per_target_key in regime_params_template:
+            return per_target_key
         return suffix
     return func_name
 
@@ -1247,15 +1132,16 @@ def _get_simple_transition_discrete_grid(
 ) -> DiscreteGrid | None:
     """Return the source DiscreteGrid for a simple transition.
 
-    Returns None if the transition is a per-target dict, None (identity), not a
-    DiscreteGrid, or the state is not present in the source regime.
+    Returns None if the transition is a per-target dict, an identity law
+    (fixed state), not a DiscreteGrid, or the state is not present in the
+    source regime.
 
     """
     # Per-target dicts handle category differences explicitly
     if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition):
         return None
-    # None means identity (fixed state) — only maps within its own regime
-    if raw is None:
+    # An identity law (fixed state) only maps within its own regime
+    if isinstance(raw, _IdentityTransition):
         return None
     # Target-only state — no source grid to compare
     if state_name not in user_regime.states:

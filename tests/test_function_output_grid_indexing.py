@@ -14,6 +14,7 @@ to take `g`).
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.effective import EffectiveUserRegime
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -21,6 +22,7 @@ from lcm import (
     Model,
     Phased,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
@@ -67,6 +69,13 @@ def _next_regime(period: int) -> FloatND:
     return jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
 
 
+def _effective_regime(**kwargs: object) -> EffectiveUserRegime:
+    """Build the effective regime, running the model's completeness validation."""
+    return EffectiveUserRegime(
+        user_regime=UserRegime(**kwargs),  # ty: ignore[invalid-argument-type]
+    )
+
+
 def _make_clashing_model() -> Model:
     alive = UserRegime(
         functions={
@@ -74,7 +83,7 @@ def _make_clashing_model() -> Model:
             "per_type_scale": _per_type_scale_takes_pref_type,
         },
         states={"pref_type": DiscreteGrid(PrefType)},
-        state_transitions={"pref_type": None},
+        state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         transition=_next_regime,
         active=lambda age: age < 2,
@@ -119,7 +128,7 @@ def test_safe_pattern_does_not_raise():
             "per_type_scale": _per_type_scale_takes_pref_type,
         },
         states={"pref_type": DiscreteGrid(PrefType)},
-        state_transitions={"pref_type": None},
+        state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         transition=_next_regime,
         active=lambda age: age < 2,
@@ -154,7 +163,7 @@ def test_array_valued_producer_indexed_by_state_does_not_raise():
             "per_type_scale": _per_type_scale_array_output,
         },
         states={"pref_type": DiscreteGrid(PrefType)},
-        state_transitions={"pref_type": None},
+        state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         transition=_next_regime,
         active=lambda age: age < 2,
@@ -203,14 +212,14 @@ def test_function_output_indexed_by_derived_categorical_raises():
         RegimeInitializationError,
         match=r"per_marital_scale.*is_married",
     ):
-        UserRegime(
+        _effective_regime(
             functions={
                 "utility": _utility_clash,
                 "per_marital_scale": _per_marital_scale,
                 "is_married": _is_married,
             },
             states={"spousal_income": DiscreteGrid(SpousalIncome)},
-            state_transitions={"spousal_income": None},
+            state_transitions={"spousal_income": fixed_transition("spousal_income")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             derived_categoricals={"is_married": DiscreteGrid(IsMarried)},
             transition=_next_regime,
@@ -240,13 +249,13 @@ def test_function_output_indexed_by_discrete_action_raises():
         RegimeInitializationError,
         match=r"per_choice_scale.*labor_supply",
     ):
-        UserRegime(
+        _effective_regime(
             functions={
                 "utility": _utility_clash,
                 "per_choice_scale": _per_choice_scale,
             },
             states={"pref_type": DiscreteGrid(PrefType)},
-            state_transitions={"pref_type": None},
+            state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={
                 "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5),
                 "labor_supply": DiscreteGrid(WorkChoice),
@@ -270,7 +279,7 @@ def test_constraint_indexing_function_output_by_state_raises():
         RegimeInitializationError,
         match=r"per_type_scale.*pref_type",
     ):
-        UserRegime(
+        _effective_regime(
             functions={
                 "utility": lambda consumption, pref_type, per_type_scale: jnp.log(  # noqa: ARG005
                     consumption + 1.0
@@ -278,7 +287,7 @@ def test_constraint_indexing_function_output_by_state_raises():
                 "per_type_scale": _per_type_scale_takes_pref_type,
             },
             states={"pref_type": DiscreteGrid(PrefType)},
-            state_transitions={"pref_type": None},
+            state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             constraints={"feasibility": _constraint_indexing_function_output},
             transition=_next_regime,
@@ -309,7 +318,7 @@ def test_phased_function_in_functions_does_not_crash_validation():
             "scaled": Phased(solve=_scale_solve, simulate=_scale_simulate),
         },
         states={"pref_type": DiscreteGrid(PrefType)},
-        state_transitions={"pref_type": None},
+        state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         transition=_next_regime,
         active=lambda age: age < 2,
@@ -344,14 +353,14 @@ def test_phased_function_solve_variant_unsafe_indexing_raises():
         RegimeInitializationError,
         match=r"per_type_scale.*pref_type",
     ):
-        UserRegime(
+        _effective_regime(
             functions={
                 "utility": _utility_consumes_scalar,
                 "per_type_scale": _per_type_scale_takes_pref_type,
                 "scaled": Phased(solve=_scale_solve_unsafe, simulate=_scale_simulate),
             },
             states={"pref_type": DiscreteGrid(PrefType)},
-            state_transitions={"pref_type": None},
+            state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             transition=_next_regime,
             active=lambda age: age < 2,
