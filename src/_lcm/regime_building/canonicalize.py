@@ -98,7 +98,9 @@ def _canonicalize_phase_transitions(
     bare_laws: dict[StateName, _CanonicalLaw] = {}
     per_target_laws: dict[StateName, Mapping[RegimeName, _CanonicalLaw]] = {}
     for state_name, raw in phase_slice.state_transitions.items():
-        if isinstance(phase_slice.grid_states.get(state_name), _ContinuousStochasticProcess):
+        if isinstance(
+            phase_slice.grid_states.get(state_name), _ContinuousStochasticProcess
+        ):
             # Process transitions are generated from the grid's intrinsic
             # transition logic, not from `state_transitions`.
             continue
@@ -134,7 +136,7 @@ def _canonicalize_phase_transitions(
         }
         if carriers:
             canonical[state_name] = MappingProxyType(
-                {target_name: law for target_name in sorted(carriers)}
+                dict.fromkeys(sorted(carriers), law)
             )
     for state_name, named in per_target_laws.items():
         cells = {

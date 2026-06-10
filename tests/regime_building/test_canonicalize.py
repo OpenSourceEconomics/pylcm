@@ -65,11 +65,11 @@ def _base_regime_kwargs() -> dict[str, Any]:
     }
 
 
-
 def _regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = _base_regime_kwargs()
     spec.update(overrides)
     return UserRegime(**spec)
+
 
 def _canonicalize(regimes: dict[str, UserRegime]) -> Mapping:
     return canonicalize_regimes(

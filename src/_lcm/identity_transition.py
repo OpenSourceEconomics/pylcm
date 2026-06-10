@@ -33,7 +33,9 @@ class _IdentityTransition:
         param = inspect.Parameter(
             state_name,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            annotation=annotation if annotation is not None else inspect.Parameter.empty,
+            annotation=annotation
+            if annotation is not None
+            else inspect.Parameter.empty,
         )
         self.__signature__ = inspect.Signature(
             [param],
