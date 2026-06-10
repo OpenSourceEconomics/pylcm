@@ -359,7 +359,7 @@ def _build_next_state_args(
     subject_states = _subject_shape_arrays(
         base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
-    # Simulate-only states (the `transition` half of a `SolveSimulateStatePair`)
+    # Simulate-only states (carried states declared via `Phased`)
     # are not solve grid axes, so they are absent from `state_action_space`. The
     # simulate `next_state` program carries and reads them, so seed each one.
     subject_states.update(
@@ -436,9 +436,10 @@ def _simulate_only_subject_states(
 ) -> dict[str, FloatND | IntND]:
     """Return `(n_subjects,)` zeros for the regime's simulate-only states.
 
-    Simulate-only states come from the `transition` half of a
-    `SolveSimulateStatePair`; they are carried per subject in simulate but are
-    not solve grid axes. Each is seeded with a zero array of its grid's dtype.
+    Simulate-only states are the carried states (declared via
+    `Phased(solve=..., simulate=Grid)`); they are carried per subject in
+    simulate but are not solve grid axes. Each is seeded with a zero array of
+    its grid's dtype.
     """
     arrays: dict[str, FloatND | IntND] = {}
     for name, grid in regime.simulation.carried_grids.items():

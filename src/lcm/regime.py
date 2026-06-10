@@ -1,8 +1,8 @@
-"""User-facing regime types: `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`.
+"""The user-facing `Regime` definition.
 
 The validators and the identity transition live behind a leading underscore in
 `_lcm.user_regime_validation` and `_lcm.regime_building.transitions`. This
-module is intentionally thin: the public class definitions plus the private
+module is intentionally thin: the public class definition plus the private
 default Bellman aggregator (`_default_H`), which `Regime` injects when a
 non-terminal regime supplies no `H`.
 
@@ -30,11 +30,7 @@ from _lcm.utils.containers import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import (
-    MarkovTransition,
-    SolveSimulateFunctionPair,
-    SolveSimulateStatePair,
-)
+from lcm.transition import MarkovTransition
 from lcm.typing import FloatND, UserFunction
 
 
@@ -69,7 +65,7 @@ class Regime:
     active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active."""
 
-    states: Mapping[StateName, Grid | SolveSimulateStatePair | Phased] = field(
+    states: Mapping[StateName, Grid | Phased] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of state variable names to grids or phase-variant declarations.
@@ -78,8 +74,7 @@ class Regime:
     `Phased(solve=callable, simulate=Grid)` declares a carried state: a
     derived function (no grid axis) in the solve phase and a seeded, evolved
     state in the simulate phase, whose law of motion is its regular
-    `state_transitions` entry. `SolveSimulateStatePair` is the legacy spelling
-    of the same declaration with the law attached to the pair.
+    `state_transitions` entry.
     """
 
     state_transitions: Mapping[
@@ -107,20 +102,19 @@ class Regime:
     )
     """Mapping of action variable names to grid objects."""
 
-    functions: Mapping[
-        FunctionName, UserFunction | SolveSimulateFunctionPair | Phased
-    ] = field(default_factory=lambda: MappingProxyType({}))
+    functions: Mapping[FunctionName, UserFunction | Phased] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of function names to callables; must include 'utility'.
 
-    `Phased` (or the legacy `SolveSimulateFunctionPair`) gives each phase its
-    own implementation.
+    `Phased` gives each phase its own implementation.
     """
 
-    # Phase-variant containers pass the type check so the validator can
-    # reject them with an explanation (constraints are phase-invariant).
-    constraints: Mapping[
-        FunctionName, UserFunction | SolveSimulateFunctionPair | Phased
-    ] = field(default_factory=lambda: MappingProxyType({}))
+    # `Phased` passes the type check so the validator can reject it with an
+    # explanation (constraints are phase-invariant).
+    constraints: Mapping[FunctionName, UserFunction | Phased] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of constraint names to constraint functions.
 
     Constraints are phase-invariant: a phase-specific feasible set would let
@@ -191,12 +185,11 @@ class Regime:
         - State transitions from `self.state_transitions`
         - The regime transition (`self.transition`, keyed as `"next_regime"`)
 
-        For `Phased` / `SolveSimulateFunctionPair` entries, the variant
-        matching `phase` is used. A carried-state declaration in `states`
-        (`Phased(solve=..., simulate=Grid)` or `SolveSimulateStatePair`)
-        contributes its `solve` variant as a derived function under the
-        state's name and its law of motion under `next_<name>`, mirroring how
-        ordinary state transitions are keyed.
+        For `Phased` entries, the variant matching `phase` is used. A
+        carried-state declaration in `states` (`Phased(solve=...,
+        simulate=Grid)`) contributes its `solve` variant as a derived
+        function under the state's name and its law of motion under
+        `next_<name>`, mirroring how ordinary state transitions are keyed.
 
         Args:
             phase: Which variant to use for phase-variant entries.
@@ -207,7 +200,7 @@ class Regime:
         """
 
         def resolve(value: object) -> UserFunction:
-            if isinstance(value, SolveSimulateFunctionPair | Phased):
+            if isinstance(value, Phased):
                 value = value.solve if phase == "solve" else value.simulate
             return cast("UserFunction", value)
 
@@ -215,10 +208,7 @@ class Regime:
             name: resolve(func) for name, func in self.functions.items()
         }
         for name, spec in self.states.items():
-            if isinstance(spec, SolveSimulateStatePair):
-                result[name] = cast("UserFunction", spec.solve)
-                result[f"next_{name}"] = cast("UserFunction", spec.transition)
-            elif isinstance(spec, Phased):
+            if isinstance(spec, Phased):
                 # Carried state: the solve variant is its derived-function
                 # imputation; the law of motion is its regular
                 # `state_transitions` entry, collected below.

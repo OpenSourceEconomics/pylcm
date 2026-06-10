@@ -27,7 +27,6 @@ from lcm.ages import AgeGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import SolveSimulateStatePair
 from lcm.typing import Float1D, FloatND, Int1D
 
 
@@ -117,7 +116,9 @@ def initial_conditions_from_dataframe(  # noqa: C901
         idx = group.index
         discrete_grids = {
             name: grid
-            for name, grid in _state_grids_unwrapping_pairs(user_regime.states).items()
+            for name, grid in _state_grids_with_carried_domains(
+                user_regime.states
+            ).items()
             if isinstance(grid, DiscreteGrid)
         }
         discrete_state_names |= discrete_grids.keys()
@@ -453,7 +454,7 @@ def _resolve_categoricals(
     if regime_name is not None:
         user_regime = user_regimes[regime_name]
         for grids_mapping in (
-            _state_grids_unwrapping_pairs(user_regime.states),
+            _state_grids_with_carried_domains(user_regime.states),
             user_regime.actions,
         ):
             grids.update(
@@ -880,25 +881,19 @@ def _collect_state_names(
     return names
 
 
-def _state_grids_unwrapping_pairs(
-    states: Mapping[StateName, Grid | SolveSimulateStatePair | Phased],
+def _state_grids_with_carried_domains(
+    states: Mapping[StateName, Grid | Phased],
 ) -> dict[StateName, Grid]:
     """Replace each carried-state declaration by its simulate-phase grid.
 
-    A carried value (declared via `Phased(solve=..., simulate=Grid)` or the
-    legacy `SolveSimulateStatePair`) is a genuine state in simulation input
-    and output, so label/code discovery must see the inner grid like any
-    other state grid.
+    A carried value (declared via `Phased(solve=..., simulate=Grid)`) is a
+    genuine state in simulation input and output, so label/code discovery
+    must see the inner grid like any other state grid.
     """
-    result: dict[StateName, Grid] = {}
-    for name, spec in states.items():
-        if isinstance(spec, SolveSimulateStatePair):
-            result[name] = cast("Grid", spec.grid)
-        elif isinstance(spec, Phased):
-            result[name] = cast("Grid", spec.simulate)
-        else:
-            result[name] = spec
-    return result
+    return {
+        name: cast("Grid", spec.simulate) if isinstance(spec, Phased) else spec
+        for name, spec in states.items()
+    }
 
 
 def _build_discrete_grid_lookup(
@@ -919,7 +914,7 @@ def _build_discrete_grid_lookup(
     lookup: dict[str, DiscreteGrid] = {}
     for regime_name, user_regime in user_regimes.items():
         for grids_mapping in (
-            _state_grids_unwrapping_pairs(user_regime.states),
+            _state_grids_with_carried_domains(user_regime.states),
             user_regime.actions,
         ):
             for var_name, grid in grids_mapping.items():

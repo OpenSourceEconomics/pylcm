@@ -28,7 +28,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.phased import Phased
-from lcm.transition import MarkovTransition, SolveSimulateStatePair
+from lcm.transition import MarkovTransition
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 if TYPE_CHECKING:
@@ -71,7 +71,7 @@ class _IdentityTransition:
 
 
 def collect_state_transitions(
-    states: Mapping[StateName, Grid | SolveSimulateStatePair | Phased | None],
+    states: Mapping[StateName, Grid | Phased | None],
     state_transitions: Mapping[
         StateName,
         UserFunction
@@ -101,12 +101,6 @@ def collect_state_transitions(
     for name, grid in states.items():
         # Process transitions built directly in _process_regime_core
         if isinstance(grid, _ContinuousStochasticProcess):
-            continue
-
-        # Phase-variant state pairs carry their own simulate transition; the
-        # solve phase treats the name as a derived function, so there is no
-        # `next_<name>` state transition to collect here.
-        if isinstance(grid, SolveSimulateStatePair):
             continue
 
         if name not in state_transitions:

@@ -37,6 +37,9 @@ automation. Python 3.14+ is required.
 - `Regime` (from `lcm.regime`): User-facing regime definition with utility, constraints,
   functions, actions, states, and state transitions (the `state_transitions` field). The
   regime transition is set via the `transition` field.
+- `Phased(solve=..., simulate=...)`: phase-specific variants of a regime-slot value
+  (functions, states, state transitions, the regime transition). A bare value broadcasts
+  to both phases.
 - Models must have at least one terminal regime and one non-terminal regime
 - Models support transitions between multiple regimes
 
@@ -48,14 +51,30 @@ automation. Python 3.14+ is required.
   `from lcm.regime import Regime as UserRegime`.
 - The canonical `Regime` carries only phase-invariant data plus two frozen phase
   namespaces — every phase-dependent read names its phase in the access path:
-  - `regime.solution` (`SolutionPhase`): solve variables and grids (a
-    `SolveSimulateStatePair` contributes no axis; productmap order), compiled solve
-    function sets, `state_action_space()`.
-  - `regime.simulation` (`SimulationPhase`): carried variables (solve states plus pair
-    states, appended — not a productmap order), grids including each pair's domain,
-    `pair_state_names` / `pair_grids`, compiled simulate function sets. Its published
-    `functions` are pair-free (pairs are leaves fed with carried values); only the
-    decision functions keep the solve imputation.
+  - `regime.solution` (`SolutionPhase`): solve variables and grids (a carried state
+    contributes no axis; productmap order), compiled solve function sets,
+    `state_action_space()`.
+  - `regime.simulation` (`SimulationPhase`): per-subject variables (solve states plus
+    carried-only states, appended — not a productmap order), grids including each
+    carried state's domain, `carried_only_state_names` / `carried_grids`, compiled
+    simulate function sets. Its published `functions` are imputation-free (carried
+    states are leaves fed with carried values); only the decision functions (Q_and_F /
+    argmax) keep the solve imputation.
+- `normalize_regime_phases` (`src/_lcm/regime_building/phases.py`) is the single
+  phase-resolution boundary: it expands every regime slot into per-phase
+  `RegimePhaseSpec` slices (`PhasedRegimeSpec.solution` / `.simulation`) and applies the
+  phase grammar. Phase is a broadcast dimension of the user spec — a bare slot value
+  applies to both phases, `Phased(solve=..., simulate=...)` specifies each phase
+  explicitly:
+  - `functions` and `state_transitions` accept `Phased` (per-phase implementations /
+    laws of motion); `transition` accepts `Phased` with matching stochasticity.
+  - `states` accept `Phased(solve=callable, simulate=Grid)` — the carried state: derived
+    (no grid axis) during backward induction, a genuine seeded-and-evolved state in
+    simulation, with its law of motion in the regular `state_transitions` slot. All
+    other solve/simulate combinations are rejected.
+  - `constraints`, `actions`, `active`, and `derived_categoricals` are phase-invariant;
+    `Phased` is rejected there with an explanation. `Phased` is outermost-only (never
+    inside a per-target dict) and never nested.
 - `StateActionSpace`: Manages state-action combinations for solution/simulation
 - `PeriodRegimeSimulationData`: Raw simulation results for one period in one regime
 
@@ -539,6 +558,15 @@ Code structure should be self-evident from function names and ordering.
 
 ### Naming and Docstring Conventions
 
+- **Noun vs verb for phase vocabulary — "the name tells you what you get."** Use the
+  noun (`solution`, `simulation`) when the name yields a *thing* — an artifact or bundle
+  of phase artifacts: `regime.solution`, `SolutionPhase`, `SimulationResult`,
+  `PhasedRegimeSpec.solution`. Use the verb (`solve`, `simulate`) when the name denotes
+  the *act* or selects a variant to be used when acting: `model.solve()`,
+  `Phased(solve=f, simulate=g)`, `phase: Literal["solve", "simulate"]`, and all
+  attributive compounds in identifiers and prose (`solve_transitions`, "the solve-phase
+  consumer", "the solve grid"). Litmus: you get a bag → noun; you get behavior or name
+  the act → verb.
 - **No unnecessary parameter aliases.** When a function has a single (or very few) call
   site(s), the parameter name should match the variable name being passed. Don't shorten
   parameter names just for brevity — e.g., use

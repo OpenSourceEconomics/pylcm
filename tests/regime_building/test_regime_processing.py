@@ -17,7 +17,7 @@ from _lcm.regime_building.processing import (
     process_regimes,
 )
 from _lcm.variables import from_regime, get_grids
-from lcm import SolveSimulateStatePair, categorical
+from lcm import Phased, categorical
 from lcm.ages import AgeGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
@@ -288,7 +288,7 @@ def test_wrap_regime_transition_probs_return_annotation_accepts_mapping():
 
 
 def _pair_handover_regime() -> UserRegime:
-    """A regime whose only handover to `retired` is its carried state pair."""
+    """A regime whose only handover to `retired` is its carried state."""
 
     def impute_pension_wealth(wealth: float) -> float:
         return wealth * 0.1
@@ -309,13 +309,15 @@ def _pair_handover_regime() -> UserRegime:
         transition=next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
-            "pension_wealth": SolveSimulateStatePair(
+            "pension_wealth": Phased(
                 solve=impute_pension_wealth,
-                grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
-                transition=evolve_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
             ),
         },
-        state_transitions={"wealth": next_wealth},
+        state_transitions={
+            "wealth": next_wealth,
+            "pension_wealth": evolve_pension_wealth,
+        },
         actions={},
         functions={"utility": utility},
     )
@@ -378,15 +380,15 @@ def test_carried_state_counts_as_covered_for_reachability():
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "health": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
-            "pension_wealth": SolveSimulateStatePair(
+            "pension_wealth": Phased(
                 solve=impute_pension_wealth,
-                grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
-                transition=evolve_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
             ),
         },
         state_transitions={
             "wealth": next_wealth,
             "health": {"working": next_health_working},
+            "pension_wealth": evolve_pension_wealth,
         },
         actions={},
         functions={"utility": utility},
@@ -414,8 +416,8 @@ def test_mock_regime_get_all_functions_matches_real_regime():
     """`MockRegime.get_all_functions` exposes the same keys as the real method.
 
     The mock is the test double for canonical processing; a key set that
-    drifts from `lcm.regime.Regime.get_all_functions` (e.g. dropping a state
-    pair's `next_<name>` transition) would let mock-based tests pass against
+    drifts from `lcm.regime.Regime.get_all_functions` (e.g. dropping a carried
+    state's `next_<name>` law) would let mock-based tests pass against
     behavior the real regime does not have.
     """
 
@@ -438,13 +440,15 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         "transition": next_regime,
         "states": {
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
-            "pension_wealth": SolveSimulateStatePair(
+            "pension_wealth": Phased(
                 solve=impute_pension_wealth,
-                grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
-                transition=evolve_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
             ),
         },
-        "state_transitions": {"wealth": next_wealth},
+        "state_transitions": {
+            "wealth": next_wealth,
+            "pension_wealth": evolve_pension_wealth,
+        },
         "functions": {"utility": utility},
     }
     real = UserRegime(**kwargs)

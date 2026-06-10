@@ -23,7 +23,6 @@ from _lcm.grids import ContinuousGrid, Grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import StateName, StateOrActionName
 from lcm.phased import Phased
-from lcm.transition import SolveSimulateStatePair
 
 if TYPE_CHECKING:
     from lcm.regime import Regime as UserRegime
@@ -46,10 +45,9 @@ def _bind_forward_refs(*, regime_cls: type) -> None:
 def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
     """Return the regime's states that are plain grids, excluding carried states.
 
-    A carried state (declared via `Phased(solve=..., simulate=Grid)` or the
-    legacy `SolveSimulateStatePair`) is a derived function in the solve phase,
-    not a grid dimension, so it is omitted from the solve-phase state grids
-    and variable info.
+    A carried state (declared via `Phased(solve=..., simulate=Grid)`) is a
+    derived function in the solve phase, not a grid dimension, so it is
+    omitted from the solve-phase state grids and variable info.
     """
     return {
         name: spec
@@ -80,18 +78,16 @@ def simulate_variables_from_regime(user_regime: UserRegime) -> Variables:
 def carried_state_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
     """Return the simulate-phase grids of the regime's carried states.
 
-    Carried states — declared via `Phased(solve=..., simulate=Grid)` or the
-    legacy `SolveSimulateStatePair` — are absent from the solve grid (they are
-    derived functions there); their grid is the simulate-phase domain used to
-    seed, classify, and validate the carried-forward value.
+    Carried states — declared via `Phased(solve=..., simulate=Grid)` — are
+    absent from the solve grid (they are derived functions there); their grid
+    is the simulate-phase domain used to seed, classify, and validate the
+    carried-forward value.
     """
-    result: dict[StateName, Grid] = {}
-    for name, spec in user_regime.states.items():
-        if isinstance(spec, SolveSimulateStatePair):
-            result[name] = cast("Grid", spec.grid)
-        elif isinstance(spec, Phased):
-            result[name] = cast("Grid", spec.simulate)
-    return result
+    return {
+        name: cast("Grid", spec.simulate)
+        for name, spec in user_regime.states.items()
+        if isinstance(spec, Phased)
+    }
 
 
 def from_regime(user_regime: UserRegime) -> Variables:

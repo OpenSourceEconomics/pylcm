@@ -21,7 +21,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
-    SolveSimulateStatePair,
+    Phased,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
@@ -2039,22 +2039,24 @@ def _occupation_pair_regime() -> UserRegime:
         transition=_next_regime_stub,
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
-            "occupation": SolveSimulateStatePair(
+            "occupation": Phased(
                 solve=_impute_occupation,
-                grid=DiscreteGrid(Occupation),
-                transition=_evolve_occupation,
+                simulate=DiscreteGrid(Occupation),
             ),
         },
-        state_transitions={"wealth": lambda wealth: wealth},
+        state_transitions={
+            "wealth": lambda wealth: wealth,
+            "occupation": _evolve_occupation,
+        },
         functions={"utility": lambda wealth: wealth},
     )
 
 
-def test_build_discrete_grid_lookup_unwraps_state_pair():
-    """A discrete grid wrapped in a `SolveSimulateStatePair` appears in the lookup.
+def test_build_discrete_grid_lookup_unwraps_carried_state():
+    """A carried state's discrete grid appears in the lookup.
 
-    The pair's carried value is a categorical state in simulation output, so
-    its label/code mapping must be discoverable like any other discrete grid.
+    The carried value is a categorical state in simulation output, so its
+    label/code mapping must be discoverable like any other discrete grid.
     """
     lookup = _build_discrete_grid_lookup({"a": _occupation_pair_regime()})
     assert "occupation" in lookup
@@ -2062,7 +2064,7 @@ def test_build_discrete_grid_lookup_unwraps_state_pair():
 
 
 def test_initial_conditions_map_discrete_pair_labels_to_codes():
-    """String labels seed a discrete pair state as integer codes."""
+    """String labels seed a discrete carried state as integer codes."""
     df = pd.DataFrame(
         {
             "regime_name": ["a", "a"],

@@ -1,11 +1,12 @@
-"""Phase-variant state: imputed during solve, seeded and evolved during simulate.
+"""Carried states: imputed during solve, seeded and evolved during simulate.
 
-A `SolveSimulateStatePair` placed in `Regime.states` gives a quantity two roles:
+A `Phased(solve=callable, simulate=Grid)` value in `Regime.states` gives a
+quantity two roles:
 - solve: a derived function (here, pension wealth imputed from AIME) that never
   becomes a grid dimension, so the solve grid is unchanged;
 - simulate: a genuine state seeded from the initial conditions and carried
-  forward each period via its transition, read by simulate functions instead of
-  the solve-phase imputation.
+  forward each period via its regular `state_transitions` law, read by
+  simulate functions instead of the solve-phase imputation.
 """
 
 from collections.abc import Mapping
@@ -18,14 +19,12 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
-    SolveSimulateStatePair,
+    Phased,
     categorical,
 )
-from lcm.exceptions import InvalidInitialConditionsError, RegimeInitializationError
+from lcm.exceptions import InvalidInitialConditionsError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
 
@@ -71,22 +70,22 @@ def _working_active(age: float) -> bool:
 
 
 def _build_pension_regime() -> UserRegime:
-    """A non-terminal regime whose pension wealth is a `SolveSimulateStatePair`."""
+    """A non-terminal regime whose pension wealth is a carried state."""
     return UserRegime(
         transition=_next_regime,
         active=_working_active,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
-            "pension_wealth": SolveSimulateStatePair(
+            "pension_wealth": Phased(
                 solve=_impute_pension_wealth,
-                grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
-                transition=_evolve_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
             ),
         },
         state_transitions={
             "wealth": _next_wealth,
             "aime": _next_aime,
+            "pension_wealth": _evolve_pension_wealth,
         },
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         constraints={"feasible_consumption": _consumption_leq_wealth},
@@ -126,47 +125,26 @@ def _build_pension_model(*, pension_as_pair: bool) -> Model:
     )
 
 
-def test_regime_accepts_state_pair_in_states() -> None:
-    """A `SolveSimulateStatePair` is a valid value in `Regime.states`."""
+def test_regime_accepts_carried_state_in_states() -> None:
+    """A `Phased(solve=callable, simulate=Grid)` is a valid value in `Regime.states`."""
     regime = _build_pension_regime()
-    assert isinstance(regime.states["pension_wealth"], SolveSimulateStatePair)
+    assert isinstance(regime.states["pension_wealth"], Phased)
 
 
-def test_get_all_functions_exposes_state_pair_transition() -> None:
-    """`get_all_functions` exposes a state pair's transition under `next_<name>`.
+def test_get_all_functions_exposes_carried_law() -> None:
+    """`get_all_functions` exposes a carried state's law under `next_<name>`.
 
-    The params template lists the transition's parameters under `next_<name>`,
-    so Series-parameter conversion (which looks each template function up by
-    that name) requires the transition to be resolvable there as well.
+    The params template lists the law's parameters under `next_<name>`, so
+    Series-parameter conversion (which looks each template function up by
+    that name) requires the law to be resolvable there as well.
     """
     regime = _build_pension_regime()
     funcs = regime.get_all_functions()
     assert funcs["next_pension_wealth"] is _evolve_pension_wealth
 
 
-def test_state_pair_in_state_transitions_raises() -> None:
-    """A pair carries its own transition; listing it in `state_transitions` errors."""
-    with pytest.raises(RegimeInitializationError, match="carry their own transition"):
-        UserRegime(
-            transition=_next_regime,
-            states={
-                "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
-                "pension_wealth": SolveSimulateStatePair(
-                    solve=_impute_pension_wealth,
-                    grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
-                    transition=_evolve_pension_wealth,
-                ),
-            },
-            state_transitions={
-                "aime": lambda aime: aime,
-                "pension_wealth": _evolve_pension_wealth,
-            },
-            functions={"utility": lambda pension_wealth: pension_wealth},
-        )
-
-
-def test_solve_grid_excludes_state_pair() -> None:
-    """A state pair is a function in solve, so it is not a solve grid dimension."""
+def test_solve_grid_excludes_carried_state() -> None:
+    """A carried state is a function in solve, so it is not a solve grid dimension."""
     model = _build_pension_model(pension_as_pair=True)
     solve_state_names = model._regimes["working"].solution.state_names
     assert set(solve_state_names) == {"wealth", "aime"}
@@ -178,9 +156,9 @@ def _solve_pension_model(model: Model) -> Mapping[int, Mapping[str, FloatND]]:
     return model.solve(params=params, log_level="debug")
 
 
-def test_state_pair_solves_like_plain_function() -> None:
-    """Imputing pension wealth via a state pair gives the same value function as
-    imputing it via an ordinary derived function."""
+def test_carried_state_solves_like_plain_function() -> None:
+    """Imputing pension wealth via a carried state gives the same value function
+    as imputing it via an ordinary derived function."""
     pair_solution = _solve_pension_model(_build_pension_model(pension_as_pair=True))
     plain_solution = _solve_pension_model(_build_pension_model(pension_as_pair=False))
 
@@ -235,13 +213,13 @@ def test_simulate_decides_on_imputed_but_accounts_on_true_pension() -> None:
     np.testing.assert_allclose(wealth.loc[(1, 1)] - wealth.loc[(0, 1)], 15.0 - 5.0)
 
 
-def test_simulate_aot_compiled_carries_state_pair() -> None:
-    """A state pair survives the AOT-compiled simulate path.
+def test_simulate_aot_compiled_carries_carried_state() -> None:
+    """A carried state survives the AOT-compiled simulate path.
 
     Setting `n_subjects` AOT-compiles every simulate program for that batch.
-    The compiled `next_state` program reads the pair's simulate-only state, so
-    its lower-args must seed that state — otherwise compilation fails before
-    the first period runs.
+    The compiled `next_state` program reads the carried simulate-only state,
+    so its lower-args must seed that state — otherwise compilation fails
+    before the first period runs.
     """
     model = Model(
         regimes={"working": _build_pension_regime(), "dead": _DEAD},
@@ -301,9 +279,9 @@ _DEAD3 = UserRegime(transition=None, functions={"utility": lambda: 0.0})
 def _build_handover_model() -> Model:
     """Three regimes where retirement keeps only the carried pension wealth.
 
-    The working regime hands over nothing but the pair state to `retired`
-    (no ordinary state is shared), so the pair's transition is the only
-    state hand-over on the crossing.
+    The working regime hands over nothing but the carried state to `retired`
+    (no ordinary state is shared), so the carried law is the only state
+    hand-over on the crossing.
     """
     working = UserRegime(
         transition=_next_regime_from_working,
@@ -311,13 +289,16 @@ def _build_handover_model() -> Model:
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
-            "pension_wealth": SolveSimulateStatePair(
+            "pension_wealth": Phased(
                 solve=_impute_pension_wealth,
-                grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
-                transition=_evolve_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
             ),
         },
-        state_transitions={"wealth": _next_wealth, "aime": _next_aime},
+        state_transitions={
+            "wealth": _next_wealth,
+            "aime": _next_aime,
+            "pension_wealth": _evolve_pension_wealth,
+        },
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         constraints={"feasible_consumption": _consumption_leq_wealth},
         functions={"utility": _utility},
@@ -326,13 +307,12 @@ def _build_handover_model() -> Model:
         transition=_next_regime_from_retired,
         active=lambda age: 64 <= age < 66,
         states={
-            "pension_wealth": SolveSimulateStatePair(
+            "pension_wealth": Phased(
                 solve=_retired_imputed_pension_wealth,
-                grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
-                transition=_evolve_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
             ),
         },
-        state_transitions={},
+        state_transitions={"pension_wealth": _evolve_pension_wealth},
         functions={"utility": _retired_utility},
     )
     return Model(
@@ -342,12 +322,12 @@ def _build_handover_model() -> Model:
     )
 
 
-def test_simulate_evolves_pair_across_pair_only_handover() -> None:
-    """The carried pair value is evolved, not frozen, on a pair-only crossing.
+def test_simulate_evolves_carried_state_across_carried_only_handover() -> None:
+    """The carried value is evolved, not frozen, on a carried-only crossing.
 
     Retirement keeps only pension wealth; entering it, the working regime's
-    pair transition must apply, so the carried value grows by its factor
-    instead of being copied unchanged.
+    carried law must apply, so the carried value grows by its factor instead
+    of being copied unchanged.
     """
     model = _build_handover_model()
     params = cast("dict[str, Any]", model.get_params_template())
@@ -372,145 +352,12 @@ def test_simulate_evolves_pair_across_pair_only_handover() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("pair_kwargs", "match"),
-    [
-        (
-            {
-                "solve": "not callable",
-                "grid": LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
-                "transition": _evolve_pension_wealth,
-            },
-            "solve",
-        ),
-        (
-            {
-                "solve": _impute_pension_wealth,
-                "grid": 42,
-                "transition": _evolve_pension_wealth,
-            },
-            "grid",
-        ),
-        (
-            {
-                "solve": _impute_pension_wealth,
-                "grid": LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
-                "transition": None,
-            },
-            "transition",
-        ),
-    ],
-)
-def test_malformed_state_pair_is_rejected_at_regime_construction(
-    pair_kwargs: dict[str, Any], match: str
-) -> None:
-    """A pair with a non-callable solve/transition or a non-grid grid errors loudly.
-
-    Each field is part of the pair's contract: `solve` and `transition` must be
-    callable, `grid` must be an LCM grid. A malformed field must surface at
-    `Regime` construction, not as an opaque failure deep inside processing.
-    """
-    with pytest.raises(RegimeInitializationError, match=match):
-        UserRegime(
-            transition=_next_regime,
-            states={
-                "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
-                "pension_wealth": SolveSimulateStatePair(**pair_kwargs),
-            },
-            state_transitions={"aime": _next_aime},
-            functions={"utility": lambda pension_wealth: pension_wealth},
-        )
-
-
-def test_terminal_regime_with_state_pair_is_rejected() -> None:
-    """A terminal regime cannot carry a state pair.
-
-    Terminal regimes have no transitions, so a pair's carry-forward role is
-    meaningless there — and silently registering its `next_<name>` would leak
-    a transition into a regime that must not have one.
-    """
-    with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
-        UserRegime(
-            transition=None,
-            states={
-                "pension_wealth": SolveSimulateStatePair(
-                    solve=_impute_pension_wealth,
-                    grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
-                    transition=_evolve_pension_wealth,
-                ),
-            },
-            functions={"utility": lambda pension_wealth: pension_wealth},
-        )
-
-
-def _evolve_pension_wealth_probs(pension_wealth: float) -> FloatND:
-    return jnp.asarray(pension_wealth)
-
-
-def test_markov_transition_as_pair_transition_is_rejected() -> None:
-    """A pair's transition must be deterministic; `MarkovTransition` errors."""
-    with pytest.raises(RegimeInitializationError, match="MarkovTransition"):
-        UserRegime(
-            transition=_next_regime,
-            states={
-                "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
-                "pension_wealth": SolveSimulateStatePair(
-                    solve=_impute_pension_wealth,
-                    grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
-                    transition=MarkovTransition(_evolve_pension_wealth_probs),
-                ),
-            },
-            state_transitions={"aime": _next_aime},
-            functions={"utility": lambda pension_wealth: pension_wealth},
-        )
-
-
-@categorical(ordered=False)
-class _CoverageStatus:
-    uncovered: ScalarInt
-    covered: ScalarInt
-
-
-def _make_pair_grid(grid_kwargs: dict[str, Any]) -> Any:
-    if grid_kwargs.get("distributed"):
-        # Continuous grids reject `distributed` at construction, so the
-        # sharded case needs a discrete pair grid.
-        return DiscreteGrid(_CoverageStatus, **grid_kwargs)
-    return LinSpacedGrid(start=0.0, stop=20.0, n_points=4, **grid_kwargs)
-
-
-@pytest.mark.parametrize(
-    "grid_kwargs",
-    [{"batch_size": 1}, {"distributed": True}],
-)
-def test_sharded_or_batched_pair_grid_is_rejected(grid_kwargs: dict[str, Any]) -> None:
-    """A pair's grid cannot be sharded or batched.
-
-    The pair's grid is the simulate-phase domain of a carried per-subject
-    value, not a solve dimension — device sharding and chunked-vmap batching
-    only apply to solve grid axes.
-    """
-    with pytest.raises(RegimeInitializationError, match="pair"):
-        UserRegime(
-            transition=_next_regime,
-            states={
-                "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
-                "pension_wealth": SolveSimulateStatePair(
-                    solve=_impute_pension_wealth,
-                    grid=_make_pair_grid(grid_kwargs),
-                    transition=_evolve_pension_wealth,
-                ),
-            },
-            state_transitions={"aime": _next_aime},
-            functions={"utility": lambda pension_wealth: pension_wealth},
-        )
-
-
 def test_solve_V_axis_order_follows_canonical_state_order() -> None:
     """V arrays are indexed by the solve states in canonical order.
 
     The productmap axis order is the engine's load-bearing invariant: V's
-    axes are exactly the solve grid states (a pair contributes none), ordered
+    axes are exactly the solve grid states (a carried state contributes none),
+    ordered
     discrete-first then continuous in declaration order. Distinct grid sizes
     pin each axis to its state.
     """
@@ -526,11 +373,11 @@ def _pension_double(pension_wealth: float) -> float:
     return pension_wealth * 2.0
 
 
-def test_additional_targets_read_carried_pair_value() -> None:
+def test_additional_targets_read_carried_value() -> None:
     """`to_dataframe(additional_targets=...)` evaluates on the carried value.
 
-    Simulate-phase consumers must see the pair as the agent's true carried
-    state, not the solve-phase imputation — only the decision (argmax over
+    Simulate-phase consumers must see the carried state as the agent's true
+    value, not the solve-phase imputation — only the decision (argmax over
     the solved policy) reads the imputed value.
     """
     regime = _build_pension_regime()
@@ -571,8 +418,8 @@ def _pension_leq_four(pension_wealth: float) -> bool:
     return pension_wealth <= 4.0
 
 
-def test_initial_feasibility_checks_seeded_pair_value() -> None:
-    """A constraint on the pair is checked against the seeded carried value.
+def test_initial_feasibility_checks_seeded_carried_value() -> None:
+    """A constraint on a carried state is checked against the seeded value.
 
     The solve-phase imputation may be feasible while the agent's true carried
     value violates the constraint; the initial-conditions feasibility check

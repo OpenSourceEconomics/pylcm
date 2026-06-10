@@ -6,9 +6,8 @@ specifies each phase explicitly. `normalize_regime_phases` expands every slot
 via that rule, applies the per-slot grammar, and aggregates violations into a
 single `RegimeInitializationError`.
 
-The legacy containers `SolveSimulateFunctionPair` and `SolveSimulateStatePair`
-desugar to the equivalent `Phased` spellings here, making this module the
-single place that resolves phase-variant values.
+This is the single place that resolves phase-variant values into per-phase
+slices; everything downstream consumes the slices.
 """
 
 from collections.abc import Mapping
@@ -22,11 +21,7 @@ from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import (
-    MarkovTransition,
-    SolveSimulateFunctionPair,
-    SolveSimulateStatePair,
-)
+from lcm.transition import MarkovTransition
 from lcm.typing import UserFunction
 
 if TYPE_CHECKING:
@@ -97,10 +92,10 @@ class PhasedRegimeSpec:
 def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     """Expand a user regime's slots into per-phase specifications.
 
-    Every phase-variant slot is split via one rule — `Phased` (or a legacy
-    pair container) assigns each variant to its phase, a bare value broadcasts
-    to both — then the per-slot grammar is applied. All violations are
-    aggregated into a single `RegimeInitializationError`.
+    Every phase-variant slot is split via one rule — `Phased` assigns each
+    variant to its phase, a bare value broadcasts to both — then the per-slot
+    grammar is applied. All violations are aggregated into a single
+    `RegimeInitializationError`.
 
     Args:
         user_regime: User-form `Regime` instance.
@@ -116,12 +111,9 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     errors: list[str] = []
 
     solve_functions, simulate_functions = _split_functions(user_regime, errors)
-    (
-        solve_grid_states,
-        simulate_grid_states,
-        carried_imputations,
-        legacy_carried_laws,
-    ) = _split_states(user_regime, errors)
+    solve_grid_states, simulate_grid_states, carried_imputations = _split_states(
+        user_regime, errors
+    )
 
     for name, func in carried_imputations.items():
         if name in user_regime.functions:
@@ -136,13 +128,10 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     solve_state_transitions, simulate_state_transitions = _split_state_transitions(
         user_regime
     )
-    simulate_state_transitions |= legacy_carried_laws
 
     carried_only = frozenset(simulate_grid_states) - frozenset(solve_grid_states)
     for name in sorted(carried_only):
         solve_state_transitions.pop(name, None)
-        if name in legacy_carried_laws:
-            continue
         errors.extend(
             _carried_law_errors(name=name, law=simulate_state_transitions.get(name))
         )
@@ -207,7 +196,7 @@ def _split_functions(
     solve_functions: dict[FunctionName, UserFunction] = {}
     simulate_functions: dict[FunctionName, UserFunction] = {}
     for name, value in user_regime.functions.items():
-        if isinstance(value, Phased | SolveSimulateFunctionPair):
+        if isinstance(value, Phased):
             variants = (
                 ("solve", value.solve, solve_functions),
                 ("simulate", value.simulate, simulate_functions),
@@ -234,26 +223,18 @@ def _split_states(
     dict[StateName, Grid],
     dict[StateName, Grid],
     dict[StateName, UserFunction],
-    dict[StateName, UserFunction],
 ]:
-    """Split `states` into per-phase grids plus carried-state components.
+    """Split `states` into per-phase grids plus carried-state imputations.
 
-    Returns the solve-phase grid states, the simulate-phase grid states, each
-    carried state's solve-phase imputation, and the carried laws of motion
-    attached to legacy `SolveSimulateStatePair` declarations (laws of carried
-    states declared via `Phased` live in `state_transitions` instead).
+    Returns the solve-phase grid states, the simulate-phase grid states, and
+    each carried state's solve-phase imputation (the carried law of motion is
+    its regular `state_transitions` entry).
     """
     solve_grid_states: dict[StateName, Grid] = {}
     simulate_grid_states: dict[StateName, Grid] = {}
     carried_imputations: dict[StateName, UserFunction] = {}
-    legacy_carried_laws: dict[StateName, UserFunction] = {}
     for name, spec in user_regime.states.items():
-        if isinstance(spec, SolveSimulateStatePair):
-            carried_imputations[name] = cast("UserFunction", spec.solve)
-            if isinstance(spec.grid, Grid):
-                simulate_grid_states[name] = spec.grid
-            legacy_carried_laws[name] = cast("UserFunction", spec.transition)
-        elif isinstance(spec, Phased):
+        if isinstance(spec, Phased):
             _normalize_phased_state(
                 name=name,
                 phased=spec,
@@ -268,12 +249,7 @@ def _split_states(
             errors.append(
                 f"states['{name}'] must be an LCM grid or `Phased`, got {spec!r}."
             )
-    return (
-        solve_grid_states,
-        simulate_grid_states,
-        carried_imputations,
-        legacy_carried_laws,
-    )
+    return solve_grid_states, simulate_grid_states, carried_imputations
 
 
 def _normalize_phased_state(

@@ -129,10 +129,10 @@ def calculate_next_states(
     # ---------------------------------------------------------------------------------
     next_state_vmapped = regime.simulation.next_state
 
-    # `SolveSimulateStatePair` states are carried (true) values that the decision's
-    # state-action space deliberately excludes. Feed them to the realized
-    # transition so it reads each pair as a leaf — the actual carried value —
-    # rather than the solve-phase imputation.
+    # Carried states are true values that the decision's state-action space
+    # deliberately excludes. Feed them to the realized transition so it reads
+    # each carried state as a leaf — the actual carried value — rather than
+    # the solve-phase imputation.
     simulate_only_states = {
         name: states_per_regime[regime.name][name]
         for name in regime.simulation.carried_grids

@@ -279,7 +279,7 @@ class SolutionPhase:
     """Solve-phase view of a canonical regime.
 
     Owns everything backward induction reads: the solve variables and grids
-    (a `SolveSimulateStatePair` contributes no axis here — its name is a
+    (a carried state contributes no axis here — its name is a
     derived function), the compiled function sets, and the state-action
     space. Reading phase-dependent data through this namespace makes the
     phase explicit at every call site.

@@ -21,11 +21,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import (
-    MarkovTransition,
-    SolveSimulateFunctionPair,
-    SolveSimulateStatePair,
-)
+from lcm.transition import MarkovTransition
 
 if TYPE_CHECKING:
     import lcm.regime
@@ -35,8 +31,8 @@ def _grid_mapping_errors(
     attr_name: str, mapping: Mapping[str, object], *, allow_phase_variants: bool
 ) -> list[str]:
     """Collect key/value type errors for a grid-valued mapping (states/actions)."""
-    allowed = Grid | SolveSimulateStatePair | Phased if allow_phase_variants else Grid
-    suffix = ", SolveSimulateStatePair, or Phased" if allow_phase_variants else ""
+    allowed = Grid | Phased if allow_phase_variants else Grid
+    suffix = " or Phased" if allow_phase_variants else ""
     error_messages: list[str] = []
     for k, v in mapping.items():
         if not isinstance(k, str):
@@ -62,7 +58,7 @@ def _callable_mapping_errors(
     for k, v in mapping.items():
         if not isinstance(k, str):
             error_messages.append(f"{attr_name} key {k!r} must be a string.")
-        if isinstance(v, Phased | SolveSimulateFunctionPair):
+        if isinstance(v, Phased):
             if not allow_phase_variants:
                 error_messages.append(
                     f"{attr_name}['{k}'] cannot be phase-variant: a "
@@ -142,7 +138,6 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
         )
 
     error_messages.extend(_validate_active(regime.active))
-    error_messages.extend(_state_pair_field_errors(regime))
     error_messages.extend(_validate_state_transitions(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
@@ -244,12 +239,12 @@ def _validate_function_output_grid_indexing(
 
 
 def _function_input_names(
-    functions: Mapping[str, Callable | SolveSimulateFunctionPair | Phased],
+    functions: Mapping[str, Callable | Phased],
 ) -> dict[str, set[str]]:
     """Return each regime function's input-parameter names.
 
-    A `Phased` or `SolveSimulateFunctionPair` contributes the union of both
-    variants' parameters; unintrospectable callables contribute the empty set.
+    A `Phased` contributes the union of both variants' parameters;
+    unintrospectable callables contribute the empty set.
     """
     result: dict[str, set[str]] = {}
     for name, func in functions.items():
@@ -269,7 +264,7 @@ def _collect_indexing_consumers(
     """Return `(name, callable)` pairs whose bodies are scanned for the clash.
 
     Functions and constraints contribute every variant of a
-    `SolveSimulateFunctionPair`; the regime transition contributes itself.
+    `Phased`; the regime transition contributes itself.
     """
     consumers: list[tuple[str, Callable]] = []
     for name, func in regime.functions.items():
@@ -282,14 +277,14 @@ def _collect_indexing_consumers(
 
 
 def _function_variants(
-    func: Callable | SolveSimulateFunctionPair | Phased,
+    func: Callable | Phased,
 ) -> tuple[Callable, ...]:
     """Return the callable variants of a regime-function entry.
 
-    A plain function is itself; a `Phased` or `SolveSimulateFunctionPair`
-    yields its `solve` and `simulate` callables so both phases are scanned.
+    A plain function is itself; a `Phased` yields its `solve` and `simulate`
+    callables so both phases are scanned.
     """
-    if isinstance(func, SolveSimulateFunctionPair | Phased):
+    if isinstance(func, Phased):
         return (cast("Callable", func.solve), cast("Callable", func.simulate))
     return (cast("Callable", func),)
 
@@ -333,81 +328,6 @@ def _validate_active(active: ActiveFunction) -> list[str]:
     return []
 
 
-def _state_pair_names(regime: lcm.regime.Regime) -> set[StateName]:
-    """Return the names of states declared as `SolveSimulateStatePair`."""
-    return {
-        name
-        for name, grid in regime.states.items()
-        if isinstance(grid, SolveSimulateStatePair)
-    }
-
-
-def _state_pair_field_errors(regime: lcm.regime.Regime) -> list[str]:
-    """Validate every state pair's `solve`, `grid`, and `transition` fields.
-
-    The pair contract:
-    - `solve` is the derived function imputing the value during backward
-      induction ⇒ must be callable.
-    - `grid` is the simulate-phase domain of a carried per-subject value, not a
-      solve dimension ⇒ must be an LCM grid, without `batch_size`/`distributed`
-      (those knobs only apply to solve grid axes).
-    - `transition` evolves the carried value each period ⇒ must be a plain
-      callable; `MarkovTransition` is not supported for state pairs.
-    - A terminal regime has no transitions, so it cannot carry a pair.
-    """
-    error_messages: list[str] = []
-    pair_names: list[StateName] = []
-    for name, spec in regime.states.items():
-        if not isinstance(spec, SolveSimulateStatePair):
-            continue
-        pair_names.append(name)
-        if not callable(spec.solve):
-            error_messages.append(
-                f"State pair '{name}': `solve` must be a callable, got {spec.solve!r}."
-            )
-        if isinstance(spec.transition, MarkovTransition):
-            error_messages.append(
-                f"State pair '{name}': `transition` must be a deterministic "
-                f"callable — `MarkovTransition` is not supported for state "
-                f"pairs."
-            )
-        elif not callable(spec.transition):
-            error_messages.append(
-                f"State pair '{name}': `transition` must be a callable, "
-                f"got {spec.transition!r}."
-            )
-        if not isinstance(spec.grid, Grid):
-            error_messages.append(
-                f"State pair '{name}': `grid` must be an LCM grid, got {spec.grid!r}."
-            )
-        elif spec.grid.batch_size > 0 or spec.grid.distributed:
-            error_messages.append(
-                f"State pair '{name}': `grid` is the simulate-phase domain of "
-                f"a carried per-subject value — `batch_size` and `distributed` "
-                f"apply only to solve grid axes and must not be set on a "
-                f"pair's grid."
-            )
-    if pair_names and regime.terminal:
-        error_messages.append(
-            f"Terminal regimes cannot carry SolveSimulateStatePair states "
-            f"(no next period to carry {pair_names} into)."
-        )
-    return error_messages
-
-
-def _state_pair_transition_errors(
-    regime: lcm.regime.Regime, state_pair_names: set[StateName]
-) -> list[str]:
-    """Error if a state pair is also listed in `state_transitions`."""
-    pairs_in_transitions = state_pair_names & set(regime.state_transitions)
-    if pairs_in_transitions:
-        return [
-            "SolveSimulateStatePair states carry their own transition and must "
-            f"not appear in state_transitions: {pairs_in_transitions}."
-        ]
-    return []
-
-
 def _validate_state_transitions(regime: lcm.regime.Regime) -> list[str]:
     """Validate state_transitions against states."""
     error_messages: list[str] = []
@@ -417,13 +337,7 @@ def _validate_state_transitions(regime: lcm.regime.Regime) -> list[str]:
         for name, grid in regime.states.items()
         if isinstance(grid, _ContinuousStochasticProcess)
     }
-    # Phase-variant state pairs carry their own transition (`pair.transition`),
-    # so they neither belong in `state_transitions` nor count as missing one.
-    state_pair_names = _state_pair_names(regime)
-    error_messages.extend(_state_pair_transition_errors(regime, state_pair_names))
-    non_process_names: set[StateName] = (
-        set(regime.states) - process_names - state_pair_names
-    )
+    non_process_names: set[StateName] = set(regime.states) - process_names
 
     # Keys not in states are allowed only with actual transitions (not None).
     # None means identity, which requires the state to exist in this regime.

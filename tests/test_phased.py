@@ -21,8 +21,6 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Phased,
-    SolveSimulateFunctionPair,
-    SolveSimulateStatePair,
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -161,21 +159,6 @@ def test_phased_function_splits_into_phase_variants() -> None:
     assert spec.simulation.functions["bonus"] is _simulate_variant
 
 
-def test_legacy_function_pair_normalizes_like_phased() -> None:
-    """`SolveSimulateFunctionPair` desugars to the same spec as `Phased`."""
-    regime = _build_regime(
-        functions={
-            "utility": _utility,
-            "bonus": SolveSimulateFunctionPair(
-                solve=_solve_variant, simulate=_simulate_variant
-            ),
-        }
-    )
-    spec = normalize_regime_phases(regime)
-    assert spec.solution.functions["bonus"] is _solve_variant
-    assert spec.simulation.functions["bonus"] is _simulate_variant
-
-
 def test_carried_state_derivation() -> None:
     """`Phased(solve=callable, simulate=Grid)` declares a carried state.
 
@@ -193,25 +176,6 @@ def test_carried_state_derivation() -> None:
     assert "pension_wealth" not in spec.solution.grid_states
     assert "pension_wealth" not in spec.solution.state_transitions
     assert "pension_wealth" not in spec.simulation.functions
-    assert isinstance(spec.simulation.grid_states["pension_wealth"], LinSpacedGrid)
-    assert spec.simulation.state_transitions["pension_wealth"] is _evolve_pension_wealth
-
-
-def test_legacy_state_pair_normalizes_like_phased_carried_state() -> None:
-    """`SolveSimulateStatePair` desugars to the carried-state spec."""
-    regime = _build_regime(
-        states={
-            "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
-            "pension_wealth": SolveSimulateStatePair(
-                solve=_impute_pension_wealth,
-                grid=_pension_grid(),
-                transition=_evolve_pension_wealth,
-            ),
-        },
-    )
-    spec = normalize_regime_phases(regime)
-    assert spec.carried_only_state_names == frozenset({"pension_wealth"})
-    assert spec.solution.functions["pension_wealth"] is _impute_pension_wealth
     assert isinstance(spec.simulation.grid_states["pension_wealth"], LinSpacedGrid)
     assert spec.simulation.state_transitions["pension_wealth"] is _evolve_pension_wealth
 
@@ -400,19 +364,6 @@ def test_phased_in_constraints_is_rejected() -> None:
         _build_regime(
             constraints={
                 "cap": Phased(solve=_solve_variant, simulate=_simulate_variant)
-            }
-        )
-
-
-def test_function_pair_in_constraints_is_rejected() -> None:
-    """The legacy pair container is rejected in `constraints` for the same
-    reason as `Phased` — and loudly, at construction."""
-    with pytest.raises(RegimeInitializationError, match="feasible"):
-        _build_regime(
-            constraints={
-                "cap": SolveSimulateFunctionPair(
-                    solve=_solve_variant, simulate=_simulate_variant
-                )
             }
         )
 

@@ -19,7 +19,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
-    SolveSimulateFunctionPair,
+    Phased,
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -295,20 +295,18 @@ def _scale_simulate(per_type_scale: FloatND) -> FloatND:
     return per_type_scale * 2.0
 
 
-def test_function_pair_in_functions_does_not_crash_validation():
-    """A `SolveSimulateFunctionPair` entry in `functions` builds fine.
+def test_phased_function_in_functions_does_not_crash_validation():
+    """A `Phased` entry in `functions` builds fine.
 
-    The indexing validator scans every regime function; a phase-specific
-    function pair is two callables and must be unwrapped, not handed to the
+    The indexing validator scans every regime function; a phase-variant
+    entry is two callables and must be unwrapped, not handed to the
     scanner whole.
     """
     alive = UserRegime(
         functions={
             "utility": _utility_consumes_scalar,
             "per_type_scale": _per_type_scale_takes_pref_type,
-            "scaled": SolveSimulateFunctionPair(
-                solve=_scale_solve, simulate=_scale_simulate
-            ),
+            "scaled": Phased(solve=_scale_solve, simulate=_scale_simulate),
         },
         states={"pref_type": DiscreteGrid(PrefType)},
         state_transitions={"pref_type": None},
@@ -336,10 +334,10 @@ def _scale_solve_unsafe(
     return per_type_scale[pref_type]
 
 
-def test_function_pair_solve_variant_unsafe_indexing_raises():
-    """The validator scans both variants of a function pair, not just one.
+def test_phased_function_solve_variant_unsafe_indexing_raises():
+    """The validator scans both variants of a phase-variant entry, not just one.
 
-    An unsafe `func_output[grid]` pattern hidden in a pair's solve variant is
+    An unsafe `func_output[grid]` pattern hidden in a `Phased` solve variant is
     caught on construction, exactly as it would be in a plain function.
     """
     with pytest.raises(
@@ -350,9 +348,7 @@ def test_function_pair_solve_variant_unsafe_indexing_raises():
             functions={
                 "utility": _utility_consumes_scalar,
                 "per_type_scale": _per_type_scale_takes_pref_type,
-                "scaled": SolveSimulateFunctionPair(
-                    solve=_scale_solve_unsafe, simulate=_scale_simulate
-                ),
+                "scaled": Phased(solve=_scale_solve_unsafe, simulate=_scale_simulate),
             },
             states={"pref_type": DiscreteGrid(PrefType)},
             state_transitions={"pref_type": None},

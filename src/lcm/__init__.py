@@ -87,10 +87,8 @@ from lcm.processes import (  # noqa: E402
 from lcm.regime import (  # noqa: E402
     MarkovTransition,
     Regime,
-    SolveSimulateFunctionPair,
 )
 from lcm.result import SimulationResult  # noqa: E402
-from lcm.transition import SolveSimulateStatePair  # noqa: E402
 
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
@@ -126,8 +124,6 @@ __all__ = [
     "RouwenhorstAR1Process",
     "SimulateSnapshot",
     "SimulationResult",
-    "SolveSimulateFunctionPair",
-    "SolveSimulateStatePair",
     "SolveSnapshot",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",

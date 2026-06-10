@@ -3,7 +3,7 @@ from _lcm.params.regime_template import (
     create_regime_params_template,
 )
 from _lcm.utils.containers import ensure_containers_are_immutable
-from lcm.regime import SolveSimulateFunctionPair
+from lcm import Phased
 from tests.mock_regime import MockRegime
 
 
@@ -100,7 +100,7 @@ def test_custom_H_shadowing_state_is_allowed():
 
 
 def test_solve_simulate_pair_template_contains_union_of_params() -> None:
-    """Template for a SolveSimulateFunctionPair H contains params from both variants.
+    """Template for a phase-variant (`Phased`) H contains params from both variants.
 
     The solve variant (`exponential_H`) takes `discount_factor`; the simulate
     variant (`beta_delta_H`) takes `beta` and `delta`. The template must contain
@@ -121,7 +121,7 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
         states={"b": None},
         functions={  # ty: ignore[invalid-argument-type]
             "utility": lambda a, b: None,  # noqa: ARG005
-            "H": SolveSimulateFunctionPair(solve=exponential_h, simulate=beta_delta_h),
+            "H": Phased(solve=exponential_h, simulate=beta_delta_h),
         },
     )
     got = create_regime_params_template(regime)
