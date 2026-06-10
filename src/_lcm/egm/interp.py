@@ -1,0 +1,58 @@
+"""Linear interpolation on NaN-padded, weakly ascending EGM grids.
+
+The upper-envelope refinement emits grid rows of static length whose unused
+tail slots hold NaN and whose kink abscissae appear twice (left- and
+right-extrapolated function values). `interp_on_padded_grid` interpolates on
+such rows without ever dividing by a zero-width bracket.
+"""
+
+import jax.numpy as jnp
+
+from lcm.typing import Float1D, FloatND
+
+
+def interp_on_padded_grid(*, x_query: FloatND, xp: Float1D, fp: Float1D) -> FloatND:
+    """Interpolate linearly on a NaN-padded, weakly ascending grid row.
+
+    The NaN padding must form a contiguous tail of `xp` (matched by NaNs in
+    `fp`); it is treated as $+\\infty$ when locating brackets, so padding never
+    influences the result. Behavior at the boundaries and at duplicated
+    abscissae:
+
+    - Queries outside the non-NaN range are clamped to the boundary values.
+    - At a duplicated abscissa (an envelope kink carrying left and right
+      values), queries strictly below the duplicate interpolate toward the
+      left value; queries at or above it use the right value. The zero-width
+      bracket between the duplicates is never used as a divisor.
+
+    Args:
+        x_query: Points at which to evaluate the interpolant; any shape.
+        xp: Weakly ascending grid row with NaNs only in the tail.
+        fp: Function values on `xp`, NaN-padded in lockstep with `xp`.
+
+    Returns:
+        Interpolated values with the shape of `x_query`.
+
+    """
+    xp_filled = jnp.where(jnp.isnan(xp), jnp.inf, xp)
+    n_valid = jnp.sum(~jnp.isnan(xp))
+    upper = jnp.clip(
+        jnp.searchsorted(xp_filled, x_query, side="right"),
+        1,
+        jnp.maximum(n_valid - 1, 1),
+    )
+    lower = upper - 1
+    xp_lower = xp[lower]
+    fp_lower = fp[lower]
+    fp_upper = fp[upper]
+    bracket_width = xp[upper] - xp_lower
+    safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
+    # Zero-width brackets arise only when a duplicated abscissa sits at the end
+    # of the non-NaN prefix; queries there are at or above the duplicate, so
+    # the right value applies.
+    relative_position = jnp.where(
+        bracket_width == 0.0,
+        1.0,
+        jnp.clip((x_query - xp_lower) / safe_width, 0.0, 1.0),
+    )
+    return fp_lower + relative_position * (fp_upper - fp_lower)
