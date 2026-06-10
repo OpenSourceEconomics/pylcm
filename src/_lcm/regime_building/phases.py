@@ -36,59 +36,6 @@ type _PhaseStateTransition = (
 type _PhaseRegimeTransition = UserFunction | MarkovTransition | None
 
 
-@dataclass(frozen=True, kw_only=True)
-class RegimePhaseSpec:
-    """One phase's slice of a regime specification."""
-
-    functions: MappingProxyType[FunctionName, UserFunction]
-    """Phase-resolved regime functions. The solution slice additionally holds
-    each carried state's imputation as a derived function under the state's
-    name; the simulation slice does not — there, the name is a genuine state."""
-
-    constraints: MappingProxyType[FunctionName, UserFunction]
-    """Constraint functions (phase-invariant by the slot grammar)."""
-
-    grid_states: MappingProxyType[StateName, Grid]
-    """States that are genuine grid states in this phase."""
-
-    state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
-    """Phase-resolved laws of motion, restricted to this phase's grid states
-    plus target-only entries."""
-
-    regime_transition: _PhaseRegimeTransition
-    """Phase-resolved regime transition; `None` for terminal regimes."""
-
-    stochastic_regime_transition: bool
-    """Whether this phase's regime transition is a `MarkovTransition`."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class PhasedRegimeSpec:
-    """A regime expanded into per-phase slices plus phase-invariant slots."""
-
-    solution: RegimePhaseSpec
-    """The solve-phase slice (backward induction)."""
-
-    simulation: RegimePhaseSpec
-    """The simulate-phase slice (forward simulation)."""
-
-    actions: MappingProxyType[ActionName, Grid]
-    """Action grids (phase-invariant by the slot grammar)."""
-
-    derived_categoricals: MappingProxyType[FunctionName, DiscreteGrid]
-    """Categorical grids for derived DAG outputs (phase-invariant)."""
-
-    terminal: bool
-    """Whether the regime is terminal (no regime transition in either phase)."""
-
-    @property
-    def carried_only_state_names(self) -> frozenset[StateName]:
-        """States carried in simulation but derived (no grid axis) in solution."""
-        return frozenset(self.simulation.grid_states) - frozenset(
-            self.solution.grid_states
-        )
-
-
 def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     """Expand a user regime's slots into per-phase specifications.
 
@@ -187,6 +134,59 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         derived_categoricals=MappingProxyType(dict(user_regime.derived_categoricals)),
         terminal=terminal,
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PhasedRegimeSpec:
+    """A regime expanded into per-phase slices plus phase-invariant slots."""
+
+    solution: RegimePhaseSpec
+    """The solve-phase slice (backward induction)."""
+
+    simulation: RegimePhaseSpec
+    """The simulate-phase slice (forward simulation)."""
+
+    actions: MappingProxyType[ActionName, Grid]
+    """Action grids (phase-invariant by the slot grammar)."""
+
+    derived_categoricals: MappingProxyType[FunctionName, DiscreteGrid]
+    """Categorical grids for derived DAG outputs (phase-invariant)."""
+
+    terminal: bool
+    """Whether the regime is terminal (no regime transition in either phase)."""
+
+    @property
+    def carried_only_state_names(self) -> frozenset[StateName]:
+        """States carried in simulation but derived (no grid axis) in solution."""
+        return frozenset(self.simulation.grid_states) - frozenset(
+            self.solution.grid_states
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RegimePhaseSpec:
+    """One phase's slice of a regime specification."""
+
+    functions: MappingProxyType[FunctionName, UserFunction]
+    """Phase-resolved regime functions. The solution slice additionally holds
+    each carried state's imputation as a derived function under the state's
+    name; the simulation slice does not — there, the name is a genuine state."""
+
+    constraints: MappingProxyType[FunctionName, UserFunction]
+    """Constraint functions (phase-invariant by the slot grammar)."""
+
+    grid_states: MappingProxyType[StateName, Grid]
+    """States that are genuine grid states in this phase."""
+
+    state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
+    """Phase-resolved laws of motion, restricted to this phase's grid states
+    plus target-only entries."""
+
+    regime_transition: _PhaseRegimeTransition
+    """Phase-resolved regime transition; `None` for terminal regimes."""
+
+    stochastic_regime_transition: bool
+    """Whether this phase's regime transition is a `MarkovTransition`."""
 
 
 def _split_functions(
