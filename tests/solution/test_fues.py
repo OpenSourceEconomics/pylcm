@@ -30,9 +30,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tests.conftest import X64_ENABLED
+
 fues = pytest.importorskip(
     "_lcm.egm.upper_envelope.fues", reason="FUES kernel not yet implemented"
 )
+
+# Tolerance for quantities computed by the kernel (segment intersections and
+# values interpolated through them): float32 carries a few ulp (~1e-7 at the
+# fixtures' scale) through the intersection arithmetic.
+_COMPUTED_ATOL = 1e-8 if X64_ENABLED else 1e-5
 
 
 def _drop_nan(arr: jnp.ndarray) -> np.ndarray:
@@ -107,7 +114,7 @@ def test_crossing_segments_yield_the_analytic_upper_envelope():
     r_query = np.linspace(0.7, 3.3, 53)
     expected = np.maximum(1.0 + 0.4 * r_query, 0.1 + 0.8 * r_query)
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_value, r_query), expected, atol=1e-8
+        _envelope_interp(got_grid, got_value, r_query), expected, atol=_COMPUTED_ATOL
     )
 
 
@@ -121,12 +128,12 @@ def test_crossing_segments_insert_intersection_twice_with_both_policies():
 
     clean_grid = _drop_nan(got_grid)
     clean_policy = np.asarray(got_policy)[~np.isnan(np.asarray(got_grid))]
-    at_kink = np.isclose(clean_grid, R_STAR, atol=1e-8)
+    at_kink = np.isclose(clean_grid, R_STAR, atol=_COMPUTED_ATOL)
     assert at_kink.sum() == 2
     np.testing.assert_allclose(
         np.sort(clean_policy[at_kink]),
         np.sort([0.30 * R_STAR, 0.55 * R_STAR]),
-        atol=1e-8,
+        atol=_COMPUTED_ATOL,
     )
 
 
