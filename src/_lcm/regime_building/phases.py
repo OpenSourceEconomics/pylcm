@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
+from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -130,15 +130,17 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             simulate_state_transitions,
             simulate_transition,
         ),
-        actions=MappingProxyType(dict(user_regime.actions)),
-        derived_categoricals=MappingProxyType(dict(user_regime.derived_categoricals)),
-        terminal=terminal,
     )
 
 
 @dataclass(frozen=True, kw_only=True)
 class PhasedRegimeSpec:
-    """A regime expanded into per-phase slices plus phase-invariant slots."""
+    """A regime expanded into per-phase slices.
+
+    Phase-invariant slots with no phase-resolved consumers (actions,
+    derived categoricals) stay on the user regime; the spec carries only
+    what the phase builders read.
+    """
 
     solution: RegimePhaseSpec
     """The solve-phase slice (backward induction)."""
@@ -146,14 +148,14 @@ class PhasedRegimeSpec:
     simulation: RegimePhaseSpec
     """The simulate-phase slice (forward simulation)."""
 
-    actions: MappingProxyType[ActionName, Grid]
-    """Action grids (phase-invariant by the slot grammar)."""
+    @property
+    def terminal(self) -> bool:
+        """Whether the regime is terminal (no regime transition in either phase).
 
-    derived_categoricals: MappingProxyType[FunctionName, DiscreteGrid]
-    """Categorical grids for derived DAG outputs (phase-invariant)."""
-
-    terminal: bool
-    """Whether the regime is terminal (no regime transition in either phase)."""
+        Terminality is phase-invariant by the slot grammar (`Phased` variants
+        cannot be `None`), so the solution slice is representative.
+        """
+        return self.solution.regime_transition is None
 
     @property
     def carried_only_state_names(self) -> frozenset[StateName]:
