@@ -168,7 +168,7 @@ def test_state_pair_in_state_transitions_raises() -> None:
 def test_solve_grid_excludes_state_pair() -> None:
     """A state pair is a function in solve, so it is not a solve grid dimension."""
     model = _build_pension_model(pension_as_pair=True)
-    solve_state_names = model._regimes["working"].variables.state_names
+    solve_state_names = model._regimes["working"].solution.state_names
     assert set(solve_state_names) == {"wealth", "aime"}
 
 
@@ -504,3 +504,19 @@ def test_sharded_or_batched_pair_grid_is_rejected(grid_kwargs: dict[str, Any]) -
             state_transitions={"aime": _next_aime},
             functions={"utility": lambda pension_wealth: pension_wealth},
         )
+
+
+def test_solve_V_axis_order_follows_canonical_state_order() -> None:
+    """V arrays are indexed by the solve states in canonical order.
+
+    The productmap axis order is the engine's load-bearing invariant: V's
+    axes are exactly the solve grid states (a pair contributes none), ordered
+    discrete-first then continuous in declaration order. Distinct grid sizes
+    pin each axis to its state.
+    """
+    model = _build_pension_model(pension_as_pair=True)
+    solution = _solve_pension_model(model)
+    for regime_to_V in solution.values():
+        if "working" in regime_to_V:
+            # wealth has 10 points, aime 5; pension_wealth contributes no axis.
+            assert regime_to_V["working"].shape == (10, 5)

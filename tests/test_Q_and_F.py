@@ -66,7 +66,7 @@ def test_get_Q_and_F_function():
     )
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
-    solve = regimes["working_life"].solve_functions
+    solve = regimes["working_life"].solution
     Q_and_F = get_Q_and_F_terminal(
         flat_param_names=flat_param_names,
         functions=solve.functions,

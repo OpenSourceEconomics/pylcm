@@ -56,6 +56,25 @@ def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
     }
 
 
+def simulate_variables_from_regime(user_regime: UserRegime) -> Variables:
+    """Build the simulate-phase `Variables`: solve variables plus pair states.
+
+    Each `SolveSimulateStatePair` is appended after the solve-ordered
+    variables as a genuine state (its simulate role). The resulting order is
+    NOT a productmap order — it only fixes column order in simulation output.
+    """
+    solve_variables = from_regime(user_regime)
+    pair_info = {
+        name: VariableInfo(
+            kind="state",
+            topology="continuous" if isinstance(grid, ContinuousGrid) else "discrete",
+            is_process=False,
+        )
+        for name, grid in state_pair_grids(user_regime).items()
+    }
+    return Variables(info=MappingProxyType({**solve_variables.info, **pair_info}))
+
+
 def state_pair_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
     """Return the simulate-phase grids of the regime's `SolveSimulateStatePair`s.
 

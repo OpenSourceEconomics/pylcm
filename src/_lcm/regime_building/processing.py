@@ -14,8 +14,8 @@ from jax import numpy as jnp
 
 from _lcm.engine import (
     Regime,
-    SimulateFunctions,
-    SolveFunctions,
+    SimulationPhase,
+    SolutionPhase,
     StateActionSpace,
     Variables,
 )
@@ -66,7 +66,12 @@ from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from _lcm.utils.error_messages import format_messages
 from _lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
-from _lcm.variables import from_regime, get_grids, state_pair_grids
+from _lcm.variables import (
+    from_regime,
+    get_grids,
+    simulate_variables_from_regime,
+    state_pair_grids,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
@@ -173,7 +178,7 @@ def process_regimes(
     for regime_name, user_regime in user_regimes.items():
         regime_params_template = create_regime_params_template(user_regime)
 
-        solve_functions = _build_solve_functions(
+        solution = _build_solution_phase(
             user_regime=user_regime,
             regime_name=regime_name,
             nested_transitions=nested_transitions[regime_name],
@@ -188,7 +193,7 @@ def process_regimes(
             enable_jit=enable_jit,
         )
 
-        simulate_functions = _build_simulate_functions(
+        simulation = _build_simulation_phase(
             user_regime=user_regime,
             regime_name=regime_name,
             nested_transitions=simulate_nested_transitions[regime_name],
@@ -201,9 +206,9 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
-            solve_transitions=solve_functions.transitions,
-            solve_stochastic_transition_names=solve_functions.stochastic_transition_names,
-            solve_compute_regime_transition_probs=solve_functions.compute_regime_transition_probs,
+            solve_transitions=solution.transitions,
+            solve_stochastic_transition_names=solution.stochastic_transition_names,
+            solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
         )
 
         stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -214,21 +219,17 @@ def process_regimes(
         canonical_regimes[regime_name] = Regime(
             name=regime_name,
             terminal=user_regime.terminal,
-            grids=all_grids[regime_name],
-            variables=regime_to_variables[regime_name],
             active_periods=tuple(regimes_to_active_periods[regime_name]),
             regime_params_template=regime_params_template,
-            solve_functions=solve_functions,
-            simulate_functions=simulate_functions,
+            solution=solution,
+            simulation=simulation,
             stochastic_state_transitions=stochastic_state_transitions,
-            _base_state_action_space=state_action_spaces[regime_name],
-            simulate_only_grids=MappingProxyType(state_pair_grids(user_regime)),
         )
 
     return ensure_containers_are_immutable(canonical_regimes)
 
 
-def _build_solve_functions(
+def _build_solution_phase(
     *,
     user_regime: UserRegime,
     regime_name: RegimeName,
@@ -245,7 +246,7 @@ def _build_solve_functions(
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
-) -> SolveFunctions:
+) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
     Args:
@@ -332,7 +333,9 @@ def _build_solve_functions(
         enable_jit=enable_jit,
     )
 
-    return SolveFunctions(
+    return SolutionPhase(
+        variables=variables,
+        grids=all_grids[regime_name],
         functions=core.functions,
         constraints=core.constraints,
         transitions=core.transitions,
@@ -340,10 +343,11 @@ def _build_solve_functions(
         compute_regime_transition_probs=compute_regime_transition_probs,
         max_Q_over_a=max_Q_over_a,
         compute_intermediates=compute_intermediates,
+        _base_state_action_space=state_action_space,
     )
 
 
-def _build_simulate_functions(
+def _build_simulation_phase(
     *,
     user_regime: UserRegime,
     regime_name: RegimeName,
@@ -363,7 +367,7 @@ def _build_simulate_functions(
     solve_transitions: TransitionFunctionsMapping,
     solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
-) -> SimulateFunctions:
+) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
     When the regime has `SolveSimulateFunctionPair` entries, simulate-specific
@@ -486,7 +490,11 @@ def _build_simulate_functions(
         enable_jit=enable_jit,
     )
 
-    return SimulateFunctions(
+    pair_grids = state_pair_grids(user_regime)
+    return SimulationPhase(
+        variables=simulate_variables_from_regime(user_regime),
+        grids=MappingProxyType({**all_grids[regime_name], **pair_grids}),
+        pair_state_names=frozenset(pair_grids),
         functions=functions,
         constraints=constraints,
         transitions=next_state_transitions,

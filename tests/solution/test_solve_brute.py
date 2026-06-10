@@ -16,11 +16,16 @@ from lcm.ages import AgeGrid
 
 
 @dataclasses.dataclass(frozen=True)
-class MockSolveFunctions:
-    """Mock SolveFunctions with only max_Q_over_a."""
+class MockSolutionPhase:
+    """Mock SolutionPhase with only the attributes solve() reads."""
 
     max_Q_over_a: dict[int, MaxQOverAFunction]
+    _base_state_action_space: StateActionSpace
+    grids: MappingProxyType[StateOrActionName, Grid]
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
+
+    def state_action_space(self, regime_params):  # noqa: ARG002
+        return self._base_state_action_space
 
 
 class MockRegime(Regime):
@@ -29,27 +34,19 @@ class MockRegime(Regime):
     Inherits from `Regime` so `isinstance(x, Regime)` holds at
     the beartype-checked perimeter of `solve()`, but bypasses the dataclass
     `__init__` so tests can supply only the attributes `solve()` reads:
-    - `_base_state_action_space`: StateActionSpace object
-    - `state_action_space()`: method returning the state-action space
-    - `solve_functions.max_Q_over_a`: dict mapping period to max_Q_over_a function
+    - `solution`: a `MockSolutionPhase` with max_Q_over_a, grids, and the
+      state-action space
     - `active_periods`: list of periods the regime is active
     """
 
     def __init__(
         self,
         *,
-        _base_state_action_space: StateActionSpace,
-        solve_functions: MockSolveFunctions,
+        solution: MockSolutionPhase,
         active_periods: list[int],
-        grids: MappingProxyType[StateOrActionName, Grid],
     ) -> None:
-        object.__setattr__(self, "_base_state_action_space", _base_state_action_space)
-        object.__setattr__(self, "solve_functions", solve_functions)
+        object.__setattr__(self, "solution", solution)
         object.__setattr__(self, "active_periods", active_periods)
-        object.__setattr__(self, "grids", grids)
-
-    def state_action_space(self, regime_params):  # noqa: ARG002
-        return self._base_state_action_space
 
 
 def test_solve_brute():
@@ -132,12 +129,12 @@ def test_solve_brute():
     # ==================================================================================
 
     regime = MockRegime(
-        _base_state_action_space=state_action_space,
-        solve_functions=MockSolveFunctions(
+        solution=MockSolutionPhase(
             max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+            _base_state_action_space=state_action_space,
+            grids=MappingProxyType({}),
         ),
         active_periods=[0, 1],
-        grids=MappingProxyType({}),
     )
 
     solution = solve(
@@ -193,12 +190,12 @@ def test_solve_brute_single_period_Qc_arr():
     # is correctly applied to the state_action_space
 
     regime = MockRegime(
-        _base_state_action_space=state_action_space,
-        solve_functions=MockSolveFunctions(
+        solution=MockSolutionPhase(
             max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+            _base_state_action_space=state_action_space,
+            grids=MappingProxyType({}),
         ),
         active_periods=[0, 1],
-        grids=MappingProxyType({}),
     )
 
     got = solve(

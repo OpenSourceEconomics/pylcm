@@ -7,7 +7,6 @@ from types import MappingProxyType
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
-from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.processing import compute_merged_discrete_categories
 from _lcm.typing import ActionName, RegimeName, RegimeNamesToIds, StateName
 from lcm.ages import AgeGrid
@@ -104,10 +103,10 @@ def _compute_metadata(
     regime_to_actions: dict[RegimeName, tuple[ActionName, ...]] = {}
 
     for regime_name, regime in regimes.items():
-        regime_to_states[regime_name] = regime.simulate_state_names
-        regime_to_actions[regime_name] = regime.variables.action_names
-        all_states.update(regime.simulate_state_names)
-        all_actions.update(regime.variables.action_names)
+        regime_to_states[regime_name] = regime.simulation.state_names
+        regime_to_actions[regime_name] = regime.simulation.variables.action_names
+        all_states.update(regime.simulation.state_names)
+        all_actions.update(regime.simulation.variables.action_names)
 
     # Extract categories and ordered flags from simulation_output_dtypes
     discrete_categories: dict[str, tuple[str, ...]] = {}
@@ -118,12 +117,13 @@ def _compute_metadata(
         discrete_categories[var_name] = tuple(dtype.categories)
         discrete_ordered[var_name] = bool(dtype.ordered)
 
-    # Per-regime discrete categories for correct code→label mapping
+    # Per-regime discrete categories for correct code→label mapping. The
+    # simulation grids include carried pair states, so a discrete pair's
+    # output column gets labels like any other discrete state.
     regime_discrete_categories: dict[tuple[RegimeName, str], tuple[str, ...]] = {}
     for regime_name, regime in regimes.items():
-        for var_name, grid in regime.grids.items():
-            if isinstance(grid, DiscreteGrid):
-                regime_discrete_categories[(regime_name, var_name)] = grid.categories
+        for var_name, grid in regime.simulation.discrete_grids.items():
+            regime_discrete_categories[(regime_name, var_name)] = grid.categories
 
     n_periods = ages.n_periods
     n_subjects = _get_n_subjects(raw_results)

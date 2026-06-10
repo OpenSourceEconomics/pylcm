@@ -31,8 +31,8 @@ def test_get_next_state_function_with_solve_target():
     internal_working = regimes["working_life"]
 
     got_func = get_next_state_function_for_solution(
-        transitions=internal_working.solve_functions.transitions["working_life"],
-        functions=internal_working.solve_functions.functions,
+        transitions=internal_working.solution.transitions["working_life"],
+        functions=internal_working.solution.functions,
     )
 
     flat_regime_params = {

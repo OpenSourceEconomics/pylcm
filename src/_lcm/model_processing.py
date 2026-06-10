@@ -395,10 +395,13 @@ def _partial_fixed_params_into_regimes(
             result[regime_name] = regime
             continue
 
-        # Build new solve_functions with partialled functions
-        solve_funcs = regime.solve_functions
+        # Build new solution phase with partialled functions. The resolved
+        # fixed params also land on the phase itself — its
+        # `state_action_space` consults them for runtime grid substitution.
+        solve_funcs = regime.solution
         new_solve = dataclasses.replace(
             solve_funcs,
+            resolved_fixed_params=MappingProxyType(regime_fixed),
             max_Q_over_a=MappingProxyType(
                 {
                     period: functools.partial(func, **regime_fixed)
@@ -418,8 +421,8 @@ def _partial_fixed_params_into_regimes(
             ),
         )
 
-        # Build new simulate_functions with partialled functions
-        simulate_funcs = regime.simulate_functions
+        # Build new simulation phase with partialled functions
+        simulate_funcs = regime.simulation
         new_simulate = dataclasses.replace(
             simulate_funcs,
             argmax_and_max_Q_over_a=MappingProxyType(
@@ -444,8 +447,8 @@ def _partial_fixed_params_into_regimes(
 
         result[regime_name] = dataclasses.replace(
             regime,
-            solve_functions=new_solve,
-            simulate_functions=new_simulate,
+            solution=new_solve,
+            simulation=new_simulate,
             resolved_fixed_params=MappingProxyType(regime_fixed),
         )
     return MappingProxyType(result)

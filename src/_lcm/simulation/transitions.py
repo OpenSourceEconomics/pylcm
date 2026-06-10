@@ -39,7 +39,7 @@ def create_regime_state_action_space(
 
     Continuous action grids declared with `pass_points_at_runtime=True` are
     completed from `regime_params` (via
-    `Regime.state_action_space`).
+    `regime.solution.state_action_space`).
 
     Args:
         regime: The internal regime instance.
@@ -51,14 +51,14 @@ def create_regime_state_action_space(
         The state-action space for the subjects in the regime.
 
     """
-    base = regime.state_action_space(regime_params=regime_params)
+    base = regime.solution.state_action_space(regime_params=regime_params)
 
     states_for_state_action_space = {
-        sn: regime_states[sn] for sn in regime.variables.state_names
+        sn: regime_states[sn] for sn in regime.solution.state_names
     }
     _validate_all_states_present(
         provided_states=states_for_state_action_space,
-        required_state_names=set(regime.variables.state_names),
+        required_state_names=set(regime.solution.state_names),
     )
 
     return base.replace(states=MappingProxyType(states_for_state_action_space))
@@ -107,14 +107,12 @@ def calculate_next_states(
     """
     # Identify stochastic transitions and generate random keys
     # ---------------------------------------------------------------------------------
-    stochastic_transition_names = regime.simulate_functions.stochastic_transition_names
+    stochastic_transition_names = regime.simulation.stochastic_transition_names
     # Sorted to fix a downstream-ordering bug when the nested iteration
     # yields names in a non-deterministic order.
     stochastic_next_function_names = sorted(
         qname_from_tree_path((target_regime, transition_name))
-        for target_regime, target_transitions in (
-            regime.simulate_functions.transitions.items()
-        )
+        for target_regime, target_transitions in (regime.simulation.transitions.items())
         for transition_name in target_transitions
         if transition_name in stochastic_transition_names
     )
@@ -129,7 +127,7 @@ def calculate_next_states(
 
     # Compute next states using regime's transition functions
     # ---------------------------------------------------------------------------------
-    next_state_vmapped = regime.simulate_functions.next_state
+    next_state_vmapped = regime.simulation.next_state
 
     # `SolveSimulateStatePair` states are carried (true) values that the decision's
     # state-action space deliberately excludes. Feed them to the realized
@@ -137,7 +135,7 @@ def calculate_next_states(
     # rather than the solve-phase imputation.
     simulate_only_states = {
         name: states_per_regime[regime.name][name]
-        for name in regime.simulate_only_grids
+        for name in regime.simulation.pair_grids
     }
 
     states_with_next_prefix = next_state_vmapped(
@@ -225,7 +223,7 @@ def calculate_next_regime_membership(
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
     regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
-        regime.simulate_functions.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
+        regime.simulation.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
             **state_action_space.states,
             **optimal_actions,
             period=jnp.int32(period),

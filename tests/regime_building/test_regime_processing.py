@@ -122,7 +122,7 @@ def test_process_regimes():
     working_regime = regimes["working_life"]
 
     # Variable Info
-    variables = working_regime.variables
+    variables = working_regime.solution.variables
     assert variables["wealth"] == VariableInfo(
         kind="state", topology="continuous", is_process=False
     )
@@ -134,32 +134,37 @@ def test_process_regimes():
     )
 
     # Grids — compare the grid objects (which now include transition attributes)
-    assert working_regime.grids["wealth"] == working_life.states["wealth"]
-    assert working_regime.grids["consumption"] == working_life.actions["consumption"]
+    assert working_regime.solution.grids["wealth"] == working_life.states["wealth"]
+    assert (
+        working_regime.solution.grids["consumption"]
+        == working_life.actions["consumption"]
+    )
 
-    assert isinstance(working_regime.grids["labor_supply"], DiscreteGrid)
-    assert working_regime.grids["labor_supply"].categories == (
+    assert isinstance(working_regime.solution.grids["labor_supply"], DiscreteGrid)
+    assert working_regime.solution.grids["labor_supply"].categories == (
         "work",
         "retire",
     )
-    assert working_regime.grids["labor_supply"].codes == (0, 1)
+    assert working_regime.solution.grids["labor_supply"].codes == (0, 1)
 
     # Materialized grids
     assert_array_equal(
-        working_regime.grids["consumption"].to_jax(),
+        working_regime.solution.grids["consumption"].to_jax(),
         working_life.actions["consumption"].to_jax(),
     )
     assert_array_equal(
-        working_regime.grids["wealth"].to_jax(),
+        working_regime.solution.grids["wealth"].to_jax(),
         cast("Grid", working_life.states["wealth"]).to_jax(),
     )
 
-    assert (working_regime.grids["labor_supply"].to_jax() == jnp.array([0, 1])).all()
+    assert (
+        working_regime.solution.grids["labor_supply"].to_jax() == jnp.array([0, 1])
+    ).all()
 
     # Functions
-    assert working_regime.solve_functions.transitions is not None
-    assert working_regime.solve_functions.constraints is not None
-    assert "utility" in working_regime.solve_functions.functions
+    assert working_regime.solution.transitions is not None
+    assert working_regime.solution.constraints is not None
+    assert "utility" in working_regime.solution.functions
 
 
 def test_variables_excludes_constraint_names():
@@ -225,8 +230,8 @@ def test_simulate_functions_use_per_regime_callables(
     attr: str,
 ) -> None:
     """Two regimes built from shared user functions get distinct simulate callables."""
-    early_func = getattr(two_non_terminal_regimes["early"].simulate_functions, attr)
-    late_func = getattr(two_non_terminal_regimes["late"].simulate_functions, attr)
+    early_func = getattr(two_non_terminal_regimes["early"].simulation, attr)
+    late_func = getattr(two_non_terminal_regimes["late"].simulation, attr)
     assert id(early_func) != id(late_func)
 
 

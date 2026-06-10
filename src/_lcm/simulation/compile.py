@@ -1,7 +1,7 @@
 """AOT-compile simulate functions for a fixed batch size.
 
-When `Model(n_subjects=N)` is set, `compile_all_simulate_functions(...)` returns
-an `regimes` mapping with each regime's `simulate_functions` callables
+When `Model(n_subjects=N)` is set, `compile_all_simulation_phases(...)` returns
+an `regimes` mapping with each regime's `simulation` callables
 swapped for AOT-compiled programs sized for batch shape `N`. The existing
 simulate call sites then pick them up transparently — no signature changes
 downstream.
@@ -38,7 +38,7 @@ from lcm.ages import AgeGrid
 from lcm.typing import FloatND, IntND
 
 
-def compile_all_simulate_functions(
+def compile_all_simulation_phases(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -60,7 +60,7 @@ def compile_all_simulate_functions(
 
     Returns:
         Immutable mapping of regime names to Regime where each regime's
-        `simulate_functions` has its callables replaced by AOT-compiled programs.
+        `simulation` phase has its callables replaced by AOT-compiled programs.
 
     """
     # Per-regime V-shape and -sharding lookup for building period-specific
@@ -77,7 +77,7 @@ def compile_all_simulate_functions(
     # every AOT program must be lowered with the same per-subject sharding.
     subject_sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
 
-    unique, func_keys = _collect_unique_simulate_functions(
+    unique, func_keys = _collect_unique_simulation_callables(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
@@ -152,7 +152,7 @@ def compile_all_simulate_functions(
     )
 
 
-def _collect_unique_simulate_functions(
+def _collect_unique_simulation_callables(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -177,7 +177,7 @@ def _collect_unique_simulate_functions(
 
     for regime_name, regime in regimes.items():
         regime_params = flat_params.get(regime_name, MappingProxyType({}))
-        sf = regime.simulate_functions
+        sf = regime.simulation
 
         # `sf.argmax_and_max_Q_over_a` has entries for *every* period
         # (pylcm builds them across the full age grid), but the regime is
@@ -267,12 +267,12 @@ def _swap_in_compiled(
     compiled: dict[Hashable, jax.stages.Compiled],
     func_keys: dict[tuple[RegimeName, str, int | None], Hashable],
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Swap compiled programs into each regime's `simulate_functions`."""
+    """Swap compiled programs into each regime's `simulation` phase."""
     new_regimes: dict[RegimeName, Regime] = {}
     for regime_name, regime in regimes.items():
-        sf = regime.simulate_functions
+        sf = regime.simulation
         # Only active periods are AOT-compiled (see
-        # `_collect_unique_simulate_functions`); leave inactive-period
+        # `_collect_unique_simulation_callables`); leave inactive-period
         # entries untouched so the existing closure stays in place — they
         # are never dispatched at runtime anyway.
         argmax_compiled_for_active = {
@@ -300,9 +300,7 @@ def _swap_in_compiled(
             next_state=next_state_compiled,
             compute_regime_transition_probs=crtp_compiled,
         )
-        new_regimes[regime_name] = dataclasses.replace(
-            regime, simulate_functions=new_sf
-        )
+        new_regimes[regime_name] = dataclasses.replace(regime, simulation=new_sf)
 
     return MappingProxyType(new_regimes)
 
@@ -334,7 +332,7 @@ def _build_argmax_args(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     subject_sharding: jax.NamedSharding | None,
 ) -> dict[str, object]:
-    base = regime.state_action_space(regime_params=regime_params)
+    base = regime.solution.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(
         base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
@@ -357,7 +355,7 @@ def _build_next_state_args(
     n_subjects: int,
     subject_sharding: jax.NamedSharding | None,
 ) -> dict[str, object]:
-    base = regime.state_action_space(regime_params=regime_params)
+    base = regime.solution.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(
         base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
@@ -375,12 +373,10 @@ def _build_next_state_args(
         sharding=subject_sharding,
     )
 
-    stoch_transition_names = regime.simulate_functions.stochastic_transition_names
+    stoch_transition_names = regime.simulation.stochastic_transition_names
     stoch_next_func_names = sorted(
         qname_from_tree_path((target_regime, transition_name))
-        for target_regime, target_transitions in (
-            regime.simulate_functions.transitions.items()
-        )
+        for target_regime, target_transitions in (regime.simulation.transitions.items())
         for transition_name in target_transitions
         if transition_name in stoch_transition_names
     )
@@ -408,7 +404,7 @@ def _build_crtp_args(
     n_subjects: int,
     subject_sharding: jax.NamedSharding | None,
 ) -> dict[str, object]:
-    base = regime.state_action_space(regime_params=regime_params)
+    base = regime.solution.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(
         base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
@@ -439,7 +435,7 @@ def _simulate_only_subject_states(
     not solve grid axes. Each is seeded with a zero array of its grid's dtype.
     """
     arrays: dict[str, FloatND | IntND] = {}
-    for name, grid in regime.simulate_only_grids.items():
+    for name, grid in regime.simulation.pair_grids.items():
         zeros = jnp.zeros((n_subjects,), dtype=grid.to_jax().dtype)
         arrays[name] = zeros if sharding is None else jax.device_put(zeros, sharding)
     return arrays

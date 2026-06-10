@@ -32,7 +32,7 @@ from _lcm.persistence.snapshots import (
     _save_solve_snapshot,
 )
 from _lcm.regime_building.processing import Regime
-from _lcm.simulation.compile import compile_all_simulate_functions
+from _lcm.simulation.compile import compile_all_simulation_phases
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
     pad_initial_conditions_to_multiple,
@@ -584,7 +584,7 @@ class Model:
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads
         # the lazy DAG functions / constraints / transitions on
-        # `simulate_functions`, never the compiled callables — so swap in
+        # `regime.simulation`, never the compiled callables — so swap in
         # the lazy regimes to keep the result cloudpickle-safe.
         if simulate_regimes is not self._regimes:
             result._regimes = self._regimes  # noqa: SLF001
@@ -655,7 +655,7 @@ class Model:
         return any(
             grid.distributed
             for regime in self._regimes.values()
-            for grid in regime.grids.values()
+            for grid in regime.solution.grids.values()
         )
 
     def _ensure_simulate_compiled(
@@ -671,7 +671,7 @@ class Model:
             cached = compile_batch_size in self._simulate_compile_cache
         if cached:
             return
-        compiled = compile_all_simulate_functions(
+        compiled = compile_all_simulation_phases(
             regimes=self._regimes,
             flat_params=flat_params,
             ages=self.ages,
