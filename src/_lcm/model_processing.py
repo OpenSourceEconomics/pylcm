@@ -14,7 +14,6 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
-from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
 from _lcm.params.processing import (
     broadcast_to_template,
@@ -22,6 +21,7 @@ from _lcm.params.processing import (
     create_params_template,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.regime_building.effective import EffectiveUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.processing import (
     Regime,
@@ -46,7 +46,7 @@ from lcm.typing import UserParams
 def build_regimes_and_template(
     *,
     ages: AgeGrid,
-    user_regimes: Mapping[RegimeName, UserRegime],
+    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -58,7 +58,7 @@ def build_regimes_and_template(
 
     Args:
         ages: Age grid for the model.
-        user_regimes: Mapping of regime names to Regime instances.
+        user_regimes: Mapping of regime names to effective regimes.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
@@ -91,7 +91,7 @@ def build_regimes_and_template(
 def _build_regimes_and_template_with_fixed_params(
     *,
     ages: AgeGrid,
-    user_regimes: Mapping[RegimeName, UserRegime],
+    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -100,7 +100,7 @@ def _build_regimes_and_template_with_fixed_params(
 
     Args:
         ages: Age grid for the model.
-        user_regimes: Mapping of regime names to Regime instances.
+        user_regimes: Mapping of regime names to effective regimes.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
@@ -205,47 +205,6 @@ def validate_model_inputs(
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
-
-
-def merge_derived_categoricals(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
-) -> MappingProxyType[RegimeName, UserRegime]:
-    """Merge model-level derived_categoricals into each regime.
-
-    Args:
-        user_regimes: Mapping of regime names to user-provided `Regime`
-            instances.
-        derived_categoricals: Model-level categorical grids to broadcast.
-
-    Returns:
-        Immutable mapping of regime names to (possibly updated) Regime instances.
-
-    Raises:
-        ModelInitializationError: If a regime already has a conflicting entry
-            (same key, different categories).
-
-    """
-    if not derived_categoricals:
-        return MappingProxyType(dict(user_regimes))
-    result: dict[RegimeName, UserRegime] = {}
-    for regime_name, user_regime in user_regimes.items():
-        merged = dict(user_regime.derived_categoricals)
-        for var, grid in derived_categoricals.items():
-            existing = merged.get(var)
-            if existing is not None and existing.categories != grid.categories:
-                msg = (
-                    f"Model-level derived_categoricals['{var}'] conflicts "
-                    f"with regime '{regime_name}': {grid.categories} vs "
-                    f"{existing.categories}."
-                )
-                raise ModelInitializationError(msg)
-            merged[var] = grid
-        result[regime_name] = dataclasses.replace(
-            user_regime, derived_categoricals=MappingProxyType(merged)
-        )
-    return MappingProxyType(result)
 
 
 def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
@@ -395,10 +354,13 @@ def _partial_fixed_params_into_regimes(
             result[regime_name] = regime
             continue
 
-        # Build new solve_functions with partialled functions
-        solve_funcs = regime.solve_functions
+        # Build new solution phase with partialled functions. The resolved
+        # fixed params also land on the phase itself — its
+        # `state_action_space` consults them for runtime grid substitution.
+        solve_funcs = regime.solution
         new_solve = dataclasses.replace(
             solve_funcs,
+            resolved_fixed_params=MappingProxyType(regime_fixed),
             max_Q_over_a=MappingProxyType(
                 {
                     period: functools.partial(func, **regime_fixed)
@@ -418,8 +380,8 @@ def _partial_fixed_params_into_regimes(
             ),
         )
 
-        # Build new simulate_functions with partialled functions
-        simulate_funcs = regime.simulate_functions
+        # Build new simulation phase with partialled functions
+        simulate_funcs = regime.simulation
         new_simulate = dataclasses.replace(
             simulate_funcs,
             argmax_and_max_Q_over_a=MappingProxyType(
@@ -444,8 +406,8 @@ def _partial_fixed_params_into_regimes(
 
         result[regime_name] = dataclasses.replace(
             regime,
-            solve_functions=new_solve,
-            simulate_functions=new_simulate,
+            solution=new_solve,
+            simulation=new_simulate,
             resolved_fixed_params=MappingProxyType(regime_fixed),
         )
     return MappingProxyType(result)

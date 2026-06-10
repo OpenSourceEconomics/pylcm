@@ -218,8 +218,8 @@ class SimulationResult:
             `save` consumes the in-memory result: on exit both
             `self.period_to_regime_to_V_arr` and `self._regimes` are
             empty mappings. The grid V-array (largest device-resident
-            artifact) and the regimes' compiled `simulate_functions` /
-            `solve_functions` (which pin XLA program workspaces on the
+            artifact) and the regimes' compiled `simulation` /
+            `solution` phases (which pin XLA program workspaces on the
             device) are released before orbax stages the per-subject
             tree; otherwise the post-V-array D2H allocations exhaust
             the device on smaller GPUs. Callers needing further
@@ -256,7 +256,7 @@ class SimulationResult:
         with (target / "metadata.pkl").open("wb") as fh:
             cloudpickle.dump(metadata, fh)
 
-        # Drop the compiled `simulate_functions` / `solve_functions`
+        # Drop the compiled `simulation` / `solution` phases
         # programs inside `self._regimes`; their XLA workspaces stay
         # live until the Python refs go, and the per-period D2H gathers
         # inside `to_dataframe` need a near-empty pool. When

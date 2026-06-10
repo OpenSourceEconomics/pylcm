@@ -16,12 +16,13 @@ break by `batch_size` with 0 last (treated as +∞).
 
 import math
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from _lcm.engine import VariableInfo, Variables
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.typing import StateOrActionName
+from _lcm.typing import StateName, StateOrActionName
+from lcm.phased import Phased
 
 if TYPE_CHECKING:
     from lcm.regime import Regime as UserRegime
@@ -39,6 +40,54 @@ def _bind_forward_refs(*, regime_cls: type) -> None:
     """
     global UserRegime  # noqa: PLW0603
     UserRegime = regime_cls  # ty: ignore[invalid-assignment]
+
+
+def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
+    """Return the regime's states that are plain grids, excluding carried states.
+
+    A carried state (declared via `Phased(solve=..., simulate=Grid)`) is a
+    derived function in the solve phase, not a grid dimension, so it is
+    omitted from the solve-phase state grids and variable info.
+    """
+    return {
+        name: spec
+        for name, spec in user_regime.states.items()
+        if isinstance(spec, Grid)
+    }
+
+
+def simulate_variables_from_regime(user_regime: UserRegime) -> Variables:
+    """Build the simulate-phase `Variables`: solve variables plus carried states.
+
+    Each carried state is appended after the solve-ordered variables as a
+    genuine state (its simulate role). The resulting order is NOT a productmap
+    order — it only fixes column order in simulation output.
+    """
+    solve_variables = from_regime(user_regime)
+    carried_info = {
+        name: VariableInfo(
+            kind="state",
+            topology="continuous" if isinstance(grid, ContinuousGrid) else "discrete",
+            is_process=False,
+        )
+        for name, grid in carried_state_grids(user_regime).items()
+    }
+    return Variables(info=MappingProxyType({**solve_variables.info, **carried_info}))
+
+
+def carried_state_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
+    """Return the simulate-phase grids of the regime's carried states.
+
+    Carried states — declared via `Phased(solve=..., simulate=Grid)` — are
+    absent from the solve grid (they are derived functions there); their grid
+    is the simulate-phase domain used to seed, classify, and validate the
+    carried-forward value.
+    """
+    return {
+        name: cast("Grid", spec.simulate)
+        for name, spec in user_regime.states.items()
+        if isinstance(spec, Phased)
+    }
 
 
 def from_regime(user_regime: UserRegime) -> Variables:
@@ -80,7 +129,7 @@ def get_grids(
 
     """
     variables = from_regime(user_regime)
-    raw_variables = dict(user_regime.states) | dict(user_regime.actions)
+    raw_variables = _grid_states(user_regime) | dict(user_regime.actions)
     return MappingProxyType({name: raw_variables[name] for name in variables})
 
 
@@ -88,7 +137,7 @@ def _raw_variable_info(
     user_regime: UserRegime,
 ) -> dict[StateOrActionName, VariableInfo]:
     """Derive `VariableInfo` for every state and action variable."""
-    variables = dict(user_regime.states) | dict(user_regime.actions)
+    variables = _grid_states(user_regime) | dict(user_regime.actions)
     info: dict[StateOrActionName, VariableInfo] = {}
     for name, spec in variables.items():
         is_state = name in user_regime.states
@@ -116,8 +165,10 @@ def _ordered_state_action_names(
 
     """
 
+    grid_states = _grid_states(user_regime)
+
     def state_sort_key(name: StateOrActionName) -> tuple[bool, float]:
-        grid = user_regime.states[name]
+        grid = grid_states[name]
         batch_size = grid.batch_size
         return (not grid.distributed, batch_size if batch_size != 0 else math.inf)
 

@@ -32,6 +32,7 @@ from lcm import (
     RouwenhorstAR1Process,
     UniformIIDProcess,
     categorical,
+    fixed_transition,
 )
 from lcm.typing import (
     BoolND,
@@ -441,10 +442,10 @@ ALIVE_REGIME = Regime(
         "wealth": next_wealth,
         "health": MarkovTransition(next_health),
         "lagged_effort": next_lagged_effort,
-        "education": None,
-        "productivity": None,
-        "health_type": None,
-        "discount_type": None,
+        "education": fixed_transition("education"),
+        "productivity": fixed_transition("productivity"),
+        "health_type": fixed_transition("health_type"),
+        "discount_type": fixed_transition("discount_type"),
     },
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),

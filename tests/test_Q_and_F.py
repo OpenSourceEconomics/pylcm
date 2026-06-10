@@ -12,6 +12,7 @@ from _lcm.params.processing import (
     get_flat_param_names,
     process_params,
 )
+from _lcm.regime_building.effective import build_effective_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
@@ -49,7 +50,9 @@ def test_get_Q_and_F_function():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     regimes = process_regimes(
-        user_regimes=user_regimes,
+        user_regimes=build_effective_regimes(
+            user_regimes=user_regimes, derived_categoricals={}
+        ),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
@@ -66,7 +69,7 @@ def test_get_Q_and_F_function():
     )
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
-    solve = regimes["working_life"].solve_functions
+    solve = regimes["working_life"].solution
     Q_and_F = get_Q_and_F_terminal(
         flat_param_names=flat_param_names,
         functions=solve.functions,

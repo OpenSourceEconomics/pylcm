@@ -11,7 +11,14 @@ import numpy as np
 from jax import Array
 
 from _lcm.dtypes import canonical_float_dtype
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
 
@@ -39,7 +46,10 @@ working = UserRegime(
         "health": DiscreteGrid(Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
     },
-    state_transitions={"health": None, "wealth": lambda wealth: wealth},
+    state_transitions={
+        "health": fixed_transition("health"),
+        "wealth": lambda wealth: wealth,
+    },
     functions={"utility": lambda wealth, health, bonus: wealth + health + bonus},
 )
 

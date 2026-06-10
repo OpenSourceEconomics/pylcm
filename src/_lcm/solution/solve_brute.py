@@ -146,7 +146,7 @@ def solve(
         )
 
         for regime_name, regime in active_regimes.items():
-            state_action_space = regime.state_action_space(
+            state_action_space = regime.solution.state_action_space(
                 regime_params=flat_params[regime_name],
             )
             max_Q_over_a = compiled_functions[(regime_name, period)]
@@ -312,9 +312,7 @@ def _compile_all_functions(
     all_functions: dict[tuple[RegimeName, int], Callable] = {}
     for regime_name, regime in regimes.items():
         for period in regime.active_periods:
-            all_functions[(regime_name, period)] = regime.solve_functions.max_Q_over_a[
-                period
-            ]
+            all_functions[(regime_name, period)] = regime.solution.max_Q_over_a[period]
 
     # If JIT is disabled, return raw functions directly.
     if not enable_jit:
@@ -344,7 +342,7 @@ def _compile_all_functions(
     lowered: dict[Hashable, jax.stages.Lowered] = {}
     labels: dict[Hashable, str] = {}
     for i, (func_id, (func, regime_name, period)) in enumerate(unique.items(), 1):
-        state_action_space = regimes[regime_name].state_action_space(
+        state_action_space = regimes[regime_name].solution.state_action_space(
             regime_params=flat_params[regime_name],
         )
         lower_args = {
@@ -461,12 +459,14 @@ def _get_regime_V_shapes_and_shardings(
     n_devices = len(jax.devices())
     topology: dict[RegimeName, _RegimeVTopology] = {}
     for regime_name, regime in regimes.items():
-        state_action_space = regime.state_action_space(
+        state_action_space = regime.solution.state_action_space(
             regime_params=flat_params[regime_name],
         )
         state_order: tuple[StateName, ...] = tuple(state_action_space.states.keys())
         shape = tuple(len(v) for v in state_action_space.states.values())
-        sharding_plan = _build_regime_sharding(grids=regime.grids, n_devices=n_devices)
+        sharding_plan = _build_regime_sharding(
+            grids=regime.solution.grids, n_devices=n_devices
+        )
         sharding = (
             sharding_plan.V_arr_sharding(state_order)
             if sharding_plan is not None
@@ -587,14 +587,14 @@ def _raise_at(
     effective_regime_params = MappingProxyType(
         {**regime.resolved_fixed_params, **regime_params}
     )
-    state_action_space = regime.state_action_space(regime_params=regime_params)
+    state_action_space = regime.solution.state_action_space(regime_params=regime_params)
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
         period=row.period,
         regimes=regimes,
         flat_params=flat_params,
         solution=solution,
     )
-    compute_intermediates = regime.solve_functions.compute_intermediates.get(row.period)
+    compute_intermediates = regime.solution.compute_intermediates.get(row.period)
     V_arr = solution[row.period][row.regime_name]
     validate_V(
         V_arr=V_arr,
