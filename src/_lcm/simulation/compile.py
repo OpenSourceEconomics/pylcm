@@ -435,7 +435,7 @@ def _simulate_only_subject_states(
     not solve grid axes. Each is seeded with a zero array of its grid's dtype.
     """
     arrays: dict[str, FloatND | IntND] = {}
-    for name, grid in regime.simulation.pair_grids.items():
+    for name, grid in regime.simulation.carried_grids.items():
         zeros = jnp.zeros((n_subjects,), dtype=grid.to_jax().dtype)
         arrays[name] = zeros if sharding is None else jax.device_put(zeros, sharding)
     return arrays

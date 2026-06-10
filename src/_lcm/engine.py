@@ -427,25 +427,27 @@ class SolutionPhase:
 class SimulationPhase:
     """Simulate-phase view of a canonical regime.
 
-    Owns everything forward simulation reads: the carried state set
-    (solve states plus `SolveSimulateStatePair` states), the per-subject
-    grids, and the compiled function sets. Reading phase-dependent data
-    through this namespace makes the phase explicit at every call site.
+    Owns everything forward simulation reads: the per-subject state set
+    (solve states plus carried-only states), the per-subject grids, and the
+    compiled function sets. Reading phase-dependent data through this
+    namespace makes the phase explicit at every call site.
     """
 
     variables: Variables
-    """Simulate states (solve states plus pairs, appended) and actions.
+    """Simulate states (solve states plus carried-only states, appended) and
+    actions.
 
-    NOT a productmap order — pairs are appended after the solve states, so
-    this ordering carries no dispatch meaning; it only fixes column order in
-    simulation output.
+    NOT a productmap order — carried-only states are appended after the solve
+    states, so this ordering carries no dispatch meaning; it only fixes column
+    order in simulation output.
     """
 
     grids: MappingProxyType[StateOrActionName, Grid]
-    """Solve grids plus each pair's simulate-phase grid."""
+    """Solve grids plus each carried-only state's simulate-phase grid."""
 
-    pair_state_names: frozenset[StateName]
-    """Names of states carried only in simulation (`SolveSimulateStatePair`)."""
+    carried_only_state_names: frozenset[StateName]
+    """States carried only in simulation: derived functions (no grid axis)
+    during backward induction, genuine seeded-and-evolved states here."""
 
     functions: EconFunctionsMapping
     """Immutable mapping of function names to internal user functions."""
@@ -470,7 +472,7 @@ class SimulationPhase:
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
-        """States carried per subject: solve states plus pair states."""
+        """States carried per subject: solve states plus carried-only states."""
         return self.variables.state_names
 
     @property
@@ -485,13 +487,13 @@ class SimulationPhase:
         )
 
     @property
-    def pair_grids(self) -> MappingProxyType[StateName, Grid]:
-        """Grids of the pair states (the simulate-phase domains)."""
+    def carried_grids(self) -> MappingProxyType[StateName, Grid]:
+        """Grids of the carried-only states (the simulate-phase domains)."""
         return MappingProxyType(
             {
                 name: self.grids[name]
                 for name in self.state_names
-                if name in self.pair_state_names
+                if name in self.carried_only_state_names
             }
         )
 

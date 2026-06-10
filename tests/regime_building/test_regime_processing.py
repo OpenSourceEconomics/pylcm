@@ -9,9 +9,9 @@ from numpy.testing import assert_array_equal
 
 from _lcm.engine import Regime, VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid
+from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.processing import (
-    _augment_nested_transitions_with_state_pairs,
-    _extract_transitions_from_regime,
+    _extract_phase_transitions,
     _rename_params_to_qnames,
     _wrap_regime_transition_probs,
     process_regimes,
@@ -321,41 +321,38 @@ def _pair_handover_regime() -> UserRegime:
     )
 
 
-def test_pair_transition_registered_for_pair_only_target():
-    """A target regime sharing only the pair still receives `next_<pair>`.
+def test_carried_law_registered_for_carried_only_target():
+    """A target regime sharing only the carried state still receives `next_<name>`.
 
-    A regime can hand over nothing but its carried pair state (retirement
-    keeps pension wealth, drops the working states). The pair's simulate
-    transition must be registered for that target — otherwise the simulation
-    silently freezes the carried value on the crossing.
+    A regime can hand over nothing but its carried state (retirement keeps
+    pension wealth, drops the working states). The carried law of motion must
+    be registered for that target in the simulate phase — otherwise the
+    simulation silently freezes the carried value on the crossing.
     """
     working = _pair_handover_regime()
-    states_per_regime = {
+    simulate_states_per_regime = {
         "working": {"wealth", "pension_wealth"},
         "retired": {"pension_wealth"},
         "dead": set(),
     }
-    nested = _extract_transitions_from_regime(
-        user_regime=working, states_per_regime=states_per_regime
+    nested = _extract_phase_transitions(
+        phase_slice=normalize_regime_phases(working).simulation,
+        states_per_regime=simulate_states_per_regime,
     )
-    augmented = _augment_nested_transitions_with_state_pairs(
-        nested_transitions=nested,
-        user_regime=working,
-        states_per_regime=states_per_regime,
-    )
-    retired_entry = augmented.get("retired")
+    retired_entry = nested.get("retired")
     assert isinstance(retired_entry, dict)
     assert "next_pension_wealth" in retired_entry
 
 
-def test_pair_state_counts_as_covered_for_reachability():
-    """A pair-carrying target stays reachable when per-target transitions exist.
+def test_carried_state_counts_as_covered_for_reachability():
+    """A target carrying a carried state stays reachable when per-target
+    transitions exist.
 
     With per-target transitions present, a target not explicitly named in any
     per-target dict is reachable when simple transitions cover its state
-    needs. The pair supplies its own transition, so the pair state must count
-    as covered — requiring a `next_<pair>` entry among the simple transitions
-    would exclude every pair-carrying target.
+    needs. In the simulate phase the carried state's law of motion is an
+    ordinary simple transition, so the carried state counts as covered and
+    the target receives both the ordinary hand-over and the carried law.
     """
 
     def impute_pension_wealth(wealth: float) -> float:
@@ -395,22 +392,19 @@ def test_pair_state_counts_as_covered_for_reachability():
         functions={"utility": utility},
     )
     # `retired` is not named in any per-target dict; its ordinary state need
-    # (wealth) is covered by a simple transition and the pair covers itself,
-    # so it must be reachable and receive next_wealth + next_pension_wealth.
-    states_per_regime = {
+    # (wealth) is covered by a simple transition and the carried law covers
+    # the carried state, so it must be reachable and receive
+    # next_wealth + next_pension_wealth.
+    simulate_states_per_regime = {
         "working": {"wealth", "health", "pension_wealth"},
         "retired": {"wealth", "pension_wealth"},
         "dead": set(),
     }
-    nested = _extract_transitions_from_regime(
-        user_regime=working, states_per_regime=states_per_regime
+    nested = _extract_phase_transitions(
+        phase_slice=normalize_regime_phases(working).simulation,
+        states_per_regime=simulate_states_per_regime,
     )
-    augmented = _augment_nested_transitions_with_state_pairs(
-        nested_transitions=nested,
-        user_regime=working,
-        states_per_regime=states_per_regime,
-    )
-    retired_entry = augmented.get("retired")
+    retired_entry = nested.get("retired")
     assert isinstance(retired_entry, dict)
     assert "next_wealth" in retired_entry
     assert "next_pension_wealth" in retired_entry

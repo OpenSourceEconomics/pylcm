@@ -22,6 +22,7 @@ from _lcm.engine import VariableInfo, Variables
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import StateName, StateOrActionName
+from lcm.phased import Phased
 from lcm.transition import SolveSimulateStatePair
 
 if TYPE_CHECKING:
@@ -58,36 +59,39 @@ def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
 
 
 def simulate_variables_from_regime(user_regime: UserRegime) -> Variables:
-    """Build the simulate-phase `Variables`: solve variables plus pair states.
+    """Build the simulate-phase `Variables`: solve variables plus carried states.
 
-    Each `SolveSimulateStatePair` is appended after the solve-ordered
-    variables as a genuine state (its simulate role). The resulting order is
-    NOT a productmap order — it only fixes column order in simulation output.
+    Each carried state is appended after the solve-ordered variables as a
+    genuine state (its simulate role). The resulting order is NOT a productmap
+    order — it only fixes column order in simulation output.
     """
     solve_variables = from_regime(user_regime)
-    pair_info = {
+    carried_info = {
         name: VariableInfo(
             kind="state",
             topology="continuous" if isinstance(grid, ContinuousGrid) else "discrete",
             is_process=False,
         )
-        for name, grid in state_pair_grids(user_regime).items()
+        for name, grid in carried_state_grids(user_regime).items()
     }
-    return Variables(info=MappingProxyType({**solve_variables.info, **pair_info}))
+    return Variables(info=MappingProxyType({**solve_variables.info, **carried_info}))
 
 
-def state_pair_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
-    """Return the simulate-phase grids of the regime's `SolveSimulateStatePair`s.
+def carried_state_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
+    """Return the simulate-phase grids of the regime's carried states.
 
-    These states are absent from the solve grid (they are derived functions
-    there); their grid is the simulate-phase domain used to seed, classify, and
-    validate the carried-forward value.
+    Carried states — declared via `Phased(solve=..., simulate=Grid)` or the
+    legacy `SolveSimulateStatePair` — are absent from the solve grid (they are
+    derived functions there); their grid is the simulate-phase domain used to
+    seed, classify, and validate the carried-forward value.
     """
-    return {
-        name: cast("Grid", spec.grid)
-        for name, spec in user_regime.states.items()
-        if isinstance(spec, SolveSimulateStatePair)
-    }
+    result: dict[StateName, Grid] = {}
+    for name, spec in user_regime.states.items():
+        if isinstance(spec, SolveSimulateStatePair):
+            result[name] = cast("Grid", spec.grid)
+        elif isinstance(spec, Phased):
+            result[name] = cast("Grid", spec.simulate)
+    return result
 
 
 def from_regime(user_regime: UserRegime) -> Variables:

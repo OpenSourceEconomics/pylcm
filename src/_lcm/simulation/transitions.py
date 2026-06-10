@@ -135,7 +135,7 @@ def calculate_next_states(
     # rather than the solve-phase imputation.
     simulate_only_states = {
         name: states_per_regime[regime.name][name]
-        for name in regime.simulation.pair_grids
+        for name in regime.simulation.carried_grids
     }
 
     states_with_next_prefix = next_state_vmapped(
