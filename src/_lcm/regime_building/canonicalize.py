@@ -171,9 +171,12 @@ def _get_reachable_targets(
     for named in per_target_laws.values():
         targets |= named.keys()
     for target_name, target_states in states_per_regime.items():
-        if target_name not in targets and target_states <= bare_laws.keys():
-            if target_states:
-                targets.add(target_name)
+        if (
+            target_name not in targets
+            and target_states
+            and target_states <= bare_laws.keys()
+        ):
+            targets.add(target_name)
     return targets
 
 

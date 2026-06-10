@@ -44,7 +44,7 @@ def _next_wealth(wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
-def _next_regime(age: float) -> ScalarInt:
+def _next_regime(age: float) -> ScalarInt:  # noqa: ARG001
     return jnp.asarray(0, dtype=jnp.int32)
 
 
@@ -114,7 +114,7 @@ def test_fixed_transition_desugars_to_per_target_identities() -> None:
             "wealth": _next_wealth,
             "health": fixed_transition("health"),
         },
-        "functions": {"utility": lambda consumption, health: jnp.log(consumption)},
+        "functions": {"utility": lambda consumption, health: jnp.log(consumption)},  # noqa: ARG005
     }
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
     specs = _canonicalize(
@@ -134,7 +134,7 @@ def test_markov_law_broadcasts_as_markov() -> None:
             "wealth": _next_wealth,
             "health": MarkovTransition(_health_probs),
         },
-        "functions": {"utility": lambda consumption, health: jnp.log(consumption)},
+        "functions": {"utility": lambda consumption, health: jnp.log(consumption)},  # noqa: ARG005
     }
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
     specs = _canonicalize(
