@@ -218,7 +218,8 @@ def _split_functions(
         elif callable(value):
             solve_functions[name] = value
             simulate_functions[name] = value
-        else:
+        elif value is not None:
+            # `None` masks a model-level entry; bound at model build.
             errors.append(f"functions['{name}'] must be a callable, got {value!r}.")
     return solve_functions, simulate_functions
 
@@ -251,7 +252,8 @@ def _split_states(
         elif isinstance(spec, Grid):
             solve_grid_states[name] = spec
             simulate_grid_states[name] = spec
-        else:
+        elif spec is not None:
+            # `None` masks a model-level entry; bound at model build.
             errors.append(
                 f"states['{name}'] must be an LCM grid or `Phased`, got {spec!r}."
             )

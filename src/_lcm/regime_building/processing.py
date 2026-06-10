@@ -1609,7 +1609,7 @@ def _fail_if_action_has_batch_size(
     """
     for regime_name, user_regime in user_regimes.items():
         for action_name, grid in user_regime.actions.items():
-            if grid.batch_size != 0:
+            if grid is not None and grid.batch_size != 0:
                 msg = (
                     f"batch_size > 0 is not supported on action grids. Only state "
                     f"grids can be batched. Found batch_size={grid.batch_size} on "

@@ -278,6 +278,27 @@ Model(
 )
 ```
 
+**Model-level regime slots (broadcast):**
+
+`Model(functions=..., constraints=..., states=..., state_transitions=..., actions=...)`
+accepts exactly what the regime-level slot accepts (incl. `Phased`, stochastic
+processes, per-target dicts, `fixed_transition`). Each entry is merged into every regime
+under the exactly-one-level rule — a name is defined at model level or regime level,
+never both (ambiguity errors); a regime-level `None` masks the model entry (masking a
+state also drops its broadcast law; an unbound mask errors). Broadcast laws are not
+merged into terminal regimes.
+
+Broadcast states and actions are pruned per regime by DAG reachability: a broadcast
+variable survives only where a root computation (utility, `H`, constraints, derived
+categoricals, the regime transition, or a law of motion toward a reachable target that
+keeps the state) transitively reads it, per phase slice, pruned only when dead in both
+phases. Regime-level declarations are never pruned. `model.pruned_variables` records the
+result per regime.
+
+`distributed=True` is legal only on model-level states; a sharded state pruned from a
+non-terminal regime is an error (unshard or make the regime use it). `batch_size` stays
+per-declaration.
+
 **Model Requirements:**
 
 - Must have at least one terminal regime and one non-terminal regime
@@ -372,6 +393,8 @@ initial_conditions = {
 - `model._regimes` - Immutable mapping of regime names to canonical `Regime` objects
   (`_lcm.engine.Regime`) produced by `process_regimes`. Private — the canonical form is
   engine-internal; user code should read `user_regimes`.
+- `model.pruned_variables` - Immutable mapping of regime names to the broadcast
+  states/actions pruned from that regime by DAG reachability
 - `model.ages` - The AgeGrid defining the lifecycle
 - `model.n_periods` - Number of periods in the model (derived from `ages`)
 - `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices

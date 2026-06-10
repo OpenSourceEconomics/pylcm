@@ -82,7 +82,8 @@ class Regime:
     active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active."""
 
-    states: Mapping[StateName, Grid | Phased] = field(
+    # `None` masks a model-level entry of the same name.
+    states: Mapping[StateName, Grid | Phased | None] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of state variable names to grids or phase-variant declarations.
@@ -114,12 +115,12 @@ class Regime:
     (outermost only, never inside a per-target dict).
     """
 
-    actions: Mapping[ActionName, Grid] = field(
+    actions: Mapping[ActionName, Grid | None] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of action variable names to grid objects."""
 
-    functions: Mapping[FunctionName, UserFunction | Phased] = field(
+    functions: Mapping[FunctionName, UserFunction | Phased | None] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of function names to callables; must include 'utility'.
@@ -129,7 +130,7 @@ class Regime:
 
     # `Phased` passes the type check so the validator can reject it with an
     # explanation (constraints are phase-invariant).
-    constraints: Mapping[FunctionName, UserFunction | Phased] = field(
+    constraints: Mapping[FunctionName, UserFunction | Phased | None] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of constraint names to constraint functions.

@@ -157,10 +157,14 @@ def _collect_all_functions_for_template(
     entries to a single variant, this returns them as-is so the caller can
     union both variants' parameters.
     """
-    result: dict[FunctionName | TransitionFunctionName, UserFunction | Phased] = dict(
-        user_regime.functions
-    )
-    result |= dict(user_regime.constraints)
+    # The template reads the effective regime, where `None` masks are
+    # already resolved; the filters narrow the type.
+    result: dict[FunctionName | TransitionFunctionName, UserFunction | Phased] = {
+        name: func for name, func in user_regime.functions.items() if func is not None
+    }
+    result |= {
+        name: func for name, func in user_regime.constraints.items() if func is not None
+    }
     # A carried state contributes its `solve` variant as a derived function
     # under the state's name (solve-phase imputation), so its parameters
     # surface in the template. Its law of motion is its regular

@@ -38,6 +38,9 @@ def _grid_mapping_errors(
     for k, v in mapping.items():
         if not isinstance(k, str):
             error_messages.append(f"{attr_name} key {k!r} must be a string.")
+        if v is None:
+            # A mask of a model-level entry; bound at model build.
+            continue
         if not allow_phase_variants and isinstance(v, Phased):
             error_messages.append(
                 f"{attr_name}['{k}'] cannot be phase-variant: the simulated "
@@ -59,6 +62,9 @@ def _callable_mapping_errors(
     for k, v in mapping.items():
         if not isinstance(k, str):
             error_messages.append(f"{attr_name} key {k!r} must be a string.")
+        if v is None:
+            # A mask of a model-level entry; bound at model build.
+            continue
         if isinstance(v, Phased):
             if not allow_phase_variants:
                 error_messages.append(
@@ -240,7 +246,9 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
     `distributed=True` on the matching state.
     """
     offending_actions = [
-        name for name, grid in regime.actions.items() if grid.distributed
+        name
+        for name, grid in regime.actions.items()
+        if grid is not None and grid.distributed
     ]
     if not offending_actions:
         return []
@@ -289,7 +297,9 @@ def _validate_function_output_grid_indexing(
     # producing function does not take `grid`, its output shape is
     # whatever it computed (typically an array indexable by `grid`) and
     # the consumer pattern is correct.
-    function_inputs = _function_input_names(regime.functions)
+    function_inputs = _function_input_names(
+        {name: func for name, func in regime.functions.items() if func is not None}
+    )
     consumers = _collect_indexing_consumers(regime)
 
     errors: list[str] = []
@@ -345,8 +355,12 @@ def _collect_indexing_consumers(
     """
     consumers: list[tuple[str, Callable]] = []
     for name, func in regime.functions.items():
+        if func is None:
+            continue
         consumers.extend((name, variant) for variant in _function_variants(func))
     for name, constraint in regime.constraints.items():
+        if constraint is None:
+            continue
         consumers.extend((name, variant) for variant in _function_variants(constraint))
     if callable(regime.transition):
         consumers.append(("regime_transition", regime.transition))
@@ -482,10 +496,13 @@ def _state_transition_value_errors(*, name: StateName, value: object) -> list[st
             )
             continue
         if variant is None:
-            error_messages.append(
-                f"state_transitions['{name}']{label}: `None` is not a law of "
-                f"motion. Use `fixed_transition('{name}')` for a fixed state.",
-            )
+            if phase_variant:
+                error_messages.append(
+                    f"state_transitions['{name}']{label}: a mask is "
+                    f"whole-entry only — `None` cannot appear inside "
+                    f"`Phased`.",
+                )
+            # Bare `None` masks a model-level law; bound at model build.
             continue
         error_messages.extend(
             _fixed_transition_name_mismatch(state_name=name, value=variant, label=label)
