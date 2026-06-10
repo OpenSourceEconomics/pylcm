@@ -16,7 +16,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, SolveSimulateStatePair, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    SolveSimulateStatePair,
+    categorical,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
@@ -362,3 +370,137 @@ def test_simulate_evolves_pair_across_pair_only_handover() -> None:
     np.testing.assert_allclose(
         float(cast("float", sim.loc[(0, 2), "pension_wealth"])), 10.0 * 1.03**2
     )
+
+
+@pytest.mark.parametrize(
+    ("pair_kwargs", "match"),
+    [
+        (
+            {
+                "solve": "not callable",
+                "grid": LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
+                "transition": _evolve_pension_wealth,
+            },
+            "solve",
+        ),
+        (
+            {
+                "solve": _impute_pension_wealth,
+                "grid": 42,
+                "transition": _evolve_pension_wealth,
+            },
+            "grid",
+        ),
+        (
+            {
+                "solve": _impute_pension_wealth,
+                "grid": LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
+                "transition": None,
+            },
+            "transition",
+        ),
+    ],
+)
+def test_malformed_state_pair_is_rejected_at_regime_construction(
+    pair_kwargs: dict[str, Any], match: str
+) -> None:
+    """A pair with a non-callable solve/transition or a non-grid grid errors loudly.
+
+    Each field is part of the pair's contract: `solve` and `transition` must be
+    callable, `grid` must be an LCM grid. A malformed field must surface at
+    `Regime` construction, not as an opaque failure deep inside processing.
+    """
+    with pytest.raises(RegimeInitializationError, match=match):
+        UserRegime(
+            transition=_next_regime,
+            states={
+                "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
+                "pension_wealth": SolveSimulateStatePair(**pair_kwargs),
+            },
+            state_transitions={"aime": _next_aime},
+            functions={"utility": lambda pension_wealth: pension_wealth},
+        )
+
+
+def test_terminal_regime_with_state_pair_is_rejected() -> None:
+    """A terminal regime cannot carry a state pair.
+
+    Terminal regimes have no transitions, so a pair's carry-forward role is
+    meaningless there — and silently registering its `next_<name>` would leak
+    a transition into a regime that must not have one.
+    """
+    with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
+        UserRegime(
+            transition=None,
+            states={
+                "pension_wealth": SolveSimulateStatePair(
+                    solve=_impute_pension_wealth,
+                    grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
+                    transition=_evolve_pension_wealth,
+                ),
+            },
+            functions={"utility": lambda pension_wealth: pension_wealth},
+        )
+
+
+def _evolve_pension_wealth_probs(pension_wealth: float) -> FloatND:
+    return jnp.asarray(pension_wealth)
+
+
+def test_markov_transition_as_pair_transition_is_rejected() -> None:
+    """A pair's transition must be deterministic; `MarkovTransition` errors."""
+    with pytest.raises(RegimeInitializationError, match="MarkovTransition"):
+        UserRegime(
+            transition=_next_regime,
+            states={
+                "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
+                "pension_wealth": SolveSimulateStatePair(
+                    solve=_impute_pension_wealth,
+                    grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
+                    transition=MarkovTransition(_evolve_pension_wealth_probs),
+                ),
+            },
+            state_transitions={"aime": _next_aime},
+            functions={"utility": lambda pension_wealth: pension_wealth},
+        )
+
+
+@categorical(ordered=False)
+class _CoverageStatus:
+    uncovered: ScalarInt
+    covered: ScalarInt
+
+
+def _make_pair_grid(grid_kwargs: dict[str, Any]) -> Any:
+    if grid_kwargs.get("distributed"):
+        # Continuous grids reject `distributed` at construction, so the
+        # sharded case needs a discrete pair grid.
+        return DiscreteGrid(_CoverageStatus, **grid_kwargs)
+    return LinSpacedGrid(start=0.0, stop=20.0, n_points=4, **grid_kwargs)
+
+
+@pytest.mark.parametrize(
+    "grid_kwargs",
+    [{"batch_size": 1}, {"distributed": True}],
+)
+def test_sharded_or_batched_pair_grid_is_rejected(grid_kwargs: dict[str, Any]) -> None:
+    """A pair's grid cannot be sharded or batched.
+
+    The pair's grid is the simulate-phase domain of a carried per-subject
+    value, not a solve dimension — device sharding and chunked-vmap batching
+    only apply to solve grid axes.
+    """
+    with pytest.raises(RegimeInitializationError, match="pair"):
+        UserRegime(
+            transition=_next_regime,
+            states={
+                "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
+                "pension_wealth": SolveSimulateStatePair(
+                    solve=_impute_pension_wealth,
+                    grid=_make_pair_grid(grid_kwargs),
+                    transition=_evolve_pension_wealth,
+                ),
+            },
+            state_transitions={"aime": _next_aime},
+            functions={"utility": lambda pension_wealth: pension_wealth},
+        )

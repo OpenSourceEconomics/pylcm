@@ -123,6 +123,7 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
         )
 
     error_messages.extend(_validate_active(regime.active))
+    error_messages.extend(_state_pair_field_errors(regime))
     error_messages.extend(_validate_state_transitions(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
@@ -320,6 +321,59 @@ def _state_pair_names(regime: lcm.regime.Regime) -> set[StateName]:
         for name, grid in regime.states.items()
         if isinstance(grid, SolveSimulateStatePair)
     }
+
+
+def _state_pair_field_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Validate every state pair's `solve`, `grid`, and `transition` fields.
+
+    The pair contract:
+    - `solve` is the derived function imputing the value during backward
+      induction ⇒ must be callable.
+    - `grid` is the simulate-phase domain of a carried per-subject value, not a
+      solve dimension ⇒ must be an LCM grid, without `batch_size`/`distributed`
+      (those knobs only apply to solve grid axes).
+    - `transition` evolves the carried value each period ⇒ must be a plain
+      callable; `MarkovTransition` is not supported for state pairs.
+    - A terminal regime has no transitions, so it cannot carry a pair.
+    """
+    error_messages: list[str] = []
+    pair_names: list[StateName] = []
+    for name, spec in regime.states.items():
+        if not isinstance(spec, SolveSimulateStatePair):
+            continue
+        pair_names.append(name)
+        if not callable(spec.solve):
+            error_messages.append(
+                f"State pair '{name}': `solve` must be a callable, got {spec.solve!r}."
+            )
+        if isinstance(spec.transition, MarkovTransition):
+            error_messages.append(
+                f"State pair '{name}': `transition` must be a deterministic "
+                f"callable — `MarkovTransition` is not supported for state "
+                f"pairs."
+            )
+        elif not callable(spec.transition):
+            error_messages.append(
+                f"State pair '{name}': `transition` must be a callable, "
+                f"got {spec.transition!r}."
+            )
+        if not isinstance(spec.grid, Grid):
+            error_messages.append(
+                f"State pair '{name}': `grid` must be an LCM grid, got {spec.grid!r}."
+            )
+        elif spec.grid.batch_size > 0 or spec.grid.distributed:
+            error_messages.append(
+                f"State pair '{name}': `grid` is the simulate-phase domain of "
+                f"a carried per-subject value — `batch_size` and `distributed` "
+                f"apply only to solve grid axes and must not be set on a "
+                f"pair's grid."
+            )
+    if pair_names and regime.terminal:
+        error_messages.append(
+            f"Terminal regimes cannot carry SolveSimulateStatePair states "
+            f"(no next period to carry {pair_names} into)."
+        )
+    return error_messages
 
 
 def _state_pair_transition_errors(
