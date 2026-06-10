@@ -6,16 +6,19 @@ specifies each phase explicitly. `normalize_regime_phases` expands every slot
 into per-phase specs and rejects combinations without defined semantics.
 """
 
-from typing import Any
+from typing import Any, cast
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.regime_building.phases import normalize_regime_phases
 from lcm import (
+    AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
+    Model,
     NormalIIDProcess,
     Phased,
     SolveSimulateFunctionPair,
@@ -476,5 +479,152 @@ def test_phased_function_with_non_callable_variant_is_rejected() -> None:
             functions={
                 "utility": _utility,
                 "bonus": Phased(solve=_solve_variant, simulate="not callable"),
+            }
+        )
+
+
+@categorical(ordered=False)
+class _RegimeId:
+    working: ScalarInt
+    dead: ScalarInt
+
+
+def _next_regime_working(age: float) -> ScalarInt:
+    return jnp.where(age < 62, _RegimeId.working, _RegimeId.dead)
+
+
+def _belief_next_wealth(wealth: float, consumption: float) -> float:
+    return wealth - consumption
+
+
+def _true_next_wealth(wealth: float, consumption: float) -> float:
+    return (wealth - consumption) * 1.1
+
+
+def _consumption_leq_wealth(consumption: float, wealth: float) -> bool:
+    return consumption <= wealth
+
+
+def _build_phased_law_model(*, phased_law: bool) -> Model:
+    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    working = UserRegime(
+        transition=_next_regime_working,
+        active=lambda age: age < 64,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
+        state_transitions={
+            "wealth": Phased(solve=_belief_next_wealth, simulate=_true_next_wealth)
+            if phased_law
+            else _belief_next_wealth
+        },
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        constraints={"feasible_consumption": _consumption_leq_wealth},
+        functions={"utility": _utility},
+    )
+    return Model(
+        regimes={"working": working, "dead": dead},
+        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        regime_id_class=_RegimeId,
+    )
+
+
+def _solve_params(model: Model) -> dict:
+    params = cast("dict", model.get_params_template())
+    params["working"]["H"]["discount_factor"] = 0.95
+    return params
+
+
+def test_phased_law_simulation_evolves_state_under_simulate_law() -> None:
+    """With `Phased` laws, the panel evolves the state under the simulate law.
+
+    The agent decides under the solved policy (computed with the solve law),
+    but the realized next state follows the simulate law.
+    """
+    model = _build_phased_law_model(phased_law=True)
+    params = _solve_params(model)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        period_to_regime_to_V_arr=None,
+        initial_conditions={
+            "wealth": jnp.asarray([50.0]),
+            "age": jnp.asarray([60.0]),
+            "regime_id": jnp.asarray([_RegimeId.working]),
+        },
+    )
+    sim = (
+        result.to_dataframe()
+        .query('regime_name == "working"')
+        .set_index(["subject_id", "period"])
+        .sort_index()
+    )
+    wealth_0 = float(cast("float", sim.loc[(0, 0), "wealth"]))
+    consumption_0 = float(cast("float", sim.loc[(0, 0), "consumption"]))
+    np.testing.assert_allclose(
+        float(cast("float", sim.loc[(0, 1), "wealth"])),
+        (wealth_0 - consumption_0) * 1.1,
+        rtol=1e-6,
+    )
+
+
+def test_phased_law_solution_matches_bare_solve_law() -> None:
+    """The value function only sees the solve law: a `Phased` law's simulate
+    variant leaves V identical to the bare solve-law model."""
+    phased_solution = _build_phased_law_model(phased_law=True).solve(
+        params=_solve_params(_build_phased_law_model(phased_law=True)),
+        log_level="debug",
+    )
+    bare_solution = _build_phased_law_model(phased_law=False).solve(
+        params=_solve_params(_build_phased_law_model(phased_law=False)),
+        log_level="debug",
+    )
+    for period, regime_to_V in bare_solution.items():
+        for regime_name, expected_V in regime_to_V.items():
+            assert bool(jnp.allclose(phased_solution[period][regime_name], expected_V))
+
+
+def _belief_drift_law(wealth: float, belief_drift: float) -> float:
+    return wealth * belief_drift
+
+
+def _true_drift_law(wealth: float, true_drift: float) -> float:
+    return wealth * true_drift
+
+
+def test_phased_law_params_template_unions_both_variants() -> None:
+    """The params template lists both laws' parameters under `next_<state>`."""
+    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    working = UserRegime(
+        transition=_next_regime_working,
+        active=lambda age: age < 64,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
+        state_transitions={
+            "wealth": Phased(solve=_belief_drift_law, simulate=_true_drift_law)
+        },
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        functions={"utility": _utility},
+    )
+    model = Model(
+        regimes={"working": working, "dead": dead},
+        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        regime_id_class=_RegimeId,
+    )
+    template = model.get_params_template()
+    assert "belief_drift" in template["working"]["next_wealth"]
+    assert "true_drift" in template["working"]["next_wealth"]
+
+
+def _markov_law(wealth: float) -> FloatND:  # noqa: ARG001
+    return jnp.asarray([0.5, 0.5])
+
+
+def test_markov_variant_in_phased_law_is_rejected() -> None:
+    """Stochastic (`MarkovTransition`) variants inside a `Phased` law of
+    motion are not yet supported."""
+    with pytest.raises(RegimeInitializationError, match="not yet supported"):
+        _build_regime(
+            state_transitions={
+                "wealth": Phased(
+                    solve=MarkovTransition(_markov_law), simulate=_next_wealth
+                )
             }
         )

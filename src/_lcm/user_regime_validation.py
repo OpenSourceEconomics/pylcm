@@ -466,11 +466,21 @@ def _validate_state_transitions(regime: lcm.regime.Regime) -> list[str]:
 def _state_transition_value_errors(*, name: StateName, value: object) -> list[str]:
     """Validate one `state_transitions` entry against the value vocabulary.
 
-    Each variant of a `Phased` entry is held to the same vocabulary as a bare
-    value: callable, `MarkovTransition`, `None`, or a per-target Mapping.
+    Each variant of a `Phased` entry is held to the vocabulary of a bare
+    value — callable, `None`, or a per-target Mapping — except that a
+    stochastic (`MarkovTransition`) variant is rejected: per-phase
+    stochasticity of a law of motion is not yet supported.
     """
     error_messages: list[str] = []
+    phase_variant = isinstance(value, Phased)
     for variant, label in _state_transition_variants(value):
+        if phase_variant and isinstance(variant, MarkovTransition):
+            error_messages.append(
+                f"state_transitions['{name}']{label}: a stochastic "
+                f"(`MarkovTransition`) variant inside `Phased` is not yet "
+                f"supported.",
+            )
+            continue
         if variant is None or callable(variant):
             continue
         if isinstance(variant, Mapping):

@@ -481,26 +481,22 @@ def _build_simulation_phase(
     # check, additional targets) reads each carried state as its carried true
     # value, not the solve-phase imputation. Dropping the imputation turns the
     # name into a leaf supplied by the simulator, and `core.transitions`
-    # (built from the simulation slice) carries each carried state's
-    # `next_<name>` law of motion. Only the decision functions built above
-    # (Q_and_F / argmax / regime-transition probs) keep the imputation — the
-    # agent decides on the value the solved policy was computed for. Without
-    # carried states the solve sets are reused unchanged.
+    # (built from the simulation slice) carries every simulate-phase law —
+    # including each carried state's `next_<name>` and any `Phased` law's
+    # simulate variant. Only the decision functions built above (Q_and_F /
+    # argmax / regime-transition probs) keep the imputation — the agent
+    # decides on the value the solved policy was computed for.
     if carried_only:
         simulate_functions: EconFunctionsMapping = MappingProxyType(
             {k: v for k, v in core.functions.items() if k not in carried_only}
         )
-        next_state_transitions = core.transitions
-        next_state_stochastic_names = core.stochastic_transition_names
     else:
         simulate_functions = core.functions
-        next_state_transitions = solve_transitions
-        next_state_stochastic_names = solve_stochastic_transition_names
 
     next_state = _build_next_state_vmapped(
         functions=simulate_functions,
-        transitions=next_state_transitions,
-        stochastic_transition_names=next_state_stochastic_names,
+        transitions=core.transitions,
+        stochastic_transition_names=core.stochastic_transition_names,
         all_grids=all_grids,
         variables=variables,
         regime_params_template=regime_params_template,
@@ -518,8 +514,8 @@ def _build_simulation_phase(
         carried_only_state_names=frozenset(carried_grids),
         functions=simulate_functions,
         constraints=constraints,
-        transitions=next_state_transitions,
-        stochastic_transition_names=next_state_stochastic_names,
+        transitions=core.transitions,
+        stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         next_state=next_state,
@@ -755,8 +751,13 @@ def _extract_phase_transitions(
     if phase_slice.regime_transition is None:
         return {}
 
-    state_transitions = collect_state_transitions(
-        phase_slice.grid_states, phase_slice.state_transitions
+    # Slice values are phase-resolved, so the collected transitions hold no
+    # `Phased` containers.
+    state_transitions = cast(
+        "dict[TransitionFunctionName, UserFunction]",
+        collect_state_transitions(
+            phase_slice.grid_states, phase_slice.state_transitions
+        ),
     )
     simple_transitions, per_target_transitions = _classify_transitions(
         state_transitions

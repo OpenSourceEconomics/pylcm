@@ -80,7 +80,7 @@ def collect_state_transitions(
         | None
         | Mapping[RegimeName, UserFunction | Callable | Phased],
     ],
-) -> dict[TransitionFunctionName, UserFunction]:
+) -> dict[TransitionFunctionName, UserFunction | Phased]:
     """Collect state transition functions from `state_transitions`.
 
     For each state, produces entries keyed as `f"next_{name}"`:
@@ -97,7 +97,7 @@ def collect_state_transitions(
     validation, so only callables, MarkovTransition, and per-target dicts remain.
 
     """
-    transitions: dict[TransitionFunctionName, UserFunction] = {}
+    transitions: dict[TransitionFunctionName, UserFunction | Phased] = {}
     for name, grid in states.items():
         # Process transitions built directly in _process_regime_core
         if isinstance(grid, _ContinuousStochasticProcess):
@@ -203,7 +203,7 @@ def _make_identity_fn(
 
 def _add_raw_transition(
     *,
-    transitions: dict[TransitionFunctionName, UserFunction],
+    transitions: dict[TransitionFunctionName, UserFunction | Phased],
     name: StateName,
     raw: UserFunction
     | Callable
