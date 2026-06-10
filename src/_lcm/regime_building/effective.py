@@ -54,8 +54,7 @@ class EffectiveUserRegime(UserRegime):
             derived_categoricals = None
         elif field_values:
             msg = (
-                "Pass either `user_regime` or the full set of regime fields, "
-                "not both."
+                "Pass either `user_regime` or the full set of regime fields, not both."
             )
             raise TypeError(msg)
         # `derived_categoricals` is the final (model-merged) mapping; `None`

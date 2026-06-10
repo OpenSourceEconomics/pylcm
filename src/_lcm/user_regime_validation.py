@@ -141,10 +141,59 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
 
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_state_transition_grammar_errors(regime))
+    error_messages.extend(_regime_transition_grammar_errors(regime.transition))
 
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
+
+
+def _regime_transition_grammar_errors(transition: object) -> list[str]:
+    """Validate the regime `transition` value vocabulary.
+
+    A `Phased` container's sides are each held to the bare vocabulary
+    (callable, `MarkovTransition`, or a per-target dict); per-target cells
+    must be `MarkovTransition`-wrapped probability functions.
+    """
+    error_messages: list[str] = []
+    sides = (
+        (
+            (transition.solve, " solve variant"),
+            (transition.simulate, " simulate variant"),
+        )
+        if isinstance(transition, Phased)
+        else ((transition, ""),)
+    )
+    for side, label in sides:
+        if not isinstance(side, Mapping):
+            continue
+        if not side:
+            error_messages.append(
+                f"transition{label}: an empty per-target dict declares no "
+                f"reachable targets — use `transition=None` for a terminal "
+                f"regime.",
+            )
+        for target_name, cell in side.items():
+            if not isinstance(target_name, str):
+                error_messages.append(
+                    f"transition{label} per-target dict key {target_name!r} "
+                    f"must be a string.",
+                )
+            if isinstance(cell, Phased):
+                error_messages.append(
+                    f"transition{label}['{target_name}'] cannot be `Phased` — "
+                    f"`Phased` is outermost-only: wrap the whole entry, e.g. "
+                    f"`Phased(solve={{...}}, simulate={{...}})`.",
+                )
+            elif not isinstance(cell, MarkovTransition):
+                error_messages.append(
+                    f"transition{label}['{target_name}'] must be a "
+                    f"`MarkovTransition`-wrapped probability function — "
+                    f"deterministic per-target regime transitions are not yet "
+                    f"supported (use the coarse form, or `MarkovTransition` "
+                    f"with indicator probabilities).",
+                )
+    return error_messages
 
 
 def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:

@@ -44,7 +44,7 @@ def _next_wealth(wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
-def _next_regime(age: float) -> ScalarInt:
+def _next_regime(age: float) -> ScalarInt:  # noqa: ARG001
     return jnp.asarray(0, dtype=jnp.int32)
 
 
@@ -65,11 +65,11 @@ def _base_regime_kwargs() -> dict[str, Any]:
     }
 
 
-
 def _regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = _base_regime_kwargs()
     spec.update(overrides)
     return UserRegime(**spec)
+
 
 def _canonicalize(regimes: dict[str, UserRegime]) -> Mapping:
     return canonicalize_regimes(
@@ -97,9 +97,20 @@ def test_bare_law_broadcasts_over_carrying_targets() -> None:
 
 
 def test_per_target_dict_is_restricted_to_named_targets() -> None:
-    """A user per-target dict passes through with exactly its named targets."""
+    """A user per-target dict passes through with exactly its named targets.
+
+    The per-target regime transition declares "retire" and "dead" reachable;
+    "work" carries `wealth` but is structurally unreachable, so the law
+    toward it is neither required nor produced.
+    """
     specs = _two_regime_model_specs(
-        {"state_transitions": {"wealth": {"retire": _next_wealth}}}
+        {
+            "transition": {
+                "retire": MarkovTransition(lambda age: jnp.asarray(0.6)),  # noqa: ARG005
+                "dead": MarkovTransition(lambda age: jnp.asarray(0.4)),  # noqa: ARG005
+            },
+            "state_transitions": {"wealth": {"retire": _next_wealth}},
+        }
     )
     canonical = specs["work"].solution.state_transitions["wealth"]
     assert set(canonical) == {"retire"}
@@ -114,7 +125,9 @@ def test_fixed_transition_desugars_to_per_target_identities() -> None:
             "wealth": _next_wealth,
             "health": fixed_transition("health"),
         },
-        "functions": {"utility": lambda consumption, health: jnp.log(consumption)},
+        "functions": {
+            "utility": lambda consumption, health: jnp.log(consumption)  # noqa: ARG005
+        },
     }
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
     specs = _canonicalize(
@@ -134,7 +147,9 @@ def test_markov_law_broadcasts_as_markov() -> None:
             "wealth": _next_wealth,
             "health": MarkovTransition(_health_probs),
         },
-        "functions": {"utility": lambda consumption, health: jnp.log(consumption)},
+        "functions": {
+            "utility": lambda consumption, health: jnp.log(consumption)  # noqa: ARG005
+        },
     }
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
     specs = _canonicalize(

@@ -54,12 +54,29 @@ class Regime:
 
     """
 
-    transition: UserFunction | MarkovTransition | Phased | None
-    """Regime transition function, or `None` for terminal regimes.
+    # `UserFunction`/`Phased` inside the per-target dict pass the type check
+    # so the validator can reject them with an explanation.
+    transition: (
+        UserFunction
+        | MarkovTransition
+        | Phased
+        | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+        | None
+    )
+    """Regime transition, or `None` for terminal regimes.
 
-    A bare callable is deterministic. Wrap in `MarkovTransition` for stochastic
-    regime transitions that return probability distributions. `Phased` gives
-    each phase its own variant (matching stochasticity required).
+    Three forms:
+
+    - bare callable ⇒ deterministic, returns the target regime id
+    - `MarkovTransition` ⇒ stochastic, returns a probability vector over all
+      regimes
+    - per-target dict ⇒ stochastic, maps target regime names to
+      `MarkovTransition`-wrapped functions returning that target's
+      probability. The key set declares the regime's reachable targets;
+      omitted regimes are structurally unreachable.
+
+    `Phased` gives each phase its own variant (matching form required; for
+    per-target dicts, identical key sets).
     """
 
     active: ActiveFunction = lambda _age: True
@@ -137,17 +154,18 @@ class Regime:
 
     @property
     def stochastic_regime_transition(self) -> bool:
-        """Whether the regime transition is stochastic (MarkovTransition).
+        """Whether the regime transition is stochastic.
 
-        `Phased` variants must have matching stochasticity, so the solve
-        variant is representative.
+        A `MarkovTransition` and a per-target dict are both stochastic.
+        `Phased` variants must have matching forms, so the solve variant is
+        representative.
         """
         transition = (
             self.transition.solve
             if isinstance(self.transition, Phased)
             else self.transition
         )
-        return isinstance(transition, MarkovTransition)
+        return isinstance(transition, MarkovTransition | Mapping)
 
     def __post_init__(self) -> None:
         _validate_mapping_contents(self)
@@ -213,10 +231,21 @@ class Regime:
                 # `state_transitions` entry, collected below.
                 result[name] = cast("UserFunction", spec.solve)
         result |= cast("Mapping[str, UserFunction]", self.constraints)
-        if callable(self.transition) or isinstance(self.transition, Phased):
+        if self.transition is not None:
             collected = collect_state_transitions(self.states, self.state_transitions)
             result |= {name: resolve(func) for name, func in collected.items()}
-            result["next_regime"] = resolve(self.transition)
+            transition = self.transition
+            if isinstance(transition, Phased):
+                transition = (
+                    transition.solve if phase == "solve" else transition.simulate
+                )
+            if isinstance(transition, Mapping):
+                # Per-target regime transition: one entry per declared target,
+                # mirroring how per-target state laws are keyed.
+                for target_name, cell in transition.items():
+                    result[f"next_regime__{target_name}"] = cast("UserFunction", cell)
+            else:
+                result["next_regime"] = cast("UserFunction", transition)
         return MappingProxyType(result)
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401

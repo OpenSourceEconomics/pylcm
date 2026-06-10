@@ -519,6 +519,15 @@ def _resolve_per_target_template_key(
                 if template_key == func_name:
                     return qname_from_tree_path((next_state, target))
 
+    # Per-target regime transitions contribute "to_{target}_next_regime" keys.
+    transition = user_regime.transition
+    if isinstance(transition, Phased):
+        transition = transition.solve
+    if isinstance(transition, Mapping):
+        for target_name in transition:
+            if func_name == f"to_{target_name}_next_regime":
+                return qname_from_tree_path(("next_regime", str(target_name)))
+
     return None
 
 

@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -7,7 +8,12 @@ from dags.tree import tree_path_from_qname
 from _lcm.grids import IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.transitions import collect_state_transitions
-from _lcm.typing import FunctionName, RegimeParamsTemplate, TransitionFunctionName
+from _lcm.typing import (
+    FunctionName,
+    RegimeName,
+    RegimeParamsTemplate,
+    TransitionFunctionName,
+)
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
@@ -162,12 +168,42 @@ def _collect_all_functions_for_template(
     for name, spec in user_regime.states.items():
         if isinstance(spec, Phased):
             result[name] = cast("UserFunction", spec.solve)
-    if callable(user_regime.transition) or isinstance(user_regime.transition, Phased):
+    if user_regime.transition is not None:
         result |= collect_state_transitions(
             user_regime.states, user_regime.state_transitions
         )
-        result["next_regime"] = user_regime.transition
+        result |= _regime_transition_entries(user_regime.transition)
     return result
+
+
+def _regime_transition_entries(
+    transition: object,
+) -> dict[TransitionFunctionName, UserFunction | Phased]:
+    """Key the regime transition for parameter discovery.
+
+    - coarse forms ⇒ one `next_regime` entry
+    - a per-target dict ⇒ one `next_regime__<target>` entry per cell, so each
+      cell's parameters surface under `to_<target>_next_regime`
+    - `Phased` per-target dicts (identical key sets) ⇒ per-cell `Phased`
+      entries, so both phases' parameters are unioned per target
+
+    """
+    if isinstance(transition, Phased) and isinstance(transition.solve, Mapping):
+        solve_cells = cast("Mapping[RegimeName, UserFunction]", transition.solve)
+        simulate_cells = cast("Mapping[RegimeName, UserFunction]", transition.simulate)
+        return {
+            f"next_regime__{target_name}": Phased(
+                solve=solve_cells[target_name],
+                simulate=simulate_cells[target_name],
+            )
+            for target_name in solve_cells
+        }
+    if isinstance(transition, Mapping):
+        cells = cast("Mapping[RegimeName, UserFunction]", transition)
+        return {
+            f"next_regime__{target_name}": cell for target_name, cell in cells.items()
+        }
+    return {"next_regime": cast("UserFunction | Phased", transition)}
 
 
 def _validate_no_shadowing(

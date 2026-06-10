@@ -33,7 +33,9 @@ type _PhaseStateTransition = (
     | None
     | Mapping[RegimeName, UserFunction | MarkovTransition]
 )
-type _PhaseRegimeTransition = UserFunction | MarkovTransition | None
+type _PhaseRegimeTransition = (
+    UserFunction | MarkovTransition | Mapping[RegimeName, MarkovTransition] | None
+)
 
 
 def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
@@ -112,8 +114,10 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             grid_states=MappingProxyType(grid_states),
             state_transitions=MappingProxyType(state_transitions),
             regime_transition=regime_transition,
+            # A per-target dict is stochastic by construction (each cell is a
+            # MarkovTransition-wrapped probability function).
             stochastic_regime_transition=isinstance(
-                regime_transition, MarkovTransition
+                regime_transition, MarkovTransition | Mapping
             ),
         )
 
@@ -374,7 +378,7 @@ def _split_regime_transition(
     """Split the regime `transition` into per-phase variants."""
     raw = user_regime.transition
     if not isinstance(raw, Phased):
-        return raw, raw
+        return cast("_PhaseRegimeTransition", raw), cast("_PhaseRegimeTransition", raw)
     sides = (("solve", raw.solve), ("simulate", raw.simulate))
     valid = True
     for phase_label, side in sides:
@@ -384,20 +388,33 @@ def _split_regime_transition(
                 "phase-invariant; use `transition=None` for a terminal regime."
             )
             valid = False
-        elif not callable(side):
+        elif not callable(side) and not isinstance(side, Mapping):
             errors.append(
-                f"Regime transition {phase_label} variant must be a callable "
-                f"or `MarkovTransition`, got {side!r}."
+                f"Regime transition {phase_label} variant must be a callable, "
+                f"`MarkovTransition`, or a per-target dict, got {side!r}."
             )
             valid = False
-    if valid and (
-        isinstance(raw.solve, MarkovTransition)
-        != isinstance(raw.simulate, MarkovTransition)
-    ):
-        errors.append(
-            "Regime transition variants must have matching stochasticity: "
-            "wrap both in `MarkovTransition` or neither."
-        )
+    if valid:
+        solve_granular = isinstance(raw.solve, Mapping)
+        simulate_granular = isinstance(raw.simulate, Mapping)
+        if solve_granular != simulate_granular or (
+            not solve_granular
+            and isinstance(raw.solve, MarkovTransition)
+            != isinstance(raw.simulate, MarkovTransition)
+        ):
+            errors.append(
+                "Regime transition variants must have matching forms: both "
+                "coarse with matching stochasticity, or both per-target dicts."
+            )
+        elif solve_granular and set(cast("Mapping", raw.solve)) != set(
+            cast("Mapping", raw.simulate)
+        ):
+            errors.append(
+                "Per-target regime transition variants must declare identical "
+                "key sets — phase-variant reachability would let the "
+                "simulation realize a jump into a regime whose continuation "
+                "value was never planned over."
+            )
     return (
         cast("_PhaseRegimeTransition", raw.solve),
         cast("_PhaseRegimeTransition", raw.simulate),
