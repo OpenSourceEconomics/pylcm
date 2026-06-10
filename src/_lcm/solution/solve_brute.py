@@ -10,6 +10,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.carry import EgmCarry
 from _lcm.engine import Regime, _build_regime_sharding
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
@@ -73,12 +74,25 @@ def solve(
         }
     )
 
-    # AOT-compile all unique max_Q_over_a functions in parallel.
+    # Rolling EGM-carry mapping, maintained next to `next_regime_to_V_arr`.
+    # Entries exist only for carry-producing regimes (DC-EGM regimes and, in
+    # models with one, terminal regimes); the template key order is reused
+    # every period so the pytree structure stays JIT-stable.
+    next_regime_to_egm_carry = MappingProxyType(
+        {
+            regime_name: regime.solve_functions.egm_carry_template
+            for regime_name, regime in regimes.items()
+            if regime.solve_functions.egm_carry_template is not None
+        }
+    )
+
+    # AOT-compile all unique solve kernels in parallel.
     compiled_functions = _compile_all_functions(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_egm_carry=next_regime_to_egm_carry,
         enable_jit=enable_jit,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
@@ -132,6 +146,7 @@ def solve(
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}
+        period_egm_carries: dict[RegimeName, EgmCarry] = {}
 
         active_regimes = {
             regime_name: regime
@@ -146,22 +161,16 @@ def solve(
         )
 
         for regime_name, regime in active_regimes.items():
-            state_action_space = regime.state_action_space(
-                regime_params=flat_params[regime_name],
-            )
-            max_Q_over_a = compiled_functions[(regime_name, period)]
-
-            # evaluate Q-function on states and actions, and maximize over actions
-            # Pass period/age as JAX arrays (not Python scalars) so the shared
-            # jax.jit function is traced once with abstract shapes, not recompiled
-            # for every distinct (period, age) pair.
-            V_arr = max_Q_over_a(
-                **state_action_space.states,
-                **state_action_space.actions,
+            V_arr = _solve_regime_period(
+                regime=regime,
+                regime_name=regime_name,
+                period=period,
+                solve_kernel=compiled_functions[(regime_name, period)],
+                flat_params=flat_params,
+                ages=ages,
                 next_regime_to_V_arr=next_regime_to_V_arr,
-                **flat_params[regime_name],
-                period=jnp.int32(period),
-                age=ages.values[period],
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                period_egm_carries=period_egm_carries,
             )
             # Async reductions: gated on log level. `"off"` skips
             # everything — no kernel launches, no host syncs, no
@@ -203,15 +212,12 @@ def solve(
                 # implies a finished `min`/`max` too.
                 diagnostic_mean[-1].block_until_ready()
 
-        # Maintain consistent pytree structure: keep all regime keys,
-        # update active regimes with solved V arrays.
-        next_regime_to_V_arr = MappingProxyType(
-            {
-                regime_name: period_solution.get(
-                    regime_name, next_regime_to_V_arr[regime_name]
-                )
-                for regime_name in regimes
-            }
+        next_regime_to_V_arr, next_regime_to_egm_carry = _roll_continuation_inputs(
+            regimes=regimes,
+            period_solution=period_solution,
+            period_egm_carries=period_egm_carries,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
         )
         solution[period] = MappingProxyType(period_solution)
 
@@ -257,6 +263,111 @@ def solve(
     return MappingProxyType(solution)
 
 
+def _solve_regime_period(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    period: int,
+    solve_kernel: Callable,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    period_egm_carries: dict[RegimeName, EgmCarry],
+) -> FloatND:
+    """Invoke one regime's solve kernel for one period.
+
+    Dispatch on the regime's kernel kind:
+
+    - DC-EGM kernel ⇒ Euler inversion on the savings grid (no action grids
+      enter); returns the V array on the exogenous state grid plus the carry
+      the regime's parents interpolate.
+    - max-Q-over-a kernel ⇒ evaluate Q on states and actions and maximize
+      over actions; a terminal regime with a carry producer additionally
+      yields its closed-form carry.
+
+    Produced carries are stored in `period_egm_carries` in place.
+
+    `period`/`age` are passed as JAX arrays (not Python scalars) so a shared
+    `jax.jit` function is traced once with abstract shapes, not recompiled
+    for every distinct (period, age) pair.
+
+    Returns:
+        The regime's value-function array.
+
+    """
+    state_action_space = regime.state_action_space(
+        regime_params=flat_params[regime_name],
+    )
+    if regime.solve_functions.egm_step is not None:
+        V_arr, egm_carry = solve_kernel(
+            **state_action_space.states,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            **flat_params[regime_name],
+            period=jnp.int32(period),
+            age=ages.values[period],
+        )
+        period_egm_carries[regime_name] = egm_carry
+        return V_arr
+
+    V_arr = solve_kernel(
+        **state_action_space.states,
+        **state_action_space.actions,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        **flat_params[regime_name],
+        period=jnp.int32(period),
+        age=ages.values[period],
+    )
+    egm_carry_producer = regime.solve_functions.egm_carry_producer
+    if egm_carry_producer is not None:
+        period_egm_carries[regime_name] = egm_carry_producer(
+            V_arr=V_arr,
+            **state_action_space.states,
+            **flat_params[regime_name],
+        )
+    return V_arr
+
+
+def _roll_continuation_inputs(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    period_solution: dict[RegimeName, FloatND],
+    period_egm_carries: dict[RegimeName, EgmCarry],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+) -> tuple[
+    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EgmCarry]
+]:
+    """Roll the per-period continuation mappings forward by one period.
+
+    Both mappings keep their full template key sets — V for every regime,
+    carries for every carry-producing regime — and update only the entries
+    solved this period, so the pytree structure stays JIT-stable.
+
+    Returns:
+        Tuple of the rolled V mapping and the rolled carry mapping.
+
+    """
+    rolled_V_arr = MappingProxyType(
+        {
+            regime_name: period_solution.get(
+                regime_name, next_regime_to_V_arr[regime_name]
+            )
+            for regime_name in regimes
+        }
+    )
+    rolled_egm_carry = MappingProxyType(
+        {
+            regime_name: period_egm_carries.get(
+                regime_name, next_regime_to_egm_carry[regime_name]
+            )
+            for regime_name in next_regime_to_egm_carry
+        }
+    )
+    return rolled_V_arr, rolled_egm_carry
+
+
 def _drain_V_arr_shards(
     *,
     solution: dict[int, MappingProxyType[RegimeName, FloatND]],
@@ -279,16 +390,22 @@ def _compile_all_functions(
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
     enable_jit: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
 ) -> dict[tuple[RegimeName, int], Callable]:
-    """AOT-compile all unique max_Q_over_a functions in parallel.
+    """AOT-compile all unique solve kernels in parallel.
 
     With shared-JIT, many periods share the same `jax.jit`-wrapped function
     object. This function deduplicates by object identity, traces each unique
     function once (sequential), then compiles the XLA programs in parallel
     via a thread pool (XLA releases the GIL during compilation).
+
+    A regime's kernel is its DC-EGM step when one is configured and its
+    max-Q-over-a grid search otherwise; the two take different lowering
+    arguments (the EGM step takes no action grids but the rolling carry
+    template).
 
     When JIT is disabled (`enable_jit=False`), returns the raw functions
     without compilation.
@@ -299,6 +416,8 @@ def _compile_all_functions(
         ages: Age grid for the model.
         next_regime_to_V_arr: Template with consistent keys and V array shapes
             for constructing lowering arguments.
+        next_regime_to_egm_carry: Template with consistent keys and carry
+            shapes for constructing EGM lowering arguments.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
@@ -310,11 +429,17 @@ def _compile_all_functions(
     """
     # Collect all (regime, period) -> function mappings.
     all_functions: dict[tuple[RegimeName, int], Callable] = {}
+    egm_keys: set[tuple[RegimeName, int]] = set()
     for regime_name, regime in regimes.items():
+        egm_step = regime.solve_functions.egm_step
         for period in regime.active_periods:
-            all_functions[(regime_name, period)] = regime.solve_functions.max_Q_over_a[
-                period
-            ]
+            if egm_step is not None:
+                all_functions[(regime_name, period)] = egm_step[period]
+                egm_keys.add((regime_name, period))
+            else:
+                all_functions[(regime_name, period)] = (
+                    regime.solve_functions.max_Q_over_a[period]
+                )
 
     # If JIT is disabled, return raw functions directly.
     if not enable_jit:
@@ -344,17 +469,16 @@ def _compile_all_functions(
     lowered: dict[Hashable, jax.stages.Lowered] = {}
     labels: dict[Hashable, str] = {}
     for i, (func_id, (func, regime_name, period)) in enumerate(unique.items(), 1):
-        state_action_space = regimes[regime_name].state_action_space(
-            regime_params=flat_params[regime_name],
+        lower_args = _build_lower_args(
+            regime=regimes[regime_name],
+            regime_name=regime_name,
+            period=period,
+            is_egm_kernel=(regime_name, period) in egm_keys,
+            flat_params=flat_params,
+            ages=ages,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
         )
-        lower_args = {
-            **dict(state_action_space.states),
-            **dict(state_action_space.actions),
-            "next_regime_to_V_arr": next_regime_to_V_arr,
-            **dict(flat_params[regime_name]),
-            "period": jnp.int32(period),
-            "age": ages.values[period],
-        }
         label = f"{regime_name} (age {ages.values[period].item()})"
         labels[func_id] = label
         logger.info("%d/%d  %s", i, n_unique, label)
@@ -394,6 +518,44 @@ def _compile_all_functions(
     # Map back to (regime, period) keys.
     return {
         key: compiled[_func_dedup_key(func=func)] for key, func in all_functions.items()
+    }
+
+
+def _build_lower_args(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    period: int,
+    is_egm_kernel: bool,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+) -> dict[str, object]:
+    """Build the lowering arguments for one solve kernel.
+
+    EGM kernels take no action grids but the rolling carry template;
+    max-Q-over-a kernels take the full state-action product.
+    """
+    state_action_space = regime.state_action_space(
+        regime_params=flat_params[regime_name],
+    )
+    common = {
+        "next_regime_to_V_arr": next_regime_to_V_arr,
+        **dict(flat_params[regime_name]),
+        "period": jnp.int32(period),
+        "age": ages.values[period],
+    }
+    if is_egm_kernel:
+        return {
+            **dict(state_action_space.states),
+            "next_regime_to_egm_carry": next_regime_to_egm_carry,
+            **common,
+        }
+    return {
+        **dict(state_action_space.states),
+        **dict(state_action_space.actions),
+        **common,
     }
 
 

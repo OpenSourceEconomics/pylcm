@@ -17,10 +17,13 @@ from lcm.ages import AgeGrid
 
 @dataclasses.dataclass(frozen=True)
 class MockSolveFunctions:
-    """Mock SolveFunctions with only max_Q_over_a."""
+    """Mock SolveFunctions with only the attributes the solve loop reads."""
 
     max_Q_over_a: dict[int, MaxQOverAFunction]
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
+    egm_step: None = None
+    egm_carry_producer: None = None
+    egm_carry_template: None = None
 
 
 class MockRegime(Regime):

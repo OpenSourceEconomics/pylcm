@@ -62,6 +62,12 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         # user-facing params in the template.
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
 
+        # `inverse_marginal_utility` (the DC-EGM inversion function) receives
+        # `marginal_continuation` from the EGM kernel at solve time, so it
+        # must not surface as a user-facing param either.
+        if name == "inverse_marginal_utility":
+            params.pop("marginal_continuation", None)
+
         path = tree_path_from_qname(name)
         template_key = f"to_{path[1]}_{path[0]}" if len(path) > 1 else name
 

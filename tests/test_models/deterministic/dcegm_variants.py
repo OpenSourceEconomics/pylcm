@@ -16,7 +16,7 @@ exists.
 import functools
 from typing import Literal
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
+from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
@@ -34,7 +34,11 @@ from tests.test_models.deterministic import base, retirement_only
 
 # Exogenous end-of-period savings grid; the lower bound is the borrowing limit
 # (savings >= 0 encodes the original `consumption <= wealth` constraint).
-SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=400.0, n_points=200)
+# Nodes are cubically clustered toward the borrowing limit: the value function
+# curves hardest where the constraint starts to bind, and the published V is
+# interpolated from endogenous points spaced like the savings nodes — a
+# uniform grid under-resolves the lowest wealth nodes by orders of magnitude.
+SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in range(200)))
 
 
 def resources(wealth: ContinuousState) -> FloatND:
@@ -69,6 +73,11 @@ DCEGM_SOLVER = DCEGM(
     resources="resources",
     post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
+    # The final decision period consumes everything, so its carry in the
+    # queried resources range consists of constrained-segment points only;
+    # 64 of them keep the geometric spacing ratio (and hence the carry
+    # interpolation error) small.
+    n_constrained_points=64,
 )
 
 

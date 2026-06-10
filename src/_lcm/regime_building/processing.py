@@ -12,6 +12,12 @@ from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.egm.carry import EgmCarry, build_template_egm_carry
+from _lcm.egm.terminal import (
+    N_STATELESS_CARRY_ROWS,
+    get_stateless_terminal_carry_producer,
+    get_terminal_wealth_carry_producer,
+)
 from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.engine import (
     Regime,
@@ -41,13 +47,14 @@ from _lcm.regime_building.stochastic_state_transitions import (
 )
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
-from _lcm.solution.registry import SOLVER_KERNEL_BUILDERS
+from _lcm.solution.registry import SOLVER_KERNEL_BUILDERS, SolverBuildContext
 from _lcm.state_action_space import create_state_action_space
 from _lcm.typing import (
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
+    EgmCarryProducer,
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
@@ -70,6 +77,7 @@ from _lcm.variables import from_regime, get_grids
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.solvers import DCEGM
 from lcm.transition import MarkovTransition, SolveSimulateFunctionPair
 from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
@@ -161,6 +169,10 @@ def process_regimes(
         }
     )
 
+    model_has_dcegm_regime = any(
+        isinstance(user_regime.solver, DCEGM) for user_regime in user_regimes.values()
+    )
+
     canonical_regimes: dict[RegimeName, Regime] = {}
     for regime_name, user_regime in user_regimes.items():
         regime_params_template = create_regime_params_template(user_regime)
@@ -168,6 +180,7 @@ def process_regimes(
         solve_functions = _build_solve_functions(
             user_regime=user_regime,
             regime_name=regime_name,
+            user_regimes=user_regimes,
             nested_transitions=nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
@@ -178,6 +191,7 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
+            model_has_dcegm_regime=model_has_dcegm_regime,
         )
 
         simulate_functions = _build_simulate_functions(
@@ -223,6 +237,7 @@ def _build_solve_functions(
     *,
     user_regime: UserRegime,
     regime_name: RegimeName,
+    user_regimes: Mapping[RegimeName, UserRegime],
     nested_transitions: dict[
         RegimeName | TransitionFunctionName,
         dict[TransitionFunctionName, UserFunction] | UserFunction,
@@ -236,12 +251,15 @@ def _build_solve_functions(
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
+    model_has_dcegm_regime: bool,
 ) -> SolveFunctions:
     """Build all compiled functions for the backward-induction (solve) phase.
 
     Args:
-        regime: The user regime.
+        user_regime: The user regime.
         regime_name: The name of the regime.
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances.
         nested_transitions: Nested transitions dict for internal processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
@@ -252,6 +270,8 @@ def _build_solve_functions(
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
+        model_has_dcegm_regime: Whether any regime of the model uses the
+            DC-EGM solver (terminal regimes then produce EGM carries).
 
     Returns:
         Complete solve functions container.
@@ -321,11 +341,31 @@ def _build_solve_functions(
     # kernels; other solvers register their own builders in
     # `SOLVER_KERNEL_BUILDERS`.
     solver_kernel_builder = SOLVER_KERNEL_BUILDERS[type(user_regime.solver)]
-    max_Q_over_a = solver_kernel_builder(
+    solver_kernels = solver_kernel_builder(
         solver=user_regime.solver,
-        state_action_space=state_action_space,
-        Q_and_F_functions=Q_and_F_functions,
+        context=SolverBuildContext(
+            regime_name=regime_name,
+            user_regimes=user_regimes,
+            state_action_space=state_action_space,
+            Q_and_F_functions=Q_and_F_functions,
+            grids=all_grids[regime_name],
+            functions=core.functions,
+            transitions=core.transitions,
+            stochastic_transition_names=core.stochastic_transition_names,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            regimes_to_active_periods=regimes_to_active_periods,
+            flat_param_names=flat_param_names,
+            enable_jit=enable_jit,
+        ),
+    )
+
+    egm_carry_producer, egm_carry_template = _build_terminal_carry_producer(
+        user_regime=user_regime,
+        functions=core.functions,
+        variables=variables,
         grids=all_grids[regime_name],
+        model_has_dcegm_regime=model_has_dcegm_regime,
         enable_jit=enable_jit,
     )
 
@@ -335,9 +375,68 @@ def _build_solve_functions(
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
-        max_Q_over_a=max_Q_over_a,
+        max_Q_over_a=solver_kernels.max_Q_over_a,
         compute_intermediates=compute_intermediates,
+        egm_step=solver_kernels.egm_step,
+        egm_carry_producer=egm_carry_producer,
+        egm_carry_template=(
+            solver_kernels.egm_carry_template
+            if solver_kernels.egm_carry_template is not None
+            else egm_carry_template
+        ),
     )
+
+
+def _build_terminal_carry_producer(
+    *,
+    user_regime: UserRegime,
+    functions: EconFunctionsMapping,
+    variables: Variables,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    model_has_dcegm_regime: bool,
+    enable_jit: bool,
+) -> tuple[EgmCarryProducer | None, EgmCarry | None]:
+    """Build the EGM carry producer and template for a terminal regime.
+
+    Terminal regimes produce closed-form carries when the model contains a
+    DC-EGM regime, so a DC-EGM parent can interpolate their value and
+    marginal utility. Cases:
+
+    - no states ⇒ constant-value, zero-marginal-utility broadcast rows
+    - exactly one continuous state and no actions ⇒ terminal utility and its
+      wealth gradient on the regime's own state grid
+    - anything else ⇒ no producer (a DC-EGM regime targeting such a terminal
+      regime is rejected by the EGM kernel builder)
+
+    Returns:
+        Tuple of the producer and the regime's carry template, both `None`
+        for non-terminal regimes, for models without a DC-EGM regime, and
+        for unsupported terminal shapes.
+
+    """
+    if not (model_has_dcegm_regime and user_regime.terminal):
+        return None, None
+    producer: EgmCarryProducer
+    if not variables.state_names:
+        producer = get_stateless_terminal_carry_producer()
+        template = build_template_egm_carry(n_rows=N_STATELESS_CARRY_ROWS)
+    elif (
+        len(variables.continuous_state_names) == 1
+        and not variables.discrete_state_names
+        and not user_regime.actions
+    ):
+        state_name = variables.continuous_state_names[0]
+        producer = get_terminal_wealth_carry_producer(
+            functions=functions, state_name=state_name
+        )
+        template = build_template_egm_carry(
+            n_rows=int(grids[state_name].to_jax().shape[0])
+        )
+    else:
+        return None, None
+    if enable_jit:
+        producer = jax.jit(producer)
+    return producer, template
 
 
 def _build_simulate_functions(

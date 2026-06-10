@@ -316,7 +316,6 @@ class Model:
             Immutable mapping of period to a value function array for each regime.
 
         """
-        self._fail_if_dcegm_solver_selected()
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
         validate_transitions(
@@ -496,7 +495,7 @@ class Model:
             optionally with additional_targets.
 
         """
-        self._fail_if_dcegm_solver_selected()
+        self._fail_if_dcegm_simulate()
         log = get_logger(log_level=log_level)
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
@@ -686,14 +685,14 @@ class Model:
         with self._simulate_compile_lock:
             self._simulate_compile_cache[compile_batch_size] = compiled
 
-    def _fail_if_dcegm_solver_selected(self) -> None:
-        """Raise until the DC-EGM solver is implemented.
+    def _fail_if_dcegm_simulate(self) -> None:
+        """Raise until DC-EGM forward simulation is implemented.
 
-        A `DCEGM`-configured regime validates the DC-EGM model contract at
-        construction time, but solving (and hence simulating) is not
-        supported yet. Raising here, before params processing, keeps the
-        error message about the solver rather than about params the EGM
-        machinery would consume internally.
+        Solving a model with a `DCEGM`-configured regime works; simulating
+        it requires the EGM policy machinery, which is not available yet.
+        Raising here, before params processing, keeps the error message
+        about the solver rather than about params the EGM machinery would
+        consume internally.
         """
         for user_regime in self.user_regimes.values():
             if isinstance(user_regime.solver, DCEGM):
