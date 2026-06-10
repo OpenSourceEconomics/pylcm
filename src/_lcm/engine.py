@@ -594,6 +594,9 @@ class Regime:
     are all deterministic.
     """
 
+    has_taste_shocks: bool = False
+    """Whether the regime declares EV1 taste shocks on its discrete actions."""
+
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
 
