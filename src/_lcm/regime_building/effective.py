@@ -68,6 +68,7 @@ class EffectiveUserRegime(UserRegime):
             "state_transitions",
             "actions",
             "constraints",
+            "taste_shocks",
             "description",
         ):
             object.__setattr__(self, field_name, getattr(user_regime, field_name))
