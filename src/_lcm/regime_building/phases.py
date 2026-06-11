@@ -219,7 +219,9 @@ class RegimePhaseSpec:
     cells sharing one `_CoarseTransitionCell`."""
 
     stochastic_regime_transition: bool
-    """Whether this phase's regime transition is a `MarkovTransition`."""
+    """Whether this phase's regime transition is stochastic — a
+    `MarkovTransition` or a per-target dict (whose cells are
+    `MarkovTransition`-wrapped probability functions)."""
 
 
 def _split_functions(

@@ -412,11 +412,11 @@ def _model_slot_value_errors(
     *,
     model_slots: Mapping[str, Mapping[str, object]],
 ) -> list[str]:
-    """Reject `None` and `Phased`-in-cell misuse in model-level slots.
+    """Reject `None` values in model-level slots (masks are regime-level).
 
-    Per-value grammar (grids, callables, law vocabulary) is validated when
-    the merged regimes are constructed; only the merge-specific vocabulary
-    is checked here.
+    Per-value grammar (grids, callables, law vocabulary, `Phased` placement)
+    is validated when the merged regimes are constructed; only the
+    merge-specific vocabulary is checked here.
     """
     errors: list[str] = []
     for slot_name, slot in model_slots.items():
