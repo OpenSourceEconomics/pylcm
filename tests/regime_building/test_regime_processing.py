@@ -125,7 +125,7 @@ def test_process_regimes():
     working_regime = regimes["working_life"]
 
     # Variable Info
-    variables = working_regime.solution.variables
+    variables = working_regime.solution._variables
     assert variables["wealth"] == VariableInfo(
         kind="state", topology="continuous", is_process=False
     )

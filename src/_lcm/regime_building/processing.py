@@ -328,7 +328,7 @@ def _build_solution_phase(
     )
 
     return SolutionPhase(
-        variables=variables,
+        _variables=variables,
         grids=all_grids[regime_name],
         functions=core.functions,
         constraints=core.constraints,
@@ -496,7 +496,7 @@ def _build_simulation_phase(
     )
 
     return SimulationPhase(
-        variables=simulation_variables,
+        _variables=simulation_variables,
         grids=simulate_grids,
         carried_only_state_names=frozenset(carried_grids),
         functions=simulate_functions,
