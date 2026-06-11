@@ -65,7 +65,10 @@ def refine_envelope(
         Tuple of refined endogenous grid, refined policy, refined value (each
         of length `n_refined`, NaN-padded), and the number of envelope points
         `n_kept`. `n_kept > n_refined` signals overflow; the arrays then hold
-        a valid truncated prefix of the envelope.
+        a valid truncated prefix of the envelope. Callers must check the
+        counter rather than publish the truncated arrays silently — the EGM
+        step NaN-poisons its published rows on overflow so the solve loop's
+        NaN diagnostics name the offending (regime, period).
 
     """
     order = jnp.argsort(endog_grid)
