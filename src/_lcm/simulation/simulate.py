@@ -463,7 +463,14 @@ def _simulate_regime_in_period(
     )
     if validation_enabled(logger):
         try:
-            validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
+            # Out-of-regime subjects carry placeholder entries (their state is
+            # meaningless under this regime's problem); validate only the
+            # subjects simulated in this regime.
+            validate_V(
+                V_arr=jnp.where(subject_ids_in_regime, V_arr, 0.0),
+                age=age,
+                regime_name=regime_name,
+            )
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
