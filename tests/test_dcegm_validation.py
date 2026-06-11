@@ -219,6 +219,64 @@ def test_passive_continuous_state_constructs():
     assert model.n_periods == N_PERIODS
 
 
+def _retirement_stay_prob(age: int, final_age_alive: float) -> FloatND:
+    return jnp.where(age >= final_age_alive, 0.0, 1.0)
+
+
+def _retirement_death_prob(age: int, final_age_alive: float) -> FloatND:
+    return jnp.where(age >= final_age_alive, 1.0, 0.0)
+
+
+def _three_regime_model_with_brute_worker(retirement_transition) -> Model:
+    """Model with a brute-force worker regime next to a DC-EGM retirement regime."""
+    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    return Model(
+        regimes={
+            "working_life": base.working_life.replace(
+                active=lambda age, la=last_age: age < la
+            ),
+            "retirement": dcegm_variants.dcegm_retirement_full.replace(
+                transition=retirement_transition,
+                active=lambda age, la=last_age: age < la,
+            ),
+            "dead": dead,
+        },
+        ages=ages,
+        regime_id_class=base.RegimeId,
+    )
+
+
+def test_granular_transition_excluding_brute_regime_passes():
+    """Declared reachability narrows the target-compatibility check.
+
+    A granular regime transition declares its key set as the reachable
+    targets; regimes outside it are structurally unreachable. A DC-EGM
+    regime whose declared targets are itself and a terminal regime may
+    therefore coexist with a brute-force non-terminal regime it never
+    transitions into (the brute regime targeting the DC-EGM regime is
+    allowed in that direction).
+    """
+    model = _three_regime_model_with_brute_worker(
+        {
+            "retirement": MarkovTransition(_retirement_stay_prob),
+            "dead": MarkovTransition(_retirement_death_prob),
+        }
+    )
+    assert model.n_periods == N_PERIODS
+
+
+def test_coarse_transition_reaching_brute_regime_raises():
+    """A coarse regime transition declares every regime reachable.
+
+    The same model fails the target-compatibility check once the DC-EGM
+    regime's transition is a bare callable: the brute-force non-terminal
+    regime becomes a declared target.
+    """
+    with pytest.raises(ModelInitializationError, match="BruteForce"):
+        _three_regime_model_with_brute_worker(base.next_regime_from_retirement)
+
+
 def test_non_dcegm_non_terminal_target_raises():
     """A DC-EGM regime may not target a brute-force non-terminal regime."""
     brute_target = dcegm_variants.dcegm_retirement.replace(
