@@ -236,8 +236,9 @@ _lcm/regime_building/
 │                            slot into per-phase RegimePhaseSpec slices
 │                            (the Phased grammar boundary)
 ├── canonicalize.py       ← canonicalize_regimes: rewrite every phase
-│                            slice's laws into the canonical target-granular
-│                            form over exactly the reachable targets
+│                            slice's laws and regime transition into the
+│                            canonical target-granular form over exactly
+│                            the reachable targets
 ├── processing.py         ← per-regime canonicalisation:
 │                            UserRegime → engine.Regime
 ├── transitions.py        ← collect_state_transitions: walk user-supplied

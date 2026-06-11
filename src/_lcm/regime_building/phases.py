@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
+from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import FunctionName, RegimeName, StateName
@@ -34,7 +35,10 @@ type _PhaseStateTransition = (
     | Mapping[RegimeName, UserFunction | MarkovTransition]
 )
 type _PhaseRegimeTransition = (
-    UserFunction | MarkovTransition | Mapping[RegimeName, MarkovTransition] | None
+    UserFunction
+    | MarkovTransition
+    | Mapping[RegimeName, MarkovTransition | _CoarseTransitionCell]
+    | None
 )
 
 
@@ -208,7 +212,11 @@ class RegimePhaseSpec:
     plus target-only entries."""
 
     regime_transition: _PhaseRegimeTransition
-    """Phase-resolved regime transition; `None` for terminal regimes."""
+    """Phase-resolved regime transition; `None` for terminal regimes.
+    `normalize_regime_phases` emits the user form (bare callable,
+    `MarkovTransition`, or per-target dict); `canonicalize_regimes` rewrites
+    every non-terminal form into a per-target mapping — coarse forms become
+    cells sharing one `_CoarseTransitionCell`."""
 
     stochastic_regime_transition: bool
     """Whether this phase's regime transition is a `MarkovTransition`."""
