@@ -224,7 +224,7 @@ def _phase_fixed_point(
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     user_regimes: Mapping[RegimeName, UserRegime],
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
-    kept: dict[RegimeName, frozenset[StateOrActionName]],
+    kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     phase_name: str,
     all_regime_names: frozenset[RegimeName],
 ) -> dict[RegimeName, frozenset[StateOrActionName]]:
@@ -233,7 +233,8 @@ def _phase_fixed_point(
     Per iteration, each regime's needed-set is the DAG ancestry of its root
     computations plus the laws of motion toward reachable targets that
     currently keep the law's state; a broadcast variable joins the kept-set
-    when needed. Monotone in `kept`, so iteration terminates.
+    when needed. Monotone in the kept-sets, so iteration terminates. The
+    input mapping is left untouched; the grown kept-sets are returned.
     """
     reachable: dict[RegimeName, frozenset[RegimeName]] = {}
     for regime_name, spec in specs.items():
@@ -249,10 +250,11 @@ def _phase_fixed_point(
         else:
             reachable[regime_name] = all_regime_names
 
+    grown = dict(kept)
     while True:
         changed = False
         for regime_name, user_regime in user_regimes.items():
-            candidates = broadcast_variables[regime_name] - kept[regime_name]
+            candidates = broadcast_variables[regime_name] - grown[regime_name]
             if not candidates:
                 continue
             phase_slice = getattr(specs[regime_name], phase_name)
@@ -260,14 +262,14 @@ def _phase_fixed_point(
                 phase_slice=phase_slice,
                 user_regime=user_regime,
                 reachable_targets=reachable[regime_name],
-                kept=kept,
+                kept=grown,
             )
             newly_kept = candidates & needed
             if newly_kept:
-                kept[regime_name] = kept[regime_name] | newly_kept
+                grown[regime_name] = grown[regime_name] | newly_kept
                 changed = True
         if not changed:
-            return kept
+            return grown
 
 
 def _needed_names(

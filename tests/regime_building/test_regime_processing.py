@@ -342,7 +342,7 @@ def test_carried_law_registered_for_carried_only_target():
         "retired": frozenset({"pension_wealth"}),
         "dead": frozenset(),
     }
-    canonical = _canonicalize_phase_transitions(
+    canonical, _ = _canonicalize_phase_transitions(
         phase_slice=normalize_regime_phases(working).simulation,
         states_per_regime=simulate_states_per_regime,
     )
@@ -404,7 +404,7 @@ def test_carried_state_counts_as_covered_for_reachability():
         "retired": frozenset({"wealth", "pension_wealth"}),
         "dead": frozenset(),
     }
-    canonical = _canonicalize_phase_transitions(
+    canonical, _ = _canonicalize_phase_transitions(
         phase_slice=normalize_regime_phases(working).simulation,
         states_per_regime=simulate_states_per_regime,
     )

@@ -81,18 +81,16 @@ def canonicalize_regimes(
         }
         for regime_name, spec in raw_specs.items():
             phase_slice: RegimePhaseSpec = getattr(spec, phase_name)
+            canonical_transitions, slice_errors = _canonicalize_phase_transitions(
+                phase_slice=phase_slice,
+                states_per_regime=states_per_regime,
+                all_regime_names=all_regime_names,
+                source_label=f"regime '{regime_name}' ({phase_name})",
+            )
+            errors += slice_errors
             canonical_slice = dataclasses.replace(
                 phase_slice,
-                state_transitions=cast(
-                    "MappingProxyType",
-                    _canonicalize_phase_transitions(
-                        phase_slice=phase_slice,
-                        states_per_regime=states_per_regime,
-                        all_regime_names=all_regime_names,
-                        source_label=f"regime '{regime_name}' ({phase_name})",
-                        errors=errors,
-                    ),
-                ),
+                state_transitions=cast("MappingProxyType", canonical_transitions),
             )
             base = canonical_specs.get(regime_name, spec)
             canonical_specs[regime_name] = dataclasses.replace(
@@ -111,23 +109,22 @@ def _canonicalize_phase_transitions(
     states_per_regime: Mapping[RegimeName, frozenset[StateName]],
     all_regime_names: frozenset[RegimeName] | None = None,
     source_label: str = "",
-    errors: list[str] | None = None,
-) -> _CanonicalStateTransitions:
-    """Expand one phase slice's laws into the canonical per-target form."""
-    if errors is None:
-        errors = []
+) -> tuple[_CanonicalStateTransitions, list[str]]:
+    """Expand one phase slice's laws into the canonical per-target form.
+
+    Returns the canonical mapping and the violations found along the way.
+    """
     if all_regime_names is None:
         all_regime_names = frozenset(states_per_regime)
     if phase_slice.regime_transition is None:
-        return MappingProxyType({})
+        return MappingProxyType({}), []
 
     bare_laws, per_target_laws = _split_laws(phase_slice)
 
-    reachable_targets = _declared_reachable_targets(
+    reachable_targets, errors = _declared_reachable_targets(
         regime_transition=phase_slice.regime_transition,
         all_regime_names=all_regime_names,
         source_label=source_label,
-        errors=errors,
     )
 
     canonical: dict[StateName, MappingProxyType[RegimeName, _CanonicalLaw]] = {}
@@ -147,15 +144,13 @@ def _canonicalize_phase_transitions(
             for target_name in reachable_targets
             if state_name in states_per_regime.get(target_name, frozenset())
         }
-        errors.extend(
-            _per_target_law_errors(
-                state_name=state_name,
-                named_targets=frozenset(named),
-                required=frozenset(required),
-                reachable_targets=reachable_targets,
-                all_regime_names=all_regime_names,
-                source_label=source_label,
-            )
+        errors += _per_target_law_errors(
+            state_name=state_name,
+            named_targets=frozenset(named),
+            required=frozenset(required),
+            reachable_targets=reachable_targets,
+            all_regime_names=all_regime_names,
+            source_label=source_label,
         )
         cells = {
             target_name: law
@@ -165,7 +160,7 @@ def _canonicalize_phase_transitions(
         if cells:
             canonical[state_name] = MappingProxyType(cells)
 
-    return MappingProxyType(canonical)
+    return MappingProxyType(canonical), errors
 
 
 def _split_laws(
@@ -246,24 +241,27 @@ def _declared_reachable_targets(
     regime_transition: object,
     all_regime_names: frozenset[RegimeName],
     source_label: str,
-    errors: list[str],
-) -> frozenset[RegimeName]:
+) -> tuple[frozenset[RegimeName], list[str]]:
     """Read the reachable target set off the regime transition.
 
     - per-target dict ⇒ its key set (unknown regime names are errors)
     - coarse callable / `MarkovTransition` ⇒ all regimes
 
+    Returns the reachable targets and the violations found along the way.
     """
     if isinstance(regime_transition, Mapping):
         declared = frozenset(cast("Mapping[RegimeName, object]", regime_transition))
         unknown = declared - all_regime_names
-        if unknown:
-            errors.append(
+        errors = (
+            [
                 f"{source_label}: the per-target regime transition names "
-                f"unknown regime(s) {sorted(unknown)}.",
-            )
-        return declared & all_regime_names
-    return all_regime_names
+                f"unknown regime(s) {sorted(unknown)}."
+            ]
+            if unknown
+            else []
+        )
+        return declared & all_regime_names, errors
+    return all_regime_names, []
 
 
 def _desugar_identity(
