@@ -14,6 +14,7 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
+from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
 from _lcm.params.processing import (
     broadcast_to_template,
@@ -206,6 +207,16 @@ def validate_model_inputs(
             user_regimes, broadcast_variables=broadcast_variables
         )
     )
+
+    for name, user_regime in user_regimes.items():
+        if user_regime.taste_shocks is not None and not any(
+            isinstance(grid, DiscreteGrid) for grid in user_regime.actions.values()
+        ):
+            error_messages.append(
+                f"Regime '{name}' declares taste_shocks but has no discrete "
+                f"action. EV1 taste shocks are drawn per discrete-action "
+                f"combination, so at least one discrete action is required."
+            )
 
     if error_messages:
         msg = format_messages(error_messages)

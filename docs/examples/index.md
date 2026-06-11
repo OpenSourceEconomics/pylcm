@@ -13,6 +13,11 @@ models live in the `lcm_examples` package and can be imported directly.
 1. **[Mortality](mortality.md)** — `lcm_examples.mortality` 3-regime model with death.
    Discrete labor, borrowing constraint.
 
+1. **[Iskhakov et al. (2017)](iskhakov_et_al_2017.md)** —
+   `lcm_examples.iskhakov_et_al_2017` Deterministic retirement model with a closed-form
+   solution, used as the test suite's analytical oracle. Discrete-continuous choice,
+   saw-tooth consumption function.
+
 1. **[Precautionary Savings](precautionary_savings.md)** —
    `lcm_examples.precautionary_savings` 2-regime model with income shocks. IID,
    Rouwenhorst, and Tauchen shock types.

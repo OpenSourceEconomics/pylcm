@@ -303,8 +303,14 @@ def _simulate_subject_chunk(
             states = new_states
             simulation_results[regime_name][period] = result
 
+            # Out-of-regime subjects carry placeholder entries (possibly -inf,
+            # when their state is infeasible under this regime's problem);
+            # validate only the subjects simulated in this regime.
             log_nan_in_V(
-                logger=logger, regime_name=regime_name, age=age, V_arr=result.V_arr
+                logger=logger,
+                regime_name=regime_name,
+                age=age,
+                V_arr=jnp.where(result.in_regime, result.V_arr, 0.0),
             )
 
         subject_regime_ids = new_subject_regime_ids
@@ -439,10 +445,17 @@ def _simulate_regime_in_period(
     # therefore only need to maximize the Q-function values over all actions.
     argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
 
+    taste_shock_kwargs = {}
+    if regime.has_taste_shocks:
+        gumbel_key, key = jax.random.split(key)
+        n_chunk = subject_ids_in_regime.shape[0]
+        taste_shock_kwargs = {"taste_shock_key": jax.random.split(gumbel_key, n_chunk)}
+
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
+        **taste_shock_kwargs,
         next_regime_to_V_arr=next_regime_to_V_arr,
         **flat_params[regime_name],
         period=jnp.int32(period),
