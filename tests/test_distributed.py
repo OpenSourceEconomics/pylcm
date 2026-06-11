@@ -9,6 +9,7 @@ from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building.effective import EffectiveUserRegime
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
+from lcm import fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
@@ -53,13 +54,9 @@ def _make_correct_distributed_model(*, n_subjects: int | None = None) -> Model:
                 stop=100,
                 n_points=10,
             ),
-            "type1": DiscreteGrid(Type, distributed=True),
-            "type2": DiscreteGrid(Type, distributed=True),
         },
         state_transitions={
             "wealth": lambda wealth, consumption: wealth - consumption,
-            "type1": None,
-            "type2": None,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         transition=lambda age: jnp.where(
@@ -75,8 +72,6 @@ def _make_correct_distributed_model(*, n_subjects: int | None = None) -> Model:
         },
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "type1": DiscreteGrid(Type, distributed=True),
-            "type2": DiscreteGrid(Type, distributed=True),
         },
         active=lambda age: age >= 5,
     )
@@ -85,6 +80,14 @@ def _make_correct_distributed_model(*, n_subjects: int | None = None) -> Model:
         regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
+        states={
+            "type1": DiscreteGrid(Type, distributed=True),
+            "type2": DiscreteGrid(Type, distributed=True),
+        },
+        state_transitions={
+            "type1": fixed_transition("type1"),
+            "type2": fixed_transition("type2"),
+        },
         n_subjects=n_subjects,
     )
 
@@ -119,13 +122,9 @@ def wrong_distributed_model():
                 stop=100,
                 n_points=10,
             ),
-            "type1": DiscreteGrid(Type, distributed=True),
-            "type2": DiscreteGrid(Type, distributed=True),
         },
         state_transitions={
             "wealth": lambda wealth, consumption: wealth - consumption,
-            "type1": None,
-            "type2": None,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         transition=lambda age: jnp.where(
@@ -141,8 +140,6 @@ def wrong_distributed_model():
         },
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "type1": DiscreteGrid(Type, distributed=True),
-            "type2": DiscreteGrid(Type, distributed=True),
         },
         active=lambda age: age >= 5,
     )
@@ -151,6 +148,14 @@ def wrong_distributed_model():
         regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
+        states={
+            "type1": DiscreteGrid(Type, distributed=True),
+            "type2": DiscreteGrid(Type, distributed=True),
+        },
+        state_transitions={
+            "type1": fixed_transition("type1"),
+            "type2": fixed_transition("type2"),
+        },
     )
 
 
@@ -401,13 +406,9 @@ def partially_distributed_model():
         },
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "type1": DiscreteGrid(Type, distributed=True),
-            "type2": DiscreteGrid(Type, distributed=True),
         },
         state_transitions={
             "wealth": lambda wealth, consumption: wealth - consumption,
-            "type1": None,
-            "type2": None,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         transition=lambda age: jnp.where(
@@ -427,6 +428,14 @@ def partially_distributed_model():
         regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
+        states={
+            "type1": DiscreteGrid(Type, distributed=True),
+            "type2": DiscreteGrid(Type, distributed=True),
+        },
+        state_transitions={
+            "type1": fixed_transition("type1"),
+            "type2": fixed_transition("type2"),
+        },
     )
 
 

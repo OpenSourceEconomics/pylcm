@@ -270,26 +270,27 @@ def _health_probs(health: DiscreteState, probs_array: FloatND) -> FloatND:
 
 
 @categorical(ordered=True)
-class _IncompleteTargetHealth:
+class _PartialCoverageHealth:
     bad: ScalarInt
     good: ScalarInt
 
 
 @categorical(ordered=False)
-class _IncompleteTargetRegimeId:
+class _PartialCoverageRegimeId:
     work: ScalarInt
     retire: ScalarInt
     dead: ScalarInt
 
 
-def _build_incomplete_target_model(
+def _build_partial_coverage_model(
     *,
+    work_transition: dict[str, MarkovTransition],
     next_regime_func: Callable,
 ) -> tuple[Model, dict]:
-    """Build a model where "retire" is an incomplete target from "work".
+    """Build a model whose "work" regime covers `health` only toward "work".
 
-    "work" has a per-target MarkovTransition for health that only covers
-    "work" (not "retire"), making "retire" incomplete.
+    "retire" also carries `health`; whether the model is valid depends on
+    whether "work"'s regime transition declares "retire" reachable.
     """
 
     def _utility(
@@ -305,7 +306,7 @@ def _build_incomplete_target_model(
         active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
-            "health": DiscreteGrid(_IncompleteTargetHealth),
+            "health": DiscreteGrid(_PartialCoverageHealth),
         },
         state_transitions={
             "wealth": _next_wealth,
@@ -316,14 +317,14 @@ def _build_incomplete_target_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        transition=next_regime_func,
+        transition=work_transition,
         functions={"utility": _utility},
     )
     retire = UserRegime(
         active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
-            "health": DiscreteGrid(_IncompleteTargetHealth),
+            "health": DiscreteGrid(_PartialCoverageHealth),
         },
         state_transitions={
             "wealth": _next_wealth,
@@ -342,7 +343,7 @@ def _build_incomplete_target_model(
 
     model = Model(
         regimes={"work": work, "retire": retire, "dead": dead_regime},
-        regime_id_class=_IncompleteTargetRegimeId,
+        regime_id_class=_PartialCoverageRegimeId,
         ages=AgeGrid(start=0, stop=3, step="Y"),
     )
     params = {
@@ -352,15 +353,26 @@ def _build_incomplete_target_model(
     return model, params
 
 
-def test_incomplete_target_zero_prob_succeeds():
-    """Solve succeeds when incomplete target has zero transition probability."""
+def test_partial_state_laws_solve_with_declared_targets():
+    """Per-target state laws covering exactly the declared targets solve.
+
+    "work" declares only itself and "dead" as targets; "retire" carries
+    `health` but is structurally unreachable from "work", so no law toward
+    it is needed.
+    """
 
     def _next_regime(age: float) -> ScalarInt:
         return jnp.where(
-            age >= 2, _IncompleteTargetRegimeId.dead, _IncompleteTargetRegimeId.work
+            age >= 2, _PartialCoverageRegimeId.dead, _PartialCoverageRegimeId.work
         )
 
-    model, params = _build_incomplete_target_model(next_regime_func=_next_regime)
+    work_transition = {
+        "work": MarkovTransition(lambda age: jnp.where(age >= 2, 0.0, 1.0)),
+        "dead": MarkovTransition(lambda age: jnp.where(age >= 2, 1.0, 0.0)),
+    }
+    model, params = _build_partial_coverage_model(
+        work_transition=work_transition, next_regime_func=_next_regime
+    )
     period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
     for regime_to_V_arr in period_to_regime_to_V_arr.values():
         for V_arr in regime_to_V_arr.values():

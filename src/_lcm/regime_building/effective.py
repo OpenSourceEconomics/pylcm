@@ -7,6 +7,7 @@ in user vocabulary — coarse laws, `Phased` containers, and per-target dicts
 survive untouched, so the params template reads the user's coarseness off it.
 """
 
+import dataclasses
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -61,17 +62,12 @@ class EffectiveUserRegime(UserRegime):
         # keeps the regime's own entries.
         if derived_categoricals is None:
             derived_categoricals = user_regime.derived_categoricals
-        for field_name in (
-            "transition",
-            "active",
-            "states",
-            "state_transitions",
-            "actions",
-            "constraints",
-            "taste_shocks",
-            "description",
-        ):
-            object.__setattr__(self, field_name, getattr(user_regime, field_name))
+        # Copy every regime field verbatim except the two with merge logic
+        # below — driven by the dataclass fields so a newly added `Regime`
+        # field can never be silently dropped from the effective regime.
+        for field in dataclasses.fields(UserRegime):
+            if field.name not in ("functions", "derived_categoricals"):
+                object.__setattr__(self, field.name, getattr(user_regime, field.name))
 
         functions = dict(user_regime.functions)
         # Terminal regimes don't need H since Q = U directly (no E_next_V).

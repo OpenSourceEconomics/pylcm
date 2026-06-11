@@ -30,6 +30,11 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.regime_building.broadcast import (
+    merge_model_slots,
+    prune_broadcast_variables,
+    validate_model_slots,
+)
 from _lcm.regime_building.effective import (
     EffectiveUserRegime,
     build_effective_regimes,
@@ -99,8 +104,13 @@ class Model:
 
     user_regimes: MappingProxyType[RegimeName, EffectiveUserRegime]
     """The effective regimes: complete (default `H` injected, completeness
-    validated), with model-level `derived_categoricals` merged in, still in
-    user vocabulary."""
+    validated), with model-level slots merged in and broadcast variables
+    pruned, still in user vocabulary."""
+
+    pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
+    """Per regime, the broadcast states and actions pruned because no root
+    computation of either phase reads them (directly or through a law of
+    motion toward a reachable target that keeps them)."""
 
     _regimes: MappingProxyType[RegimeName, Regime]
     """Canonical, processed regimes used by solve and simulate.
@@ -169,6 +179,11 @@ class Model:
         derived_categoricals: Mapping[FunctionName, DiscreteGrid] = MappingProxyType(
             {}
         ),
+        functions: Mapping[str, object] = MappingProxyType({}),
+        constraints: Mapping[str, object] = MappingProxyType({}),
+        states: Mapping[str, object] = MappingProxyType({}),
+        state_transitions: Mapping[str, object] = MappingProxyType({}),
+        actions: Mapping[str, object] = MappingProxyType({}),
         n_subjects: int | None = None,
     ) -> None:
         """Initialize the Model.
@@ -188,6 +203,16 @@ class Model:
                 not in states/actions. Broadcast to all regimes (merged with
                 each regime's own `derived_categoricals`). Raises if a regime
                 already has a conflicting entry.
+            functions: Model-level functions, merged into every regime under
+                the exactly-one-level rule (a name is defined at model level
+                or regime level, never both; a regime-level `None` masks the
+                model entry).
+            constraints: Model-level constraints; same merge rule.
+            states: Model-level states; same merge rule. Broadcast states are
+                pruned per regime by DAG reachability (see
+                `pruned_variables`). `distributed=True` is legal only here.
+            state_transitions: Model-level laws of motion; same merge rule.
+            actions: Model-level actions; same merge rule and pruning.
             n_subjects: Expected simulate batch size; if set, the first matching
                 `simulate(...)` call AOT-compiles all simulate functions for
                 batch shape `n_subjects` before backward induction starts.
@@ -203,8 +228,24 @@ class Model:
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
 
-        self.user_regimes = build_effective_regimes(
+        model_slots = {
+            "functions": functions,
+            "constraints": constraints,
+            "states": states,
+            "state_transitions": state_transitions,
+            "actions": actions,
+        }
+        validate_model_slots(model_slots=model_slots)
+        merged_regimes, broadcast_variables = merge_model_slots(
             user_regimes=regimes,
+            model_slots=model_slots,
+        )
+        pruned_regimes, self.pruned_variables = prune_broadcast_variables(
+            user_regimes=merged_regimes,
+            broadcast_variables=broadcast_variables,
+        )
+        self.user_regimes = build_effective_regimes(
+            user_regimes=pruned_regimes,
             derived_categoricals=derived_categoricals,
         )
         validate_model_inputs(
@@ -212,6 +253,7 @@ class Model:
             user_regimes=self.user_regimes,
             regime_id_class=regime_id_class,
             n_subjects=n_subjects,
+            broadcast_variables=broadcast_variables,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -232,6 +274,19 @@ class Model:
         self.simulation_output_dtypes = _get_output_dtypes(
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
+        )
+
+    def __repr__(self) -> str:
+        """Summarize the model; mention pruning when any regime was pruned."""
+        n_pruned = sum(1 for names in self.pruned_variables.values() if names)
+        pruned_part = (
+            f", {n_pruned} regimes with pruned variables (see `.pruned_variables`)"
+            if n_pruned
+            else ""
+        )
+        return (
+            f"Model(n_regimes={len(self.user_regimes)}, "
+            f"n_periods={self.n_periods}{pruned_part})"
         )
 
     def __getstate__(self) -> dict[str, object]:

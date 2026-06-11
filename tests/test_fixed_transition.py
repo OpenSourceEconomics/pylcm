@@ -22,7 +22,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
 
@@ -148,12 +148,14 @@ def test_name_mismatch_inside_per_target_dict_raises() -> None:
         )
 
 
-def test_none_state_transition_is_rejected_with_migration_hint() -> None:
-    """`None` is not a law of motion; the error points to `fixed_transition`."""
-    with pytest.raises(RegimeInitializationError, match=r"fixed_transition"):
-        _build_regime(
-            state_transitions={"health": None, "wealth": _next_wealth},
-        )
+def test_unbound_none_state_transition_is_rejected_with_migration_hint() -> None:
+    """`None` masks a model-level law; unbound, it errors at model build with
+    a pointer to `fixed_transition` for the fixed-state intent."""
+    work = _build_regime(
+        state_transitions={"health": None, "wealth": _next_wealth},
+    )
+    with pytest.raises(ModelInitializationError, match=r"fixed_transition"):
+        _build_model(work)
 
 
 def test_fixed_transition_for_state_not_in_regime_raises() -> None:
