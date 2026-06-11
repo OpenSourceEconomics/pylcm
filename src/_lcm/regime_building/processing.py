@@ -117,7 +117,7 @@ def process_regimes(
     # each reachable target that carries the state — including targets reached
     # through nothing but the carried state.
     specs = canonicalize_regimes(user_regimes=user_regimes)
-    nested_transitions = {
+    solve_nested_transitions = {
         regime_name: _extract_phase_transitions(phase_slice=spec.solution)
         for regime_name, spec in specs.items()
     }
@@ -172,7 +172,7 @@ def process_regimes(
         solution = _build_solution_phase(
             spec=spec,
             regime_name=regime_name,
-            nested_transitions=nested_transitions[regime_name],
+            nested_transitions=solve_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
