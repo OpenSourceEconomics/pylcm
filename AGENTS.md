@@ -59,9 +59,11 @@ automation. Python 3.14+ is required.
   canonicalization stage. Rewrites every phase slice's laws into the canonical
   target-granular form `Mapping[RegimeName, law]` over exactly the reachable targets
   carrying the state in that phase — bare laws broadcast, per-target dicts pass through,
-  `fixed_transition` entries desugar into per-target identities. Reachability is
-  resolved here, once; the engine-side extraction is a pure transpose. Rule: the params
-  template reads the user (effective) spec, the engine reads the canonical spec.
+  `fixed_transition` entries desugar into per-target identities. Reachability has a
+  single source of truth — the regime transition (per-target dict ⇒ its key set; coarse
+  ⇒ all regimes) — and is resolved here, once; the engine-side extraction is a pure
+  transpose. Rule: the params template reads the user (effective) spec, the engine reads
+  the canonical spec.
 - `Regime` (from `_lcm.engine`): Canonical representation produced by `process_regimes`
   from a user-facing `Regime`. Internal engine code threads this form. Inside boundary
   files that import both, alias the user form as
@@ -84,7 +86,8 @@ automation. Python 3.14+ is required.
   applies to both phases, `Phased(solve=..., simulate=...)` specifies each phase
   explicitly:
   - `functions` and `state_transitions` accept `Phased` (per-phase implementations /
-    laws of motion); `transition` accepts `Phased` with matching stochasticity.
+    laws of motion); `transition` accepts `Phased` with matching forms (and, for
+    per-target dicts, identical key sets).
   - `states` accept `Phased(solve=callable, simulate=Grid)` — the carried state: derived
     (no grid axis) during backward induction, a genuine seeded-and-evolved state in
     simulation, with its law of motion in the regular `state_transitions` slot. All
@@ -222,8 +225,17 @@ Regime(
 
 **Regime Requirements:**
 
-- `transition` is required: the regime transition function, or `None` for terminal
-  regimes. `terminal` is a derived property (`self.transition is None`).
+- `transition` is required: the regime transition, or `None` for terminal regimes.
+  `terminal` is a derived property (`self.transition is None`). Three forms:
+  - bare callable ⇒ deterministic, returns the target regime id; every regime is
+    reachable
+  - `MarkovTransition` ⇒ stochastic, returns a probability vector over all regimes;
+    every regime is reachable
+  - per-target dict `{target: MarkovTransition(prob_func)}` ⇒ stochastic; each cell
+    returns that target's probability and the key set declares the regime's reachable
+    targets — omitted regimes are structurally unreachable. Cells must be
+    `MarkovTransition`-wrapped; `transition={}` is rejected (terminality is `None`).
+    Cell params surface in the template under `to_<target>_next_regime`.
 - `active` is optional; defaults to `lambda _age: True` (always active)
 - `functions` must contain a `"utility"` entry (the utility function); checked when the
   model builds its effective regimes, not at `Regime` construction
@@ -233,8 +245,10 @@ Regime(
   match the dict key). `None` is rejected. Wrap in `MarkovTransition` for stochastic
   transitions.
 - Per-target dicts in `state_transitions` map target regime names to transition
-  functions — every reachable target must be listed. Within a per-target dict,
-  stochasticity must be consistent (all `MarkovTransition` or none).
+  functions — every reachable target carrying the state must be listed, and no
+  unreachable or unknown target may be (checked at model build; narrow reachability with
+  a per-target regime transition). Within a per-target dict, stochasticity must be
+  consistent (all `MarkovTransition` or none).
 - Stochastic processes have intrinsic transitions and must NOT appear in
   `state_transitions`.
 - Terminal regimes must have empty `state_transitions`.
@@ -263,6 +277,27 @@ Model(
     enable_jit=True,  # Control JAX compilation (default: True)
 )
 ```
+
+**Model-level regime slots (broadcast):**
+
+`Model(functions=..., constraints=..., states=..., state_transitions=..., actions=...)`
+accepts exactly what the regime-level slot accepts (incl. `Phased`, stochastic
+processes, per-target dicts, `fixed_transition`). Each entry is merged into every regime
+under the exactly-one-level rule — a name is defined at model level or regime level,
+never both (ambiguity errors); a regime-level `None` masks the model entry (masking a
+state also drops its broadcast law; an unbound mask errors). Broadcast laws are not
+merged into terminal regimes.
+
+Broadcast states and actions are pruned per regime by DAG reachability: a broadcast
+variable survives only where a root computation (utility, `H`, constraints, derived
+categoricals, the regime transition, or a law of motion toward a reachable target that
+keeps the state) transitively reads it, per phase slice, pruned only when dead in both
+phases. Regime-level declarations are never pruned. `model.pruned_variables` records the
+result per regime.
+
+`distributed=True` is legal only on model-level states; a sharded state pruned from a
+non-terminal regime is an error (unshard or make the regime use it). `batch_size` stays
+per-declaration.
 
 **Model Requirements:**
 
@@ -358,6 +393,8 @@ initial_conditions = {
 - `model._regimes` - Immutable mapping of regime names to canonical `Regime` objects
   (`_lcm.engine.Regime`) produced by `process_regimes`. Private — the canonical form is
   engine-internal; user code should read `user_regimes`.
+- `model.pruned_variables` - Immutable mapping of regime names to the broadcast
+  states/actions pruned from that regime by DAG reachability
 - `model.ages` - The AgeGrid defining the lifecycle
 - `model.n_periods` - Number of periods in the model (derived from `ages`)
 - `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices

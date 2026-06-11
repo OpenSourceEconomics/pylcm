@@ -151,6 +151,7 @@ def validate_model_inputs(
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_id_class: type,
     n_subjects: int | None = None,
+    broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
 ) -> None:
     """Validate model constructor inputs.
 
@@ -207,7 +208,11 @@ def validate_model_inputs(
             "regime names:\n"
             f"    {regime_names}."
         )
-    error_messages.extend(_validate_all_variables_used(user_regimes))
+    error_messages.extend(
+        _validate_all_variables_used(
+            user_regimes, broadcast_variables=broadcast_variables
+        )
+    )
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -229,6 +234,8 @@ def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
 
 def _validate_all_variables_used(
     user_regimes: Mapping[RegimeName, UserRegime],
+    *,
+    broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -237,9 +244,16 @@ def _validate_all_variables_used(
     - A transition function
     - A regime function whose output H consumes at the Bellman step
 
+    Broadcast variables are exempt: DAG pruning already weeded the unused
+    ones, and a retained broadcast variable may be used only through a law
+    of motion toward a reachable target (which this per-regime check cannot
+    see).
+
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        broadcast_variables: Per regime, the model-level broadcast state and
+            action names to exempt.
 
     Returns:
         A list of error messages. Empty list if validation passes.
@@ -249,6 +263,8 @@ def _validate_all_variables_used(
 
     for regime_name, user_regime in user_regimes.items():
         variable_names = set(user_regime.states) | set(user_regime.actions)
+        if broadcast_variables is not None:
+            variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
 
         targets = [
