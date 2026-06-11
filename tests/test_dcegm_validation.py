@@ -322,24 +322,3 @@ def test_brute_force_solver_explicit_equals_default():
                     got_default[period][regime], got_explicit[period][regime]
                 )
             )
-
-
-def test_dcegm_simulate_raises_not_implemented():
-    """Solving a DC-EGM model works; simulating it raises `NotImplementedError`."""
-    model = dcegm_variants.get_retirement_only_model("dcegm", N_PERIODS)
-    params = dcegm_variants.get_retirement_only_params(N_PERIODS)
-
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
-
-    with pytest.raises(NotImplementedError, match=r"[Ss]imulat"):
-        model.simulate(
-            params=params,
-            initial_conditions={
-                "wealth": jnp.array([10.0]),
-                "regime_id": jnp.array(
-                    [retirement_only.RetirementOnlyRegimeId.retirement]
-                ),
-            },
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            log_level="off",
-        )

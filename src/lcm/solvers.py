@@ -43,6 +43,16 @@ class DCEGM:
     and an `inverse_marginal_utility` regime function — which is validated at
     `Model` construction time.
 
+    Forward simulation works but is *grid-restricted*: `simulate` recomputes
+    the argmax over the regime's gridded continuous action against the
+    stored value function, rather than interpolating the exact EGM policy.
+    Simulated continuous actions therefore live on the action grid, and with
+    taste shocks the simulated choice frequencies follow the grid-restricted
+    choice-specific values, not exactly the solve's choice probabilities.
+    The budget constraint the solve enforces intrinsically
+    (`continuous_action <= resources - savings_grid lower bound`) is applied
+    as a feasibility mask during simulation.
+
     """
 
     continuous_state: StateName
