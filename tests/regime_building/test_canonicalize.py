@@ -7,6 +7,12 @@ canonical target-granular form `Mapping[RegimeName, law]`:
 - a user per-target dict passes through restricted to its named targets
 - a `fixed_transition` entry desugars into per-target identity laws
 
+The regime transition itself is canonicalized the same way: a coarse form
+(bare callable or `MarkovTransition`) becomes a `Mapping[RegimeName, cell]`
+over all regimes whose cells share one underlying transition object (one
+evaluation, indexed per target), a user per-target dict passes through, and
+a terminal regime keeps `None`.
+
 The engine reads only this canonical form; reachability is resolved here,
 not during function compilation.
 """
@@ -17,7 +23,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from _lcm.regime_building.canonicalize import canonicalize_regimes
-from _lcm.regime_building.effective import build_effective_regimes
+from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
@@ -73,9 +79,7 @@ def _regime(**overrides: Any) -> UserRegime:
 
 def _canonicalize(regimes: dict[str, UserRegime]) -> Mapping:
     return canonicalize_regimes(
-        user_regimes=build_effective_regimes(
-            user_regimes=regimes, derived_categoricals={}
-        )
+        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={})
     )
 
 
@@ -186,6 +190,52 @@ def test_carried_state_law_lives_only_in_the_simulation_slice() -> None:
     simulate_canonical = specs["work"].simulation.state_transitions["pension_wealth"]
     assert set(simulate_canonical) == {"work", "retire"}
     assert all(law is _evolve for law in simulate_canonical.values())
+
+
+def test_coarse_markov_regime_transition_canonicalizes_to_shared_cells() -> None:
+    """A coarse `MarkovTransition` regime transition becomes a per-target mapping.
+
+    The canonical mapping covers all regimes (a coarse form declares every
+    regime reachable) and every cell references the same underlying
+    transition object, so the engine evaluates it once and indexes per
+    target.
+    """
+    transition = MarkovTransition(lambda age: jnp.asarray([0.5, 0.3, 0.2]))  # noqa: ARG005
+    specs = _two_regime_model_specs(
+        {"transition": transition, "state_transitions": {"wealth": _next_wealth}}
+    )
+    canonical = specs["work"].solution.regime_transition
+    assert isinstance(canonical, Mapping)
+    assert set(canonical) == {"work", "retire", "dead"}
+    assert all(cell.underlying is transition for cell in canonical.values())
+
+
+def test_coarse_deterministic_regime_transition_canonicalizes_to_shared_cells() -> None:
+    """A coarse deterministic regime transition becomes a per-target mapping.
+
+    The canonical mapping covers all regimes and every cell references the
+    same underlying callable.
+    """
+    specs = _two_regime_model_specs({"state_transitions": {"wealth": _next_wealth}})
+    canonical = specs["work"].solution.regime_transition
+    assert isinstance(canonical, Mapping)
+    assert set(canonical) == {"work", "retire", "dead"}
+    assert all(cell.underlying is _next_regime for cell in canonical.values())
+
+
+def test_per_target_regime_transition_passes_through() -> None:
+    """A user per-target regime transition stays a mapping of exactly its cells."""
+    to_retire = MarkovTransition(lambda age: jnp.asarray(0.6))  # noqa: ARG005
+    to_dead = MarkovTransition(lambda age: jnp.asarray(0.4))  # noqa: ARG005
+    specs = _two_regime_model_specs(
+        {
+            "transition": {"retire": to_retire, "dead": to_dead},
+            "state_transitions": {"wealth": {"retire": _next_wealth}},
+        }
+    )
+    canonical = specs["work"].solution.regime_transition
+    assert isinstance(canonical, Mapping)
+    assert dict(canonical) == {"retire": to_retire, "dead": to_dead}
 
 
 def test_terminal_regime_has_empty_canonical_transitions() -> None:

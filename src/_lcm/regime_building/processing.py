@@ -12,6 +12,7 @@ from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.engine import (
     Regime,
     SimulationPhase,
@@ -27,7 +28,7 @@ from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
     get_max_Q_over_a,
@@ -86,15 +87,19 @@ from lcm.transition import (
 )
 from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
+type _TransitionBundles = dict[
+    RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
+]
+
 
 def process_regimes(
     *,
-    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Process effective regimes into canonical regimes.
+    """Process finalized regimes into canonical regimes.
 
     Canonicalizes every regime's laws into target-granular form
     (`canonicalize_regimes`), then compiles the per-phase function sets.
@@ -102,7 +107,7 @@ def process_regimes(
     transition logic.
 
     Args:
-        user_regimes: Mapping of regime names to effective regimes.
+        user_regimes: Mapping of regime names to finalized regimes.
         ages: The AgeGrid for the model.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         enable_jit: Whether to jit the functions of the canonical regime.
@@ -117,7 +122,7 @@ def process_regimes(
     # each reachable target that carries the state — including targets reached
     # through nothing but the carried state.
     specs = canonicalize_regimes(user_regimes=user_regimes)
-    nested_transitions = {
+    solve_nested_transitions = {
         regime_name: _extract_phase_transitions(phase_slice=spec.solution)
         for regime_name, spec in specs.items()
     }
@@ -172,7 +177,7 @@ def process_regimes(
         solution = _build_solution_phase(
             spec=spec,
             regime_name=regime_name,
-            nested_transitions=nested_transitions[regime_name],
+            nested_transitions=solve_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
@@ -225,10 +230,7 @@ def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
-    nested_transitions: dict[
-        RegimeName | TransitionFunctionName,
-        dict[TransitionFunctionName, UserFunction] | UserFunction,
-    ],
+    nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
@@ -244,7 +246,8 @@ def _build_solution_phase(
     Args:
         spec: The regime's per-phase specification.
         regime_name: The name of the regime.
-        nested_transitions: Nested transitions dict for internal processing.
+        nested_transitions: Per-target transition bundles for internal
+            processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
@@ -328,7 +331,7 @@ def _build_solution_phase(
     )
 
     return SolutionPhase(
-        variables=variables,
+        _variables=variables,
         grids=all_grids[regime_name],
         functions=core.functions,
         constraints=core.constraints,
@@ -345,10 +348,7 @@ def _build_simulation_phase(
     *,
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
-    nested_transitions: dict[
-        RegimeName | TransitionFunctionName,
-        dict[TransitionFunctionName, UserFunction] | UserFunction,
-    ],
+    nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
@@ -377,7 +377,8 @@ def _build_simulation_phase(
     Args:
         spec: The regime's per-phase specification.
         regime_name: The name of the regime.
-        nested_transitions: Nested transitions dict for internal processing.
+        nested_transitions: Per-target transition bundles for internal
+            processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
@@ -496,7 +497,7 @@ def _build_simulation_phase(
     )
 
     return SimulationPhase(
-        variables=simulation_variables,
+        _variables=simulation_variables,
         grids=simulate_grids,
         carried_only_state_names=frozenset(carried_grids),
         functions=simulate_functions,
@@ -539,10 +540,7 @@ def _process_regime_core(
     functions: Mapping[FunctionName, UserFunction],
     constraints: Mapping[FunctionName, UserFunction],
     state_transitions: Mapping[StateName, object],
-    nested_transitions: dict[
-        RegimeName | TransitionFunctionName,
-        dict[TransitionFunctionName, UserFunction] | UserFunction,
-    ],
+    nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variables: Variables,
@@ -558,7 +556,8 @@ def _process_regime_core(
         constraints: Phase-resolved constraint functions.
         state_transitions: This phase's `state_transitions` slice, used to
             detect per-target dicts and stochastic transitions.
-        nested_transitions: Nested transitions dict for internal processing.
+        nested_transitions: Per-target transition bundles for internal
+            processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         variables: States and actions of the regime with kind/topology/process tags.
@@ -570,22 +569,28 @@ def _process_regime_core(
     """
     flat_grids = flatten_regime_namespace(all_grids)
 
-    # A per-target regime transition is processed cell-by-cell below, not via
-    # the flat namespace — its cells are not state laws and must not enter
-    # the per-target next_state bundles.
-    raw_next_regime = nested_transitions.get("next_regime")
-    granular_next_regime: Mapping[RegimeName, UserFunction] | None = None
-    if isinstance(raw_next_regime, Mapping):
-        granular_next_regime = cast(
-            "Mapping[RegimeName, UserFunction]", raw_next_regime
-        )
-        nested_transitions = {
-            key: value
-            for key, value in nested_transitions.items()
-            if key != "next_regime"
+    # The canonical regime transition rides in the bundles as each target's
+    # `"next_regime"` cell. Cells are not state laws: split them off before
+    # the flat-namespace processing, dropping bundles that held nothing else
+    # so the per-target `transitions` mapping keys exactly the targets with
+    # at least one state law (the period-target enumeration reads those
+    # keys).
+    next_regime_cells_by_target: dict[
+        RegimeName, UserFunction | _CoarseTransitionCell
+    ] = {}
+    state_law_bundles: dict[RegimeName, dict[TransitionFunctionName, UserFunction]] = {}
+    for target_name, bundle in nested_transitions.items():
+        if "next_regime" in bundle:
+            next_regime_cells_by_target[target_name] = bundle["next_regime"]
+        laws = {
+            law_name: cast("UserFunction", law)
+            for law_name, law in bundle.items()
+            if law_name != "next_regime"
         }
+        if laws:
+            state_law_bundles[target_name] = laws
 
-    flat_nested_transitions = flatten_regime_namespace(nested_transitions)
+    flat_nested_transitions = flatten_regime_namespace(state_law_bundles)
 
     all_functions: dict[str, UserFunction] = {
         **functions,
@@ -601,7 +606,6 @@ def _process_regime_core(
         func_name: func
         for func_name, func in flat_nested_transitions.items()
         if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
-        and func_name != "next_regime"
     }
 
     deterministic_transition_functions = {
@@ -685,7 +689,6 @@ def _process_regime_core(
     internal_transition = {
         func_name: processed_functions[func_name]
         for func_name in flat_nested_transitions
-        if func_name != "next_regime"
     } | {key: processed_functions[key] for key in process_transition_keys}
 
     processed_constraints: ConstraintFunctionsMapping = MappingProxyType(
@@ -704,20 +707,10 @@ def _process_regime_core(
 
     transitions = _wrap_transitions(unflatten_regime_namespace(internal_transition))
 
-    next_regime_func: TransitionFunction | None = processed_functions.get("next_regime")
-
-    next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None
-    if granular_next_regime is not None:
-        next_regime_cells = MappingProxyType(
-            {
-                target_name: _rename_params_to_qnames(
-                    func=cell,
-                    regime_params_template=regime_params_template,
-                    param_key=f"to_{target_name}_next_regime",
-                )
-                for target_name, cell in granular_next_regime.items()
-            }
-        )
+    next_regime_func, next_regime_cells = _process_next_regime_cells(
+        next_regime_cells_by_target=next_regime_cells_by_target,
+        regime_params_template=regime_params_template,
+    )
 
     return _CoreResult(
         functions=phase_functions,
@@ -729,19 +722,74 @@ def _process_regime_core(
     )
 
 
-def _extract_phase_transitions(
+def _process_next_regime_cells(
     *,
-    phase_slice: RegimePhaseSpec,
-) -> dict[
-    RegimeName | TransitionFunctionName,
-    dict[TransitionFunctionName, UserFunction] | UserFunction,
+    next_regime_cells_by_target: Mapping[
+        RegimeName, UserFunction | _CoarseTransitionCell
+    ],
+    regime_params_template: RegimeParamsTemplate,
+) -> tuple[
+    TransitionFunction | None, MappingProxyType[RegimeName, EconFunction] | None
 ]:
+    """Process the canonical regime-transition cells of one phase.
+
+    Dispatch on the cell type of the canonical per-target mapping:
+
+    - empty mapping (terminal regime) ⇒ `(None, None)`
+    - `_CoarseTransitionCell` cells ⇒ the shared underlying transition is
+      processed once under the `next_regime` template key, so the engine
+      evaluates it once and indexes per target
+    - `MarkovTransition` cells (user per-target dict) ⇒ each cell is
+      processed under its `to_<target>_next_regime` template key
+
+    Args:
+        next_regime_cells_by_target: The canonical regime-transition cells,
+            keyed by target regime name.
+        regime_params_template: The regime's parameter template.
+
+    Returns:
+        Tuple of the processed coarse transition (`None` unless coarse) and
+        the processed per-target cells (`None` unless per-target).
+
+    """
+    if not next_regime_cells_by_target:
+        return None, None
+    cells = tuple(next_regime_cells_by_target.values())
+    first_cell = cells[0]
+    if isinstance(first_cell, _CoarseTransitionCell):
+        assert all(  # noqa: S101
+            isinstance(cell, _CoarseTransitionCell)
+            and cell.underlying is first_cell.underlying
+            for cell in cells
+        ), "Coarse regime-transition cells must share one underlying object."
+        next_regime_func = _rename_params_to_qnames(
+            func=cast("UserFunction", first_cell.underlying),
+            regime_params_template=regime_params_template,
+            param_key="next_regime",
+        )
+        return next_regime_func, None
+    next_regime_cells = MappingProxyType(
+        {
+            target_name: _rename_params_to_qnames(
+                func=cast("UserFunction", cell),
+                regime_params_template=regime_params_template,
+                param_key=f"to_{target_name}_next_regime",
+            )
+            for target_name, cell in next_regime_cells_by_target.items()
+        }
+    )
+    return None, next_regime_cells
+
+
+def _extract_phase_transitions(*, phase_slice: RegimePhaseSpec) -> _TransitionBundles:
     """Transpose one canonical phase slice into per-target transition bundles.
 
-    The slice's `state_transitions` values are canonical per-target mappings
-    (`canonicalize_regimes` resolved reachability and desugared identities),
-    so the extraction is a pure transpose: bundle each target regime's
-    `next_<state>` laws, plus the regime transition under `"next_regime"`.
+    The slice's `state_transitions` values and its regime transition are
+    canonical per-target mappings (`canonicalize_regimes` resolved
+    reachability and desugared identities), so the extraction is a pure
+    transpose: bundle each target regime's `next_<state>` laws plus its
+    regime-transition cell under `"next_regime"`. A target reachable through
+    the regime transition alone contributes a bundle holding only its cell.
     Stochastic process transitions are handled separately during internal
     function processing.
 
@@ -749,26 +797,25 @@ def _extract_phase_transitions(
         phase_slice: One canonical phase slice of the regime specification.
 
     Returns:
-        Nested transitions dict for internal processing.
+        Per-target transition bundles for internal processing.
 
     """
     if phase_slice.regime_transition is None:
         return {}
 
-    nested: dict[
-        RegimeName | TransitionFunctionName,
-        dict[TransitionFunctionName, UserFunction] | UserFunction,
-    ] = {"next_regime": cast("UserFunction", phase_slice.regime_transition)}
-
-    per_target: dict[RegimeName, dict[TransitionFunctionName, UserFunction]] = {}
+    per_target: _TransitionBundles = {}
     for state_name, canonical in phase_slice.state_transitions.items():
         for target_regime_name, law in cast(
             "Mapping[RegimeName, UserFunction]", canonical
         ).items():
             per_target.setdefault(target_regime_name, {})[f"next_{state_name}"] = law
-    nested |= per_target
+    for target_regime_name, cell in cast(
+        "Mapping[RegimeName, UserFunction | _CoarseTransitionCell]",
+        phase_slice.regime_transition,
+    ).items():
+        per_target.setdefault(target_regime_name, {})["next_regime"] = cell
 
-    return nested
+    return per_target
 
 
 def _wrap_transitions(
@@ -848,7 +895,7 @@ def _extract_param_key(
     - "work__next_health" with `to_work_next_health` in the template (user
       wrote a per-target dict) ⇒ "to_work_next_health"
     - "work__next_wealth" without such a key (broadcast law) ⇒ "next_wealth"
-    - unprefixed names like "next_regime" ⇒ unchanged
+    - unprefixed names ⇒ unchanged
 
     """
     path = tree_path_from_qname(func_name)
