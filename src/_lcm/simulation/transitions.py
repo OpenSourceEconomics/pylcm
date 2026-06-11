@@ -243,8 +243,14 @@ def calculate_next_regime_membership(
             **regime_params,
         )
     )
+    # A per-target regime transition's probs dict covers only its declared
+    # targets — anything else is structurally unreachable (zero probability).
     active_regime_probs = MappingProxyType(
-        {r: regime_transition_probs[r] for r in active_regimes_next_period}
+        {
+            r: regime_transition_probs[r]
+            for r in active_regimes_next_period
+            if r in regime_transition_probs
+        }
     )
 
     # Generate random keys and draw next regimes
