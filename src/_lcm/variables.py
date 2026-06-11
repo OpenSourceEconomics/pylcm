@@ -130,7 +130,9 @@ def get_grids(
     """
     variables = from_regime(user_regime)
     raw_variables = _grid_states(user_regime) | dict(user_regime.actions)
-    return MappingProxyType({name: raw_variables[name] for name in variables})
+    return MappingProxyType(
+        {name: grid for name in variables if (grid := raw_variables[name]) is not None}
+    )
 
 
 def _raw_variable_info(
