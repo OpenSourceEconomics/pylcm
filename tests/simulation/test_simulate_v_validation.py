@@ -12,10 +12,11 @@ import logging
 import jax.numpy as jnp
 import pytest
 
+from _lcm.utils.logging import LogLevel
 from lcm_examples.iskhakov_et_al_2017 import get_model, get_params
 
 
-def _simulate(*, log_level: str) -> None:
+def _simulate(*, log_level: LogLevel) -> None:
     model = get_model(6)
     params = get_params(
         6,
@@ -49,7 +50,7 @@ def test_no_nan_warning_from_out_of_regime_placeholders(caplog):
 
 
 @pytest.mark.parametrize("log_level", ["warning", "debug"])
-def test_out_of_regime_placeholders_pass_v_validation(log_level):
+def test_out_of_regime_placeholders_pass_v_validation(log_level: LogLevel) -> None:
     """Per-regime V validation ignores out-of-regime placeholder entries.
 
     The simulate-time `validate_V` check must consider only the subjects
