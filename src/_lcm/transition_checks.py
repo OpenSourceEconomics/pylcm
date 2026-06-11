@@ -7,8 +7,10 @@ runs. Two families:
   `validate_regime_transitions_all_periods`. Iterates active non-terminal
   regimes across periods, evaluates the regime transition function on the
   Cartesian product of its accepted grid variables, and verifies finiteness,
-  [0, 1] range, sum-to-1, no probability mass to inactive regimes, and no
-  positive probability to a target with incomplete stochastic transitions.
+  [0, 1] range, sum-to-1, and no probability mass to inactive regimes.
+  (Per-target regime transitions make omitted targets structurally
+  unreachable; state-law coverage of reachable targets is validated at
+  model build.)
 - **State transition probability check** keyed on
   `validate_state_transitions_all_periods`. Sweeps every `MarkovTransition`
   state transition (incl. per-target dict entries), evaluates the user
@@ -263,14 +265,6 @@ def _validate_regime_transition_single(
         state_action_values=MappingProxyType(point),
     )
 
-    _validate_no_reachable_incomplete_targets(
-        regimes=regimes,
-        regime_transition_probs=regime_transition_probs,
-        active_regimes_next_period=active_regimes_next_period,
-        regime_name=regime_name,
-        age=ages.values[period],  # noqa: PD011
-    )
-
 
 def _validate_regime_transition_probs(
     *,
@@ -380,55 +374,6 @@ def _format_sum_violation(
         f"{n_failing} of {sum_all.shape[0]} probability vectors do not sum to 1.0.\n"
         f"First failing entries:\n{df.to_string(index=False)}"
     )
-
-
-def _validate_no_reachable_incomplete_targets(
-    *,
-    regimes: MappingProxyType[RegimeName, Regime],
-    regime_transition_probs: MappingProxyType[RegimeName, FloatND],
-    active_regimes_next_period: tuple[RegimeName, ...],
-    regime_name: RegimeName,
-    age: float | ScalarInt | ScalarFloat,
-) -> None:
-    """Check that targets with incomplete stochastic transitions are unreachable.
-
-    A target is "incomplete" from the source regime if the source's
-    `transitions[target_regime_name]` does not cover all of the target's
-    stochastic state needs. Such targets must have zero transition
-    probability, otherwise the continuation value cannot be computed. This
-    includes self-transitions (regime reaches itself): omitting the
-    self-entry in a per-target dict is a common user error.
-
-    """
-    solution = regimes[regime_name].solution
-    transitions = solution.transitions
-    stochastic_names = solution.stochastic_transition_names
-
-    for target_regime_name in active_regimes_next_period:
-        target_regime = regimes[target_regime_name]
-        needs = {
-            f"next_{s}"
-            for s in target_regime.solution.state_names
-            if f"next_{s}" in stochastic_names
-        }
-        if not needs:
-            continue
-        if target_regime_name in transitions and needs.issubset(
-            transitions[target_regime_name]
-        ):
-            continue
-        if not jnp.any(regime_transition_probs[target_regime_name] > 0):
-            continue
-        missing = sorted(needs - set(transitions.get(target_regime_name, {})))
-        raise InvalidRegimeTransitionProbabilitiesError(
-            f"Regime '{regime_name}' at age {age} has positive transition "
-            f"probability to '{target_regime_name}', but '{regime_name}' "
-            f"does not provide state transition(s) for: {missing}. Extend "
-            f"`state_transitions` in '{regime_name}' to cover "
-            f"'{target_regime_name}' (via a per-target dict if the "
-            f"transition differs by target), or ensure "
-            f"'{target_regime_name}' is unreachable."
-        )
 
 
 def validate_state_transitions_all_periods(  # noqa: C901
