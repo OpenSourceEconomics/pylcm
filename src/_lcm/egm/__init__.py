@@ -1,4 +1,4 @@
-"""Endogenous-grid-method (DC-EGM) solver internals.
+"""Endogenous Grid Method (EGM) building blocks.
 
 Hosts the DC-EGM model-contract validation (`_lcm.egm.validation`), the
 upper-envelope refinement of EGM candidate solutions
