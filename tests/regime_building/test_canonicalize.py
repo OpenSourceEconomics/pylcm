@@ -97,9 +97,20 @@ def test_bare_law_broadcasts_over_carrying_targets() -> None:
 
 
 def test_per_target_dict_is_restricted_to_named_targets() -> None:
-    """A user per-target dict passes through with exactly its named targets."""
+    """A user per-target dict passes through with exactly its named targets.
+
+    The per-target regime transition declares "retire" and "dead" reachable;
+    "work" carries `wealth` but is structurally unreachable, so the law
+    toward it is neither required nor produced.
+    """
     specs = _two_regime_model_specs(
-        {"state_transitions": {"wealth": {"retire": _next_wealth}}}
+        {
+            "transition": {
+                "retire": MarkovTransition(lambda age: jnp.asarray(0.6)),  # noqa: ARG005
+                "dead": MarkovTransition(lambda age: jnp.asarray(0.4)),  # noqa: ARG005
+            },
+            "state_transitions": {"wealth": {"retire": _next_wealth}},
+        }
     )
     canonical = specs["work"].solution.state_transitions["wealth"]
     assert set(canonical) == {"retire"}
@@ -114,7 +125,9 @@ def test_fixed_transition_desugars_to_per_target_identities() -> None:
             "wealth": _next_wealth,
             "health": fixed_transition("health"),
         },
-        "functions": {"utility": lambda consumption, health: jnp.log(consumption)},  # noqa: ARG005
+        "functions": {
+            "utility": lambda consumption, health: jnp.log(consumption)  # noqa: ARG005
+        },
     }
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
     specs = _canonicalize(
@@ -134,7 +147,9 @@ def test_markov_law_broadcasts_as_markov() -> None:
             "wealth": _next_wealth,
             "health": MarkovTransition(_health_probs),
         },
-        "functions": {"utility": lambda consumption, health: jnp.log(consumption)},  # noqa: ARG005
+        "functions": {
+            "utility": lambda consumption, health: jnp.log(consumption)  # noqa: ARG005
+        },
     }
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
     specs = _canonicalize(

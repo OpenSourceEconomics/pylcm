@@ -519,6 +519,15 @@ def _resolve_per_target_template_key(
                 if template_key == func_name:
                     return qname_from_tree_path((next_state, target))
 
+    # Per-target regime transitions contribute "to_{target}_next_regime" keys.
+    transition = user_regime.transition
+    if isinstance(transition, Phased):
+        transition = transition.solve
+    if isinstance(transition, Mapping):
+        for target_name in transition:
+            if func_name == f"to_{target_name}_next_regime":
+                return qname_from_tree_path(("next_regime", str(target_name)))
+
     return None
 
 
@@ -882,17 +891,19 @@ def _collect_state_names(
 
 
 def _state_grids_with_carried_domains(
-    states: Mapping[StateName, Grid | Phased],
+    states: Mapping[StateName, Grid | Phased | None],
 ) -> dict[StateName, Grid]:
     """Replace each carried-state declaration by its simulate-phase grid.
 
     A carried value (declared via `Phased(solve=..., simulate=Grid)`) is a
     genuine state in simulation input and output, so label/code discovery
-    must see the inner grid like any other state grid.
+    must see the inner grid like any other state grid. `None` masks are
+    resolved before the consumers here run; the filter narrows the type.
     """
     return {
         name: cast("Grid", spec.simulate) if isinstance(spec, Phased) else spec
         for name, spec in states.items()
+        if spec is not None
     }
 
 

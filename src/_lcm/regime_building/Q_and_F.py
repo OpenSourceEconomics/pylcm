@@ -32,7 +32,7 @@ def get_Q_and_F(
     flat_param_names: frozenset[str],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
-    complete_targets: tuple[RegimeName, ...],
+    period_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -48,7 +48,8 @@ def get_Q_and_F(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
-        complete_targets: Target regimes with all required stochastic transitions.
+        period_targets: Target regimes whose continuation enters E[V]
+            this period (reachable, with state laws, active next period).
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
         compute_regime_transition_probs: Regime transition probability function
@@ -69,7 +70,7 @@ def get_Q_and_F(
 
     next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
 
-    for target_regime_name in complete_targets:
+    for target_regime_name in period_targets:
         # Transitions from the current regime to the target regime
         target_transitions = transitions[target_regime_name]
 
@@ -152,16 +153,12 @@ def get_Q_and_F(
             compute_regime_transition_probs(**states_actions_params)
         )
         U_arr, F_arr = U_and_F(**states_actions_params)
-        # Use only complete targets for the traced function — incomplete
-        # target validation happens outside JIT to keep the HLO (and thus
-        # the persistent compilation cache key) independent of the
-        # partition.
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in complete_targets}
+            {r: regime_transition_probs[r] for r in period_targets}
         )
 
         E_next_V = jnp.zeros_like(U_arr)
-        for target_regime_name in complete_targets:
+        for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
             )
@@ -213,7 +210,7 @@ def get_compute_intermediates(
     flat_param_names: frozenset[str],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
-    complete_targets: tuple[RegimeName, ...],
+    period_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -232,7 +229,8 @@ def get_compute_intermediates(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to constraint functions.
-        complete_targets: Target regimes with all required stochastic transitions.
+        period_targets: Target regimes whose continuation enters E[V]
+            this period (reachable, with state laws, active next period).
         transitions: Immutable mapping of target regime names to state transition
             functions.
         stochastic_transition_names: Frozenset of stochastic transition function
@@ -254,7 +252,7 @@ def get_compute_intermediates(
 
     next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
 
-    for target_regime_name in complete_targets:
+    for target_regime_name in period_targets:
         target_transitions = transitions[target_regime_name]
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
             functions=functions,
@@ -323,11 +321,11 @@ def get_compute_intermediates(
         )
         U_arr, F_arr = U_and_F(**states_actions_params)
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in complete_targets}
+            {r: regime_transition_probs[r] for r in period_targets}
         )
 
         E_next_V = jnp.zeros_like(U_arr)
-        for target_regime_name in complete_targets:
+        for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
             )
@@ -415,59 +413,36 @@ def get_Q_and_F_terminal(
     return Q_and_F
 
 
-def get_complete_targets(
+def get_period_targets(
     *,
     period: int,
     transitions: TransitionFunctionsMapping,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    stochastic_transition_names: frozenset[TransitionFunctionName],
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> tuple[RegimeName, ...]:
-    """Return active target regimes whose stochastic needs are fully covered.
+    """Return the target regimes whose continuation enters E[V] this period.
 
-    Enumerates every regime active in the next period (from
-    `regime_to_v_interpolation_info`) and keeps those whose stochastic
-    state needs are all covered by `transitions`. Targets missing stochastic
-    transitions (including those entirely absent from `transitions`) are
-    dropped; `validate_regime_transitions_all_periods` (via
-    `_validate_no_reachable_incomplete_targets` in
-    `_lcm.utils.error_handling`) raises pre-solve if any dropped target has
-    non-zero transition probability.
+    The canonical transition bundles (`transitions` keys) carry exactly the
+    reachable targets with at least one state law; the period filter keeps
+    those active in the next period. A reachable target absent from the
+    bundles has no states (its V is identically zero) and contributes
+    nothing to the continuation.
 
     Args:
-        period: The period to enumerate active targets for.
+        period: The period to enumerate targets for.
         transitions: Immutable mapping of target regime names to their
             state transition functions.
         regimes_to_active_periods: Immutable mapping of regime names to
             their active period tuples.
-        stochastic_transition_names: Frozenset of stochastic transition
-            function names.
-        regime_to_v_interpolation_info: Mapping of regime names to
-            V-interpolation info.
 
     Returns:
-        Tuple of complete target regime names.
+        Tuple of this period's target regime names.
 
     """
-    all_active = tuple(
+    return tuple(
         regime_name
-        for regime_name in regime_to_v_interpolation_info
+        for regime_name in transitions
         if period + 1 in regimes_to_active_periods.get(regime_name, ())
     )
-
-    complete: list[RegimeName] = []
-    for regime_name in all_active:
-        target_stochastic_needs = {
-            f"next_{s}"
-            for s in regime_to_v_interpolation_info[regime_name].state_names
-            if f"next_{s}" in stochastic_transition_names
-        }
-        if regime_name in transitions and target_stochastic_needs.issubset(
-            transitions[regime_name]
-        ):
-            complete.append(regime_name)
-
-    return tuple(complete)
 
 
 def _get_arg_names_of_Q_and_F(
