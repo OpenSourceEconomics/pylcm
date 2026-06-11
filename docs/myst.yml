@@ -58,12 +58,14 @@ project:
         - file: explanations/stochastic_transitions.ipynb
         - file: explanations/dispatchers.ipynb
         - file: explanations/beta_delta.ipynb
+        - file: explanations/iskhakov_et_al_2017.ipynb
         - file: explanations/architecture.md
     - file: examples/index.md
       title: Examples
       children:
         - file: examples/tiny.md
         - file: examples/mortality.md
+        - file: examples/iskhakov_et_al_2017.md
         - file: examples/precautionary_savings.md
         - file: examples/precautionary_savings_health.md
         - file: examples/mahler_yum_2024.md
