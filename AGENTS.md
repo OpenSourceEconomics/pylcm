@@ -45,16 +45,18 @@ automation. Python 3.14+ is required.
 
 **Canonical Processing (`src/_lcm/engine.py`)**
 
-- The pipeline from user input to engine form: `Regime` → `EffectiveUserRegime` (merge +
-  completeness) → `PhasedRegimeSpec` (phase split + canonical laws) →
+- The pipeline from user input to engine form: `Regime` → finalized `Regime` (same
+  class, post-merge) → `PhasedRegimeSpec` (phase split + canonical laws) →
   `_lcm.engine.Regime` (compiled function sets).
-- `EffectiveUserRegime` (`src/_lcm/regime_building/effective.py`): the regime as the
-  model actually runs it — model-level `derived_categoricals` merged in, default `H`
-  injected, completeness validated (a `utility` entry, state-transition coverage,
-  state/action overlap, distributed-grid rules). Still user vocabulary, so the params
-  template reads the user's coarseness off it. Subclasses the user `Regime`; constructed
-  only by `build_effective_regimes`. A bare `Regime` validates only local, value-shape
-  properties at construction — completeness may be satisfied only at the model level.
+- `finalize_regimes` (`src/_lcm/regime_building/finalize.py`): finalizes each user
+  `Regime` at model build into the form the model actually runs — model-level
+  `derived_categoricals` merged in, default `H` injected, completeness validated (a
+  `utility` entry, state-transition coverage, state/action overlap, distributed-grid
+  rules). The result is a plain `lcm.regime.Regime`, still user vocabulary, so the
+  params template reads the user's coarseness off it. Internal signatures mark the
+  post-merge form with the erased alias `FinalizedUserRegime` (defined in
+  `finalize.py`). A bare `Regime` validates only local, value-shape properties at
+  construction — completeness may be satisfied only at the model level.
 - `canonicalize_regimes` (`src/_lcm/regime_building/canonicalize.py`): the model-level
   canonicalization stage. Rewrites every phase slice's laws into the canonical
   target-granular form `Mapping[RegimeName, law]` over exactly the reachable targets
@@ -62,7 +64,7 @@ automation. Python 3.14+ is required.
   `fixed_transition` entries desugar into per-target identities. Reachability has a
   single source of truth — the regime transition (per-target dict ⇒ its key set; coarse
   ⇒ all regimes) — and is resolved here, once; the engine-side extraction is a pure
-  transpose. Rule: the params template reads the user (effective) spec, the engine reads
+  transpose. Rule: the params template reads the user (finalized) spec, the engine reads
   the canonical spec.
 - `Regime` (from `_lcm.engine`): Canonical representation produced by `process_regimes`
   from a user-facing `Regime`. Internal engine code threads this form. Inside boundary
@@ -238,7 +240,7 @@ Regime(
     Cell params surface in the template under `to_<target>_next_regime`.
 - `active` is optional; defaults to `lambda _age: True` (always active)
 - `functions` must contain a `"utility"` entry (the utility function); checked when the
-  model builds its effective regimes, not at `Regime` construction
+  model finalizes its regimes, not at `Regime` construction
 - `state_transitions` maps state names to transition functions. Every non-process state
   in a non-terminal regime must have an entry (checked at model build).
   `fixed_transition(state_name)` marks a fixed state (identity law; its argument must
@@ -387,9 +389,9 @@ initial_conditions = {
 
 - `model.get_params_template()` - Mutable copy of the parameter template (dict by regime
   name)
-- `model.user_regimes` - Immutable mapping of regime names to `EffectiveUserRegime`
-  objects: the regimes as the model runs them (model-level slots merged, default `H`
-  injected), still in user vocabulary
+- `model.user_regimes` - Immutable mapping of regime names to plain `Regime` objects:
+  the regimes as the model runs them, finalized at model build (model-level slots
+  merged, default `H` injected, completeness validated), still in user vocabulary
 - `model._regimes` - Immutable mapping of regime names to canonical `Regime` objects
   (`_lcm.engine.Regime`) produced by `process_regimes`. Private — the canonical form is
   engine-internal; user code should read `user_regimes`.

@@ -17,7 +17,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from _lcm.regime_building.canonicalize import canonicalize_regimes
-from _lcm.regime_building.effective import build_effective_regimes
+from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
@@ -73,9 +73,7 @@ def _regime(**overrides: Any) -> UserRegime:
 
 def _canonicalize(regimes: dict[str, UserRegime]) -> Mapping:
     return canonicalize_regimes(
-        user_regimes=build_effective_regimes(
-            user_regimes=regimes, derived_categoricals={}
-        )
+        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={})
     )
 
 

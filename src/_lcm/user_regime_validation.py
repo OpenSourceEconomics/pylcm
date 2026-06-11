@@ -111,7 +111,7 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
     Completeness properties (a `utility` entry, state-transition coverage,
     state/action overlap, distributed-grid rules) may be satisfied only after
     model-level slots are merged in; `_validate_completeness` checks them when
-    the effective regime is constructed.
+    the regimes are finalized at model build.
     """
     error_messages: list[str] = []
 
@@ -203,7 +203,7 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
 
 
 def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
-    """Collect completeness errors for an effective (post-merge) regime.
+    """Collect completeness errors for a finalized (post-merge) regime.
 
     These properties hold only for the regime the model actually runs —
     a bare user `Regime` may legitimately lack them until model-level slots

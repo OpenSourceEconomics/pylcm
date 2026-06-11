@@ -177,7 +177,7 @@ class Regime:
             object.__setattr__(self, name, value)
 
         # Completeness (a `utility` entry, default-`H` injection, transition
-        # coverage) is validated when the model builds its effective regimes
+        # coverage) is validated when the model finalizes its regimes
         # — model-level slots may still satisfy it after merging.
         make_immutable("functions")
         make_immutable("states")

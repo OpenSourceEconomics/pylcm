@@ -35,9 +35,9 @@ from _lcm.regime_building.broadcast import (
     prune_broadcast_variables,
     validate_model_slots,
 )
-from _lcm.regime_building.effective import (
-    EffectiveUserRegime,
-    build_effective_regimes,
+from _lcm.regime_building.finalize import (
+    FinalizedUserRegime,
+    finalize_regimes,
 )
 from _lcm.regime_building.processing import Regime
 from _lcm.simulation.compile import compile_all_simulation_phases
@@ -102,10 +102,10 @@ class Model:
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from regime names to integer indices."""
 
-    user_regimes: MappingProxyType[RegimeName, EffectiveUserRegime]
-    """The effective regimes: complete (default `H` injected, completeness
-    validated), with model-level slots merged in and broadcast variables
-    pruned, still in user vocabulary."""
+    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
+    """The finalized regimes: plain `lcm.regime.Regime` instances, complete
+    (default `H` injected, completeness validated), with model-level slots
+    merged in and broadcast variables pruned, still in user vocabulary."""
 
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     """Per regime, the broadcast states and actions pruned because no root
@@ -244,7 +244,7 @@ class Model:
             user_regimes=merged_regimes,
             broadcast_variables=broadcast_variables,
         )
-        self.user_regimes = build_effective_regimes(
+        self.user_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
             derived_categoricals=derived_categoricals,
         )

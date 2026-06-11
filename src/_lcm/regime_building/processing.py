@@ -27,7 +27,7 @@ from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
     get_max_Q_over_a,
@@ -89,12 +89,12 @@ from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
 def process_regimes(
     *,
-    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Process effective regimes into canonical regimes.
+    """Process finalized regimes into canonical regimes.
 
     Canonicalizes every regime's laws into target-granular form
     (`canonicalize_regimes`), then compiles the per-phase function sets.
@@ -102,7 +102,7 @@ def process_regimes(
     transition logic.
 
     Args:
-        user_regimes: Mapping of regime names to effective regimes.
+        user_regimes: Mapping of regime names to finalized regimes.
         ages: The AgeGrid for the model.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         enable_jit: Whether to jit the functions of the canonical regime.

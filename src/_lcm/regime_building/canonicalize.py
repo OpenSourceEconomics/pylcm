@@ -29,7 +29,7 @@ from typing import cast
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
@@ -49,12 +49,12 @@ type _CanonicalStateTransitions = MappingProxyType[
 
 def canonicalize_regimes(
     *,
-    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
 ) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
-    """Split every effective regime into phases and canonicalize its laws.
+    """Split every finalized regime into phases and canonicalize its laws.
 
     Args:
-        user_regimes: Mapping of regime names to effective regimes.
+        user_regimes: Mapping of regime names to finalized regimes.
 
     Returns:
         Immutable mapping of regime names to per-phase specs whose every

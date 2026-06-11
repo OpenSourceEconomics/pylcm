@@ -21,7 +21,7 @@ from _lcm.params.processing import (
     create_params_template,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.processing import (
     Regime,
@@ -46,7 +46,7 @@ from lcm.typing import UserParams
 def build_regimes_and_template(
     *,
     ages: AgeGrid,
-    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -58,7 +58,7 @@ def build_regimes_and_template(
 
     Args:
         ages: Age grid for the model.
-        user_regimes: Mapping of regime names to effective regimes.
+        user_regimes: Mapping of regime names to finalized regimes.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
@@ -91,7 +91,7 @@ def build_regimes_and_template(
 def _build_regimes_and_template_with_fixed_params(
     *,
     ages: AgeGrid,
-    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -100,7 +100,7 @@ def _build_regimes_and_template_with_fixed_params(
 
     Args:
         ages: Age grid for the model.
-        user_regimes: Mapping of regime names to effective regimes.
+        user_regimes: Mapping of regime names to finalized regimes.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.

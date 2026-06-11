@@ -157,7 +157,7 @@ def _collect_all_functions_for_template(
     entries to a single variant, this returns them as-is so the caller can
     union both variants' parameters.
     """
-    # The template reads the effective regime, where `None` masks are
+    # The template reads the finalized regime, where `None` masks are
     # already resolved; the filters narrow the type.
     result: dict[FunctionName | TransitionFunctionName, UserFunction | Phased] = {
         name: func for name, func in user_regime.functions.items() if func is not None
