@@ -17,6 +17,7 @@ from _lcm.typing import (
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.solvers import DCEGM
 from lcm.typing import UserFunction
 
 
@@ -69,10 +70,11 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         # user-facing params in the template.
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
 
-        # `inverse_marginal_utility` (the DC-EGM inversion function) receives
-        # `marginal_continuation` from the EGM kernel at solve time, so it
-        # must not surface as a user-facing param either.
-        if name == "inverse_marginal_utility":
+        # In a DC-EGM regime, `inverse_marginal_utility` (the inversion
+        # function) receives `marginal_continuation` from the EGM kernel at
+        # solve time, so it must not surface as a user-facing param there. In
+        # any other regime, a function of that name is ordinary.
+        if name == "inverse_marginal_utility" and isinstance(user_regime.solver, DCEGM):
             params.pop("marginal_continuation", None)
 
         path = tree_path_from_qname(name)

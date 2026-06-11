@@ -26,6 +26,9 @@ def interp_on_padded_grid(*, x_query: FloatND, xp: Float1D, fp: Float1D) -> Floa
       values), queries strictly below the duplicate interpolate toward the
       left value; queries at or above it use the right value. The zero-width
       bracket between the duplicates is never used as a divisor.
+    - A `-inf` endpoint (an infeasible value) forces the bracket's interior
+      to `-inf` instead of NaN; a query exactly on a finite neighbor returns
+      that neighbor's value.
 
     Args:
         x_query: Points at which to evaluate the interpolant; any shape.

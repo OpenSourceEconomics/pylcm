@@ -8,20 +8,15 @@ envelope) and compared against:
 - the brute-force solver with regime-level taste shocks on the equivalent spec
   (smoothed case): both solvers approximate the same smoothed model, so their V
   arrays agree up to the consumption-grid resolution of the brute solution.
-
-Skips until `lcm.solvers` (and, for the smoothed case, `lcm.taste_shocks`)
-exist; red until DC-EGM handles discrete choices.
 """
 
 import numpy as np
 import pytest
-from numpy.testing import assert_array_almost_equal as aaae
-
-pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
 
 from _lcm.config import TEST_DATA
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm import AgeGrid, Model
+from lcm.taste_shocks import ExtremeValueTasteShocks
 from tests.test_models.deterministic import base, dcegm_variants
 from tests.test_models.deterministic.dcegm_variants import (
     get_full_model,
@@ -69,8 +64,9 @@ def test_dcegm_matches_analytical_solution(case, spec):
     for kind, regime in [("worker", "working_life"), ("retired", "retirement")]:
         numerical = _stack_regime_V(period_to_regime_to_V_arr, regime)
         analytical = _load_analytical(case, kind)
-        mse = np.mean((analytical - numerical) ** 2, axis=0)
-        aaae(mse, 0, decimal=2)
+        # Elementwise — every (period, node) value must hit the analytical
+        # solution; aggregating over periods could hide a localized error.
+        np.testing.assert_allclose(numerical, analytical, atol=0.03, err_msg=f"{kind}")
 
 
 def _smoothed_model_pair(n_periods: int, shocks) -> dict[str, Model]:
@@ -117,18 +113,13 @@ def test_smoothed_model_brute_and_dcegm_agree():
     period 0, wealth node 4: closed form 5.121, DC-EGM 5.118, brute 5.044), so
     the comparison covers the wealth nodes where the brute solver is reliable.
     """
-    taste_shocks_module = pytest.importorskip(
-        "lcm.taste_shocks", reason="Taste shocks not yet implemented"
-    )
     n_periods = 4
     scale = 0.2
     n_brute_unstable_nodes = 10
     params = get_full_params(n_periods, discount_factor=0.98, wage=20.0)
     params["working_life"]["taste_shocks"] = {"scale": scale}
 
-    models = _smoothed_model_pair(
-        n_periods, taste_shocks_module.ExtremeValueTasteShocks()
-    )
+    models = _smoothed_model_pair(n_periods, ExtremeValueTasteShocks())
     solutions = {
         solver: model.solve(params=params, log_level="debug")
         for solver, model in models.items()

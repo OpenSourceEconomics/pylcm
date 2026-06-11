@@ -49,7 +49,7 @@ import jax
 import jax.numpy as jnp
 from dags import concatenate_functions, get_ancestors
 
-from _lcm.grids import ContinuousGrid, Grid
+from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import (
     ActionName,
@@ -58,7 +58,7 @@ from _lcm.typing import (
     StateName,
     StateOrActionName,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import GridInitializationError, ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.regime import _default_H
@@ -156,12 +156,20 @@ def _validate_dcegm_regime(
         user_regimes=user_regimes,
         solver=solver,
     )
-    _fail_if_numeric_spot_checks_fail(
-        regime_name=regime_name,
-        user_regime=user_regime,
-        functions=functions,
-        solver=solver,
-    )
+    try:
+        _fail_if_numeric_spot_checks_fail(
+            regime_name=regime_name,
+            user_regime=user_regime,
+            functions=functions,
+            solver=solver,
+        )
+    except GridInitializationError as error:
+        msg = (
+            f"A numeric spot check of the DC-EGM contract in regime "
+            f"'{regime_name}' needs grid points at model construction, but a "
+            f"grid supplies them only at runtime: {error}"
+        )
+        raise ModelInitializationError(msg) from error
 
 
 def _fail_if_terminal(*, regime_name: RegimeName, user_regime: UserRegime) -> None:
@@ -584,10 +592,45 @@ def _fail_if_grid_hygiene_violated(
     user_regime: UserRegime,
     solver: DCEGM,
 ) -> None:
-    """Euler grid not batched/distributed; savings grid covers the Euler grid."""
+    """No runtime/batched/distributed grids; savings grid covers the Euler grid."""
     # Rule 1 has already established that the Euler state's grid is a
     # (non-process) continuous grid.
     euler_grid = cast("ContinuousGrid", user_regime.states[solver.continuous_state])
+    # DC-EGM builds its kernels (savings nodes, carry shapes, numeric spot
+    # checks) at model-construction time, so these grids must carry their
+    # points then — runtime-supplied points cannot work.
+    kernel_grids = {
+        "DCEGM savings grid": solver.savings_grid,
+        f"grid of the Euler state '{solver.continuous_state}'": euler_grid,
+        f"grid of the continuous action '{solver.continuous_action}'": (
+            user_regime.actions[solver.continuous_action]
+        ),
+    }
+    for role, grid in kernel_grids.items():
+        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+            msg = (
+                f"The {role} in regime '{regime_name}' supplies its points "
+                "only at runtime via params; a DCEGM regime needs the points "
+                "at model construction. Supply them via `points=...`."
+            )
+            raise ModelInitializationError(msg)
+    # The EGM kernel selects carry rows by integer indexing along whole
+    # discrete axes, so discrete grids cannot be batched or distributed.
+    for kind, name_to_grid in (
+        ("state", user_regime.states),
+        ("action", user_regime.actions),
+    ):
+        for name, grid in name_to_grid.items():
+            if isinstance(grid, DiscreteGrid) and (
+                grid.batch_size != 0 or grid.distributed
+            ):
+                msg = (
+                    f"The grid of the discrete {kind} '{name}' in regime "
+                    f"'{regime_name}' must not be batched or distributed in "
+                    f"a DCEGM regime (got batch_size={grid.batch_size}, "
+                    f"distributed={grid.distributed})."
+                )
+                raise ModelInitializationError(msg)
     if euler_grid.batch_size != 0 or euler_grid.distributed:
         msg = (
             f"The grid of the Euler state '{solver.continuous_state}' in "

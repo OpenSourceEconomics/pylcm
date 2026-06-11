@@ -4,16 +4,21 @@ A regime with `solver=DCEGM(...)` must satisfy the EGM contract; every violation
 raises `ModelInitializationError` at `Model` construction with a message naming
 the offending piece. The cases here mutate a valid DC-EGM regime one rule at a
 time.
-
-Skips until `lcm.solvers` exists; red until the validation lands.
 """
+
+import dataclasses
 
 import jax.numpy as jnp
 import pytest
 
-pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
-
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import BruteForce
@@ -193,6 +198,36 @@ CASES = {
         ),
         "batch",
     ),
+    "batched_discrete_state_grid": (
+        lambda: VALID.replace(
+            states={
+                **dict(VALID.states),
+                "skill": DiscreteGrid(base.LaborSupply, batch_size=1),
+            },
+            state_transitions={
+                **dict(VALID.state_transitions),
+                "skill": fixed_transition("skill"),
+            },
+        ),
+        "batch",
+    ),
+    "runtime_savings_grid": (
+        lambda: VALID.replace(
+            solver=dataclasses.replace(
+                dcegm_variants.DCEGM_SOLVER,
+                savings_grid=IrregSpacedGrid(n_points=8),
+            )
+        ),
+        "runtime",
+    ),
+    "runtime_euler_state_grid": (
+        lambda: VALID.replace(states={"wealth": IrregSpacedGrid(n_points=100)}),
+        "runtime",
+    ),
+    "runtime_continuous_action_grid": (
+        lambda: VALID.replace(actions={"consumption": IrregSpacedGrid(n_points=50)}),
+        "runtime",
+    ),
 }
 
 
@@ -289,7 +324,10 @@ def test_non_dcegm_non_terminal_target_raises():
         active=lambda age: age < 60,
     )
     ages = AgeGrid(start=40, stop=60, step="10Y")
-    with pytest.raises(ModelInitializationError, match="DCEGM"):
+    with pytest.raises(
+        ModelInitializationError,
+        match="non-terminal target of a DCEGM regime must itself use the DCEGM",
+    ):
         Model(
             regimes={
                 "working_life": dcegm_source,
@@ -299,6 +337,32 @@ def test_non_dcegm_non_terminal_target_raises():
             ages=ages,
             regime_id_class=base.RegimeId,
         )
+
+
+def _ordinary_inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def test_brute_force_inverse_marginal_utility_keeps_its_params():
+    """`marginal_continuation` stays a user param outside DC-EGM regimes.
+
+    Only the DC-EGM kernel supplies `marginal_continuation` at solve time. In
+    a brute-force regime, a function named `inverse_marginal_utility` is an
+    ordinary regime function, so its argument must surface in the params
+    template like any other.
+    """
+    regime = retirement_only.retirement.replace(
+        functions={
+            **dict(retirement_only.retirement.functions),
+            "inverse_marginal_utility": _ordinary_inverse_marginal_utility,
+        },
+        active=lambda age: age < 60,
+    )
+    model = _build_model(regime)
+
+    template = model.get_params_template()
+
+    assert "marginal_continuation" in template["retirement"]["inverse_marginal_utility"]
 
 
 def test_brute_force_solver_explicit_equals_default():

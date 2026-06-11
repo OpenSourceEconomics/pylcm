@@ -31,12 +31,23 @@ The model specification (functional forms, parameter values, choice coding — i
 the upstream docstring/code discrepancy on which choice code means "work") is documented
 in `generate_fixtures.py`'s module docstring.
 
-## Known upstream artifact
+## Excluded rows: low-wealth resolution of the uniform savings grid
 
-The retiree rows at the lowest wealth node (`lagged_choice = 1`, `wealth = 1.0`) carry
-an upstream numerical artifact: the stored `value_retire` contradicts the value implied
-by the fixture's own `policy_retire` column (period 0: stored value −66.0, while
-consuming the stored policy `0.124 · wealth` per period is worth about −54), and an
-independent fine-grid value-iteration recursion of the same model confirms the
-policy-implied value. The cross-check test therefore excludes those rows; all other rows
-agree with the recursion at the test's tolerances.
+The retiree rows at the lowest wealth node (`lagged_choice = 1`, `wealth = 1.0`; 9 rows,
+one per period) are excluded from the cross-check. The run's exogenous savings grid is
+uniform on `[0, 50]`, which under-resolves the sharply curved (CRRA, `rho = 1.95`)
+retiree value function near the borrowing limit: the published value is interpolated
+linearly between endogenous grid points whose spacing the savings grid dictates, and the
+resulting error compounds backward across periods. Both implementations inherit the
+problem from the shared grid, but the error is implementation-specific in size — at
+period 0 the fixture stores about −66.0 and pylcm's DC-EGM about −76, while an
+independent fine-grid value-iteration recursion of the model (consistent with the
+fixture's own `policy_retire` column, which implies about −54) and pylcm's brute-force
+twin both put the value near −54. A pylcm DC-EGM run with the same number of savings
+nodes clustered toward the borrowing limit also reproduces the recursion at those nodes
+(locked in by `test_clustered_savings_grid_resolves_excluded_low_wealth_nodes`), so the
+exclusion reflects the fixture run's grid choice, not a kernel defect.
+
+On the remaining rows, agreement between the two DC-EGM implementations certifies that
+the implementations match on a shared discretization; the brute-force comparison and the
+recursion anchor accuracy.
