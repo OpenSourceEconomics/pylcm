@@ -235,6 +235,32 @@ def test_non_dcegm_non_terminal_target_raises():
         )
 
 
+def _ordinary_inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def test_brute_force_inverse_marginal_utility_keeps_its_params():
+    """`marginal_continuation` stays a user param outside DC-EGM regimes.
+
+    Only the DC-EGM kernel supplies `marginal_continuation` at solve time. In
+    a brute-force regime, a function named `inverse_marginal_utility` is an
+    ordinary regime function, so its argument must surface in the params
+    template like any other.
+    """
+    regime = retirement_only.retirement.replace(
+        functions={
+            **dict(retirement_only.retirement.functions),
+            "inverse_marginal_utility": _ordinary_inverse_marginal_utility,
+        },
+        active=lambda age: age < 60,
+    )
+    model = _build_model(regime)
+
+    template = model.get_params_template()
+
+    assert "marginal_continuation" in template["retirement"]["inverse_marginal_utility"]
+
+
 def test_brute_force_solver_explicit_equals_default():
     """`solver=BruteForce()` is the default: identical solution either way."""
     params = retirement_only.get_params(N_PERIODS)
