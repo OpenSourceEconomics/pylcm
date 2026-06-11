@@ -13,9 +13,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   upper-envelope scan (Dobrescu & Shanker 2022) — no consumption grid enters
   the solve, and the credit-constrained segment is exact. Requires declared
   `resources`, post-decision, and `inverse_marginal_utility` regime functions;
-  the model contract is validated at `Model` construction. Forward simulation
-  of DC-EGM-solved models is not available yet (`simulate()` raises
-  `NotImplementedError`).
+  the model contract is validated at `Model` construction. Supports discrete
+  states and actions, EV1 taste shocks, stochastic processes, and passive
+  continuous states. Forward simulation works with grid-restricted consumption
+  (the intrinsic budget constraint is applied as a feasibility mask).
 
 - Adds regime-level EV1 taste shocks as a model property:
   `Regime(taste_shocks=lcm.ExtremeValueTasteShocks())` with the scale as the
