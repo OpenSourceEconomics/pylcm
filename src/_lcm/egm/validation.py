@@ -28,8 +28,10 @@ offending piece. The rules, in the order they are checked:
   post-decision function
 - grid hygiene: the Euler grid is neither batched nor distributed, and the
   savings grid covers the Euler grid's upper region
-- every reachable non-terminal target regime also uses DC-EGM with the same
-  Euler state (brute-force regimes may target DC-EGM regimes)
+- every declared-reachable non-terminal target regime also uses DC-EGM with
+  the same Euler state (reachability is read off the regime transition: a
+  granular per-target mapping declares its key set, any coarse form reaches
+  every regime; brute-force regimes may target DC-EGM regimes)
 - numeric spot checks on small grid samples, outside jit: consumption
   recovery `post_decision ≈ resources - action`, resources non-decreasing in
   the Euler state, and `inverse_marginal_utility` consistent with
@@ -851,29 +853,21 @@ def _reachable_target_names(
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> set[RegimeName]:
-    """Regimes a regime can transition into, judged from `state_transitions`.
+    """Regimes a regime can transition into, read off the declared reachability.
 
-    Mirrors the engine's reachability notion: without per-target transition
-    dicts every regime is potentially reachable; with them, the reachable set
-    is the union of the explicitly named targets plus any regime whose states
-    are fully covered by simple (non-per-target) transitions.
+    The regime transition is the single source of truth for reachability:
+
+    - a granular per-target mapping declares exactly its key set — omitted
+      regimes are structurally unreachable,
+    - any coarse form (bare callable or `MarkovTransition`) reaches every
+      regime.
     """
-    per_target_keys: set[RegimeName] = set()
-    has_per_target = False
-    simple_state_names: set[str] = set()
-    for state_name, value in user_regime.state_transitions.items():
-        if isinstance(value, Mapping) and not isinstance(value, MarkovTransition):
-            has_per_target = True
-            per_target_keys |= set(cast("Mapping[RegimeName, object]", value).keys())
-        else:
-            simple_state_names.add(state_name)
-    if not has_per_target:
-        return set(user_regimes)
-    for target_name, target in user_regimes.items():
-        needed = set(target.states)
-        if needed and needed.issubset(simple_state_names):
-            per_target_keys.add(target_name)
-    return per_target_keys
+    transition = user_regime.transition
+    if isinstance(transition, Phased):
+        transition = transition.solve
+    if isinstance(transition, Mapping):
+        return set(cast("Mapping[RegimeName, object]", transition).keys())
+    return set(user_regimes)
 
 
 def _resolve_solve_functions(

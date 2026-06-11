@@ -50,17 +50,34 @@ N_PERIODS = 4
 # Number of discretization nodes of the income process.
 N_INCOME_NODES = 5
 
-WEALTH_GRID = LinSpacedGrid(start=1.0, stop=60.0, n_points=60)
-CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=60.0, n_points=300)
+# Unconditional income added to next wealth in the Rouwenhorst variant. Keeps
+# continuation wealth comfortably inside the wealth grid even at zero savings
+# and rest, where the brute-force oracle would otherwise edge-clamp its
+# next-period V lookup.
+BASE_INCOME = 5.0
+
+# Scale of the IID income entering next wealth, for the same reason: the
+# lowest quadrature node times the scale stays well above the wealth grid's
+# lower end.
+IID_INCOME_SCALE = 10.0
+
+# Dense enough that the brute-force oracle's piecewise-linear V lookup is
+# accurate at low wealth, where log utility curves hardest.
+WEALTH_GRID = LinSpacedGrid(start=1.0, stop=60.0, n_points=120)
+# Dense because the brute-force argmax error is first-order in the grid
+# spacing wherever the borrowing constraint binds (the optimum sits at
+# `consumption = wealth`, between grid points).
+CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=60.0, n_points=600)
 
 # Exogenous end-of-period savings grid, cubically clustered toward the
 # borrowing limit where the value function curves hardest.
 SAVINGS_GRID = IrregSpacedGrid(points=tuple(60.0 * (i / 119) ** 3 for i in range(120)))
 
-# Lowest wealth nodes excluded from the brute-force comparison: there the
-# coarse consumption grid makes brute force itself unreliable (the same
-# exclusion the discrete and passive DC-EGM tests use).
-N_BRUTE_UNSTABLE_NODES = 8
+# Lowest wealth nodes excluded from the brute-force comparison (wealth below
+# ~9): there the coarse consumption grid and the curvature of log utility
+# make brute force itself unreliable (the same exclusion the discrete and
+# passive DC-EGM tests use, scaled to this wealth grid's node spacing).
+N_BRUTE_UNSTABLE_NODES = 16
 
 
 @categorical(ordered=False)
@@ -108,7 +125,7 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
 def next_wealth_from_savings_with_labor(
     savings: FloatND, labor_income: FloatND, interest_rate: float
 ) -> ContinuousState:
-    return (1 + interest_rate) * savings + labor_income
+    return (1 + interest_rate) * savings + BASE_INCOME + labor_income
 
 
 def next_wealth_brute_with_labor(
@@ -117,13 +134,13 @@ def next_wealth_brute_with_labor(
     labor_income: FloatND,
     interest_rate: float,
 ) -> ContinuousState:
-    return (1 + interest_rate) * (wealth - consumption) + labor_income
+    return (1 + interest_rate) * (wealth - consumption) + BASE_INCOME + labor_income
 
 
 def next_wealth_from_savings_iid(
     savings: FloatND, income: ContinuousState, interest_rate: float
 ) -> ContinuousState:
-    return (1 + interest_rate) * savings + jnp.exp(income)
+    return (1 + interest_rate) * savings + IID_INCOME_SCALE * jnp.exp(income)
 
 
 def next_wealth_brute_iid(
@@ -132,7 +149,9 @@ def next_wealth_brute_iid(
     income: ContinuousState,
     interest_rate: float,
 ) -> ContinuousState:
-    return (1 + interest_rate) * (wealth - consumption) + jnp.exp(income)
+    return (1 + interest_rate) * (wealth - consumption) + IID_INCOME_SCALE * jnp.exp(
+        income
+    )
 
 
 def borrowing_constraint(
@@ -277,7 +296,7 @@ def test_rouwenhorst_process_matches_dense_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["alive"])
         dcegm_V = np.asarray(dcegm_solution[period]["alive"])
-        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 60)
+        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 120)
         np.testing.assert_allclose(
             dcegm_V[:, N_BRUTE_UNSTABLE_NODES:],
             brute_V[:, N_BRUTE_UNSTABLE_NODES:],
@@ -300,7 +319,7 @@ def test_iid_process_matches_dense_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["alive"])
         dcegm_V = np.asarray(dcegm_solution[period]["alive"])
-        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 60)
+        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 120)
         np.testing.assert_allclose(
             dcegm_V[:, N_BRUTE_UNSTABLE_NODES:],
             brute_V[:, N_BRUTE_UNSTABLE_NODES:],

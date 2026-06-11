@@ -28,9 +28,10 @@ class EgmCarry:
     carry has a period-invariant pytree shape (periods sharing a compiled
     program never trigger retracing). Regimes with combo dimensions carry one
     row per combo: leading axes are the regime's discrete states (in V state
-    order), then its passive continuous states (in V continuous-state order,
-    one node per combo), then its discrete actions. Every array is pinned to
-    the canonical float dtype.
+    order; process states are node-valued discrete dimensions), then its
+    passive continuous states (in V continuous-state order, one node per
+    combo), then its discrete actions. Every array is pinned to the canonical
+    float dtype.
     """
 
     endog_grid: FloatND
