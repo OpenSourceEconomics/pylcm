@@ -44,6 +44,7 @@ class SolverKernelBuilder(Protocol):
         Q_and_F_functions: MappingProxyType[int, QAndFFunction],
         grids: MappingProxyType[StateOrActionName, Grid],
         enable_jit: bool,
+        has_taste_shocks: bool,
     ) -> MappingProxyType[int, MaxQOverAFunction]:
         """Return the per-period solve kernels keyed by period index."""
         ...
@@ -56,6 +57,7 @@ def _build_brute_force_kernels(
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     grids: MappingProxyType[StateOrActionName, Grid],
     enable_jit: bool,
+    has_taste_shocks: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
     """Build max-Q-over-a closures for each period.
 
@@ -75,6 +77,8 @@ def _build_brute_force_kernels(
                 },
                 action_names=state_action_space.action_names,
                 state_names=state_action_space.state_names,
+                n_discrete_action_axes=len(state_action_space.discrete_actions),
+                has_taste_shocks=has_taste_shocks,
             )
             built[q_id] = jax.jit(func) if enable_jit else func
         result[period] = built[q_id]
@@ -88,6 +92,7 @@ def _build_dcegm_kernels(
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     grids: MappingProxyType[StateOrActionName, Grid],  # noqa: ARG001
     enable_jit: bool,  # noqa: ARG001
+    has_taste_shocks: bool,  # noqa: ARG001
 ) -> MappingProxyType[int, MaxQOverAFunction]:
     """Build per-period kernel stubs that raise at solve time.
 

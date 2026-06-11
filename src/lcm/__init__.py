@@ -90,6 +90,7 @@ from lcm.regime import (  # noqa: E402
 )
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import DCEGM, BruteForce  # noqa: E402
+from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import fixed_transition  # noqa: E402
 
 # Modules with TYPE_CHECKING-only forward references expose a
@@ -112,6 +113,7 @@ __all__ = [
     "AgeGrid",
     "BruteForce",
     "DiscreteGrid",
+    "ExtremeValueTasteShocks",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogNormalIIDProcess",

@@ -31,6 +31,7 @@ from _lcm.utils.containers import (
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import DCEGM, BruteForce
+from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import MarkovTransition
 from lcm.typing import FloatND, UserFunction
 
@@ -153,6 +154,15 @@ class Regime:
     - `DCEGM(...)`: endogenous grid method for one continuous state and one
       continuous action; the regime must satisfy the DC-EGM model contract,
       which is validated at `Model` construction time.
+    """
+
+    taste_shocks: ExtremeValueTasteShocks | None = None
+    """EV1 taste shocks on the regime's discrete-action combinations.
+
+    When set, the shock scale becomes the runtime param
+    `{"taste_shocks": {"scale": ...}}` and the solve aggregates discrete
+    actions via the smoothed expected maximum instead of the hard maximum.
+    Requires at least one discrete action.
     """
 
     description: str = ""
