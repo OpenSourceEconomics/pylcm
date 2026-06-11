@@ -17,7 +17,6 @@ from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import BruteForce
-from lcm.transition import fixed_transition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -78,6 +77,24 @@ def _stochastic_next_wealth(
     return jnp.stack([probs, probs])
 
 
+def _stochastic_next_aime(
+    aime: ContinuousState,
+    interest_rate: float,
+) -> FloatND:
+    probs = jnp.where(interest_rate > 0, 0.5, 0.5) * jnp.ones_like(aime)
+    return jnp.stack([probs, probs])
+
+
+def _next_aime_depending_on_consumption(
+    aime: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return aime + 0.1 * consumption
+
+
+def _next_aime_decaying(aime: ContinuousState) -> ContinuousState:
+    return 0.95 * aime
+
+
 def _without_function(regime: UserRegime, name: str) -> UserRegime:
     functions = {k: v for k, v in regime.functions.items() if k != name}
     return regime.replace(functions=functions)
@@ -132,7 +149,7 @@ CASES = {
         ),
         "continuous action",
     ),
-    "passive_continuous_state_not_yet_supported": (
+    "stochastic_passive_state_transition": (
         lambda: VALID.replace(
             states={
                 **dict(VALID.states),
@@ -140,10 +157,23 @@ CASES = {
             },
             state_transitions={
                 **dict(VALID.state_transitions),
-                "aime": fixed_transition("aime"),
+                "aime": MarkovTransition(_stochastic_next_aime),
             },
         ),
-        "continuous state",
+        "'aime'.*is stochastic",
+    ),
+    "passive_state_transition_depends_on_consumption": (
+        lambda: VALID.replace(
+            states={
+                **dict(VALID.states),
+                "aime": LinSpacedGrid(start=0.0, stop=5.0, n_points=4),
+            },
+            state_transitions={
+                **dict(VALID.state_transitions),
+                "aime": _next_aime_depending_on_consumption,
+            },
+        ),
+        "not passive",
     ),
     "regime_transition_prob_depends_on_wealth": (
         lambda: VALID.replace(transition=_regime_transition_depending_on_wealth),
@@ -171,6 +201,80 @@ def test_dcegm_contract_violation_raises(build, match):
     """Each contract violation fails fast at Model construction."""
     with pytest.raises(ModelInitializationError, match=match):
         _build_model(build())
+
+
+def test_passive_continuous_state_constructs():
+    """A passive continuous state (deterministic, decision-independent) is valid."""
+    regime = VALID.replace(
+        states={
+            **dict(VALID.states),
+            "aime": LinSpacedGrid(start=0.0, stop=5.0, n_points=4),
+        },
+        state_transitions={
+            **dict(VALID.state_transitions),
+            "aime": _next_aime_decaying,
+        },
+    )
+    model = _build_model(regime)
+    assert model.n_periods == N_PERIODS
+
+
+def _retirement_stay_prob(age: int, final_age_alive: float) -> FloatND:
+    return jnp.where(age >= final_age_alive, 0.0, 1.0)
+
+
+def _retirement_death_prob(age: int, final_age_alive: float) -> FloatND:
+    return jnp.where(age >= final_age_alive, 1.0, 0.0)
+
+
+def _three_regime_model_with_brute_worker(retirement_transition) -> Model:
+    """Model with a brute-force worker regime next to a DC-EGM retirement regime."""
+    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    return Model(
+        regimes={
+            "working_life": base.working_life.replace(
+                active=lambda age, la=last_age: age < la
+            ),
+            "retirement": dcegm_variants.dcegm_retirement_full.replace(
+                transition=retirement_transition,
+                active=lambda age, la=last_age: age < la,
+            ),
+            "dead": dead,
+        },
+        ages=ages,
+        regime_id_class=base.RegimeId,
+    )
+
+
+def test_granular_transition_excluding_brute_regime_passes():
+    """Declared reachability narrows the target-compatibility check.
+
+    A granular regime transition declares its key set as the reachable
+    targets; regimes outside it are structurally unreachable. A DC-EGM
+    regime whose declared targets are itself and a terminal regime may
+    therefore coexist with a brute-force non-terminal regime it never
+    transitions into (the brute regime targeting the DC-EGM regime is
+    allowed in that direction).
+    """
+    model = _three_regime_model_with_brute_worker(
+        {
+            "retirement": MarkovTransition(_retirement_stay_prob),
+            "dead": MarkovTransition(_retirement_death_prob),
+        }
+    )
+    assert model.n_periods == N_PERIODS
+
+
+def test_coarse_transition_reaching_brute_regime_raises():
+    """A coarse regime transition declares every regime reachable.
+
+    The same model fails the target-compatibility check once the DC-EGM
+    regime's transition is a bare callable: the brute-force non-terminal
+    regime becomes a declared target.
+    """
+    with pytest.raises(ModelInitializationError, match="BruteForce"):
+        _three_regime_model_with_brute_worker(base.next_regime_from_retirement)
 
 
 def test_non_dcegm_non_terminal_target_raises():
@@ -218,24 +322,3 @@ def test_brute_force_solver_explicit_equals_default():
                     got_default[period][regime], got_explicit[period][regime]
                 )
             )
-
-
-def test_dcegm_simulate_raises_not_implemented():
-    """Solving a DC-EGM model works; simulating it raises `NotImplementedError`."""
-    model = dcegm_variants.get_retirement_only_model("dcegm", N_PERIODS)
-    params = dcegm_variants.get_retirement_only_params(N_PERIODS)
-
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
-
-    with pytest.raises(NotImplementedError, match=r"[Ss]imulat"):
-        model.simulate(
-            params=params,
-            initial_conditions={
-                "wealth": jnp.array([10.0]),
-                "regime_id": jnp.array(
-                    [retirement_only.RetirementOnlyRegimeId.retirement]
-                ),
-            },
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            log_level="off",
-        )

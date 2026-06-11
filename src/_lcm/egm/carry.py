@@ -26,10 +26,12 @@ class EgmCarry:
 
     All rows share the trailing grid axis of static, per-regime length so the
     carry has a period-invariant pytree shape (periods sharing a compiled
-    program never trigger retracing). Regimes with discrete dimensions carry
-    one row per discrete combo: leading axes are the regime's discrete
-    states (in V state order), then its discrete actions. Every array is
-    pinned to the canonical float dtype.
+    program never trigger retracing). Regimes with combo dimensions carry one
+    row per combo: leading axes are the regime's discrete states (in V state
+    order; process states are node-valued discrete dimensions), then its
+    passive continuous states (in V continuous-state order, one node per
+    combo), then its discrete actions. Every array is pinned to the canonical
+    float dtype.
     """
 
     endog_grid: FloatND
@@ -99,9 +101,9 @@ def build_template_egm_carry(
 
     Args:
         n_rows: Static length of the carry rows.
-        leading_shape: Sizes of the regime's discrete dimensions (discrete
-            states, then discrete actions); empty for regimes without
-            discrete dimensions.
+        leading_shape: Sizes of the regime's combo dimensions (discrete
+            states, then passive states, then discrete actions); empty for
+            regimes without combo dimensions.
 
     Returns:
         Carry with an ascending unit-interval grid and all-zero policy,

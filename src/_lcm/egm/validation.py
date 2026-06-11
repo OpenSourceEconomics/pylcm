@@ -7,7 +7,10 @@ offending piece. The rules, in the order they are checked:
 
 - exactly one continuous (*Euler*) state and one continuous action; process
   states are exempt (they enter the value function as node-valued discrete
-  dimensions); passive continuous states are not supported yet
+  dimensions); every other continuous state must be *passive*: deterministic,
+  with a transition whose DAG ancestors include neither the Euler state, the
+  continuous action, the resources function, nor the post-decision function,
+  and a grid that is neither batched nor distributed
 - the post-decision function, the resources function, and
   `inverse_marginal_utility` exist in `Regime.functions`
 - the regime uses the default Bellman aggregator `H`
@@ -25,8 +28,10 @@ offending piece. The rules, in the order they are checked:
   post-decision function
 - grid hygiene: the Euler grid is neither batched nor distributed, and the
   savings grid covers the Euler grid's upper region
-- every reachable non-terminal target regime also uses DC-EGM with the same
-  Euler state (brute-force regimes may target DC-EGM regimes)
+- every declared-reachable non-terminal target regime also uses DC-EGM with
+  the same Euler state (reachability is read off the regime transition: a
+  granular per-target mapping declares its key set, any coarse form reaches
+  every regime; brute-force regimes may target DC-EGM regimes)
 - numeric spot checks on small grid samples, outside jit: consumption
   recovery `post_decision ≈ resources - action`, resources non-decreasing in
   the Euler state, and `inverse_marginal_utility` consistent with
@@ -121,6 +126,12 @@ def _validate_dcegm_regime(
     _fail_if_resources_depend_on_continuous_action(
         regime_name=regime_name, functions=functions, solver=solver
     )
+    _fail_if_passive_state_invalid(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=functions,
+        solver=solver,
+    )
     _fail_if_euler_transition_stochastic(
         regime_name=regime_name, user_regime=user_regime, solver=solver
     )
@@ -173,8 +184,9 @@ def _fail_if_state_action_classification_invalid(
     """Require exactly one continuous (Euler) state and one continuous action.
 
     Process states are exempt: they enter the value function as node-valued
-    discrete dimensions. Any other continuous state would have to be a
-    *passive* state, which the DCEGM solver does not support yet.
+    discrete dimensions. Other continuous states are allowed as *passive*
+    states; `_fail_if_passive_state_invalid` verifies their passivity once
+    the regime's solve functions are resolved.
     """
     continuous_states = _continuous_non_process_names(_solve_grids(user_regime.states))
     continuous_actions = _continuous_non_process_names(
@@ -186,18 +198,6 @@ def _fail_if_state_action_classification_invalid(
             f"DCEGM `continuous_state` '{solver.continuous_state}' is not a "
             f"continuous state of regime '{regime_name}'. Continuous "
             f"(non-process) states: {continuous_states}."
-        )
-        raise ModelInitializationError(msg)
-
-    extra_states = [s for s in continuous_states if s != solver.continuous_state]
-    if extra_states:
-        msg = (
-            f"Regime '{regime_name}' has continuous states {extra_states} in "
-            f"addition to the Euler continuous state "
-            f"'{solver.continuous_state}'. The DCEGM solver supports exactly "
-            "one continuous state; passive continuous states are not "
-            "supported yet (process states are — declare them via the "
-            "stochastic process grids)."
         )
         raise ModelInitializationError(msg)
 
@@ -364,6 +364,90 @@ def _fail_if_resources_depend_on_continuous_action(
             "chosen."
         )
         raise ModelInitializationError(msg)
+
+
+def _fail_if_passive_state_invalid(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: DCEGM,
+) -> None:
+    """Every non-Euler continuous state must be passive.
+
+    A passive state rides along as a grid axis of the value function and the
+    EGM carry; its next value is computed at the savings-node stage and read
+    from the child carry by interpolation on the child's passive grid. That
+    requires, per passive state:
+
+    - a deterministic transition (stochastic continuous dynamics belong in a
+      process state),
+    - transition DAG ancestors excluding the Euler state, the continuous
+      action, the resources function, and the post-decision function (none
+      of which are known at the savings-node stage),
+    - a grid that is neither batched nor distributed (the kernel enumerates
+      its nodes as discrete combos).
+    """
+    passive_names = [
+        name
+        for name in _continuous_non_process_names(_solve_grids(user_regime.states))
+        if name != solver.continuous_state
+    ]
+    opaque_functions = _without(
+        functions, names={solver.post_decision_function, solver.resources}
+    )
+    forbidden = {
+        solver.continuous_state,
+        solver.continuous_action,
+        solver.resources,
+        solver.post_decision_function,
+    }
+    for state_name in passive_names:
+        value = user_regime.state_transitions.get(state_name)
+        if value is None:
+            # Transition coverage is validated when the effective regimes are
+            # built; a missing entry gets its own error there.
+            continue
+        is_stochastic = isinstance(value, MarkovTransition) or (
+            isinstance(value, Mapping)
+            and any(isinstance(v, MarkovTransition) for v in value.values())
+        )
+        if is_stochastic:
+            msg = (
+                f"The transition of the continuous state '{state_name}' in "
+                f"regime '{regime_name}' is stochastic. A non-Euler continuous "
+                "state in a DCEGM regime must be passive (deterministic); use "
+                "a stochastic process state (e.g. Rouwenhorst or Tauchen) for "
+                "stochastic continuous dynamics."
+            )
+            raise ModelInitializationError(msg)
+        for label, transition_func in _transition_variants(value):
+            ancestors = _dag_ancestors(
+                functions=opaque_functions, target_func=transition_func
+            )
+            bad = sorted(ancestors & forbidden)
+            if bad:
+                msg = (
+                    f"The continuous state '{state_name}' of regime "
+                    f"'{regime_name}' is not passive: its transition{label} "
+                    f"depends on {bad}. A passive continuous state's "
+                    "transition must not depend on the Euler state "
+                    f"'{solver.continuous_state}', the continuous action "
+                    f"'{solver.continuous_action}', the resources function "
+                    f"'{solver.resources}', or the post-decision function "
+                    f"'{solver.post_decision_function}' — those values are "
+                    "unknown until the EGM step has run."
+                )
+                raise ModelInitializationError(msg)
+        grid = cast("ContinuousGrid", user_regime.states[state_name])
+        if grid.batch_size != 0 or grid.distributed:
+            msg = (
+                f"The grid of the passive continuous state '{state_name}' in "
+                f"regime '{regime_name}' must not be batched or distributed "
+                f"in a DCEGM regime (got batch_size={grid.batch_size}, "
+                f"distributed={grid.distributed})."
+            )
+            raise ModelInitializationError(msg)
 
 
 def _fail_if_euler_transition_stochastic(
@@ -769,29 +853,21 @@ def _reachable_target_names(
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> set[RegimeName]:
-    """Regimes a regime can transition into, judged from `state_transitions`.
+    """Regimes a regime can transition into, read off the declared reachability.
 
-    Mirrors the engine's reachability notion: without per-target transition
-    dicts every regime is potentially reachable; with them, the reachable set
-    is the union of the explicitly named targets plus any regime whose states
-    are fully covered by simple (non-per-target) transitions.
+    The regime transition is the single source of truth for reachability:
+
+    - a granular per-target mapping declares exactly its key set — omitted
+      regimes are structurally unreachable,
+    - any coarse form (bare callable or `MarkovTransition`) reaches every
+      regime.
     """
-    per_target_keys: set[RegimeName] = set()
-    has_per_target = False
-    simple_state_names: set[str] = set()
-    for state_name, value in user_regime.state_transitions.items():
-        if isinstance(value, Mapping) and not isinstance(value, MarkovTransition):
-            has_per_target = True
-            per_target_keys |= set(cast("Mapping[RegimeName, object]", value).keys())
-        else:
-            simple_state_names.add(state_name)
-    if not has_per_target:
-        return set(user_regimes)
-    for target_name, target in user_regimes.items():
-        needed = set(target.states)
-        if needed and needed.issubset(simple_state_names):
-            per_target_keys.add(target_name)
-    return per_target_keys
+    transition = user_regime.transition
+    if isinstance(transition, Phased):
+        transition = transition.solve
+    if isinstance(transition, Mapping):
+        return set(cast("Mapping[RegimeName, object]", transition).keys())
+    return set(user_regimes)
 
 
 def _resolve_solve_functions(
