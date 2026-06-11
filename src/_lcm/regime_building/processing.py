@@ -203,6 +203,7 @@ def process_regimes(
             enable_jit=enable_jit,
             solver=user_regime.solver,
             model_has_dcegm_regime=model_has_dcegm_regime,
+            has_taste_shocks=user_regime.taste_shocks is not None,
         )
 
         simulation = _build_simulation_phase(
@@ -222,6 +223,7 @@ def process_regimes(
             solve_transitions=solution.transitions,
             solve_stochastic_transition_names=solution.stochastic_transition_names,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
+            has_taste_shocks=user_regime.taste_shocks is not None,
         )
 
         stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -237,6 +239,7 @@ def process_regimes(
             solution=solution,
             simulation=simulation,
             stochastic_state_transitions=stochastic_state_transitions,
+            has_taste_shocks=user_regime.taste_shocks is not None,
         )
 
     return ensure_containers_are_immutable(canonical_regimes)
@@ -262,6 +265,7 @@ def _build_solution_phase(
     enable_jit: bool,
     solver: BruteForce | DCEGM,
     model_has_dcegm_regime: bool,
+    has_taste_shocks: bool,
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -284,6 +288,8 @@ def _build_solution_phase(
             kernel builder.
         model_has_dcegm_regime: Whether any regime of the model uses the
             DC-EGM solver (terminal regimes then produce EGM carries).
+        has_taste_shocks: Whether the regime declares EV1 taste shocks on its
+            discrete actions.
 
     Returns:
         Complete solve functions container.
@@ -371,6 +377,7 @@ def _build_solution_phase(
             regimes_to_active_periods=regimes_to_active_periods,
             flat_param_names=flat_param_names,
             enable_jit=enable_jit,
+            has_taste_shocks=has_taste_shocks,
         ),
     )
 
@@ -477,6 +484,7 @@ def _build_simulation_phase(
     solve_transitions: TransitionFunctionsMapping,
     solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
+    has_taste_shocks: bool,
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -509,6 +517,8 @@ def _build_simulation_phase(
             (reused).
         solve_compute_regime_transition_probs: Solve-phase regime transition prob
             function, used for Q_and_F in both phases.
+        has_taste_shocks: Whether the regime declares EV1 taste shocks on its
+            discrete actions.
 
     Returns:
         Complete simulate functions container.
@@ -598,6 +608,7 @@ def _build_simulation_phase(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         enable_jit=enable_jit,
+        has_taste_shocks=has_taste_shocks,
     )
 
     next_state = _build_next_state_vmapped(
@@ -1624,11 +1635,18 @@ def _build_argmax_and_max_Q_over_a_per_period(
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
+    has_taste_shocks: bool = False,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
     """Build argmax-and-max-Q-over-a closures for each period.
 
     Periods sharing the same Q_and_F object reuse a single compiled function.
+    With taste shocks, the per-subject Gumbel key is vmapped alongside the
+    simulated states.
     """
+    spacemapped_names = tuple(state_action_space.states)
+    if has_taste_shocks:
+        spacemapped_names = (*spacemapped_names, "taste_shock_key")
+
     built: dict[int, ArgmaxQOverAFunction] = {}
     result: dict[int, ArgmaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
@@ -1638,13 +1656,15 @@ def _build_argmax_and_max_Q_over_a_per_period(
                 Q_and_F=Q_and_F,
                 action_names=state_action_space.action_names,
                 state_names=state_action_space.state_names,
+                n_discrete_action_axes=len(state_action_space.discrete_actions),
+                has_taste_shocks=has_taste_shocks,
             )
             if enable_jit:
                 func = jax.jit(func)
             built[q_id] = simulation_spacemap(
                 func=func,
                 action_names=(),
-                state_names=tuple(state_action_space.states),
+                state_names=spacemapped_names,
             )
         result[period] = built[q_id]
     return MappingProxyType(result)

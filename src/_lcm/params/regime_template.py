@@ -87,6 +87,15 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
 
     _add_runtime_grid_params(function_params, user_regime)
 
+    if user_regime.taste_shocks is not None:
+        if "taste_shocks" in function_params:
+            raise InvalidNameError(
+                "The regime declares `taste_shocks`, whose scale parameter lives "
+                "under the pseudo-function name 'taste_shocks' in the params — "
+                "this conflicts with a regime function of the same name."
+            )
+        function_params["taste_shocks"] = {"scale": "float"}
+
     return MappingProxyType(
         {k: MappingProxyType(v) for k, v in function_params.items()}
     )

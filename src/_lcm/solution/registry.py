@@ -90,6 +90,9 @@ class SolverBuildContext:
     enable_jit: bool
     """Whether to JIT-compile the kernels."""
 
+    has_taste_shocks: bool
+    """Whether the regime declares EV1 taste shocks on its discrete actions."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class SolverKernels:
@@ -144,6 +147,8 @@ def _build_brute_force_kernels(
                 },
                 action_names=context.state_action_space.action_names,
                 state_names=context.state_action_space.state_names,
+                n_discrete_action_axes=len(context.state_action_space.discrete_actions),
+                has_taste_shocks=context.has_taste_shocks,
             )
             built[q_id] = jax.jit(func) if context.enable_jit else func
         result[period] = built[q_id]
