@@ -153,7 +153,7 @@ def test_process_regimes():
     # Materialized grids
     assert_array_equal(
         working_regime.solution.grids["consumption"].to_jax(),
-        working_life.actions["consumption"].to_jax(),
+        cast("Grid", working_life.actions["consumption"]).to_jax(),
     )
     assert_array_equal(
         working_regime.solution.grids["wealth"].to_jax(),

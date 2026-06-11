@@ -18,7 +18,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, Model, categorical, fixed_transition
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    MarkovTransition,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.test_models.deterministic import base
 from tests.test_models.deterministic.dcegm_variants import (
@@ -29,6 +36,23 @@ from tests.test_models.deterministic.dcegm_variants import (
 )
 
 N_PERIODS = 4
+
+
+def _retirement_stay_prob(age: float, final_age_alive: float) -> FloatND:
+    return jnp.where(age >= final_age_alive, 0.0, 1.0)
+
+
+def _retirement_death_prob(age: float, final_age_alive: float) -> FloatND:
+    return jnp.where(age >= final_age_alive, 1.0, 0.0)
+
+
+# Retirement can only stay retired or die. Declaring this granularly (with
+# indicator probabilities) narrows reachability so the bare wealth law never
+# has to cover the skill-carrying working regime.
+RETIREMENT_TRANSITION = {
+    "retirement": MarkovTransition(_retirement_stay_prob),
+    "dead": MarkovTransition(_retirement_death_prob),
+}
 
 
 @categorical(ordered=False)
@@ -54,7 +78,7 @@ def must_retire(labor_supply: DiscreteAction) -> BoolND:
 def _get_skill_model_params(*, wage: float = 20.0) -> dict:
     """Params for the models whose retirement regime names its target."""
     params = get_full_params(N_PERIODS, discount_factor=0.98, wage=wage)
-    params["retirement"] = {"to_retirement_next_wealth": {"labor_income": 0.0}}
+    params["retirement"] = {"next_wealth": {"labor_income": 0.0}}
     return params
 
 
@@ -79,12 +103,10 @@ def _get_skill_model() -> Model:
         },
         active=lambda age, la=last_age: age < la,
     )
-    # Retirement names its actual target: a bare wealth law would broadcast
-    # to every regime carrying wealth, including the skill-carrying working
-    # regime that retirement can never reach.
     retirement = dcegm_retirement_full.replace(
+        transition=RETIREMENT_TRANSITION,
         state_transitions={
-            "wealth": {"retirement": dcegm_retirement_full.state_transitions["wealth"]},
+            "wealth": dcegm_retirement_full.state_transitions["wealth"],
         },
         active=lambda age, la=last_age: age < la,
     )
@@ -205,7 +227,8 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
                 active=lambda age, la=last_age: age < la,
             ),
             "retirement": base.retirement.replace(
-                state_transitions={"wealth": {"retirement": base.next_wealth}},
+                transition=RETIREMENT_TRANSITION,
+                state_transitions={"wealth": base.next_wealth},
                 active=lambda age, la=last_age: age < la,
             ),
             "dead": base.dead,

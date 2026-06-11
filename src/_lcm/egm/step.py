@@ -82,7 +82,7 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
-from _lcm.regime_building.Q_and_F import get_complete_targets
+from _lcm.regime_building.Q_and_F import get_period_targets
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
     ActionName,
@@ -203,7 +203,6 @@ def build_egm_step_functions(
         target_split = get_egm_continuation_targets(
             period=period,
             transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
@@ -263,7 +262,6 @@ def get_egm_continuation_targets(
     *,
     period: int,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]]:
@@ -284,8 +282,6 @@ def get_egm_continuation_targets(
         period: The period the kernel solves.
         transitions: Immutable mapping of target regime names to their state
             transition functions.
-        stochastic_transition_names: Frozenset of stochastic transition
-            function names.
         regimes_to_active_periods: Immutable mapping of regime names to their
             active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to
@@ -295,12 +291,10 @@ def get_egm_continuation_targets(
         Tuple of carry-target names and scalar-target names.
 
     """
-    carry_targets = get_complete_targets(
+    carry_targets = get_period_targets(
         period=period,
         transitions=transitions,
         regimes_to_active_periods=regimes_to_active_periods,
-        stochastic_transition_names=stochastic_transition_names,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
     scalar_targets = tuple(
         name
@@ -1461,7 +1455,7 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     for name, func in user_regime.functions.items():
         if isinstance(func, Phased):
             resolved[name] = cast("UserFunction", func.solve)
-        else:
+        elif func is not None:
             resolved[name] = func
     return concatenate_functions(
         functions=resolved,

@@ -45,7 +45,7 @@ from _lcm.regime_building.phases import (
     RegimePhaseSpec,
 )
 from _lcm.regime_building.Q_and_F import (
-    get_complete_targets,
+    get_period_targets,
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
@@ -321,13 +321,14 @@ def _build_solution_phase(
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=core.functions,
-            compute_regime_transition_probs=core.next_regime_func,  # ty: ignore[invalid-argument-type]
+            compute_regime_transition_probs=core.next_regime_func,
             grids=all_grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
             is_stochastic=spec.solution.stochastic_regime_transition,
             enable_jit=enable_jit,
             phase="solve",
+            next_regime_cells=core.next_regime_cells,
         )
         Q_and_F_functions = _build_Q_and_F_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
@@ -579,13 +580,14 @@ def _build_simulation_phase(
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=simulate_functions,
-            compute_regime_transition_probs=core.next_regime_func,  # ty: ignore[invalid-argument-type]
+            compute_regime_transition_probs=core.next_regime_func,
             grids=simulate_grids,
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
             is_stochastic=spec.simulation.stochastic_regime_transition,
             enable_jit=enable_jit,
             phase="simulate",
+            next_regime_cells=core.next_regime_cells,
         )
         # Q_and_F uses the solve (non-vmapped) regime transition probs since
         # it evaluates on the Cartesian grid, not per-subject. The solve
@@ -651,7 +653,12 @@ class _CoreResult:
     """Frozenset of stochastic transition function names."""
 
     next_regime_func: TransitionFunction | None
-    """The regime transition function, or `None` for terminal regimes."""
+    """The coarse regime transition function; `None` for terminal regimes and
+    for per-target regime transitions."""
+
+    next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None
+    """Per-target regime transition probability functions (params renamed),
+    or `None` when the regime transition is coarse or absent."""
 
 
 def _process_regime_core(
@@ -689,6 +696,22 @@ def _process_regime_core(
 
     """
     flat_grids = flatten_regime_namespace(all_grids)
+
+    # A per-target regime transition is processed cell-by-cell below, not via
+    # the flat namespace — its cells are not state laws and must not enter
+    # the per-target next_state bundles.
+    raw_next_regime = nested_transitions.get("next_regime")
+    granular_next_regime: Mapping[RegimeName, UserFunction] | None = None
+    if isinstance(raw_next_regime, Mapping):
+        granular_next_regime = cast(
+            "Mapping[RegimeName, UserFunction]", raw_next_regime
+        )
+        nested_transitions = {
+            key: value
+            for key, value in nested_transitions.items()
+            if key != "next_regime"
+        }
+
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
     all_functions: dict[str, UserFunction] = {
@@ -810,12 +833,26 @@ def _process_regime_core(
 
     next_regime_func: TransitionFunction | None = processed_functions.get("next_regime")
 
+    next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None
+    if granular_next_regime is not None:
+        next_regime_cells = MappingProxyType(
+            {
+                target_name: _rename_params_to_qnames(
+                    func=cell,
+                    regime_params_template=regime_params_template,
+                    param_key=f"to_{target_name}_next_regime",
+                )
+                for target_name, cell in granular_next_regime.items()
+            }
+        )
+
     return _CoreResult(
         functions=phase_functions,
         constraints=processed_constraints,
         transitions=transitions,
         stochastic_transition_names=stochastic_transition_names,
         next_regime_func=next_regime_func,
+        next_regime_cells=next_regime_cells,
     )
 
 
@@ -1280,40 +1317,52 @@ def _get_simple_transition_discrete_grid(
 def build_regime_transition_probs_functions(
     *,
     functions: EconFunctionsMapping,
-    compute_regime_transition_probs: TransitionFunction,
+    compute_regime_transition_probs: TransitionFunction | None,
     grids: MappingProxyType[StateOrActionName, Grid],
     regime_names_to_ids: RegimeNamesToIds,
     regime_params_template: RegimeParamsTemplate,
     is_stochastic: bool,
     enable_jit: bool,
     phase: Literal["solve", "simulate"],
+    next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None,
 ) -> RegimeTransitionFunction | VmappedRegimeTransitionFunction:
     """Build a regime transition probability function for the given phase.
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
-        compute_regime_transition_probs: The user's next_regime function.
+        compute_regime_transition_probs: The user's coarse next_regime
+            function; `None` for per-target regime transitions.
         grids: Immutable mapping of state and action variable names to grid objects.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         regime_params_template: The regime's parameter template.
         is_stochastic: Whether the regime transition is stochastic.
         enable_jit: Whether to JIT-compile the functions.
         phase: Which phase to build for.
+        next_regime_cells: Per-target regime transition probability functions;
+            `None` for coarse regime transitions.
 
     """
-    # Wrap deterministic next_regime to return one-hot probability array
-    if is_stochastic:
-        probs_func = compute_regime_transition_probs
-    else:
-        probs_func = _wrap_deterministic_regime_transition(
-            func=compute_regime_transition_probs,
-            regime_names_to_ids=regime_names_to_ids,
+    if next_regime_cells is not None:
+        wrapped_regime_transition_probs = _assemble_granular_regime_transition_probs(
+            next_regime_cells=next_regime_cells
         )
+    else:
+        if compute_regime_transition_probs is None:
+            msg = "Either a coarse regime transition or per-target cells is required."
+            raise ModelInitializationError(msg)
+        # Wrap deterministic next_regime to return one-hot probability array
+        if is_stochastic:
+            probs_func = compute_regime_transition_probs
+        else:
+            probs_func = _wrap_deterministic_regime_transition(
+                func=compute_regime_transition_probs,
+                regime_names_to_ids=regime_names_to_ids,
+            )
 
-    # Wrap to convert array output to dict format
-    wrapped_regime_transition_probs = _wrap_regime_transition_probs(
-        func=probs_func, regime_names_to_ids=regime_names_to_ids
-    )
+        # Wrap to convert array output to dict format
+        wrapped_regime_transition_probs = _wrap_regime_transition_probs(
+            func=probs_func, regime_names_to_ids=regime_names_to_ids
+        )
 
     functions_pool = dict(functions) | {
         "regime_transition_probs": wrapped_regime_transition_probs
@@ -1347,6 +1396,58 @@ def build_regime_transition_probs_functions(
     )
 
     return jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
+
+
+def _assemble_granular_regime_transition_probs(
+    *,
+    next_regime_cells: MappingProxyType[RegimeName, EconFunction],
+) -> Callable[..., MappingProxyType[RegimeName, FloatND]]:
+    """Assemble per-target probability cells into the probs-dict contract.
+
+    Produces the same regime-name → probability mapping that
+    `_wrap_regime_transition_probs` builds from a coarse probability vector,
+    restricted to the declared targets: omitted regimes are structurally
+    unreachable.
+
+    Args:
+        next_regime_cells: Per-target probability functions with qname params.
+
+    Returns:
+        A function over the union of the cells' arguments returning an
+        immutable mapping of declared regime names to probability scalars.
+
+    """
+    cell_arg_names = {
+        target_name: tuple(name for name in get_annotations(cell) if name != "return")
+        for target_name, cell in next_regime_cells.items()
+    }
+    merged_annotations: dict[str, str] = {}
+    for cell in next_regime_cells.values():
+        annotations = get_annotations(cell)
+        annotations.pop("return", None)
+        merged_annotations |= annotations
+    return_annotation = MappingProxyType[RegimeName, FloatND]
+
+    @with_signature(args=merged_annotations, return_annotation=return_annotation)
+    def regime_transition_probs(
+        **kwargs: FloatND | IntND | int,
+    ) -> MappingProxyType[RegimeName, FloatND]:
+        return MappingProxyType(
+            {
+                target_name: jnp.asarray(
+                    cell(**{name: kwargs[name] for name in cell_arg_names[target_name]})
+                )
+                for target_name, cell in next_regime_cells.items()
+            }
+        )
+
+    # Pin `__annotations__` on the final wrapper: `concatenate_functions`
+    # reads `__annotations__` (not `__signature__`) to reconcile the DAG.
+    regime_transition_probs.__annotations__ = {
+        **merged_annotations,
+        "return": return_annotation,
+    }
+    return regime_transition_probs
 
 
 def _wrap_regime_transition_probs(
@@ -1500,23 +1601,21 @@ def _build_Q_and_F_per_period(
     # Group periods by target configuration
     configs: dict[tuple[RegimeName, ...], list[int]] = {}
     for period in range(ages.n_periods):
-        complete = get_complete_targets(
+        complete = get_period_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
-            stochastic_transition_names=stochastic_transition_names,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
         configs.setdefault(complete, []).append(period)
 
     # Build one Q_and_F per distinct configuration
     built: dict[tuple[RegimeName, ...], QAndFFunction] = {}
-    for complete_targets in configs:
-        built[complete_targets] = get_Q_and_F(
+    for period_targets in configs:
+        built[period_targets] = get_Q_and_F(
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
-            complete_targets=complete_targets,
+            period_targets=period_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
@@ -1615,7 +1714,7 @@ def _fail_if_action_has_batch_size(
     """
     for regime_name, user_regime in user_regimes.items():
         for action_name, grid in user_regime.actions.items():
-            if grid.batch_size != 0:
+            if grid is not None and grid.batch_size != 0:
                 msg = (
                     f"batch_size > 0 is not supported on action grids. Only state "
                     f"grids can be batched. Found batch_size={grid.batch_size} on "

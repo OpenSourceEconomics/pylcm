@@ -18,7 +18,7 @@ import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
-from _lcm.regime_building.Q_and_F import get_complete_targets, get_compute_intermediates
+from _lcm.regime_building.Q_and_F import get_compute_intermediates, get_period_targets
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
     ActionName,
@@ -91,12 +91,10 @@ def _build_compute_intermediates_per_period(
 
     configs: dict[tuple[RegimeName, ...], list[int]] = {}
     for period in range(ages.n_periods):
-        complete = get_complete_targets(
+        complete = get_period_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
-            stochastic_transition_names=stochastic_transition_names,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
         configs.setdefault(complete, []).append(period)
 
@@ -105,12 +103,12 @@ def _build_compute_intermediates_per_period(
         *state_action_space.action_names,
     )
     built: dict[tuple[RegimeName, ...], Callable] = {}
-    for complete_targets in configs:
+    for period_targets in configs:
         scalar = get_compute_intermediates(
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
-            complete_targets=complete_targets,
+            period_targets=period_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
@@ -123,7 +121,7 @@ def _build_compute_intermediates_per_period(
             state_batch_sizes=state_batch_sizes,
         )
         fused = _wrap_with_reduction(func=mapped, variable_names=variable_names)
-        built[complete_targets] = jax.jit(fused) if enable_jit else fused
+        built[period_targets] = jax.jit(fused) if enable_jit else fused
 
     result: dict[int, Callable] = {}
     for key, periods in configs.items():
