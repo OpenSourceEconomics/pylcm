@@ -47,6 +47,7 @@ from dags import concatenate_functions, get_ancestors
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import (
+    ActionName,
     FunctionName,
     RegimeName,
     StateName,
@@ -176,7 +177,9 @@ def _fail_if_state_action_classification_invalid(
     *passive* state, which the DCEGM solver does not support yet.
     """
     continuous_states = _continuous_non_process_names(_solve_grids(user_regime.states))
-    continuous_actions = _continuous_non_process_names(user_regime.actions)
+    continuous_actions = _continuous_non_process_names(
+        _solve_grids(user_regime.actions)
+    )
 
     if solver.continuous_state not in continuous_states:
         msg = (
@@ -595,7 +598,7 @@ def _fail_if_numeric_spot_checks_fail(
 
     grids: dict[StateOrActionName, Grid] = {
         **_solve_grids(user_regime.states),
-        **dict(user_regime.actions),
+        **_solve_grids(user_regime.actions),
     }
     euler_sample = _grid_sample(grids[solver.continuous_state])
     action_sample = _grid_sample(grids[solver.continuous_action])
@@ -803,21 +806,23 @@ def _resolve_solve_functions(
     for name, func in user_regime.functions.items():
         if isinstance(func, Phased):
             resolved[name] = cast("UserFunction", func.solve)
-        else:
+        elif func is not None:
             resolved[name] = func
     return resolved
 
 
 def _solve_grids(
-    states: Mapping[StateName, object],
+    slot: Mapping[StateName, object] | Mapping[ActionName, object],
 ) -> dict[StateOrActionName, Grid]:
-    """Solve-phase grids of a `states` slot.
+    """Solve-phase grids of a `states` or `actions` slot.
 
     A `Phased` state is carried: derived (no grid axis) during backward
     induction, so it contributes no solve-phase grid — exactly why carried
-    states are invisible to the DC-EGM state classification.
+    states are invisible to the DC-EGM state classification. `None` entries
+    (model-level broadcast masks) carry no grid either; the effective regime
+    the validation runs on has them resolved away.
     """
-    return {name: grid for name, grid in states.items() if isinstance(grid, Grid)}
+    return {name: grid for name, grid in slot.items() if isinstance(grid, Grid)}
 
 
 def _continuous_non_process_names(
