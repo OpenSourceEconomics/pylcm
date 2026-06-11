@@ -23,7 +23,7 @@ from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EgmCarry
 from _lcm.typing import EconFunctionsMapping, EgmCarryProducer, StateName
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import FloatND, ScalarFloat
+from lcm.typing import FloatND, IntND, ScalarFloat
 
 # Static row count of a stateless terminal carry: two grid slots suffice to
 # represent a constant function under linear interpolation.
@@ -39,7 +39,11 @@ def get_stateless_terminal_carry_producer() -> EgmCarryProducer:
 
     """
 
-    def produce_stateless_carry(*, V_arr: FloatND, **kwargs: FloatND) -> EgmCarry:  # noqa: ARG001
+    def produce_stateless_carry(
+        *,
+        V_arr: FloatND,
+        **kwargs: FloatND | IntND,  # noqa: ARG001
+    ) -> EgmCarry:
         """Broadcast the scalar terminal value into constant carry rows."""
         dtype = canonical_float_dtype()
         zeros = jnp.zeros(N_STATELESS_CARRY_ROWS, dtype=dtype)
@@ -89,7 +93,9 @@ def get_terminal_wealth_carry_producer(
         get_union_of_args([utility_func]) - {state_name},
     )
 
-    def produce_terminal_wealth_carry(*, V_arr: FloatND, **kwargs: FloatND) -> EgmCarry:
+    def produce_terminal_wealth_carry(
+        *, V_arr: FloatND, **kwargs: FloatND | IntND
+    ) -> EgmCarry:
         """Evaluate the terminal value and its wealth gradient on the grid."""
         dtype = canonical_float_dtype()
         wealth_grid = jnp.asarray(kwargs[state_name], dtype=dtype)
