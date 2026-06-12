@@ -10,7 +10,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
-from _lcm.engine import Regime, _build_regime_sharding
+from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.logging import (
@@ -129,6 +129,10 @@ def solve(
     total_start = time.monotonic()
 
     # backwards induction loop
+    base_state_action_spaces = _build_base_state_action_spaces(
+        regimes=regimes, flat_params=flat_params
+    )
+
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}
@@ -145,17 +149,15 @@ def solve(
             n_active_regimes=len(active_regimes),
         )
 
-        for regime_name, regime in active_regimes.items():
-            state_action_space = regime.solution.state_action_space(
-                regime_params=flat_params[regime_name],
-            )
-            max_Q_over_a = compiled_functions[(regime_name, period)]
+        for regime_name in active_regimes:
+            state_action_space = base_state_action_spaces[regime_name]
 
-            # evaluate Q-function on states and actions, and maximize over actions
+            # evaluate Q-function on states and actions, and maximize over
+            # actions (the compiled function is the period's max_Q_over_a).
             # Pass period/age as JAX arrays (not Python scalars) so the shared
-            # jax.jit function is traced once with abstract shapes, not recompiled
-            # for every distinct (period, age) pair.
-            V_arr = max_Q_over_a(
+            # jax.jit function is traced once with abstract shapes, not
+            # recompiled for every distinct (period, age) pair.
+            V_arr = compiled_functions[(regime_name, period)](
                 **state_action_space.states,
                 **state_action_space.actions,
                 next_regime_to_V_arr=next_regime_to_V_arr,
@@ -255,6 +257,25 @@ def solve(
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
     return MappingProxyType(solution)
+
+
+def _build_base_state_action_spaces(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+) -> dict[RegimeName, StateActionSpace]:
+    """Build each regime's params-completed state-action space once.
+
+    The space is period-invariant within one solve (params are fixed), so
+    runtime-grid completion (e.g. process gridpoint computation) runs once
+    per regime instead of once per period-regime iteration.
+    """
+    return {
+        regime_name: regime.solution.state_action_space(
+            regime_params=flat_params[regime_name]
+        )
+        for regime_name, regime in regimes.items()
+    }
 
 
 def _drain_V_arr_shards(
