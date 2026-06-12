@@ -295,12 +295,70 @@ def test_nan_regime_transition_prob_surfaces_as_error():
     del params["final_age_alive"]
     params["retirement"] = {
         **params.get("retirement", {}),
-        "to_retirement_next_regime": {"survival_rate": float("nan")},
-        "to_dead_next_regime": {"survival_rate": float("nan")},
+        "retirement": {"next_regime": {"survival_rate": float("nan")}},
+        "dead": {"next_regime": {"survival_rate": float("nan")}},
     }
 
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve(params=params, log_level="debug")
+
+
+@categorical(ordered=False)
+class RegimeIdWithLost:
+    working_life: ScalarInt
+    retirement: ScalarInt
+    dead: ScalarInt
+    lost: ScalarInt
+
+
+def _lost_utility() -> FloatND:
+    return jnp.asarray(-1000.0)
+
+
+def test_undeclared_stateless_regime_does_not_enter_the_continuation():
+    """A stateless regime outside the declared targets contributes nothing.
+
+    The DC-EGM retirement regime declares its reachable targets granularly
+    (`{retirement, dead}`). A further stateless terminal regime in the model
+    — reachable only from the brute-force worker — must be invisible to the
+    retirement regime's continuation: its value function is unchanged by
+    that regime's presence.
+    """
+    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    lost = base.dead.replace(functions={"utility": _lost_utility})
+    shared_regimes = {
+        "working_life": base.working_life.replace(
+            active=lambda age, la=last_age: age < la
+        ),
+        "retirement": dcegm_retirement_full.replace(
+            transition=RETIREMENT_TRANSITION,
+            active=lambda age, la=last_age: age < la,
+        ),
+        "dead": base.dead,
+    }
+    with_lost = Model(
+        regimes={**shared_regimes, "lost": lost},
+        ages=ages,
+        regime_id_class=RegimeIdWithLost,
+    )
+    without_lost = Model(
+        regimes=shared_regimes,
+        ages=ages,
+        regime_id_class=base.RegimeId,
+    )
+    params = _get_skill_model_params()
+
+    solution_with = with_lost.solve(params=params, log_level="debug")
+    solution_without = without_lost.solve(params=params, log_level="debug")
+
+    for period in sorted(solution_without)[:-1]:
+        np.testing.assert_allclose(
+            np.asarray(solution_with[period]["retirement"]),
+            np.asarray(solution_without[period]["retirement"]),
+            atol=1e-12,
+            err_msg=f"period={period}",
+        )
 
 
 def _nothing_is_feasible(labor_supply: DiscreteAction) -> BoolND:

@@ -95,6 +95,7 @@ from _lcm.egm.carry import EgmCarry, build_template_egm_carry
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import interp_on_padded_grid, locate_on_grid
 from _lcm.egm.upper_envelope import get_upper_envelope
+from _lcm.egm.validation import _reachable_target_names
 from _lcm.engine import StateActionSpace
 from _lcm.logsum import logsum_and_softmax
 from _lcm.processes import _ContinuousStochasticProcess
@@ -220,11 +221,17 @@ def build_egm_step_functions(
     )
     carry_template = build_template_egm_carry(n_rows=n_pad, leading_shape=leading_shape)
 
+    reachable_targets = frozenset(
+        _reachable_target_names(
+            user_regime=user_regimes[regime_name], user_regimes=user_regimes
+        )
+    )
     configs: dict[tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]], list[int]] = {}
     for period in regimes_to_active_periods[regime_name]:
         target_split = get_egm_continuation_targets(
             period=period,
             transitions=transitions,
+            reachable_targets=reachable_targets,
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
@@ -284,6 +291,7 @@ def get_egm_continuation_targets(
     *,
     period: int,
     transitions: TransitionFunctionsMapping,
+    reachable_targets: frozenset[RegimeName],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]]:
@@ -298,12 +306,16 @@ def get_egm_continuation_targets(
       interpolated from their `EgmCarry` rows.
     - *Scalar targets* are stateless (no transition entries, no states; e.g.
       a `dead` regime); their continuation is the constant value of their
-      carry rows and their marginal continuation is zero.
+      carry rows and their marginal continuation is zero. Only declared-
+      reachable regimes qualify: a stateless regime the model contains for
+      other regimes' sake has no transition-probability cell here, and the
+      regime transition is the single source of truth for reachability.
 
     Args:
         period: The period the kernel solves.
         transitions: Immutable mapping of target regime names to their state
             transition functions.
+        reachable_targets: The regime's declared-reachable target names.
         regimes_to_active_periods: Immutable mapping of regime names to their
             active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to
@@ -321,7 +333,8 @@ def get_egm_continuation_targets(
     scalar_targets = tuple(
         name
         for name in regime_to_v_interpolation_info
-        if period + 1 in regimes_to_active_periods.get(name, ())
+        if name in reachable_targets
+        and period + 1 in regimes_to_active_periods.get(name, ())
         and not regime_to_v_interpolation_info[name].state_names
         and name not in carry_targets
     )

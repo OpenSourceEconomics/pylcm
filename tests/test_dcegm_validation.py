@@ -18,6 +18,7 @@ from lcm import (
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    Phased,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
@@ -101,6 +102,20 @@ def _next_aime_decaying(aime: ContinuousState) -> ContinuousState:
     return 0.95 * aime
 
 
+def _impute_wealth_memo(wealth: ContinuousState) -> ContinuousState:
+    return wealth
+
+
+def _next_wealth_memo(wealth_memo: ContinuousState) -> ContinuousState:
+    return wealth_memo
+
+
+def _utility_reading_carried_state(
+    consumption: ContinuousAction, wealth_memo: ContinuousState
+) -> FloatND:
+    return jnp.log(consumption) + 0.01 * wealth_memo
+
+
 def _without_function(regime: UserRegime, name: str) -> UserRegime:
     functions = {k: v for k, v in regime.functions.items() if k != name}
     return regime.replace(functions=functions)
@@ -141,6 +156,26 @@ CASES = {
             constraints={"borrowing_constraint": borrowing_constraint}
         ),
         "constraint",
+    ),
+    "utility_reads_continuous_state_through_carried_state": (
+        lambda: VALID.replace(
+            states={
+                **dict(VALID.states),
+                "wealth_memo": Phased(
+                    solve=_impute_wealth_memo,
+                    simulate=LinSpacedGrid(start=1.0, stop=400.0, n_points=4),
+                ),
+            },
+            state_transitions={
+                **dict(VALID.state_transitions),
+                "wealth_memo": _next_wealth_memo,
+            },
+            functions={
+                **dict(VALID.functions),
+                "utility": _utility_reading_carried_state,
+            },
+        ),
+        "utility",
     ),
     "custom_bellman_aggregator": (
         lambda: VALID.replace(functions={**dict(VALID.functions), "H": _custom_H}),
@@ -249,6 +284,39 @@ def test_passive_continuous_state_constructs():
         state_transitions={
             **dict(VALID.state_transitions),
             "aime": _next_aime_decaying,
+        },
+    )
+    model = _build_model(regime)
+    assert model.n_periods == N_PERIODS
+
+
+def _impute_pension(age: int) -> ContinuousState:
+    return jnp.asarray(0.1 * age)
+
+
+def _next_pension(pension: ContinuousState) -> ContinuousState:
+    return pension
+
+
+def test_carried_state_with_decision_free_imputation_constructs():
+    """A carried state imputed independently of the decision variables is valid.
+
+    Carried states are derived functions in the solve phase — no grid axis —
+    so they are invisible to the DC-EGM state classification, and a
+    decision-free imputation keeps every consumer evaluable at the savings
+    stage.
+    """
+    regime = VALID.replace(
+        states={
+            **dict(VALID.states),
+            "pension": Phased(
+                solve=_impute_pension,
+                simulate=LinSpacedGrid(start=0.0, stop=10.0, n_points=4),
+            ),
+        },
+        state_transitions={
+            **dict(VALID.state_transitions),
+            "pension": _next_pension,
         },
     )
     model = _build_model(regime)

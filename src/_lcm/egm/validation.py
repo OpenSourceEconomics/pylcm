@@ -109,7 +109,7 @@ def _validate_dcegm_regime(
     )
     _fail_if_custom_H(regime_name=regime_name, user_regime=user_regime)
 
-    functions = _resolve_solve_functions(user_regime)
+    functions = _resolve_solve_functions(user_regime=user_regime)
 
     _fail_if_post_decision_signature_invalid(
         regime_name=regime_name, functions=functions, solver=solver
@@ -196,9 +196,11 @@ def _fail_if_state_action_classification_invalid(
     states; `_fail_if_passive_state_invalid` verifies their passivity once
     the regime's solve functions are resolved.
     """
-    continuous_states = _continuous_non_process_names(_solve_grids(user_regime.states))
+    continuous_states = _continuous_non_process_names(
+        grids=_solve_grids(slot=user_regime.states)
+    )
     continuous_actions = _continuous_non_process_names(
-        _solve_grids(user_regime.actions)
+        grids=_solve_grids(slot=user_regime.actions)
     )
 
     if solver.continuous_state not in continuous_states:
@@ -398,11 +400,13 @@ def _fail_if_passive_state_invalid(
     """
     passive_names = [
         name
-        for name in _continuous_non_process_names(_solve_grids(user_regime.states))
+        for name in _continuous_non_process_names(
+            grids=_solve_grids(slot=user_regime.states)
+        )
         if name != solver.continuous_state
     ]
     opaque_functions = _without(
-        functions, names={solver.post_decision_function, solver.resources}
+        functions=functions, names={solver.post_decision_function, solver.resources}
     )
     forbidden = {
         solver.continuous_state,
@@ -429,7 +433,7 @@ def _fail_if_passive_state_invalid(
                 "stochastic continuous dynamics."
             )
             raise ModelInitializationError(msg)
-        for label, transition_func in _transition_variants(value):
+        for label, transition_func in _transition_variants(value=value):
             ancestors = _dag_ancestors(
                 functions=opaque_functions, target_func=transition_func
             )
@@ -509,14 +513,14 @@ def _fail_if_euler_transition_bypasses_post_decision(
         raise ModelInitializationError(msg)
 
     opaque_functions = _without(
-        functions, names={solver.post_decision_function, solver.resources}
+        functions=functions, names={solver.post_decision_function, solver.resources}
     )
     forbidden = {
         solver.continuous_state,
         solver.continuous_action,
         solver.resources,
     }
-    for label, transition_func in _transition_variants(value):
+    for label, transition_func in _transition_variants(value=value):
         ancestors = _dag_ancestors(
             functions=opaque_functions,
             target_func=transition_func,
@@ -549,18 +553,20 @@ def _fail_if_savings_stage_function_depends_on_decision(
     if user_regime.transition is not None:
         # Coarse, MarkovTransition-wrapped, Phased, and granular per-target
         # regime transitions all unpack to plain callables.
-        for label, regime_transition in _transition_variants(user_regime.transition):
+        for label, regime_transition in _transition_variants(
+            value=user_regime.transition
+        ):
             candidates.append((f"regime transition function{label}", regime_transition))
     for state_name, value in user_regime.state_transitions.items():
         if state_name == solver.continuous_state or value is None:
             continue
-        for label, transition_func in _transition_variants(value):
+        for label, transition_func in _transition_variants(value=value):
             candidates.append(
                 (f"transition of state '{state_name}'{label}", transition_func)
             )
 
     opaque_functions = _without(
-        functions, names={solver.post_decision_function, solver.resources}
+        functions=functions, names={solver.post_decision_function, solver.resources}
     )
     forbidden = {
         solver.continuous_state,
@@ -672,7 +678,9 @@ def _fail_if_target_regime_incompatible(
     Terminal targets are always allowed, and brute-force regimes may target
     DC-EGM regimes (they only consume the target's value-function array).
     """
-    for target_name in sorted(_reachable_target_names(user_regime, user_regimes)):
+    for target_name in sorted(
+        _reachable_target_names(user_regime=user_regime, user_regimes=user_regimes)
+    ):
         target = user_regimes[target_name]
         if target.terminal:
             continue
@@ -720,11 +728,11 @@ def _fail_if_numeric_spot_checks_fail(
     rtol = 1e-6 if x64_enabled else 1e-3
 
     grids: dict[StateOrActionName, Grid] = {
-        **_solve_grids(user_regime.states),
-        **_solve_grids(user_regime.actions),
+        **_solve_grids(slot=user_regime.states),
+        **_solve_grids(slot=user_regime.actions),
     }
-    euler_sample = _grid_sample(grids[solver.continuous_state])
-    action_sample = _grid_sample(grids[solver.continuous_action])
+    euler_sample = _grid_sample(grid=grids[solver.continuous_state])
+    action_sample = _grid_sample(grid=grids[solver.continuous_action])
     n_sample = min(euler_sample.shape[0], action_sample.shape[0])
 
     resources_func = concatenate_functions(functions, targets=solver.resources)
@@ -788,7 +796,9 @@ def _fail_if_numeric_spot_checks_fail(
                     },
                 )
                 expected = resources_value - c
-                if not _isclose(post_value, expected, rtol=rtol, atol=atol):
+                if not _isclose(
+                    actual=post_value, expected=expected, rtol=rtol, atol=atol
+                ):
                     msg = (
                         f"Consumption recovery fails in regime '{regime_name}': "
                         f"the post-decision function must satisfy "
@@ -881,7 +891,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
 
     for c, mu in zip(action_sample, marginal_utility, strict=True):
         recovered = inverse_func(**inverse_kwargs, marginal_continuation=mu)
-        if not _isclose(recovered, c, rtol=rtol, atol=atol):
+        if not _isclose(actual=recovered, expected=c, rtol=rtol, atol=atol):
             msg = (
                 f"'inverse_marginal_utility' of regime '{regime_name}' is "
                 "inconsistent with `jax.grad` of the utility DAG: the "
@@ -893,6 +903,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
 
 
 def _reachable_target_names(
+    *,
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> set[RegimeName]:
@@ -914,19 +925,31 @@ def _reachable_target_names(
 
 
 def _resolve_solve_functions(
+    *,
     user_regime: UserRegime,
 ) -> dict[FunctionName, UserFunction]:
-    """Return `Regime.functions` with solve-phase variants resolved."""
+    """Return the regime's solve-phase function pool.
+
+    `Regime.functions` with solve-phase variants resolved, plus the solve
+    imputation of every carried (`Phased`) state under the state's name. The
+    imputations make DAG-ancestor checks see through carried states: a
+    function reading a carried state imputed from the Euler state genuinely
+    depends on the Euler state at the savings stage.
+    """
     resolved: dict[FunctionName, UserFunction] = {}
     for name, func in user_regime.functions.items():
         if isinstance(func, Phased):
             resolved[name] = cast("UserFunction", func.solve)
         elif func is not None:
             resolved[name] = func
+    for state_name, grid in user_regime.states.items():
+        if isinstance(grid, Phased):
+            resolved[state_name] = cast("UserFunction", grid.solve)
     return resolved
 
 
 def _solve_grids(
+    *,
     slot: Mapping[StateName, object] | Mapping[ActionName, object],
 ) -> dict[StateOrActionName, Grid]:
     """Solve-phase grids of a `states` or `actions` slot.
@@ -941,6 +964,7 @@ def _solve_grids(
 
 
 def _continuous_non_process_names(
+    *,
     grids: Mapping[StateOrActionName, Grid],
 ) -> list[StateOrActionName]:
     """Names of continuous grids that are not stochastic processes."""
@@ -953,6 +977,7 @@ def _continuous_non_process_names(
 
 
 def _transition_variants(
+    *,
     value: object,
 ) -> list[tuple[str, UserFunction]]:
     """Unpack a `state_transitions` entry into labeled callables.
@@ -979,8 +1004,8 @@ def _transition_variants(
 
 
 def _without(
-    functions: dict[FunctionName, UserFunction],
     *,
+    functions: dict[FunctionName, UserFunction],
     names: set[FunctionName],
 ) -> dict[FunctionName, UserFunction]:
     """Return `functions` with `names` removed, so they become DAG leaves."""
@@ -1002,7 +1027,7 @@ def _dag_ancestors(
     return set(get_ancestors(mapping, targets=[target_name], include_targets=False))
 
 
-def _grid_sample(grid: Grid, *, n_points: int = 5) -> Float1D:
+def _grid_sample(*, grid: Grid, n_points: int = 5) -> Float1D:
     """A small, sorted, evenly indexed sample of grid points."""
     points = grid.to_jax()
     n_grid = points.shape[0]
@@ -1051,7 +1076,7 @@ def _call_with_varied(
     return func(**fixed, **{k: v for k, v in varied.items() if k in arg_names})
 
 
-def _isclose(actual: object, expected: object, *, rtol: float, atol: float) -> bool:
+def _isclose(*, actual: object, expected: object, rtol: float, atol: float) -> bool:
     """Eager scalar closeness check, robust to 0-d JAX arrays."""
     return bool(
         jnp.isclose(jnp.asarray(actual), jnp.asarray(expected), rtol=rtol, atol=atol)
