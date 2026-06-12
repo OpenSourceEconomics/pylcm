@@ -110,7 +110,7 @@ def _build_model(**model_slots: Any) -> Model:
 
 
 def test_model_functions_broadcast_to_every_regime() -> None:
-    """A model-level function is part of every effective regime."""
+    """A model-level function is part of every finalized regime."""
 
     def _bonus(wealth: float) -> FloatND:
         return jnp.asarray(wealth * 0.01)

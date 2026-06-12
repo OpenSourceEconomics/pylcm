@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -120,7 +120,7 @@ def test_regime_invalid_utility():
 
 
 def test_regime_overlapping_states_actions(binary_category_class):
-    """The effective regime rejects overlapping state and action names."""
+    """Regime finalization rejects overlapping state and action names."""
     regime = UserRegime(
         states={
             "health": DiscreteGrid(binary_category_class),
@@ -135,7 +135,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
         RegimeInitializationError,
         match=r"States and actions cannot have overlapping names.",
     ):
-        EffectiveUserRegime(user_regime=regime)
+        finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})
 
 
 def test_regime_transition_must_be_callable():

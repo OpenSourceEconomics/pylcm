@@ -7,7 +7,7 @@ from jax.sharding import NamedSharding, PartitionSpec
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm import fixed_transition
 from lcm.ages import AgeGrid
@@ -457,12 +457,12 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
 
 
 def test_distributed_action_grid_raises_at_regime_init():
-    """Action grids cannot be distributed; the effective regime rejects one.
+    """Action grids cannot be distributed; regime finalization rejects one.
 
     Distribution is a property of state axes (which form the V-array shape).
     Marking an action grid as distributed has no consistent meaning under the
-    current sharding model, so it is rejected when the model builds its
-    effective regimes. (Continuous action grids never reach this check — they
+    current sharding model, so it is rejected when the model finalizes its
+    regimes. (Continuous action grids never reach this check — they
     are rejected at grid init by `_fail_if_continuous_grid_distributed`.)
     """
 
@@ -483,7 +483,7 @@ def test_distributed_action_grid_raises_at_regime_init():
         transition=lambda age: age,
     )
     with pytest.raises(RegimeInitializationError, match="distributed=True"):
-        EffectiveUserRegime(user_regime=regime)
+        finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})
 
 
 @_skip_pytest_parallel
