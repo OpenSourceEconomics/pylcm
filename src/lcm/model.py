@@ -26,6 +26,7 @@ from _lcm.pandas_utils import (
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
+    materialize_granular_transition_params,
 )
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
@@ -759,5 +760,12 @@ class Model:
                 regime_names_to_ids=self.regime_names_to_ids,
             )
         flat_params = cast_params_to_canonical_dtypes(flat_params)
+        flat_params = materialize_granular_transition_params(
+            flat_params=flat_params,
+            expansions={
+                regime_name: regime.granular_param_expansions
+                for regime_name, regime in self._regimes.items()
+            },
+        )
         _validate_param_types(flat_params)
         return flat_params

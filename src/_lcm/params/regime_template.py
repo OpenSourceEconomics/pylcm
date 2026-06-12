@@ -214,7 +214,7 @@ def _regime_transition_entries(
 
     - coarse forms ⇒ one `next_regime` entry
     - a per-target dict ⇒ one `next_regime__<target>` entry per cell, so each
-      cell's parameters surface under `to_<target>_next_regime`
+      cell's parameters nest under the target (`template[target]["next_regime"]`)
     - `Phased` per-target dicts (identical key sets) ⇒ per-cell `Phased`
       entries, so both phases' parameters are unioned per target
 

@@ -9,6 +9,7 @@ transition bundles, so param qnames parallel engine function qnames.
 from typing import Any
 
 import jax.numpy as jnp
+import pytest
 
 from lcm import (
     AgeGrid,
@@ -17,6 +18,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
 
@@ -139,3 +141,106 @@ def test_old_mangled_spelling_is_gone() -> None:
     model = _build_model(_work_regime())
     template = model.get_params_template()
     assert not any(key.startswith("to_") for key in template["work"])
+
+
+def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
+    """A coarse law's params are stored per reachable carrying target in the
+    canonical flat params (`target__func__param`), all targets sharing one
+    leaf; the coarse spelling does not appear there."""
+
+    def _next_wealth_growth(wealth: float, consumption: float, growth: float) -> float:
+        return (wealth - consumption) * growth
+
+    work = _work_regime(state_transitions={"wealth": _next_wealth_growth})
+    dead = UserRegime(
+        transition=None,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
+        functions={"utility": lambda wealth: 0.1 * wealth},
+    )
+    model = Model(
+        regimes={"work": work, "retired": _retired_regime(), "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+    params = {
+        "work": {
+            "discount_factor": 0.95,
+            "next_wealth": {"growth": 1.02},
+            "retired": {"next_regime": {"hazard": 0.01}},
+            "dead": {"next_regime": {"hazard": 0.01}},
+        },
+        "retired": {"discount_factor": 0.95},
+    }
+    initial_conditions = {
+        "age": jnp.array([0, 0]),
+        "wealth": jnp.array([10.0, 20.0]),
+        "regime_id": jnp.array([_RegimeId.work, _RegimeId.work]),
+    }
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    )
+    flat_work = result.flat_params["work"]
+    assert "retired__next_wealth__growth" in flat_work
+    assert "dead__next_wealth__growth" in flat_work
+    assert "next_wealth__growth" not in flat_work
+    assert (
+        flat_work["retired__next_wealth__growth"]
+        is flat_work["dead__next_wealth__growth"]
+    )
+
+
+def test_coarse_value_for_granular_template_slots_shares_one_leaf() -> None:
+    """A function-level value broadcast over per-target template slots lands
+    in every target as the same leaf object."""
+    model = _build_model(_work_regime())
+    params = {
+        "work": {
+            "discount_factor": 0.95,
+            "next_regime": {"hazard": 0.01},
+            "retired": {"next_wealth": {"exit_tax": 0.1}},
+        },
+        "retired": {"discount_factor": 0.95},
+    }
+    initial_conditions = {
+        "age": jnp.array([0, 0]),
+        "wealth": jnp.array([10.0, 20.0]),
+        "regime_id": jnp.array([_RegimeId.work, _RegimeId.work]),
+    }
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    )
+    flat_work = result.flat_params["work"]
+    assert (
+        flat_work["retired__next_regime__hazard"]
+        is flat_work["dead__next_regime__hazard"]
+    )
+
+
+def test_coarse_regime_transition_rejects_per_target_params() -> None:
+    """A coarse regime transition is evaluated once and shared across targets,
+    so target-nested params for it are rejected."""
+
+    def _prob_vector(age: float, hazard: float) -> FloatND:
+        dead = jnp.clip(hazard * age, 0.0, 1.0)
+        return jnp.stack([jnp.zeros_like(dead), 1.0 - dead, dead])
+
+    work = _work_regime(
+        transition=MarkovTransition(_prob_vector),
+        state_transitions={"wealth": _next_wealth},
+    )
+    model = _build_model(work)
+    params = {
+        "work": {
+            "discount_factor": 0.95,
+            "retired": {"next_regime": {"hazard": 0.01}},
+        },
+        "retired": {"discount_factor": 0.95},
+    }
+    with pytest.raises(InvalidParamsError, match="retired__next_regime__hazard"):
+        model.solve(params=params, log_level="off")

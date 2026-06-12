@@ -35,6 +35,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pandas as pd
+from dags.tree import tree_path_from_qname
 
 from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
@@ -45,6 +46,9 @@ from lcm.exceptions import (
     InvalidStateTransitionProbabilitiesError,
 )
 from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
+
+# Within-regime flat param qname `target__law__param`.
+_NUM_PARTS_PER_TARGET_PARAM = 3
 
 
 def validate_transitions(
@@ -84,25 +88,35 @@ def _params_callable_for_state_transition(
     """Return un-qualified params for calling a state-transition function.
 
     Both `regime.resolved_fixed_params` and `flat_params_for_regime` key
-    their entries by the qualified names produced by
-    `create_regime_params_template`:
+    every transition-law param granularly (`<target>__next_<state>__<param>`),
+    matching the engine's target-prefixed function qnames:
 
-    - simple transitions ⇒ `next_<state>__<param>`
-    - per-target dicts   ⇒ `<target>__next_<state>__<param>`
+    - per-target dicts ⇒ one entry per target, possibly distinct values
+    - coarse laws      ⇒ one entry per reachable carrying target, all
+      sharing the same leaf — any target's binding yields the law's params
 
     The `MarkovTransition`'s user function is called with the raw
     parameter names from its signature, so the validator must strip
-    the same qualifier the template builder applied before lookup.
-    Without the strip, every transition-function parameter that isn't
-    a grid axis falls through to the "not numerically validated" skip
-    branch and the per-transition numerical check never runs.
+    the same qualifier before lookup. Without the strip, every
+    transition-function parameter that isn't a grid axis falls through
+    to the "not numerically validated" skip branch and the
+    per-transition numerical check never runs.
     """
-    if transition.target_regime_name is None:
-        prefix = f"next_{transition.state_name}__"
-    else:
-        prefix = f"{transition.target_regime_name}__next_{transition.state_name}__"
-
     merged = {**regime.resolved_fixed_params, **flat_params_for_regime}
+
+    if transition.target_regime_name is None:
+        # Coarse law: read any target's (shared-leaf) binding.
+        law_name = f"next_{transition.state_name}"
+        parts_by_name = {name: tree_path_from_qname(name) for name in merged}
+        return MappingProxyType(
+            {
+                parts[2]: merged[name]
+                for name, parts in parts_by_name.items()
+                if len(parts) == _NUM_PARTS_PER_TARGET_PARAM and parts[1] == law_name
+            }
+        )
+
+    prefix = f"{transition.target_regime_name}__next_{transition.state_name}__"
     return MappingProxyType(
         {
             name.removeprefix(prefix): value

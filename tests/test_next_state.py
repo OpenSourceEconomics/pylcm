@@ -41,7 +41,7 @@ def test_get_next_state_function_with_solve_target():
     flat_regime_params = {
         "discount_factor": jnp.asarray(1.0),
         "utility__disutility_of_work": jnp.asarray(1.0),
-        "next_wealth__interest_rate": jnp.asarray(0.05),
+        "working_life__next_wealth__interest_rate": jnp.asarray(0.05),
     }
     action = {"labor_supply": jnp.asarray(1), "consumption": jnp.asarray(10.0)}
     state = {"wealth": jnp.asarray(20.0)}

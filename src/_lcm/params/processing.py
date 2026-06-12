@@ -141,6 +141,7 @@ def broadcast_to_template(
 
     result: dict[str, dict[str, object]] = {name: {} for name in template}
     used_keys: set[str] = set()
+    missing: list[str] = []
 
     for qname in template_flat:
         candidates = _find_candidates(qname=qname, params_flat=params_flat)
@@ -159,16 +160,62 @@ def broadcast_to_template(
             result[regime][remainder] = params_flat[chosen]
             used_keys.add(chosen)
         elif required:
-            raise InvalidParamsError(f"Missing required parameter: {qname!r}")
+            missing.append(qname)
 
     unknown = set(params_flat) - used_keys
-    if unknown:
-        raise InvalidParamsError(f"Unknown keys: {sorted(unknown)}")
+    if missing or unknown:
+        messages = []
+        if missing:
+            messages.append(f"Missing required parameter(s): {missing}")
+        if unknown:
+            messages.append(f"Unknown keys: {sorted(unknown)}")
+        raise InvalidParamsError(" ".join(messages))
 
     return cast(
         "FlatParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
+
+
+def materialize_granular_transition_params(
+    *,
+    flat_params: FlatParams,
+    expansions: Mapping[str, Mapping[str, tuple[str, ...]]],
+) -> FlatParams:
+    """Expand coarse transition-law params to their per-target qnames.
+
+    Canonical flat params always key transition-law params per target
+    (`<target>__<law>__<param>`), matching the engine's target-prefixed
+    function qnames. A coarse user spelling resolves against the coarse
+    template key first; this pass replaces each such entry with one entry
+    per granular prefix, every target sharing the same leaf object —
+    bit-identical arithmetic and no per-target copies.
+
+    Args:
+        flat_params: Template-shaped output of `broadcast_to_template`
+            (after dtype canonicalisation).
+        expansions: Per regime, mapping of coarse law key to its granular
+            qname prefixes (`Regime.granular_param_expansions`).
+
+    Returns:
+        New immutable mapping with coarse transition-law entries replaced
+        by their granular spellings.
+
+    """
+    result: dict[str, MappingProxyType[str, object]] = {}
+    for regime_name, leaves in flat_params.items():
+        regime_expansions = expansions.get(regime_name, {})
+        materialized: dict[str, object] = {}
+        for param_qname, value in leaves.items():
+            path = tree_path_from_qname(param_qname)
+            prefixes = regime_expansions.get(path[0])
+            if len(path) == _NUM_PARTS_FUNCTION_PARAM - 1 and prefixes:
+                for prefix in prefixes:
+                    materialized[qname_from_tree_path((prefix, path[1]))] = value
+            else:
+                materialized[param_qname] = value
+        result[regime_name] = MappingProxyType(materialized)
+    return cast("FlatParams", MappingProxyType(result))
 
 
 def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
@@ -186,13 +233,25 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
         New immutable mapping with every leaf cast to its canonical dtype.
 
     """
+    # One cast per distinct input object: a value broadcast into several
+    # slots (e.g. a coarse value resolved into per-target template slots)
+    # stays one shared leaf, so downstream consumers can deduplicate by
+    # identity and large array leaves are not copied per slot.
+    memo: dict[int, Any] = {}
+
+    def _cast_shared(value: Any, *, name: str) -> Any:  # noqa: ANN401
+        key = id(value)
+        if key not in memo:
+            memo[key] = _cast_leaves_to_canonical_dtype(value, name=name)
+        return memo[key]
+
     return cast(
         "FlatParams",
         MappingProxyType(
             {
                 regime: MappingProxyType(
                     {
-                        param_qname: _cast_leaves_to_canonical_dtype(
+                        param_qname: _cast_shared(
                             value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
                         )
                         for param_qname, value in leaves.items()

@@ -20,6 +20,7 @@ from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
     create_params_template,
+    materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -132,10 +133,20 @@ def _build_regimes_and_template_with_fixed_params(
     fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
     _validate_param_types(fixed_flat_params)
 
+    # The template trim works on the template-shaped (user-coarse) form;
+    # partialling needs the granular form the compiled functions bind.
+    granular_fixed_flat_params = materialize_granular_transition_params(
+        flat_params=fixed_flat_params,
+        expansions={
+            regime_name: regime.granular_param_expansions
+            for regime_name, regime in raw_regimes.items()
+        },
+    )
+
     return (
         _partial_fixed_params_into_regimes(
             raw_regimes=raw_regimes,
-            fixed_flat_params=fixed_flat_params,
+            fixed_flat_params=granular_fixed_flat_params,
         ),
         _remove_fixed_params_from_template(
             template=raw_params_template,
