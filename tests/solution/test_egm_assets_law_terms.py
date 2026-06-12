@@ -16,7 +16,6 @@ import functools
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
@@ -60,11 +59,17 @@ OOP_WITHOUT_INSURANCE = 6.0
 # choice interior so both rows of the law term are exercised.
 INSURANCE_PREMIUM = 0.25
 
-# Capital-income supplement: a means-tested transfer (Medicaid-style threshold
-# on capital income) plus a proportional match — the Euler-state dependence of
-# the law term, including a kink.
+# Capital-income supplement: a means-tested transfer with a kinked PHASE-OUT
+# (full below the means-test cap, linearly phased out toward zero) plus a
+# proportional match — the Euler-state dependence of the law term. The
+# phase-out keeps the term CONTINUOUS in wealth: a hard cliff
+# (`jnp.where(capital_income <= cap, BASE, 0)`) is rejected at model build,
+# because a jump in the residual makes the child's value function
+# discontinuous and the true policy bunches at the discontinuity — a corner
+# outside EGM's candidate set.
 CAPITAL_RETURN = 0.04
 MEANS_TEST_CAP = 2.0
+PHASE_OUT_END = 3.0  # capital income at which the supplement is fully phased out
 BASE_SUPPLEMENT = 5.0
 CAPITAL_MATCH = 0.5
 
@@ -182,8 +187,10 @@ def health_net_transfer(health: DiscreteState, buy_private: DiscreteAction) -> F
 
 def capital_supplement(wealth: ContinuousState) -> FloatND:
     capital_income = CAPITAL_RETURN * wealth
-    means_tested = jnp.where(capital_income <= MEANS_TEST_CAP, BASE_SUPPLEMENT, 0.0)
-    return means_tested + CAPITAL_MATCH * capital_income
+    phase_out_share = jnp.clip(
+        (PHASE_OUT_END - capital_income) / (PHASE_OUT_END - MEANS_TEST_CAP), 0.0, 1.0
+    )
+    return BASE_SUPPLEMENT * phase_out_share + CAPITAL_MATCH * capital_income
 
 
 def _stay_prob(age: int, final_age_alive: float, survival_rate: float) -> FloatND:
@@ -357,21 +364,16 @@ def _means_test_model(solver: str) -> Model:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "A law term reading the current Euler state needs the exogenous-"
-        "asset-row kernel mode; the validator still rejects the law."
-    ),
-)
 def test_euler_state_law_term_with_means_test_matches_brute_force():
     """A means-tested capital supplement in the law matches brute force.
 
     The additive term reads the current Euler state through a decision-time
-    function (capital income), including a threshold kink. It is evaluated at
-    the exogenous asset nodes — exactly where the brute-force oracle evaluates
-    it — so the two solvers agree at every node up to the brute solver's
-    consumption-grid resolution.
+    function (capital income), with a kinked but CONTINUOUS phase-out — a
+    hard cliff is rejected by validation, because the true policy bunches at
+    the value discontinuity it induces, outside EGM's candidate set. The term
+    is evaluated at the exogenous asset nodes — exactly where the brute-force
+    oracle evaluates it — so the two solvers agree at every node up to the
+    brute solver's consumption-grid resolution.
     """
     params = _params()
     dcegm_solution = _means_test_model("dcegm").solve(params=params, log_level="debug")

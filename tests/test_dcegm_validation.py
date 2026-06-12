@@ -323,6 +323,52 @@ def test_carried_state_with_decision_free_imputation_constructs():
     assert model.n_periods == N_PERIODS
 
 
+def _cliff_supplement(wealth: ContinuousState) -> FloatND:
+    return jnp.where(wealth <= 100.0, 5.0, 0.0)
+
+
+def _kinked_supplement(wealth: ContinuousState) -> FloatND:
+    return 5.0 * jnp.clip((150.0 - wealth) / 50.0, 0.0, 1.0)
+
+
+def _next_wealth_with_cliff(
+    savings: FloatND, cliff_supplement: FloatND
+) -> ContinuousState:
+    return savings + cliff_supplement
+
+
+def _next_wealth_with_kink(
+    savings: FloatND, kinked_supplement: FloatND
+) -> ContinuousState:
+    return savings + kinked_supplement
+
+
+def test_euler_law_with_cliff_in_euler_state_raises():
+    """A law whose residual jumps in the Euler state fails at model build.
+
+    A jump makes the child's value function discontinuous, so the true
+    policy bunches next-period wealth at the discontinuity — a corner where
+    the Euler equation does not hold and which EGM's candidate set cannot
+    represent. Kinked (continuous) residuals are solvable per asset node.
+    """
+    regime = VALID.replace(
+        state_transitions={"wealth": _next_wealth_with_cliff},
+        functions={**dict(VALID.functions), "cliff_supplement": _cliff_supplement},
+    )
+    with pytest.raises(ModelInitializationError, match=r"discontinuous.*bunches"):
+        _build_model(regime)
+
+
+def test_euler_law_with_kinked_phase_out_constructs():
+    """A law reading the Euler state through a continuous kink is valid."""
+    regime = VALID.replace(
+        state_transitions={"wealth": _next_wealth_with_kink},
+        functions={**dict(VALID.functions), "kinked_supplement": _kinked_supplement},
+    )
+    model = _build_model(regime)
+    assert model.n_periods == N_PERIODS
+
+
 def _retirement_stay_prob(age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, 1.0)
 
