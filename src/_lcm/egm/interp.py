@@ -1,4 +1,4 @@
-"""Linear interpolation on NaN-padded, weakly ascending EGM grids.
+"""Interpolation on NaN-padded, weakly ascending EGM grids.
 
 The upper-envelope refinement emits grid rows of static length whose unused
 tail slots hold NaN and whose kink abscissae appear twice (left- and
@@ -13,8 +13,14 @@ import jax.numpy as jnp
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
 
-def interp_on_padded_grid(*, x_query: FloatND, xp: Float1D, fp: Float1D) -> FloatND:
-    """Interpolate linearly on a NaN-padded, weakly ascending grid row.
+def interp_on_padded_grid(
+    *,
+    x_query: FloatND,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D | None = None,
+) -> FloatND:
+    """Interpolate on a NaN-padded, weakly ascending grid row.
 
     The NaN padding must form a contiguous tail of `xp` (matched by NaNs in
     `fp`); it is treated as $+\\infty$ when locating brackets, so padding never
@@ -30,10 +36,24 @@ def interp_on_padded_grid(*, x_query: FloatND, xp: Float1D, fp: Float1D) -> Floa
       to `-inf` instead of NaN; a query exactly on a finite neighbor returns
       that neighbor's value.
 
+    Without `fp_slopes` the interpolant is piecewise linear. With `fp_slopes`
+    — the exact derivatives $f'(x)$ at the `xp` nodes (for an EGM value row,
+    the marginal-utility row via the envelope theorem) — each bracket gets a
+    cubic Hermite correction instead, with Fritsch-Carlson slope limiting so
+    the interpolant stays monotone on monotone data. Linear interpolation of
+    a concave value row is biased downward by $O(h^2)$ per read and the bias
+    compounds across backward induction; exact slopes remove it at no extra
+    data cost. Brackets with a non-finite endpoint or slope fall back to the
+    linear rule, so the NaN-padding, kink, and `-inf` contracts above are
+    unchanged.
+
     Args:
         x_query: Points at which to evaluate the interpolant; any shape.
         xp: Weakly ascending grid row with NaNs only in the tail.
         fp: Function values on `xp`, NaN-padded in lockstep with `xp`.
+        fp_slopes: Derivatives of `fp` with respect to `xp` at the `xp`
+            nodes, NaN-padded in lockstep; `None` selects linear
+            interpolation.
 
     Returns:
         Interpolated values with the shape of `x_query`.
@@ -65,7 +85,7 @@ def interp_on_padded_grid(*, x_query: FloatND, xp: Float1D, fp: Float1D) -> Floa
     # yields `-inf` wherever it carries positive weight (instead of the NaN
     # of `fp_lower + rel * (fp_upper - fp_lower)`), and contributes exactly
     # nothing at weight zero.
-    return jnp.where(weight_lower > 0.0, weight_lower * fp_lower, 0.0) + jnp.where(
+    linear = jnp.where(weight_lower > 0.0, weight_lower * fp_lower, 0.0) + jnp.where(
         relative_position > 0.0, relative_position * fp_upper, 0.0
     )
 
