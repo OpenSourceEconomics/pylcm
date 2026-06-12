@@ -53,7 +53,7 @@ class MockRegime(UserRegime):
         object.__setattr__(self, "active", lambda _age: True)
         object.__setattr__(self, "derived_categoricals", MappingProxyType({}))
         object.__setattr__(self, "description", "")
-        # `EffectiveUserRegime` injects the default `H` for non-terminal
+        # `finalize_regimes` injects the default `H` for non-terminal
         # regimes; mirror that here.
         if not self.terminal and "H" not in self.functions:
             object.__setattr__(self, "functions", {**self.functions, "H": _default_H})

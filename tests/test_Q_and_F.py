@@ -12,7 +12,7 @@ from _lcm.params.processing import (
     get_flat_param_names,
     process_params,
 )
-from _lcm.regime_building.effective import build_effective_regimes
+from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
@@ -50,7 +50,7 @@ def test_get_Q_and_F_function():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     regimes = process_regimes(
-        user_regimes=build_effective_regimes(
+        user_regimes=finalize_regimes(
             user_regimes=user_regimes, derived_categoricals={}
         ),
         ages=ages,

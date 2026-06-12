@@ -663,7 +663,7 @@ def _validate_discrete_state_values(
     discrete_info: dict[str, tuple[set[int], set[int]]] = {}
     for regime_name, regime in regimes.items():
         regime_id = int(regime_names_to_ids[regime_name])
-        for state_name in regime.simulation.variables.discrete_state_names:
+        for state_name in regime.simulation.discrete_state_names:
             grid = regime.simulation.grids[state_name]
             if isinstance(grid, DiscreteGrid):
                 codes, regime_ids = discrete_info.get(state_name, (set(), set()))
@@ -799,7 +799,7 @@ def _check_regime_feasibility(  # noqa: C901
     )
     accepted = get_union_of_args([feasibility_func])
 
-    action_names = list(regime.solution.variables.action_names)
+    action_names = list(regime.solution.action_names)
     if not action_names:
         return None
 

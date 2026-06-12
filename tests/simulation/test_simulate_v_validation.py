@@ -50,7 +50,7 @@ def test_no_nan_warning_from_out_of_regime_placeholders(caplog):
 
 
 @pytest.mark.parametrize("log_level", ["warning", "debug"])
-def test_out_of_regime_placeholders_pass_v_validation(log_level):
+def test_out_of_regime_placeholders_pass_v_validation(log_level: LogLevel) -> None:
     """Per-regime V validation ignores out-of-regime placeholder entries.
 
     The simulate-time `validate_V` check must consider only the subjects
