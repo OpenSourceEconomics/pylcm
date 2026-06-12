@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from dags import concatenate_functions
 
+from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
 from _lcm.typing import FlatRegimeParams, RegimeName
 from _lcm.utils.dispatchers import vmap_1d
@@ -60,12 +61,24 @@ def _collect_all_available_targets(
 
 
 def _get_available_targets_for_regime(regime: Regime) -> set[str]:
-    """Get available target names for a single regime."""
-    excluded = {"H"} | _get_stochastic_weight_function_names(regime)
+    """Get available target names for a single regime.
+
+    Internal machinery is excluded: the Bellman aggregator `H`, the
+    stochastic weight functions, and the budget mask synthesized for DC-EGM
+    regimes (an implementation detail of the simulate-phase argmax, not a
+    user-declared constraint). A DC-EGM regime's `inverse_marginal_utility`
+    is excluded as well — its `marginal_continuation` argument exists only
+    inside the Euler inversion, so it is not computable from simulation data.
+    """
+    excluded = {"H", DCEGM_BUDGET_CONSTRAINT_NAME} | (
+        _get_stochastic_weight_function_names(regime)
+    )
+    if regime.solution.egm_step is not None:
+        excluded.add("inverse_marginal_utility")
     sim = regime.simulation
-    return {
-        name for name in sim.functions if name not in excluded
-    } | sim.constraints.keys()
+    return {name for name in sim.functions if name not in excluded} | {
+        name for name in sim.constraints if name not in excluded
+    }
 
 
 def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:

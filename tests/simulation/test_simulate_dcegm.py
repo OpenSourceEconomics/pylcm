@@ -16,6 +16,8 @@ properties anchor this:
   resolution wherever the two solves' V arrays agree.
 """
 
+from types import MappingProxyType
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -203,13 +205,70 @@ def test_dcegm_full_model_simulates_end_to_end():
     assert (alive["consumption"].to_numpy() <= budget + 1e-9).all()
 
 
-def test_dcegm_simulate_accepts_precomputed_solution():
-    """`simulate` consumes V arrays from a prior `solve` of a DC-EGM model."""
+def test_dcegm_simulate_consumes_the_provided_solution():
+    """`simulate` reads the V arrays it is given, not a fresh solve.
+
+    With the solved V, period-0 consumption at wealth 20 is interior (the
+    continuation rewards saving); with an all-zero V there is nothing to save
+    for, so the argmax picks the largest feasible consumption node. The two
+    paths must differ, and the zero-V path must hit exactly that node.
+    """
     n_periods = 4
+    initial_wealth = 20.0
+    model = dcegm_variants.get_retirement_only_model("dcegm", n_periods)
+    params = dcegm_variants.get_retirement_only_params(n_periods)
+    solved = model.solve(params=params, log_level="off")
+    zeroed = MappingProxyType(
+        {
+            period: MappingProxyType(
+                {name: jnp.zeros_like(arr) for name, arr in regime_to_V.items()}
+            )
+            for period, regime_to_V in solved.items()
+        }
+    )
+
+    consumption = {}
+    for label, period_to_regime_to_V_arr in {
+        "solved": solved,
+        "zeroed": zeroed,
+    }.items():
+        result = model.simulate(
+            params=params,
+            initial_conditions={
+                "wealth": jnp.array([initial_wealth]),
+                "age": jnp.array([40.0]),
+                "regime_id": jnp.array(
+                    [RetirementOnlyRegimeId.retirement], dtype=jnp.int32
+                ),
+            },
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            log_level="debug",
+            seed=1,
+        )
+        df = result.to_dataframe().query("regime_name == 'retirement' and period == 0")
+        consumption[label] = float(df["consumption"].iloc[0])
+
+    consumption_grid = np.asarray(dcegm_variants.CONSUMPTION_GRID.to_jax())
+    budget = initial_wealth - float(dcegm_variants.SAVINGS_GRID.to_jax()[0])
+    largest_feasible_node = consumption_grid[consumption_grid <= budget + 1e-9].max()
+    assert consumption["zeroed"] == pytest.approx(largest_feasible_node)
+    assert consumption["solved"] < consumption["zeroed"]
+
+
+def test_dcegm_solver_machinery_is_not_a_result_target():
+    """DC-EGM solver machinery never surfaces in the result API.
+
+    `available_targets` and `to_dataframe(additional_targets="all")` expose
+    the user-declared functions and constraints. Two pieces of solver
+    machinery stay invisible: the synthesized budget mask (an implementation
+    detail of the simulate-phase argmax) and `inverse_marginal_utility`
+    (whose `marginal_continuation` argument exists only inside the Euler
+    inversion, so it is not computable from simulation data).
+    """
+    n_periods = 3
     model = dcegm_variants.get_retirement_only_model("dcegm", n_periods)
     params = dcegm_variants.get_retirement_only_params(n_periods)
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
     result = model.simulate(
         params=params,
         initial_conditions={
@@ -219,10 +278,13 @@ def test_dcegm_simulate_accepts_precomputed_solution():
                 [RetirementOnlyRegimeId.retirement], dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=1,
     )
 
-    df = result.to_dataframe().query("regime_name == 'retirement'")
-    assert (df["consumption"].to_numpy() <= df["wealth"].to_numpy() + 1e-9).all()
+    assert "dcegm_budget_constraint" not in result.available_targets
+    assert "inverse_marginal_utility" not in result.available_targets
+    df = result.to_dataframe(additional_targets="all")
+    assert "dcegm_budget_constraint" not in df.columns
+    assert "inverse_marginal_utility" not in df.columns
