@@ -11,7 +11,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, IrregSpacedGrid, LogSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
