@@ -143,6 +143,10 @@ def solve(
     total_start = time.monotonic()
 
     # backwards induction loop
+    base_state_action_spaces = _build_base_state_action_spaces(
+        regimes=regimes, flat_params=flat_params
+    )
+
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}

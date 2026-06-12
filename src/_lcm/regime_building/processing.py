@@ -727,16 +727,16 @@ def _process_regime_core(
         RegimeName, UserFunction | _CoarseTransitionCell
     ] = {}
     state_law_bundles: dict[RegimeName, dict[TransitionFunctionName, UserFunction]] = {}
-    for target_name, bundle in nested_transitions.items():
+    for target_regime_name, bundle in nested_transitions.items():
         if "next_regime" in bundle:
-            next_regime_cells_by_target[target_name] = bundle["next_regime"]
+            next_regime_cells_by_target[target_regime_name] = bundle["next_regime"]
         laws = {
             law_name: cast("UserFunction", law)
             for law_name, law in bundle.items()
             if law_name != "next_regime"
         }
         if laws:
-            state_law_bundles[target_name] = laws
+            state_law_bundles[target_regime_name] = laws
 
     flat_nested_transitions = flatten_regime_namespace(state_law_bundles)
 
@@ -918,12 +918,12 @@ def _process_next_regime_cells(
         return next_regime_func, None
     next_regime_cells = MappingProxyType(
         {
-            target_name: _rename_params_to_qnames(
+            target_regime_name: _rename_params_to_qnames(
                 func=cast("UserFunction", cell),
                 regime_params_template=regime_params_template,
-                param_key=qname_from_tree_path((target_name, "next_regime")),
+                param_key=qname_from_tree_path((target_regime_name, "next_regime")),
             )
-            for target_name, cell in next_regime_cells_by_target.items()
+            for target_regime_name, cell in next_regime_cells_by_target.items()
         }
     )
     return None, next_regime_cells
@@ -1079,11 +1079,11 @@ def _granular_param_expansions(
     """
     expansions: dict[FunctionName, set[str]] = {}
     for bundles in nested_transitions_by_phase:
-        for target_name, bundle in bundles.items():
+        for target_regime_name, bundle in bundles.items():
             for law_name in bundle:
                 if law_name == "next_regime":
                     continue
-                qname = qname_from_tree_path((target_name, law_name))
+                qname = qname_from_tree_path((target_regime_name, law_name))
                 names_key = _extract_template_names_key(qname, regime_params_template)
                 if names_key != qname and regime_params_template.get(names_key):
                     expansions.setdefault(names_key, set()).add(qname)
@@ -1099,7 +1099,7 @@ def _extract_template_names_key(
     """Extract the template key under which a function's param names live.
 
     The template mirrors the user's coarseness — a per-target dict yields
-    params nested under the target (`template[target][func]`), a broadcast
+    params nested under the target (`template[target_regime][func]`), a broadcast
     law a single coarse `next_<state>` key — while the engine-side function
     names are always target-prefixed (canonical form). The template therefore
     decides where the names live:
@@ -1245,7 +1245,7 @@ def _validate_categoricals(
             if source_grid is None:
                 continue
 
-            for target_name, target_regime in user_regimes.items():
+            for target_regime_name, target_regime in user_regimes.items():
                 target_grid = target_regime.states.get(state_name)
                 if not isinstance(target_grid, DiscreteGrid):
                     continue
@@ -1254,7 +1254,7 @@ def _validate_categoricals(
                     error_messages.append(
                         f"Discrete state '{state_name}' in regime '{source_name}' "
                         f"has categories {source_grid.categories}, but regime "
-                        f"'{target_name}' has categories "
+                        f"'{target_regime_name}' has categories "
                         f"{target_grid.categories}. A single transition function "
                         f"cannot map between different category sets — use a "
                         f"per-target dict in state_transitions to specify the "
@@ -1557,8 +1557,10 @@ def _assemble_granular_regime_transition_probs(
 
     """
     cell_arg_names = {
-        target_name: tuple(name for name in get_annotations(cell) if name != "return")
-        for target_name, cell in next_regime_cells.items()
+        target_regime_name: tuple(
+            name for name in get_annotations(cell) if name != "return"
+        )
+        for target_regime_name, cell in next_regime_cells.items()
     }
     merged_annotations: dict[str, str] = {}
     for cell in next_regime_cells.values():
@@ -1573,10 +1575,15 @@ def _assemble_granular_regime_transition_probs(
     ) -> MappingProxyType[RegimeName, FloatND]:
         return MappingProxyType(
             {
-                target_name: jnp.asarray(
-                    cell(**{name: kwargs[name] for name in cell_arg_names[target_name]})
+                target_regime_name: jnp.asarray(
+                    cell(
+                        **{
+                            name: kwargs[name]
+                            for name in cell_arg_names[target_regime_name]
+                        }
+                    )
                 )
-                for target_name, cell in next_regime_cells.items()
+                for target_regime_name, cell in next_regime_cells.items()
             }
         )
 
