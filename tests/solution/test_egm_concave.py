@@ -86,7 +86,7 @@ def test_discount_factor_zero_yields_consume_everything_values():
 
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
-    wealth = np.asarray(model.user_regimes["retirement"].states["wealth"].to_jax())
+    wealth = np.asarray(WEALTH_GRID.to_jax())
     for period in range(n_periods - 1):
         np.testing.assert_allclose(
             np.asarray(period_to_regime_to_V_arr[period]["retirement"]),

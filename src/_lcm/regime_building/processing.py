@@ -12,6 +12,7 @@ from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.egm.carry import EgmCarry, build_template_egm_carry
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
@@ -202,7 +203,7 @@ def process_regimes(
             spec=spec,
             regime_name=regime_name,
             user_regimes=user_regimes,
-            nested_transitions=nested_transitions[regime_name],
+            nested_transitions=solve_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
             granular_param_expansions=granular_param_expansions,
@@ -264,10 +265,7 @@ def _build_solution_phase(
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
-    nested_transitions: dict[
-        RegimeName | TransitionFunctionName,
-        dict[TransitionFunctionName, UserFunction] | UserFunction,
-    ],
+    nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
@@ -289,7 +287,8 @@ def _build_solution_phase(
         regime_name: The name of the regime.
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
-        nested_transitions: Nested transitions dict for internal processing.
+        nested_transitions: Per-target transition bundles for internal
+            processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         granular_param_expansions: Immutable mapping of coarse-template law
