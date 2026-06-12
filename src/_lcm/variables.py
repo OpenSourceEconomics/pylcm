@@ -28,68 +28,6 @@ if TYPE_CHECKING:
     from lcm.regime import Regime as UserRegime
 
 
-def _bind_forward_refs(*, regime_cls: type) -> None:
-    """Bind `UserRegime` into this module's globals.
-
-    The package claw rewrites string annotations on `from_regime`,
-    `get_grids`, and similar helpers into runtime forward references
-    resolved against this module's globals. `lcm.__init__` calls this
-    helper once the user-facing `Regime` is loaded so the refs resolve
-    at call time without depending on an ad-hoc assignment from outside
-    the module.
-    """
-    global UserRegime  # noqa: PLW0603
-    UserRegime = regime_cls  # ty: ignore[invalid-assignment]
-
-
-def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
-    """Return the regime's states that are plain grids, excluding carried states.
-
-    A carried state (declared via `Phased(solve=..., simulate=Grid)`) is a
-    derived function in the solve phase, not a grid dimension, so it is
-    omitted from the solve-phase state grids and variable info.
-    """
-    return {
-        name: spec
-        for name, spec in user_regime.states.items()
-        if isinstance(spec, Grid)
-    }
-
-
-def simulate_variables_from_regime(user_regime: UserRegime) -> Variables:
-    """Build the simulate-phase `Variables`: solve variables plus carried states.
-
-    Each carried state is appended after the solve-ordered variables as a
-    genuine state (its simulate role). The resulting order is NOT a productmap
-    order — it only fixes column order in simulation output.
-    """
-    solve_variables = from_regime(user_regime)
-    carried_info = {
-        name: VariableInfo(
-            kind="state",
-            topology="continuous" if isinstance(grid, ContinuousGrid) else "discrete",
-            is_process=False,
-        )
-        for name, grid in carried_state_grids(user_regime).items()
-    }
-    return Variables(info=MappingProxyType({**solve_variables.info, **carried_info}))
-
-
-def carried_state_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
-    """Return the simulate-phase grids of the regime's carried states.
-
-    Carried states — declared via `Phased(solve=..., simulate=Grid)` — are
-    absent from the solve grid (they are derived functions there); their grid
-    is the simulate-phase domain used to seed, classify, and validate the
-    carried-forward value.
-    """
-    return {
-        name: cast("Grid", spec.simulate)
-        for name, spec in user_regime.states.items()
-        if isinstance(spec, Phased)
-    }
-
-
 def from_regime(user_regime: UserRegime) -> Variables:
     """Build `Variables` from a regime, ordering names canonically.
 
@@ -133,6 +71,68 @@ def get_grids(
     return MappingProxyType(
         {name: grid for name in variables if (grid := raw_variables[name]) is not None}
     )
+
+
+def simulate_variables_from_regime(user_regime: UserRegime) -> Variables:
+    """Build the simulate-phase `Variables`: solve variables plus carried states.
+
+    Each carried state is appended after the solve-ordered variables as a
+    genuine state (its simulate role). The resulting order is NOT a productmap
+    order — it only fixes column order in simulation output.
+    """
+    solve_variables = from_regime(user_regime)
+    carried_info = {
+        name: VariableInfo(
+            kind="state",
+            topology="continuous" if isinstance(grid, ContinuousGrid) else "discrete",
+            is_process=False,
+        )
+        for name, grid in carried_state_grids(user_regime).items()
+    }
+    return Variables(info=MappingProxyType({**solve_variables.info, **carried_info}))
+
+
+def carried_state_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
+    """Return the simulate-phase grids of the regime's carried states.
+
+    Carried states — declared via `Phased(solve=..., simulate=Grid)` — are
+    absent from the solve grid (they are derived functions there); their grid
+    is the simulate-phase domain used to seed, classify, and validate the
+    carried-forward value.
+    """
+    return {
+        name: cast("Grid", spec.simulate)
+        for name, spec in user_regime.states.items()
+        if isinstance(spec, Phased)
+    }
+
+
+def _bind_forward_refs(*, regime_cls: type) -> None:
+    """Bind `UserRegime` into this module's globals.
+
+    The package claw rewrites string annotations on `from_regime`,
+    `get_grids`, and similar helpers into runtime forward references
+    resolved against this module's globals. `lcm.__init__` calls this
+    helper once the user-facing `Regime` is loaded so the refs resolve
+    at call time without depending on an ad-hoc assignment from outside
+    the module.
+    """
+    global UserRegime  # noqa: PLW0603
+    UserRegime = regime_cls  # ty: ignore[invalid-assignment]
+
+
+def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
+    """Return the regime's states that are plain grids, excluding carried states.
+
+    A carried state (declared via `Phased(solve=..., simulate=Grid)`) is a
+    derived function in the solve phase, not a grid dimension, so it is
+    omitted from the solve-phase state grids and variable info.
+    """
+    return {
+        name: spec
+        for name, spec in user_regime.states.items()
+        if isinstance(spec, Grid)
+    }
 
 
 def _raw_variable_info(
