@@ -1708,7 +1708,7 @@ def test_convert_series_per_target_transition() -> None:
     )
     sr = pd.Series([0.9, 0.1, 0.2, 0.8, 0.8, 0.2, 0.3, 0.7], index=index)
 
-    params = {"working": {"to_working_next_health": {"probs_array": sr}}}
+    params = {"working": {"working": {"next_health": {"probs_array": sr}}}}
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
@@ -1718,7 +1718,7 @@ def test_convert_series_per_target_transition() -> None:
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
-    arr = result["working"]["to_working_next_health__probs_array"]
+    arr = result["working"]["working__next_health__probs_array"]
     assert arr.shape == (3, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
@@ -1989,7 +1989,7 @@ def test_convert_series_cross_grid_transition() -> None:
 
     params = {
         "pre65": {
-            "to_post65_next_health": {"health_trans_probs_cross": sr_cross},
+            "post65": {"next_health": {"health_trans_probs_cross": sr_cross}},
         },
     }
     internal = broadcast_to_template(
@@ -2002,7 +2002,7 @@ def test_convert_series_cross_grid_transition() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
 
-    arr = result["pre65"]["to_post65_next_health__health_trans_probs_cross"]
+    arr = result["pre65"]["post65__next_health__health_trans_probs_cross"]
     # Shape: (n_ages=2, n_source_health=3, n_target_health=2)
     # n_ages=2 because AgeGrid has ages [0, 1]; missing age 1 is NaN-filled.
     assert arr.shape == (2, 3, 2)  # ty: ignore[unresolved-attribute]

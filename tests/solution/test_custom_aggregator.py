@@ -5,7 +5,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -222,15 +222,16 @@ def test_custom_ces_aggregator_differs_from_default():
 
 
 def test_default_H_injected_for_non_terminal():
-    """The default H is injected on the non-terminal effective regime."""
-    r = EffectiveUserRegime(
-        user_regime=UserRegime(
-            functions={"utility": lambda: 0.0},
-            transition=lambda: {"a": 1.0},
-            active=lambda age: age < 1,
-        ),
+    """The default H is injected on the non-terminal finalized regime."""
+    regime = UserRegime(
+        functions={"utility": lambda: 0.0},
+        transition=lambda: {"a": 1.0},
+        active=lambda age: age < 1,
     )
-    assert "H" in r.functions
+    finalized = finalize_regimes(
+        user_regimes={"regime": regime}, derived_categoricals={}
+    )["regime"]
+    assert "H" in finalized.functions
 
 
 def test_default_H_not_injected_for_terminal():

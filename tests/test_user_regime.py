@@ -8,7 +8,7 @@ import pytest
 from dags.tree import QNAME_DELIMITER
 
 from _lcm.grids import IrregSpacedGrid
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.transitions import (
     _IdentityTransition,
     collect_state_transitions,
@@ -164,9 +164,11 @@ def test_regime_with_active_callable():
     assert regime.active(5) is False
 
 
-def _as_effective(regime: UserRegime) -> EffectiveUserRegime:
+def _finalize(regime: UserRegime) -> UserRegime:
     """Run the completeness validation the model applies to each regime."""
-    return EffectiveUserRegime(user_regime=regime)
+    return finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})[
+        "regime"
+    ]
 
 
 def test_regime_requires_utility_in_functions():
@@ -177,7 +179,7 @@ def test_regime_requires_utility_in_functions():
         states={"wealth": WEALTH_GRID},
     )
     with pytest.raises(RegimeInitializationError, match=r"utility.*must be provided"):
-        _as_effective(regime)
+        _finalize(regime)
 
 
 def test_active_validation_rejects_non_callable():
@@ -289,7 +291,7 @@ def test_state_grid_without_explicit_transition_raises():
     with pytest.raises(
         RegimeInitializationError, match="must have an entry in state_transitions"
     ):
-        _as_effective(regime)
+        _finalize(regime)
 
 
 def test_state_grid_with_fixed_transition_is_accepted():
@@ -348,7 +350,7 @@ def test_state_grid_unset_error_with_different_grid_types(grid_cls):
     with pytest.raises(
         RegimeInitializationError, match="must have an entry in state_transitions"
     ):
-        _as_effective(regime)
+        _finalize(regime)
 
 
 def test_discrete_state_grid_without_explicit_transition_raises():
@@ -367,7 +369,7 @@ def test_discrete_state_grid_without_explicit_transition_raises():
     with pytest.raises(
         RegimeInitializationError, match="must have an entry in state_transitions"
     ):
-        _as_effective(regime)
+        _finalize(regime)
 
 
 def test_collect_state_transitions_missing_state_raises():

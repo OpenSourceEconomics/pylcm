@@ -15,6 +15,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatRegimeParams,
+    FunctionName,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     RegimeName,
@@ -285,8 +286,12 @@ class SolutionPhase:
     phase explicit at every call site.
     """
 
-    variables: Variables
-    """Solve states and actions, with kind/topology/process tags."""
+    _variables: Variables
+    """Solve states and actions, with kind/topology/process tags.
+
+    Private bundle behind the name-tuple properties (`state_names`,
+    `action_names`, `discrete_state_names`); read those instead.
+    """
 
     grids: MappingProxyType[StateOrActionName, Grid]
     """Immutable mapping of variable names to grid objects (productmap order)."""
@@ -330,7 +335,17 @@ class SolutionPhase:
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
         """Solve-phase state names in canonical (productmap) order."""
-        return self.variables.state_names
+        return self._variables.state_names
+
+    @property
+    def action_names(self) -> tuple[StateOrActionName, ...]:
+        """Solve-phase action names in canonical (productmap) order."""
+        return self._variables.action_names
+
+    @property
+    def discrete_state_names(self) -> tuple[StateOrActionName, ...]:
+        """Solve-phase discrete state names (includes stochastic processes)."""
+        return self._variables.discrete_state_names
 
     @property
     def discrete_grids(self) -> MappingProxyType[StateOrActionName, DiscreteGrid]:
@@ -433,13 +448,15 @@ class SimulationPhase:
     namespace makes the phase explicit at every call site.
     """
 
-    variables: Variables
+    _variables: Variables
     """Simulate states (solve states plus carried-only states, appended) and
     actions.
 
     NOT a productmap order — carried-only states are appended after the solve
     states, so this ordering carries no dispatch meaning; it only fixes column
-    order in simulation output.
+    order in simulation output. Private bundle behind the name-tuple
+    properties (`state_names`, `action_names`, `discrete_state_names`); read
+    those instead.
     """
 
     grids: MappingProxyType[StateOrActionName, Grid]
@@ -473,7 +490,17 @@ class SimulationPhase:
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
         """States carried per subject: solve states plus carried-only states."""
-        return self.variables.state_names
+        return self._variables.state_names
+
+    @property
+    def action_names(self) -> tuple[StateOrActionName, ...]:
+        """Simulate-phase action names."""
+        return self._variables.action_names
+
+    @property
+    def discrete_state_names(self) -> tuple[StateOrActionName, ...]:
+        """Per-subject discrete state names (includes stochastic processes)."""
+        return self._variables.discrete_state_names
 
     @property
     def discrete_grids(self) -> MappingProxyType[StateOrActionName, DiscreteGrid]:
@@ -572,6 +599,18 @@ class Regime:
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
+
+    granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]] = (
+        MappingProxyType({})
+    )
+    """Immutable mapping of coarse-template law keys to granular qname prefixes.
+
+    A state law whose params the template keys coarsely (`next_<state>`)
+    binds granularly in the engine (`<target>__next_<state>`); each entry
+    lists every such prefix across both phases so canonical flat params can
+    materialize one shared leaf per target. Empty when every law's params
+    are user-granular or absent.
+    """
 
 
 @dataclasses.dataclass(frozen=True)

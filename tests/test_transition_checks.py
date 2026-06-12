@@ -595,8 +595,8 @@ def test_per_target_state_validator_resolves_params_from_fixed_params(
     The skip-and-warn branch must not fire just because the source regime
     declares the transition under a per-target dict — the validator
     strips the per-target qualified prefix
-    `to_<target>_next_<state>__` the same way it strips the simple
-    `next_<state>__` prefix for non-per-target transitions.
+    `<target>__next_<state>__` the same way it resolves the params of
+    coarse transitions.
     """
     model = _model_with_per_target_fixed_param_health_probs()
 

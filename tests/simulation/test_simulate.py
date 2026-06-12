@@ -7,7 +7,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
-from _lcm.regime_building.effective import build_effective_regimes
+from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import (
@@ -48,7 +48,7 @@ def simulate_inputs():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     regimes = process_regimes(
-        user_regimes=build_effective_regimes(
+        user_regimes=finalize_regimes(
             user_regimes=user_regimes, derived_categoricals={}
         ),
         ages=ages,
@@ -61,7 +61,7 @@ def simulate_inputs():
         "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
         "simulation_output_dtypes": _get_output_dtypes(
-            user_regimes=build_effective_regimes(
+            user_regimes=finalize_regimes(
                 user_regimes=user_regimes, derived_categoricals={}
             ),
             regime_names_to_ids=regime_names_to_ids,
@@ -76,7 +76,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                 {
                     "H__discount_factor": jnp.asarray(1.0),
                     "utility__disutility_of_work": jnp.asarray(1.0),
-                    "next_wealth__interest_rate": jnp.asarray(0.05),
+                    "working_life__next_wealth__interest_rate": jnp.asarray(0.05),
                     "next_regime__final_age_alive": jnp.asarray(0),
                 }
             ),

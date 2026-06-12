@@ -402,8 +402,10 @@ def test_model_broadcast_merges_into_regimes():
     )
 
 
-def test_model_broadcast_matching_regime_entry():
-    """Model-level entry matching a regime entry does not conflict."""
+def test_model_broadcast_same_name_at_both_levels_raises():
+    """`derived_categoricals` follows the exactly-one-level rule: a name
+    defined at model level and regime level is ambiguous even when the grids
+    match."""
     wg_grid = DiscreteGrid(_WealthGroup)
     alive = UserRegime(
         functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
@@ -420,17 +422,17 @@ def test_model_broadcast_matching_regime_entry():
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
-    model = Model(
-        regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=RegimeId,
-        derived_categoricals={"wealth_group": wg_grid},
-    )
-    assert model.user_regimes["alive"].derived_categoricals["wealth_group"] is wg_grid
+    with pytest.raises(Exception, match="Ambiguous"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
+            derived_categoricals={"wealth_group": wg_grid},
+        )
 
 
-def test_model_broadcast_conflict_raises():
-    """Model-level entry conflicting with regime entry raises."""
+def test_model_broadcast_conflicting_grids_raise():
+    """A name defined at both levels raises also when the grids differ."""
 
     @categorical(ordered=False)
     class _OtherGroup:
@@ -453,7 +455,7 @@ def test_model_broadcast_conflict_raises():
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
-    with pytest.raises(Exception, match="conflicts"):
+    with pytest.raises(Exception, match="Ambiguous"):
         Model(
             regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
