@@ -89,7 +89,7 @@ type _UserParamsLeaf = (
 # - model level: `{param: value}`
 # - regime level: `{regime: {param: value}}`
 # - function level: `{regime: {func: {param: value}}}`
-# - target level: `{regime: {target: {transition_func: {param: value}}}}`
+# - target level: `{regime: {target_regime: {transition_func: {param: value}}}}`
 #   — target-specific params for a per-target transition
 type UserParams = Mapping[
     str,

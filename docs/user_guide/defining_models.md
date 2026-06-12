@@ -51,17 +51,25 @@ Each model-level slot accepts exactly what the regime-level slot accepts — inc
 `Phased`, stochastic processes, per-target dicts, and `fixed_transition`. The entries
 are merged into every regime under three rules:
 
-- **Exactly one level.** A name is defined at model level or regime level, never both —
-  a duplicate raises an ambiguity error at model build.
-- **`None` masks.** A regime-level `None` removes the model entry for that regime
-  (masking a state also drops its broadcast law of motion). A `None` with no model-level
-  entry behind it is an error.
-- **DAG pruning.** Broadcast states and actions are pruned per regime by reachability: a
-  broadcast variable survives in a regime only if a root computation (utility, `H`,
-  constraints, derived categoricals, the regime transition, or a law of motion toward a
-  reachable target that keeps the state) transitively reads it, in either phase.
-  Regime-level declarations are never pruned. `model.pruned_variables` records, per
-  regime, which broadcast names were pruned.
+- **Exactly one level.** Each name (function, constraint, state, state transition,
+  action) may be defined at the model level or at the regime level, never both —
+  defining it at both raises an ambiguity error at model build, exactly like supplying a
+  parameter at two levels of the params dict. The same rule applies uniformly to every
+  slot, including `derived_categoricals`.
+- **`None` masks.** A regime opts out of a model-level entry by setting that name to
+  `None` at the regime level (the *mask*) — the entry is removed for that regime.
+  Masking a state also drops its broadcast law of motion, and masking a name that has no
+  model-level entry behind it is an error.
+- **DAG pruning.** A model-level (broadcast) state or action survives in a given regime
+  only if some root computation of that regime — utility, `H`, a constraint, a derived
+  categorical, the regime transition, or a law of motion toward a reachable target that
+  carries the state — transitively reads it. Because "a law toward a reachable target
+  that carries the state" refers to *other* regimes' carried states, pruning one
+  variable in regime B can make a variable in regime A newly dead, so the pruning
+  iterates across all regimes until nothing more can be dropped (a cross-regime fixed
+  point). It runs separately on the solve slice and the simulate slice of each regime; a
+  variable is dropped only when dead in **both** phases. Regime-level declarations are
+  never pruned. `model.pruned_variables` records the outcome per regime.
 
 Pruning means a model-level state costs nothing in regimes that never touch it — the
 grid axis simply does not appear there. Two restrictions keep the device layout

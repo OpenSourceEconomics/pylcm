@@ -243,8 +243,10 @@ class Regime:
             if isinstance(transition, Mapping):
                 # Per-target regime transition: one entry per declared target,
                 # mirroring how per-target state laws are keyed.
-                for target_name, cell in transition.items():
-                    result[f"next_regime__{target_name}"] = cast("UserFunction", cell)
+                for target_regime_name, cell in transition.items():
+                    result[f"next_regime__{target_regime_name}"] = cast(
+                        "UserFunction", cell
+                    )
             else:
                 result["next_regime"] = cast("UserFunction", transition)
         return MappingProxyType(result)

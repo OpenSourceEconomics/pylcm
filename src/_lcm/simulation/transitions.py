@@ -109,8 +109,10 @@ def calculate_next_states(
     # Sorted to fix a downstream-ordering bug when the nested iteration
     # yields names in a non-deterministic order.
     stochastic_next_function_names = sorted(
-        qname_from_tree_path((target_regime, transition_name))
-        for target_regime, target_transitions in (regime.simulation.transitions.items())
+        qname_from_tree_path((target_regime_name, transition_name))
+        for target_regime_name, target_transitions in (
+            regime.simulation.transitions.items()
+        )
         for transition_name in target_transitions
         if transition_name in stochastic_transition_names
     )
@@ -152,13 +154,16 @@ def calculate_next_states(
     # `StateName` keys directly.
     next_states_per_regime = MappingProxyType(
         {
-            target: MappingProxyType(
+            target_regime_name: MappingProxyType(
                 {
                     name.removeprefix("next_"): value
                     for name, value in target_next_states.items()
                 }
             )
-            for target, target_next_states in states_with_next_prefix.items()
+            for (
+                target_regime_name,
+                target_next_states,
+            ) in states_with_next_prefix.items()
         }
     )
 
@@ -362,9 +367,9 @@ def _advance_states_for_subjects(
         regime_name: dict(regime_states)
         for regime_name, regime_states in states_per_regime.items()
     }
-    for target, target_next_states in next_states_per_regime.items():
+    for target_regime_name, target_next_states in next_states_per_regime.items():
         for state_name, next_state_values in target_next_states.items():
-            current_arr = states_per_regime[target][state_name]
+            current_arr = states_per_regime[target_regime_name][state_name]
             target_dtype = current_arr.dtype
             # Preserve storage dtype only when the transition output is the
             # same numeric kind. Across kinds (e.g. int storage + float
@@ -375,7 +380,7 @@ def _advance_states_for_subjects(
                 if next_state_values.dtype.kind == target_dtype.kind
                 else next_state_values
             )
-            updated[target][state_name] = jnp.where(
+            updated[target_regime_name][state_name] = jnp.where(
                 subject_indices,
                 new_values,
                 current_arr,
