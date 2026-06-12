@@ -12,6 +12,7 @@ from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     get_intrinsic_budget_constraint,
