@@ -65,11 +65,9 @@ def _custom_H(utility: FloatND, continuation: FloatND) -> FloatND:
     return utility + 0.9 * continuation
 
 
-def _regime_transition_depending_on_wealth(
-    age: int, final_age_alive: float, wealth: ContinuousState
-) -> ScalarInt:
+def _regime_transition_with_wealth_cliff(wealth: ContinuousState) -> ScalarInt:
     return jnp.where(
-        (age >= final_age_alive) | (wealth < 0.0),
+        wealth < 100.0,
         retirement_only.RetirementOnlyRegimeId.dead,
         retirement_only.RetirementOnlyRegimeId.retirement,
     )
@@ -216,9 +214,9 @@ CASES = {
         ),
         "not passive",
     ),
-    "regime_transition_prob_depends_on_wealth": (
-        lambda: VALID.replace(transition=_regime_transition_depending_on_wealth),
-        "wealth",
+    "regime_transition_cliff_in_wealth": (
+        lambda: VALID.replace(transition=_regime_transition_with_wealth_cliff),
+        "regime transition function.*discontinuous",
     ),
     "stochastic_euler_state_transition": (
         lambda: VALID.replace(
