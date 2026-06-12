@@ -26,6 +26,9 @@ def interp_on_padded_grid(*, x_query: FloatND, xp: Float1D, fp: Float1D) -> Floa
       values), queries strictly below the duplicate interpolate toward the
       left value; queries at or above it use the right value. The zero-width
       bracket between the duplicates is never used as a divisor.
+    - A `-inf` endpoint (an infeasible value) forces the bracket's interior
+      to `-inf` instead of NaN; a query exactly on a finite neighbor returns
+      that neighbor's value.
 
     Args:
         x_query: Points at which to evaluate the interpolant; any shape.
@@ -57,7 +60,14 @@ def interp_on_padded_grid(*, x_query: FloatND, xp: Float1D, fp: Float1D) -> Floa
         1.0,
         jnp.clip((x_query - xp_lower) / safe_width, 0.0, 1.0),
     )
-    return fp_lower + relative_position * (fp_upper - fp_lower)
+    weight_lower = 1.0 - relative_position
+    # Blend on results with zero-weight short-circuits: a `-inf` endpoint
+    # yields `-inf` wherever it carries positive weight (instead of the NaN
+    # of `fp_lower + rel * (fp_upper - fp_lower)`), and contributes exactly
+    # nothing at weight zero.
+    return jnp.where(weight_lower > 0.0, weight_lower * fp_lower, 0.0) + jnp.where(
+        relative_position > 0.0, relative_position * fp_upper, 0.0
+    )
 
 
 def locate_on_grid(

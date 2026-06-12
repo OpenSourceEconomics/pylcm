@@ -17,7 +17,7 @@ from _lcm.simulation.initial_conditions import (
     build_initial_states,
     trim_pad_from_raw_results,
 )
-from _lcm.simulation.random import draw_random_seed
+from _lcm.simulation.random import draw_random_seed, generate_simulation_keys
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
@@ -447,9 +447,17 @@ def _simulate_regime_in_period(
 
     taste_shock_kwargs = {}
     if regime.has_taste_shocks:
-        gumbel_key, key = jax.random.split(key)
-        n_chunk = subject_ids_in_regime.shape[0]
-        taste_shock_kwargs = {"taste_shock_key": jax.random.split(gumbel_key, n_chunk)}
+        # Per-subject Gumbel keys are generated for the full population and
+        # sliced by global subject index, so a subject's draw is invariant to
+        # how the population is chunked.
+        key, gumbel_keys = generate_simulation_keys(
+            key=key,
+            names=["taste_shock"],
+            n_initial_states=n_subjects,
+            subject_slice=subject_slice,
+            original_n_subjects=original_n_subjects,
+        )
+        taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
 
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
@@ -463,7 +471,14 @@ def _simulate_regime_in_period(
     )
     if validation_enabled(logger):
         try:
-            validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
+            # Out-of-regime subjects carry placeholder entries (their state is
+            # meaningless under this regime's problem); validate only the
+            # subjects simulated in this regime.
+            validate_V(
+                V_arr=jnp.where(subject_ids_in_regime, V_arr, 0.0),
+                age=age,
+                regime_name=regime_name,
+            )
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 

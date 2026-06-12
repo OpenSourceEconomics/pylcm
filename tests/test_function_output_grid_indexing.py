@@ -14,7 +14,7 @@ to take `g`).
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -69,11 +69,12 @@ def _next_regime(period: int) -> FloatND:
     return jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
 
 
-def _effective_regime(**kwargs: object) -> EffectiveUserRegime:
-    """Build the effective regime, running the model's completeness validation."""
-    return EffectiveUserRegime(
-        user_regime=UserRegime(**kwargs),  # ty: ignore[invalid-argument-type]
-    )
+def _finalized_regime(**kwargs: object) -> UserRegime:
+    """Finalize a single regime, running the model's completeness validation."""
+    regime = UserRegime(**kwargs)  # ty: ignore[invalid-argument-type]
+    return finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})[
+        "regime"
+    ]
 
 
 def _make_clashing_model() -> Model:
@@ -212,7 +213,7 @@ def test_function_output_indexed_by_derived_categorical_raises():
         RegimeInitializationError,
         match=r"per_marital_scale.*is_married",
     ):
-        _effective_regime(
+        _finalized_regime(
             functions={
                 "utility": _utility_clash,
                 "per_marital_scale": _per_marital_scale,
@@ -249,7 +250,7 @@ def test_function_output_indexed_by_discrete_action_raises():
         RegimeInitializationError,
         match=r"per_choice_scale.*labor_supply",
     ):
-        _effective_regime(
+        _finalized_regime(
             functions={
                 "utility": _utility_clash,
                 "per_choice_scale": _per_choice_scale,
@@ -279,7 +280,7 @@ def test_constraint_indexing_function_output_by_state_raises():
         RegimeInitializationError,
         match=r"per_type_scale.*pref_type",
     ):
-        _effective_regime(
+        _finalized_regime(
             functions={
                 "utility": lambda consumption, pref_type, per_type_scale: jnp.log(  # noqa: ARG005
                     consumption + 1.0
@@ -353,7 +354,7 @@ def test_phased_function_solve_variant_unsafe_indexing_raises():
         RegimeInitializationError,
         match=r"per_type_scale.*pref_type",
     ):
-        _effective_regime(
+        _finalized_regime(
             functions={
                 "utility": _utility_consumes_scalar,
                 "per_type_scale": _per_type_scale_takes_pref_type,

@@ -1,13 +1,10 @@
-"""Spec for regime-level EV1 taste shocks under the brute-force solver (#247).
+"""Spec for regime-level EV1 taste shocks under the brute-force solver.
 
 Taste shocks are a model property declared on the `Regime` (`taste_shocks=
 ExtremeValueTasteShocks()`), with the scale a runtime param under the pseudo-
 function name `taste_shocks`. The solve replaces the hard max over discrete-action
 axes with the smoothed expected maximum `scale * logsumexp(Qc / scale)` after the
 masked max over continuous actions.
-
-Skips until `lcm.taste_shocks` and `_lcm.logsum` exist; red until the logsumexp
-aggregation is wired into the brute-force solver.
 """
 
 import jax.numpy as jnp
@@ -15,14 +12,12 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-pytest.importorskip("lcm.taste_shocks", reason="Taste shocks not yet implemented")
-logsum = pytest.importorskip("_lcm.logsum", reason="Logsum kernel not yet implemented")
-
-from lcm.exceptions import ModelInitializationError  # noqa: E402
-from lcm.taste_shocks import (  # noqa: E402
+from _lcm import logsum
+from lcm.exceptions import ModelInitializationError
+from lcm.taste_shocks import (
     ExtremeValueTasteShocks,
 )
-from tests.test_models import taste_shocks_toy  # noqa: E402
+from tests.test_models import taste_shocks_toy
 
 
 def test_logsum_matches_logsumexp_identity():

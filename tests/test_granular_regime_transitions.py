@@ -11,7 +11,6 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from _lcm.pandas_utils import _resolve_per_target_template_key
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -117,7 +116,7 @@ def test_granular_transition_solves_and_simulates() -> None:
 
 
 def test_template_has_per_target_regime_transition_keys() -> None:
-    """Each granular cell's parameters surface under `to_<target>_next_regime`."""
+    """Each granular cell's parameters surface under the target's branch."""
 
     def _prob_dead_with_param(age: int, hazard: float) -> ScalarFloat:
         return jnp.clip(hazard * (1.0 + age), 0.0, 1.0)
@@ -132,8 +131,8 @@ def test_template_has_per_target_regime_transition_keys() -> None:
     )
     model = _build_model(work)
     template = model.get_params_template()
-    assert "hazard" in template["work"]["to_dead_next_regime"]
-    assert "hazard" in template["work"]["to_work_next_regime"]
+    assert "hazard" in template["work"]["dead"]["next_regime"]
+    assert "hazard" in template["work"]["work"]["next_regime"]
 
 
 def test_plain_callable_cell_is_rejected() -> None:
@@ -208,12 +207,9 @@ def test_granular_keys_narrow_reachability() -> None:
     assert "work" in model.user_regimes
 
 
-def test_per_target_regime_transition_template_key_resolves() -> None:
-    """`to_<target>_next_regime` template keys map onto the granular cells."""
+def test_per_target_regime_transition_template_nests_under_target() -> None:
+    """Granular cells' params nest under the target in the template."""
     work = _build_regime()
-    assert (
-        _resolve_per_target_template_key(
-            func_name="to_retired_next_regime", user_regime=work
-        )
-        == "next_regime__retired"
-    )
+    model = _build_model(work)
+    template = model.get_params_template()
+    assert "next_regime" in template["work"]["retired"]

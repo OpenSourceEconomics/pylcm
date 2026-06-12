@@ -23,8 +23,51 @@ model = Model(
 ```
 
 All arguments are keyword-only. The three required arguments are `regimes`, `ages`, and
-`regime_id_class`. The mapping is stored as `model.user_regimes` (boundary form); the
-processed canonical form is the engine-internal `model._regimes`.
+`regime_id_class`. The finalized regimes are stored as `model.user_regimes` (plain
+`Regime` instances in user vocabulary); the processed canonical form is the
+engine-internal `model._regimes`.
+
+## Model-Level Regime Slots
+
+When several regimes share functions, states, or actions, declare the shared structure
+once at the model level instead of repeating it per regime — a lifecycle model with a
+couple of dozen shared functions and a handful of shared states shrinks to one
+declaration site:
+
+```python
+model = Model(
+    regimes={"working": working, "retired": retired, "dead": dead},
+    ages=ages,
+    regime_id_class=RegimeId,
+    functions={"taxes": taxes, "net_income": net_income},
+    constraints={"budget": budget_constraint},
+    states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=50)},
+    state_transitions={"wealth": next_wealth},
+    actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=30)},
+)
+```
+
+Each model-level slot accepts exactly what the regime-level slot accepts — including
+`Phased`, stochastic processes, per-target dicts, and `fixed_transition`. The entries
+are merged into every regime under three rules:
+
+- **Exactly one level.** A name is defined at model level or regime level, never both —
+  a duplicate raises an ambiguity error at model build.
+- **`None` masks.** A regime-level `None` removes the model entry for that regime
+  (masking a state also drops its broadcast law of motion). A `None` with no model-level
+  entry behind it is an error.
+- **DAG pruning.** Broadcast states and actions are pruned per regime by reachability: a
+  broadcast variable survives in a regime only if a root computation (utility, `H`,
+  constraints, derived categoricals, the regime transition, or a law of motion toward a
+  reachable target that keeps the state) transitively reads it, in either phase.
+  Regime-level declarations are never pruned. `model.pruned_variables` records, per
+  regime, which broadcast names were pruned.
+
+Pruning means a model-level state costs nothing in regimes that never touch it — the
+grid axis simply does not appear there. Two restrictions keep the device layout
+coherent: `distributed=True` (sharding) is legal only on model-level states, and a
+sharded state pruned from a non-terminal regime is an error (unshard it or make the
+regime use it).
 
 ## Regime ID Classes
 
@@ -106,7 +149,8 @@ The `Model` constructor validates:
 After construction, the model exposes several useful attributes:
 
 ```python
-model.user_regimes  # immutable mapping of user-provided `Regime` objects
+model.user_regimes  # immutable mapping of finalized `Regime` objects
+model.pruned_variables  # per regime, the broadcast names pruned by DAG reachability
 model.n_periods  # number of periods
 model.regime_names_to_ids  # name -> integer mapping
 model.get_params_template()  # mutable copy of the parameter template

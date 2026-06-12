@@ -8,20 +8,17 @@ envelope) and compared against:
 - the brute-force solver with regime-level taste shocks on the equivalent spec
   (smoothed case): both solvers approximate the same smoothed model, so their V
   arrays agree up to the consumption-grid resolution of the brute solution.
-
-Skips until `lcm.solvers` (and, for the smoothed case, `lcm.taste_shocks`)
-exist; red until DC-EGM handles discrete choices.
 """
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
-from numpy.testing import assert_array_almost_equal as aaae
-
-pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
 
 from _lcm.config import TEST_DATA
 from _lcm.typing import PeriodToRegimeToVArr
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, MarkovTransition, Model
+from lcm.taste_shocks import ExtremeValueTasteShocks
+from lcm.typing import FloatND
 from tests.test_models.deterministic import base, dcegm_variants
 from tests.test_models.deterministic.dcegm_variants import (
     get_full_model,
@@ -69,8 +66,68 @@ def test_dcegm_matches_analytical_solution(case, spec):
     for kind, regime in [("worker", "working_life"), ("retired", "retirement")]:
         numerical = _stack_regime_V(period_to_regime_to_V_arr, regime)
         analytical = _load_analytical(case, kind)
-        mse = np.mean((analytical - numerical) ** 2, axis=0)
-        aaae(mse, 0, decimal=2)
+        # Elementwise — every (period, node) value must hit the analytical
+        # solution; aggregating over periods could hide a localized error.
+        np.testing.assert_allclose(numerical, analytical, atol=0.03, err_msg=f"{kind}")
+
+
+def _retirement_stay_prob(age: float, final_age_alive: float) -> FloatND:
+    return jnp.where(age >= final_age_alive, 0.0, 1.0)
+
+
+def _retirement_death_prob(age: float, final_age_alive: float) -> FloatND:
+    return jnp.where(age >= final_age_alive, 1.0, 0.0)
+
+
+def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
+    """A brute-force worker targeting a DC-EGM retiree solves to brute values.
+
+    Brute-force regimes may target DC-EGM regimes (they only read the
+    target's V array); the DC-EGM retiree declares its reachable targets
+    granularly so the brute worker is structurally unreachable from it. The
+    mixed model's V differs from the all-brute model's only through the
+    retiree continuation, on which the two solvers agree wherever the brute
+    solver is reliable.
+    """
+    n_periods = 4
+    n_brute_unstable_nodes = 10
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = float(ages.exact_values[-1])
+
+    def active(age: float, la: float = last_age) -> bool:
+        return age < la
+
+    mixed = Model(
+        regimes={
+            "working_life": base.working_life.replace(active=active),
+            "retirement": dcegm_variants.dcegm_retirement_full.replace(
+                active=active,
+                transition={
+                    "retirement": MarkovTransition(_retirement_stay_prob),
+                    "dead": MarkovTransition(_retirement_death_prob),
+                },
+            ),
+            "dead": base.dead,
+        },
+        ages=ages,
+        regime_id_class=base.RegimeId,
+    )
+    params = get_full_params(n_periods, discount_factor=0.98, wage=20.0)
+
+    mixed_solution = mixed.solve(params=params, log_level="debug")
+    brute_solution = get_full_model("brute_force", n_periods).solve(
+        params=params, log_level="debug"
+    )
+
+    for period in sorted(brute_solution)[:-1]:
+        for regime in ["working_life", "retirement"]:
+            np.testing.assert_allclose(
+                np.asarray(mixed_solution[period][regime])[n_brute_unstable_nodes:],
+                np.asarray(brute_solution[period][regime])[n_brute_unstable_nodes:],
+                atol=1e-2,
+                rtol=1e-3,
+                err_msg=f"period={period}, regime={regime}",
+            )
 
 
 def _smoothed_model_pair(n_periods: int, shocks) -> dict[str, Model]:
@@ -117,18 +174,13 @@ def test_smoothed_model_brute_and_dcegm_agree():
     period 0, wealth node 4: closed form 5.121, DC-EGM 5.118, brute 5.044), so
     the comparison covers the wealth nodes where the brute solver is reliable.
     """
-    taste_shocks_module = pytest.importorskip(
-        "lcm.taste_shocks", reason="Taste shocks not yet implemented"
-    )
     n_periods = 4
     scale = 0.2
     n_brute_unstable_nodes = 10
     params = get_full_params(n_periods, discount_factor=0.98, wage=20.0)
     params["working_life"]["taste_shocks"] = {"scale": scale}
 
-    models = _smoothed_model_pair(
-        n_periods, taste_shocks_module.ExtremeValueTasteShocks()
-    )
+    models = _smoothed_model_pair(n_periods, ExtremeValueTasteShocks())
     solutions = {
         solver: model.solve(params=params, log_level="debug")
         for solver, model in models.items()

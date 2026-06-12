@@ -4,7 +4,7 @@ import jax.numpy as jnp
 
 from _lcm.engine import VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, categorical
-from _lcm.regime_building.effective import build_effective_regimes
+from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.next_state import (
     _create_discrete_stochastic_next_func,
     get_next_state_function_for_simulation,
@@ -23,7 +23,7 @@ def test_get_next_state_function_with_solve_target():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     regimes = process_regimes(
-        user_regimes=build_effective_regimes(
+        user_regimes=finalize_regimes(
             user_regimes=user_regimes, derived_categoricals={}
         ),
         ages=ages,
@@ -41,7 +41,7 @@ def test_get_next_state_function_with_solve_target():
     flat_regime_params = {
         "discount_factor": jnp.asarray(1.0),
         "utility__disutility_of_work": jnp.asarray(1.0),
-        "next_wealth__interest_rate": jnp.asarray(0.05),
+        "working_life__next_wealth__interest_rate": jnp.asarray(0.05),
     }
     action = {"labor_supply": jnp.asarray(1), "consumption": jnp.asarray(10.0)}
     state = {"wealth": jnp.asarray(20.0)}

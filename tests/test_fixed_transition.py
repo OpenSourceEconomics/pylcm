@@ -162,7 +162,7 @@ def test_fixed_transition_for_state_not_in_regime_raises() -> None:
     """A fixed state must exist in the regime declaring its law.
 
     Coverage against the state set is a completeness property, validated when
-    the model builds its effective regimes.
+    the model finalizes its regimes.
     """
     work = _build_regime(
         state_transitions={

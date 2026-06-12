@@ -23,15 +23,17 @@ def invert_euler(
 ) -> ScalarFloat:
     """Invert the Euler equation at one savings node.
 
-    The expected marginal continuation is clamped at a small positive
-    epsilon *before* inversion (the degenerate-inversion guard): an exactly
-    zero marginal continuation — e.g. every reachable child is a stateless
-    terminal regime — means saving has no marginal value, so the
-    consume-everything corner is optimal. Without the clamp,
-    $(u')^{-1}(0) = +\\infty$ would inject an infinite endogenous grid point
-    that poisons the candidate sort and the envelope scan; with it, the
-    inversion returns a very large but finite action and the closed-form
-    credit-constrained segment represents the corner.
+    The discounted expected marginal continuation is clamped at a small
+    positive epsilon *before* inversion (the degenerate-inversion guard): an
+    exactly zero discounted marginal continuation — e.g. every reachable
+    child is a stateless terminal regime, or the discount factor is zero —
+    means saving has no marginal value, so the consume-everything corner is
+    optimal. Without the clamp, $(u')^{-1}(0) = +\\infty$ would inject an
+    infinite endogenous grid point that poisons the candidate sort and the
+    envelope scan; with it, the inversion returns a very large but finite
+    action and the closed-form credit-constrained segment represents the
+    corner. The clamp acts on the discounted product, so a zero discount
+    factor cannot reintroduce the degenerate inversion.
 
     Args:
         expected_marginal_continuation: Probability- and shock-weighted
@@ -47,6 +49,6 @@ def invert_euler(
         The optimal continuous action at the savings node.
 
     """
-    eps = jnp.finfo(expected_marginal_continuation.dtype).eps
-    clamped = jnp.maximum(expected_marginal_continuation, eps)
-    return inverse_marginal_utility(marginal_continuation=discount_factor * clamped)
+    discounted = discount_factor * expected_marginal_continuation
+    eps = jnp.finfo(discounted.dtype).eps
+    return inverse_marginal_utility(marginal_continuation=jnp.maximum(discounted, eps))
