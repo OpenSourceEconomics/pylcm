@@ -56,27 +56,38 @@ axis:
    evaluates anything at off-grid passive values: each combo's rows are
    interpolated in resources only, on the regime's own grid axes.
 
-When the Euler state's law itself reads the current Euler state (an
-additive residual like a means-tested capital-income supplement), the kernel
-solves *per exogenous asset node* instead: conditional on one node of the
-Euler grid the residual is a per-combo constant, so the single-post-state
-pipeline above is exact within the node's row, and the row publishes only
-its own node. This is brute-force-equivalent by construction — the brute
-solver evaluates the same decision-time functions at the same exogenous
-nodes. The per-combo carry then holds the per-node published points (one
-row per combo, no asset axis): abscissa the node resources, policy the
-published optimal action, value the published V, and marginal
+When any savings-stage function reads the current Euler state — the Euler
+state's own law (an additive residual like a means-tested capital-income
+supplement), the regime-transition probabilities, a stochastic transition
+weight, or a passive state's law — the kernel solves *per exogenous asset
+node* instead: conditional on one node of the Euler grid every such read is
+a per-combo constant, so the single-post-state pipeline above is exact
+within the node's row, and the row publishes only its own node. This is
+brute-force-equivalent by construction — the brute solver evaluates the
+same decision-time functions at the same exogenous nodes. The per-combo
+carry then holds the per-node published points (one row per combo, no asset
+axis): abscissa the node resources, policy the published optimal action,
+value the published V, and marginal
 $dV/dR = u'(c^*) + \\beta\\, (\\partial W/\\partial a)\\big|_{A^*} / R'(a)$
-— the envelope term $u'(c^*)$ plus the law's direct Euler-state channel
-through the continuation $W$, divided by the resources slope. The mode
-requires the law to be *continuous* in the Euler state (kinks are fine): a
-residual that jumps makes the child's value function discontinuous, the
-true policy bunches next-period wealth exactly at the discontinuity — an
-Euler-equation-free corner outside EGM's candidate families (interior Euler
-inversions plus the closed-form credit-constrained segment) — so such laws
-are rejected at build time rather than solved approximately. The switch is
-a build-time Python branch; the default path is untouched and costs nothing
-when the mode is unused.
+— the envelope term $u'(c^*)$ plus the savings-stage functions' direct
+Euler-state channels through the continuation $W$, divided by the resources
+slope. The Euler-state channel is differentiated through the *whole*
+continuation closure: regime-transition probabilities and transition
+weights are evaluated inside it, so first-order terms like
+$\\sum_{targets} \\partial P/\\partial a \\cdot EV_{target}$ survive — the
+probabilities are not the softmax of the values they weight, so Danskin
+does not cancel them, and hoisting them out of the differentiated closure
+would silently drop them. The mode requires every savings-stage Euler-state
+read to be *continuous* in the Euler state at the resolution of the Euler
+grid (kinks are fine): a residual that jumps makes the child's value
+function discontinuous, the true policy bunches next-period wealth exactly
+at the discontinuity — an Euler-equation-free corner outside EGM's
+candidate families (interior Euler inversions plus the closed-form
+credit-constrained segment) — and a jump in the probabilities or weights
+breaks the smoothness-at-node-resolution assumption the per-node solve
+relies on, so such functions are rejected at build time rather than solved
+approximately. The switch is a build-time Python branch; the default path
+is untouched and costs nothing when the mode is unused.
 
 The canonical combo-axis order — single-sourced through
 `_EgmKernelPieces.combo_names` and the carry template's leading shape — is
@@ -117,7 +128,7 @@ from _lcm.egm.carry import EgmCarry, build_template_egm_carry
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import interp_on_padded_grid, locate_on_grid
 from _lcm.egm.upper_envelope import get_upper_envelope
-from _lcm.egm.validation import _reachable_target_names, euler_law_reads_euler_state
+from _lcm.egm.validation import _reachable_target_names, savings_stage_reads_euler_state
 from _lcm.engine import StateActionSpace
 from _lcm.logsum import logsum_and_softmax
 from _lcm.processes import _ContinuousStochasticProcess
@@ -215,7 +226,12 @@ def build_egm_step_functions(
     """
     n_pad = compute_egm_carry_length(solver=solver)
     own_v_info = regime_to_v_interpolation_info[regime_name]
-    asset_row_mode = euler_law_reads_euler_state(
+    # Any savings-stage Euler-state read (the Euler law's residual, regime
+    # transition probabilities, stochastic transition weights, non-Euler
+    # laws) switches the kernel to the per-exogenous-asset-node solve; the
+    # single-post-state kernel has no defined Euler value at the savings
+    # stage, so dispatching it would be silently wrong.
+    asset_row_mode = savings_stage_reads_euler_state(
         user_regime=user_regimes[regime_name], solver=solver
     )
     if asset_row_mode:
@@ -288,6 +304,7 @@ def build_egm_step_functions(
             own_discrete_state_names=own_discrete_state_names,
             own_passive_state_names=own_passive_state_names,
             own_discrete_action_names=tuple(own_discrete_action_values),
+            asset_row_mode=asset_row_mode,
         )
         if unsupported is not None:
             kernel = _get_raising_egm_step(reason=unsupported)
@@ -415,7 +432,7 @@ def _get_egm_step(
     """Build the EGM kernel for one continuation-target configuration.
 
     `asset_row_mode` selects the per-combo computation at build time: the
-    per-exogenous-asset-node solve when the Euler state's law reads the
+    per-exogenous-asset-node solve when any savings-stage function reads the
     current Euler state, the single-post-state default otherwise.
     """
     get_solve_one_combo = (
@@ -866,18 +883,24 @@ def _get_solve_one_combo_asset_rows(
 ]:
     """Build the per-combo EGM computation solving per exogenous asset node.
 
-    Used when the Euler state's law reads the current Euler state:
-    conditional on one node of the Euler grid the law's residual is a
-    per-combo constant, so the single-post-state pipeline (Euler inversion
-    over the savings nodes, constrained candidates, upper-envelope
-    refinement) is exact within the node's row, and each row publishes only
-    its own node — exactly where the brute-force oracle evaluates the same
-    decision-time functions. The per-combo carry row holds the per-node
-    published points: abscissa the node resources (weakly ascending by the
-    resources monotonicity check), policy the published optimal action,
-    value the published V, and marginal the corrected
+    Used when any savings-stage function (the Euler state's law, the
+    regime-transition probabilities, a stochastic transition weight, a
+    passive state's law) reads the current Euler state: conditional on one
+    node of the Euler grid every such read is a per-combo constant, so the
+    single-post-state pipeline (Euler inversion over the savings nodes,
+    constrained candidates, upper-envelope refinement) is exact within the
+    node's row, and each row publishes only its own node — exactly where
+    the brute-force oracle evaluates the same decision-time functions. The
+    per-combo carry row holds the per-node published points: abscissa the
+    node resources (weakly ascending by the resources monotonicity check),
+    policy the published optimal action, value the published V, and
+    marginal the corrected
     $dV/dR = u'(c^*) + \\beta\\, (\\partial W/\\partial a)|_{A^*} / R'(a)$,
-    NaN-padded to the carry length.
+    NaN-padded to the carry length. The Euler-state gradient
+    $\\partial W/\\partial a$ rebuilds the full continuation closure from
+    the traced node value, so it carries every direct channel: the law's
+    residual, $\\sum \\partial P/\\partial a \\cdot EV$ from the
+    probabilities, the weights' and passive laws' derivatives.
     """
     dtype = state_grid.dtype
     n_state = int(state_grid.shape[0])
@@ -1131,7 +1154,14 @@ def _get_expected_continuation_value(
     inversion: per-target smoothed carry reads, regime-transition-probability
     weighted, plus the scalar targets' constant values. The asset-row mode
     differentiates this map in the Euler slot of the combo pool to obtain
-    the law's direct Euler-state channel $\\partial W/\\partial a$.
+    the direct Euler-state channel $\\partial W/\\partial a$. The
+    probabilities, transition weights, and child next-state reads are all
+    evaluated from the combo pool *inside* this builder, so when the pool's
+    Euler slot is a traced value the gradient carries their first-order
+    terms (e.g. $\\sum \\partial P/\\partial a \\cdot EV$) — precomputing
+    them outside the differentiated closure would silently drop those
+    terms (Danskin does not cancel them: the probabilities are not the
+    softmax of the values they weight).
     """
     regime_transition_probs = pieces.compute_regime_transition_probs(**combo_pool)
     child_readers = {
@@ -1184,8 +1214,9 @@ def _get_child_carry_reader(
     transition weights $w(\\text{node}' \\mid \\text{node})$ — *outside* the
     discrete-action aggregation, matching the brute-force expectation over
     the already action-aggregated next-period V. The weights are evaluated
-    once per combo (they depend on the current node values and params, never
-    on the savings node — validated).
+    once per combo (they depend on the current node values, params, and — in
+    asset-row mode — the combo pool's Euler value, never on the savings
+    node — validated).
     """
     weight_vecs: tuple[Float1D, ...] = ()
     if read.weights_func is not None:
@@ -2010,6 +2041,7 @@ def _find_unsupported_feature(
     own_discrete_state_names: tuple[StateName, ...],
     own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_names: tuple[ActionName, ...],
+    asset_row_mode: bool,
 ) -> str | None:
     """Return a message naming the first feature outside the kernel's scope.
 
@@ -2040,6 +2072,7 @@ def _find_unsupported_feature(
             own_discrete_state_names=own_discrete_state_names,
             own_passive_state_names=own_passive_state_names,
             own_discrete_action_names=own_discrete_action_names,
+            asset_row_mode=asset_row_mode,
         )
 
     if message is None:
@@ -2161,6 +2194,7 @@ def _find_unsupported_function_args(
     own_discrete_state_names: tuple[StateName, ...],
     own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_names: tuple[ActionName, ...],
+    asset_row_mode: bool,
 ) -> str | None:
     """Return a message naming the first function with out-of-scope arguments."""
     # Combo inputs are bound per (discrete state, passive node, discrete
@@ -2169,6 +2203,13 @@ def _find_unsupported_function_args(
         set(own_discrete_state_names)
         | set(own_passive_state_names)
         | set(own_discrete_action_names)
+    )
+    # In asset-row mode the combo pool carries the Euler node's value, so
+    # savings-stage functions (regime transition probabilities, transition
+    # weights) may read the Euler state; the single-post-state kernel has no
+    # Euler value in the pool.
+    allowed_savings_stage_inputs = allowed_combo_inputs | (
+        {solver.continuous_state} if asset_row_mode else set()
     )
     allowed_params = flat_param_names | {"age", "period"}
     utility_func = _concatenate_regime_function(functions=functions, target="utility")
@@ -2181,7 +2222,7 @@ def _find_unsupported_function_args(
         (
             "the regime transition probability function",
             frozenset(get_union_of_args([compute_regime_transition_probs])),
-            allowed_combo_inputs | allowed_params,
+            allowed_savings_stage_inputs | allowed_params,
         ),
     ]
     # Intrinsic process-weight functions are evaluated per combo at the
@@ -2202,7 +2243,7 @@ def _find_unsupported_function_args(
                 (
                     f"the transition-weight function '{weight_key}'",
                     frozenset(get_union_of_args([weight_func])),
-                    allowed_combo_inputs | allowed_params,
+                    allowed_savings_stage_inputs | allowed_params,
                 )
             )
     for constraint_name in constraints:

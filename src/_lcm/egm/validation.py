@@ -8,8 +8,9 @@ offending piece. The rules, in the order they are checked:
 - exactly one continuous (*Euler*) state and one continuous action; process
   states are exempt (they enter the value function as node-valued discrete
   dimensions); every other continuous state must be *passive*: deterministic,
-  with a transition whose DAG ancestors include neither the Euler state, the
-  continuous action, the resources function, nor the post-decision function,
+  with a transition whose DAG ancestors include neither the continuous
+  action, the resources function, nor the post-decision function (the
+  current Euler state is allowed — see the savings-node-stage rule below),
   and a grid that is neither batched nor distributed
 - the post-decision function, the resources function, and
   `inverse_marginal_utility` exist in `Regime.functions`
@@ -21,17 +22,22 @@ offending piece. The rules, in the order they are checked:
 - `utility` does not depend on the continuous state (envelope condition)
 - the resources function does not depend on the continuous action
 - the Euler state's transition is deterministic, names the post-decision
-  function, and reaches the continuous action only through it; it may read
-  the current Euler state directly (the kernel then solves per exogenous
-  asset node), but only through a residual that is CONTINUOUS in the Euler
-  state — a numeric spot check rejects laws that jump (a jump makes the
-  child's value function discontinuous; the true policy bunches at the
-  discontinuity, a corner where the Euler equation does not hold and which
-  EGM's candidate families cannot represent)
-- everything evaluated at the savings-node stage (regime transition,
-  stochastic weights, non-Euler state transitions) is independent of the
-  Euler state, the continuous action, the resources function, and the
-  post-decision function
+  function, and reaches the continuous action only through it
+- everything evaluated at the savings-node stage (the Euler state's law,
+  the regime transition, stochastic weights, non-Euler state transitions)
+  is independent of the continuous action, the resources function, and the
+  post-decision function; any of them may read the current Euler state (the
+  kernel then solves per exogenous asset node, where current assets are
+  known), but only through values that are CONTINUOUS in the Euler state at
+  the resolution of the Euler grid — a numeric spot check on the grid nodes
+  plus two levels of cell-midpoint refinement rejects values that jump
+  (within a cell, a smooth function's quarter-cell increments shrink like a
+  derivative bound, while a cliff's increment survives subdivision; a jump
+  in the Euler law makes the child's value function discontinuous and the
+  true policy bunches at the discontinuity, a corner outside EGM's
+  candidate families, while a jump in the other savings-stage functions
+  breaks the smoothness-at-node-resolution assumption the per-node solve
+  relies on)
 - grid hygiene: the Euler grid is neither batched nor distributed, and the
   savings grid covers the Euler grid's upper region
 - every declared-reachable non-terminal target regime also uses DC-EGM with
@@ -70,14 +76,16 @@ from lcm.regime import Regime as UserRegime
 from lcm.regime import _default_H
 from lcm.solvers import DCEGM
 from lcm.transition import MarkovTransition
-from lcm.typing import Float1D, FloatND, ScalarFloat, UserFunction
+from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, UserFunction
 
-# Dense Euler-state sample size of the law-continuity spot check, and the
-# spike factor that separates a jump from a kink: a continuous law's increment
-# across a kink is bounded by the steeper side's neighboring increment, while
-# a cliff produces an isolated spike independent of the sample step.
-_N_CONTINUITY_SAMPLE = 401
-_JUMP_FACTOR = 10.0
+# Shrink threshold of the node-resolution continuity spot check. Within one
+# Euler grid cell, a function that is smooth at node resolution has
+# quarter-cell increments of roughly a quarter of the neighboring cells'
+# node-level increments (a derivative bound under two midpoint subdivisions),
+# while a cliff's increment survives subdivision unshrunk. The threshold sits
+# between the two regimes; the criterion is scale-invariant (ratios of the
+# function's own increments, with only a float-noise floor).
+_CONTINUITY_SHRINK_FACTOR = 0.4
 
 
 def validate_dcegm_regimes(
@@ -104,36 +112,33 @@ def validate_dcegm_regimes(
             )
 
 
-def euler_law_reads_euler_state(*, user_regime: UserRegime, solver: DCEGM) -> bool:
-    """Whether the Euler state's law reads the current Euler state.
+def savings_stage_reads_euler_state(*, user_regime: UserRegime, solver: DCEGM) -> bool:
+    """Whether any savings-stage function reads the current Euler state.
 
-    Runs the same opaque-post-decision ancestor check as
-    `_fail_if_euler_transition_bypasses_post_decision` (`Phased` resolved to
-    the solve side, per-target cells unpacked) over all transition variants
-    of the Euler state's law. The kernel builder uses the result to switch
-    to the per-exogenous-asset-node solve mode, where the law's
-    Euler-state-dependent residual is a per-combo constant.
+    Runs the opaque-post-decision ancestor check (`Phased` resolved to the
+    solve side, per-target cells unpacked, `MarkovTransition` weights
+    unwrapped) over every savings-stage function: the Euler state's law, the
+    regime transition, and the non-Euler state transitions. The kernel
+    builder uses the result to switch to the per-exogenous-asset-node solve
+    mode, where every Euler-state read is a per-combo constant. The single
+    trigger keeps the kernel-mode dispatch in lockstep with the validation
+    relaxation: a savings-stage Euler-state read is admitted exactly when
+    the regime is solved per node.
 
     Args:
         user_regime: The user-provided `Regime` instance.
         solver: The regime's DC-EGM solver configuration.
 
     Returns:
-        `True` when any variant of the Euler state's law has the Euler state
+        `True` when any savings-stage function variant has the Euler state
         among its DAG ancestors.
 
     """
-    value = user_regime.state_transitions.get(solver.continuous_state)
-    if value is None:
-        return False
     functions = _resolve_solve_functions(user_regime=user_regime)
-    opaque_functions = _without(
-        functions=functions, names={solver.post_decision_function, solver.resources}
-    )
-    return any(
-        solver.continuous_state
-        in _dag_ancestors(functions=opaque_functions, target_func=transition_func)
-        for _label, transition_func in _transition_variants(value=value)
+    return bool(
+        _savings_stage_euler_state_readers(
+            user_regime=user_regime, functions=functions, solver=solver
+        )
     )
 
 
@@ -209,13 +214,12 @@ def _validate_dcegm_regime(
             functions=functions,
             solver=solver,
         )
-        if euler_law_reads_euler_state(user_regime=user_regime, solver=solver):
-            _fail_if_euler_law_jumps_in_euler_state(
-                regime_name=regime_name,
-                user_regime=user_regime,
-                functions=functions,
-                solver=solver,
-            )
+        _fail_if_savings_stage_function_jumps_in_euler_state(
+            regime_name=regime_name,
+            user_regime=user_regime,
+            functions=functions,
+            solver=solver,
+        )
     except GridInitializationError as error:
         msg = (
             f"A numeric spot check of the DC-EGM contract in regime "
@@ -445,9 +449,12 @@ def _fail_if_passive_state_invalid(
 
     - a deterministic transition (stochastic continuous dynamics belong in a
       process state),
-    - transition DAG ancestors excluding the Euler state, the continuous
-      action, the resources function, and the post-decision function (none
-      of which are known at the savings-node stage),
+    - transition DAG ancestors excluding the continuous action, the
+      resources function, and the post-decision function (none of which are
+      known at the savings-node stage). The current Euler state is an
+      allowed ancestor: the kernel then solves per exogenous asset node,
+      where the state's value is known (the read must be continuous at node
+      resolution — checked by the savings-stage continuity spot check),
     - a grid that is neither batched nor distributed (the kernel enumerates
       its nodes as discrete combos).
     """
@@ -462,7 +469,6 @@ def _fail_if_passive_state_invalid(
         functions=functions, names={solver.post_decision_function, solver.resources}
     )
     forbidden = {
-        solver.continuous_state,
         solver.continuous_action,
         solver.resources,
         solver.post_decision_function,
@@ -496,12 +502,13 @@ def _fail_if_passive_state_invalid(
                     f"The continuous state '{state_name}' of regime "
                     f"'{regime_name}' is not passive: its transition{label} "
                     f"depends on {bad}. A passive continuous state's "
-                    "transition must not depend on the Euler state "
-                    f"'{solver.continuous_state}', the continuous action "
+                    "transition must not depend on the continuous action "
                     f"'{solver.continuous_action}', the resources function "
                     f"'{solver.resources}', or the post-decision function "
                     f"'{solver.post_decision_function}' — those values are "
-                    "unknown until the EGM step has run."
+                    "unknown until the EGM step has run. (Reading the Euler "
+                    f"state '{solver.continuous_state}' is allowed: the "
+                    "kernel then solves per exogenous asset node.)"
                 )
                 raise ModelInitializationError(msg)
         grid = cast("ContinuousGrid", user_regime.states[state_name])
@@ -552,7 +559,7 @@ def _fail_if_euler_transition_bypasses_post_decision(
     through any other channel. The current Euler state is an allowed
     transition ancestor: the kernel then solves per exogenous asset node,
     where the residual is a per-combo constant
-    (`euler_law_reads_euler_state` reports this mode).
+    (`savings_stage_reads_euler_state` reports this mode).
     """
     bypass_msg = (
         f"The transition of the Euler state '{solver.continuous_state}' in "
@@ -598,38 +605,31 @@ def _fail_if_savings_stage_function_depends_on_decision(
 ) -> None:
     """Savings-node-stage functions must not depend on the current decision.
 
-    At a savings node, current wealth and the continuous action are unknown
+    At a savings node, the continuous action and the resources are unknown
     (they are EGM outputs). The regime transition, every stochastic
     transition weight, and every non-Euler state transition must therefore
-    be independent of the Euler state, the continuous action, the resources
-    function, and the post-decision function.
+    be independent of the continuous action, the resources function, and
+    the post-decision function. Reading the current Euler state is allowed:
+    the kernel then solves per exogenous asset node
+    (`savings_stage_reads_euler_state` reports this mode), where the read
+    is a per-combo constant — its continuity at node resolution is checked
+    by `_fail_if_savings_stage_function_jumps_in_euler_state`.
     """
-    candidates: list[tuple[str, UserFunction]] = []
-    if user_regime.transition is not None:
-        # Coarse, MarkovTransition-wrapped, Phased, and granular per-target
-        # regime transitions all unpack to plain callables.
-        for label, regime_transition in _transition_variants(
-            value=user_regime.transition
-        ):
-            candidates.append((f"regime transition function{label}", regime_transition))
-    for state_name, value in user_regime.state_transitions.items():
-        if state_name == solver.continuous_state or value is None:
-            continue
-        for label, transition_func in _transition_variants(value=value):
-            candidates.append(
-                (f"transition of state '{state_name}'{label}", transition_func)
-            )
-
     opaque_functions = _without(
         functions=functions, names={solver.post_decision_function, solver.resources}
     )
     forbidden = {
-        solver.continuous_state,
         solver.continuous_action,
         solver.resources,
         solver.post_decision_function,
     }
-    for label, func in candidates:
+    for role, label, func in _savings_stage_candidates(
+        user_regime=user_regime, solver=solver
+    ):
+        if role == "euler_law":
+            # The Euler state's own law has its dedicated structural check
+            # (`_fail_if_euler_transition_bypasses_post_decision`).
+            continue
         ancestors = _dag_ancestors(functions=opaque_functions, target_func=func)
         bad = sorted(ancestors & forbidden)
         if bad:
@@ -637,14 +637,93 @@ def _fail_if_savings_stage_function_depends_on_decision(
                 f"The {label} of regime '{regime_name}' depends on {bad}. "
                 "Functions evaluated at the savings-node stage (regime "
                 "transition probabilities, stochastic transition weights, and "
-                "non-Euler state transitions) must not depend on the Euler "
-                f"state '{solver.continuous_state}', the continuous action "
-                f"'{solver.continuous_action}', the resources function "
-                f"'{solver.resources}', or the post-decision function "
-                f"'{solver.post_decision_function}' — those values are "
-                "unknown until the EGM step has run."
+                "non-Euler state transitions) must not depend on the "
+                f"continuous action '{solver.continuous_action}', the "
+                f"resources function '{solver.resources}', or the "
+                f"post-decision function '{solver.post_decision_function}' — "
+                "those values are unknown until the EGM step has run."
             )
             raise ModelInitializationError(msg)
+
+
+def _savings_stage_candidates(
+    *,
+    user_regime: UserRegime,
+    solver: DCEGM,
+) -> list[tuple[str, str, UserFunction]]:
+    """Enumerate every savings-stage function variant of a regime.
+
+    Coarse, `MarkovTransition`-wrapped, `Phased`, and granular per-target
+    forms all unpack to plain callables via `_transition_variants`.
+
+    Returns:
+        List of `(role, label, func)` triples, with role one of
+        `"euler_law"`, `"regime_transition"`, and `"state_transition"`.
+
+    """
+    candidates: list[tuple[str, str, UserFunction]] = []
+    euler_value = user_regime.state_transitions.get(solver.continuous_state)
+    if euler_value is not None:
+        for label, transition_func in _transition_variants(value=euler_value):
+            candidates.append(
+                (
+                    "euler_law",
+                    f"transition of the Euler state '{solver.continuous_state}'{label}",
+                    transition_func,
+                )
+            )
+    if user_regime.transition is not None:
+        for label, regime_transition in _transition_variants(
+            value=user_regime.transition
+        ):
+            candidates.append(
+                (
+                    "regime_transition",
+                    f"regime transition function{label}",
+                    regime_transition,
+                )
+            )
+    for state_name, value in user_regime.state_transitions.items():
+        if state_name == solver.continuous_state or value is None:
+            continue
+        for label, transition_func in _transition_variants(value=value):
+            candidates.append(
+                (
+                    "state_transition",
+                    f"transition of state '{state_name}'{label}",
+                    transition_func,
+                )
+            )
+    return candidates
+
+
+def _savings_stage_euler_state_readers(
+    *,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: DCEGM,
+) -> list[tuple[str, str, UserFunction]]:
+    """Savings-stage function variants whose DAG ancestors include the Euler state.
+
+    The post-decision and resources functions are opaque (removed from the
+    DAG), so only direct decision-time reads of the Euler state count.
+
+    Returns:
+        List of `(role, label, func)` triples, filtered from
+        `_savings_stage_candidates`.
+
+    """
+    opaque_functions = _without(
+        functions=functions, names={solver.post_decision_function, solver.resources}
+    )
+    return [
+        (role, label, func)
+        for role, label, func in _savings_stage_candidates(
+            user_regime=user_regime, solver=solver
+        )
+        if solver.continuous_state
+        in _dag_ancestors(functions=opaque_functions, target_func=func)
+    ]
 
 
 def _fail_if_grid_hygiene_violated(
@@ -957,31 +1036,35 @@ def _fail_if_inverse_marginal_utility_inconsistent(
             raise ModelInitializationError(msg)
 
 
-def _fail_if_euler_law_jumps_in_euler_state(
+def _fail_if_savings_stage_function_jumps_in_euler_state(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
     solver: DCEGM,
 ) -> None:
-    """The Euler state's law must be continuous in the Euler state.
+    """Savings-stage reads of the Euler state must be continuous at node resolution.
 
-    A residual that jumps in the Euler state makes the child's value function
-    discontinuous, and the true policy bunches next-period wealth exactly at
-    the discontinuity — a corner where the Euler equation does not hold, so
-    EGM's candidate families (interior Euler inversions plus the closed-form
-    credit-constrained segment) structurally exclude the optimum. Such laws
-    are rejected at build time rather than solved approximately.
+    The per-exogenous-asset-node solve evaluates every savings-stage
+    Euler-state read at the grid nodes and publishes per-node results, which
+    is exact only when the read is smooth at the resolution of the Euler
+    grid. A jump in the Euler state's own law additionally makes the child's
+    value function discontinuous, so the true policy bunches next-period
+    wealth exactly at the discontinuity — a corner where the Euler equation
+    does not hold, so EGM's candidate families (interior Euler inversions
+    plus the closed-form credit-constrained segment) structurally exclude
+    the optimum. Offending functions are rejected at build time rather than
+    solved approximately.
 
-    Numeric spot check: every law variant is evaluated at a fixed savings
-    value over a dense Euler-state sample spanning the Euler grid, in a few
-    discrete-combo contexts sampled from the grids. A consecutive increment
-    exceeding `_JUMP_FACTOR` times the larger of its neighboring increments
-    (plus a scale-aware absolute floor) is an isolated spike — a jump, not a
-    kink: a continuous law's increment across a kink is bounded by the
-    steeper side's neighboring increment, while a cliff's spike is
-    independent of the sample step. Variants whose pruned DAG needs free
-    model parameters are skipped (their values are unknown at build time).
+    Numeric spot check: every savings-stage variant whose DAG ancestors
+    include the Euler state is evaluated over the Euler grid nodes plus two
+    levels of cell-midpoint refinement (the Euler law at a fixed savings
+    value), in a few discrete-combo contexts sampled from the grids.
+    `_find_jump_at_node_resolution` flags cells whose refined increments do
+    not shrink under subdivision — a smooth band with dedicated nodes across
+    it passes, a band narrower than one grid cell is a cliff at node
+    resolution. Variants whose pruned DAG needs free model parameters are
+    skipped (their values are unknown at build time).
     """
     x64_enabled = bool(jax.config.read("jax_enable_x64"))
     base_atol = 1e-8 if x64_enabled else 1e-4
@@ -990,21 +1073,20 @@ def _fail_if_euler_law_jumps_in_euler_state(
         **_solve_grids(slot=user_regime.states),
         **_solve_grids(slot=user_regime.actions),
     }
-    euler_points = grids[solver.continuous_state].to_jax()
-    euler_sample = jnp.linspace(
-        jnp.min(euler_points), jnp.max(euler_points), num=_N_CONTINUITY_SAMPLE
-    )
+    euler_points = jnp.sort(grids[solver.continuous_state].to_jax())
+    euler_sample = _node_resolution_sample(grid_points=euler_points)
     savings_points = solver.savings_grid.to_jax()
     savings_value = savings_points[savings_points.shape[0] // 2]
 
     functions_without_post = _without(
         functions=functions, names={solver.post_decision_function}
     )
-    value = user_regime.state_transitions[solver.continuous_state]
-    for label, transition_func in _transition_variants(value=value):
+    for role, label, func in _savings_stage_euler_state_readers(
+        user_regime=user_regime, functions=functions, solver=solver
+    ):
         target_name = "__dcegm_validation_target__"
         law_func = concatenate_functions(
-            functions={**functions_without_post, target_name: transition_func},
+            functions={**functions_without_post, target_name: func},
             targets=target_name,
         )
         varied = {solver.continuous_state, solver.post_decision_function}
@@ -1017,26 +1099,105 @@ def _fail_if_euler_law_jumps_in_euler_state(
                 savings_value=savings_value,
                 euler_sample=euler_sample,
             )
-            jump_location = _find_jump(
-                sample=euler_sample, values=law_values, atol=base_atol
+            jump_location = _find_jump_at_node_resolution(
+                grid_points=euler_points, values=law_values, atol=base_atol
             )
             if jump_location is not None:
+                consequence = (
+                    (
+                        "A jump in the law makes the child's value function "
+                        "discontinuous, and the true policy bunches "
+                        f"next-period '{solver.continuous_state}' exactly at "
+                        "the discontinuity — a corner where the Euler "
+                        "equation does not hold, which EGM's candidate set "
+                        "cannot represent."
+                    )
+                    if role == "euler_law"
+                    else (
+                        "Savings-stage reads of the Euler state are "
+                        "evaluated per exogenous asset node, which is exact "
+                        "only when they are smooth at the resolution of the "
+                        f"'{solver.continuous_state}' grid."
+                    )
+                )
                 msg = (
-                    f"The transition of the Euler state "
-                    f"'{solver.continuous_state}' in regime "
-                    f"'{regime_name}'{label} reads the current Euler state "
-                    "but is discontinuous in it: its value jumps near "
-                    f"{solver.continuous_state} ≈ {jump_location}. A jump in "
-                    "the law makes the child's value function discontinuous, "
-                    "and the true policy bunches next-period "
-                    f"'{solver.continuous_state}' exactly at the "
-                    "discontinuity — a corner where the Euler equation does "
-                    "not hold, which EGM's candidate set cannot represent. "
-                    "Make the law continuous in "
+                    f"The {label} in regime '{regime_name}' reads the "
+                    f"current Euler state '{solver.continuous_state}' but is "
+                    "discontinuous in it at the resolution of the "
+                    f"'{solver.continuous_state}' grid: its value jumps near "
+                    f"{solver.continuous_state} ≈ {jump_location}. "
+                    f"{consequence} If the function is a continuous band "
+                    "steeper than the grid resolves, add grid nodes across "
+                    "the band; otherwise make it continuous in "
                     f"'{solver.continuous_state}' (kinks are fine), e.g. by "
                     "phasing the term out instead of cutting it off."
                 )
                 raise ModelInitializationError(msg)
+
+
+def _node_resolution_sample(*, grid_points: Float1D) -> Float1D:
+    """Grid nodes plus two levels of cell-midpoint refinement (quarter points).
+
+    Args:
+        grid_points: Sorted 1d grid points (`n` nodes).
+
+    Returns:
+        Sorted sample of length `4 * (n - 1) + 1`: every node plus the
+        quarter points of every cell.
+
+    """
+    left = grid_points[:-1]
+    right = grid_points[1:]
+    offsets = jnp.asarray([0.0, 0.25, 0.5, 0.75])
+    refined = (left[:, None] + (right - left)[:, None] * offsets[None, :]).reshape(-1)
+    return jnp.concatenate([refined, grid_points[-1:]])
+
+
+def _find_jump_at_node_resolution(
+    *,
+    grid_points: Float1D,
+    values: FloatND | IntND,
+    atol: float,
+) -> float | None:
+    """Approximate location of the first cell with a sub-node-resolution jump.
+
+    `values` are the function's values on `_node_resolution_sample` of
+    `grid_points` (vector-valued outputs allowed; increments are reduced
+    with the maximum over output components). For each grid cell, the
+    maximum quarter-cell increment is compared against the node-level
+    increments of the cell and its neighbors: a function that is smooth at
+    node resolution shrinks like a derivative bound under two midpoint
+    subdivisions (quarter-cell increments roughly a quarter of the
+    neighborhood's node-level increments), while a cliff's increment — or a
+    band without dedicated nodes across it — survives subdivision unshrunk.
+    The criterion is scale-invariant up to a float-noise floor.
+
+    Returns:
+        Midpoint of the first offending cell, or `None` when every cell's
+        refined increments shrink as a smooth function's would.
+
+    """
+    flat = jnp.asarray(values).reshape(values.shape[0], -1)
+    quarter_increments = jnp.max(jnp.abs(jnp.diff(flat, axis=0)), axis=1)
+    node_values = flat[::4]
+    node_increments = jnp.max(jnp.abs(jnp.diff(node_values, axis=0)), axis=1)
+    n_cells = int(grid_points.shape[0]) - 1
+    max_quarter_per_cell = quarter_increments.reshape(n_cells, 4).max(axis=1)
+    # Edge-pad so the first and last cells compare against their available
+    # neighbors only.
+    padded = jnp.concatenate(
+        [node_increments[:1], node_increments, node_increments[-1:]]
+    )
+    neighborhood = jnp.maximum(jnp.maximum(padded[:-2], padded[1:-1]), padded[2:])
+    scale = jnp.max(jnp.abs(jnp.where(jnp.isfinite(flat), flat, 0.0)))
+    noise_floor = atol * (1.0 + scale)
+    jumps = max_quarter_per_cell > (
+        _CONTINUITY_SHRINK_FACTOR * neighborhood + noise_floor
+    )
+    if not bool(jnp.any(jumps)):
+        return None
+    index = int(jnp.argmax(jumps))
+    return float(0.5 * (grid_points[index] + grid_points[index + 1]))
 
 
 def _law_values_on_sample(
@@ -1047,10 +1208,18 @@ def _law_values_on_sample(
     post_decision_name: FunctionName,
     savings_value: ScalarFloat,
     euler_sample: Float1D,
-) -> Float1D:
-    """Evaluate one law variant over the Euler-state sample at fixed savings."""
+) -> FloatND | IntND:
+    """Evaluate one savings-stage variant over the Euler sample at fixed savings.
 
-    def law_of_euler_state(state_value: ScalarFloat) -> ScalarFloat:
+    The Euler state's law consumes the (removed, hence leaf) post-decision
+    function and is fed the fixed savings value; the other savings-stage
+    functions never read it (validated), so the varied savings slot is
+    filtered away by their signatures. Vector-valued outputs (e.g. Markov
+    weight vectors) stack along the sample axis; deterministic regime
+    transitions yield integer regime ids.
+    """
+
+    def law_of_euler_state(state_value: ScalarFloat) -> FloatND | IntND:
         return _call_with_varied(
             func=law_func,
             fixed=context,
@@ -1090,32 +1259,6 @@ def _combo_contexts(
         {name: sample[min(j, sample.shape[0] - 1)] for name, sample in samples.items()}
         for j in range(n_contexts)
     ]
-
-
-def _find_jump(
-    *,
-    sample: Float1D,
-    values: Float1D,
-    atol: float,
-) -> float | None:
-    """Approximate location of the first isolated spike in the increments.
-
-    An increment is a jump when it exceeds `_JUMP_FACTOR` times the larger
-    of its neighboring increments plus a scale-aware absolute floor. Returns
-    the midpoint of the offending sample interval, or `None` when every
-    increment is kink-compatible.
-    """
-    increments = jnp.abs(jnp.diff(values))
-    left_neighbor = jnp.concatenate([increments[1:2], increments[:-1]])
-    right_neighbor = jnp.concatenate([increments[1:], increments[-2:-1]])
-    neighbor = jnp.maximum(left_neighbor, right_neighbor)
-    scale = jnp.max(jnp.abs(jnp.where(jnp.isfinite(values), values, 0.0)))
-    tolerance = atol * (1.0 + scale) + _JUMP_FACTOR * neighbor
-    jumps = increments > tolerance
-    if not bool(jnp.any(jumps)):
-        return None
-    index = int(jnp.argmax(jumps))
-    return float(0.5 * (sample[index] + sample[index + 1]))
 
 
 def _reachable_target_names(
@@ -1281,7 +1424,7 @@ def _call_with_varied(
     func: UserFunction,
     fixed: dict[str, object],
     varied: dict[str, object],
-) -> FloatND:
+) -> FloatND | IntND:
     """Call `func` with fixed kwargs plus the varied values it actually takes.
 
     `fixed` covers exactly the non-varied arguments; varied values are
