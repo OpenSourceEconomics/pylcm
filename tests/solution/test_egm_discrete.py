@@ -247,7 +247,8 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
         np.testing.assert_allclose(
             dcegm_V[..., n_brute_unstable_nodes:],
             brute_V[..., n_brute_unstable_nodes:],
-            atol=1e-2,
+            # The brute leg's grid-restricted max is the biased side here.
+            atol=3e-2,
             rtol=1e-3,
             err_msg=f"period={period}",
         )

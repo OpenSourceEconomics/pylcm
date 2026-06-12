@@ -775,11 +775,21 @@ def _aggregate_child_choices(
     value_rows = carry.value[child_index].reshape(-1, n_pad)
     marginal_rows = carry.marginal_utility[child_index].reshape(-1, n_pad)
 
+    # The marginal-utility row is the value row's exact slope (envelope
+    # theorem), upgrading the value read to cubic Hermite; the mu read itself
+    # stays linear (a policy-grade quantity, and its interpolation error
+    # enters the value only at second order through the Euler inversion).
+    def interp_value_row(xp: Float1D, fp: Float1D, fp_slopes: Float1D) -> ScalarFloat:
+        """Interpolate one carry value row; positional per `jax.vmap`."""
+        return interp_on_padded_grid(
+            x_query=child_resources, xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+
     def interp_row(xp: Float1D, fp: Float1D) -> ScalarFloat:
         """Interpolate one carry row; positional per `jax.vmap`."""
         return interp_on_padded_grid(x_query=child_resources, xp=xp, fp=fp)
 
-    value_at_child = jax.vmap(interp_row)(grid_rows, value_rows)
+    value_at_child = jax.vmap(interp_value_row)(grid_rows, value_rows, marginal_rows)
     marginal_at_child = jax.vmap(interp_row)(grid_rows, marginal_rows)
     # A row that is -inf everywhere yields NaN under linear interpolation
     # (-inf minus -inf); restore the -inf / exact-zero pair on the results.
@@ -978,19 +988,18 @@ def _publish_V_and_carry_rows(
     n_pad: int,
     publish_resources: FloatND,
     borrowing_limit: ScalarFloat,
-    first_endogenous_point: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     discounted_expected_value_at_limit: ScalarFloat,
 ) -> tuple[FloatND, Float1D, Float1D]:
     """Interpolate V onto the exogenous grid and finish the carry value rows.
 
-    The constraint binds exactly at the resources points weakly below the
-    first endogenous (Euler) point, so the published value there is the
-    closed-form constrained value — the exact value of saving exactly the
-    borrowing limit. Above it, the refined envelope is read with the cubic
-    Hermite interpolant (the marginal-utility row is the value row's exact
-    slope by the envelope theorem), floored at the constrained value, which
-    remains a feasible-policy lower bound everywhere.
+    Below the lowest refined envelope point the interpolant edge-clamps, so
+    the published value there is the closed-form constrained value — the
+    exact value of saving exactly the borrowing limit. Above it, the refined
+    envelope is read with the cubic Hermite interpolant (the marginal-utility
+    row is the value row's exact slope by the envelope theorem), floored at
+    the constrained value, which remains a feasible-policy lower bound
+    everywhere.
 
     Envelope overflow is not silent: the outputs are NaN-poisoned so the
     solve loop's NaN diagnostics surface the offending (regime, period).
@@ -1003,8 +1012,6 @@ def _publish_V_and_carry_rows(
         n_pad: Static length of the refined rows.
         publish_resources: Resources at the regime's exogenous state grid.
         borrowing_limit: Lower bound of the savings grid.
-        first_endogenous_point: The endogenous resources point of the lowest
-            savings node; the credit constraint binds weakly below it.
         utility_of_action: Utility with everything but the continuous action
             bound.
         discounted_expected_value_at_limit: Discounted expected continuation
@@ -1039,18 +1046,21 @@ def _publish_V_and_carry_rows(
         + discounted_expected_value_at_limit,
         -jnp.inf,
     )
-    V_row = jnp.maximum(value_interpolated, value_constrained)
-    V_row = jnp.where(overflowed, jnp.nan, V_row).astype(dtype)
-
-    marginal_utility = jax.vmap(jax.grad(utility_of_action))(
-        jnp.where(jnp.isnan(refined_policy), 1.0, refined_policy)
-    )
-    V_arr = jnp.where(
-        constraint_binds,
+    # Below the lowest refined point the interpolant edge-clamps, so the
+    # closed-form constrained value (the exact value of saving exactly the
+    # borrowing limit) is published outright there. Everywhere else it is a
+    # feasible-policy floor under the Hermite read of the refined envelope:
+    # forcing it further up — e.g. to the first Euler point — would discard
+    # envelope information wherever degenerate inversions push that point
+    # right (a zero-ish marginal continuation makes it ~1/eps), and the
+    # constrained candidates inside the envelope already carry exact slopes.
+    refined_grid_start = refined_grid[0]
+    V_row = jnp.where(
+        (closed_form_actions > 0.0) & (publish_resources <= refined_grid_start),
         value_constrained,
         jnp.maximum(value_interpolated, value_constrained),
     )
-    V_arr = jnp.where(overflowed, jnp.nan, V_arr).astype(dtype)
+    V_row = jnp.where(overflowed, jnp.nan, V_row).astype(dtype)
 
     value_row = jnp.where(overflowed, jnp.nan, refined_value).astype(dtype)
     return V_row, value_row, marginal_utility.astype(dtype)

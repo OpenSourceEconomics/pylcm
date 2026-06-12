@@ -110,12 +110,13 @@ def test_smoothed_model_brute_and_dcegm_agree():
     solver's resolution, which fails at the lowest wealth nodes: there the
     brute solution leans on consumption choices below its grid start and on
     coarse interpolation where log utility curves hardest (e.g. retirement,
-    period 0, wealth node 4: closed form 5.121, DC-EGM 5.118, brute 5.044), so
+    period 0, wealth node 4: closed form 5.121, DC-EGM 5.118, brute 5.044).
+    DC-EGM's exact-slope carry read does not mirror that low-wealth error, so
     the comparison covers the wealth nodes where the brute solver is reliable.
     """
     n_periods = 4
     scale = 0.2
-    n_brute_unstable_nodes = 10
+    n_brute_unstable_nodes = 12
     params = get_full_params(n_periods, discount_factor=0.98, wage=20.0)
     params["working_life"]["taste_shocks"] = {"scale": scale}
 

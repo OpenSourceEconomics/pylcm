@@ -86,7 +86,10 @@ def test_discount_factor_zero_yields_consume_everything_values():
     The degenerate-inversion guard must hold after discounting: a zero
     discount factor zeroes the marginal continuation at every savings node, so
     the consume-everything corner is optimal at every wealth node and
-    `V(wealth) = log(wealth)` in every non-terminal period.
+    `V(wealth) = log(wealth)` in every non-terminal period. V equals
+    `log(wealth)` up to the high-order publish interpolation error (the
+    closed-form constrained value is published outright only below the lowest
+    refined point).
     """
     n_periods = 3
     model = get_retirement_only_model("dcegm", n_periods)
@@ -99,7 +102,7 @@ def test_discount_factor_zero_yields_consume_everything_values():
         np.testing.assert_allclose(
             np.asarray(period_to_regime_to_V_arr[period]["retirement"]),
             np.log(wealth),
-            atol=1e-6,
+            atol=2e-5,
             err_msg=f"period={period}",
         )
 
