@@ -25,7 +25,15 @@ _N_SUBJECTS = 100_000
 
 _SOLVE_WEALTH_N_POINTS = 1_000
 _SOLVE_CONSUMPTION_N_POINTS = 5_000
-_SOLVE_SAVINGS_N_POINTS = 1_000
+# Matched-precision calibration for the head-to-head: 200 cubically clustered
+# savings nodes solve this model to the same V accuracy as the 1000-node (and
+# even a 20000-node) consumption grid reaches wherever the consumption grid's
+# truncation at its start point does not bind — both solvers then sit at the
+# same few-percent-of-utility error level, so the timing comparison is
+# apples-to-apples. More savings nodes do not improve accuracy here (the
+# residual is carry-interpolation error compounding over the horizon, not
+# savings resolution), they only lengthen the sequential envelope scan.
+_SOLVE_SAVINGS_N_POINTS = 200
 
 _SIMULATE_WEALTH_N_POINTS = 500
 _SIMULATE_CONSUMPTION_N_POINTS = 500
@@ -55,6 +63,7 @@ def _make_model_and_params(
         AgeGrid,
         DiscreteGrid,
         ExtremeValueTasteShocks,
+        IrregSpacedGrid,
         LinSpacedGrid,
         Model,
         Regime,
@@ -156,8 +165,15 @@ def _make_model_and_params(
             continuous_action="consumption",
             resources="resources",
             post_decision_function="savings",
-            savings_grid=LinSpacedGrid(
-                start=0.0, stop=400.0, n_points=_SOLVE_SAVINGS_N_POINTS
+            # Cubically clustered toward the borrowing limit: the value
+            # function curves hardest where the constraint starts to bind,
+            # and a uniform grid under-resolves the lowest wealth nodes by
+            # orders of magnitude.
+            savings_grid=IrregSpacedGrid(
+                points=tuple(
+                    400.0 * (i / (_SOLVE_SAVINGS_N_POINTS - 1)) ** 3
+                    for i in range(_SOLVE_SAVINGS_N_POINTS)
+                )
             ),
         )
         dcegm_functions = {
@@ -273,9 +289,18 @@ class IskhakovEtAl2017SolveGpuPeakMem(_gpu_mem.GpuPeakMem):
 
 
 class IskhakovEtAl2017DCEGMSolve:
-    """DC-EGM solve of the same model: Euler inversion replaces the grid search."""
+    """DC-EGM solve of the same model: Euler inversion replaces the grid search.
 
-    version = "1"
+    Calibrated to the brute-force benchmark's precision (see the savings-grid
+    constant). Reading the head-to-head: the upper-envelope refinement is a
+    sequential `lax.scan` over the savings nodes, so on a GPU — which thrives
+    on the brute solver's one huge parallel reduction — DC-EGM trades parallel
+    width for a shorter critical path and can lose on wall clock while using a
+    fraction of the memory. On CPU the same configuration beats brute force
+    outright.
+    """
+
+    version = "2"
     timeout = 600
 
     def _build(self) -> None:
