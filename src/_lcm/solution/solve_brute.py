@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.carry import EgmCarry
-from _lcm.engine import Regime, _build_regime_sharding
+from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.logging import (
@@ -58,32 +58,8 @@ def solve(
         Immutable mapping of periods to regime value function arrays.
 
     """
-    # Compute V array shapes (and their device shardings, if any) and build
-    # a consistent next_regime_to_V_arr template. Using the same pytree
-    # structure (keys and shapes) across all periods avoids JIT re-
-    # compilation from pytree mismatches.
-    regime_V_topology = _get_regime_V_shapes_and_shardings(
-        regimes=regimes,
-        flat_params=flat_params,
-    )
-
-    next_regime_to_V_arr = MappingProxyType(
-        {
-            regime_name: _build_zero_V_arr(topology=topology)
-            for regime_name, topology in regime_V_topology.items()
-        }
-    )
-
-    # Rolling EGM-carry mapping, maintained next to `next_regime_to_V_arr`.
-    # Entries exist only for carry-producing regimes (DC-EGM regimes and, in
-    # models with one, terminal regimes); the template key order is reused
-    # every period so the pytree structure stays JIT-stable.
-    next_regime_to_egm_carry = MappingProxyType(
-        {
-            regime_name: regime.solution.egm_carry_template
-            for regime_name, regime in regimes.items()
-            if regime.solution.egm_carry_template is not None
-        }
+    next_regime_to_V_arr, next_regime_to_egm_carry = _build_continuation_templates(
+        regimes=regimes, flat_params=flat_params
     )
 
     # AOT-compile all unique solve kernels in parallel.
@@ -170,6 +146,7 @@ def solve(
                 regime_name=regime_name,
                 period=period,
                 solve_kernel=compiled_functions[(regime_name, period)],
+                state_action_space=base_state_action_spaces[regime_name],
                 flat_params=flat_params,
                 ages=ages,
                 next_regime_to_V_arr=next_regime_to_V_arr,
@@ -273,6 +250,7 @@ def _solve_regime_period(
     regime_name: RegimeName,
     period: int,
     solve_kernel: Callable,
+    state_action_space: StateActionSpace,
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
@@ -300,9 +278,6 @@ def _solve_regime_period(
         The regime's value-function array.
 
     """
-    state_action_space = regime.solution.state_action_space(
-        regime_params=flat_params[regime_name],
-    )
     if regime.solution.egm_step is not None:
         V_arr, egm_carry = solve_kernel(
             **state_action_space.states,
@@ -372,6 +347,63 @@ def _roll_continuation_inputs(
         }
     )
     return rolled_V_arr, rolled_egm_carry
+
+
+def _build_continuation_templates(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+) -> tuple[
+    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EgmCarry]
+]:
+    """Build the period-invariant continuation-input templates.
+
+    Both mappings keep the same pytree structure (keys and shapes) across all
+    periods, avoiding JIT re-compilation from pytree mismatches:
+
+    - the V template holds a zero array per regime, shaped (and sharded) like
+      the regime's V array;
+    - the EGM-carry template holds entries only for carry-producing regimes
+      (DC-EGM regimes and, in models with one, terminal regimes), in the key
+      order reused every period.
+    """
+    regime_V_topology = _get_regime_V_shapes_and_shardings(
+        regimes=regimes,
+        flat_params=flat_params,
+    )
+    next_regime_to_V_arr = MappingProxyType(
+        {
+            regime_name: _build_zero_V_arr(topology=topology)
+            for regime_name, topology in regime_V_topology.items()
+        }
+    )
+    next_regime_to_egm_carry = MappingProxyType(
+        {
+            regime_name: regime.solution.egm_carry_template
+            for regime_name, regime in regimes.items()
+            if regime.solution.egm_carry_template is not None
+        }
+    )
+    return next_regime_to_V_arr, next_regime_to_egm_carry
+
+
+def _build_base_state_action_spaces(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+) -> dict[RegimeName, StateActionSpace]:
+    """Build each regime's params-completed state-action space once.
+
+    The space is period-invariant within one solve (params are fixed), so
+    runtime-grid completion (e.g. process gridpoint computation) runs once
+    per regime instead of once per period-regime iteration.
+    """
+    return {
+        regime_name: regime.solution.state_action_space(
+            regime_params=flat_params[regime_name]
+        )
+        for regime_name, regime in regimes.items()
+    }
 
 
 def _drain_V_arr_shards(
