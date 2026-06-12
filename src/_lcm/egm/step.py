@@ -108,6 +108,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     EgmStepFunction,
+    FunctionName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -478,7 +479,7 @@ class _EgmKernelPieces:
     action_name: ActionName
     """Name of the regime's continuous action."""
 
-    post_decision_name: str
+    post_decision_name: FunctionName
     """Name of the post-decision function (the savings node's input slot)."""
 
     savings_nodes: Float1D
@@ -547,7 +548,7 @@ class _ChildRead:
     next_state_func: Callable[..., Any]
     """The target's next-state function (post-decision function removed)."""
 
-    next_state_key: str
+    next_state_key: TransitionFunctionName
     """`next_<state>` key of the child's continuous (Euler) state."""
 
     euler_state_name: StateName
@@ -742,12 +743,21 @@ def _get_solve_one_combo(
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
         )
 
+        candidate_grid = jnp.concatenate(
+            [pieces.borrowing_limit + constrained_actions, endog_grid]
+        )
+        candidate_policy = jnp.concatenate([constrained_actions, actions])
+        candidate_value = jnp.concatenate([constrained_values, values])
+        # A `-inf`-valued candidate (e.g. a corner whose continuation is
+        # `-inf`) is dominated by every finite candidate and would inject
+        # `-inf - (-inf) = NaN` into the envelope scan's gradient arithmetic.
+        # Mask the triple to NaN — the scan's absent form. NaN-valued
+        # candidates stay as they are: genuine poison must keep propagating.
+        candidate_dead = jnp.isneginf(candidate_value)
         refined_grid, refined_policy, refined_value, n_kept = pieces.refine(
-            endog_grid=jnp.concatenate(
-                [pieces.borrowing_limit + constrained_actions, endog_grid]
-            ),
-            policy=jnp.concatenate([constrained_actions, actions]),
-            value=jnp.concatenate([constrained_values, values]),
+            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
+            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
+            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
         )
 
         V_row, value_row, marginal_utility_row = _publish_V_and_carry_rows(
@@ -761,6 +771,13 @@ def _get_solve_one_combo(
             utility_of_action=utility_of_action,
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
         )
+
+        # A combo with no live candidate (its entire continuation is `-inf`)
+        # is worth `-inf` everywhere, like an infeasible combo.
+        no_live_candidate = jnp.all(candidate_dead)
+        V_row = jnp.where(no_live_candidate, -jnp.inf, V_row)
+        value_row = jnp.where(no_live_candidate, -jnp.inf, value_row)
+        marginal_utility_row = jnp.where(no_live_candidate, 0.0, marginal_utility_row)
 
         if pieces.feasibility_func is not None:
             # Infeasible discrete combos: -inf value rows so they win no
@@ -823,18 +840,20 @@ def _get_compute_node(
             smoothed_value, smoothed_marginal = child_readers[target](savings_value)
             prob = regime_transition_probs[target]
             # Zero unreachable-target contributions on the results, never by
-            # multiplying into a possibly non-finite value.
+            # multiplying into a possibly non-finite value. The else branch
+            # is `prob * 0.0` (not `0.0`) so a NaN probability poisons the
+            # sum instead of vanishing.
             expected_marginal = expected_marginal + jnp.where(
-                prob > 0.0, prob * smoothed_marginal, 0.0
+                prob > 0.0, prob * smoothed_marginal, prob * 0.0
             )
             expected_value = expected_value + jnp.where(
-                prob > 0.0, prob * smoothed_value, 0.0
+                prob > 0.0, prob * smoothed_value, prob * 0.0
             )
         for target in pieces.scalar_targets:
             prob = regime_transition_probs[target]
             constant_value = next_regime_to_egm_carry[target].value[0]
             expected_value = expected_value + jnp.where(
-                prob > 0.0, prob * constant_value, 0.0
+                prob > 0.0, prob * constant_value, prob * 0.0
             )
 
         action = invert_euler(
@@ -854,7 +873,7 @@ def _get_child_carry_reader(
     read: _ChildRead,
     carry: EgmCarry,
     combo_pool: dict[str, Any],
-    post_decision_name: str,
+    post_decision_name: FunctionName,
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
     """Build the per-savings-node carry read of one target for one combo.
 
@@ -1075,12 +1094,16 @@ def _expect_over_process_nodes(
     for vec, indices in zip(weight_vecs[1:], flat_node_indices[1:], strict=True):
         joint_weights = joint_weights * vec[indices]
     # Weight on results: a zero-weight node contributes exactly 0.0 even
-    # when its smoothed value is -inf (never 0 * inf = NaN).
+    # when its smoothed value is -inf (never 0 * inf = NaN). The else branch
+    # is `weights * 0.0` (not `0.0`) so a NaN weight poisons the sum instead
+    # of vanishing.
     smoothed_value = jnp.sum(
-        jnp.where(joint_weights > 0.0, joint_weights * node_values, 0.0)
+        jnp.where(joint_weights > 0.0, joint_weights * node_values, joint_weights * 0.0)
     )
     smoothed_marginal = jnp.sum(
-        jnp.where(joint_weights > 0.0, joint_weights * node_marginals, 0.0)
+        jnp.where(
+            joint_weights > 0.0, joint_weights * node_marginals, joint_weights * 0.0
+        )
     )
     return smoothed_value, smoothed_marginal
 
@@ -1167,12 +1190,14 @@ def _aggregate_child_choices(
 
     value_at_child = jax.vmap(interp_row)(grid_rows, value_rows, queries_flat)
     marginal_at_child = jax.vmap(interp_row)(grid_rows, marginal_rows, queries_flat)
-    # A row that is -inf everywhere yields NaN under linear interpolation
-    # (-inf minus -inf); restore the -inf / exact-zero pair on the results.
-    row_infeasible = jnp.isneginf(value_rows[:, 0])
-    value_at_child = jnp.where(row_infeasible, -jnp.inf, value_at_child)
+    # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
+    # exactly-zero marginal utility, so an infeasible-everywhere row reads as
+    # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
+    # bequest at zero wealth) keeps its finite region intact. A `-inf` value
+    # read pins the marginal read to zero so the pair stays consistent at
+    # queries clamped onto a `-inf` node.
     marginal_at_child = jnp.where(
-        row_infeasible, 0.0, marginal_at_child * gradients_flat
+        jnp.isneginf(value_at_child), 0.0, marginal_at_child * gradients_flat
     )
     value_at_child = value_at_child.reshape(block_shape)
     marginal_at_child = marginal_at_child.reshape(block_shape)
@@ -1213,7 +1238,7 @@ def _build_child_reads(
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     carry_targets: tuple[RegimeName, ...],
-    post_decision_name: str,
+    post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> MappingProxyType[RegimeName, _ChildRead]:
     """Build the per-carry-target statics of the EGM kernel's child reads.
@@ -1372,7 +1397,7 @@ def _get_passive_state_names(
 def _concatenate_regime_function(
     *,
     functions: EconFunctionsMapping,
-    target: str,
+    target: FunctionName,
 ) -> UserFunction:
     """Concatenate one regime-function target from the H-free DAG."""
     return concatenate_functions(
