@@ -87,10 +87,12 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
     granularly so the brute worker is structurally unreachable from it. The
     mixed model's V differs from the all-brute model's only through the
     retiree continuation, on which the two solvers agree wherever the brute
-    solver is reliable.
+    solver is reliable. At the lowest wealth nodes the brute leg leans on
+    consumption below its grid start and coarse interpolation, so its values
+    are the biased side there and the comparison starts above them.
     """
     n_periods = 4
-    n_brute_unstable_nodes = 10
+    n_brute_unstable_nodes = 12
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
