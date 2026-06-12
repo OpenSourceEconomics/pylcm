@@ -21,7 +21,13 @@ offending piece. The rules, in the order they are checked:
 - `utility` does not depend on the continuous state (envelope condition)
 - the resources function does not depend on the continuous action
 - the Euler state's transition is deterministic, names the post-decision
-  function, and reaches the state and the action only through it
+  function, and reaches the continuous action only through it; it may read
+  the current Euler state directly (the kernel then solves per exogenous
+  asset node), but only through a residual that is CONTINUOUS in the Euler
+  state — a numeric spot check rejects laws that jump (a jump makes the
+  child's value function discontinuous; the true policy bunches at the
+  discontinuity, a corner where the Euler equation does not hold and which
+  EGM's candidate families cannot represent)
 - everything evaluated at the savings-node stage (regime transition,
   stochastic weights, non-Euler state transitions) is independent of the
   Euler state, the continuous action, the resources function, and the
@@ -66,6 +72,13 @@ from lcm.solvers import DCEGM
 from lcm.transition import MarkovTransition
 from lcm.typing import Float1D, FloatND, ScalarFloat, UserFunction
 
+# Dense Euler-state sample size of the law-continuity spot check, and the
+# spike factor that separates a jump from a kink: a continuous law's increment
+# across a kink is bounded by the steeper side's neighboring increment, while
+# a cliff produces an isolated spike independent of the sample step.
+_N_CONTINUITY_SAMPLE = 401
+_JUMP_FACTOR = 10.0
+
 
 def validate_dcegm_regimes(
     *,
@@ -89,6 +102,39 @@ def validate_dcegm_regimes(
                 user_regime=user_regime,
                 user_regimes=user_regimes,
             )
+
+
+def euler_law_reads_euler_state(*, user_regime: UserRegime, solver: DCEGM) -> bool:
+    """Whether the Euler state's law reads the current Euler state.
+
+    Runs the same opaque-post-decision ancestor check as
+    `_fail_if_euler_transition_bypasses_post_decision` (`Phased` resolved to
+    the solve side, per-target cells unpacked) over all transition variants
+    of the Euler state's law. The kernel builder uses the result to switch
+    to the per-exogenous-asset-node solve mode, where the law's
+    Euler-state-dependent residual is a per-combo constant.
+
+    Args:
+        user_regime: The user-provided `Regime` instance.
+        solver: The regime's DC-EGM solver configuration.
+
+    Returns:
+        `True` when any variant of the Euler state's law has the Euler state
+        among its DAG ancestors.
+
+    """
+    value = user_regime.state_transitions.get(solver.continuous_state)
+    if value is None:
+        return False
+    functions = _resolve_solve_functions(user_regime=user_regime)
+    opaque_functions = _without(
+        functions=functions, names={solver.post_decision_function, solver.resources}
+    )
+    return any(
+        solver.continuous_state
+        in _dag_ancestors(functions=opaque_functions, target_func=transition_func)
+        for _label, transition_func in _transition_variants(value=value)
+    )
 
 
 def _validate_dcegm_regime(
@@ -163,6 +209,13 @@ def _validate_dcegm_regime(
             functions=functions,
             solver=solver,
         )
+        if euler_law_reads_euler_state(user_regime=user_regime, solver=solver):
+            _fail_if_euler_law_jumps_in_euler_state(
+                regime_name=regime_name,
+                user_regime=user_regime,
+                functions=functions,
+                solver=solver,
+            )
     except GridInitializationError as error:
         msg = (
             f"A numeric spot check of the DC-EGM contract in regime "
@@ -491,18 +544,21 @@ def _fail_if_euler_transition_bypasses_post_decision(
     functions: dict[FunctionName, UserFunction],
     solver: DCEGM,
 ) -> None:
-    """The Euler transition consumes the post-decision function — and only it.
+    """The Euler transition consumes the post-decision function.
 
     With the post-decision and resources functions removed from the DAG,
     their names become leaf inputs, so the ancestor set reveals whether the
-    transition reaches the state or the action through any other channel.
+    transition reaches the continuous action or the resources function
+    through any other channel. The current Euler state is an allowed
+    transition ancestor: the kernel then solves per exogenous asset node,
+    where the residual is a per-combo constant
+    (`euler_law_reads_euler_state` reports this mode).
     """
     bypass_msg = (
         f"The transition of the Euler state '{solver.continuous_state}' in "
         f"regime '{regime_name}' must consume the post-decision function "
         f"'{solver.post_decision_function}' and reach "
-        f"'{solver.continuous_state}' and '{solver.continuous_action}' only "
-        "through it."
+        f"'{solver.continuous_action}' only through it."
     )
     value = user_regime.state_transitions.get(solver.continuous_state)
     if value is None:
@@ -516,7 +572,6 @@ def _fail_if_euler_transition_bypasses_post_decision(
         functions=functions, names={solver.post_decision_function, solver.resources}
     )
     forbidden = {
-        solver.continuous_state,
         solver.continuous_action,
         solver.resources,
     }
@@ -900,6 +955,167 @@ def _fail_if_inverse_marginal_utility_inconsistent(
                 f"{float(recovered)} (marginal utility {float(mu)})."
             )
             raise ModelInitializationError(msg)
+
+
+def _fail_if_euler_law_jumps_in_euler_state(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: DCEGM,
+) -> None:
+    """The Euler state's law must be continuous in the Euler state.
+
+    A residual that jumps in the Euler state makes the child's value function
+    discontinuous, and the true policy bunches next-period wealth exactly at
+    the discontinuity — a corner where the Euler equation does not hold, so
+    EGM's candidate families (interior Euler inversions plus the closed-form
+    credit-constrained segment) structurally exclude the optimum. Such laws
+    are rejected at build time rather than solved approximately.
+
+    Numeric spot check: every law variant is evaluated at a fixed savings
+    value over a dense Euler-state sample spanning the Euler grid, in a few
+    discrete-combo contexts sampled from the grids. A consecutive increment
+    exceeding `_JUMP_FACTOR` times the larger of its neighboring increments
+    (plus a scale-aware absolute floor) is an isolated spike — a jump, not a
+    kink: a continuous law's increment across a kink is bounded by the
+    steeper side's neighboring increment, while a cliff's spike is
+    independent of the sample step. Variants whose pruned DAG needs free
+    model parameters are skipped (their values are unknown at build time).
+    """
+    x64_enabled = bool(jax.config.read("jax_enable_x64"))
+    base_atol = 1e-8 if x64_enabled else 1e-4
+
+    grids: dict[StateOrActionName, Grid] = {
+        **_solve_grids(slot=user_regime.states),
+        **_solve_grids(slot=user_regime.actions),
+    }
+    euler_points = grids[solver.continuous_state].to_jax()
+    euler_sample = jnp.linspace(
+        jnp.min(euler_points), jnp.max(euler_points), num=_N_CONTINUITY_SAMPLE
+    )
+    savings_points = solver.savings_grid.to_jax()
+    savings_value = savings_points[savings_points.shape[0] // 2]
+
+    functions_without_post = _without(
+        functions=functions, names={solver.post_decision_function}
+    )
+    value = user_regime.state_transitions[solver.continuous_state]
+    for label, transition_func in _transition_variants(value=value):
+        target_name = "__dcegm_validation_target__"
+        law_func = concatenate_functions(
+            functions={**functions_without_post, target_name: transition_func},
+            targets=target_name,
+        )
+        varied = {solver.continuous_state, solver.post_decision_function}
+        for context in _combo_contexts(func=law_func, grids=grids, varied=varied):
+            law_values = _law_values_on_sample(
+                law_func=law_func,
+                context=context,
+                euler_state_name=solver.continuous_state,
+                post_decision_name=solver.post_decision_function,
+                savings_value=savings_value,
+                euler_sample=euler_sample,
+            )
+            jump_location = _find_jump(
+                sample=euler_sample, values=law_values, atol=base_atol
+            )
+            if jump_location is not None:
+                msg = (
+                    f"The transition of the Euler state "
+                    f"'{solver.continuous_state}' in regime "
+                    f"'{regime_name}'{label} reads the current Euler state "
+                    "but is discontinuous in it: its value jumps near "
+                    f"{solver.continuous_state} ≈ {jump_location}. A jump in "
+                    "the law makes the child's value function discontinuous, "
+                    "and the true policy bunches next-period "
+                    f"'{solver.continuous_state}' exactly at the "
+                    "discontinuity — a corner where the Euler equation does "
+                    "not hold, which EGM's candidate set cannot represent. "
+                    "Make the law continuous in "
+                    f"'{solver.continuous_state}' (kinks are fine), e.g. by "
+                    "phasing the term out instead of cutting it off."
+                )
+                raise ModelInitializationError(msg)
+
+
+def _law_values_on_sample(
+    *,
+    law_func: UserFunction,
+    context: dict[str, object],
+    euler_state_name: StateName,
+    post_decision_name: FunctionName,
+    savings_value: ScalarFloat,
+    euler_sample: Float1D,
+) -> Float1D:
+    """Evaluate one law variant over the Euler-state sample at fixed savings."""
+
+    def law_of_euler_state(state_value: ScalarFloat) -> ScalarFloat:
+        return _call_with_varied(
+            func=law_func,
+            fixed=context,
+            varied={
+                euler_state_name: state_value,
+                post_decision_name: savings_value,
+            },
+        )
+
+    return jax.vmap(law_of_euler_state)(euler_sample)
+
+
+def _combo_contexts(
+    *,
+    func: UserFunction,
+    grids: dict[StateOrActionName, Grid],
+    varied: set[str],
+    n_contexts: int = 3,
+) -> list[dict[str, object]]:
+    """A few fixed-input contexts for every non-varied argument of `func`.
+
+    Context `j` binds each non-varied argument to the `j`-th point of its
+    grid's small sample (clamped to the sample length), so the contexts span
+    different discrete-combo regions. Returns no contexts when an argument
+    is neither varied nor a state/action — a free model parameter whose
+    value is unknown at build time, so the numeric check cannot run.
+    """
+    samples: dict[str, Float1D] = {}
+    for arg_name in inspect.signature(func).parameters:
+        if arg_name in varied:
+            continue
+        if arg_name in grids:
+            samples[arg_name] = _grid_sample(grid=grids[arg_name])
+        else:
+            return []
+    return [
+        {name: sample[min(j, sample.shape[0] - 1)] for name, sample in samples.items()}
+        for j in range(n_contexts)
+    ]
+
+
+def _find_jump(
+    *,
+    sample: Float1D,
+    values: Float1D,
+    atol: float,
+) -> float | None:
+    """Approximate location of the first isolated spike in the increments.
+
+    An increment is a jump when it exceeds `_JUMP_FACTOR` times the larger
+    of its neighboring increments plus a scale-aware absolute floor. Returns
+    the midpoint of the offending sample interval, or `None` when every
+    increment is kink-compatible.
+    """
+    increments = jnp.abs(jnp.diff(values))
+    left_neighbor = jnp.concatenate([increments[1:2], increments[:-1]])
+    right_neighbor = jnp.concatenate([increments[1:], increments[-2:-1]])
+    neighbor = jnp.maximum(left_neighbor, right_neighbor)
+    scale = jnp.max(jnp.abs(jnp.where(jnp.isfinite(values), values, 0.0)))
+    tolerance = atol * (1.0 + scale) + _JUMP_FACTOR * neighbor
+    jumps = increments > tolerance
+    if not bool(jnp.any(jumps)):
+        return None
+    index = int(jnp.argmax(jumps))
+    return float(0.5 * (sample[index] + sample[index + 1]))
 
 
 def _reachable_target_names(

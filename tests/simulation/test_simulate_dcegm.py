@@ -24,6 +24,11 @@ import pytest
 
 pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
 
+from tests.solution.test_egm_assets_law_terms import (
+    LawTermRegimeId,
+    _params,
+    _phased_law_model,
+)
 from tests.test_models import dcegm_paper_twin
 from tests.test_models.deterministic import dcegm_variants
 from tests.test_models.deterministic.base import RegimeId as FullRegimeId
@@ -288,3 +293,39 @@ def test_dcegm_solver_machinery_is_not_a_result_target():
     df = result.to_dataframe(additional_targets="all")
     assert "dcegm_budget_constraint" not in df.columns
     assert "inverse_marginal_utility" not in df.columns
+
+
+def test_phase_variant_law_term_simulates_with_the_simulate_variant():
+    """A `Phased` Euler law's simulate variant governs the simulated path.
+
+    The solve-phase law adds a constant adjustment to savings (embedded in
+    the solved V); the simulate-phase law is `savings` alone, so the
+    simulated wealth path obeys `wealth_{t+1} = wealth_t - consumption_t`
+    exactly.
+    """
+    model = _phased_law_model("dcegm")
+    params = _params()
+
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([30.0, 60.0]),
+            "age": jnp.array([40.0, 40.0]),
+            "regime_id": jnp.full(2, LawTermRegimeId.working_life, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+        seed=7,
+    )
+
+    df = (
+        result.to_dataframe()
+        .query("regime_name == 'working_life'")
+        .sort_values(["subject_id", "period"])
+    )
+    for _, subject in df.groupby("subject_id"):
+        wealth = subject["wealth"].to_numpy()
+        consumption = subject["consumption"].to_numpy()
+        np.testing.assert_allclose(
+            wealth[1:], wealth[:-1] - consumption[:-1], atol=1e-6
+        )
