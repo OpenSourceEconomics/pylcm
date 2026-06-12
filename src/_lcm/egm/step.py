@@ -103,14 +103,23 @@ are $-\\infty$ and their marginal-utility rows are exactly zero, so they
 carry zero choice probability and stay finite inside the parent's
 probability-weighted expectation.
 
+A terminal carry target may carry discrete states, but only those shared
+with the parent's own discrete combo axes and reached by the identity
+(fixed) transition — at a parent combo with the state at value $k$ the
+terminal carry row is its utility evaluated at $k$, selected by the parent's
+own integer combo index, exactly as the non-terminal child read selects its
+combo. A fixed `pref_type` whose terminal bequest differs by type is the
+motivating case.
+
 Out of scope: stochastic non-process transitions into a carry target,
-terminal carry targets with discrete states or actions, child resources
-functions reading anything beyond the child's states and discrete actions
-(e.g. free child params), and child process states whose grid points are
-supplied at runtime while feeding the child's resources function. Such
-configurations build kernels that raise `NotImplementedError` at solve
-time, so `Model` construction always succeeds for a validated DC-EGM
-regime.
+terminal carry targets with actions, with a discrete state the parent does
+not carry, or with a non-identity transition into a shared discrete state,
+child resources functions reading anything beyond the child's states and
+discrete actions (e.g. free child params), and child process states whose
+grid points are supplied at runtime while feeding the child's resources
+function. Such configurations build kernels that raise `NotImplementedError`
+at solve time, so `Model` construction always succeeds for a validated
+DC-EGM regime.
 """
 
 import math
@@ -146,6 +155,7 @@ from _lcm.typing import (
     RegimeName,
     RegimeTransitionFunction,
     StateName,
+    TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
@@ -2056,6 +2066,7 @@ def _find_unsupported_feature(
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            own_discrete_state_names=own_discrete_state_names,
         )
         if message is not None:
             break
@@ -2091,6 +2102,7 @@ def _find_unsupported_target_feature(
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    own_discrete_state_names: tuple[StateName, ...],
 ) -> str | None:
     """Return a message naming the first unsupported feature of one target."""
     target_info = regime_to_v_interpolation_info[target]
@@ -2100,6 +2112,8 @@ def _find_unsupported_target_feature(
             target=target,
             user_regime=user_regimes[target],
             target_info=target_info,
+            target_transitions=transitions[target],
+            own_discrete_state_names=own_discrete_state_names,
         )
         if terminal_message is not None:
             return terminal_message
@@ -2159,18 +2173,49 @@ def _find_unsupported_terminal_target_feature(
     target: RegimeName,
     user_regime: UserRegime,
     target_info: VInterpolationInfo,
+    target_transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    own_discrete_state_names: tuple[StateName, ...],
 ) -> str | None:
-    """Return a message naming the first unsupported feature of a terminal target."""
-    if target_info.discrete_states:
+    """Return a message naming the first unsupported feature of a terminal target.
+
+    A terminal carry covers exactly one continuous state and no actions. It
+    may additionally carry discrete states, but only those that are *shared*
+    with the parent's own discrete combo axes and reached by the *identity*
+    (fixed) transition: at a parent combo with the state at value $k$ the
+    terminal carry row is its utility evaluated at $k$, so the parent selects
+    its own combo by integer indexing the carry's leading axis. A terminal
+    discrete state that the parent does not carry has no parent axis to align
+    to; one reached by a stochastic or non-identity transition is a separate,
+    unsupported gap.
+    """
+    own_discrete = set(own_discrete_state_names)
+    for name, grid in target_info.discrete_states.items():
+        if isinstance(grid, _ContinuousStochasticProcess):
+            return (
+                f"its terminal target regime '{target}' has the process state "
+                f"'{name}'; terminal carries cover discrete states shared with "
+                "the parent via an identity transition only."
+            )
+        if name not in own_discrete:
+            return (
+                f"its terminal target regime '{target}' has the discrete state "
+                f"'{name}', which the parent does not carry; a terminal carry's "
+                "discrete states must be shared with the parent's own discrete "
+                "combo axes."
+            )
+        transition = target_transitions.get(f"next_{name}")
+        if not getattr(transition, "_is_auto_identity", False):
+            return (
+                f"its terminal target regime '{target}' is reached by a "
+                f"non-identity transition into the discrete state '{name}'; a "
+                "terminal carry's discrete states must be shared with the "
+                "parent via an identity (fixed) transition."
+            )
+    n_continuous = len(target_info.continuous_states)
+    if n_continuous != 1:
         return (
-            f"its terminal target regime '{target}' has discrete states "
-            f"{list(target_info.discrete_states)}; terminal carries cover "
-            "a single continuous state only."
-        )
-    if len(target_info.state_names) != 1:
-        return (
-            f"its terminal target regime '{target}' has states "
-            f"{list(target_info.state_names)}; exactly one continuous "
+            f"its terminal target regime '{target}' has continuous states "
+            f"{list(target_info.continuous_states)}; exactly one continuous "
             "state is supported."
         )
     if user_regime.actions:
