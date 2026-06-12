@@ -342,8 +342,16 @@ def _get_egm_step(
                 child_resources, child_dr_da = jax.value_and_grad(composed_resources)(
                     savings_value
                 )
+                # The marginal-utility row is the value row's exact slope
+                # (envelope theorem), upgrading the value read to cubic
+                # Hermite; the mu read itself stays linear (a policy-grade
+                # quantity, and its interpolation error enters the value only
+                # at second order through the Euler inversion).
                 value_at_child = interp_on_padded_grid(
-                    x_query=child_resources, xp=carry.endog_grid, fp=carry.value
+                    x_query=child_resources,
+                    xp=carry.endog_grid,
+                    fp=carry.value,
+                    fp_slopes=carry.marginal_utility,
                 )
                 marginal_at_child = interp_on_padded_grid(
                     x_query=child_resources,
@@ -410,6 +418,7 @@ def _get_egm_step(
             n_pad=n_pad,
             publish_resources=publish_resources,
             borrowing_limit=borrowing_limit,
+            first_endogenous_point=endog_grid[0],
             utility_of_action=utility_of_action,
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
         )
@@ -539,15 +548,19 @@ def _publish_V_and_assemble_carry(
     n_pad: int,
     publish_resources: FloatND,
     borrowing_limit: ScalarFloat,
+    first_endogenous_point: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     discounted_expected_value_at_limit: ScalarFloat,
 ) -> tuple[FloatND, EgmCarry]:
     """Interpolate V onto the exogenous grid and assemble the carry.
 
-    The published value is the maximum of the interpolated refined envelope
-    and the closed-form constrained value: the latter is the exact value of a
-    feasible policy (save exactly the borrowing limit), so the maximum is
-    exact where the constraint binds and a valid lower bound everywhere else.
+    The constraint binds exactly at the resources points weakly below the
+    first endogenous (Euler) point, so the published value there is the
+    closed-form constrained value — the exact value of saving exactly the
+    borrowing limit. Above it, the refined envelope is read with the cubic
+    Hermite interpolant (the marginal-utility row is the value row's exact
+    slope by the envelope theorem), floored at the constrained value, which
+    remains a feasible-policy lower bound everywhere.
 
     Envelope overflow is not silent: the outputs are NaN-poisoned so the
     solve loop's NaN diagnostics surface the offending (regime, period).
@@ -560,6 +573,8 @@ def _publish_V_and_assemble_carry(
         n_pad: Static length of the refined rows.
         publish_resources: Resources at the regime's exogenous state grid.
         borrowing_limit: Lower bound of the savings grid.
+        first_endogenous_point: The endogenous resources point of the lowest
+            savings node; the credit constraint binds weakly below it.
         utility_of_action: Utility with everything but the continuous action
             bound.
         discounted_expected_value_at_limit: Discounted expected continuation
@@ -572,8 +587,17 @@ def _publish_V_and_assemble_carry(
     dtype = publish_resources.dtype
     overflowed = n_kept > n_pad
 
+    marginal_utility = jax.vmap(jax.grad(utility_of_action))(
+        jnp.where(jnp.isnan(refined_policy), 1.0, refined_policy)
+    )
+    marginal_utility = jnp.where(jnp.isnan(refined_policy), jnp.nan, marginal_utility)
+    marginal_utility = jnp.where(jnp.isneginf(refined_value), 0.0, marginal_utility)
+
     value_interpolated = interp_on_padded_grid(
-        x_query=publish_resources, xp=refined_grid, fp=refined_value
+        x_query=publish_resources,
+        xp=refined_grid,
+        fp=refined_value,
+        fp_slopes=marginal_utility,
     )
     closed_form_actions = publish_resources - borrowing_limit
     value_constrained = jnp.where(
@@ -584,14 +608,15 @@ def _publish_V_and_assemble_carry(
         + discounted_expected_value_at_limit,
         -jnp.inf,
     )
-    V_arr = jnp.maximum(value_interpolated, value_constrained)
-    V_arr = jnp.where(overflowed, jnp.nan, V_arr).astype(dtype)
-
-    marginal_utility = jax.vmap(jax.grad(utility_of_action))(
-        jnp.where(jnp.isnan(refined_policy), 1.0, refined_policy)
+    constraint_binds = (closed_form_actions > 0.0) & (
+        publish_resources <= first_endogenous_point
     )
-    marginal_utility = jnp.where(jnp.isnan(refined_policy), jnp.nan, marginal_utility)
-    marginal_utility = jnp.where(jnp.isneginf(refined_value), 0.0, marginal_utility)
+    V_arr = jnp.where(
+        constraint_binds,
+        value_constrained,
+        jnp.maximum(value_interpolated, value_constrained),
+    )
+    V_arr = jnp.where(overflowed, jnp.nan, V_arr).astype(dtype)
 
     carry = EgmCarry(
         endog_grid=jnp.where(overflowed, jnp.nan, refined_grid).astype(dtype),
