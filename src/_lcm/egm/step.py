@@ -978,15 +978,19 @@ def _publish_V_and_carry_rows(
     n_pad: int,
     publish_resources: FloatND,
     borrowing_limit: ScalarFloat,
+    first_endogenous_point: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     discounted_expected_value_at_limit: ScalarFloat,
 ) -> tuple[FloatND, Float1D, Float1D]:
     """Interpolate V onto the exogenous grid and finish the carry value rows.
 
-    The published value is the maximum of the interpolated refined envelope
-    and the closed-form constrained value: the latter is the exact value of a
-    feasible policy (save exactly the borrowing limit), so the maximum is
-    exact where the constraint binds and a valid lower bound everywhere else.
+    The constraint binds exactly at the resources points weakly below the
+    first endogenous (Euler) point, so the published value there is the
+    closed-form constrained value — the exact value of saving exactly the
+    borrowing limit. Above it, the refined envelope is read with the cubic
+    Hermite interpolant (the marginal-utility row is the value row's exact
+    slope by the envelope theorem), floored at the constrained value, which
+    remains a feasible-policy lower bound everywhere.
 
     Envelope overflow is not silent: the outputs are NaN-poisoned so the
     solve loop's NaN diagnostics surface the offending (regime, period).
@@ -999,6 +1003,8 @@ def _publish_V_and_carry_rows(
         n_pad: Static length of the refined rows.
         publish_resources: Resources at the regime's exogenous state grid.
         borrowing_limit: Lower bound of the savings grid.
+        first_endogenous_point: The endogenous resources point of the lowest
+            savings node; the credit constraint binds weakly below it.
         utility_of_action: Utility with everything but the continuous action
             bound.
         discounted_expected_value_at_limit: Discounted expected continuation
@@ -1012,8 +1018,17 @@ def _publish_V_and_carry_rows(
     dtype = publish_resources.dtype
     overflowed = n_kept > n_pad
 
+    marginal_utility = jax.vmap(jax.grad(utility_of_action))(
+        jnp.where(jnp.isnan(refined_policy), 1.0, refined_policy)
+    )
+    marginal_utility = jnp.where(jnp.isnan(refined_policy), jnp.nan, marginal_utility)
+    marginal_utility = jnp.where(jnp.isneginf(refined_value), 0.0, marginal_utility)
+
     value_interpolated = interp_on_padded_grid(
-        x_query=publish_resources, xp=refined_grid, fp=refined_value
+        x_query=publish_resources,
+        xp=refined_grid,
+        fp=refined_value,
+        fp_slopes=marginal_utility,
     )
     closed_form_actions = publish_resources - borrowing_limit
     value_constrained = jnp.where(
@@ -1030,8 +1045,12 @@ def _publish_V_and_carry_rows(
     marginal_utility = jax.vmap(jax.grad(utility_of_action))(
         jnp.where(jnp.isnan(refined_policy), 1.0, refined_policy)
     )
-    marginal_utility = jnp.where(jnp.isnan(refined_policy), jnp.nan, marginal_utility)
-    marginal_utility = jnp.where(jnp.isneginf(refined_value), 0.0, marginal_utility)
+    V_arr = jnp.where(
+        constraint_binds,
+        value_constrained,
+        jnp.maximum(value_interpolated, value_constrained),
+    )
+    V_arr = jnp.where(overflowed, jnp.nan, V_arr).astype(dtype)
 
     value_row = jnp.where(overflowed, jnp.nan, refined_value).astype(dtype)
     return V_row, value_row, marginal_utility.astype(dtype)
