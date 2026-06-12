@@ -101,6 +101,14 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
             )
         function_params["taste_shocks"] = {"scale": "float"}
 
+    top_level_collisions = set(function_params) & set(per_target_params)
+    if top_level_collisions:
+        raise InvalidNameError(
+            f"Name(s) {sorted(top_level_collisions)} are used both as a "
+            f"target regime of a per-target transition and as a function, "
+            f"state, or action in the regime. Rename one of the two."
+        )
+
     return MappingProxyType(
         {
             **{k: MappingProxyType(v) for k, v in function_params.items()},

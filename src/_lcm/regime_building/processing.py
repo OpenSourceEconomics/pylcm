@@ -232,6 +232,7 @@ def process_regimes(
             solution=solution,
             simulation=simulation,
             stochastic_state_transitions=stochastic_state_transitions,
+            granular_param_expansions=granular_param_expansions,
             has_taste_shocks=user_regime.taste_shocks is not None,
         )
 
