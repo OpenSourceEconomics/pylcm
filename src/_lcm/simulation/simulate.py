@@ -11,6 +11,7 @@ from jax import vmap
 from _lcm.engine import (
     PeriodRegimeSimulationData,
     Regime,
+    StateActionSpace,
 )
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
@@ -252,6 +253,17 @@ def _simulate_subject_chunk(
         regime_name: {} for regime_name in regimes
     }
 
+    # The params-completed base space is period-invariant within one simulate
+    # call (params are fixed), so build it once per regime — runtime-grid
+    # completion (e.g. process gridpoint computation) rides on it and would
+    # otherwise rerun every period.
+    base_state_action_spaces = {
+        regime_name: regime.solution.state_action_space(
+            regime_params=flat_params[regime_name]
+        )
+        for regime_name, regime in regimes.items()
+    }
+
     for period, age in enumerate(ages.values):
         period_start = time.monotonic()
 
@@ -284,6 +296,7 @@ def _simulate_subject_chunk(
                 _simulate_regime_in_period(
                     regime_name=regime_name,
                     regime=regime,
+                    base_state_action_space=base_state_action_spaces[regime_name],
                     period=period,
                     age=age,
                     states=states,
@@ -374,6 +387,7 @@ def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
     regime: Regime,
+    base_state_action_space: StateActionSpace,
     period: int,
     age: ScalarInt | ScalarFloat,
     states: StatesPerRegime,
@@ -399,6 +413,8 @@ def _simulate_regime_in_period(
     Args:
         regime_name: Name of the current regime.
         regime: Internal representation of the regime.
+        base_state_action_space: The regime's params-completed state-action
+            space, built once per simulate call.
         period: Current period (0-indexed).
         age: Age corresponding to current period.
         states: Carrier of current-period state arrays for every regime and
@@ -430,7 +446,7 @@ def _simulate_regime_in_period(
     state_action_space = create_regime_state_action_space(
         regime=regime,
         regime_states=states[regime_name],
-        regime_params=flat_params[regime_name],
+        base=base_state_action_space,
     )
     # Compute optimal actions
     # We need to pass the value function array of the next period to the
@@ -559,8 +575,12 @@ def _lookup_values_from_indices(
 
 
 # vmap jnp.unravel_index over the first axis of the `indices` argument, while holding
-# the `shape` argument constant (in_axes = (0, None)).
-vmapped_unravel_index = vmap(jnp.unravel_index, in_axes=(0, None))
+# the `shape` argument constant (in_axes = (0, None)). Jitted with the shape
+# static so the vmap is traced once per (subject-count, grid-shape) pair
+# instead of on every period-regime call in the simulation's inner loop.
+vmapped_unravel_index = jax.jit(
+    vmap(jnp.unravel_index, in_axes=(0, None)), static_argnums=1
+)
 
 
 def _compute_starting_periods(

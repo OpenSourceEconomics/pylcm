@@ -54,9 +54,10 @@ automation. Python 3.14+ is required.
   `utility` entry, state-transition coverage, state/action overlap, distributed-grid
   rules). The result is a plain `lcm.regime.Regime`, still user vocabulary, so the
   params template reads the user's coarseness off it. Internal signatures mark the
-  post-merge form with the erased alias `FinalizedUserRegime` (defined in
-  `finalize.py`). A bare `Regime` validates only local, value-shape properties at
-  construction — completeness may be satisfied only at the model level.
+  post-merge form with `FinalizedUserRegime` (defined in `finalize.py`) — an alias the
+  type checker treats as plain `Regime`; it enforces nothing and only documents that
+  finalization has happened. A bare `Regime` validates only local, value-shape
+  properties at construction — completeness may be satisfied only at the model level.
 - `canonicalize_regimes` (`src/_lcm/regime_building/canonicalize.py`): the model-level
   canonicalization stage. Rewrites every phase slice's laws into the canonical
   target-granular form `Mapping[RegimeName, law]` over exactly the reachable targets
@@ -233,9 +234,9 @@ Regime(
     reachable
   - `MarkovTransition` ⇒ stochastic, returns a probability vector over all regimes;
     every regime is reachable
-  - per-target dict `{target: MarkovTransition(prob_func)}` ⇒ stochastic; each cell
-    returns that target's probability and the key set declares the regime's reachable
-    targets — omitted regimes are structurally unreachable. Cells must be
+  - per-target dict `{target_regime: MarkovTransition(prob_func)}` ⇒ stochastic; each
+    cell returns that target's probability and the key set declares the regime's
+    reachable targets — omitted regimes are structurally unreachable. Cells must be
     `MarkovTransition`-wrapped; `transition={}` is rejected (terminality is `None`).
     Cell params nest under the target in the template
     (`template[regime][target]["next_regime"]`).
