@@ -237,7 +237,8 @@ Regime(
     returns that target's probability and the key set declares the regime's reachable
     targets — omitted regimes are structurally unreachable. Cells must be
     `MarkovTransition`-wrapped; `transition={}` is rejected (terminality is `None`).
-    Cell params surface in the template under `to_<target>_next_regime`.
+    Cell params nest under the target in the template
+    (`template[regime][target]["next_regime"]`).
 - `active` is optional; defaults to `lambda _age: True` (always active)
 - `functions` must contain a `"utility"` entry (the utility function); checked when the
   model finalizes its regimes, not at `Regime` construction
@@ -326,9 +327,10 @@ per-declaration.
 When parameters are indexed by a DAG function output (not a model state/action), declare
 `derived_categoricals={"name": DiscreteGrid(CategoryClass)}` on the `Regime` that uses
 it. For convenience, model-level `derived_categoricals` on `Model(...)` are broadcast to
-all regimes. Functions used as derived categoricals must return **integer** types, not
-booleans — JAX cannot use booleans as array indices inside JIT. Use `jnp.int32(...)` to
-cast.
+all regimes under the exactly-one-level rule — a name is declared at model level or
+regime level, never both (ambiguity errors, also when the grids match). Functions used
+as derived categoricals must return **integer** types, not booleans — JAX cannot use
+booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
 ### SimulationResult
 

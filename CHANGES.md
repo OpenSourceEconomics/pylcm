@@ -37,6 +37,25 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   model build (model-level slots merged, default `H` injected, completeness
   validated).
 
+### Per-target parameters
+
+- Per-target transition parameters nest under the target regime's name in the
+  params template — `template[regime][target][func][param]` — replacing the
+  `to_<target>_…` spelling. Param qnames parallel engine function qnames.
+
+- Parameters resolve at four levels, most to least specific: target / function
+  (one value broadcasts over the law's targets) / regime / model. Exactly one
+  level per parameter; multi-level specifications are ambiguity errors.
+
+- Canonical flat params always key transition-law params per target, every
+  target of a broadcast value sharing one leaf object. A coarse regime
+  transition is evaluated once and shared, so it takes no per-target
+  parameters.
+
+- Model-level `derived_categoricals` follow the exactly-one-level rule of the
+  other model-level slots: a name declared at model level and regime level is
+  an ambiguity error, also when the grids match.
+
 
 ## 0.0.1
 

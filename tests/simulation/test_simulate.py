@@ -76,7 +76,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                 {
                     "H__discount_factor": jnp.asarray(1.0),
                     "utility__disutility_of_work": jnp.asarray(1.0),
-                    "next_wealth__interest_rate": jnp.asarray(0.05),
+                    "working_life__next_wealth__interest_rate": jnp.asarray(0.05),
                     "next_regime__final_age_alive": jnp.asarray(0),
                 }
             ),

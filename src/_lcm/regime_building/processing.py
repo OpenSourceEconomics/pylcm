@@ -173,6 +173,13 @@ def process_regimes(
     for regime_name, user_regime in user_regimes.items():
         spec = specs[regime_name]
         regime_params_template = create_regime_params_template(user_regime)
+        granular_param_expansions = _granular_param_expansions(
+            nested_transitions_by_phase=(
+                solve_nested_transitions[regime_name],
+                simulate_nested_transitions[regime_name],
+            ),
+            regime_params_template=regime_params_template,
+        )
 
         solution = _build_solution_phase(
             spec=spec,
@@ -180,6 +187,7 @@ def process_regimes(
             nested_transitions=solve_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
+            granular_param_expansions=granular_param_expansions,
             regime_names_to_ids=regime_names_to_ids,
             variables=regime_to_variables[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
@@ -195,6 +203,7 @@ def process_regimes(
             nested_transitions=simulate_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
+            granular_param_expansions=granular_param_expansions,
             regime_names_to_ids=regime_names_to_ids,
             variables=regime_to_variables[regime_name],
             simulation_variables=simulate_variables_from_regime(user_regime),
@@ -221,6 +230,7 @@ def process_regimes(
             solution=solution,
             simulation=simulation,
             stochastic_state_transitions=stochastic_state_transitions,
+            granular_param_expansions=granular_param_expansions,
         )
 
     return ensure_containers_are_immutable(canonical_regimes)
@@ -233,6 +243,7 @@ def _build_solution_phase(
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
+    granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
     regime_names_to_ids: RegimeNamesToIds,
     variables: Variables,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
@@ -250,6 +261,8 @@ def _build_solution_phase(
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
+        granular_param_expansions: Immutable mapping of coarse-template law
+            keys to granular qname prefixes.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         variables: States and actions of the regime with kind/topology/process tags.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
@@ -272,7 +285,10 @@ def _build_solution_phase(
         variables=variables,
     )
 
-    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
+    flat_param_names = _engine_flat_param_names(
+        regime_params_template=regime_params_template,
+        granular_param_expansions=granular_param_expansions,
+    )
 
     if spec.terminal:
         compute_regime_transition_probs = None
@@ -291,7 +307,7 @@ def _build_solution_phase(
             compute_regime_transition_probs=core.next_regime_func,
             grids=all_grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
-            regime_params_template=regime_params_template,
+            flat_param_names=flat_param_names,
             is_stochastic=spec.solution.stochastic_regime_transition,
             enable_jit=enable_jit,
             phase="solve",
@@ -351,6 +367,7 @@ def _build_simulation_phase(
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
+    granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
     regime_names_to_ids: RegimeNamesToIds,
     variables: Variables,
     simulation_variables: Variables,
@@ -381,6 +398,8 @@ def _build_simulation_phase(
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
+        granular_param_expansions: Immutable mapping of coarse-template law
+            keys to granular qname prefixes.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         variables: States and actions of the regime with kind/topology/process tags.
         simulation_variables: Simulate-phase variables (solve variables plus
@@ -440,7 +459,10 @@ def _build_simulation_phase(
     }
     simulate_grids = MappingProxyType({**all_grids[regime_name], **carried_grids})
 
-    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
+    flat_param_names = _engine_flat_param_names(
+        regime_params_template=regime_params_template,
+        granular_param_expansions=granular_param_expansions,
+    )
 
     if spec.terminal:
         compute_regime_transition_probs = None
@@ -458,7 +480,7 @@ def _build_simulation_phase(
             compute_regime_transition_probs=core.next_regime_func,
             grids=simulate_grids,
             regime_names_to_ids=regime_names_to_ids,
-            regime_params_template=regime_params_template,
+            flat_param_names=flat_param_names,
             is_stochastic=spec.simulation.stochastic_regime_transition,
             enable_jit=enable_jit,
             phase="simulate",
@@ -492,7 +514,7 @@ def _build_simulation_phase(
         stochastic_transition_names=core.stochastic_transition_names,
         all_grids=all_grids,
         variables=variables,
-        regime_params_template=regime_params_template,
+        flat_param_names=flat_param_names,
         enable_jit=enable_jit,
     )
 
@@ -632,19 +654,19 @@ def _process_regime_core(
         )
 
     for func_name, func in deterministic_transition_functions.items():
-        param_key = _extract_param_key(func_name, regime_params_template)
         processed_functions[func_name] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
-            param_key=param_key,
+            param_key=func_name,
+            names_key=_extract_template_names_key(func_name, regime_params_template),
         )
 
     for func_name, func in stochastic_transition_functions.items():
-        param_key = _extract_param_key(func_name, regime_params_template)
         processed_functions[f"weight_{func_name}"] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
-            param_key=param_key,
+            param_key=func_name,
+            names_key=_extract_template_names_key(func_name, regime_params_template),
         )
         processed_functions[func_name] = _get_discrete_markov_next_function(
             func=func,
@@ -740,7 +762,7 @@ def _process_next_regime_cells(
       processed once under the `next_regime` template key, so the engine
       evaluates it once and indexes per target
     - `MarkovTransition` cells (user per-target dict) ⇒ each cell is
-      processed under its `to_<target>_next_regime` template key
+      processed under its nested `template[target]["next_regime"]` branch
 
     Args:
         next_regime_cells_by_target: The canonical regime-transition cells,
@@ -773,7 +795,7 @@ def _process_next_regime_cells(
             target_name: _rename_params_to_qnames(
                 func=cast("UserFunction", cell),
                 regime_params_template=regime_params_template,
-                param_key=f"to_{target_name}_next_regime",
+                param_key=qname_from_tree_path((target_name, "next_regime")),
             )
             for target_name, cell in next_regime_cells_by_target.items()
         }
@@ -859,6 +881,7 @@ def _rename_params_to_qnames(
     func: UserFunction,
     regime_params_template: RegimeParamsTemplate,
     param_key: str,
+    names_key: str | None = None,
 ) -> EconFunction:
     """Rename function params to qualified names using dags.signature.rename_arguments.
 
@@ -867,13 +890,23 @@ def _rename_params_to_qnames(
     Args:
         func: The user function.
         regime_params_template: The parameter template for the regime.
-        param_key: The key to look up in regime_params_template (e.g., "utility").
+        param_key: The qname prefix the renamed params carry (e.g., "utility",
+            "retired__next_wealth").
+        names_key: The template key under which the param names live, when it
+            differs from `param_key` — a coarse law's names sit at the bare
+            law name while its params bind per target. Defaults to
+            `param_key`.
 
     Returns:
         The function with renamed parameters.
 
     """
-    param_names = list(regime_params_template[param_key])
+    # Per-target keys are qnames (`<target>__<func>`) addressing a nested
+    # template branch; walk the tree path instead of subscripting directly.
+    branch: Mapping[str, object] = regime_params_template
+    for part in tree_path_from_qname(names_key if names_key is not None else param_key):
+        branch = cast("Mapping[str, object]", branch[part])
+    param_names = list(branch)
     if not param_names:
         return cast("EconFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
@@ -881,29 +914,88 @@ def _rename_params_to_qnames(
     return cast("EconFunction", rename_arguments(func, mapper=mapper))
 
 
-def _extract_param_key(
+def _engine_flat_param_names(
+    *,
+    regime_params_template: RegimeParamsTemplate,
+    granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
+) -> frozenset[str]:
+    """Return the regime's flat param names in the engine's binding vocabulary.
+
+    Template names whose function key has a granular expansion are replaced
+    by their per-target spellings (`<target>__<law>__<param>`); everything
+    else passes through unchanged.
+    """
+    names: set[str] = set()
+    for name in get_flat_param_names(regime_params_template):
+        path = tree_path_from_qname(name)
+        prefixes = granular_param_expansions.get(path[0]) if len(path) > 1 else None
+        if prefixes:
+            names.update(
+                qname_from_tree_path((prefix, path[-1])) for prefix in prefixes
+            )
+        else:
+            names.add(name)
+    return frozenset(names)
+
+
+def _granular_param_expansions(
+    *,
+    nested_transitions_by_phase: tuple[_TransitionBundles, ...],
+    regime_params_template: RegimeParamsTemplate,
+) -> MappingProxyType[FunctionName, tuple[str, ...]]:
+    """Map each coarse-template law key to its granular qname prefixes.
+
+    A state law whose params the template keys coarsely binds them per target
+    in the engine; this collects, across the given phase bundles, every
+    `<target>__<law>` prefix for laws whose names live at the bare law name
+    (mirroring `_extract_template_names_key`) and that carry params at all.
+    Canonical flat params materialize one shared leaf per prefix.
+    """
+    expansions: dict[FunctionName, set[str]] = {}
+    for bundles in nested_transitions_by_phase:
+        for target_name, bundle in bundles.items():
+            for law_name in bundle:
+                if law_name == "next_regime":
+                    continue
+                qname = qname_from_tree_path((target_name, law_name))
+                names_key = _extract_template_names_key(qname, regime_params_template)
+                if names_key != qname and regime_params_template.get(names_key):
+                    expansions.setdefault(names_key, set()).add(qname)
+    return MappingProxyType(
+        {law_name: tuple(sorted(v)) for law_name, v in expansions.items()}
+    )
+
+
+def _extract_template_names_key(
     func_name: str,
     regime_params_template: RegimeParamsTemplate,
 ) -> str:
-    """Extract the param template key from a possibly prefixed function name.
+    """Extract the template key under which a function's param names live.
 
     The template mirrors the user's coarseness — a per-target dict yields
-    `to_<target>_next_<state>` keys, a broadcast law a single `next_<state>`
-    key — while the engine-side function names are always target-prefixed
-    (canonical form). The template therefore decides which key applies:
+    params nested under the target (`template[target][func]`), a broadcast
+    law a single coarse `next_<state>` key — while the engine-side function
+    names are always target-prefixed (canonical form). The template therefore
+    decides where the names live:
 
-    - "work__next_health" with `to_work_next_health` in the template (user
-      wrote a per-target dict) ⇒ "to_work_next_health"
-    - "work__next_wealth" without such a key (broadcast law) ⇒ "next_wealth"
+    - "work__next_health" with `template["work"]["next_health"]` present
+      (user wrote a per-target dict) ⇒ "work__next_health"
+    - "work__next_wealth" without such a branch (broadcast law) ⇒
+      "next_wealth"
     - unprefixed names ⇒ unchanged
 
+    Either way the params *bind* under the engine function's qname; for
+    broadcast laws the canonical flat params materialize one shared leaf
+    per target (`Regime.granular_param_expansions`).
     """
     path = tree_path_from_qname(func_name)
     if len(path) > 1:
         suffix = qname_from_tree_path(path[1:])
-        per_target_key = f"to_{path[0]}_{suffix}"
-        if per_target_key in regime_params_template:
-            return per_target_key
+        target_branch = regime_params_template.get(path[0])
+        if isinstance(target_branch, Mapping) and isinstance(
+            target_branch.get(suffix), Mapping
+        ):
+            return func_name
         return suffix
     return func_name
 
@@ -1240,7 +1332,7 @@ def build_regime_transition_probs_functions(
     compute_regime_transition_probs: TransitionFunction | None,
     grids: MappingProxyType[StateOrActionName, Grid],
     regime_names_to_ids: RegimeNamesToIds,
-    regime_params_template: RegimeParamsTemplate,
+    flat_param_names: frozenset[str],
     is_stochastic: bool,
     enable_jit: bool,
     phase: Literal["solve", "simulate"],
@@ -1254,7 +1346,8 @@ def build_regime_transition_probs_functions(
             function; `None` for per-target regime transitions.
         grids: Immutable mapping of state and action variable names to grid objects.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
-        regime_params_template: The regime's parameter template.
+        flat_param_names: Frozenset of flat parameter names in the engine's
+            binding vocabulary.
         is_stochastic: Whether the regime transition is stochastic.
         enable_jit: Whether to JIT-compile the functions.
         phase: Which phase to build for.
@@ -1311,7 +1404,7 @@ def build_regime_transition_probs_functions(
         func=next_regime_accepting_all,
         variables=_get_vmap_params(
             all_args=tuple(inspect.signature(next_regime_accepting_all).parameters),
-            regime_params_template=regime_params_template,
+            flat_param_names=flat_param_names,
         ),
     )
 
@@ -1473,10 +1566,10 @@ def _wrap_deterministic_regime_transition(
 def _get_vmap_params(
     *,
     all_args: tuple[str, ...],
-    regime_params_template: RegimeParamsTemplate,
+    flat_param_names: frozenset[str],
 ) -> tuple[str, ...]:
     """Get parameter names that should be vmapped (states and actions)."""
-    non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
+    non_vmap = {"period", "age"} | flat_param_names
     return tuple(arg for arg in all_args if arg not in non_vmap)
 
 
@@ -1620,7 +1713,7 @@ def _build_next_state_vmapped(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variables: Variables,
-    regime_params_template: RegimeParamsTemplate,
+    flat_param_names: frozenset[str],
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
     """Build a vmapped next-state function for simulation."""
@@ -1633,7 +1726,7 @@ def _build_next_state_vmapped(
     )
     sig_args = tuple(inspect.signature(next_state).parameters)
 
-    non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
+    non_vmap = {"period", "age"} | flat_param_names
     vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)
 
     next_state_vmapped = vmap_1d(func=next_state, variables=vmap_variables)

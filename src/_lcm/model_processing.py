@@ -9,6 +9,7 @@ import functools
 import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
+from typing import cast
 
 from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
@@ -19,6 +20,7 @@ from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
     create_params_template,
+    materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -29,7 +31,6 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.typing import (
     FlatParams,
-    FunctionName,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
@@ -132,10 +133,20 @@ def _build_regimes_and_template_with_fixed_params(
     fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
     _validate_param_types(fixed_flat_params)
 
+    # The template trim works on the template-shaped (user-coarse) form;
+    # partialling needs the granular form the compiled functions bind.
+    granular_fixed_flat_params = materialize_granular_transition_params(
+        flat_params=fixed_flat_params,
+        expansions={
+            regime_name: regime.granular_param_expansions
+            for regime_name, regime in raw_regimes.items()
+        },
+    )
+
     return (
         _partial_fixed_params_into_regimes(
             raw_regimes=raw_regimes,
-            fixed_flat_params=fixed_flat_params,
+            fixed_flat_params=granular_fixed_flat_params,
         ),
         _remove_fixed_params_from_template(
             template=raw_params_template,
@@ -327,33 +338,38 @@ def _remove_fixed_params_from_template(
     template so users don't need to supply them at solve/simulate time.
 
     """
-    result: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
-    for regime_name, regime_template in template.items():
-        regime_fixed = fixed_flat_params.get(regime_name, MappingProxyType({}))
-        new_regime: dict[FunctionName, dict[str, str]] = {}
-        for func_name, func_params in regime_template.items():
-            new_func_params = {
-                param_name: param_type
-                for param_name, param_type in func_params.items()
-                if qname_from_tree_path((func_name, param_name)) not in regime_fixed
+
+    def _trim(
+        *, branch: Mapping[str, object], prefix: tuple[str, ...], fixed: Mapping
+    ) -> dict[str, object]:
+        trimmed: dict[str, object] = {}
+        for key, value in branch.items():
+            if isinstance(value, Mapping):
+                inner = _trim(
+                    branch=cast("Mapping[str, object]", value),
+                    prefix=(*prefix, key),
+                    fixed=fixed,
+                )
+                if inner:
+                    trimmed[key] = MappingProxyType(inner)
+            elif qname_from_tree_path((*prefix, key)) not in fixed:
+                trimmed[key] = value
+        return trimmed
+
+    return cast(
+        "ParamsTemplate",
+        MappingProxyType(
+            {
+                regime_name: MappingProxyType(
+                    _trim(
+                        branch=regime_template,
+                        prefix=(),
+                        fixed=fixed_flat_params.get(regime_name, MappingProxyType({})),
+                    )
+                )
+                for regime_name, regime_template in template.items()
             }
-            if new_func_params:
-                new_regime[func_name] = new_func_params
-        if new_regime:
-            result[regime_name] = new_regime
-        else:
-            # Keep regime key even if empty (needed by process_params)
-            result[regime_name] = {}
-    return MappingProxyType(
-        {
-            regime_name: MappingProxyType(
-                {
-                    func_name: MappingProxyType(func_params)
-                    for func_name, func_params in regime.items()
-                }
-            )
-            for regime_name, regime in result.items()
-        }
+        ),
     )
 
 
