@@ -80,8 +80,8 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
 
         path = tree_path_from_qname(name)
         if len(path) > 1:
-            func_name, target_name = path[0], path[1]
-            target_branch = per_target_params.setdefault(target_name, {})
+            func_name, target_regime_name = path[0], path[1]
+            target_branch = per_target_params.setdefault(target_regime_name, {})
             if func_name in target_branch:
                 target_branch[func_name] |= params
             else:
@@ -118,10 +118,10 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         {
             **{k: MappingProxyType(v) for k, v in function_params.items()},
             **{
-                target_name: MappingProxyType(
+                target_regime_name: MappingProxyType(
                     {k: MappingProxyType(v) for k, v in branch.items()}
                 )
-                for target_name, branch in per_target_params.items()
+                for target_regime_name, branch in per_target_params.items()
             },
         }
     )
@@ -228,7 +228,7 @@ def _regime_transition_entries(
 
     - coarse forms ⇒ one `next_regime` entry
     - a per-target dict ⇒ one `next_regime__<target>` entry per cell, so each
-      cell's parameters nest under the target (`template[target]["next_regime"]`)
+      cell's parameters nest under the target (`template[target_regime]["next_regime"]`)
     - `Phased` per-target dicts (identical key sets) ⇒ per-cell `Phased`
       entries, so both phases' parameters are unioned per target
 
@@ -237,16 +237,17 @@ def _regime_transition_entries(
         solve_cells = cast("Mapping[RegimeName, UserFunction]", transition.solve)
         simulate_cells = cast("Mapping[RegimeName, UserFunction]", transition.simulate)
         return {
-            f"next_regime__{target_name}": Phased(
-                solve=solve_cells[target_name],
-                simulate=simulate_cells[target_name],
+            f"next_regime__{target_regime_name}": Phased(
+                solve=solve_cells[target_regime_name],
+                simulate=simulate_cells[target_regime_name],
             )
-            for target_name in solve_cells
+            for target_regime_name in solve_cells
         }
     if isinstance(transition, Mapping):
         cells = cast("Mapping[RegimeName, UserFunction]", transition)
         return {
-            f"next_regime__{target_name}": cell for target_name, cell in cells.items()
+            f"next_regime__{target_regime_name}": cell
+            for target_regime_name, cell in cells.items()
         }
     return {"next_regime": cast("UserFunction | Phased", transition)}
 
