@@ -22,6 +22,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import BruteForce
+from lcm.transition import fixed_transition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
