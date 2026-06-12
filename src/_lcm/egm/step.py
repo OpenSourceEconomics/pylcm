@@ -1197,11 +1197,23 @@ def _aggregate_child_choices(
     queries_flat = row_queries.reshape(-1)
     gradients_flat = row_gradients.reshape(-1)
 
+    # The marginal-utility row is the value row's exact slope (envelope
+    # theorem), upgrading the value read to cubic Hermite; the mu read itself
+    # stays linear (a policy-grade quantity, and its interpolation error
+    # enters the value only at second order through the Euler inversion).
+    def interp_value_row(
+        xp: Float1D, fp: Float1D, fp_slopes: Float1D, x_query: ScalarFloat
+    ) -> ScalarFloat:
+        """Interpolate one carry value row at its query; positional per `jax.vmap`."""
+        return interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp, fp_slopes=fp_slopes)
+
     def interp_row(xp: Float1D, fp: Float1D, x_query: ScalarFloat) -> ScalarFloat:
         """Interpolate one carry row at its own query; positional per `jax.vmap`."""
         return interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
 
-    value_at_child = jax.vmap(interp_row)(grid_rows, value_rows, queries_flat)
+    value_at_child = jax.vmap(interp_value_row)(
+        grid_rows, value_rows, marginal_rows, queries_flat
+    )
     marginal_at_child = jax.vmap(interp_row)(grid_rows, marginal_rows, queries_flat)
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as

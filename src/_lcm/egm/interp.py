@@ -3,9 +3,11 @@
 The upper-envelope refinement emits grid rows of static length whose unused
 tail slots hold NaN and whose kink abscissae appear twice (left- and
 right-extrapolated function values). `interp_on_padded_grid` interpolates on
-such rows without ever dividing by a zero-width bracket. `locate_on_grid`
-produces edge-clamped bracket indices and weights on ordinary (unpadded)
-grids, e.g. the passive-state grids of the mixed carry read.
+such rows without ever dividing by a zero-width bracket; passing the row's
+exact slopes upgrades the linear interpolant to a monotone cubic Hermite one.
+`locate_on_grid` produces edge-clamped bracket indices and weights on
+ordinary (unpadded) grids, e.g. the passive-state grids of the mixed carry
+read.
 """
 
 import jax.numpy as jnp
@@ -88,6 +90,17 @@ def interp_on_padded_grid(
     linear = jnp.where(weight_lower > 0.0, weight_lower * fp_lower, 0.0) + jnp.where(
         relative_position > 0.0, relative_position * fp_upper, 0.0
     )
+    if fp_slopes is None:
+        return linear
+    return linear + _hermite_correction(
+        relative_position=relative_position,
+        bracket_width=bracket_width,
+        safe_width=safe_width,
+        fp_lower=fp_lower,
+        fp_upper=fp_upper,
+        slope_lower=fp_slopes[lower],
+        slope_upper=fp_slopes[upper],
+    )
 
 
 def locate_on_grid(
@@ -128,3 +141,53 @@ def locate_on_grid(
         jnp.clip((x_query - grid[lower]) / safe_width, 0.0, 1.0),
     )
     return lower, upper, weight_upper
+
+
+def _hermite_correction(
+    *,
+    relative_position: FloatND,
+    bracket_width: FloatND,
+    safe_width: FloatND,
+    fp_lower: FloatND,
+    fp_upper: FloatND,
+    slope_lower: FloatND,
+    slope_upper: FloatND,
+) -> FloatND:
+    """Cubic Hermite correction on top of the linear blend, per bracket.
+
+    With $t$ the relative position, $h$ the bracket width, $\\Delta f$ the
+    value difference, and limited node slopes $m_0, m_1$, the cubic Hermite
+    interpolant is the linear blend plus
+    $t (1-t) \\left[ (1-t)(h m_0 - \\Delta f) + t (\\Delta f - h m_1) \\right]$,
+    which vanishes at both endpoints — boundary clamps and zero-width-bracket
+    reads are untouched. The slopes are Fritsch-Carlson limited (same sign as
+    the secant, magnitude at most three times it), a sufficient condition for
+    the interpolant to be monotone on each monotone bracket. The correction
+    is applied only on positive-width brackets whose endpoint values and
+    slopes are all finite; everywhere else it is zero and the linear rule
+    (with its `-inf` and NaN-padding contracts) stands.
+    """
+    df = fp_upper - fp_lower
+    safe_df = jnp.where(jnp.isfinite(df), df, 0.0)
+    secant = safe_df / safe_width
+
+    def limit(slope: FloatND) -> FloatND:
+        same_sign = slope * secant > 0.0
+        limited = jnp.sign(secant) * jnp.minimum(jnp.abs(slope), 3.0 * jnp.abs(secant))
+        return jnp.where(same_sign, limited, 0.0)
+
+    coeff_lower = safe_width * limit(slope_lower) - safe_df
+    coeff_upper = safe_df - safe_width * limit(slope_upper)
+    correction = (
+        relative_position
+        * (1.0 - relative_position)
+        * ((1.0 - relative_position) * coeff_lower + relative_position * coeff_upper)
+    )
+    applicable = (
+        (bracket_width > 0.0)
+        & jnp.isfinite(fp_lower)
+        & jnp.isfinite(fp_upper)
+        & jnp.isfinite(slope_lower)
+        & jnp.isfinite(slope_upper)
+    )
+    return jnp.where(applicable, correction, 0.0)
