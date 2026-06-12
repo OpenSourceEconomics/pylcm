@@ -447,8 +447,10 @@ def _build_terminal_carry_producer(
     marginal utility. Cases:
 
     - no states ⇒ constant-value, zero-marginal-utility broadcast rows
-    - exactly one continuous state and no actions ⇒ terminal utility and its
-      wealth gradient on the regime's own state grid
+    - exactly one continuous state, no actions, and discrete states only of
+      the fixed (non-process) kind ⇒ terminal utility and its wealth gradient
+      on the regime's own state grid, with the discrete states as the carry's
+      leading axes (one wealth row per discrete combo)
     - anything else ⇒ no producer (a DC-EGM regime targeting such a terminal
       regime is rejected by the EGM kernel builder)
 
@@ -461,20 +463,35 @@ def _build_terminal_carry_producer(
     if not (model_has_dcegm_regime and user_regime.terminal):
         return None, None
     producer: EgmCarryProducer
+    discrete_state_names = tuple(
+        name
+        for name in variables.state_names
+        if name in set(variables.discrete_state_names)
+    )
+    has_only_fixed_discrete_states = all(
+        not isinstance(grids[name], _ContinuousStochasticProcess)
+        for name in discrete_state_names
+    )
     if not variables.state_names:
         producer = get_stateless_terminal_carry_producer()
         template = build_template_egm_carry(n_rows=N_STATELESS_CARRY_ROWS)
     elif (
         len(variables.continuous_state_names) == 1
-        and not variables.discrete_state_names
+        and has_only_fixed_discrete_states
         and not user_regime.actions
     ):
         state_name = variables.continuous_state_names[0]
         producer = get_terminal_wealth_carry_producer(
-            functions=functions, state_name=state_name
+            functions=functions,
+            state_name=state_name,
+            discrete_state_names=discrete_state_names,
+        )
+        leading_shape = tuple(
+            int(grids[name].to_jax().shape[0]) for name in discrete_state_names
         )
         template = build_template_egm_carry(
-            n_rows=int(grids[state_name].to_jax().shape[0])
+            n_rows=int(grids[state_name].to_jax().shape[0]),
+            leading_shape=leading_shape,
         )
     else:
         return None, None
