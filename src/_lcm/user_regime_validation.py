@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 def _grid_mapping_errors(
-    attr_name: str, mapping: Mapping[str, object], *, allow_phase_variants: bool
+    *, attr_name: str, mapping: Mapping[str, object], allow_phase_variants: bool
 ) -> list[str]:
     """Collect key/value type errors for a grid-valued mapping (states/actions)."""
     allowed = Grid | Phased if allow_phase_variants else Grid
@@ -55,7 +55,7 @@ def _grid_mapping_errors(
 
 
 def _callable_mapping_errors(
-    attr_name: str, mapping: Mapping[str, object], *, allow_phase_variants: bool
+    *, attr_name: str, mapping: Mapping[str, object], allow_phase_variants: bool
 ) -> list[str]:
     """Collect key/value type errors for a callable-valued mapping."""
     error_messages: list[str] = []
@@ -90,13 +90,19 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
 
     """
     error_messages = [
-        *_grid_mapping_errors("states", regime.states, allow_phase_variants=True),
-        *_grid_mapping_errors("actions", regime.actions, allow_phase_variants=False),
-        *_callable_mapping_errors(
-            "functions", regime.functions, allow_phase_variants=True
+        *_grid_mapping_errors(
+            attr_name="states", mapping=regime.states, allow_phase_variants=True
+        ),
+        *_grid_mapping_errors(
+            attr_name="actions", mapping=regime.actions, allow_phase_variants=False
         ),
         *_callable_mapping_errors(
-            "constraints", regime.constraints, allow_phase_variants=False
+            attr_name="functions", mapping=regime.functions, allow_phase_variants=True
+        ),
+        *_callable_mapping_errors(
+            attr_name="constraints",
+            mapping=regime.constraints,
+            allow_phase_variants=False,
         ),
     ]
 
@@ -111,7 +117,7 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
     Completeness properties (a `utility` entry, state-transition coverage,
     state/action overlap, distributed-grid rules) may be satisfied only after
     model-level slots are merged in; `_validate_completeness` checks them when
-    the effective regime is constructed.
+    the regimes are finalized at model build.
     """
     error_messages: list[str] = []
 
@@ -203,7 +209,7 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
 
 
 def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
-    """Collect completeness errors for an effective (post-merge) regime.
+    """Collect completeness errors for a finalized (post-merge) regime.
 
     These properties hold only for the regime the model actually runs —
     a bare user `Regime` may legitimately lack them until model-level slots

@@ -104,9 +104,9 @@ def _compute_metadata(
 
     for regime_name, regime in regimes.items():
         regime_to_states[regime_name] = regime.simulation.state_names
-        regime_to_actions[regime_name] = regime.simulation.variables.action_names
+        regime_to_actions[regime_name] = regime.simulation.action_names
         all_states.update(regime.simulation.state_names)
-        all_actions.update(regime.simulation.variables.action_names)
+        all_actions.update(regime.simulation.action_names)
 
     # Extract categories and ordered flags from simulation_output_dtypes
     discrete_categories: dict[str, tuple[str, ...]] = {}

@@ -1,10 +1,10 @@
-"""`EffectiveUserRegime` — the regime as the model runs it.
+"""`finalize_regimes` — the regimes as the model runs them.
 
 A user `Regime` validates only local, value-shape properties at construction;
 completeness (a `utility` entry, state-transition coverage, default-`H`
-injection, state/action overlap) is validated when the model builds its
-effective regimes. `model.user_regimes` exposes the effective form: complete,
-immutable, still in user vocabulary.
+injection, state/action overlap) is validated when the model finalizes its
+regimes. `model.user_regimes` exposes the finalized form: plain `Regime`
+instances, complete, immutable, still in user vocabulary.
 """
 
 from typing import Any
@@ -12,7 +12,6 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.effective import EffectiveUserRegime
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
@@ -89,13 +88,12 @@ def test_model_with_uncovered_state_raises() -> None:
         _build_model(work)
 
 
-def test_user_regimes_are_effective_with_default_h() -> None:
-    """`model.user_regimes` exposes effective regimes: `H` injected, raw untouched."""
+def test_user_regimes_are_finalized_with_default_h() -> None:
+    """`model.user_regimes` exposes finalized regimes: `H` injected, raw untouched."""
     work = _build_work_regime()
     model = _build_model(work)
-    effective = model.user_regimes["work"]
-    assert isinstance(effective, EffectiveUserRegime)
-    assert "H" in effective.functions
+    finalized = model.user_regimes["work"]
+    assert "H" in finalized.functions
     assert "H" not in work.functions
 
 
@@ -115,14 +113,14 @@ def test_state_action_overlap_raises_at_model_time() -> None:
         _build_model(work)
 
 
-def test_effective_regime_is_a_user_regime() -> None:
-    """Engine code typed against the user `Regime` accepts the effective form."""
+def test_finalized_regime_is_a_plain_user_regime() -> None:
+    """`model.user_regimes` holds plain `Regime` instances, not a subclass."""
     model = _build_model(_build_work_regime())
-    assert isinstance(model.user_regimes["work"], UserRegime)
+    assert type(model.user_regimes["work"]) is UserRegime
 
 
 def test_model_level_derived_categoricals_are_merged() -> None:
-    """Model-level `derived_categoricals` appear on every effective regime."""
+    """Model-level `derived_categoricals` appear on every finalized regime."""
 
     @categorical(ordered=False)
     class _Flag:
