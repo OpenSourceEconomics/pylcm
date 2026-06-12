@@ -26,13 +26,14 @@ _N_SUBJECTS = 100_000
 _SOLVE_WEALTH_N_POINTS = 1_000
 _SOLVE_CONSUMPTION_N_POINTS = 5_000
 # Matched-precision calibration for the head-to-head: 200 cubically clustered
-# savings nodes solve this model to the same V accuracy as the 1000-node (and
-# even a 20000-node) consumption grid reaches wherever the consumption grid's
-# truncation at its start point does not bind — both solvers then sit at the
-# same few-percent-of-utility error level, so the timing comparison is
-# apples-to-apples. More savings nodes do not improve accuracy here (the
-# residual is carry-interpolation error compounding over the horizon, not
-# savings resolution), they only lengthen the sequential envelope scan.
+# savings nodes solve this model at least as accurately as the dense
+# consumption grid does wherever the consumption grid's truncation at its
+# start point does not bind, so the timing comparison is apples-to-apples
+# (against the retirement leg's closed form, DC-EGM at this grid is at
+# max error ~1e-3 while the brute leg floors at ~2e-2 from grid bias and
+# is unboundedly wrong below its consumption-grid start). More savings
+# nodes buy further accuracy only DC-EGM can reach — and lengthen the
+# sequential envelope scan — so they would unbalance the comparison.
 _SOLVE_SAVINGS_N_POINTS = 200
 
 _SIMULATE_WEALTH_N_POINTS = 500
