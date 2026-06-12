@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
+from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import FunctionName, RegimeName, StateName
@@ -34,7 +35,10 @@ type _PhaseStateTransition = (
     | Mapping[RegimeName, UserFunction | MarkovTransition]
 )
 type _PhaseRegimeTransition = (
-    UserFunction | MarkovTransition | Mapping[RegimeName, MarkovTransition] | None
+    UserFunction
+    | MarkovTransition
+    | Mapping[RegimeName, MarkovTransition | _CoarseTransitionCell]
+    | None
 )
 
 
@@ -57,48 +61,67 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             grammar.
 
     """
-    errors: list[str] = []
-
-    solve_functions, simulate_functions = _split_functions(user_regime, errors)
-    solve_grid_states, simulate_grid_states, carried_imputations = _split_states(
-        user_regime, errors
+    solve_functions, simulate_functions, function_errors = _split_functions(
+        user_regime=user_regime
+    )
+    solve_grid_states, simulate_grid_states, carried_imputations, state_errors = (
+        _split_states(user_regime=user_regime)
     )
 
-    for name, func in carried_imputations.items():
-        if name in user_regime.functions:
-            errors.append(
-                f"State '{name}' is carried: its solve-phase imputation is "
-                f"registered as a derived function under '{name}', colliding "
-                f"with the regime function of the same name. Rename one of "
-                f"the two."
-            )
-        solve_functions[name] = func
+    collision_errors = [
+        f"State '{name}' is carried: its solve-phase imputation is "
+        f"registered as a derived function under '{name}', colliding "
+        f"with the regime function of the same name. Rename one of "
+        f"the two."
+        for name in carried_imputations
+        if name in user_regime.functions
+    ]
+    solve_functions = {**solve_functions, **carried_imputations}
 
     solve_state_transitions, simulate_state_transitions = _split_state_transitions(
-        user_regime
+        user_regime=user_regime
     )
 
     carried_only = frozenset(simulate_grid_states) - frozenset(solve_grid_states)
-    for name in sorted(carried_only):
-        solve_state_transitions.pop(name, None)
-        errors.extend(
-            _carried_law_errors(name=name, law=simulate_state_transitions.get(name))
+    solve_state_transitions = {
+        name: law
+        for name, law in solve_state_transitions.items()
+        if name not in carried_only
+    }
+    carried_errors = [
+        message
+        for name in sorted(carried_only)
+        for message in _carried_law_errors(
+            name=name, law=simulate_state_transitions.get(name)
         )
+    ]
 
-    solve_transition, simulate_transition = _split_regime_transition(
-        user_regime, errors
+    solve_transition, simulate_transition, transition_errors = _split_regime_transition(
+        user_regime=user_regime
     )
     terminal = user_regime.transition is None
-    if terminal and carried_only:
-        errors.append(
+    terminal_errors = (
+        [
             f"Terminal regimes cannot declare carried states (no next period "
             f"to carry {sorted(carried_only)} into)."
-        )
+        ]
+        if terminal and carried_only
+        else []
+    )
 
+    errors = (
+        function_errors
+        + state_errors
+        + collision_errors
+        + carried_errors
+        + transition_errors
+        + terminal_errors
+    )
     if errors:
         raise RegimeInitializationError(format_messages(errors))
 
     def _phase_spec(
+        *,
         functions: dict[FunctionName, UserFunction],
         grid_states: dict[StateName, Grid],
         state_transitions: dict[StateName, _PhaseStateTransition],
@@ -123,16 +146,16 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
 
     return PhasedRegimeSpec(
         solution=_phase_spec(
-            solve_functions,
-            solve_grid_states,
-            solve_state_transitions,
-            solve_transition,
+            functions=solve_functions,
+            grid_states=solve_grid_states,
+            state_transitions=solve_state_transitions,
+            regime_transition=solve_transition,
         ),
         simulation=_phase_spec(
-            simulate_functions,
-            simulate_grid_states,
-            simulate_state_transitions,
-            simulate_transition,
+            functions=simulate_functions,
+            grid_states=simulate_grid_states,
+            state_transitions=simulate_state_transitions,
+            regime_transition=simulate_transition,
         ),
     )
 
@@ -189,18 +212,31 @@ class RegimePhaseSpec:
     plus target-only entries."""
 
     regime_transition: _PhaseRegimeTransition
-    """Phase-resolved regime transition; `None` for terminal regimes."""
+    """Phase-resolved regime transition; `None` for terminal regimes.
+    `normalize_regime_phases` emits the user form (bare callable,
+    `MarkovTransition`, or per-target dict); `canonicalize_regimes` rewrites
+    every non-terminal form into a per-target mapping — coarse forms become
+    cells sharing one `_CoarseTransitionCell`."""
 
     stochastic_regime_transition: bool
-    """Whether this phase's regime transition is a `MarkovTransition`."""
+    """Whether this phase's regime transition is stochastic — a
+    `MarkovTransition` or a per-target dict (whose cells are
+    `MarkovTransition`-wrapped probability functions)."""
 
 
 def _split_functions(
-    user_regime: lcm.regime.Regime, errors: list[str]
-) -> tuple[dict[FunctionName, UserFunction], dict[FunctionName, UserFunction]]:
-    """Split `functions` into per-phase mappings, validating each variant."""
+    *, user_regime: lcm.regime.Regime
+) -> tuple[
+    dict[FunctionName, UserFunction], dict[FunctionName, UserFunction], list[str]
+]:
+    """Split `functions` into per-phase mappings, validating each variant.
+
+    Returns the solve-phase mapping, the simulate-phase mapping, and the
+    grammar violations found along the way.
+    """
     solve_functions: dict[FunctionName, UserFunction] = {}
     simulate_functions: dict[FunctionName, UserFunction] = {}
+    errors: list[str] = []
     for name, value in user_regime.functions.items():
         if isinstance(value, Phased):
             variants = (
@@ -221,34 +257,37 @@ def _split_functions(
         elif value is not None:
             # `None` masks a model-level entry; bound at model build.
             errors.append(f"functions['{name}'] must be a callable, got {value!r}.")
-    return solve_functions, simulate_functions
+    return solve_functions, simulate_functions, errors
 
 
 def _split_states(
-    user_regime: lcm.regime.Regime, errors: list[str]
+    *, user_regime: lcm.regime.Regime
 ) -> tuple[
     dict[StateName, Grid],
     dict[StateName, Grid],
     dict[StateName, UserFunction],
+    list[str],
 ]:
     """Split `states` into per-phase grids plus carried-state imputations.
 
-    Returns the solve-phase grid states, the simulate-phase grid states, and
-    each carried state's solve-phase imputation (the carried law of motion is
-    its regular `state_transitions` entry).
+    Returns the solve-phase grid states, the simulate-phase grid states, each
+    carried state's solve-phase imputation (the carried law of motion is its
+    regular `state_transitions` entry), and the grammar violations found
+    along the way.
     """
     solve_grid_states: dict[StateName, Grid] = {}
     simulate_grid_states: dict[StateName, Grid] = {}
     carried_imputations: dict[StateName, UserFunction] = {}
+    errors: list[str] = []
     for name, spec in user_regime.states.items():
         if isinstance(spec, Phased):
-            _normalize_phased_state(
-                name=name,
-                phased=spec,
-                errors=errors,
-                carried_imputations=carried_imputations,
-                simulate_grid_states=simulate_grid_states,
+            imputation, carried_grid, state_errors = _normalize_phased_state(
+                name=name, phased=spec
             )
+            errors += state_errors
+            if imputation is not None and carried_grid is not None:
+                carried_imputations[name] = imputation
+                simulate_grid_states[name] = carried_grid
         elif isinstance(spec, Grid):
             solve_grid_states[name] = spec
             simulate_grid_states[name] = spec
@@ -257,17 +296,12 @@ def _split_states(
             errors.append(
                 f"states['{name}'] must be an LCM grid or `Phased`, got {spec!r}."
             )
-    return solve_grid_states, simulate_grid_states, carried_imputations
+    return solve_grid_states, simulate_grid_states, carried_imputations, errors
 
 
 def _normalize_phased_state(
-    *,
-    name: StateName,
-    phased: Phased,
-    errors: list[str],
-    carried_imputations: dict[StateName, UserFunction],
-    simulate_grid_states: dict[StateName, Grid],
-) -> None:
+    *, name: StateName, phased: Phased
+) -> tuple[UserFunction | None, Grid | None, list[str]]:
     """Apply the states matrix to one `Phased` state declaration.
 
     The only valid cell is `Phased(solve=callable, simulate=Grid)` — the
@@ -282,56 +316,62 @@ def _normalize_phased_state(
       `functions`
     - a stochastic-process grid on either side ⇒ processes have intrinsic
       transitions and cannot be phase-variant
+
+    Returns the carried state's solve-phase imputation and simulate-phase
+    grid (both `None` when the declaration is rejected), and the violations.
     """
     solve_side, simulate_side = phased.solve, phased.simulate
     if isinstance(solve_side, _ContinuousStochasticProcess) or isinstance(
         simulate_side, _ContinuousStochasticProcess
     ):
-        errors.append(
-            f"states['{name}']: stochastic-process grids have intrinsic "
-            f"transitions and cannot be phase-variant."
+        return (
+            None,
+            None,
+            [
+                f"states['{name}']: stochastic-process grids have intrinsic "
+                f"transitions and cannot be phase-variant."
+            ],
         )
-        return
     solve_is_grid = isinstance(solve_side, Grid)
     simulate_is_grid = isinstance(simulate_side, Grid)
     if solve_is_grid and simulate_is_grid:
-        errors.append(
+        message = (
             f"states['{name}']: `Phased(solve=Grid, simulate=Grid)` has no "
             f"semantics — identical grids are a bare Grid, and differing "
             f"solve/simulate grid domains are not supported."
         )
     elif solve_is_grid and callable(simulate_side):
-        errors.append(
+        message = (
             f"states['{name}']: a state that is a grid in the solve phase but "
             f"derived in the simulate phase is not yet supported."
         )
     elif callable(solve_side) and simulate_is_grid:
         grid = cast("Grid", simulate_side)
         if grid.batch_size > 0 or grid.distributed:
-            errors.append(
+            message = (
                 f"states['{name}']: the grid of a carried state is the "
                 f"simulate-phase domain of a per-subject value — `batch_size` "
                 f"and `distributed` apply only to solve grid axes and must "
                 f"not be set on it."
             )
         else:
-            carried_imputations[name] = cast("UserFunction", solve_side)
-            simulate_grid_states[name] = grid
+            return cast("UserFunction", solve_side), grid, []
     elif callable(solve_side) and callable(simulate_side):
-        errors.append(
+        message = (
             f"states['{name}']: a function derived in both phases belongs in "
             f"`functions`, not `states`."
         )
     else:
-        errors.append(
+        message = (
             f"states['{name}']: `Phased` state variants must be a callable "
             f"(solve) and an LCM grid (simulate), got solve={solve_side!r}, "
             f"simulate={simulate_side!r}."
         )
+    return None, None, [message]
 
 
 def _split_state_transitions(
-    user_regime: lcm.regime.Regime,
+    *, user_regime: lcm.regime.Regime
 ) -> tuple[
     dict[StateName, _PhaseStateTransition], dict[StateName, _PhaseStateTransition]
 ]:
@@ -375,28 +415,34 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
 
 
 def _split_regime_transition(
-    user_regime: lcm.regime.Regime, errors: list[str]
-) -> tuple[_PhaseRegimeTransition, _PhaseRegimeTransition]:
-    """Split the regime `transition` into per-phase variants."""
+    *, user_regime: lcm.regime.Regime
+) -> tuple[_PhaseRegimeTransition, _PhaseRegimeTransition, list[str]]:
+    """Split the regime `transition` into per-phase variants.
+
+    Returns the solve-phase variant, the simulate-phase variant, and the
+    grammar violations found along the way.
+    """
     raw = user_regime.transition
     if not isinstance(raw, Phased):
-        return cast("_PhaseRegimeTransition", raw), cast("_PhaseRegimeTransition", raw)
+        return (
+            cast("_PhaseRegimeTransition", raw),
+            cast("_PhaseRegimeTransition", raw),
+            [],
+        )
+    errors: list[str] = []
     sides = (("solve", raw.solve), ("simulate", raw.simulate))
-    valid = True
     for phase_label, side in sides:
         if side is None:
             errors.append(
                 "Regime transition variants cannot be `None` — terminality is "
                 "phase-invariant; use `transition=None` for a terminal regime."
             )
-            valid = False
         elif not callable(side) and not isinstance(side, Mapping):
             errors.append(
                 f"Regime transition {phase_label} variant must be a callable, "
                 f"`MarkovTransition`, or a per-target dict, got {side!r}."
             )
-            valid = False
-    if valid:
+    if not errors:
         solve_granular = isinstance(raw.solve, Mapping)
         simulate_granular = isinstance(raw.simulate, Mapping)
         if solve_granular != simulate_granular or (
@@ -420,4 +466,5 @@ def _split_regime_transition(
     return (
         cast("_PhaseRegimeTransition", raw.solve),
         cast("_PhaseRegimeTransition", raw.simulate),
+        errors,
     )

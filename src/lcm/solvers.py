@@ -82,7 +82,16 @@ class DCEGM:
     """
 
     savings_grid: ContinuousGrid
-    """Exogenous end-of-period grid; its lower bound is the borrowing limit."""
+    """Exogenous end-of-period grid; its lower bound is the borrowing limit.
+
+    The endogenous grid inherits this grid's spacing, and the published value
+    function is interpolated linearly between endogenous points — so this grid
+    controls where the solution is accurate. With sharply curved utility (e.g.
+    CRRA), cluster the nodes toward the borrowing limit (`LogSpacedGrid`, or
+    an `IrregSpacedGrid` clustered at the low end): a uniform grid
+    under-resolves the value function near the limit, and that interpolation
+    error compounds across periods.
+    """
 
     upper_envelope: Literal["fues"] = "fues"
     """Upper-envelope refinement backend removing dominated Euler candidates."""

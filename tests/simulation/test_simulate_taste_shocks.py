@@ -1,19 +1,13 @@
-"""Spec for taste-shock-consistent simulation (Gumbel-max discrete choices, #247).
+"""Spec for taste-shock-consistent simulation (Gumbel-max discrete choices).
 
 When a regime declares `taste_shocks`, simulation draws the discrete action by
 adding `scale * Gumbel(0, 1)` noise to the per-discrete-action `Qc` values and
 taking the feasibility-masked argmax — so simulated choice frequencies converge
 to the softmax probabilities implied by the solve.
-
-Skips until `lcm.taste_shocks` exists; red until the Gumbel-max path is wired
-into the simulation.
 """
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
-
-pytest.importorskip("lcm.taste_shocks", reason="Taste shocks not yet implemented")
 
 from tests.test_models import taste_shocks_toy
 
@@ -79,6 +73,41 @@ def test_simulated_work_frequency_converges_to_softmax_probability():
         wealth=initial_wealth, scale=scale, discount_factor=discount_factor
     )
     np.testing.assert_allclose(work_freq, expected, atol=0.015)
+
+
+def test_taste_shock_draws_are_invariant_to_subject_chunking():
+    """Chunked and unchunked simulations draw identical taste shocks.
+
+    Per-subject Gumbel keys are generated for the full population and sliced
+    by global subject index, so `subject_batch_size` never changes any
+    subject's simulated choices.
+    """
+    n_subjects = 64
+    model = taste_shocks_toy.get_model()
+    params = taste_shocks_toy.get_params(scale=0.2, discount_factor=0.95)
+    initial_conditions = {
+        "age": jnp.full(n_subjects, 40.0),
+        "wealth": jnp.full(n_subjects, 4.6),
+        "regime_id": jnp.full(
+            n_subjects, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
+        ),
+    }
+
+    results = {
+        batch_size: model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=None,
+            log_level="debug",
+            seed=5471,
+            subject_batch_size=batch_size,
+        ).to_dataframe(use_labels=False)
+        for batch_size in (0, 16)
+    }
+
+    np.testing.assert_array_equal(
+        results[0]["work"].to_numpy(), results[16]["work"].to_numpy()
+    )
 
 
 def test_scale_zero_simulation_is_deterministic():

@@ -372,3 +372,70 @@ class IskhakovEtAl2017Simulate:
 class IskhakovEtAl2017SimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.bench_iskhakov_et_al_2017"
     bench_class = "IskhakovEtAl2017Simulate"
+
+
+class IskhakovEtAl2017DCEGMSimulate:
+    """Simulate the DC-EGM variant from a pre-solved model.
+
+    The simulate path is the standard per-subject grid argmax in both solver
+    variants; the DC-EGM variant additionally synthesizes the intrinsic
+    budget mask, so this benchmark measures the simulate-side overhead of a
+    DC-EGM regime against `IskhakovEtAl2017Simulate`.
+    """
+
+    version = "1"
+    timeout = 600
+
+    def _build(self) -> None:
+        self.model, self.model_params = _make_model_and_params(
+            wealth_n_points=_SIMULATE_WEALTH_N_POINTS,
+            consumption_n_points=_SIMULATE_CONSUMPTION_N_POINTS,
+            solver="dcegm",
+        )
+        self.period_to_regime_to_V_arr = self.model.solve(
+            params=self.model_params, log_level="off"
+        )
+        self.initial_conditions = _make_initial_conditions(_N_SUBJECTS)
+
+    def setup(self) -> None:
+        self._build()
+        start = time.perf_counter()
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
+            log_level="off",
+        )
+        self._compile_time = time.perf_counter() - start
+
+    def setup_for_gpu_measurement(self) -> None:
+        self._build()
+
+    def time_execution(self) -> None:
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
+            log_level="off",
+        )
+
+    def peakmem_execution(self) -> None:
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
+            log_level="off",
+        )
+
+    def teardown(self) -> None:
+        _clear_gpu_memory()
+
+    def track_compilation_time(self) -> float:
+        return self._compile_time
+
+    track_compilation_time.unit = "seconds"
+
+
+class IskhakovEtAl2017DCEGMSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
+    bench_module = "benchmarks.bench_iskhakov_et_al_2017"
+    bench_class = "IskhakovEtAl2017DCEGMSimulate"

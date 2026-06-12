@@ -9,6 +9,7 @@ import functools
 import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
+from typing import cast
 
 from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
@@ -21,9 +22,10 @@ from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
     create_params_template,
+    materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.processing import (
     Regime,
@@ -31,7 +33,6 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.typing import (
     FlatParams,
-    FunctionName,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
@@ -48,7 +49,7 @@ from lcm.typing import UserParams
 def build_regimes_and_template(
     *,
     ages: AgeGrid,
-    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -60,7 +61,7 @@ def build_regimes_and_template(
 
     Args:
         ages: Age grid for the model.
-        user_regimes: Mapping of regime names to effective regimes.
+        user_regimes: Mapping of regime names to finalized regimes.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
@@ -93,7 +94,7 @@ def build_regimes_and_template(
 def _build_regimes_and_template_with_fixed_params(
     *,
     ages: AgeGrid,
-    user_regimes: Mapping[RegimeName, EffectiveUserRegime],
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -102,7 +103,7 @@ def _build_regimes_and_template_with_fixed_params(
 
     Args:
         ages: Age grid for the model.
-        user_regimes: Mapping of regime names to effective regimes.
+        user_regimes: Mapping of regime names to finalized regimes.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
@@ -134,10 +135,20 @@ def _build_regimes_and_template_with_fixed_params(
     fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
     _validate_param_types(fixed_flat_params)
 
+    # The template trim works on the template-shaped (user-coarse) form;
+    # partialling needs the granular form the compiled functions bind.
+    granular_fixed_flat_params = materialize_granular_transition_params(
+        flat_params=fixed_flat_params,
+        expansions={
+            regime_name: regime.granular_param_expansions
+            for regime_name, regime in raw_regimes.items()
+        },
+    )
+
     return (
         _partial_fixed_params_into_regimes(
             raw_regimes=raw_regimes,
-            fixed_flat_params=fixed_flat_params,
+            fixed_flat_params=granular_fixed_flat_params,
         ),
         _remove_fixed_params_from_template(
             template=raw_params_template,
@@ -345,33 +356,38 @@ def _remove_fixed_params_from_template(
     template so users don't need to supply them at solve/simulate time.
 
     """
-    result: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
-    for regime_name, regime_template in template.items():
-        regime_fixed = fixed_flat_params.get(regime_name, MappingProxyType({}))
-        new_regime: dict[FunctionName, dict[str, str]] = {}
-        for func_name, func_params in regime_template.items():
-            new_func_params = {
-                param_name: param_type
-                for param_name, param_type in func_params.items()
-                if qname_from_tree_path((func_name, param_name)) not in regime_fixed
+
+    def _trim(
+        *, branch: Mapping[str, object], prefix: tuple[str, ...], fixed: Mapping
+    ) -> dict[str, object]:
+        trimmed: dict[str, object] = {}
+        for key, value in branch.items():
+            if isinstance(value, Mapping):
+                inner = _trim(
+                    branch=cast("Mapping[str, object]", value),
+                    prefix=(*prefix, key),
+                    fixed=fixed,
+                )
+                if inner:
+                    trimmed[key] = MappingProxyType(inner)
+            elif qname_from_tree_path((*prefix, key)) not in fixed:
+                trimmed[key] = value
+        return trimmed
+
+    return cast(
+        "ParamsTemplate",
+        MappingProxyType(
+            {
+                regime_name: MappingProxyType(
+                    _trim(
+                        branch=regime_template,
+                        prefix=(),
+                        fixed=fixed_flat_params.get(regime_name, MappingProxyType({})),
+                    )
+                )
+                for regime_name, regime_template in template.items()
             }
-            if new_func_params:
-                new_regime[func_name] = new_func_params
-        if new_regime:
-            result[regime_name] = new_regime
-        else:
-            # Keep regime key even if empty (needed by process_params)
-            result[regime_name] = {}
-    return MappingProxyType(
-        {
-            regime_name: MappingProxyType(
-                {
-                    func_name: MappingProxyType(func_params)
-                    for func_name, func_params in regime.items()
-                }
-            )
-            for regime_name, regime in result.items()
-        }
+        ),
     )
 
 
@@ -391,49 +407,49 @@ def _partial_fixed_params_into_regimes(
         # Build new solution phase with partialled functions. The resolved
         # fixed params also land on the phase itself — its
         # `state_action_space` consults them for runtime grid substitution.
-        solve_funcs = regime.solution
+        solution = regime.solution
         new_solve = dataclasses.replace(
-            solve_funcs,
+            solution,
             resolved_fixed_params=MappingProxyType(regime_fixed),
             max_Q_over_a=MappingProxyType(
                 {
                     period: functools.partial(func, **regime_fixed)
-                    for period, func in solve_funcs.max_Q_over_a.items()
+                    for period, func in solution.max_Q_over_a.items()
                 }
             ),
             compute_regime_transition_probs=(
                 functools.partial(
-                    solve_funcs.compute_regime_transition_probs,
+                    solution.compute_regime_transition_probs,
                     **_filter_kwargs_for_func(
-                        func=solve_funcs.compute_regime_transition_probs,
+                        func=solution.compute_regime_transition_probs,
                         kwargs=regime_fixed,
                     ),
                 )
-                if solve_funcs.compute_regime_transition_probs is not None
+                if solution.compute_regime_transition_probs is not None
                 else None
             ),
         )
 
         # Build new simulation phase with partialled functions
-        simulate_funcs = regime.simulation
+        simulation = regime.simulation
         new_simulate = dataclasses.replace(
-            simulate_funcs,
+            simulation,
             argmax_and_max_Q_over_a=MappingProxyType(
                 {
                     period: functools.partial(func, **regime_fixed)
-                    for period, func in simulate_funcs.argmax_and_max_Q_over_a.items()
+                    for period, func in simulation.argmax_and_max_Q_over_a.items()
                 }
             ),
-            next_state=functools.partial(simulate_funcs.next_state, **regime_fixed),
+            next_state=functools.partial(simulation.next_state, **regime_fixed),
             compute_regime_transition_probs=(
                 functools.partial(
-                    simulate_funcs.compute_regime_transition_probs,
+                    simulation.compute_regime_transition_probs,
                     **_filter_kwargs_for_func(
-                        func=simulate_funcs.compute_regime_transition_probs,
+                        func=simulation.compute_regime_transition_probs,
                         kwargs=regime_fixed,
                     ),
                 )
-                if simulate_funcs.compute_regime_transition_probs is not None
+                if simulation.compute_regime_transition_probs is not None
                 else None
             ),
         )

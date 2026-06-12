@@ -8,20 +8,17 @@ pylcm's solved V on the twin model at the fixture's wealth nodes:
 
 - the brute-force twin (taste shocks via logsumexp over the consumption-grid
   `Qc`) must agree up to consumption-grid resolution,
-- the DC-EGM twin must agree tightly — same algorithm family, independent code.
-
-Skips until `lcm.taste_shocks` and `lcm.solvers` exist; red until both
-implementations are wired.
+- the DC-EGM twin must agree tightly — same algorithm family, independent code,
+  and (by pinning the fixture run's savings grid) the same discretization, so
+  agreement certifies the implementation, not the accuracy of every node.
 """
 
 import numpy as np
 import pandas as pd
 import pytest
 
-pytest.importorskip("lcm.taste_shocks", reason="Taste shocks not yet implemented")
-pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
-
 from _lcm.config import TEST_DATA
+from lcm import IrregSpacedGrid
 from tests.test_models import dcegm_paper_twin
 
 SCALE = 0.2
@@ -39,14 +36,18 @@ def reference() -> pd.DataFrame:
     df["emax"] = np.nanmax(values, axis=1) + SCALE * np.log(
         np.nansum(np.exp(shifted / SCALE), axis=1)
     )
-    # The retiree rows at the lowest wealth node carry an upstream artifact:
-    # the fixture's `value_retire` there contradicts the value implied by the
-    # fixture's own `policy_retire` column (e.g. period 0, wealth 1: stored
-    # value -66.0, but consuming the stored policy 0.124·wealth per period is
-    # worth about -54), and a fine-grid value-iteration recursion of the same
-    # model confirms the policy-implied value. Both pylcm solvers reproduce
-    # the recursion, so these rows are excluded rather than the tolerances
-    # loosened; every other row is asserted at full tolerance.
+    # The retiree rows at the lowest wealth node (9 rows, one per period) are
+    # excluded: the run's uniform savings grid under-resolves the sharply
+    # curved retiree value function near the borrowing limit, so the
+    # value-space interpolation error there is large and
+    # implementation-specific — the fixture stores about -66.0 at period 0,
+    # pylcm's DC-EGM about -76, while a fine-grid value-iteration recursion
+    # of the same model (and the brute-force twin, and a DC-EGM run with a
+    # savings grid clustered toward the limit — see
+    # `test_clustered_savings_grid_resolves_excluded_low_wealth_nodes`) puts
+    # the truth near -54. With no common discretization error to compare,
+    # the rows are excluded rather than the tolerances loosened; every other
+    # row is asserted at full tolerance.
     return df.query("not (lagged_choice == 1 and wealth == 1.0)")
 
 
@@ -55,6 +56,38 @@ def _wealth_node_indices(wealth_points: np.ndarray) -> np.ndarray:
     indices = np.searchsorted(grid, wealth_points)
     np.testing.assert_allclose(grid[indices], wealth_points, atol=1e-12)
     return indices
+
+
+def test_clustered_savings_grid_resolves_excluded_low_wealth_nodes():
+    """A savings grid clustered toward the borrowing limit fixes the low-wealth rows.
+
+    The fixture comparison excludes the retiree rows at wealth 1 because the
+    pinned uniform savings grid under-resolves the value function there in
+    both implementations. With the same node count clustered toward the
+    limit, pylcm's DC-EGM reproduces the brute-force value (which a fine-grid
+    recursion of the model confirms) at every excluded node — the exclusion
+    reflects the fixture run's grid, not the kernel.
+    """
+    low = np.geomspace(1e-4, 2.0, 220)
+    high = np.linspace(2.0, 50.0, 281)[1:]
+    clustered = IrregSpacedGrid(points=(0.0, *map(float, low), *map(float, high)))
+    params = dcegm_paper_twin.get_params(taste_shock_scale=SCALE)
+
+    dcegm_V = dcegm_paper_twin.build_dcegm_model(savings_grid=clustered).solve(
+        params=params, log_level="debug"
+    )
+    brute_V = dcegm_paper_twin.get_model("brute_force").solve(
+        params=params, log_level="debug"
+    )
+
+    node = _wealth_node_indices(np.array([1.0]))
+    for period in range(dcegm_paper_twin.N_PERIODS - 1):
+        np.testing.assert_allclose(
+            np.asarray(dcegm_V[period]["retirement"])[node],
+            np.asarray(brute_V[period]["retirement"])[node],
+            atol=0.15,
+            err_msg=f"period={period}",
+        )
 
 
 @pytest.mark.parametrize(

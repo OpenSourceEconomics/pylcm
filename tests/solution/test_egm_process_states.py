@@ -21,6 +21,7 @@ import functools
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from lcm import (
     AgeGrid,
@@ -32,6 +33,7 @@ from lcm import (
     RouwenhorstAR1Process,
     categorical,
 )
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -327,3 +329,18 @@ def test_iid_process_matches_dense_brute_force():
             rtol=1e-3,
             err_msg=f"period={period}",
         )
+
+
+def test_nan_process_params_surface_as_error():
+    """NaN process params poison the DC-EGM solve loudly, as under brute force.
+
+    The intrinsic transition weights of a process state are evaluated inside
+    the EGM kernel; a NaN weight must propagate into the published V rows so
+    the solve's NaN diagnostics raise — never be swallowed by the zero-weight
+    masking of unreachable nodes.
+    """
+    params = _get_params("rouwenhorst")
+    params["alive"]["income"] = {"mu": 0.0, "sigma": 0.25, "rho": float("nan")}
+
+    with pytest.raises(InvalidValueFunctionError):
+        _get_model("dcegm", "rouwenhorst").solve(params=params, log_level="debug")

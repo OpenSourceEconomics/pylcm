@@ -4,19 +4,26 @@ A regime with `solver=DCEGM(...)` must satisfy the EGM contract; every violation
 raises `ModelInitializationError` at `Model` construction with a message naming
 the offending piece. The cases here mutate a valid DC-EGM regime one rule at a
 time.
-
-Skips until `lcm.solvers` exists; red until the validation lands.
 """
+
+import dataclasses
 
 import jax.numpy as jnp
 import pytest
 
-pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
-
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    Phased,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import BruteForce
+from lcm.transition import fixed_transition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -95,6 +102,20 @@ def _next_aime_decaying(aime: ContinuousState) -> ContinuousState:
     return 0.95 * aime
 
 
+def _impute_wealth_memo(wealth: ContinuousState) -> ContinuousState:
+    return wealth
+
+
+def _next_wealth_memo(wealth_memo: ContinuousState) -> ContinuousState:
+    return wealth_memo
+
+
+def _utility_reading_carried_state(
+    consumption: ContinuousAction, wealth_memo: ContinuousState
+) -> FloatND:
+    return jnp.log(consumption) + 0.01 * wealth_memo
+
+
 def _without_function(regime: UserRegime, name: str) -> UserRegime:
     functions = {k: v for k, v in regime.functions.items() if k != name}
     return regime.replace(functions=functions)
@@ -135,6 +156,26 @@ CASES = {
             constraints={"borrowing_constraint": borrowing_constraint}
         ),
         "constraint",
+    ),
+    "utility_reads_continuous_state_through_carried_state": (
+        lambda: VALID.replace(
+            states={
+                **dict(VALID.states),
+                "wealth_memo": Phased(
+                    solve=_impute_wealth_memo,
+                    simulate=LinSpacedGrid(start=1.0, stop=400.0, n_points=4),
+                ),
+            },
+            state_transitions={
+                **dict(VALID.state_transitions),
+                "wealth_memo": _next_wealth_memo,
+            },
+            functions={
+                **dict(VALID.functions),
+                "utility": _utility_reading_carried_state,
+            },
+        ),
+        "utility",
     ),
     "custom_bellman_aggregator": (
         lambda: VALID.replace(functions={**dict(VALID.functions), "H": _custom_H}),
@@ -193,6 +234,36 @@ CASES = {
         ),
         "batch",
     ),
+    "batched_discrete_state_grid": (
+        lambda: VALID.replace(
+            states={
+                **dict(VALID.states),
+                "skill": DiscreteGrid(base.LaborSupply, batch_size=1),
+            },
+            state_transitions={
+                **dict(VALID.state_transitions),
+                "skill": fixed_transition("skill"),
+            },
+        ),
+        "batch",
+    ),
+    "runtime_savings_grid": (
+        lambda: VALID.replace(
+            solver=dataclasses.replace(
+                dcegm_variants.DCEGM_SOLVER,
+                savings_grid=IrregSpacedGrid(n_points=8),
+            )
+        ),
+        "runtime",
+    ),
+    "runtime_euler_state_grid": (
+        lambda: VALID.replace(states={"wealth": IrregSpacedGrid(n_points=100)}),
+        "runtime",
+    ),
+    "runtime_continuous_action_grid": (
+        lambda: VALID.replace(actions={"consumption": IrregSpacedGrid(n_points=50)}),
+        "runtime",
+    ),
 }
 
 
@@ -213,6 +284,39 @@ def test_passive_continuous_state_constructs():
         state_transitions={
             **dict(VALID.state_transitions),
             "aime": _next_aime_decaying,
+        },
+    )
+    model = _build_model(regime)
+    assert model.n_periods == N_PERIODS
+
+
+def _impute_pension(age: int) -> ContinuousState:
+    return jnp.asarray(0.1 * age)
+
+
+def _next_pension(pension: ContinuousState) -> ContinuousState:
+    return pension
+
+
+def test_carried_state_with_decision_free_imputation_constructs():
+    """A carried state imputed independently of the decision variables is valid.
+
+    Carried states are derived functions in the solve phase — no grid axis —
+    so they are invisible to the DC-EGM state classification, and a
+    decision-free imputation keeps every consumer evaluable at the savings
+    stage.
+    """
+    regime = VALID.replace(
+        states={
+            **dict(VALID.states),
+            "pension": Phased(
+                solve=_impute_pension,
+                simulate=LinSpacedGrid(start=0.0, stop=10.0, n_points=4),
+            ),
+        },
+        state_transitions={
+            **dict(VALID.state_transitions),
+            "pension": _next_pension,
         },
     )
     model = _build_model(regime)
@@ -289,7 +393,10 @@ def test_non_dcegm_non_terminal_target_raises():
         active=lambda age: age < 60,
     )
     ages = AgeGrid(start=40, stop=60, step="10Y")
-    with pytest.raises(ModelInitializationError, match="DCEGM"):
+    with pytest.raises(
+        ModelInitializationError,
+        match="non-terminal target of a DCEGM regime must itself use the DCEGM",
+    ):
         Model(
             regimes={
                 "working_life": dcegm_source,
@@ -299,6 +406,32 @@ def test_non_dcegm_non_terminal_target_raises():
             ages=ages,
             regime_id_class=base.RegimeId,
         )
+
+
+def _ordinary_inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def test_brute_force_inverse_marginal_utility_keeps_its_params():
+    """`marginal_continuation` stays a user param outside DC-EGM regimes.
+
+    Only the DC-EGM kernel supplies `marginal_continuation` at solve time. In
+    a brute-force regime, a function named `inverse_marginal_utility` is an
+    ordinary regime function, so its argument must surface in the params
+    template like any other.
+    """
+    regime = retirement_only.retirement.replace(
+        functions={
+            **dict(retirement_only.retirement.functions),
+            "inverse_marginal_utility": _ordinary_inverse_marginal_utility,
+        },
+        active=lambda age: age < 60,
+    )
+    model = _build_model(regime)
+
+    template = model.get_params_template()
+
+    assert "marginal_continuation" in template["retirement"]["inverse_marginal_utility"]
 
 
 def test_brute_force_solver_explicit_equals_default():

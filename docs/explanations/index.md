@@ -19,6 +19,8 @@ hood.
   and continuous shock transitions use different runtime representations.
 - [Dispatchers](dispatchers.ipynb) — How `productmap`, `vmap_1d`, and
   `simulation_spacemap` evaluate scalar functions on structured spaces.
+- [The Phase Grammar](phase_grammar.ipynb) — How `Phased(solve=..., simulate=...)` gives
+  regime slots per-phase variants, with carried states as the flagship use.
 - [Beta-Delta (Quasi-Hyperbolic) Discounting](beta_delta.ipynb) — How to use the plugin
   system to model consumers with this particular form of time-inconsistent preferences.
 - [Discrete-Continuous Choice: Iskhakov et al. (2017)](iskhakov_et_al_2017.ipynb) — Why

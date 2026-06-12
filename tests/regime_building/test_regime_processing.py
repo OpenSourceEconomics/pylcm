@@ -10,7 +10,7 @@ from numpy.testing import assert_array_equal
 from _lcm.engine import Regime, VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid
 from _lcm.regime_building.canonicalize import _canonicalize_phase_transitions
-from _lcm.regime_building.effective import EffectiveUserRegime, build_effective_regimes
+from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.processing import (
     _rename_params_to_qnames,
@@ -115,7 +115,7 @@ def test_process_regimes():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     regimes = process_regimes(
-        user_regimes=build_effective_regimes(
+        user_regimes=finalize_regimes(
             user_regimes=user_regimes, derived_categoricals={}
         ),
         ages=ages,
@@ -125,7 +125,7 @@ def test_process_regimes():
     working_regime = regimes["working_life"]
 
     # Variable Info
-    variables = working_regime.solution.variables
+    variables = working_regime.solution._variables
     assert variables["wealth"] == VariableInfo(
         kind="state", topology="continuous", is_process=False
     )
@@ -215,7 +215,7 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
         active=lambda age: age >= 1,
     )
     return process_regimes(
-        user_regimes=build_effective_regimes(
+        user_regimes=finalize_regimes(
             user_regimes={"early": early, "late": late}, derived_categoricals={}
         ),
         ages=AgeGrid(start=0, stop=2, step="Y"),
@@ -342,7 +342,7 @@ def test_carried_law_registered_for_carried_only_target():
         "retired": frozenset({"pension_wealth"}),
         "dead": frozenset(),
     }
-    canonical = _canonicalize_phase_transitions(
+    canonical, _ = _canonicalize_phase_transitions(
         phase_slice=normalize_regime_phases(working).simulation,
         states_per_regime=simulate_states_per_regime,
     )
@@ -404,7 +404,7 @@ def test_carried_state_counts_as_covered_for_reachability():
         "retired": frozenset({"wealth", "pension_wealth"}),
         "dead": frozenset(),
     }
-    canonical = _canonicalize_phase_transitions(
+    canonical, _ = _canonicalize_phase_transitions(
         phase_slice=normalize_regime_phases(working).simulation,
         states_per_regime=simulate_states_per_regime,
     )
@@ -451,8 +451,8 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         },
         "functions": {"utility": utility},
     }
-    real = EffectiveUserRegime(
-        user_regime=UserRegime(**kwargs), derived_categoricals={}
-    )
+    real = finalize_regimes(
+        user_regimes={"regime": UserRegime(**kwargs)}, derived_categoricals={}
+    )["regime"]
     mock = MockRegime(**kwargs)
     assert set(mock.get_all_functions()) == set(real.get_all_functions())

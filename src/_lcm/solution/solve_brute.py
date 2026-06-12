@@ -325,6 +325,8 @@ def _solve_regime_period(
             V_arr=V_arr,
             **state_action_space.states,
             **flat_params[regime_name],
+            period=jnp.int32(period),
+            age=ages.values[period],
         )
     return V_arr
 
@@ -758,7 +760,14 @@ def _raise_at(
         flat_params=flat_params,
         solution=solution,
     )
-    compute_intermediates = regime.solution.compute_intermediates.get(row.period)
+    # The intermediates closure mirrors the brute-force Q evaluation; for a
+    # row solved by the EGM kernel it cannot reproduce the failing
+    # computation, so the error is raised without the U/F/E/Q breakdown.
+    compute_intermediates = (
+        None
+        if regime.solution.egm_step is not None
+        else regime.solution.compute_intermediates.get(row.period)
+    )
     V_arr = solution[row.period][row.regime_name]
     validate_V(
         V_arr=V_arr,

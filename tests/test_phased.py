@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.effective import EffectiveUserRegime
+from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
 from lcm import (
     AgeGrid,
@@ -310,13 +310,13 @@ def test_process_grid_inside_phased_is_rejected() -> None:
 def test_carried_state_without_law_of_motion_is_rejected() -> None:
     """A carried state is a genuine simulate-phase state and needs a
     `state_transitions` entry like any other state. Coverage is validated
-    when the model builds its effective regimes."""
+    when the model finalizes its regimes."""
     regime = _build_regime(
         states=_carried_states(),
         state_transitions={"wealth": _next_wealth, "aime": lambda aime: aime},
     )
     with pytest.raises(RegimeInitializationError, match="state_transitions"):
-        EffectiveUserRegime(user_regime=regime)
+        finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})
 
 
 def test_carried_state_with_markov_law_is_rejected() -> None:
