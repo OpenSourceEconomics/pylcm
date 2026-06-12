@@ -86,8 +86,15 @@ type FlatRegimeParams = MappingProxyType[
 ]
 type FlatParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
-# Immutable templates, used internally
-type RegimeParamsTemplate = MappingProxyType[FunctionName, MappingProxyType[str, str]]
+# Immutable templates, used internally. Within a regime, a key is either:
+# - a function name ⇒ that function's params (`{param: type-string}`)
+# - a target regime's name ⇒ per-target transition params nested one level
+#   deeper (`{transition_func: {param: type-string}}`)
+type RegimeParamsTemplate = MappingProxyType[
+    FunctionName | RegimeName,
+    MappingProxyType[str, str]
+    | MappingProxyType[TransitionFunctionName, MappingProxyType[str, str]],
+]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # Type aliases for value function arrays

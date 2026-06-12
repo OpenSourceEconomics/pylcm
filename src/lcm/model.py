@@ -5,6 +5,7 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import pandas as pd
@@ -25,6 +26,7 @@ from _lcm.pandas_utils import (
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
+    materialize_granular_transition_params,
 )
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
@@ -35,9 +37,9 @@ from _lcm.regime_building.broadcast import (
     prune_broadcast_variables,
     validate_model_slots,
 )
-from _lcm.regime_building.effective import (
-    EffectiveUserRegime,
-    build_effective_regimes,
+from _lcm.regime_building.finalize import (
+    FinalizedUserRegime,
+    finalize_regimes,
 )
 from _lcm.regime_building.processing import Regime
 from _lcm.simulation.compile import compile_all_simulation_phases
@@ -104,10 +106,10 @@ class Model:
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from regime names to integer indices."""
 
-    user_regimes: MappingProxyType[RegimeName, EffectiveUserRegime]
-    """The effective regimes: complete (default `H` injected, completeness
-    validated), with model-level slots merged in and broadcast variables
-    pruned, still in user vocabulary."""
+    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
+    """The finalized regimes: plain `lcm.regime.Regime` instances, complete
+    (default `H` injected, completeness validated), with model-level slots
+    merged in and broadcast variables pruned, still in user vocabulary."""
 
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     """Per regime, the broadcast states and actions pruned because no root
@@ -246,7 +248,7 @@ class Model:
             user_regimes=merged_regimes,
             broadcast_variables=broadcast_variables,
         )
-        self.user_regimes = build_effective_regimes(
+        self.user_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
             derived_categoricals=derived_categoricals,
         )
@@ -320,16 +322,13 @@ class Model:
 
         """
         mutable = ensure_containers_are_mutable(self._params_template)
-        return {
-            regime: {
-                func: {
-                    param: getattr(typ, "__name__", str(typ))
-                    for param, typ in params.items()
-                }
-                for func, params in funcs.items()
-            }
-            for regime, funcs in mutable.items()
-        }
+
+        def _readable(value: object) -> object:
+            if isinstance(value, Mapping):
+                return {key: _readable(inner) for key, inner in value.items()}
+            return getattr(value, "__name__", str(value))
+
+        return cast("UserFacingParamsTemplate", _readable(mutable))
 
     @beartype(conf=PARAMS_CONF)
     def solve(
@@ -777,5 +776,12 @@ class Model:
                 regime_names_to_ids=self.regime_names_to_ids,
             )
         flat_params = cast_params_to_canonical_dtypes(flat_params)
+        flat_params = materialize_granular_transition_params(
+            flat_params=flat_params,
+            expansions={
+                regime_name: regime.granular_param_expansions
+                for regime_name, regime in self._regimes.items()
+            },
+        )
         _validate_param_types(flat_params)
         return flat_params
