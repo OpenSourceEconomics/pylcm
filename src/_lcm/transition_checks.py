@@ -88,7 +88,7 @@ def _params_callable_for_state_transition(
     `create_regime_params_template`:
 
     - simple transitions ⇒ `next_<state>__<param>`
-    - per-target dicts   ⇒ `to_<target>_next_<state>__<param>`
+    - per-target dicts   ⇒ `<target>__next_<state>__<param>`
 
     The `MarkovTransition`'s user function is called with the raw
     parameter names from its signature, so the validator must strip
@@ -100,7 +100,7 @@ def _params_callable_for_state_transition(
     if transition.target_regime_name is None:
         prefix = f"next_{transition.state_name}__"
     else:
-        prefix = f"to_{transition.target_regime_name}_next_{transition.state_name}__"
+        prefix = f"{transition.target_regime_name}__next_{transition.state_name}__"
 
     merged = {**regime.resolved_fixed_params, **flat_params_for_regime}
     return MappingProxyType(

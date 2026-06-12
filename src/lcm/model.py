@@ -5,6 +5,7 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import pandas as pd
@@ -318,16 +319,13 @@ class Model:
 
         """
         mutable = ensure_containers_are_mutable(self._params_template)
-        return {
-            regime: {
-                func: {
-                    param: getattr(typ, "__name__", str(typ))
-                    for param, typ in params.items()
-                }
-                for func, params in funcs.items()
-            }
-            for regime, funcs in mutable.items()
-        }
+
+        def _readable(value: object) -> object:
+            if isinstance(value, Mapping):
+                return {key: _readable(inner) for key, inner in value.items()}
+            return getattr(value, "__name__", str(value))
+
+        return cast("UserFacingParamsTemplate", _readable(mutable))
 
     @beartype(conf=PARAMS_CONF)
     def solve(

@@ -773,7 +773,7 @@ def _process_next_regime_cells(
             target_name: _rename_params_to_qnames(
                 func=cast("UserFunction", cell),
                 regime_params_template=regime_params_template,
-                param_key=f"to_{target_name}_next_regime",
+                param_key=qname_from_tree_path((target_name, "next_regime")),
             )
             for target_name, cell in next_regime_cells_by_target.items()
         }
@@ -873,7 +873,12 @@ def _rename_params_to_qnames(
         The function with renamed parameters.
 
     """
-    param_names = list(regime_params_template[param_key])
+    # Per-target keys are qnames (`<target>__<func>`) addressing a nested
+    # template branch; walk the tree path instead of subscripting directly.
+    branch: Mapping[str, object] = regime_params_template
+    for part in tree_path_from_qname(param_key):
+        branch = cast("Mapping[str, object]", branch[part])
+    param_names = list(branch)
     if not param_names:
         return cast("EconFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
@@ -888,22 +893,27 @@ def _extract_param_key(
     """Extract the param template key from a possibly prefixed function name.
 
     The template mirrors the user's coarseness — a per-target dict yields
-    `to_<target>_next_<state>` keys, a broadcast law a single `next_<state>`
-    key — while the engine-side function names are always target-prefixed
-    (canonical form). The template therefore decides which key applies:
+    params nested under the target (`template[target][func]`), a broadcast
+    law a single coarse `next_<state>` key — while the engine-side function
+    names are always target-prefixed (canonical form). The template therefore
+    decides which key applies:
 
-    - "work__next_health" with `to_work_next_health` in the template (user
-      wrote a per-target dict) ⇒ "to_work_next_health"
-    - "work__next_wealth" without such a key (broadcast law) ⇒ "next_wealth"
+    - "work__next_health" with `template["work"]["next_health"]` present
+      (user wrote a per-target dict) ⇒ "work__next_health" — param qnames
+      parallel engine function qnames
+    - "work__next_wealth" without such a branch (broadcast law) ⇒
+      "next_wealth"
     - unprefixed names ⇒ unchanged
 
     """
     path = tree_path_from_qname(func_name)
     if len(path) > 1:
         suffix = qname_from_tree_path(path[1:])
-        per_target_key = f"to_{path[0]}_{suffix}"
-        if per_target_key in regime_params_template:
-            return per_target_key
+        target_branch = regime_params_template.get(path[0])
+        if isinstance(target_branch, Mapping) and isinstance(
+            target_branch.get(suffix), Mapping
+        ):
+            return func_name
         return suffix
     return func_name
 

@@ -54,6 +54,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
     }
 
     function_params: dict[FunctionName, dict[str, str]] = {}
+    per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
 
     for name, func in _collect_all_functions_for_template(user_regime).items():
         if isinstance(func, Phased):
@@ -69,20 +70,46 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         # user-facing params in the template.
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
 
+        # Per-target entries (`<func>__<target>`) nest under the target — the
+        # target is a genuine tree level, mirroring the canonical transition
+        # bundles, so param qnames parallel engine function qnames.
         path = tree_path_from_qname(name)
-        template_key = f"to_{path[1]}_{path[0]}" if len(path) > 1 else name
-
-        if template_key in function_params:
-            function_params[template_key] |= params
+        if len(path) > 1:
+            func_name, target_name = path[0], path[1]
+            target_branch = per_target_params.setdefault(target_name, {})
+            if func_name in target_branch:
+                target_branch[func_name] |= params
+            else:
+                target_branch[func_name] = params
+        elif name in function_params:
+            function_params[name] |= params
         else:
-            function_params[template_key] = params
+            function_params[name] = params
 
-    _validate_no_shadowing(function_params, user_regime)
+    _validate_no_shadowing(
+        {**function_params, **{k: {} for k in per_target_params}}, user_regime
+    )
 
     _add_runtime_grid_params(function_params, user_regime)
 
+    top_level_collisions = set(function_params) & set(per_target_params)
+    if top_level_collisions:
+        raise InvalidNameError(
+            f"Name(s) {sorted(top_level_collisions)} are used both as a "
+            f"target regime of a per-target transition and as a function, "
+            f"state, or action in the regime. Rename one of the two."
+        )
+
     return MappingProxyType(
-        {k: MappingProxyType(v) for k, v in function_params.items()}
+        {
+            **{k: MappingProxyType(v) for k, v in function_params.items()},
+            **{
+                target_name: MappingProxyType(
+                    {k: MappingProxyType(v) for k, v in branch.items()}
+                )
+                for target_name, branch in per_target_params.items()
+            },
+        }
     )
 
 
