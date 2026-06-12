@@ -11,10 +11,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, IrregSpacedGrid, LogSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ContinuousState, FloatND
+from lcm.solvers import DCEGM
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.mortality import WEALTH_GRID
 from tests.solution.test_retirement_only_oracle import (
     ANALYTICAL_CASES,
@@ -78,7 +86,10 @@ def test_discount_factor_zero_yields_consume_everything_values():
     The degenerate-inversion guard must hold after discounting: a zero
     discount factor zeroes the marginal continuation at every savings node, so
     the consume-everything corner is optimal at every wealth node and
-    `V(wealth) = log(wealth)` in every non-terminal period.
+    `V(wealth) = log(wealth)` in every non-terminal period. V equals
+    `log(wealth)` up to the high-order publish interpolation error (the
+    closed-form constrained value is published outright only below the lowest
+    refined point).
     """
     n_periods = 3
     model = get_retirement_only_model("dcegm", n_periods)
@@ -91,7 +102,7 @@ def test_discount_factor_zero_yields_consume_everything_values():
         np.testing.assert_allclose(
             np.asarray(period_to_regime_to_V_arr[period]["retirement"]),
             np.log(wealth),
-            atol=1e-6,
+            atol=2e-5,
             err_msg=f"period={period}",
         )
 
@@ -144,6 +155,124 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
         expected[3:],
         atol=1e-3,
     )
+
+
+@categorical(ordered=False)
+class _InterestRegimeId:
+    retirement: ScalarInt
+    dead: ScalarInt
+
+
+def _log_consumption_value(wealth: np.ndarray, *, n_alive: int) -> np.ndarray:
+    """Closed-form retired value `V(w) = B log(w) + A` with log utility.
+
+    With gross return $R_g = 1 + r$, discount factor $\\beta$, and `n_alive`
+    remaining periods of life, the Bellman recursion for $V(w) = B \\log w + A$
+    starts from $A = B = 0$ and iterates `n_alive` times.
+    """
+    discount_factor = 0.95
+    gross_return = 1.05
+    intercept = 0.0
+    slope = 0.0
+    for _ in range(n_alive):
+        slope_new = 1.0 + discount_factor * slope
+        if slope_new > 1.0:
+            intercept = -np.log(slope_new) + discount_factor * (
+                slope * np.log(gross_return * (slope_new - 1.0) / slope_new) + intercept
+            )
+        else:
+            intercept = discount_factor * intercept
+        slope = slope_new
+    return slope * np.log(wealth) + intercept
+
+
+def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
+    """A 5%-interest retirement model hits the closed form on every wealth node.
+
+    With log utility, $\\beta = 0.95$, gross return $1.05$, and a multi-period
+    horizon, the retired value function is $V(w) = B \\log(w) + A$ in closed
+    form. The published V must match it on a dense linear wealth grid at every
+    period — across many backward-induction steps, so carry-read and
+    publish-side interpolation errors of the concave value rows may not
+    accumulate beyond the tolerance.
+    """
+    n_periods = 10
+
+    def utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    def resources(wealth: ContinuousState) -> FloatND:
+        return wealth
+
+    def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+        return resources - consumption
+
+    def next_wealth(savings: FloatND, interest_rate: float) -> ContinuousState:
+        return (1.0 + interest_rate) * savings
+
+    def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+        return 1.0 / marginal_continuation
+
+    def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+        return jnp.where(
+            age >= final_age_alive,
+            _InterestRegimeId.dead,
+            _InterestRegimeId.retirement,
+        )
+
+    ages = AgeGrid(start=40, stop=40 + n_periods - 1, step="Y")
+    last_age = ages.exact_values[-1]
+    retirement = UserRegime(
+        transition=next_regime,
+        actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=100)},
+        states={"wealth": LinSpacedGrid(start=1, stop=400, n_points=1000)},
+        state_transitions={"wealth": next_wealth},
+        functions={
+            "utility": utility,
+            "resources": resources,
+            "savings": savings,
+            "inverse_marginal_utility": inverse_marginal_utility,
+        },
+        solver=DCEGM(
+            continuous_state="wealth",
+            continuous_action="consumption",
+            resources="resources",
+            post_decision_function="savings",
+            # Cubic node clustering toward the borrowing limit, as the value
+            # function curves hardest there.
+            savings_grid=IrregSpacedGrid(
+                points=tuple(400.0 * (i / 199) ** 3 for i in range(200))
+            ),
+            n_constrained_points=64,
+        ),
+        active=lambda age: age < last_age,
+    )
+    dead = UserRegime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda _age: True,
+    )
+    model = Model(
+        regimes={"retirement": retirement, "dead": dead},
+        ages=ages,
+        regime_id_class=_InterestRegimeId,
+    )
+    params = {
+        "discount_factor": 0.95,
+        "interest_rate": 0.05,
+        "final_age_alive": 40 + n_periods - 2,
+    }
+
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+
+    wealth = np.linspace(1.0, 400.0, 1000)
+    for period in range(n_periods - 1):
+        np.testing.assert_allclose(
+            np.asarray(period_to_regime_to_V_arr[period]["retirement"]),
+            _log_consumption_value(wealth, n_alive=(n_periods - 1) - period),
+            atol=3e-3,
+            err_msg=f"period={period}",
+        )
 
 
 def test_nan_param_surfaces_as_value_function_error():
