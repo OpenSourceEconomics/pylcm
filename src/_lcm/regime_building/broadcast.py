@@ -320,8 +320,8 @@ def _regime_transition_roots(
     transition = phase_slice.regime_transition
     if isinstance(transition, Mapping):
         return {
-            f"__next_regime_{target_name}": cast("UserFunction", cell)
-            for target_name, cell in transition.items()
+            f"__next_regime_{target_regime_name}": cast("UserFunction", cell)
+            for target_regime_name, cell in transition.items()
         }
     if transition is not None:
         return {"__next_regime": cast("UserFunction", transition)}
@@ -347,13 +347,15 @@ def _law_roots(
             if isinstance(raw, Mapping)
             else dict.fromkeys(reachable_targets, raw)
         )
-        for target_name, law in cells.items():
+        for target_regime_name, law in cells.items():
             if (
                 law is not None
-                and target_name in reachable_targets
-                and state_name in kept.get(target_name, frozenset())
+                and target_regime_name in reachable_targets
+                and state_name in kept.get(target_regime_name, frozenset())
             ):
-                roots[f"__law_{state_name}_{target_name}"] = cast("UserFunction", law)
+                roots[f"__law_{state_name}_{target_regime_name}"] = cast(
+                    "UserFunction", law
+                )
     return roots
 
 
@@ -388,16 +390,10 @@ def _merge_one_slot(
     for name, value in regime_slot.items():
         if value is None:
             if name not in model_slot:
-                hint = (
-                    f" `None` masks a model-level entry; use "
-                    f"`fixed_transition('{name}')` for a fixed state."
-                    if slot_name == "state_transitions"
-                    else ""
-                )
                 errors.append(
                     f"{slot_name}['{name}'] in regime '{regime_name}' is "
                     f"`None`, but no model-level entry provides '{name}' — "
-                    f"there is nothing to mask.{hint}",
+                    f"there is nothing to mask.",
                 )
         elif name in model_slot:
             errors.append(
