@@ -150,6 +150,7 @@ from _lcm.egm.upper_envelope import get_upper_envelope
 from _lcm.egm.validation import _reachable_target_names, savings_stage_reads_euler_state
 from _lcm.engine import StateActionSpace
 from _lcm.logsum import logsum_and_softmax
+from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
@@ -654,12 +655,22 @@ class _ChildRead:
     resources_arg_names: frozenset[str]
     """Leaf argument names of the child's resources function."""
 
+    resources_param_names: frozenset[str]
+    """Qualified param leaves of the child's resources function.
+
+    Bound per node from the combo pool (the regime's flat params, plus `age`
+    / `period`). Constant in the savings node, so they ride through the
+    composed resources gradients without contributing a savings derivative.
+    """
+
     resources_is_simple: bool
     """Whether the resources function reads only the child's Euler state.
 
     The simple case computes one query and one composed gradient per savings
     node and broadcasts them across the carry rows; the general case
-    evaluates both per row.
+    evaluates both per row. Params and `age` / `period` are constants, so a
+    resources function reading only the Euler state and params still counts
+    as simple.
     """
 
     discrete_state_names: tuple[StateName, ...]
@@ -1290,6 +1301,13 @@ def _get_child_carry_reader(
             )
             if not is_stochastic and name in read.resources_arg_names
         }
+        # The child resources function may read the regime's flat params and
+        # `age` / `period` (e.g. a capital-income return rate); bind them from
+        # the combo pool once. They are constant in the savings node, so they
+        # ride through the composed gradients as constants.
+        resources_param_kwargs = {
+            name: combo_pool[name] for name in read.resources_param_names
+        }
 
         def child_euler_state(savings: ScalarFloat) -> ScalarFloat:
             inner = read.next_state_func(**combo_pool, **{post_decision_name: savings})
@@ -1302,6 +1320,7 @@ def _get_child_carry_reader(
                 read=read,
                 child_euler_state=child_euler_state,
                 deterministic_resources_kwargs=deterministic_resources_kwargs,
+                resources_param_kwargs=resources_param_kwargs,
                 savings_value=savings_value,
                 stochastic_values=stochastic_values,
             )
@@ -1335,23 +1354,26 @@ def _compute_row_queries_and_gradients(
     read: _ChildRead,
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
     deterministic_resources_kwargs: dict[str, Any],
+    resources_param_kwargs: dict[str, Any],
     savings_value: ScalarFloat,
     stochastic_values: tuple[ScalarFloat | ScalarInt, ...],
 ) -> tuple[FloatND, FloatND]:
     """Per-row $R'$ queries and composed gradients for one node combo.
 
     The composed map differentiated per row is
-    $A \\mapsto R'(\\mathcal{T}(A), z', d', p')$ — only the child's Euler
-    state depends on the savings node; the discrete-state codes, stochastic
-    node values, passive node values, and action codes ride as constants. With
-    a simple resources function (Euler state only), one query and gradient is
-    computed and broadcast across the row block.
+    $A \\mapsto R'(\\mathcal{T}(A), z', d', p'; \\theta)$ — only the child's
+    Euler state depends on the savings node; the discrete-state codes,
+    stochastic node values, passive node values, action codes, and model
+    params $\\theta$ ride as constants. With a simple resources function
+    (Euler state and params only), one query and gradient is computed and
+    broadcast across the row block.
     """
     if read.resources_is_simple:
 
         def composed(savings: ScalarFloat) -> ScalarFloat:
             return read.resources_func(
-                **{read.euler_state_name: child_euler_state(savings)}
+                **{read.euler_state_name: child_euler_state(savings)},
+                **resources_param_kwargs,
             )
 
         query, gradient = jax.value_and_grad(composed)(savings_value)
@@ -1378,7 +1400,8 @@ def _compute_row_queries_and_gradients(
             **dict(zip(read.row_arg_names, row_values, strict=True)),
         }
         return read.resources_func(
-            **{k: v for k, v in bound.items() if k in read.resources_arg_names}
+            **{k: v for k, v in bound.items() if k in read.resources_arg_names},
+            **resources_param_kwargs,
         )
 
     if read.row_values:
@@ -1731,6 +1754,16 @@ def _build_child_reads(
         resources_arg_names = frozenset(
             _get_child_resources_arg_names(user_regime=target_regime)
         )
+        # Everything the resources function reads beyond the child's own
+        # states and discrete actions is a (qualified) param or `age` /
+        # `period`: a per-node constant bound from the combo pool.
+        child_binding_names = (
+            {euler_state_name}
+            | set(discrete_state_names)
+            | set(passive_state_names)
+            | set(action_names)
+        )
+        resources_param_names = resources_arg_names - child_binding_names
         row_grids = passive_grids + action_values
         if row_grids:
             row_mesh = jnp.meshgrid(*row_grids, indexing="ij")
@@ -1748,7 +1781,9 @@ def _build_child_reads(
             euler_state_name=euler_state_name,
             resources_func=resources_func,
             resources_arg_names=resources_arg_names,
-            resources_is_simple=resources_arg_names <= {euler_state_name},
+            resources_param_names=resources_param_names,
+            resources_is_simple=(resources_arg_names - resources_param_names)
+            <= {euler_state_name},
             discrete_state_names=discrete_state_names,
             stochastic_flags=stochastic_flags,
             stochastic_state_names=stochastic_state_names,
@@ -2128,6 +2163,7 @@ def _find_unsupported_feature(
             transitions=transitions,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             own_discrete_state_names=own_discrete_state_names,
+            flat_param_names=flat_param_names,
         )
         if message is not None:
             break
@@ -2163,6 +2199,7 @@ def _find_unsupported_target_feature(
     transitions: TransitionFunctionsMapping,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     own_discrete_state_names: tuple[StateName, ...],
+    flat_param_names: frozenset[str],
 ) -> str | None:
     """Return a message naming the first unsupported feature of one target."""
     target_info = regime_to_v_interpolation_info[target]
@@ -2197,15 +2234,27 @@ def _find_unsupported_target_feature(
     child_action_names, _ = _get_child_discrete_actions(
         user_regime=user_regimes[target]
     )
+    # Mirror the function-args allowance (`_find_unsupported_function_args`):
+    # beyond the child's states and discrete actions, the resources function
+    # may read the regime's flat params and the lifecycle `age` / `period`.
+    # Solve-phase imputed intermediates (a carried state's solve law) are
+    # baked into the resources DAG, so their leaf inputs (the passive states
+    # and params they read) are what surfaces here — the imputed output is
+    # computed, never demanded as a leaf.
     allowed_resources_args = (
-        {child_state_name} | set(target_info.state_names) | set(child_action_names)
+        {child_state_name}
+        | set(target_info.state_names)
+        | set(child_action_names)
+        | set(flat_param_names)
+        | {"age", "period"}
     )
     extra_resources_args = sorted(resources_arg_names - allowed_resources_args)
     if extra_resources_args:
         return (
             f"the resources function of target regime '{target}' depends on "
             f"{extra_resources_args}; beyond the Euler state it may read "
-            "only the child's states and discrete actions."
+            "only the child's states and discrete actions, the regime's "
+            "params, and age/period."
         )
     for process_name in target_process_states:
         grid = target_info.discrete_states[process_name]
@@ -2420,16 +2469,43 @@ def _get_child_resources_arg_names(*, user_regime: UserRegime) -> set[str]:
 
 
 def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
-    """Concatenate a DC-EGM target's resources function from its user DAG."""
+    """Concatenate a DC-EGM target's resources function from its user DAG.
+
+    Each user function's params are renamed to their qualified names
+    (`<func>__<param>`) before concatenation, matching the engine's binding
+    vocabulary so the kernel feeds them straight from the combo pool (which
+    carries the regime's flat params). Solve-phase imputed intermediates (a
+    `Phased` function or a carried state's solve law) are resolved to their
+    solve variant and baked into the DAG, so their outputs are computed from
+    leaf states and params rather than demanded as leaves.
+    """
+    # Imported lazily: `regime_building.processing` imports the solver
+    # registry, which imports this module, so a top-level import would cycle.
+    from _lcm.regime_building import processing as _proc  # noqa: PLC0415
+
     solver = cast("DCEGM", user_regime.solver)
+    regime_params_template = create_regime_params_template(user_regime)
     resolved: dict[str, UserFunction] = {}
     for name, func in user_regime.functions.items():
         if isinstance(func, Phased):
             resolved[name] = cast("UserFunction", func.solve)
         elif func is not None:
             resolved[name] = func
+    # A carried state contributes a solve-phase imputation function under its
+    # own name; include it so resources may read the imputed value.
+    for name, value in user_regime.states.items():
+        if isinstance(value, Phased) and name not in resolved:
+            resolved[name] = cast("UserFunction", value.solve)
+    qnamed = {
+        name: _proc._rename_params_to_qnames(  # noqa: SLF001
+            func=func,
+            regime_params_template=regime_params_template,
+            param_key=name,
+        )
+        for name, func in resolved.items()
+    }
     return concatenate_functions(
-        functions=resolved,
+        functions=qnamed,
         targets=solver.resources,
         enforce_signature=False,
         set_annotations=True,
