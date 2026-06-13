@@ -400,7 +400,22 @@ def _partial_fixed_params_into_regimes(
     result: dict[RegimeName, Regime] = {}
     for regime_name, regime in raw_regimes.items():
         regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
-        if not regime_fixed:
+        # A DC-EGM source carrying into a *different* target regime evaluates
+        # that target's resources / transition functions in its per-asset-node
+        # solve, reading the target's fixed params (e.g. a pension factor the
+        # source never reads). These are model-level shared values, so the
+        # target's `fixed_flat_params` entry carries the right value; union
+        # them into the params bound into the source's `egm_step` kernel. The
+        # kernel threads its `**kwargs` into the per-combo pool, and the
+        # captured functions read only the keys they need, so the extra
+        # carry-target params are harmless to the functions that don't.
+        egm_fixed = dict(regime_fixed)
+        for target_name in regime.solution.transitions:
+            for key, value in fixed_flat_params.get(
+                target_name, MappingProxyType({})
+            ).items():
+                egm_fixed.setdefault(key, value)
+        if not regime_fixed and not egm_fixed:
             result[regime_name] = regime
             continue
 
@@ -433,13 +448,14 @@ def _partial_fixed_params_into_regimes(
             # probabilities, transition weights, the child resources and
             # next-state maps) before fixed params are partialled. The kernel
             # threads its `**kwargs` straight into the per-combo pool those
-            # captured functions read, so binding the regime's fixed params
-            # here restores the params removed from `flat_params` for every
-            # one of them at once — matching what the live params supply.
+            # captured functions read, so binding the union of the regime's
+            # and its carry targets' fixed params here restores the params
+            # removed from `flat_params` for every one of them at once —
+            # matching what the live params supply.
             egm_step=(
                 MappingProxyType(
                     {
-                        period: functools.partial(func, **regime_fixed)
+                        period: functools.partial(func, **egm_fixed)
                         for period, func in solution.egm_step.items()
                     }
                 )
