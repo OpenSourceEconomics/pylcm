@@ -13,7 +13,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -23,7 +22,6 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import BruteForce
-from lcm.transition import fixed_transition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -224,27 +222,11 @@ CASES = {
         ),
         "stochastic",
     ),
-    "batched_euler_state_grid": (
-        lambda: VALID.replace(
-            states={
-                "wealth": LinSpacedGrid(start=1, stop=400, n_points=100, batch_size=50)
-            }
-        ),
-        "batch",
-    ),
-    "batched_discrete_state_grid": (
-        lambda: VALID.replace(
-            states={
-                **dict(VALID.states),
-                "skill": DiscreteGrid(base.LaborSupply, batch_size=1),
-            },
-            state_transitions={
-                **dict(VALID.state_transitions),
-                "skill": fixed_transition("skill"),
-            },
-        ),
-        "batch",
-    ),
+    # `batch_size` on the Euler / discrete / passive grids is no longer a
+    # contract violation — it is the supported memory knob that splays the
+    # solve (Euler grid → `lax.map` over asset nodes; combo grids → per-axis
+    # `productmap`). Construction is covered below; numerical correctness in
+    # `tests/solution/test_egm_batch_size_euler.py` and `_combos.py`.
     "runtime_savings_grid": (
         lambda: VALID.replace(
             solver=dataclasses.replace(
@@ -283,6 +265,20 @@ def test_passive_continuous_state_constructs():
             **dict(VALID.state_transitions),
             "aime": _next_aime_decaying,
         },
+    )
+    model = _build_model(regime)
+    assert model.n_periods == N_PERIODS
+
+
+def test_batched_euler_state_grid_constructs():
+    """`batch_size` on the Euler grid is a valid memory knob, not a violation.
+
+    It splays the per-asset-node solve into `lax.map` blocks; the solver still
+    builds. Numerical invariance across block sizes is covered in
+    `tests/solution/test_egm_batch_size_euler.py`.
+    """
+    regime = VALID.replace(
+        states={"wealth": LinSpacedGrid(start=1, stop=400, n_points=100, batch_size=50)}
     )
     model = _build_model(regime)
     assert model.n_periods == N_PERIODS
