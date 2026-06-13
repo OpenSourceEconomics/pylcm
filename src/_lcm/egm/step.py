@@ -149,6 +149,7 @@ from _lcm.egm.interp import interp_on_padded_grid, locate_on_grid
 from _lcm.egm.upper_envelope import get_upper_envelope
 from _lcm.egm.validation import _reachable_target_names, savings_stage_reads_euler_state
 from _lcm.engine import StateActionSpace
+from _lcm.grids import ContinuousGrid
 from _lcm.logsum import logsum_and_softmax
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
@@ -252,6 +253,13 @@ def build_egm_step_functions(
 
     """
     n_pad = compute_egm_carry_length(solver=solver)
+    # `batch_size` on the Euler-state grid splays the per-asset-node solve into
+    # blocks (`lax.map`) to shed peak working-set memory; 0 keeps the fused
+    # vmap. Only the asset-row kernel has a per-node axis to splay.
+    euler_grid = cast(
+        "ContinuousGrid", user_regimes[regime_name].states[solver.continuous_state]
+    )
+    euler_batch_size = euler_grid.batch_size
     own_v_info = regime_to_v_interpolation_info[regime_name]
     # Any savings-stage Euler-state read (the Euler law's residual, regime
     # transition probabilities, stochastic transition weights, non-Euler
@@ -354,6 +362,7 @@ def build_egm_step_functions(
                 has_taste_shocks=has_taste_shocks,
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 asset_row_mode=asset_row_mode,
+                euler_batch_size=euler_batch_size,
             )
         built[(carry_targets, scalar_targets)] = kernel
 
@@ -457,12 +466,17 @@ def _get_egm_step(
     has_taste_shocks: bool,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     asset_row_mode: bool,
+    euler_batch_size: int,
 ) -> EgmStepFunction:
     """Build the EGM kernel for one continuation-target configuration.
 
     `asset_row_mode` selects the per-combo computation at build time: the
     per-exogenous-asset-node solve when any savings-stage function reads the
     current Euler state, the single-post-state default otherwise.
+
+    `euler_batch_size` (the Euler grid's `batch_size`) splays the asset-row
+    per-node solve into `lax.map` blocks to shed peak memory; it has no effect
+    in the single-post-state (non-asset-row) kernel, which has no per-node axis.
     """
     get_solve_one_combo = (
         _get_solve_one_combo_asset_rows if asset_row_mode else _get_solve_one_combo
@@ -525,6 +539,7 @@ def _get_egm_step(
             pool=pool,
             state_grid=state_grid,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
+            euler_batch_size=euler_batch_size,
         )
 
         if pieces.combo_names:
@@ -805,11 +820,18 @@ def _get_solve_one_combo(
     pool: dict[str, Any],
     state_grid: Float1D,
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    euler_batch_size: int,
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
     tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
 ]:
-    """Build the per-combo EGM computation for one kernel invocation."""
+    """Build the per-combo EGM computation for one kernel invocation.
+
+    `euler_batch_size` is accepted for a uniform builder signature but unused:
+    the single-post-state kernel solves once per combo, with no per-asset-node
+    axis to splay (only the asset-row kernel honors it).
+    """
+    del euler_batch_size
     dtype = state_grid.dtype
 
     def solve_one_combo(
@@ -930,6 +952,7 @@ def _get_solve_one_combo_asset_rows(
     pool: dict[str, Any],
     state_grid: Float1D,
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    euler_batch_size: int,
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
     tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
@@ -1096,7 +1119,16 @@ def _get_solve_one_combo_asset_rows(
 
             return V_node, policy_node, mu_node
 
-        V_vec, policy_vec, mu_vec = jax.vmap(solve_one_node)(state_grid)
+        # Splay the per-asset-node solve into `lax.map` blocks of
+        # `euler_batch_size` to shed peak working-set memory; `0` (or a size
+        # covering the whole grid) keeps the fused vmap. The two are
+        # numerically identical — only the schedule differs.
+        if 0 < euler_batch_size < n_state:
+            V_vec, policy_vec, mu_vec = jax.lax.map(
+                solve_one_node, state_grid, batch_size=euler_batch_size
+            )
+        else:
+            V_vec, policy_vec, mu_vec = jax.vmap(solve_one_node)(state_grid)
         publish_resources = jax.vmap(own_resources_of_state)(state_grid)
 
         pad = jnp.full((pieces.n_pad - n_state,), jnp.nan, dtype=dtype)
