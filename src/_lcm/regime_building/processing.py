@@ -13,6 +13,10 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qnam
 from jax import numpy as jnp
 
 from _lcm.coarse_transition import _CoarseTransitionCell
+from _lcm.egm.budget import (
+    DCEGM_BUDGET_CONSTRAINT_NAME,
+    get_intrinsic_budget_constraint,
+)
 from _lcm.egm.carry import EgmCarry, build_template_egm_carry
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
@@ -269,6 +273,7 @@ def process_regimes(
             solve_stochastic_transition_names=solution.stochastic_transition_names,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
             has_taste_shocks=user_regime.taste_shocks is not None,
+            solver=user_regime.solver,
         )
 
         stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -558,6 +563,7 @@ def _build_simulation_phase(
     solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     has_taste_shocks: bool,
+    solver: BruteForce | DCEGM,
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -569,6 +575,12 @@ def _build_simulation_phase(
 
     Q_and_F always uses the solve (non-vmapped) regime transition probs because
     it evaluates on the Cartesian grid, not per-subject.
+
+    For a DC-EGM regime, the budget constraint the EGM solve enforces
+    intrinsically is synthesized and injected into the constraint set: the
+    simulate-phase grid argmax needs it as a feasibility mask exactly like a
+    user-declared borrowing constraint of a brute-force regime. The solve
+    phase is unaffected — the EGM kernels never see it.
 
     Args:
         spec: The regime's per-phase specification.
@@ -595,6 +607,8 @@ def _build_simulation_phase(
             function, used for Q_and_F in both phases.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
+        solver: The regime's solver configuration; a DC-EGM regime gets the
+            synthesized intrinsic budget constraint.
 
     Returns:
         Complete simulate functions container.
@@ -615,6 +629,26 @@ def _build_simulation_phase(
     )
     functions = core.functions
     constraints = core.constraints
+    if isinstance(solver, DCEGM):
+        if (
+            DCEGM_BUDGET_CONSTRAINT_NAME in core.functions
+            or DCEGM_BUDGET_CONSTRAINT_NAME in core.constraints
+        ):
+            msg = (
+                f"Regime '{regime_name}' declares a function or constraint "
+                f"named '{DCEGM_BUDGET_CONSTRAINT_NAME}'. That name is "
+                "reserved for the budget constraint the simulate phase "
+                "synthesizes for DC-EGM regimes; rename it."
+            )
+            raise ModelInitializationError(msg)
+        constraints = MappingProxyType(
+            {
+                **core.constraints,
+                DCEGM_BUDGET_CONSTRAINT_NAME: get_intrinsic_budget_constraint(
+                    solver=solver, functions=core.functions
+                ),
+            }
+        )
 
     # Every published simulate-phase consumer (next_state, the realized
     # regime draw, the feasibility check, additional targets) reads each

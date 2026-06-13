@@ -36,13 +36,6 @@ from _lcm.typing import (
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, BruteForce
 
-DCEGM_NOT_IMPLEMENTED_MSG = (
-    "Simulating a model with a `solver=DCEGM(...)` regime is not implemented "
-    "yet: the forward simulation needs the EGM policy machinery, which is "
-    "not available. Solving such a model works; to simulate, use "
-    "`solver=BruteForce()` (the default) for every regime."
-)
-
 
 @dataclass(frozen=True, kw_only=True)
 class SolverBuildContext:
