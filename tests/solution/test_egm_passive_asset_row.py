@@ -452,3 +452,81 @@ def test_means_tested_prob_through_param_intermediate_matches_brute_force(
             rtol=1e-3,
             err_msg=f"period={period}",
         )
+
+
+@functools.cache
+def _model_with_aime_batch(aime_batch_size: int) -> Model:
+    """The asset-row passive-AIME DC-EGM model with `aime` splayed by batch_size."""
+    working = UserRegime(
+        transition={
+            "working_life": MarkovTransition(stay_prob),
+            "dead": MarkovTransition(death_prob),
+        },
+        active=_active,
+        actions={
+            "labor_supply": DiscreteGrid(LaborChoice),
+            "consumption": CONSUMPTION_GRID,
+        },
+        states={
+            "wealth": WEALTH_GRID,
+            "aime": LinSpacedGrid(
+                start=0.0, stop=AIME_MAX, n_points=6, batch_size=aime_batch_size
+            ),
+            "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
+        },
+        state_transitions={"wealth": next_wealth_dcegm, "aime": next_aime},
+        constraints={},
+        functions={
+            **_shared_functions(),
+            "resources": resources,
+            "savings": savings,
+            "inverse_marginal_utility": inverse_marginal_utility,
+        },
+        solver=DCEGM_SOLVER,
+    )
+    return Model(
+        regimes={"working_life": working, "dead": dead},
+        ages=_ages(),
+        regime_id_class=PassiveAssetRowRegimeId,
+    )
+
+
+def _euler_last_flat(value_array: np.ndarray) -> np.ndarray:
+    """Move the Euler (wealth) axis last and flatten the leading combo axes.
+
+    `batch_size` on a continuous state reorders the canonical continuous-axis
+    layout (a batched axis is placed ahead of an unbatched one — the same
+    reordering the brute solver applies). Moving the Euler axis last collapses
+    that difference: `(income, wealth, aime)` and `(income, aime, wealth)` both
+    become `(income, aime, wealth)`, so the solved values are directly
+    comparable regardless of the splay.
+    """
+    moved = np.moveaxis(value_array, _euler_axis(value_array), -1)
+    return moved.reshape(-1, moved.shape[-1])
+
+
+@pytest.mark.parametrize("aime_batch_size", [1, 2, 4])
+def test_passive_aime_batch_size_leaves_value_function_unchanged(aime_batch_size: int):
+    """Splaying the passive AIME combo axis does not change the solved values.
+
+    `batch_size` on the passive `aime` grid only changes how the combo product
+    is scheduled (per-axis `productmap` blocks instead of one fused vmap). The
+    canonical layout reorders the continuous axes (batched ahead of unbatched,
+    matching the brute solver), but the solved values — compared with the Euler
+    axis moved last — match the unsplayed `batch_size=0` solve exactly, at every
+    period, including a block size that does not divide the AIME grid.
+    """
+    reference = _model("dcegm").solve(params=_params(), log_level="debug")
+    splayed = _model_with_aime_batch(aime_batch_size).solve(
+        params=_params(), log_level="debug"
+    )
+    # `working_life` is the asset-row regime carrying the splayed AIME axis;
+    # it is inactive in the terminal period, so exclude that period.
+    for period in sorted(reference)[:-1]:
+        np.testing.assert_allclose(
+            _euler_last_flat(np.asarray(splayed[period]["working_life"])),
+            _euler_last_flat(np.asarray(reference[period]["working_life"])),
+            rtol=1e-12,
+            atol=1e-12,
+            err_msg=f"period={period}, bs={aime_batch_size}",
+        )
