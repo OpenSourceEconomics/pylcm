@@ -303,10 +303,17 @@ def _maybe_offload_carries_to_host(
     the accelerator holding only the reachable-target subset each kernel
     re-uploads at dispatch (`_reachable_carry_subset`). A no-op on a CPU-only
     host. Returns the mapping unchanged when offloading is disabled.
+
+    Uses `jax.device_get` (host NumPy), not `jax.device_put(..., cpu_device)`:
+    under a sharded (distributed) solve the carries are device-sharded, and a
+    CPU-*committed* array re-uploaded to an AOT-compiled kernel is rejected for
+    disagreeing with the kernel's compiled input sharding. Host NumPy is
+    *uncommitted*, so JAX reshards it to the kernel's expected `in_shardings`
+    at dispatch instead of erroring.
     """
     if not offload:
         return next_regime_to_egm_carry
-    return jax.device_put(next_regime_to_egm_carry, jax.devices("cpu")[0])
+    return jax.device_get(next_regime_to_egm_carry)
 
 
 def _solve_regime_period(
