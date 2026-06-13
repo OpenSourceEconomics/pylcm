@@ -183,8 +183,8 @@ def _add_raw_transition(
     if callable(raw) or isinstance(raw, Phased):
         transitions[f"next_{name}"] = cast("UserFunction", raw)
     elif isinstance(raw, Mapping):
-        for target_regime_name, target_value in raw.items():
-            key = f"next_{name}{QNAME_DELIMITER}{target_regime_name}"
+        for target_name, target_value in raw.items():
+            key = f"next_{name}{QNAME_DELIMITER}{target_name}"
             transitions[key] = cast("UserFunction", target_value)
 
 
