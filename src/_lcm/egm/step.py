@@ -34,10 +34,11 @@ axis:
    composed factor sits inside the aggregation because each choice's
    envelope lives in its own resources space (exact for EV1 by Danskin's
    theorem; scale zero degrades to the hard max / one-hot argmax),
-4. take the process-node and regime-transition expectations: a child process
-   state's node is distributed per the grid's intrinsic transition weights
+4. take the stochastic-node and regime-transition expectations: a child
+   stochastic state's node — a continuous AR(1) process state or a
+   Markov-discrete state — is distributed per its intrinsic transition weights
    $w(\\text{node}' \\mid \\text{node}, \\text{params})$, so steps 2-3 run
-   per child node combo and the results are weight-summed — the process
+   per child node combo and the results are weight-summed — the stochastic
    expectation sits *outside* the action aggregation (the shock realizes
    before the next period's choice), matching the brute-force solver's
    weighted average of the already action-aggregated next-period V — and the
@@ -111,7 +112,16 @@ own integer combo index, exactly as the non-terminal child read selects its
 combo. A fixed `pref_type` whose terminal bequest differs by type is the
 motivating case.
 
-Out of scope: stochastic non-process transitions into a carry target,
+A child Markov-discrete state — one whose `next_<name>` is a stochastic
+transition into the target — is integrated exactly like a process state: its
+node axis is the *child's* discrete grid (codes $0, 1, \\dots$, which also
+index the carry's leading axis), distributed per the intrinsic weights
+$w(\\text{node}' \\mid \\text{node}, \\text{params})$, summed outside the
+action aggregation. The child grid need not match the source's: a 3-state
+health remapped onto a 2-state target carries a length-2 weight vector, and
+the integration ranges over the child axis.
+
+Out of scope:
 terminal carry targets with actions, with a discrete state the parent does
 not carry, or with a non-identity transition into a shared discrete state,
 child resources functions reading anything beyond the child's states and
@@ -307,7 +317,6 @@ def build_egm_step_functions(
             constraints=constraints,
             carry_targets=carry_targets,
             transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
@@ -325,6 +334,7 @@ def build_egm_step_functions(
                 functions=functions,
                 constraints=constraints,
                 transitions=transitions,
+                stochastic_transition_names=stochastic_transition_names,
                 compute_regime_transition_probs=compute_regime_transition_probs,
                 carry_targets=carry_targets,
                 scalar_targets=scalar_targets,
@@ -427,6 +437,7 @@ def _get_egm_step(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     carry_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
@@ -454,6 +465,7 @@ def _get_egm_step(
         functions=functions,
         constraints=constraints,
         transitions=transitions,
+        stochastic_transition_names=stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         carry_targets=carry_targets,
         scalar_targets=scalar_targets,
@@ -621,7 +633,7 @@ class _ChildRead:
     """Build-time statics for reading one carry target's rows.
 
     The row block of a child carry — after the deterministic discrete-state
-    and process-node indices are applied — has the child's passive nodes as
+    and stochastic-node indices are applied — has the child's passive nodes as
     leading axes and its discrete-action combos as trailing axes; the
     per-row binding values and the block shape are precomputed here so the
     kernel's per-savings-node read is pure array work.
@@ -651,22 +663,33 @@ class _ChildRead:
     """
 
     discrete_state_names: tuple[StateName, ...]
-    """Child discrete-state names (process states included) in carry-axis order."""
+    """Child discrete-state names (stochastic states included) in carry-axis order."""
 
-    process_flags: tuple[bool, ...]
-    """Per discrete-state dimension: whether it is a process state."""
+    stochastic_flags: tuple[bool, ...]
+    """Per discrete-state dimension: whether it is a stochastic node axis.
 
-    process_state_names: tuple[StateName, ...]
-    """Child process-state names in carry-axis order."""
+    A dimension is stochastic when its next-period node is distributed by a
+    transition law: a continuous AR(1) process state, or a Markov-discrete
+    state whose `next_<name>` is a stochastic transition into the target. Both
+    are integrated over the child's node axis with the intrinsic weights.
+    """
 
-    process_node_values: tuple[Float1D, ...]
-    """Grid-point values per process dimension (NaN when supplied at runtime)."""
+    stochastic_state_names: tuple[StateName, ...]
+    """Child stochastic node-axis names (process or Markov) in carry-axis order."""
+
+    stochastic_node_values: tuple[FloatND | IntND, ...]
+    """Per stochastic dimension: the node values fed into the resources query.
+
+    Process dimensions carry the continuous AR(1) grid points (NaN when
+    supplied at runtime); Markov-discrete dimensions carry the integer
+    category codes (which equal the carry's leading-axis indices).
+    """
 
     weight_keys: tuple[str, ...]
-    """`weight_<target>__next_<state>` keys aligned with the process dims."""
+    """`weight_<target>__next_<state>` keys aligned with the stochastic dims."""
 
     weights_func: Callable[..., Any] | None
-    """Concatenated intrinsic-weights function, or `None` without process dims."""
+    """Concatenated intrinsic-weights function, or `None` without stochastic dims."""
 
     passive_state_names: tuple[StateName, ...]
     """Child passive-state names in carry-axis order."""
@@ -695,6 +718,7 @@ def _build_kernel_pieces(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     carry_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
@@ -714,6 +738,7 @@ def _build_kernel_pieces(
         user_regimes=user_regimes,
         functions=functions,
         transitions=transitions,
+        stochastic_transition_names=stochastic_transition_names,
         carry_targets=carry_targets,
         post_decision_name=solver.post_decision_function,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -1219,9 +1244,10 @@ def _get_child_carry_reader(
     The returned callable maps a savings node to the target's smoothed
     continuation value and smoothed marginal continuation in savings space
     (the composed gradient $\\partial R'/\\partial A$ is applied per carry
-    row inside the read). With child process states, the read runs per child
-    node combo and the per-node results are summed with the intrinsic
-    transition weights $w(\\text{node}' \\mid \\text{node})$ — *outside* the
+    row inside the read). With child stochastic states (a continuous AR(1)
+    process state or a Markov-discrete state), the read runs per child node
+    combo and the per-node results are summed with the intrinsic transition
+    weights $w(\\text{node}' \\mid \\text{node})$ — *outside* the
     discrete-action aggregation, matching the brute-force expectation over
     the already action-aggregated next-period V. The weights are evaluated
     once per combo (they depend on the current node values, params, and — in
@@ -1232,8 +1258,8 @@ def _get_child_carry_reader(
     if read.weights_func is not None:
         weights = read.weights_func(**combo_pool)
         weight_vecs = tuple(weights[key] for key in read.weight_keys)
-    resources_reads_process = bool(
-        set(read.process_state_names) & read.resources_arg_names
+    resources_reads_stochastic = bool(
+        set(read.stochastic_state_names) & read.resources_arg_names
     )
 
     def read_child(savings_value: ScalarFloat) -> tuple[ScalarFloat, ScalarFloat]:
@@ -1248,10 +1274,10 @@ def _get_child_carry_reader(
         )
         deterministic_index = tuple(
             cast("ScalarInt", next_states[f"next_{name}"])
-            for name, is_process in zip(
-                read.discrete_state_names, read.process_flags, strict=True
+            for name, is_stochastic in zip(
+                read.discrete_state_names, read.stochastic_flags, strict=True
             )
-            if not is_process
+            if not is_stochastic
         )
         child_passive_values = tuple(
             cast("ScalarFloat", next_states[f"next_{name}"])
@@ -1259,10 +1285,10 @@ def _get_child_carry_reader(
         )
         deterministic_resources_kwargs = {
             name: next_states[f"next_{name}"]
-            for name, is_process in zip(
-                read.discrete_state_names, read.process_flags, strict=True
+            for name, is_stochastic in zip(
+                read.discrete_state_names, read.stochastic_flags, strict=True
             )
-            if not is_process and name in read.resources_arg_names
+            if not is_stochastic and name in read.resources_arg_names
         }
 
         def child_euler_state(savings: ScalarFloat) -> ScalarFloat:
@@ -1270,17 +1296,17 @@ def _get_child_carry_reader(
             return cast("ScalarFloat", inner[read.next_state_key])
 
         def queries_and_gradients(
-            process_values: tuple[ScalarFloat, ...],
+            stochastic_values: tuple[ScalarFloat | ScalarInt, ...],
         ) -> tuple[FloatND, FloatND]:
             return _compute_row_queries_and_gradients(
                 read=read,
                 child_euler_state=child_euler_state,
                 deterministic_resources_kwargs=deterministic_resources_kwargs,
                 savings_value=savings_value,
-                process_values=process_values,
+                stochastic_values=stochastic_values,
             )
 
-        if not read.process_state_names:
+        if not read.stochastic_state_names:
             queries, gradients = queries_and_gradients(())
             return _aggregate_child_choices(
                 carry=carry,
@@ -1291,14 +1317,14 @@ def _get_child_carry_reader(
                 row_gradients=gradients,
             )
 
-        return _expect_over_process_nodes(
+        return _expect_over_stochastic_nodes(
             read=read,
             carry=carry,
             weight_vecs=weight_vecs,
             deterministic_index=deterministic_index,
             child_passive_values=child_passive_values,
             queries_and_gradients=queries_and_gradients,
-            resources_reads_process=resources_reads_process,
+            resources_reads_stochastic=resources_reads_stochastic,
         )
 
     return read_child
@@ -1310,15 +1336,15 @@ def _compute_row_queries_and_gradients(
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
     deterministic_resources_kwargs: dict[str, Any],
     savings_value: ScalarFloat,
-    process_values: tuple[ScalarFloat, ...],
+    stochastic_values: tuple[ScalarFloat | ScalarInt, ...],
 ) -> tuple[FloatND, FloatND]:
     """Per-row $R'$ queries and composed gradients for one node combo.
 
     The composed map differentiated per row is
     $A \\mapsto R'(\\mathcal{T}(A), z', d', p')$ — only the child's Euler
-    state depends on the savings node; the discrete-state codes, process node
-    values, passive node values, and action codes ride as constants. With a
-    simple resources function (Euler state only), one query and gradient is
+    state depends on the savings node; the discrete-state codes, stochastic
+    node values, passive node values, and action codes ride as constants. With
+    a simple resources function (Euler state only), one query and gradient is
     computed and broadcast across the row block.
     """
     if read.resources_is_simple:
@@ -1334,11 +1360,11 @@ def _compute_row_queries_and_gradients(
             jnp.broadcast_to(gradient, read.row_block_shape),
         )
 
-    # Empty when the resources function reads no process state: the shared
+    # Empty when the resources function reads no stochastic state: the shared
     # (node-independent) computation passes no node values.
-    process_kwargs = (
-        dict(zip(read.process_state_names, process_values, strict=True))
-        if process_values
+    stochastic_kwargs = (
+        dict(zip(read.stochastic_state_names, stochastic_values, strict=True))
+        if stochastic_values
         else {}
     )
 
@@ -1348,7 +1374,7 @@ def _compute_row_queries_and_gradients(
         bound = {
             read.euler_state_name: child_euler_state(savings),
             **deterministic_resources_kwargs,
-            **process_kwargs,
+            **stochastic_kwargs,
             **dict(zip(read.row_arg_names, row_values, strict=True)),
         }
         return read.resources_func(
@@ -1370,42 +1396,47 @@ def _compute_row_queries_and_gradients(
     )
 
 
-def _expect_over_process_nodes(
+def _expect_over_stochastic_nodes(
     *,
     read: _ChildRead,
     carry: EgmCarry,
     weight_vecs: tuple[Float1D, ...],
     deterministic_index: tuple[ScalarInt, ...],
     child_passive_values: tuple[ScalarFloat, ...],
-    queries_and_gradients: Callable[[tuple[ScalarFloat, ...]], tuple[FloatND, FloatND]],
-    resources_reads_process: bool,
+    queries_and_gradients: Callable[
+        [tuple[ScalarFloat | ScalarInt, ...]], tuple[FloatND, FloatND]
+    ],
+    resources_reads_stochastic: bool,
 ) -> tuple[ScalarFloat, ScalarFloat]:
-    """Weight the carry read over the child's process-node combos.
+    """Weight the carry read over the child's stochastic-node combos.
 
     Runs the full read (per-row queries, mixed passive interpolation, choice
     aggregation) at every child node combo and sums the per-node smoothed
-    values and marginals with the joint intrinsic weights — the process
+    values and marginals with the joint intrinsic weights — the stochastic
     expectation sits *outside* the discrete-action aggregation, matching the
     brute-force solver's weighted average of the already action-aggregated
-    next-period V.
+    next-period V. The node axes are the child's continuous AR(1) process
+    states and Markov-discrete states alike; a Markov node feeds its integer
+    code into the resources query (when read) and selects the carry's leading
+    discrete axis by that code.
     """
     # The queries depend on the node combo only when the resources function
-    # reads a process state; otherwise compute them once and share.
-    if not resources_reads_process:
+    # reads a stochastic state; otherwise compute them once and share.
+    if not resources_reads_stochastic:
         shared_queries, shared_gradients = queries_and_gradients(())
 
     def read_at_nodes(
         node_indices: tuple[ScalarInt, ...],
     ) -> tuple[ScalarFloat, ScalarFloat]:
-        """Run the full carry read at one child process-node combo."""
-        if resources_reads_process:
-            process_values = tuple(
+        """Run the full carry read at one child stochastic-node combo."""
+        if resources_reads_stochastic:
+            stochastic_values = tuple(
                 values[index]
                 for values, index in zip(
-                    read.process_node_values, node_indices, strict=True
+                    read.stochastic_node_values, node_indices, strict=True
                 )
             )
-            queries, gradients = queries_and_gradients(process_values)
+            queries, gradients = queries_and_gradients(stochastic_values)
         else:
             queries, gradients = shared_queries, shared_gradients
         return _aggregate_child_choices(
@@ -1413,7 +1444,7 @@ def _expect_over_process_nodes(
             child_index=_interleave_child_index(
                 deterministic_index=deterministic_index,
                 node_indices=node_indices,
-                process_flags=read.process_flags,
+                stochastic_flags=read.stochastic_flags,
             ),
             child_passive_values=child_passive_values,
             child_passive_grids=read.passive_grids,
@@ -1424,7 +1455,7 @@ def _expect_over_process_nodes(
     node_index_mesh = jnp.meshgrid(
         *(
             jnp.arange(values.shape[0], dtype=jnp.int32)
-            for values in read.process_node_values
+            for values in read.stochastic_node_values
         ),
         indexing="ij",
     )
@@ -1452,14 +1483,14 @@ def _interleave_child_index(
     *,
     deterministic_index: tuple[ScalarInt, ...],
     node_indices: tuple[ScalarInt, ...],
-    process_flags: tuple[bool, ...],
+    stochastic_flags: tuple[bool, ...],
 ) -> tuple[ScalarInt, ...]:
-    """Merge deterministic codes and process node indices in carry-axis order."""
+    """Merge deterministic codes and stochastic node indices in carry-axis order."""
     deterministic_iter = iter(deterministic_index)
     node_iter = iter(node_indices)
     return tuple(
-        next(node_iter) if is_process else next(deterministic_iter)
-        for is_process in process_flags
+        next(node_iter) if is_stochastic else next(deterministic_iter)
+        for is_stochastic in stochastic_flags
     )
 
 
@@ -1476,7 +1507,7 @@ def _aggregate_child_choices(
 
     The carry rows matching the child's discrete-state values are selected
     by integer indexing on the leading state axes (discrete codes equal grid
-    positions, process dims indexed at one node); the remaining leading axes
+    positions, stochastic dims indexed at one node); the remaining leading axes
     are the child's passive nodes, then its discrete-action combos. Every
     row is interpolated 1-D at its own resources query and its marginal is
     multiplied by its own composed gradient $(\\partial R'/\\partial A)$ —
@@ -1497,7 +1528,7 @@ def _aggregate_child_choices(
     Args:
         carry: The child's EGM carry.
         child_index: The child's discrete-state values at this savings node
-            (process dims: the node index of this read).
+            (stochastic dims: the node index of this read).
         child_passive_values: The child's passive values at this savings
             node, aligned with `child_passive_grids`.
         child_passive_grids: The child's passive grids in carry-axis order.
@@ -1589,6 +1620,7 @@ def _build_child_reads(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     carry_targets: tuple[RegimeName, ...],
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
@@ -1616,26 +1648,57 @@ def _build_child_reads(
         discrete_state_names = _get_discrete_state_names(
             v_interpolation_info=target_info
         )
-        process_flags = tuple(
-            isinstance(target_info.discrete_states[name], _ContinuousStochasticProcess)
-            for name in discrete_state_names
-        )
-        process_state_names = tuple(
+        # A discrete dimension is a stochastic node axis when its next-period
+        # node is distributed by a transition law: a continuous AR(1) process
+        # state, or a Markov-discrete state whose `next_<name>` is a stochastic
+        # transition into this target. Both are integrated over the child's
+        # node axis with the intrinsic weights `weight_<target>__next_<name>`.
+        target_transition_names = frozenset(transitions[target])
+
+        def _is_stochastic(
+            name: StateName,
+            target_info: VInterpolationInfo = target_info,
+            target_transition_names: frozenset[
+                TransitionFunctionName
+            ] = target_transition_names,
+        ) -> bool:
+            if isinstance(
+                target_info.discrete_states[name], _ContinuousStochasticProcess
+            ):
+                return True
+            transition_name = f"next_{name}"
+            return (
+                transition_name in target_transition_names
+                and transition_name in stochastic_transition_names
+            )
+
+        stochastic_flags = tuple(_is_stochastic(name) for name in discrete_state_names)
+        stochastic_state_names = tuple(
             name
-            for name, is_process in zip(
-                discrete_state_names, process_flags, strict=True
+            for name, is_stochastic in zip(
+                discrete_state_names, stochastic_flags, strict=True
             )
-            if is_process
+            if is_stochastic
         )
-        process_node_values = tuple(
-            jnp.asarray(
-                target_info.discrete_states[name].to_jax(),
-                dtype=canonical_float_dtype(),
+        # Process axes feed the continuous AR(1) grid points into the resources
+        # query; Markov axes feed their integer category codes (`to_jax()`
+        # returns `[0, 1, ...]`, which also equal the carry's leading-axis
+        # indices). Both serve as the node-axis range of the integration mesh.
+        stochastic_node_values = tuple(
+            (
+                jnp.asarray(
+                    target_info.discrete_states[name].to_jax(),
+                    dtype=canonical_float_dtype(),
+                )
+                if isinstance(
+                    target_info.discrete_states[name], _ContinuousStochasticProcess
+                )
+                else jnp.asarray(target_info.discrete_states[name].to_jax())
             )
-            for name in process_state_names
+            for name in stochastic_state_names
         )
         weight_keys = tuple(
-            f"weight_{target}__next_{name}" for name in process_state_names
+            f"weight_{target}__next_{name}" for name in stochastic_state_names
         )
         weights_func = None
         if weight_keys:
@@ -1687,9 +1750,9 @@ def _build_child_reads(
             resources_arg_names=resources_arg_names,
             resources_is_simple=resources_arg_names <= {euler_state_name},
             discrete_state_names=discrete_state_names,
-            process_flags=process_flags,
-            process_state_names=process_state_names,
-            process_node_values=process_node_values,
+            stochastic_flags=stochastic_flags,
+            stochastic_state_names=stochastic_state_names,
+            stochastic_node_values=stochastic_node_values,
             weight_keys=weight_keys,
             weights_func=weights_func,
             passive_state_names=passive_state_names,
@@ -2044,7 +2107,6 @@ def _find_unsupported_feature(
     constraints: ConstraintFunctionsMapping,
     carry_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
@@ -2064,7 +2126,6 @@ def _find_unsupported_feature(
             user_regimes=user_regimes,
             functions=functions,
             transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             own_discrete_state_names=own_discrete_state_names,
         )
@@ -2100,7 +2161,6 @@ def _find_unsupported_target_feature(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     own_discrete_state_names: tuple[StateName, ...],
 ) -> str | None:
@@ -2130,13 +2190,6 @@ def _find_unsupported_target_feature(
                 f"'{target}' has no intrinsic transition from this regime "
                 "(both regimes must carry the same process state)."
             )
-    process_transition_keys = {f"next_{name}" for name in target_process_states}
-    stochastic = sorted(
-        (set(transitions[target]) & stochastic_transition_names)
-        - process_transition_keys
-    )
-    if stochastic:
-        return f"the transitions {stochastic} into regime '{target}' are stochastic."
     child_state_name = _get_child_state_name(user_regime=user_regimes[target])
     resources_arg_names = _get_child_resources_arg_names(
         user_regime=user_regimes[target]
