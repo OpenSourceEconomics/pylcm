@@ -512,12 +512,14 @@ def _fail_if_passive_state_invalid(
                 )
                 raise ModelInitializationError(msg)
         grid = cast("ContinuousGrid", user_regime.states[state_name])
-        if grid.batch_size != 0 or grid.distributed:
+        # `batch_size` on a passive state splays its combo axis (via productmap)
+        # to shed memory; `distributed` stays rejected (a continuous axis
+        # cannot be sharded).
+        if grid.distributed:
             msg = (
                 f"The grid of the passive continuous state '{state_name}' in "
-                f"regime '{regime_name}' must not be batched or distributed "
-                f"in a DCEGM regime (got batch_size={grid.batch_size}, "
-                f"distributed={grid.distributed})."
+                f"regime '{regime_name}' must not be distributed in a DCEGM "
+                f"regime (got distributed={grid.distributed})."
             )
             raise ModelInitializationError(msg)
 
@@ -754,23 +756,34 @@ def _fail_if_grid_hygiene_violated(
                 "at model construction. Supply them via `points=...`."
             )
             raise ModelInitializationError(msg)
-    # The EGM kernel selects carry rows by integer indexing along whole
-    # discrete axes, so discrete grids cannot be batched or distributed.
-    for kind, name_to_grid in (
-        ("state", user_regime.states),
-        ("action", user_regime.actions),
-    ):
-        for name, grid in name_to_grid.items():
-            if isinstance(grid, DiscreteGrid) and (
-                grid.batch_size != 0 or grid.distributed
-            ):
-                msg = (
-                    f"The grid of the discrete {kind} '{name}' in regime "
-                    f"'{regime_name}' must not be batched or distributed in "
-                    f"a DCEGM regime (got batch_size={grid.batch_size}, "
-                    f"distributed={grid.distributed})."
-                )
-                raise ModelInitializationError(msg)
+    # `batch_size` on a discrete state splays its combo axis: the per-combo
+    # solve runs in `productmap` blocks (per-axis `lax.map`) reassembled into
+    # the whole combo product before the carry is built, so carry rows still
+    # carry whole discrete axes. `distributed` stays rejected — the kernel
+    # selects child carry rows by integer indexing along whole discrete axes,
+    # which a sharded (per-device slice) axis would break.
+    for name, grid in user_regime.states.items():
+        if isinstance(grid, DiscreteGrid) and grid.distributed:
+            msg = (
+                f"The grid of the discrete state '{name}' in regime "
+                f"'{regime_name}' must not be distributed in a DCEGM regime "
+                f"(got distributed={grid.distributed})."
+            )
+            raise ModelInitializationError(msg)
+    # Discrete actions cannot be batched or distributed: the discrete-action
+    # aggregation (logsum over the action axes) needs every action value at
+    # once, so its axis is never split.
+    for name, grid in user_regime.actions.items():
+        if isinstance(grid, DiscreteGrid) and (
+            grid.batch_size != 0 or grid.distributed
+        ):
+            msg = (
+                f"The grid of the discrete action '{name}' in regime "
+                f"'{regime_name}' must not be batched or distributed in a "
+                f"DCEGM regime (got batch_size={grid.batch_size}, "
+                f"distributed={grid.distributed})."
+            )
+            raise ModelInitializationError(msg)
     # `batch_size` on the Euler grid is honored: it splays the per-asset-node
     # solve into blocks (`lax.map`) to shed peak working-set memory, leaving the
     # value function unchanged. `distributed` remains disallowed — a continuous
