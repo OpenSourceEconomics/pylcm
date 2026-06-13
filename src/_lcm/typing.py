@@ -14,7 +14,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from jax import Array
 from jaxtyping import Key
 
-from _lcm.egm.carry import EgmCarry
+from _lcm.egm.carry import EGMCarry
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 
@@ -239,7 +239,7 @@ class MaxQOverAFunction(Protocol):
 
 
 @runtime_checkable
-class EgmStepFunction(Protocol):
+class EGMStepFunction(Protocol):
     """The per-period DC-EGM kernel for one regime.
 
     Consumes the regime's exogenous state grids, the rolling value-function
@@ -254,13 +254,13 @@ class EgmStepFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+        next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
-    ) -> tuple[FloatND, EgmCarry]: ...
+    ) -> tuple[FloatND, EGMCarry]: ...
 
 
 @runtime_checkable
-class EgmCarryProducer(Protocol):
+class EGMCarryProducer(Protocol):
     """Closed-form carry producer for a terminal regime.
 
     Maps the regime's solved value-function array (plus its state grids and
@@ -275,7 +275,7 @@ class EgmCarryProducer(Protocol):
         *,
         V_arr: FloatND,
         **kwargs: Any,  # noqa: ANN401
-    ) -> EgmCarry: ...
+    ) -> EGMCarry: ...
 
 
 @runtime_checkable

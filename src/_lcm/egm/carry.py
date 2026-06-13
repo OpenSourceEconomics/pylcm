@@ -3,7 +3,7 @@
 Backward induction with DC-EGM threads more than the value-function array
 between adjacent periods: the parent's Euler inversion needs the child's
 optimal policy, value, and marginal utility on the child's endogenous
-(resources-space) grid. `EgmCarry` bundles these rows; the solve loop rolls a
+(resources-space) grid. `EGMCarry` bundles these rows; the solve loop rolls a
 `next_regime_to_egm_carry` mapping alongside `next_regime_to_V_arr`, with one
 entry per carry-producing regime (DC-EGM regimes and terminal regimes a
 DC-EGM regime can target).
@@ -21,7 +21,7 @@ from lcm.typing import FloatND, ScalarFloat
 
 
 @dataclass(frozen=True, kw_only=True)
-class EgmCarry:
+class EGMCarry:
     """Per-regime EGM solution rows threaded between adjacent periods.
 
     All rows share the trailing grid axis of static, per-regime length so the
@@ -72,25 +72,25 @@ _EGM_CARRY_FIELDS = (
 )
 
 
-def _flatten_egm_carry(carry: EgmCarry) -> tuple[tuple[Any, ...], None]:
+def _flatten_egm_carry(carry: EGMCarry) -> tuple[tuple[Any, ...], None]:
     return tuple(getattr(carry, name) for name in _EGM_CARRY_FIELDS), None
 
 
-def _unflatten_egm_carry(_aux: None, children: Sequence[Any]) -> EgmCarry:
-    carry = object.__new__(EgmCarry)
+def _unflatten_egm_carry(_aux: None, children: Sequence[Any]) -> EGMCarry:
+    carry = object.__new__(EGMCarry)
     for name, child in zip(_EGM_CARRY_FIELDS, children, strict=True):
         object.__setattr__(carry, name, child)
     return carry
 
 
-jax.tree_util.register_pytree_node(EgmCarry, _flatten_egm_carry, _unflatten_egm_carry)
+jax.tree_util.register_pytree_node(EGMCarry, _flatten_egm_carry, _unflatten_egm_carry)
 
 
 def build_template_egm_carry(
     *,
     n_rows: int,
     leading_shape: tuple[int, ...] = (),
-) -> EgmCarry:
+) -> EGMCarry:
     """Build a benign all-finite carry template with `n_rows` grid slots.
 
     Used to initialize the rolling `next_regime_to_egm_carry` mapping before
@@ -112,7 +112,7 @@ def build_template_egm_carry(
     """
     dtype = canonical_float_dtype()
     shape = (*leading_shape, n_rows)
-    return EgmCarry(
+    return EGMCarry(
         endog_grid=jnp.broadcast_to(jnp.linspace(0.0, 1.0, n_rows, dtype=dtype), shape),
         policy=jnp.zeros(shape, dtype=dtype),
         value=jnp.zeros(shape, dtype=dtype),

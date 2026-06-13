@@ -15,7 +15,7 @@ from typing import Protocol
 
 import jax
 
-from _lcm.egm.carry import EgmCarry
+from _lcm.egm.carry import EGMCarry
 from _lcm.egm.step import build_egm_step_functions
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
@@ -24,7 +24,7 @@ from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
-    EgmStepFunction,
+    EGMStepFunction,
     MaxQOverAFunction,
     QAndFFunction,
     RegimeName,
@@ -109,11 +109,17 @@ class SolverKernels:
     Empty for solvers that replace the grid search with their own kernels.
     """
 
-    egm_step: MappingProxyType[int, EgmStepFunction] | None = None
+    egm_step: MappingProxyType[int, EGMStepFunction] | None = None
     """Immutable mapping of period to DC-EGM kernels, or `None`."""
 
-    egm_carry_template: EgmCarry | None = None
+    egm_carry_template: EGMCarry | None = None
     """All-finite template carry with the regime's static shapes, or `None`."""
+
+    egm_reachable_targets: frozenset[RegimeName] = frozenset()
+    """The regime's reachable-target names — the only carry keys its kernels
+    read. The solve loop filters the rolling carry mapping to these before
+    handing it to each kernel, so the device need not hold every regime's
+    carry at once."""
 
 
 class SolverKernelBuilder(Protocol):
@@ -172,7 +178,7 @@ def _build_dcegm_kernels(
     """
     assert isinstance(solver, DCEGM)  # noqa: S101
     assert context.compute_regime_transition_probs is not None  # noqa: S101
-    egm_step, egm_carry_template = build_egm_step_functions(
+    egm_step, egm_carry_template, egm_reachable_targets = build_egm_step_functions(
         solver=solver,
         regime_name=context.regime_name,
         user_regimes=context.user_regimes,
@@ -189,7 +195,7 @@ def _build_dcegm_kernels(
         has_taste_shocks=context.has_taste_shocks,
     )
     if context.enable_jit:
-        jitted_by_id: dict[int, EgmStepFunction] = {}
+        jitted_by_id: dict[int, EGMStepFunction] = {}
         for func in egm_step.values():
             if id(func) not in jitted_by_id:
                 jitted_by_id[id(func)] = jax.jit(func)
@@ -200,6 +206,7 @@ def _build_dcegm_kernels(
         max_Q_over_a=MappingProxyType({}),
         egm_step=egm_step,
         egm_carry_template=egm_carry_template,
+        egm_reachable_targets=egm_reachable_targets,
     )
 
 

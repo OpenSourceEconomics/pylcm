@@ -7,7 +7,7 @@ from typing import Literal, cast
 import jax
 from jax import Array
 
-from _lcm.egm.carry import EgmCarry
+from _lcm.egm.carry import EGMCarry
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import (
@@ -15,8 +15,8 @@ from _lcm.typing import (
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
-    EgmCarryProducer,
-    EgmStepFunction,
+    EGMCarryProducer,
+    EGMStepFunction,
     FlatRegimeParams,
     FunctionName,
     MaxQOverAFunction,
@@ -317,14 +317,14 @@ class SolutionPhase:
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
 
-    egm_step: MappingProxyType[int, EgmStepFunction] | None = None
+    egm_step: MappingProxyType[int, EGMStepFunction] | None = None
     """Immutable mapping of period to DC-EGM kernels, or `None`.
 
     Populated for regimes configured with `solver=DCEGM(...)`; the solve
     loop dispatches to these instead of `max_Q_over_a`.
     """
 
-    egm_carry_producer: EgmCarryProducer | None = None
+    egm_carry_producer: EGMCarryProducer | None = None
     """Closed-form EGM carry producer, or `None`.
 
     Populated for terminal regimes when the model contains a DC-EGM regime;
@@ -332,13 +332,22 @@ class SolutionPhase:
     period.
     """
 
-    egm_carry_template: EgmCarry | None = None
+    egm_carry_template: EGMCarry | None = None
     """All-finite template carry with the regime's static shapes, or `None`.
 
     Populated for every carry-producing regime (DC-EGM regimes and terminal
     regimes in a model with a DC-EGM regime). Initializes the rolling
     `next_regime_to_egm_carry` mapping and serves as the lowering argument
     when AOT-compiling EGM kernels.
+    """
+
+    egm_reachable_targets: frozenset[RegimeName] = frozenset()
+    """The regime's reachable-target names (empty unless it has an `egm_step`).
+
+    The only carry keys the regime's kernels read; the solve loop filters the
+    rolling `next_regime_to_egm_carry` to these before handing it to each
+    kernel, so the device holds only the reachable subset rather than every
+    carry-producing regime's carry at once.
     """
 
     compute_intermediates: MappingProxyType[int, Callable]
