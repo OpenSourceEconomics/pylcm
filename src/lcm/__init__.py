@@ -74,6 +74,7 @@ from lcm.persistence import (  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     _bind_forward_refs as _bind_persistence_forward_refs,
 )
+from lcm.phased import Phased  # noqa: E402
 from lcm.processes import (  # noqa: E402
     LogNormalIIDProcess,
     NormalIIDProcess,
@@ -86,9 +87,9 @@ from lcm.processes import (  # noqa: E402
 from lcm.regime import (  # noqa: E402
     MarkovTransition,
     Regime,
-    SolveSimulateFunctionPair,
 )
 from lcm.result import SimulationResult  # noqa: E402
+from lcm.transition import fixed_transition  # noqa: E402
 
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
@@ -116,6 +117,7 @@ __all__ = [
     "Model",
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
+    "Phased",
     "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
@@ -123,13 +125,13 @@ __all__ = [
     "RouwenhorstAR1Process",
     "SimulateSnapshot",
     "SimulationResult",
-    "SolveSimulateFunctionPair",
     "SolveSnapshot",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
     "UniformIIDProcess",
     "__version__",
     "categorical",
+    "fixed_transition",
     "load_snapshot",
     "load_solution",
     "save_solution",

@@ -1,9 +1,9 @@
-"""User-facing transition wrappers: `MarkovTransition`, `SolveSimulateFunctionPair`.
+"""User-facing transition vocabulary: `MarkovTransition` and `fixed_transition`.
 
-A thin leaf module — class definitions only, with no dependency on `Regime`,
-the validators, or the regime-building code. Keeping these types here lets the
-user-facing `Regime`, the engine-internal regime-building code, and the
-regime validators all import them without an import cycle.
+A thin leaf module with no dependency on `Regime`, the validators, or the
+regime-building code. Keeping the vocabulary here lets the user-facing
+`Regime`, the engine-internal regime-building code, and the regime validators
+all import it without an import cycle.
 
 """
 
@@ -14,28 +14,27 @@ from typing import Any
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
-from lcm.typing import FloatND
+from _lcm.identity_transition import _IdentityTransition
+from _lcm.typing import StateName
+from lcm.typing import FloatND, UserFunction
 
 
-class SolveSimulateFunctionPair[S, T]:
-    """Container for phase-specific function variants.
+def fixed_transition(state_name: StateName) -> UserFunction:
+    """Create the law of motion for a fixed state: next value = current value.
 
-    Use this to provide different implementations of a function for the solve
-    and simulate phases.  For example, naive beta-delta discounting uses
-    exponential discounting during backward induction (solve) but
-    present-biased discounting for action selection (simulate).
+    The returned callable is an ordinary deterministic law, so it is legal
+    wherever a law of motion is — as a bare `state_transitions` entry, inside
+    a `Phased` side, and inside a per-target dict.
 
-    Variants may have different parameter signatures.  The params template is
-    the union of both variants' parameters; each variant receives only the
-    kwargs it expects.
+    Args:
+        state_name: Name of the fixed state. Must match the
+            `state_transitions` key the law is assigned to.
+
+    Returns:
+        The identity law of motion for `state_name`.
 
     """
-
-    __slots__ = ("simulate", "solve")
-
-    def __init__(self, *, solve: S, simulate: T) -> None:
-        self.solve = solve
-        self.simulate = simulate
+    return _IdentityTransition(state_name)
 
 
 @beartype(conf=REGIME_CONF)

@@ -2,10 +2,13 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 from _lcm.grids import Grid
-from _lcm.regime_building.transitions import collect_state_transitions
 from lcm.regime import Regime as UserRegime
-from lcm.regime import SolveSimulateFunctionPair, _default_H
+from lcm.regime import _default_H
 from lcm.typing import UserFunction
+
+
+def _noop() -> None:
+    """Stand-in regime transition while collecting a transition-less mock."""
 
 
 class MockRegime(UserRegime):
@@ -50,7 +53,7 @@ class MockRegime(UserRegime):
         object.__setattr__(self, "active", lambda _age: True)
         object.__setattr__(self, "derived_categoricals", MappingProxyType({}))
         object.__setattr__(self, "description", "")
-        # `UserRegime.__post_init__` injects the default `H` for non-terminal
+        # `finalize_regimes` injects the default `H` for non-terminal
         # regimes; mirror that here.
         if not self.terminal and "H" not in self.functions:
             object.__setattr__(self, "functions", {**self.functions, "H": _default_H})
@@ -62,22 +65,27 @@ class MockRegime(UserRegime):
     def get_all_functions(
         self, phase: Literal["solve", "simulate"] = "solve"
     ) -> MappingProxyType[str, UserFunction]:
-        """Get all regime functions including utility, constraints, and transitions."""
-        result: dict[str, UserFunction] = {}
-        for name, func in self.functions.items():
-            if isinstance(func, SolveSimulateFunctionPair):
-                result[name] = cast(
-                    "UserFunction",
-                    func.solve if phase == "solve" else func.simulate,
-                )
-            else:
-                result[name] = func
-        result |= dict(self.constraints)
-        if self.states:
-            result |= collect_state_transitions(
+        """Delegate to the real method, tolerating the mock's loose fields.
+
+        Mocks may carry `None`-valued states (partial configurations the
+        real constructor would reject) and rely on state transitions being
+        collected even without a regime transition. Normalize both, then
+        reuse `Regime.get_all_functions` so the key set can never drift
+        from the real regime's.
+        """
+        normalized = MockRegime(
+            states=cast(
+                "dict[str, Grid | None]",
                 {k: v for k, v in self.states.items() if v is not None},
-                self.state_transitions,
-            )
-        if self.transition:
-            result["next_regime"] = self.transition
+            ),
+            state_transitions=cast(
+                "dict[str, UserFunction | None]", self.state_transitions
+            ),
+            constraints=cast("dict[str, UserFunction]", self.constraints),
+            transition=self.transition if callable(self.transition) else _noop,
+            functions=cast("dict[str, UserFunction]", self.functions),
+        )
+        result = dict(UserRegime.get_all_functions(normalized, phase))
+        if not callable(self.transition):
+            del result["next_regime"]
         return MappingProxyType(result)

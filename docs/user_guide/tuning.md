@@ -13,8 +13,9 @@ helps, and the trade-offs that are easy to get backwards.
 The one-line model:
 
 - **`batch_size` (splay) is a memory knob. It is time-neutral.**
-- **`distributed` (shard) is a speed knob. It applies only to discrete,
-  non-transitioning axes.**
+- **`distributed` (shard) is a speed knob for discrete axes — communication-free on the
+  axes the agent never transitions along, and still effective (a modest per-period
+  exchange) on transitioning ones.**
 
 Keeping these straight is the whole game: splaying never speeds anything up, and
 sharding is the only knob that does.
@@ -34,10 +35,10 @@ pref_type = DiscreteGrid(PrefType, distributed=True)
 assets = LinSpacedGrid(start=0.0, stop=1_000.0, n_points=200, batch_size=50)
 ```
 
-| knob                       | what it does                                                             | what it buys      | applies to                            |
-| -------------------------- | ------------------------------------------------------------------------ | ----------------- | ------------------------------------- |
-| `batch_size=k` (splay)     | `lax.scan` the per-period work over chunks of `k` points along that axis | lower peak memory | any axis                              |
-| `distributed=True` (shard) | place that axis's blocks on separate devices                             | parallel speedup  | discrete, non-transitioning axes only |
+| knob                       | what it does                                                             | what it buys      | applies to         |
+| -------------------------- | ------------------------------------------------------------------------ | ----------------- | ------------------ |
+| `batch_size=k` (splay)     | `lax.scan` the per-period work over chunks of `k` points along that axis | lower peak memory | any axis           |
+| `distributed=True` (shard) | place that axis's blocks on separate devices                             | parallel speedup  | discrete axes only |
 
 `batch_size=0` (the default) means "no splay" — one kernel per period over the full
 axis. `distributed=False` (the default) means "not sharded".
@@ -77,18 +78,25 @@ It stops being free only at the extremes:
 **Rule: use the fewest chunks that fit.** Halving memory needs only two chunks
 (`batch_size = n_points / 2`), not `batch_size = 1`.
 
-## `distributed`: shard for speed (discrete, non-transitioning axes)
+## `distributed`: shard for speed (discrete axes)
 
 `distributed=True` places the blocks of an axis on separate devices and solves them in
 parallel. It is the only knob that reduces wall-clock — but it is legal only for a
 narrow class of axes, and pylcm enforces the boundaries at construction time.
 
-**It runs communication-free only for axes the agent never transitions along.** If an
-agent's position on the axis is fixed for life (a permanent type, a fixed group), each
-block's value function is independent of the others, so the blocks sit on different
-devices with *zero* cross-device traffic. An axis the agent *moves along* (health,
-wealth, a lagged choice) couples the blocks: every period would need an all-to-all
-exchange, and the communication swamps the compute.
+**A never-transitioning axis shards communication-free; a transitioning discrete axis
+shards with only a modest per-period exchange.** If an agent's position on the axis is
+fixed for life (a permanent type, a fixed group), each block's value function is
+independent of the others, so the blocks sit on different devices with *zero*
+cross-device traffic — the ideal case. When the agent *does* transition along a sharded
+discrete axis, the cross-shard probability mass is contracted by an `all-reduce` that is
+*output-sized* (the reduced continuation value), not V-array-sized — so the per-period
+exchange stays well under the compute. (In one measured sweep, sharding a transitioning
+three-category state across three devices matched the never-transitioning case to within
+the timing noise.) A *continuous* axis is the one that truly defeats sharding: every
+next-period interpolation reads across the full grid, forcing an `all-gather` of the
+entire V-array per device each period — which is why pylcm rejects continuous-axis
+sharding outright (below).
 
 Two guards make this concrete — both raise `GridInitializationError` at construction:
 
@@ -133,6 +141,10 @@ Measured on 80 GB A100s, one six-regime lifecycle model:
 - **Three GPUs, the permanent-type axis sharded one block per device** — a *heavier*
   policy-overlay variant of the same model ≈ **59 m**. The shard more than offsets the
   extra per-regime work: three devices beat one even on a bigger problem.
+- **Three GPUs, a *transitioning* three-category state sharded one block per device** —
+  matched the never-transitioning permanent-type shard at the same model size, within
+  the timing noise. A transitioning discrete axis shards about as well; its per-period
+  exchange stays modest.
 - **Two single-GPU runs that differ only in which axis is chunked for memory** finished
   within about a minute of each other (≈ 1 h 37 m vs ≈ 1 h 38 m) — direct confirmation
   that the choice of splay axis is time-neutral; only the device count moved the wall.
@@ -204,8 +216,9 @@ leaving it off costs nothing and keeps the memory headroom.
 
 ## Checklist
 
-- Shard a never-transitioning discrete axis across devices for speed
-  (`distributed=True`).
+- Shard a discrete axis across devices for speed (`distributed=True`) —
+  never-transitioning axes are communication-free, transitioning ones cost only a modest
+  per-period exchange.
 - Keep `batch_size=0` on a sharded axis — never batch and shard the same axis.
 - If a single device still can't hold its share, splay a large continuous axis, using
   the fewest chunks that fit.

@@ -40,7 +40,7 @@ lcm/
 ├── persistence.py    ← SolveSnapshot, SimulateSnapshot, load_snapshot,
 │                       save_solution, load_solution
 ├── processes.py      ← the seven *Process classes
-├── regime.py         ← Regime, MarkovTransition, SolveSimulateFunctionPair
+├── regime.py         ← Regime (Phased and MarkovTransition re-exported)
 ├── result.py         ← SimulationResult
 ├── transition.py     ← transition helpers
 ├── typing.py         ← user-facing type aliases
@@ -94,7 +94,7 @@ The mapping of public names to files:
 | File             | What lives there                                                                                                                                                                                          |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `model.py`       | `Model`                                                                                                                                                                                                   |
-| `regime.py`      | `Regime`, `MarkovTransition`, `SolveSimulateFunctionPair`, and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`.                                  |
+| `regime.py`      | `Regime` and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`; the phase normalizer in `_lcm/regime_building/phases.py`.                          |
 | `ages.py`        | `AgeGrid`. Step parser and validators live in `_lcm/ages.py`.                                                                                                                                             |
 | `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `PiecewiseGridSegment`, and the `@categorical` decorator                         |
 | `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
@@ -215,11 +215,30 @@ The file name `engine.py` reflects what's inside: the engine's view of a model.
 
 ## Build pipeline: `model_processing.py` and `regime_building/`
 
+A user `Regime` is finalized at model build — model-level slots merged, broadcast
+variables pruned, default `H` injected, completeness validated — into the plain,
+complete `Regime`s exposed as `model.user_regimes`. The params template reads this
+user-vocabulary form, while `process_regimes` internally splits each regime into
+canonical per-phase slices and compiles the engine `Regime`.
+
 ```
 _lcm/model_processing.py  ← top-level pipeline:
                             user regimes + params → canonical Model
 
 _lcm/regime_building/
+├── broadcast.py          ← model-level slot merge (exactly-one-level rule,
+│                            `None` masking) + DAG-reachability pruning of
+│                            broadcast states and actions
+├── finalize.py           ← finalize_regimes: derived-categorical merge,
+│                            default-H injection, completeness validation;
+│                            output stays a plain lcm.regime.Regime
+├── phases.py             ← normalize_regime_phases: expand every regime
+│                            slot into per-phase RegimePhaseSpec slices
+│                            (the Phased grammar boundary)
+├── canonicalize.py       ← canonicalize_regimes: rewrite every phase
+│                            slice's laws and regime transition into the
+│                            canonical target-granular form over exactly
+│                            the reachable targets
 ├── processing.py         ← per-regime canonicalisation:
 │                            UserRegime → engine.Regime
 ├── transitions.py        ← collect_state_transitions: walk user-supplied

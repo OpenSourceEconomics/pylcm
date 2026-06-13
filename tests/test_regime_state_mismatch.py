@@ -11,9 +11,9 @@ from lcm import (
     MarkovTransition,
     Model,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import (
-    InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
 )
 from lcm.regime import Regime as UserRegime
@@ -112,7 +112,7 @@ def test_discrete_state_different_categories_across_regimes():
             "health": DiscreteGrid(HealthRetirement),
         },
         state_transitions={
-            "health": None,
+            "health": fixed_transition("health"),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retirement},
@@ -335,7 +335,7 @@ def test_per_target_dict_transitions():
             "health": DiscreteGrid(HealthRetirement),
         },
         state_transitions={
-            "health": None,
+            "health": fixed_transition("health"),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retirement},
@@ -426,7 +426,7 @@ def test_discrete_state_same_count_different_names():
 
     retire = UserRegime(
         states={"status": DiscreteGrid(StatusB)},
-        state_transitions={"status": None},
+        state_transitions={"status": fixed_transition("status")},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={
             "utility": lambda consumption, status: jnp.log(consumption) + status
@@ -469,13 +469,13 @@ def test_mixed_ordered_flags_raises():
 
     a = UserRegime(
         states={"health": DiscreteGrid(HealthOrdered)},
-        state_transitions={"health": None},
+        state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
     b = UserRegime(
         states={"health": DiscreteGrid(HealthUnordered)},
-        state_transitions={"health": None},
+        state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
@@ -513,13 +513,13 @@ def test_both_ordered_same_categories_passes():
 
     a = UserRegime(
         states={"health": DiscreteGrid(HealthA)},
-        state_transitions={"health": None},
+        state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
     b = UserRegime(
         states={"health": DiscreteGrid(HealthB)},
-        state_transitions={"health": None},
+        state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
@@ -612,12 +612,12 @@ _CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=50, n_points=20)
 
 
 def test_incomplete_per_target_reachable_target():
-    """Per-target dict omits a target the source CAN reach (prob>0).
+    """Per-target dict omits a target the source can reach.
 
-    Regime A's transition function produces B's id, but A's per-target dict
-    does not list B. This is a user error — the missing transition means
-    B's continuation value cannot be computed. The pre-solve validation
-    raises `InvalidRegimeTransitionProbabilitiesError`.
+    Regime A's coarse transition reaches every regime, but A's per-target
+    dict does not list B. This is a user error — the missing law means B's
+    continuation value cannot be computed — and the model rejects it at
+    build time.
     """
 
     @categorical(ordered=False)
@@ -665,7 +665,10 @@ def test_incomplete_per_target_reachable_target():
             "health": DiscreteGrid(HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
-        state_transitions={"health": None, "wealth": _next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _next_wealth,
+        },
         actions={"consumption": _CONSUMPTION_GRID},
         constraints=_BORROWING_CONSTRAINT,
         functions={
@@ -677,17 +680,15 @@ def test_incomplete_per_target_reachable_target():
 
     dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
 
-    model = Model(
-        regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
-        ages=AgeGrid(start=0, stop=4, step="Y"),
-        regime_id_class=_RegimeId,
-    )
-
     with pytest.raises(
-        InvalidRegimeTransitionProbabilitiesError,
-        match=r"does not provide state transition",
+        ModelInitializationError,
+        match=r"does not cover reachable target",
     ):
-        model.solve(log_level="debug", params={"discount_factor": 0.95})
+        Model(
+            regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
+            ages=AgeGrid(start=0, stop=4, step="Y"),
+            regime_id_class=_RegimeId,
+        )
 
 
 def test_complete_per_target_stochastic_cross_grid() -> None:
@@ -741,7 +742,10 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
             "health": DiscreteGrid(HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
-        state_transitions={"health": None, "wealth": _next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _next_wealth,
+        },
         actions={"consumption": _CONSUMPTION_GRID},
         constraints=_BORROWING_CONSTRAINT,
         functions={
@@ -762,12 +766,12 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
 
 
 def test_incomplete_per_target_unreachable_target() -> None:
-    """Per-target dict omits a target the source cannot reach (prob=0).
+    """Per-target dict omits a target the source declares unreachable.
 
-    Regime A lists transitions to A and B only. C is reachable from B but not
-    from A (A's regime transition function never produces C's id). During
-    backward induction, C is active but A's contribution to E[V] for C is
-    zero. Solve must handle this gracefully.
+    Regime A lists transitions to A and B only and declares exactly those
+    (plus dead) as targets via the per-target regime transition. C is
+    reachable from B but structurally unreachable from A, so A owes no law
+    toward C. Solve must handle this gracefully.
     """
 
     @categorical(ordered=False)
@@ -777,31 +781,7 @@ def test_incomplete_per_target_unreachable_target() -> None:
         regime_c: ScalarInt
         dead: ScalarInt
 
-    def next_regime_a(age: float) -> ScalarInt:
-        """A → B at age 1, A otherwise. Never produces C."""
-        return jnp.where(
-            age >= 2,
-            _RegimeId.dead,
-            jnp.where(
-                age >= 1,
-                _RegimeId.regime_b,
-                _RegimeId.regime_a,
-            ),
-        )
-
-    def next_regime_b(age: float) -> ScalarInt:
-        """B → C at age 2."""
-        return jnp.where(
-            age >= 3,
-            _RegimeId.dead,
-            jnp.where(
-                age >= 2,
-                _RegimeId.regime_c,
-                _RegimeId.regime_b,
-            ),
-        )
-
-    # A only lists A, B, dead — NOT C.
+    # A declares A, B, dead as its targets — NOT C.
     regime_a = UserRegime(
         states={
             "health": DiscreteGrid(HealthWorkingLife),
@@ -820,7 +800,13 @@ def test_incomplete_per_target_unreachable_target() -> None:
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
         },
-        transition=next_regime_a,
+        transition={
+            "regime_a": MarkovTransition(lambda age: jnp.where(age < 1, 1.0, 0.0)),
+            "regime_b": MarkovTransition(
+                lambda age: jnp.where((age >= 1) & (age < 2), 1.0, 0.0)
+            ),
+            "dead": MarkovTransition(lambda age: jnp.where(age >= 2, 1.0, 0.0)),
+        },
         active=lambda age: age < 3,
     )
 
@@ -842,7 +828,13 @@ def test_incomplete_per_target_unreachable_target() -> None:
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
         },
-        transition=next_regime_b,
+        transition={
+            "regime_b": MarkovTransition(lambda age: jnp.where(age < 2, 1.0, 0.0)),
+            "regime_c": MarkovTransition(
+                lambda age: jnp.where((age >= 2) & (age < 3), 1.0, 0.0)
+            ),
+            "dead": MarkovTransition(lambda age: jnp.where(age >= 3, 1.0, 0.0)),
+        },
         active=lambda age: age < 4,
     )
 
@@ -851,7 +843,10 @@ def test_incomplete_per_target_unreachable_target() -> None:
             "health": DiscreteGrid(HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
-        state_transitions={"health": None, "wealth": _next_wealth},
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _next_wealth,
+        },
         actions={"consumption": _CONSUMPTION_GRID},
         constraints=_BORROWING_CONSTRAINT,
         functions={

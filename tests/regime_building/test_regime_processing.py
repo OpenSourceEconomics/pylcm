@@ -1,5 +1,6 @@
 import functools
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
@@ -7,14 +8,17 @@ from beartype import beartype
 from numpy.testing import assert_array_equal
 
 from _lcm.engine import Regime, VariableInfo, Variables
-from _lcm.grids import DiscreteGrid, LinSpacedGrid
+from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid
+from _lcm.regime_building.canonicalize import _canonicalize_phase_transitions
+from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.processing import (
     _rename_params_to_qnames,
     _wrap_regime_transition_probs,
     process_regimes,
 )
 from _lcm.variables import from_regime, get_grids
-from lcm import categorical
+from lcm import Phased, categorical
 from lcm.ages import AgeGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
@@ -111,7 +115,9 @@ def test_process_regimes():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     regimes = process_regimes(
-        user_regimes=user_regimes,
+        user_regimes=finalize_regimes(
+            user_regimes=user_regimes, derived_categoricals={}
+        ),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
@@ -119,7 +125,7 @@ def test_process_regimes():
     working_regime = regimes["working_life"]
 
     # Variable Info
-    variables = working_regime.variables
+    variables = working_regime.solution._variables
     assert variables["wealth"] == VariableInfo(
         kind="state", topology="continuous", is_process=False
     )
@@ -131,32 +137,37 @@ def test_process_regimes():
     )
 
     # Grids — compare the grid objects (which now include transition attributes)
-    assert working_regime.grids["wealth"] == working_life.states["wealth"]
-    assert working_regime.grids["consumption"] == working_life.actions["consumption"]
+    assert working_regime.solution.grids["wealth"] == working_life.states["wealth"]
+    assert (
+        working_regime.solution.grids["consumption"]
+        == working_life.actions["consumption"]
+    )
 
-    assert isinstance(working_regime.grids["labor_supply"], DiscreteGrid)
-    assert working_regime.grids["labor_supply"].categories == (
+    assert isinstance(working_regime.solution.grids["labor_supply"], DiscreteGrid)
+    assert working_regime.solution.grids["labor_supply"].categories == (
         "work",
         "retire",
     )
-    assert working_regime.grids["labor_supply"].codes == (0, 1)
+    assert working_regime.solution.grids["labor_supply"].codes == (0, 1)
 
     # Materialized grids
     assert_array_equal(
-        working_regime.grids["consumption"].to_jax(),
-        working_life.actions["consumption"].to_jax(),
+        working_regime.solution.grids["consumption"].to_jax(),
+        cast("Grid", working_life.actions["consumption"]).to_jax(),
     )
     assert_array_equal(
-        working_regime.grids["wealth"].to_jax(),
-        working_life.states["wealth"].to_jax(),
+        working_regime.solution.grids["wealth"].to_jax(),
+        cast("Grid", working_life.states["wealth"]).to_jax(),
     )
 
-    assert (working_regime.grids["labor_supply"].to_jax() == jnp.array([0, 1])).all()
+    assert (
+        working_regime.solution.grids["labor_supply"].to_jax() == jnp.array([0, 1])
+    ).all()
 
     # Functions
-    assert working_regime.solve_functions.transitions is not None
-    assert working_regime.solve_functions.constraints is not None
-    assert "utility" in working_regime.solve_functions.functions
+    assert working_regime.solution.transitions is not None
+    assert working_regime.solution.constraints is not None
+    assert "utility" in working_regime.solution.functions
 
 
 def test_variables_excludes_constraint_names():
@@ -204,7 +215,9 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
         active=lambda age: age >= 1,
     )
     return process_regimes(
-        user_regimes={"early": early, "late": late},
+        user_regimes=finalize_regimes(
+            user_regimes={"early": early, "late": late}, derived_categoricals={}
+        ),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_names_to_ids=MappingProxyType(
             {"early": jnp.int32(0), "late": jnp.int32(1)}
@@ -222,8 +235,8 @@ def test_simulate_functions_use_per_regime_callables(
     attr: str,
 ) -> None:
     """Two regimes built from shared user functions get distinct simulate callables."""
-    early_func = getattr(two_non_terminal_regimes["early"].simulate_functions, attr)
-    late_func = getattr(two_non_terminal_regimes["late"].simulate_functions, attr)
+    early_func = getattr(two_non_terminal_regimes["early"].simulation, attr)
+    late_func = getattr(two_non_terminal_regimes["late"].simulation, attr)
     assert id(early_func) != id(late_func)
 
 
@@ -277,3 +290,169 @@ def test_wrap_regime_transition_probs_return_annotation_accepts_mapping():
     result = beartype(wrapped)()
 
     assert set(result) == {"working", "retired"}
+
+
+def _pair_handover_regime() -> UserRegime:
+    """A regime whose only handover to `retired` is its carried state."""
+
+    def impute_pension_wealth(wealth: float) -> float:
+        return wealth * 0.1
+
+    def evolve_pension_wealth(pension_wealth: float) -> float:
+        return pension_wealth * 1.03
+
+    def next_wealth(wealth: float) -> float:
+        return wealth
+
+    def next_regime(_age: float) -> ScalarInt:
+        return jnp.int32(0)
+
+    def utility(wealth: float) -> FloatND:
+        return jnp.asarray(wealth)
+
+    return UserRegime(
+        transition=next_regime,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
+            "pension_wealth": Phased(
+                solve=impute_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
+            ),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "pension_wealth": evolve_pension_wealth,
+        },
+        actions={},
+        functions={"utility": utility},
+    )
+
+
+def test_carried_law_registered_for_carried_only_target():
+    """A target regime sharing only the carried state still receives `next_<name>`.
+
+    A regime can hand over nothing but its carried state (retirement keeps
+    pension wealth, drops the working states). The carried law of motion must
+    be registered for that target in the simulate phase — otherwise the
+    simulation silently freezes the carried value on the crossing.
+    """
+    working = _pair_handover_regime()
+    simulate_states_per_regime = {
+        "working": frozenset({"wealth", "pension_wealth"}),
+        "retired": frozenset({"pension_wealth"}),
+        "dead": frozenset(),
+    }
+    canonical, _ = _canonicalize_phase_transitions(
+        phase_slice=normalize_regime_phases(working).simulation,
+        states_per_regime=simulate_states_per_regime,
+    )
+    assert "retired" in canonical["pension_wealth"]
+
+
+def test_carried_state_counts_as_covered_for_reachability():
+    """A target carrying a carried state stays reachable when per-target
+    transitions exist.
+
+    With per-target transitions present, a target not explicitly named in any
+    per-target dict is reachable when simple transitions cover its state
+    needs. In the simulate phase the carried state's law of motion is an
+    ordinary simple transition, so the carried state counts as covered and
+    the target receives both the ordinary hand-over and the carried law.
+    """
+
+    def impute_pension_wealth(wealth: float) -> float:
+        return wealth * 0.1
+
+    def evolve_pension_wealth(pension_wealth: float) -> float:
+        return pension_wealth * 1.03
+
+    def next_wealth(wealth: float) -> float:
+        return wealth
+
+    def next_health_working(health: float) -> float:
+        return health
+
+    def next_regime(_age: float) -> ScalarInt:
+        return jnp.int32(0)
+
+    def utility(wealth: float) -> FloatND:
+        return jnp.asarray(wealth)
+
+    working = UserRegime(
+        transition=next_regime,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
+            "health": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+            "pension_wealth": Phased(
+                solve=impute_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
+            ),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "health": {"working": next_health_working},
+            "pension_wealth": evolve_pension_wealth,
+        },
+        actions={},
+        functions={"utility": utility},
+    )
+    # `retired` is not named in any per-target dict; its ordinary state need
+    # (wealth) is covered by a bare law and the carried law covers the
+    # carried state, so it must be reachable and receive both laws.
+    simulate_states_per_regime = {
+        "working": frozenset({"wealth", "health", "pension_wealth"}),
+        "retired": frozenset({"wealth", "pension_wealth"}),
+        "dead": frozenset(),
+    }
+    canonical, _ = _canonicalize_phase_transitions(
+        phase_slice=normalize_regime_phases(working).simulation,
+        states_per_regime=simulate_states_per_regime,
+    )
+    assert "retired" in canonical["wealth"]
+    assert "retired" in canonical["pension_wealth"]
+
+
+def test_mock_regime_get_all_functions_matches_real_regime():
+    """`MockRegime.get_all_functions` exposes the same keys as the real method.
+
+    The mock is the test double for canonical processing; a key set that
+    drifts from `lcm.regime.Regime.get_all_functions` (e.g. dropping a carried
+    state's `next_<name>` law) would let mock-based tests pass against
+    behavior the real regime does not have.
+    """
+
+    def impute_pension_wealth(wealth: float) -> float:
+        return wealth * 0.1
+
+    def evolve_pension_wealth(pension_wealth: float) -> float:
+        return pension_wealth * 1.03
+
+    def next_wealth(wealth: float) -> float:
+        return wealth
+
+    def next_regime(_age: float) -> ScalarInt:
+        return jnp.int32(0)
+
+    def utility(wealth: float) -> FloatND:
+        return jnp.asarray(wealth)
+
+    kwargs: dict = {
+        "transition": next_regime,
+        "states": {
+            "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
+            "pension_wealth": Phased(
+                solve=impute_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=5.0, n_points=2),
+            ),
+        },
+        "state_transitions": {
+            "wealth": next_wealth,
+            "pension_wealth": evolve_pension_wealth,
+        },
+        "functions": {"utility": utility},
+    }
+    real = finalize_regimes(
+        user_regimes={"regime": UserRegime(**kwargs)}, derived_categoricals={}
+    )["regime"]
+    mock = MockRegime(**kwargs)
+    assert set(mock.get_all_functions()) == set(real.get_all_functions())

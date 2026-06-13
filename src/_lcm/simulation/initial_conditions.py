@@ -78,11 +78,13 @@ def canonicalize_initial_conditions(
     discrete_state_names = {
         state_name
         for regime in regimes.values()
-        for state_name, grid in regime.grids.items()
+        for state_name, grid in regime.simulation.grids.items()
         if isinstance(grid, DiscreteGrid)
     }
     known_state_names = {
-        state_name for regime in regimes.values() for state_name in regime.grids
+        state_name
+        for regime in regimes.values()
+        for state_name in regime.simulation.grids
     }
     canonical: dict[str, FloatND | IntND] = {}
     for name, value in initial_conditions.items():
@@ -126,8 +128,8 @@ def build_initial_states(
     sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
     for regime_name, regime in regimes.items():
         regime_states: dict[StateName, Float1D | Int1D] = {}
-        for state_name in regime.variables.state_names:
-            grid = regime.grids[state_name]
+        for state_name in regime.simulation.state_names:
+            grid = regime.simulation.grids[state_name]
             if isinstance(grid, DiscreteGrid):
                 # Cast user-supplied discrete states to the grid's index
                 # dtype so every period's argmax sees a single signature
@@ -280,7 +282,7 @@ def subject_array_sharding(
     distributes_any = any(
         grid.distributed
         for regime in regimes.values()
-        for grid in regime.grids.values()
+        for grid in regime.solution.grids.values()
     )
     if not distributes_any:
         return None
@@ -450,7 +452,7 @@ def _collect_state_name_errors(
     # All known states (union across all regimes) — used for the "extra" check
     all_known_states: set[str] = set(PSEUDO_STATE_NAMES)
     for regime in regimes.values():
-        all_known_states.update(regime.variables.state_names)
+        all_known_states.update(regime.simulation.state_names)
 
     # Required states — only from regimes subjects actually start in
     required_states: set[str] = set(PSEUDO_STATE_NAMES)
@@ -459,7 +461,7 @@ def _collect_state_name_errors(
         regime_ids_to_names[int(i)] for i in used_ids if int(i) in regime_ids_to_names
     } & valid_regime_names
     for regime_name in used_regime_names:
-        required_states.update(regimes[regime_name].variables.state_names)
+        required_states.update(regimes[regime_name].simulation.state_names)
 
     provided_states = set(initial_states.keys())
 
@@ -661,8 +663,8 @@ def _validate_discrete_state_values(
     discrete_info: dict[str, tuple[set[int], set[int]]] = {}
     for regime_name, regime in regimes.items():
         regime_id = int(regime_names_to_ids[regime_name])
-        for state_name in regime.variables.discrete_state_names:
-            grid = regime.grids[state_name]
+        for state_name in regime.simulation.discrete_state_names:
+            grid = regime.simulation.grids[state_name]
             if isinstance(grid, DiscreteGrid):
                 codes, regime_ids = discrete_info.get(state_name, (set(), set()))
                 discrete_info[state_name] = (
@@ -792,12 +794,12 @@ def _check_regime_feasibility(  # noqa: C901
 
     """
     feasibility_func = _get_feasibility(
-        functions=regime.simulate_functions.functions,
-        constraints=regime.simulate_functions.constraints,
+        functions=regime.simulation.functions,
+        constraints=regime.simulation.constraints,
     )
     accepted = get_union_of_args([feasibility_func])
 
-    action_names = list(regime.variables.action_names)
+    action_names = list(regime.solution.action_names)
     if not action_names:
         return None
 
@@ -805,7 +807,7 @@ def _check_regime_feasibility(  # noqa: C901
     # substituted. The base grid's `to_jax()` raises for runtime-supplied
     # `IrregSpacedGrid`s declared with `pass_points_at_runtime=True`, so the
     # validator must read points from `state_action_space(regime_params=...)`.
-    state_action_space = regime.state_action_space(
+    state_action_space = regime.solution.state_action_space(
         regime_params=cast("FlatRegimeParams", MappingProxyType(dict(regime_params))),
     )
     action_grids: dict[ActionName, FloatND | IntND] = {
@@ -818,7 +820,10 @@ def _check_regime_feasibility(  # noqa: C901
     )
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
-    state_names = list(regime.variables.state_names)
+    # Simulate state set: a carried pair state is a leaf of the feasibility
+    # function, so the constraint is checked against the seeded true value,
+    # not the solve-phase imputation.
+    state_names = list(regime.simulation.state_names)
     needs_age = "age" in accepted
     needs_period = "period" in accepted
 
@@ -933,8 +938,8 @@ def _per_constraint_feasibility(
     `action_kwargs`, and `filtered_params` per constraint so dags doesn't
     raise on stray kwargs.
     """
-    constraints = regime.simulate_functions.constraints
-    functions = regime.simulate_functions.functions
+    constraints = regime.simulation.constraints
+    functions = regime.simulation.functions
     if not constraints or not subject_states:
         return {}
 
@@ -997,9 +1002,7 @@ def _raise_feasibility_type_error(
             when any discrete state has a non-integer dtype.
 
     """
-    discrete_names = {
-        name for name, grid in regime.grids.items() if isinstance(grid, DiscreteGrid)
-    }
+    discrete_names = set(regime.simulation.discrete_grids)
 
     bad_dtypes: list[str] = []
     for name, arr in subject_states.items():
@@ -1060,8 +1063,8 @@ def _format_infeasibility_message(
     state_df.index.name = "subject"
 
     # Convert discrete codes to labels
-    for name, grid in regime.grids.items():
-        if isinstance(grid, DiscreteGrid) and name in state_df.columns:
+    for name, grid in regime.simulation.discrete_grids.items():
+        if name in state_df.columns:
             state_df[name] = [grid.categories[int(v)] for v in state_df[name]]
 
     # Append one boolean column per constraint: True = admits ≥ 1 action,

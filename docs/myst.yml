@@ -57,6 +57,7 @@ project:
         - file: explanations/approximating_continuous_shocks.ipynb
         - file: explanations/stochastic_transitions.ipynb
         - file: explanations/dispatchers.ipynb
+        - file: explanations/phase_grammar.ipynb
         - file: explanations/beta_delta.ipynb
         - file: explanations/architecture.md
     - file: examples/index.md

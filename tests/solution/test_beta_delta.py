@@ -21,7 +21,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
-from lcm import AgeGrid, LinSpacedGrid, Model, SolveSimulateFunctionPair, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, Phased, categorical
 from lcm.regime import Regime as UserRegime
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
@@ -185,9 +185,7 @@ def test_beta_delta_consumption(label, beta, delta):
     if label == "naive_phase_variant":
         # Solve with exponential H, simulate with beta-delta H
         model = _make_model(
-            H_func=SolveSimulateFunctionPair(
-                solve=exponential_H, simulate=beta_delta_H
-            ),
+            H_func=Phased(solve=exponential_H, simulate=beta_delta_H),
         )
         # Params are the union of both variants' params
         params = {
