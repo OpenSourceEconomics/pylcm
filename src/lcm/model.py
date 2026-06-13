@@ -51,6 +51,7 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
+from _lcm.solution.registry import DCEGM_NOT_IMPLEMENTED_MSG
 from _lcm.solution.solve_brute import solve
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
@@ -82,6 +83,7 @@ from lcm.exceptions import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
+from lcm.solvers import DCEGM
 from lcm.typing import UserFacingParamsTemplate, UserInitialConditions, UserParams
 
 
@@ -553,6 +555,7 @@ class Model:
             optionally with additional_targets.
 
         """
+        self._fail_if_dcegm_simulate()
         log = get_logger(log_level=log_level)
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
@@ -741,6 +744,19 @@ class Model:
         )
         with self._simulate_compile_lock:
             self._simulate_compile_cache[compile_batch_size] = compiled
+
+    def _fail_if_dcegm_simulate(self) -> None:
+        """Raise until DC-EGM forward simulation is implemented.
+
+        Solving a model with a `DCEGM`-configured regime works; simulating
+        it requires the EGM policy machinery, which is not available yet.
+        Raising here, before params processing, keeps the error message
+        about the solver rather than about params the EGM machinery would
+        consume internally.
+        """
+        for user_regime in self.user_regimes.values():
+            if isinstance(user_regime.solver, DCEGM):
+                raise NotImplementedError(DCEGM_NOT_IMPLEMENTED_MSG)
 
     def _process_params(self, params: UserParams) -> FlatParams:
         """Broadcast, convert Series, dtype-cast, and validate user params.

@@ -13,6 +13,13 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qnam
 from jax import numpy as jnp
 
 from _lcm.coarse_transition import _CoarseTransitionCell
+from _lcm.egm.carry import EgmCarry, build_template_egm_carry
+from _lcm.egm.terminal import (
+    N_STATELESS_CARRY_ROWS,
+    get_stateless_terminal_carry_producer,
+    get_terminal_wealth_carry_producer,
+)
+from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.engine import (
     Regime,
     SimulationPhase,
@@ -31,7 +38,6 @@ from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_pe
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
-    get_max_Q_over_a,
 )
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.next_state import get_next_state_function_for_simulation
@@ -48,14 +54,15 @@ from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
+from _lcm.solution.registry import SOLVER_KERNEL_BUILDERS, SolverBuildContext
 from _lcm.state_action_space import create_state_action_space
 from _lcm.typing import (
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
+    EgmCarryProducer,
     FunctionName,
-    MaxQOverAFunction,
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
@@ -82,6 +89,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.solvers import DCEGM, BruteForce
 from lcm.transition import (
     MarkovTransition,
 )
@@ -116,6 +124,12 @@ def process_regimes(
         The processed canonical regimes.
 
     """
+    # DC-EGM regimes must satisfy the EGM model contract before any kernel
+    # is built. `Model.__init__` validates earlier (so contract violations
+    # beat the generic unused-variable check); this call covers direct
+    # `process_regimes` callers.
+    validate_dcegm_regimes(user_regimes=user_regimes)
+
     # The canonical specs hold every law in target-granular form, resolved per
     # phase: the simulate slice additionally holds every carried-only state
     # and its law of motion, so the canonical mapping carries the law toward
@@ -169,6 +183,10 @@ def process_regimes(
         }
     )
 
+    model_has_dcegm_regime = any(
+        isinstance(user_regime.solver, DCEGM) for user_regime in user_regimes.values()
+    )
+
     canonical_regimes: dict[RegimeName, Regime] = {}
     for regime_name, user_regime in user_regimes.items():
         spec = specs[regime_name]
@@ -184,6 +202,7 @@ def process_regimes(
         solution = _build_solution_phase(
             spec=spec,
             regime_name=regime_name,
+            user_regimes=user_regimes,
             nested_transitions=solve_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
@@ -195,6 +214,8 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
+            solver=user_regime.solver,
+            model_has_dcegm_regime=model_has_dcegm_regime,
             has_taste_shocks=user_regime.taste_shocks is not None,
         )
 
@@ -243,6 +264,7 @@ def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
+    user_regimes: Mapping[RegimeName, UserRegime],
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
@@ -254,6 +276,8 @@ def _build_solution_phase(
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
+    solver: BruteForce | DCEGM,
+    model_has_dcegm_regime: bool,
     has_taste_shocks: bool,
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
@@ -261,6 +285,8 @@ def _build_solution_phase(
     Args:
         spec: The regime's per-phase specification.
         regime_name: The name of the regime.
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances.
         nested_transitions: Per-target transition bundles for internal
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
@@ -274,6 +300,10 @@ def _build_solution_phase(
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
+        solver: The regime's solver configuration; selects the per-period
+            kernel builder.
+        model_has_dcegm_regime: Whether any regime of the model uses the
+            DC-EGM solver (terminal regimes then produce EGM carries).
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
 
@@ -345,12 +375,38 @@ def _build_solution_phase(
             enable_jit=enable_jit,
         )
 
-    max_Q_over_a = _build_max_Q_over_a_per_period(
-        state_action_space=state_action_space,
-        Q_and_F_functions=Q_and_F_functions,
+    # Dispatch the per-period kernel build on the regime's solver
+    # configuration. `BruteForce` builds the max-Q-over-a grid-search
+    # kernels; other solvers register their own builders in
+    # `SOLVER_KERNEL_BUILDERS`.
+    solver_kernel_builder = SOLVER_KERNEL_BUILDERS[type(solver)]
+    solver_kernels = solver_kernel_builder(
+        solver=solver,
+        context=SolverBuildContext(
+            regime_name=regime_name,
+            user_regimes=user_regimes,
+            state_action_space=state_action_space,
+            Q_and_F_functions=Q_and_F_functions,
+            grids=all_grids[regime_name],
+            functions=core.functions,
+            transitions=core.transitions,
+            stochastic_transition_names=core.stochastic_transition_names,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            regimes_to_active_periods=regimes_to_active_periods,
+            flat_param_names=flat_param_names,
+            enable_jit=enable_jit,
+            has_taste_shocks=has_taste_shocks,
+        ),
+    )
+
+    egm_carry_producer, egm_carry_template = _build_terminal_carry_producer(
+        user_regime=user_regimes[regime_name],
+        functions=core.functions,
+        variables=variables,
         grids=all_grids[regime_name],
+        model_has_dcegm_regime=model_has_dcegm_regime,
         enable_jit=enable_jit,
-        has_taste_shocks=has_taste_shocks,
     )
 
     return SolutionPhase(
@@ -361,10 +417,69 @@ def _build_solution_phase(
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
-        max_Q_over_a=max_Q_over_a,
+        max_Q_over_a=solver_kernels.max_Q_over_a,
         compute_intermediates=compute_intermediates,
+        egm_step=solver_kernels.egm_step,
+        egm_carry_producer=egm_carry_producer,
+        egm_carry_template=(
+            solver_kernels.egm_carry_template
+            if solver_kernels.egm_carry_template is not None
+            else egm_carry_template
+        ),
         _base_state_action_space=state_action_space,
     )
+
+
+def _build_terminal_carry_producer(
+    *,
+    user_regime: UserRegime,
+    functions: EconFunctionsMapping,
+    variables: Variables,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    model_has_dcegm_regime: bool,
+    enable_jit: bool,
+) -> tuple[EgmCarryProducer | None, EgmCarry | None]:
+    """Build the EGM carry producer and template for a terminal regime.
+
+    Terminal regimes produce closed-form carries when the model contains a
+    DC-EGM regime, so a DC-EGM parent can interpolate their value and
+    marginal utility. Cases:
+
+    - no states ⇒ constant-value, zero-marginal-utility broadcast rows
+    - exactly one continuous state and no actions ⇒ terminal utility and its
+      wealth gradient on the regime's own state grid
+    - anything else ⇒ no producer (a DC-EGM regime targeting such a terminal
+      regime is rejected by the EGM kernel builder)
+
+    Returns:
+        Tuple of the producer and the regime's carry template, both `None`
+        for non-terminal regimes, for models without a DC-EGM regime, and
+        for unsupported terminal shapes.
+
+    """
+    if not (model_has_dcegm_regime and user_regime.terminal):
+        return None, None
+    producer: EgmCarryProducer
+    if not variables.state_names:
+        producer = get_stateless_terminal_carry_producer()
+        template = build_template_egm_carry(n_rows=N_STATELESS_CARRY_ROWS)
+    elif (
+        len(variables.continuous_state_names) == 1
+        and not variables.discrete_state_names
+        and not user_regime.actions
+    ):
+        state_name = variables.continuous_state_names[0]
+        producer = get_terminal_wealth_carry_producer(
+            functions=functions, state_name=state_name
+        )
+        template = build_template_egm_carry(
+            n_rows=int(grids[state_name].to_jax().shape[0])
+        )
+    else:
+        return None, None
+    if enable_jit:
+        producer = jax.jit(producer)
+    return producer, template
 
 
 def _build_simulation_phase(
@@ -1659,40 +1774,6 @@ def _build_Q_and_F_per_period(
         for period in periods:
             result[period] = built[key]
 
-    return MappingProxyType(result)
-
-
-def _build_max_Q_over_a_per_period(
-    *,
-    state_action_space: StateActionSpace,
-    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    grids: MappingProxyType[StateOrActionName, Grid],
-    enable_jit: bool,
-    has_taste_shocks: bool = False,
-) -> MappingProxyType[int, MaxQOverAFunction]:
-    """Build max-Q-over-a closures for each period.
-
-    Periods sharing the same Q_and_F object reuse a single compiled function.
-    """
-    built: dict[int, MaxQOverAFunction] = {}
-    result: dict[int, MaxQOverAFunction] = {}
-    for period, Q_and_F in Q_and_F_functions.items():
-        q_id = id(Q_and_F)
-        if q_id not in built:
-            func = get_max_Q_over_a(
-                Q_and_F=Q_and_F,
-                batch_sizes={
-                    name: grid.batch_size
-                    for name, grid in grids.items()
-                    if name in state_action_space.state_names
-                },
-                action_names=state_action_space.action_names,
-                state_names=state_action_space.state_names,
-                n_discrete_action_axes=len(state_action_space.discrete_actions),
-                has_taste_shocks=has_taste_shocks,
-            )
-            built[q_id] = jax.jit(func) if enable_jit else func
-        result[period] = built[q_id]
     return MappingProxyType(result)
 
 

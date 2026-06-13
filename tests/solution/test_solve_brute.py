@@ -23,6 +23,9 @@ class MockSolutionPhase:
     _base_state_action_space: StateActionSpace
     grids: MappingProxyType[StateOrActionName, Grid]
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
+    egm_step: None = None
+    egm_carry_producer: None = None
+    egm_carry_template: None = None
 
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space

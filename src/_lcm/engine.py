@@ -7,6 +7,7 @@ from typing import Literal, cast
 import jax
 from jax import Array
 
+from _lcm.egm.carry import EgmCarry
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import (
@@ -14,6 +15,8 @@ from _lcm.typing import (
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
+    EgmCarryProducer,
+    EgmStepFunction,
     FlatRegimeParams,
     FunctionName,
     MaxQOverAFunction,
@@ -313,6 +316,30 @@ class SolutionPhase:
 
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
+
+    egm_step: MappingProxyType[int, EgmStepFunction] | None = None
+    """Immutable mapping of period to DC-EGM kernels, or `None`.
+
+    Populated for regimes configured with `solver=DCEGM(...)`; the solve
+    loop dispatches to these instead of `max_Q_over_a`.
+    """
+
+    egm_carry_producer: EgmCarryProducer | None = None
+    """Closed-form EGM carry producer, or `None`.
+
+    Populated for terminal regimes when the model contains a DC-EGM regime;
+    the solve loop invokes it on the regime's value-function array each
+    period.
+    """
+
+    egm_carry_template: EgmCarry | None = None
+    """All-finite template carry with the regime's static shapes, or `None`.
+
+    Populated for every carry-producing regime (DC-EGM regimes and terminal
+    regimes in a model with a DC-EGM regime). Initializes the rolling
+    `next_regime_to_egm_carry` mapping and serves as the lowering argument
+    when AOT-compiling EGM kernels.
+    """
 
     compute_intermediates: MappingProxyType[int, Callable]
     """Immutable mapping of period to intermediate-computation closures.

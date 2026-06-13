@@ -15,6 +15,7 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
+from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
 from _lcm.params.processing import (
@@ -174,6 +175,12 @@ def validate_model_inputs(
 
     """
     _fail_if_invalid_n_subjects(n_subjects=n_subjects)
+
+    # DC-EGM contract checks run before the generic checks below: a contract
+    # violation (e.g. a missing resources function) typically also leaves
+    # variables unused, and the contract-specific message is the actionable
+    # one.
+    validate_dcegm_regimes(user_regimes=user_regimes)
 
     error_messages: list[str] = []
 
