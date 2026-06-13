@@ -389,6 +389,7 @@ def _build_solution_phase(
             Q_and_F_functions=Q_and_F_functions,
             grids=all_grids[regime_name],
             functions=core.functions,
+            constraints=core.constraints,
             transitions=core.transitions,
             stochastic_transition_names=core.stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,

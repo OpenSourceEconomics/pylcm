@@ -10,7 +10,6 @@ solver is unstable.
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
@@ -52,8 +51,9 @@ def test_dcegm_matches_analytical_on_full_wealth_grid(case, n_periods):
 
     numerical = stack_retirement_V(period_to_regime_to_V_arr)
     analytical = load_analytical_values_retired(case)
-    mse = np.mean((analytical - numerical) ** 2, axis=0)
-    aaae(mse, 0, decimal=3)
+    # Elementwise — every (period, node) value must hit the analytical
+    # solution; aggregating over periods could hide a localized error.
+    np.testing.assert_allclose(numerical, analytical, atol=0.03)
 
 
 @pytest.mark.parametrize(("case", "n_periods"), ANALYTICAL_CASES.items())
@@ -86,7 +86,10 @@ def test_discount_factor_zero_yields_consume_everything_values():
     The degenerate-inversion guard must hold after discounting: a zero
     discount factor zeroes the marginal continuation at every savings node, so
     the consume-everything corner is optimal at every wealth node and
-    `V(wealth) = log(wealth)` in every non-terminal period.
+    `V(wealth) = log(wealth)` in every non-terminal period. V equals
+    `log(wealth)` up to the high-order publish interpolation error (the
+    closed-form constrained value is published outright only below the lowest
+    refined point).
     """
     n_periods = 3
     model = get_retirement_only_model("dcegm", n_periods)
@@ -99,7 +102,7 @@ def test_discount_factor_zero_yields_consume_everything_values():
         np.testing.assert_allclose(
             np.asarray(period_to_regime_to_V_arr[period]["retirement"]),
             np.log(wealth),
-            atol=1e-6,
+            atol=2e-5,
             err_msg=f"period={period}",
         )
 

@@ -3,32 +3,48 @@
 `build_egm_step_functions` turns a regime's processed functions, transitions,
 and `DCEGM` solver configuration into per-period kernels that replace the
 brute-force `max_Q_over_a` during backward induction. Each kernel runs the
-concave EGM step on the exogenous savings grid:
+DC-EGM step per combination of the regime's discrete states and discrete
+actions, with the exogenous savings grid as the inner axis:
 
 1. compute child states at every savings node (the post-decision function is
    removed from the DAG so the savings node enters as an external input),
-2. map the child state into the child's resources space and interpolate the
-   child's carry rows there,
-3. take the regime-transition-probability-weighted expectation of the
-   marginal continuation, multiplying by the composed-gradient factor
-   $\\partial R'/\\partial A$ of the map $A \\mapsto R'(\\mathcal{T}(A))$,
-4. invert the Euler equation per savings node (with the degenerate-inversion
+2. map the child state into the child's resources space, select the carry
+   rows matching the child's discrete-state values, and interpolate the
+   child's value and marginal utility there per child discrete-action combo,
+3. aggregate over the child's discrete-action rows with the child's EV1
+   taste-shock scale: the smoothed value is the logsum and the smoothed
+   marginal is the choice-probability-weighted marginal
+   $\\sum_{d'} P_{d'} \\mu_{d'}$ (exact for EV1 by Danskin's theorem; scale
+   zero degrades to the hard max / one-hot argmax),
+4. take the regime-transition-probability-weighted expectation, multiplying
+   by the composed-gradient factor $\\partial R'/\\partial A$ of the map
+   $A \\mapsto R'(\\mathcal{T}(A))$,
+5. invert the Euler equation per savings node (with the degenerate-inversion
    guard) to obtain the optimal action and the endogenous resources grid,
-5. add the closed-form credit-constrained segment as additional candidates,
-6. refine the candidate correspondence through the configured upper-envelope
-   backend,
-7. publish the value function on the regime's exogenous state grid and
-   assemble the carry for the regime's parents.
+6. add the closed-form credit-constrained segment as additional candidates,
+7. refine the candidate correspondence through the configured upper-envelope
+   backend (one envelope per discrete combo),
+8. publish the value function on the regime's exogenous state grid —
+   discrete-state combos remain axes of the value-function array, the
+   regime's own discrete-action combos are aggregated with the regime's own
+   taste-shock scale — and assemble the per-combo carry rows for the
+   regime's parents.
 
-Scope: regimes (and their carry targets) without discrete states, discrete
-actions, or process states; the expectation covers deterministic child-state
-transitions. Configurations outside this scope build kernels that raise
+Discrete-only constraints mask infeasible discrete combos: their value rows
+are $-\\infty$ and their marginal-utility rows are exactly zero, so they
+carry zero choice probability and stay finite inside the parent's
+probability-weighted expectation.
+
+Out of scope: process states (own or in a carry target), stochastic
+transitions into a carry target, terminal carry targets with discrete states
+or actions. Such configurations build kernels that raise
 `NotImplementedError` at solve time, so `Model` construction always succeeds
 for a validated DC-EGM regime.
 """
 
 import math
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -41,11 +57,17 @@ from _lcm.egm.carry import EgmCarry, build_template_egm_carry
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.upper_envelope import get_upper_envelope
+from _lcm.engine import StateActionSpace
+from _lcm.logsum import logsum_and_softmax
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
+from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
 from _lcm.regime_building.Q_and_F import get_period_targets
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
+    ActionName,
+    ConstraintFunctionsMapping,
     EconFunctionsMapping,
     EgmStepFunction,
     RegimeName,
@@ -58,7 +80,14 @@ from _lcm.utils.functools import get_union_of_args
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
-from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, UserFunction
+from lcm.typing import (
+    Float1D,
+    FloatND,
+    ScalarBool,
+    ScalarFloat,
+    ScalarInt,
+    UserFunction,
+)
 
 # Smallest constrained-segment action as a fraction of the segment's span.
 # The constrained candidates are geometrically spaced from this offset toward
@@ -72,12 +101,15 @@ def build_egm_step_functions(
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     flat_param_names: frozenset[str],
+    state_action_space: StateActionSpace,
+    has_taste_shocks: bool,
 ) -> tuple[MappingProxyType[int, EgmStepFunction], EgmCarry]:
     """Build per-period DC-EGM kernels and the regime's carry template.
 
@@ -93,6 +125,8 @@ def build_egm_step_functions(
             here).
         functions: The regime's processed functions (params renamed to
             qualified names).
+        constraints: Immutable mapping of the regime's constraint names to
+            constraint functions (discrete-only after DC-EGM validation).
         transitions: Immutable mapping of target regime names to their state
             transition functions.
         stochastic_transition_names: Frozenset of stochastic transition
@@ -104,14 +138,34 @@ def build_egm_step_functions(
         regimes_to_active_periods: Immutable mapping of regime names to their
             active period tuples.
         flat_param_names: Frozenset of flat parameter names for the regime.
+        state_action_space: The regime's state-action space (source of the
+            discrete-action grids and their canonical order).
+        has_taste_shocks: Whether the regime declares EV1 taste shocks on its
+            discrete actions.
 
     Returns:
         Tuple of the per-period kernel mapping and the regime's all-finite
-        carry template.
+        carry template (leading axes: discrete states, then discrete
+        actions).
 
     """
     n_pad = compute_egm_carry_length(solver=solver)
-    carry_template = build_template_egm_carry(n_rows=n_pad)
+    own_discrete_state_names = _get_discrete_state_names(
+        v_interpolation_info=regime_to_v_interpolation_info[regime_name]
+    )
+    own_discrete_action_values = MappingProxyType(
+        dict(state_action_space.discrete_actions)
+    )
+    leading_shape = tuple(
+        int(
+            regime_to_v_interpolation_info[regime_name]
+            .discrete_states[name]
+            .to_jax()
+            .shape[0]
+        )
+        for name in own_discrete_state_names
+    ) + tuple(int(v.shape[0]) for v in own_discrete_action_values.values())
+    carry_template = build_template_egm_carry(n_rows=n_pad, leading_shape=leading_shape)
 
     configs: dict[tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]], list[int]] = {}
     for period in regimes_to_active_periods[regime_name]:
@@ -132,12 +186,15 @@ def build_egm_step_functions(
             regime_name=regime_name,
             user_regimes=user_regimes,
             functions=functions,
+            constraints=constraints,
             carry_targets=carry_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
+            own_discrete_state_names=own_discrete_state_names,
+            own_discrete_action_names=tuple(own_discrete_action_values),
         )
         if unsupported is not None:
             kernel = _get_raising_egm_step(reason=unsupported)
@@ -146,11 +203,16 @@ def build_egm_step_functions(
                 solver=solver,
                 user_regimes=user_regimes,
                 functions=functions,
+                constraints=constraints,
                 transitions=transitions,
                 compute_regime_transition_probs=compute_regime_transition_probs,
                 carry_targets=carry_targets,
                 scalar_targets=scalar_targets,
                 n_pad=n_pad,
+                own_discrete_state_names=own_discrete_state_names,
+                own_discrete_action_values=own_discrete_action_values,
+                has_taste_shocks=has_taste_shocks,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             )
         built[(carry_targets, scalar_targets)] = kernel
 
@@ -234,54 +296,39 @@ def _get_egm_step(
     solver: DCEGM,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     compute_regime_transition_probs: RegimeTransitionFunction,
     carry_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
     n_pad: int,
+    own_discrete_state_names: tuple[StateName, ...],
+    own_discrete_action_values: MappingProxyType[ActionName, Any],
+    has_taste_shocks: bool,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> EgmStepFunction:
     """Build the EGM kernel for one continuation-target configuration."""
-    euler_state_name = solver.continuous_state
-    action_name = solver.continuous_action
-    post_decision_name = solver.post_decision_function
-
-    savings_nodes = jnp.asarray(
-        solver.savings_grid.to_jax(), dtype=canonical_float_dtype()
+    pieces = _build_kernel_pieces(
+        solver=solver,
+        user_regimes=user_regimes,
+        functions=functions,
+        constraints=constraints,
+        transitions=transitions,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        carry_targets=carry_targets,
+        scalar_targets=scalar_targets,
+        n_pad=n_pad,
+        own_discrete_state_names=own_discrete_state_names,
+        own_discrete_action_values=own_discrete_action_values,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
-    borrowing_limit = savings_nodes[0]
-    n_constrained = solver.n_constrained_points
-    # Static geometric ratio: the constrained actions run from
-    # `span * CONSTRAINED_OFFSET_FRACTION` up to `span`, so the ratio depends
-    # only on the offset fraction and the point count.
-    constrained_ratio = (1.0 / CONSTRAINED_OFFSET_FRACTION) ** (
-        1.0 / max(n_constrained - 1, 1)
-    )
-
-    next_state_funcs, child_resources_funcs, child_next_state_keys = (
-        _build_target_closures(
-            user_regimes=user_regimes,
-            functions=functions,
-            transitions=transitions,
-            carry_targets=carry_targets,
-            post_decision_name=post_decision_name,
-        )
-    )
-    utility_func, inverse_marginal_utility_func, own_resources_func = (
-        _concatenate_regime_function(functions=functions, target="utility"),
-        _concatenate_regime_function(
-            functions=functions, target="inverse_marginal_utility"
-        ),
-        _concatenate_regime_function(functions=functions, target=solver.resources),
-    )
-    build_H_kwargs = _get_build_H_kwargs(functions)
-    refine = get_upper_envelope(solver=solver, n_refined=n_pad)
 
     def egm_step(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
         next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, EgmCarry]:
-        """Run the concave EGM step and publish V on the exogenous grid.
+        """Run the DC-EGM step and publish V on the exogenous grid.
 
         Args:
             next_regime_to_V_arr: The next period's value-function arrays;
@@ -293,137 +340,468 @@ def _get_egm_step(
 
         Returns:
             Tuple of the value-function array on the exogenous state grid
-            and the regime's carry.
+            (discrete-state axes leading, the continuous state last) and the
+            regime's carry (one row per discrete-state x discrete-action
+            combo).
 
         """
         dtype = canonical_float_dtype()
-        pool = {k: v for k, v in kwargs.items() if k != euler_state_name}
-        state_grid = jnp.asarray(kwargs[euler_state_name], dtype=dtype)
+        own_state_names = {pieces.euler_state_name, *own_discrete_state_names}
+        pool = {k: v for k, v in kwargs.items() if k not in own_state_names}
+        state_grid = jnp.asarray(kwargs[pieces.euler_state_name], dtype=dtype)
+        own_taste_shock_scale = (
+            jnp.asarray(kwargs[TASTE_SHOCK_SCALE_PARAM], dtype=dtype)
+            if has_taste_shocks
+            else jnp.asarray(0.0, dtype=dtype)
+        )
+        solve_one_combo = _get_solve_one_combo(
+            pieces=pieces,
+            pool=pool,
+            state_grid=state_grid,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+        )
 
-        regime_transition_probs = compute_regime_transition_probs(**pool)
+        if pieces.combo_names:
+            combo_grids = tuple(
+                jnp.asarray(kwargs[name]) for name in own_discrete_state_names
+            ) + tuple(own_discrete_action_values.values())
+            mesh = jnp.meshgrid(*combo_grids, indexing="ij")
+            flat_combos = tuple(m.ravel() for m in mesh)
+            V_rows, grid_rows, policy_rows, value_rows, marginal_rows = jax.vmap(
+                solve_one_combo
+            )(flat_combos)
+            dims = tuple(int(g.shape[0]) for g in combo_grids)
+            V_stack = V_rows.reshape(*dims, state_grid.shape[0])
+            action_axes = tuple(range(len(own_discrete_state_names), len(combo_grids)))
+            if action_axes:
+                V_arr, _ = logsum_and_softmax(
+                    values=V_stack, scale=own_taste_shock_scale, axes=action_axes
+                )
+            else:
+                V_arr = V_stack
+            carry = EgmCarry(
+                endog_grid=grid_rows.reshape(*dims, n_pad),
+                policy=policy_rows.reshape(*dims, n_pad),
+                value=value_rows.reshape(*dims, n_pad),
+                marginal_utility=marginal_rows.reshape(*dims, n_pad),
+                taste_shock_scale=own_taste_shock_scale,
+            )
+        else:
+            V_arr, grid_row, policy_row, value_row, marginal_row = solve_one_combo(())
+            carry = EgmCarry(
+                endog_grid=grid_row,
+                policy=policy_row,
+                value=value_row,
+                marginal_utility=marginal_row,
+                taste_shock_scale=own_taste_shock_scale,
+            )
+        return V_arr, carry
+
+    return egm_step
+
+
+@dataclass(frozen=True, kw_only=True)
+class _EgmKernelPieces:
+    """Build-time statics shared by every per-combo EGM computation."""
+
+    euler_state_name: StateName
+    """Name of the regime's continuous (Euler) state."""
+
+    action_name: ActionName
+    """Name of the regime's continuous action."""
+
+    post_decision_name: str
+    """Name of the post-decision function (the savings node's input slot)."""
+
+    savings_nodes: Float1D
+    """The exogenous end-of-period savings grid."""
+
+    borrowing_limit: ScalarFloat
+    """Lower bound of the savings grid."""
+
+    n_constrained: int
+    """Number of closed-form credit-constrained candidate points."""
+
+    constrained_ratio: float
+    """Static geometric spacing ratio of the constrained candidates."""
+
+    n_pad: int
+    """Static length of the refined carry rows."""
+
+    combo_names: tuple[StateName | ActionName, ...]
+    """Discrete-state names, then discrete-action names (carry-axis order)."""
+
+    carry_targets: tuple[RegimeName, ...]
+    """Targets whose continuation is interpolated from their carry rows."""
+
+    scalar_targets: tuple[RegimeName, ...]
+    """Stateless targets contributing a constant continuation value."""
+
+    next_state_funcs: Mapping[RegimeName, Callable[..., Any]]
+    """Per-target next-state functions (post-decision function removed)."""
+
+    child_resources_funcs: Mapping[RegimeName, Callable[[ScalarFloat], ScalarFloat]]
+    """Per-target closed-over child resources maps."""
+
+    child_next_state_keys: Mapping[RegimeName, str]
+    """Per-target `next_<state>` key of the child's continuous state."""
+
+    child_discrete_state_names: Mapping[RegimeName, tuple[StateName, ...]]
+    """Per-target child discrete-state names in carry-axis order."""
+
+    utility_func: UserFunction
+    """The regime's concatenated utility function."""
+
+    inverse_marginal_utility_func: UserFunction
+    """The regime's concatenated inverse-marginal-utility function."""
+
+    own_resources_func: UserFunction
+    """The regime's concatenated resources function."""
+
+    feasibility_func: Callable[..., ScalarBool] | None
+    """Discrete-feasibility predicate of a combo, or `None`."""
+
+    build_H_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    """Closure assembling the Bellman aggregator's keyword arguments."""
+
+    refine: Callable[..., tuple[Float1D, Float1D, Float1D, ScalarInt]]
+    """The configured upper-envelope backend."""
+
+    compute_regime_transition_probs: RegimeTransitionFunction
+    """Regime transition probability function for solve."""
+
+
+def _build_kernel_pieces(
+    *,
+    solver: DCEGM,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    transitions: TransitionFunctionsMapping,
+    compute_regime_transition_probs: RegimeTransitionFunction,
+    carry_targets: tuple[RegimeName, ...],
+    scalar_targets: tuple[RegimeName, ...],
+    n_pad: int,
+    own_discrete_state_names: tuple[StateName, ...],
+    own_discrete_action_values: MappingProxyType[ActionName, Any],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> _EgmKernelPieces:
+    """Assemble the build-time statics of the EGM kernel."""
+    savings_nodes = jnp.asarray(
+        solver.savings_grid.to_jax(), dtype=canonical_float_dtype()
+    )
+    n_constrained = solver.n_constrained_points
+    (
+        next_state_funcs,
+        child_resources_funcs,
+        child_next_state_keys,
+        child_discrete_state_names,
+    ) = _build_target_closures(
+        user_regimes=user_regimes,
+        functions=functions,
+        transitions=transitions,
+        carry_targets=carry_targets,
+        post_decision_name=solver.post_decision_function,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+    )
+    return _EgmKernelPieces(
+        euler_state_name=solver.continuous_state,
+        action_name=solver.continuous_action,
+        post_decision_name=solver.post_decision_function,
+        savings_nodes=savings_nodes,
+        borrowing_limit=savings_nodes[0],
+        n_constrained=n_constrained,
+        # Static geometric ratio: the constrained actions run from
+        # `span * CONSTRAINED_OFFSET_FRACTION` up to `span`, so the ratio
+        # depends only on the offset fraction and the point count.
+        constrained_ratio=(1.0 / CONSTRAINED_OFFSET_FRACTION)
+        ** (1.0 / max(n_constrained - 1, 1)),
+        n_pad=n_pad,
+        combo_names=own_discrete_state_names + tuple(own_discrete_action_values),
+        carry_targets=carry_targets,
+        scalar_targets=scalar_targets,
+        next_state_funcs=next_state_funcs,
+        child_resources_funcs=child_resources_funcs,
+        child_next_state_keys=child_next_state_keys,
+        child_discrete_state_names=child_discrete_state_names,
+        utility_func=_concatenate_regime_function(
+            functions=functions, target="utility"
+        ),
+        inverse_marginal_utility_func=_concatenate_regime_function(
+            functions=functions, target="inverse_marginal_utility"
+        ),
+        own_resources_func=_concatenate_regime_function(
+            functions=functions, target=solver.resources
+        ),
+        feasibility_func=_build_feasibility_function(
+            functions=functions, constraints=constraints
+        ),
+        build_H_kwargs=_get_build_H_kwargs(functions),
+        refine=get_upper_envelope(solver=solver, n_refined=n_pad),
+        compute_regime_transition_probs=compute_regime_transition_probs,
+    )
+
+
+def _get_solve_one_combo(
+    *,
+    pieces: _EgmKernelPieces,
+    pool: dict[str, Any],
+    state_grid: Float1D,
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+) -> Callable[
+    [tuple[ScalarInt, ...]], tuple[Float1D, Float1D, Float1D, Float1D, Float1D]
+]:
+    """Build the per-combo EGM computation for one kernel invocation."""
+    dtype = state_grid.dtype
+
+    def solve_one_combo(
+        combo_values: tuple[ScalarInt, ...],
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+        """Run the EGM step for one discrete (state x action) combo.
+
+        Takes the combo's discrete values positionally so `jax.vmap` can
+        batch over flattened combo arrays.
+
+        Returns:
+            Tuple of the combo's value row on the exogenous state grid and
+            its refined endogenous grid, policy, value, and marginal-utility
+            carry rows.
+
+        """
+        combo_pool = {
+            **pool,
+            **dict(zip(pieces.combo_names, combo_values, strict=True)),
+        }
         # Validation pins the default Bellman aggregator, whose single
         # non-(utility, E_next_V) parameter is the discount factor.
-        (discount_factor,) = tuple(build_H_kwargs(pool).values())
+        (discount_factor,) = tuple(pieces.build_H_kwargs(combo_pool).values())
 
         def utility_of_action(action_value: ScalarFloat) -> ScalarFloat:
-            return utility_func(**{action_name: action_value}, **pool)
-
-        def inverse_marginal_utility(
-            marginal_continuation: ScalarFloat,
-        ) -> ScalarFloat:
-            return inverse_marginal_utility_func(
-                marginal_continuation=marginal_continuation, **pool
+            return pieces.utility_func(
+                **{pieces.action_name: action_value}, **combo_pool
             )
 
-        def compute_node(
-            savings_value: ScalarFloat,
-        ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
-            """Euler-invert one savings node against the continuation."""
-            expected_marginal = jnp.asarray(0.0, dtype=dtype)
-            expected_value = jnp.asarray(0.0, dtype=dtype)
-            for target in carry_targets:
-                carry = next_regime_to_egm_carry[target]
-
-                def composed_resources(
-                    savings: ScalarFloat, *, target: RegimeName = target
-                ) -> ScalarFloat:
-                    """Map a savings node into the child's resources space."""
-                    next_states = next_state_funcs[target](
-                        **pool, **{post_decision_name: savings}
-                    )
-                    # The solution-phase next-state function returns a flat
-                    # mapping of `next_<state>` names to scalars; the shared
-                    # protocol's nested return type is the simulation form.
-                    next_state_value = cast(
-                        "ScalarFloat", next_states[child_next_state_keys[target]]
-                    )
-                    return child_resources_funcs[target](next_state_value)
-
-                child_resources, child_dr_da = jax.value_and_grad(composed_resources)(
-                    savings_value
-                )
-                # The marginal-utility row is the value row's exact slope
-                # (envelope theorem), upgrading the value read to cubic
-                # Hermite; the mu read itself stays linear (a policy-grade
-                # quantity, and its interpolation error enters the value only
-                # at second order through the Euler inversion).
-                value_at_child = interp_on_padded_grid(
-                    x_query=child_resources,
-                    xp=carry.endog_grid,
-                    fp=carry.value,
-                    fp_slopes=carry.marginal_utility,
-                )
-                marginal_at_child = interp_on_padded_grid(
-                    x_query=child_resources,
-                    xp=carry.endog_grid,
-                    fp=carry.marginal_utility,
-                )
-                prob = regime_transition_probs[target]
-                # Zero unreachable-target contributions on the results, never
-                # by multiplying into a possibly non-finite value.
-                expected_marginal = expected_marginal + jnp.where(
-                    prob > 0.0, prob * marginal_at_child * child_dr_da, 0.0
-                )
-                expected_value = expected_value + jnp.where(
-                    prob > 0.0, prob * value_at_child, 0.0
-                )
-            for target in scalar_targets:
-                prob = regime_transition_probs[target]
-                constant_value = next_regime_to_egm_carry[target].value[0]
-                expected_value = expected_value + jnp.where(
-                    prob > 0.0, prob * constant_value, 0.0
-                )
-
-            action = invert_euler(
-                expected_marginal_continuation=expected_marginal,
-                discount_factor=discount_factor,
-                inverse_marginal_utility=inverse_marginal_utility,
-            )
-            endog_point = savings_value + action
-            value = utility_of_action(action) + discount_factor * expected_value
-            return action, endog_point, value, expected_value
-
+        compute_node = _get_compute_node(
+            pieces=pieces,
+            combo_pool=combo_pool,
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            dtype=dtype,
+        )
         actions, endog_grid, values, expected_values = jax.vmap(compute_node)(
-            savings_nodes
+            pieces.savings_nodes
         )
 
         def own_resources_of_state(state_value: ScalarFloat) -> ScalarFloat:
-            return own_resources_func(**{euler_state_name: state_value}, **pool)
+            return pieces.own_resources_func(
+                **{pieces.euler_state_name: state_value}, **combo_pool
+            )
 
         publish_resources = jax.vmap(own_resources_of_state)(state_grid)
 
         constrained_actions, constrained_values = _compute_constrained_candidates(
             first_endogenous_point=endog_grid[0],
             publish_resources=publish_resources,
-            borrowing_limit=borrowing_limit,
-            n_constrained=n_constrained,
-            constrained_ratio=constrained_ratio,
+            borrowing_limit=pieces.borrowing_limit,
+            n_constrained=pieces.n_constrained,
+            constrained_ratio=pieces.constrained_ratio,
             utility_of_action=utility_of_action,
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
         )
 
-        refined_grid, refined_policy, refined_value, n_kept = refine(
+        refined_grid, refined_policy, refined_value, n_kept = pieces.refine(
             endog_grid=jnp.concatenate(
-                [borrowing_limit + constrained_actions, endog_grid]
+                [pieces.borrowing_limit + constrained_actions, endog_grid]
             ),
             policy=jnp.concatenate([constrained_actions, actions]),
             value=jnp.concatenate([constrained_values, values]),
         )
 
-        return _publish_V_and_assemble_carry(
+        V_row, value_row, marginal_utility_row = _publish_V_and_carry_rows(
             refined_grid=refined_grid,
             refined_policy=refined_policy,
             refined_value=refined_value,
             n_kept=n_kept,
-            n_pad=n_pad,
+            n_pad=pieces.n_pad,
             publish_resources=publish_resources,
-            borrowing_limit=borrowing_limit,
-            first_endogenous_point=endog_grid[0],
+            borrowing_limit=pieces.borrowing_limit,
             utility_of_action=utility_of_action,
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
         )
 
-    return egm_step
+        if pieces.feasibility_func is not None:
+            # Infeasible discrete combos: -inf value rows so they win no
+            # maximum and carry zero choice probability; exactly-zero
+            # marginal utility so probability-weighted sums stay finite.
+            feasible = pieces.feasibility_func(**combo_pool)
+            V_row = jnp.where(feasible, V_row, -jnp.inf)
+            value_row = jnp.where(feasible, value_row, -jnp.inf)
+            marginal_utility_row = jnp.where(feasible, marginal_utility_row, 0.0)
+
+        return (
+            V_row,
+            refined_grid.astype(dtype),
+            refined_policy.astype(dtype),
+            value_row,
+            marginal_utility_row,
+        )
+
+    return solve_one_combo
+
+
+def _get_compute_node(
+    *,
+    pieces: _EgmKernelPieces,
+    combo_pool: dict[str, Any],
+    discount_factor: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    dtype: Any,  # noqa: ANN401
+) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
+    """Build the per-savings-node Euler inversion for one discrete combo."""
+    regime_transition_probs = pieces.compute_regime_transition_probs(**combo_pool)
+
+    def inverse_marginal_utility(
+        marginal_continuation: ScalarFloat,
+    ) -> ScalarFloat:
+        return pieces.inverse_marginal_utility_func(
+            marginal_continuation=marginal_continuation, **combo_pool
+        )
+
+    def compute_node(
+        savings_value: ScalarFloat,
+    ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
+        """Euler-invert one savings node against the continuation."""
+        expected_marginal = jnp.asarray(0.0, dtype=dtype)
+        expected_value = jnp.asarray(0.0, dtype=dtype)
+        for target in pieces.carry_targets:
+            carry = next_regime_to_egm_carry[target]
+
+            def composed_resources(
+                savings: ScalarFloat, *, target: RegimeName = target
+            ) -> tuple[ScalarFloat, tuple[ScalarInt, ...]]:
+                """Map a savings node into the child's resources space.
+
+                Returns the child's resources (differentiated) and the
+                child's discrete-state values (auxiliary; their transitions
+                are independent of the savings node).
+                """
+                next_states = pieces.next_state_funcs[target](
+                    **combo_pool, **{pieces.post_decision_name: savings}
+                )
+                # The solution-phase next-state function returns a flat
+                # mapping of `next_<state>` names to scalars; the shared
+                # protocol's nested return type is the simulation form.
+                next_state_value = cast(
+                    "ScalarFloat", next_states[pieces.child_next_state_keys[target]]
+                )
+                child_index = tuple(
+                    cast("ScalarInt", next_states[f"next_{name}"])
+                    for name in pieces.child_discrete_state_names[target]
+                )
+                return (
+                    pieces.child_resources_funcs[target](next_state_value),
+                    child_index,
+                )
+
+            (child_resources, child_index), child_dr_da = jax.value_and_grad(
+                composed_resources, has_aux=True
+            )(savings_value)
+            smoothed_value, smoothed_marginal = _aggregate_child_choices(
+                carry=carry,
+                child_index=child_index,
+                child_resources=child_resources,
+            )
+            prob = regime_transition_probs[target]
+            # Zero unreachable-target contributions on the results, never by
+            # multiplying into a possibly non-finite value.
+            expected_marginal = expected_marginal + jnp.where(
+                prob > 0.0, prob * smoothed_marginal * child_dr_da, 0.0
+            )
+            expected_value = expected_value + jnp.where(
+                prob > 0.0, prob * smoothed_value, 0.0
+            )
+        for target in pieces.scalar_targets:
+            prob = regime_transition_probs[target]
+            constant_value = next_regime_to_egm_carry[target].value[0]
+            expected_value = expected_value + jnp.where(
+                prob > 0.0, prob * constant_value, 0.0
+            )
+
+        action = invert_euler(
+            expected_marginal_continuation=expected_marginal,
+            discount_factor=discount_factor,
+            inverse_marginal_utility=inverse_marginal_utility,
+        )
+        endog_point = savings_value + action
+        value = utility_of_action(action) + discount_factor * expected_value
+        return action, endog_point, value, expected_value
+
+    return compute_node
+
+
+def _aggregate_child_choices(
+    *,
+    carry: EgmCarry,
+    child_index: tuple[ScalarInt, ...],
+    child_resources: ScalarFloat,
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Interpolate one child's carry and aggregate its discrete-action rows.
+
+    The carry rows matching the child's discrete-state values are selected
+    by integer indexing on the leading state axes (discrete codes equal grid
+    positions); the remaining leading axes are the child's discrete-action
+    combos. Each row is interpolated at the child's resources value, then
+    aggregated with the child's taste-shock scale: the smoothed value is the
+    logsum and the smoothed marginal is $\\sum_{d'} P_{d'} \\mu_{d'}$ —
+    exact for EV1 by Danskin's theorem, no $\\partial P/\\partial R$ terms.
+    Scale zero yields the hard max / one-hot argmax through the same code
+    path. Rows that are $-\\infty$ everywhere (infeasible child combos) get
+    zero probability and contribute exactly zero marginal utility.
+
+    Args:
+        carry: The child's EGM carry.
+        child_index: The child's discrete-state values at this savings node.
+        child_resources: The child's resources value at this savings node.
+
+    Returns:
+        Tuple of the smoothed continuation value and the smoothed marginal
+        continuation $\\partial W/\\partial R'$.
+
+    """
+    n_pad = carry.value.shape[-1]
+    grid_rows = carry.endog_grid[child_index].reshape(-1, n_pad)
+    value_rows = carry.value[child_index].reshape(-1, n_pad)
+    marginal_rows = carry.marginal_utility[child_index].reshape(-1, n_pad)
+
+    # The marginal-utility row is the value row's exact slope (envelope
+    # theorem), upgrading the value read to cubic Hermite; the mu read itself
+    # stays linear (a policy-grade quantity, and its interpolation error
+    # enters the value only at second order through the Euler inversion).
+    def interp_value_row(xp: Float1D, fp: Float1D, fp_slopes: Float1D) -> ScalarFloat:
+        """Interpolate one carry value row; positional per `jax.vmap`."""
+        return interp_on_padded_grid(
+            x_query=child_resources, xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+
+    def interp_row(xp: Float1D, fp: Float1D) -> ScalarFloat:
+        """Interpolate one carry row; positional per `jax.vmap`."""
+        return interp_on_padded_grid(x_query=child_resources, xp=xp, fp=fp)
+
+    value_at_child = jax.vmap(interp_value_row)(grid_rows, value_rows, marginal_rows)
+    marginal_at_child = jax.vmap(interp_row)(grid_rows, marginal_rows)
+    # A row that is -inf everywhere yields NaN under linear interpolation
+    # (-inf minus -inf); restore the -inf / exact-zero pair on the results.
+    row_infeasible = jnp.isneginf(value_rows[:, 0])
+    value_at_child = jnp.where(row_infeasible, -jnp.inf, value_at_child)
+    marginal_at_child = jnp.where(row_infeasible, 0.0, marginal_at_child)
+
+    smoothed_value, choice_probs = logsum_and_softmax(
+        values=value_at_child, scale=carry.taste_shock_scale, axes=(0,)
+    )
+    smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
+    return smoothed_value, smoothed_marginal
 
 
 def _build_target_closures(
@@ -433,10 +811,12 @@ def _build_target_closures(
     transitions: TransitionFunctionsMapping,
     carry_targets: tuple[RegimeName, ...],
     post_decision_name: str,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> tuple[
     dict[RegimeName, Callable[..., Any]],
     dict[RegimeName, Callable[[ScalarFloat], ScalarFloat]],
     dict[RegimeName, str],
+    dict[RegimeName, tuple[StateName, ...]],
 ]:
     """Build the per-carry-target closures of the EGM kernel.
 
@@ -447,9 +827,10 @@ def _build_target_closures(
     silently wrong.
 
     Returns:
-        Tuple of three dicts keyed by carry-target name: the next-state
-        function, the closed-over child resources map, and the child's
-        `next_<state>` key.
+        Tuple of four dicts keyed by carry-target name: the next-state
+        function, the closed-over child resources map, the child's
+        `next_<state>` key for its continuous state, and the child's
+        discrete-state names in carry-axis order.
 
     """
     functions_without_post = MappingProxyType(
@@ -470,7 +851,30 @@ def _build_target_closures(
         target: f"next_{_get_child_state_name(user_regime=user_regimes[target])}"
         for target in carry_targets
     }
-    return next_state_funcs, child_resources_funcs, child_next_state_keys
+    child_discrete_state_names = {
+        target: _get_discrete_state_names(
+            v_interpolation_info=regime_to_v_interpolation_info[target]
+        )
+        for target in carry_targets
+    }
+    return (
+        next_state_funcs,
+        child_resources_funcs,
+        child_next_state_keys,
+        child_discrete_state_names,
+    )
+
+
+def _get_discrete_state_names(
+    *,
+    v_interpolation_info: VInterpolationInfo,
+) -> tuple[StateName, ...]:
+    """Discrete-state names of a regime in carry-axis (V state) order."""
+    return tuple(
+        name
+        for name in v_interpolation_info.state_names
+        if name in v_interpolation_info.discrete_states
+    )
 
 
 def _concatenate_regime_function(
@@ -485,6 +889,42 @@ def _concatenate_regime_function(
         enforce_signature=False,
         set_annotations=True,
     )
+
+
+def _build_feasibility_function(
+    *,
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+) -> Callable[..., ScalarBool] | None:
+    """Build the discrete-feasibility predicate of a combo, or `None`.
+
+    DC-EGM validation guarantees that no constraint reaches the continuous
+    state or action, so every constraint is evaluable per discrete combo.
+
+    Returns:
+        Callable mapping a combo's pool (discrete values plus flat params)
+        to a scalar feasibility indicator, or `None` without constraints.
+
+    """
+    if not constraints:
+        return None
+    constraints_func = concatenate_functions(
+        functions={
+            **{name: func for name, func in functions.items() if name != "H"},
+            **dict(constraints),
+        },
+        targets=list(constraints),
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+
+    def feasibility(**combo_pool: Any) -> ScalarBool:  # noqa: ANN401
+        """Evaluate all constraints for one combo and combine them."""
+        outputs = constraints_func(**combo_pool)
+        return jnp.all(jnp.stack([jnp.asarray(out) for out in outputs.values()]))
+
+    return feasibility
 
 
 def _compute_constrained_candidates(
@@ -539,7 +979,7 @@ def _compute_constrained_candidates(
     return constrained_actions, constrained_values
 
 
-def _publish_V_and_assemble_carry(
+def _publish_V_and_carry_rows(
     *,
     refined_grid: Float1D,
     refined_policy: Float1D,
@@ -548,19 +988,18 @@ def _publish_V_and_assemble_carry(
     n_pad: int,
     publish_resources: FloatND,
     borrowing_limit: ScalarFloat,
-    first_endogenous_point: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     discounted_expected_value_at_limit: ScalarFloat,
-) -> tuple[FloatND, EgmCarry]:
-    """Interpolate V onto the exogenous grid and assemble the carry.
+) -> tuple[FloatND, Float1D, Float1D]:
+    """Interpolate V onto the exogenous grid and finish the carry value rows.
 
-    The constraint binds exactly at the resources points weakly below the
-    first endogenous (Euler) point, so the published value there is the
-    closed-form constrained value — the exact value of saving exactly the
-    borrowing limit. Above it, the refined envelope is read with the cubic
-    Hermite interpolant (the marginal-utility row is the value row's exact
-    slope by the envelope theorem), floored at the constrained value, which
-    remains a feasible-policy lower bound everywhere.
+    Below the lowest refined envelope point the interpolant edge-clamps, so
+    the published value there is the closed-form constrained value — the
+    exact value of saving exactly the borrowing limit. Above it, the refined
+    envelope is read with the cubic Hermite interpolant (the marginal-utility
+    row is the value row's exact slope by the envelope theorem), floored at
+    the constrained value, which remains a feasible-policy lower bound
+    everywhere.
 
     Envelope overflow is not silent: the outputs are NaN-poisoned so the
     solve loop's NaN diagnostics surface the offending (regime, period).
@@ -573,15 +1012,14 @@ def _publish_V_and_assemble_carry(
         n_pad: Static length of the refined rows.
         publish_resources: Resources at the regime's exogenous state grid.
         borrowing_limit: Lower bound of the savings grid.
-        first_endogenous_point: The endogenous resources point of the lowest
-            savings node; the credit constraint binds weakly below it.
         utility_of_action: Utility with everything but the continuous action
             bound.
         discounted_expected_value_at_limit: Discounted expected continuation
             value at the lowest savings node.
 
     Returns:
-        Tuple of the value-function array and the regime's carry.
+        Tuple of the value row on the exogenous state grid, the carry value
+        row, and the carry marginal-utility row.
 
     """
     dtype = publish_resources.dtype
@@ -608,24 +1046,24 @@ def _publish_V_and_assemble_carry(
         + discounted_expected_value_at_limit,
         -jnp.inf,
     )
-    constraint_binds = (closed_form_actions > 0.0) & (
-        publish_resources <= first_endogenous_point
-    )
-    V_arr = jnp.where(
-        constraint_binds,
+    # Below the lowest refined point the interpolant edge-clamps, so the
+    # closed-form constrained value (the exact value of saving exactly the
+    # borrowing limit) is published outright there. Everywhere else it is a
+    # feasible-policy floor under the Hermite read of the refined envelope:
+    # forcing it further up — e.g. to the first Euler point — would discard
+    # envelope information wherever degenerate inversions push that point
+    # right (a zero-ish marginal continuation makes it ~1/eps), and the
+    # constrained candidates inside the envelope already carry exact slopes.
+    refined_grid_start = refined_grid[0]
+    V_row = jnp.where(
+        (closed_form_actions > 0.0) & (publish_resources <= refined_grid_start),
         value_constrained,
         jnp.maximum(value_interpolated, value_constrained),
     )
-    V_arr = jnp.where(overflowed, jnp.nan, V_arr).astype(dtype)
+    V_row = jnp.where(overflowed, jnp.nan, V_row).astype(dtype)
 
-    carry = EgmCarry(
-        endog_grid=jnp.where(overflowed, jnp.nan, refined_grid).astype(dtype),
-        policy=refined_policy.astype(dtype),
-        value=jnp.where(overflowed, jnp.nan, refined_value).astype(dtype),
-        marginal_utility=marginal_utility.astype(dtype),
-        taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
-    )
-    return V_arr, carry
+    value_row = jnp.where(overflowed, jnp.nan, refined_value).astype(dtype)
+    return V_row, value_row, marginal_utility.astype(dtype)
 
 
 def _get_raising_egm_step(*, reason: str) -> EgmStepFunction:
@@ -652,31 +1090,26 @@ def _find_unsupported_feature(
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
     carry_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
+    own_discrete_state_names: tuple[StateName, ...],
+    own_discrete_action_names: tuple[ActionName, ...],
 ) -> str | None:
     """Return a message naming the first feature outside the kernel's scope.
 
     Returns `None` when the configuration is fully supported.
     """
-    own_extra_actions = [
-        name
-        for name in user_regimes[regime_name].actions
-        if name != solver.continuous_action
-    ]
+    own_process_states = _get_process_state_names(
+        v_interpolation_info=regime_to_v_interpolation_info[regime_name]
+    )
     message: str | None = None
-    if own_extra_actions:
-        message = (
-            f"it has actions {own_extra_actions} besides the continuous "
-            f"action '{solver.continuous_action}'."
-        )
-    elif regime_to_v_interpolation_info[regime_name].discrete_states:
-        discrete = list(regime_to_v_interpolation_info[regime_name].discrete_states)
-        message = f"it has discrete or process states {discrete}."
+    if own_process_states:
+        message = f"it has process states {list(own_process_states)}."
 
     for target in carry_targets:
         if message is not None:
@@ -693,15 +1126,18 @@ def _find_unsupported_feature(
         message = _find_unsupported_function_args(
             solver=solver,
             functions=functions,
+            constraints=constraints,
             compute_regime_transition_probs=compute_regime_transition_probs,
             flat_param_names=flat_param_names,
+            own_discrete_state_names=own_discrete_state_names,
+            own_discrete_action_names=own_discrete_action_names,
         )
 
     if message is None:
         return None
     return (
         f"The DC-EGM solver cannot solve regime '{regime_name}' yet: {message} "
-        "Support arrives with the discrete-choice DC-EGM step."
+        "This configuration is outside the DC-EGM kernel's current scope."
     )
 
 
@@ -715,23 +1151,20 @@ def _find_unsupported_target_feature(
 ) -> str | None:
     """Return a message naming the first unsupported feature of one target."""
     target_info = regime_to_v_interpolation_info[target]
-    if target_info.discrete_states:
+    target_process_states = _get_process_state_names(v_interpolation_info=target_info)
+    if target_process_states:
         return (
-            f"its target regime '{target}' has discrete or process "
-            f"states {list(target_info.discrete_states)}."
+            f"its target regime '{target}' has process states "
+            f"{list(target_process_states)}."
         )
-    if len(target_info.state_names) != 1:
-        return (
-            f"its target regime '{target}' has states "
-            f"{list(target_info.state_names)}; exactly one continuous state "
-            "is supported."
+    if user_regimes[target].terminal:
+        terminal_message = _find_unsupported_terminal_target_feature(
+            target=target,
+            user_regime=user_regimes[target],
+            target_info=target_info,
         )
-    if user_regimes[target].terminal and user_regimes[target].actions:
-        return (
-            f"its terminal target regime '{target}' has actions "
-            f"{list(user_regimes[target].actions)}, so its carry is not "
-            "its utility on the state grid."
-        )
+        if terminal_message is not None:
+            return terminal_message
     stochastic = sorted(set(transitions[target]) & stochastic_transition_names)
     if stochastic:
         return f"the transitions {stochastic} into regime '{target}' are stochastic."
@@ -748,28 +1181,72 @@ def _find_unsupported_target_feature(
     return None
 
 
+def _find_unsupported_terminal_target_feature(
+    *,
+    target: RegimeName,
+    user_regime: UserRegime,
+    target_info: VInterpolationInfo,
+) -> str | None:
+    """Return a message naming the first unsupported feature of a terminal target."""
+    if target_info.discrete_states:
+        return (
+            f"its terminal target regime '{target}' has discrete states "
+            f"{list(target_info.discrete_states)}; terminal carries cover "
+            "a single continuous state only."
+        )
+    if len(target_info.state_names) != 1:
+        return (
+            f"its terminal target regime '{target}' has states "
+            f"{list(target_info.state_names)}; exactly one continuous "
+            "state is supported."
+        )
+    if user_regime.actions:
+        return (
+            f"its terminal target regime '{target}' has actions "
+            f"{list(user_regime.actions)}, so its carry is not "
+            "its utility on the state grid."
+        )
+    return None
+
+
 def _find_unsupported_function_args(
     *,
     solver: DCEGM,
     functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
     compute_regime_transition_probs: RegimeTransitionFunction,
     flat_param_names: frozenset[str],
+    own_discrete_state_names: tuple[StateName, ...],
+    own_discrete_action_names: tuple[ActionName, ...],
 ) -> str | None:
     """Return a message naming the first function with out-of-scope arguments."""
+    allowed_discrete = set(own_discrete_state_names) | set(own_discrete_action_names)
     allowed_params = flat_param_names | {"age", "period"}
     utility_func = _concatenate_regime_function(functions=functions, target="utility")
     arg_requirements: list[tuple[str, frozenset[str], set[str]]] = [
         (
             "the utility function",
             frozenset(get_union_of_args([utility_func])),
-            {solver.continuous_action} | allowed_params,
+            {solver.continuous_action} | allowed_discrete | allowed_params,
         ),
         (
             "the regime transition probability function",
             frozenset(get_union_of_args([compute_regime_transition_probs])),
-            set(allowed_params),
+            allowed_discrete | allowed_params,
         ),
     ]
+    for constraint_name in constraints:
+        constraint_func = _concatenate_regime_function(
+            functions=MappingProxyType({**dict(functions), **dict(constraints)}),
+            target=constraint_name,
+        )
+        arg_requirements.append(
+            (
+                f"the constraint '{constraint_name}'",
+                frozenset(get_union_of_args([constraint_func])),
+                allowed_discrete | allowed_params,
+            )
+        )
     for label, needed, allowed in arg_requirements:
         extra = sorted(needed - allowed)
         if extra:
@@ -777,8 +1254,20 @@ def _find_unsupported_function_args(
     return None
 
 
+def _get_process_state_names(
+    *,
+    v_interpolation_info: VInterpolationInfo,
+) -> tuple[StateName, ...]:
+    """Names of a regime's process states (node-valued discrete dimensions)."""
+    return tuple(
+        name
+        for name, grid in v_interpolation_info.discrete_states.items()
+        if isinstance(grid, _ContinuousStochasticProcess)
+    )
+
+
 def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
-    """Name of a carry target's single continuous state.
+    """Name of a carry target's continuous (Euler) state.
 
     For a DC-EGM target this is its configured Euler state; for a terminal
     target it is its only state (uniqueness is checked by

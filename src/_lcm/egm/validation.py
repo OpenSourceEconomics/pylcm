@@ -463,14 +463,10 @@ def _fail_if_savings_stage_function_depends_on_decision(
     """
     candidates: list[tuple[str, UserFunction]] = []
     if user_regime.transition is not None:
-        regime_transition = (
-            user_regime.transition.func
-            if isinstance(user_regime.transition, MarkovTransition)
-            else user_regime.transition
-        )
-        candidates.append(
-            ("regime transition function", cast("UserFunction", regime_transition))
-        )
+        # Coarse, MarkovTransition-wrapped, Phased, and granular per-target
+        # regime transitions all unpack to plain callables.
+        for label, regime_transition in _transition_variants(user_regime.transition):
+            candidates.append((f"regime transition function{label}", regime_transition))
     for state_name, value in user_regime.state_transitions.items():
         if state_name == solver.continuous_state or value is None:
             continue
