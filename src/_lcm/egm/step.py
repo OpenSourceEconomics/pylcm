@@ -167,6 +167,7 @@ from _lcm.typing import (
     RegimeName,
     RegimeTransitionFunction,
     StateName,
+    StateOrActionName,
     TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
@@ -571,23 +572,12 @@ def _get_egm_step(
                 )
 
             # Map the per-combo solve over the Cartesian product of the combo
-            # axes via the same per-axis `productmap` the brute solver uses: a
-            # discrete state / process / passive grid's `batch_size` splays its
-            # axis into `lax.map` blocks (shedding memory), actions stay fused
-            # (the discrete-action logsum needs every value at once). The
-            # outputs come back with the combo axes (in `combo_var_names`
-            # order) as leading dims — no manual reshape — preserving whole
-            # discrete axes for the carry.
-            mapped = productmap(
-                # `productmap` handles a pytree (tuple) return at runtime — its
-                # `FunctionWithArrayReturn` bound just lists single arrays.
-                func=solve_one_combo_over_axes,  # ty: ignore[invalid-argument-type]
-                variables=combo_var_names,
-                batch_sizes={
-                    **dict(combo_state_batch_sizes),
-                    **dict.fromkeys(own_discrete_action_values, 0),
-                },
-            )
+            # axes: a discrete state / process / passive grid's `batch_size`
+            # splays its axis (shedding memory), actions stay fused (the
+            # discrete-action logsum needs every value at once). Splayed axes
+            # share one `lax.map` (one scan carry) rather than nesting one per
+            # axis. Outputs come back with the combo axes in `combo_var_names`
+            # order, preserving whole discrete axes for the carry.
             combo_axis_values = {
                 **{
                     name: jnp.asarray(kwargs[name])
@@ -598,8 +588,16 @@ def _get_egm_step(
                     for name, values in own_discrete_action_values.items()
                 },
             }
-            V_stack, grid_stack, policy_stack, value_stack, marginal_stack = mapped(
-                **combo_axis_values
+            V_stack, grid_stack, policy_stack, value_stack, marginal_stack = (
+                _map_combo_product(
+                    func=solve_one_combo_over_axes,
+                    combo_var_names=combo_var_names,
+                    combo_axis_values=combo_axis_values,
+                    batch_sizes={
+                        **dict(combo_state_batch_sizes),
+                        **dict.fromkeys(own_discrete_action_values, 0),
+                    },
+                )
             )
             n_state_axes = len(own_discrete_state_names) + len(own_passive_state_names)
             action_axes = tuple(range(n_state_axes, len(combo_var_names)))
@@ -631,6 +629,80 @@ def _get_egm_step(
         return V_arr, carry
 
     return egm_step
+
+
+def _map_combo_product(
+    *,
+    func: Callable[..., tuple[Float1D, ...]],
+    combo_var_names: tuple[StateOrActionName, ...],
+    combo_axis_values: dict[StateOrActionName, FloatND | IntND],
+    batch_sizes: dict[StateOrActionName, int],
+) -> tuple[FloatND, ...]:
+    """Map the per-combo solve over the Cartesian product of the combo axes.
+
+    `func` has a `combo_var_names` keyword signature and returns one tuple of
+    1-D arrays per combo. Each combo axis with `batch_size == 0` is vmapped;
+    axes with `batch_size > 0` are splayed (run in `lax.map` blocks) to shed
+    peak memory. Returns the stacked outputs with the combo axes as leading
+    dims in `combo_var_names` order (the canonical carry layout).
+
+    With ≤1 splayed axis this is plain `productmap` (one `lax.map`, no
+    nesting). With ≥2 splayed axes, `productmap` would nest one `lax.map`
+    per axis and stack a scan carry per level; instead the splayed axes are
+    flattened into a *single* `lax.map` (one carry) with the unsplayed axes
+    vmapped within each step, then the result is transposed back into
+    `combo_var_names` order. Numerically identical to the nested form — only
+    the schedule (and its peak resident) differs.
+    """
+    splayed = tuple(name for name in combo_var_names if batch_sizes[name] > 0)
+    vmapped = tuple(name for name in combo_var_names if batch_sizes[name] == 0)
+
+    if len(splayed) <= 1:
+        mapped = productmap(
+            func=func,  # ty: ignore[invalid-argument-type]
+            variables=combo_var_names,
+            batch_sizes=batch_sizes,
+        )
+        return mapped(**combo_axis_values)
+
+    # One `lax.map` over the flattened splayed product, unsplayed axes vmapped
+    # within each step (all-`batch_size=0` `productmap` lowers to nested vmaps,
+    # no scan carry).
+    inner = productmap(
+        func=func,  # ty: ignore[invalid-argument-type]
+        variables=vmapped,
+        batch_sizes=dict.fromkeys(vmapped, 0),
+    )
+    vmapped_values = {name: combo_axis_values[name] for name in vmapped}
+    splayed_dims = tuple(int(combo_axis_values[name].shape[0]) for name in splayed)
+    mesh = jnp.meshgrid(*(combo_axis_values[name] for name in splayed), indexing="ij")
+    flat_splayed = tuple(grid.ravel() for grid in mesh)
+    block = 1
+    for name in splayed:
+        block *= batch_sizes[name]
+
+    def at_one_splayed_combo(
+        splayed_values: tuple[ScalarFloat | ScalarInt, ...],
+    ) -> tuple[FloatND, ...]:
+        return inner(
+            **dict(zip(splayed, splayed_values, strict=True)), **vmapped_values
+        )
+
+    stacked = jax.lax.map(at_one_splayed_combo, flat_splayed, batch_size=block)
+
+    # Restore `combo_var_names` order: `stacked` axes are
+    # (flattened splayed, *vmapped, *per-element); reshape the flat axis back
+    # to the splayed dims, then transpose the combo axes into canonical order.
+    current_order = splayed + vmapped
+    perm = tuple(current_order.index(name) for name in combo_var_names)
+    n_combo = len(combo_var_names)
+
+    def _reorder(arr: FloatND) -> FloatND:
+        arr = arr.reshape(*splayed_dims, *arr.shape[1:])
+        trailing = tuple(range(n_combo, arr.ndim))
+        return jnp.transpose(arr, (*perm, *trailing))
+
+    return tuple(_reorder(arr) for arr in stacked)
 
 
 @dataclass(frozen=True, kw_only=True)
