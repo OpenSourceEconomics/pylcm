@@ -18,6 +18,7 @@ import functools
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
@@ -301,8 +302,15 @@ def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) ->
 
 
 @functools.cache
-def _smoothstep_intermediate_model(solver: str) -> Model:
-    """Survival probability reading wealth through a param-dependent chain."""
+def _smoothstep_intermediate_model(solver: str, *, rate_is_fixed: bool) -> Model:
+    """Survival probability reading wealth through a param-dependent chain.
+
+    When `rate_is_fixed`, `rate_of_return` is supplied through `fixed_params`
+    (partialled at model build and dropped from the live template) rather than
+    as a free solve param, so the prebuilt asset-row kernel must carry the
+    partialled qualified param `capital_income__rate_of_return` into the
+    per-node regime-transition-probability evaluation.
+    """
     is_dcegm = solver == "dcegm"
     intermediates = {
         "capital_income": capital_income,
@@ -334,29 +342,42 @@ def _smoothstep_intermediate_model(solver: str) -> Model:
         ),
         solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
     )
+    fixed_params = (
+        {"working_life": {"capital_income": {"rate_of_return": RATE_OF_RETURN}}}
+        if rate_is_fixed
+        else {}
+    )
     return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=AssetRowRegimeId,
+        fixed_params=fixed_params,
     )
 
 
-def test_regime_prob_reading_param_intermediate_matches_brute_force():
+@pytest.mark.parametrize("rate_is_fixed", [False, True])
+def test_regime_prob_reading_param_intermediate_matches_brute_force(
+    rate_is_fixed: bool,  # noqa: FBT001
+):
     """A survival probability `share <- countable <- capital_income(w, r)` matches.
 
     The stay probability reads wealth through a param-dependent intermediate
     chain (the SSI-smoothstep shape), so the regime is solved per exogenous
     asset node. The probability's wealth slope carries the first-order term
     $\\partial P_{stay}/\\partial wealth \\cdot EV_{stay}$ into the marginal
-    value, evaluated with the model param. Values agree with the brute oracle.
+    value, evaluated with the model param — whether `rate_of_return` is a free
+    solve param or supplied through `fixed_params` (and thus partialled into
+    the prebuilt asset-row kernel). Values agree with the brute oracle.
     """
     params = _params()
-    dcegm_solution = _smoothstep_intermediate_model("dcegm").solve(
-        params=params, log_level="debug"
-    )
-    brute_solution = _smoothstep_intermediate_model("brute_force").solve(
-        params=params, log_level="debug"
-    )
+    if rate_is_fixed:
+        del params["rate_of_return"]
+    dcegm_solution = _smoothstep_intermediate_model(
+        "dcegm", rate_is_fixed=rate_is_fixed
+    ).solve(params=params, log_level="debug")
+    brute_solution = _smoothstep_intermediate_model(
+        "brute_force", rate_is_fixed=rate_is_fixed
+    ).solve(params=params, log_level="debug")
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
     )

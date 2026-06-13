@@ -428,6 +428,24 @@ def _partial_fixed_params_into_regimes(
                 if solution.compute_regime_transition_probs is not None
                 else None
             ),
+            # The DC-EGM kernels are prebuilt closures that capture the
+            # regime's savings-stage functions (regime-transition
+            # probabilities, transition weights, the child resources and
+            # next-state maps) before fixed params are partialled. The kernel
+            # threads its `**kwargs` straight into the per-combo pool those
+            # captured functions read, so binding the regime's fixed params
+            # here restores the params removed from `flat_params` for every
+            # one of them at once — matching what the live params supply.
+            egm_step=(
+                MappingProxyType(
+                    {
+                        period: functools.partial(func, **regime_fixed)
+                        for period, func in solution.egm_step.items()
+                    }
+                )
+                if solution.egm_step is not None
+                else None
+            ),
         )
 
         # Build new simulation phase with partialled functions
