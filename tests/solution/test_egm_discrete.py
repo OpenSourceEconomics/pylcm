@@ -26,14 +26,18 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.test_models.deterministic import base
 from tests.test_models.deterministic.dcegm_variants import (
+    dcegm_retirement,
     dcegm_retirement_full,
     dcegm_working_life,
     get_full_model,
     get_full_params,
+    get_retirement_only_params,
 )
+from tests.test_models.deterministic.retirement_only import RetirementOnlyRegimeId
 
 N_PERIODS = 4
 
@@ -252,3 +256,149 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
             rtol=1e-3,
             err_msg=f"period={period}",
         )
+
+
+def _stay_prob_from_param(survival_rate: float) -> FloatND:
+    return jnp.asarray(survival_rate)
+
+
+def _death_prob_from_param(survival_rate: float) -> FloatND:
+    return jnp.asarray(1.0 - survival_rate)
+
+
+def test_nan_regime_transition_prob_surfaces_as_error():
+    """A NaN regime-transition probability raises instead of vanishing.
+
+    Masking unreachable targets must not swallow a NaN probability (`NaN > 0`
+    is false): the runtime probability check rejects non-finite probabilities
+    in the DC-EGM solve exactly as under brute force.
+    """
+    n_periods = 3
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    model = Model(
+        regimes={
+            "retirement": dcegm_retirement.replace(
+                transition={
+                    "retirement": MarkovTransition(_stay_prob_from_param),
+                    "dead": MarkovTransition(_death_prob_from_param),
+                },
+                active=lambda age, la=last_age: age < la,
+            ),
+            "dead": base.dead,
+        },
+        ages=ages,
+        regime_id_class=RetirementOnlyRegimeId,
+    )
+    params = get_retirement_only_params(n_periods)
+    # The granular transition replaces the age-based one, so its param goes
+    # and the per-cell survival rate (set to NaN) arrives.
+    del params["final_age_alive"]
+    params["retirement"] = {
+        **params.get("retirement", {}),
+        "retirement": {"next_regime": {"survival_rate": float("nan")}},
+        "dead": {"next_regime": {"survival_rate": float("nan")}},
+    }
+
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
+        model.solve(params=params, log_level="debug")
+
+
+@categorical(ordered=False)
+class RegimeIdWithLost:
+    working_life: ScalarInt
+    retirement: ScalarInt
+    dead: ScalarInt
+    lost: ScalarInt
+
+
+def _lost_utility() -> FloatND:
+    return jnp.asarray(-1000.0)
+
+
+def test_undeclared_stateless_regime_does_not_enter_the_continuation():
+    """A stateless regime outside the declared targets contributes nothing.
+
+    The DC-EGM retirement regime declares its reachable targets granularly
+    (`{retirement, dead}`). A further stateless terminal regime in the model
+    — reachable only from the brute-force worker — must be invisible to the
+    retirement regime's continuation: its value function is unchanged by
+    that regime's presence.
+    """
+    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    lost = base.dead.replace(functions={"utility": _lost_utility})
+    shared_regimes = {
+        "working_life": base.working_life.replace(
+            active=lambda age, la=last_age: age < la
+        ),
+        "retirement": dcegm_retirement_full.replace(
+            transition=RETIREMENT_TRANSITION,
+            active=lambda age, la=last_age: age < la,
+        ),
+        "dead": base.dead,
+    }
+    with_lost = Model(
+        regimes={**shared_regimes, "lost": lost},
+        ages=ages,
+        regime_id_class=RegimeIdWithLost,
+    )
+    without_lost = Model(
+        regimes=shared_regimes,
+        ages=ages,
+        regime_id_class=base.RegimeId,
+    )
+    params = _get_skill_model_params()
+
+    solution_with = with_lost.solve(params=params, log_level="debug")
+    solution_without = without_lost.solve(params=params, log_level="debug")
+
+    for period in sorted(solution_without)[:-1]:
+        np.testing.assert_allclose(
+            np.asarray(solution_with[period]["retirement"]),
+            np.asarray(solution_without[period]["retirement"]),
+            atol=1e-12,
+            err_msg=f"period={period}",
+        )
+
+
+def _nothing_is_feasible(labor_supply: DiscreteAction) -> BoolND:
+    return jnp.zeros_like(labor_supply, dtype=bool)
+
+
+def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
+    """A regime whose every combo is infeasible publishes `-inf` V, never NaN.
+
+    A discrete-only constraint that is false everywhere makes the regime's
+    value `-inf` at every state; its parents (including its own earlier
+    periods) must absorb the `-inf` continuation gracefully. Brute force
+    publishes `-inf` in this case, and DC-EGM must match it.
+    """
+    base_model_regimes = {
+        "working_life": dcegm_working_life.replace(
+            constraints={"nothing_is_feasible": _nothing_is_feasible},
+            active=lambda age: age < 70,
+        ),
+        "retirement": dcegm_retirement_full.replace(
+            transition=RETIREMENT_TRANSITION,
+            state_transitions={
+                "wealth": dcegm_retirement_full.state_transitions["wealth"],
+            },
+            active=lambda age: age < 70,
+        ),
+        "dead": base.dead,
+    }
+    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    doomed_model = Model(
+        regimes=base_model_regimes,
+        ages=ages,
+        regime_id_class=base.RegimeId,
+    )
+    params = get_full_params(N_PERIODS, discount_factor=0.98, wage=20.0)
+
+    solution = doomed_model.solve(params=params, log_level="debug")
+
+    for period in sorted(solution)[:-1]:
+        working_V = np.asarray(solution[period]["working_life"])
+        assert bool(np.isneginf(working_V).all()), f"period={period}"
+        assert bool(np.isfinite(solution[period]["retirement"]).all())

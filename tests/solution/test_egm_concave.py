@@ -306,3 +306,42 @@ def test_dcegm_solution_has_standard_v_array_layout():
         assert sorted(brute[period]) == sorted(dcegm[period])
         for regime in brute[period]:
             assert brute[period][regime].shape == dcegm[period][regime].shape
+
+
+def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
+    """A `-inf` terminal value at one node only affects queries near it.
+
+    With a bequest grid that includes zero wealth, the terminal value is
+    `-inf` at that node and finite elsewhere. The carry read must treat the
+    row pointwise — only bequests interpolating against the `-inf` node lose
+    value — so the decision period still solves to the closed form at wealth
+    nodes whose optimal bequest is interior.
+    """
+    n_periods = 2
+    discount_factor = 0.98
+    bequest_points = (0.0, *(float(x) for x in np.geomspace(0.005, 400.0, 400)))
+    bequest_dead = UserRegime(
+        transition=None,
+        states={"wealth": IrregSpacedGrid(points=bequest_points)},
+        functions={"utility": _bequest_utility},
+    )
+    model = Model(
+        regimes={
+            "retirement": dcegm_retirement.replace(active=lambda age: age < 50),
+            "dead": bequest_dead,
+        },
+        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        regime_id_class=retirement_only.RetirementOnlyRegimeId,
+    )
+    params = get_retirement_only_params(n_periods, discount_factor=discount_factor)
+
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+
+    wealth = np.asarray(WEALTH_GRID.to_jax())
+    consumption = wealth / (1.0 + discount_factor)
+    expected = np.log(consumption) + discount_factor * np.log(wealth - consumption)
+    np.testing.assert_allclose(
+        np.asarray(period_to_regime_to_V_arr[0]["retirement"])[3:],
+        expected[3:],
+        atol=1e-3,
+    )

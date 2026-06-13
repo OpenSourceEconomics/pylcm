@@ -91,6 +91,14 @@ class SolverBuildContext:
     flat_param_names: frozenset[str]
     """Frozenset of flat parameter names for the regime."""
 
+    regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]]
+    """Immutable mapping of every regime name to its flat parameter names.
+
+    A DC-EGM source carrying into a different target regime reads the target's
+    params in its per-asset-node solve, so the kernel build admits and binds
+    the union of the source and its reachable carry targets' params.
+    """
+
     enable_jit: bool
     """Whether to JIT-compile the kernels."""
 
@@ -183,6 +191,7 @@ def _build_dcegm_kernels(
         regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
         regimes_to_active_periods=context.regimes_to_active_periods,
         flat_param_names=context.flat_param_names,
+        regime_to_flat_param_names=context.regime_to_flat_param_names,
         state_action_space=context.state_action_space,
         has_taste_shocks=context.has_taste_shocks,
     )

@@ -5,11 +5,14 @@ tail slots hold NaN and whose kink abscissae appear twice (left- and
 right-extrapolated function values). `interp_on_padded_grid` interpolates on
 such rows without ever dividing by a zero-width bracket; passing the row's
 exact slopes upgrades the linear interpolant to a monotone cubic Hermite one.
+`locate_on_grid` produces edge-clamped bracket indices and weights on
+ordinary (unpadded) grids, e.g. the passive-state grids of the mixed carry
+read.
 """
 
 import jax.numpy as jnp
 
-from lcm.typing import Float1D, FloatND
+from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
 
 def interp_on_padded_grid(
@@ -98,6 +101,46 @@ def interp_on_padded_grid(
         slope_lower=fp_slopes[lower],
         slope_upper=fp_slopes[upper],
     )
+
+
+def locate_on_grid(
+    *,
+    x_query: ScalarFloat,
+    grid: Float1D,
+) -> tuple[ScalarInt, ScalarInt, ScalarFloat]:
+    """Locate the bracketing nodes and upper weight of a query on a sorted grid.
+
+    The bracket is edge-clamped: queries below the first node get upper
+    weight `0.0` on the first bracket, queries above the last node get upper
+    weight `1.0` on the last bracket, so the linear blend
+    `(1 - weight) * f[lower] + weight * f[upper]` never extrapolates. A query
+    exactly on a node yields a weight of exactly `0.0` or `1.0`, so on-node
+    reads reproduce the node values without interpolation error.
+
+    Args:
+        x_query: The query point.
+        grid: Strictly ascending grid nodes (at least two).
+
+    Returns:
+        Tuple of the lower node index, the upper node index, and the weight
+        of the upper node.
+
+    """
+    n_nodes = grid.shape[0]
+    upper = jnp.clip(
+        jnp.searchsorted(grid, x_query, side="right"),
+        1,
+        n_nodes - 1,
+    )
+    lower = upper - 1
+    bracket_width = grid[upper] - grid[lower]
+    safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
+    weight_upper = jnp.where(
+        bracket_width == 0.0,
+        1.0,
+        jnp.clip((x_query - grid[lower]) / safe_width, 0.0, 1.0),
+    )
+    return lower, upper, weight_upper
 
 
 def _hermite_correction(
