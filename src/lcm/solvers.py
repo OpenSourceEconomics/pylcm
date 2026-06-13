@@ -83,14 +83,27 @@ class DCEGM:
     error compounds across periods.
     """
 
-    upper_envelope: Literal["fues"] = "fues"
-    """Upper-envelope refinement backend removing dominated Euler candidates."""
+    upper_envelope: Literal["fues", "rfc"] = "fues"
+    """Upper-envelope refinement backend removing dominated Euler candidates.
+
+    - `"fues"`: the Fast Upper-Envelope Scan — a sequential scan that inserts
+      exact segment-crossing points.
+    - `"rfc"`: the Rooftop-Cut algorithm — a parallel dominance test that only
+      deletes points (a kink lands between retained points, recovered by the
+      Hermite carry read) and generalizes to multidimensional grids.
+    """
 
     fues_jump_thresh: float = 2.0
     """Segment-switch threshold on `|ΔA / ΔR|` in the FUES scan."""
 
     fues_n_points_to_scan: int = 10
     """Number of points the FUES forward scan inspects after a candidate."""
+
+    rfc_jump_thresh: float = 2.0
+    """Segment-switch threshold on `|Δc / ΔR|` in the rooftop cut."""
+
+    rfc_search_radius: int = 10
+    """Number of neighbors on each side the rooftop-cut dominance test inspects."""
 
     refined_grid_factor: float = 1.2
     """Headroom factor sizing the refined (NaN-padded) envelope arrays."""
