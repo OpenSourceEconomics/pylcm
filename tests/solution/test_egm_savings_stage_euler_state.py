@@ -302,19 +302,24 @@ def test_smoothstep_survival_probability_matches_brute_force():
 
 
 @functools.cache
-def _markov_health_model() -> Model:
-    """Markov health weights reading wealth through a smoothstep (DC-EGM only)."""
+def _markov_health_model(solver: str) -> Model:
+    """Markov health weights reading wealth through a smoothstep."""
+    is_dcegm = solver == "dcegm"
     working = UserRegime(
         transition=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(Health)},
         state_transitions={
-            "wealth": next_wealth_dcegm,
+            "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
             "health": MarkovTransition(health_weights),
         },
-        functions={**_dcegm_functions(), "utility": utility_with_health},
-        solver=DCEGM_SOLVER,
+        constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
+        functions={
+            **(_dcegm_functions() if is_dcegm else {}),
+            "utility": utility_with_health,
+        },
+        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -323,19 +328,35 @@ def _markov_health_model() -> Model:
     )
 
 
-def test_markov_weights_reading_wealth_build_and_raise_at_solve():
-    """Asset-reading Markov weights of a discrete state pass validation.
+def test_markov_weights_reading_wealth_match_brute_force():
+    """Asset-reading Markov weights of a discrete state match brute force.
 
-    The smooth wealth read in the health transition weights is admitted at
-    model build (the regime is solved per exogenous asset node, where wealth
-    is known). Stochastic non-process transitions into a carry target are
-    outside the DC-EGM kernel's scope, so solving raises
-    `NotImplementedError` naming the stochastic transition rather than
-    producing a silently wrong solution.
+    The health transition weights read current wealth through a smoothstep, so
+    the regime is solved per exogenous asset node, where wealth is known. The
+    weights' wealth derivative enters the published marginal value through the
+    continuation's stochastic-weight channel (the $\\partial w/\\partial a
+    \\cdot EV$ term), exactly as the asset-node brute-force oracle evaluates
+    it. Values agree across the full wealth-by-health grid.
     """
-    model = _markov_health_model()
-    with pytest.raises(NotImplementedError, match="stochastic"):
-        model.solve(params=_params(), log_level="debug")
+    params = _params()
+    dcegm_solution = _markov_health_model("dcegm").solve(
+        params=params, log_level="debug"
+    )
+    brute_solution = _markov_health_model("brute_force").solve(
+        params=params, log_level="debug"
+    )
+    for period in sorted(brute_solution)[:-1]:
+        brute_V = np.asarray(brute_solution[period]["working_life"])
+        dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
+        # V leads with the discrete health axis; wealth is the trailing axis.
+        assert brute_V.shape == dcegm_V.shape == (2, 160)
+        np.testing.assert_allclose(
+            dcegm_V[:, N_BRUTE_UNSTABLE_NODES:],
+            brute_V[:, N_BRUTE_UNSTABLE_NODES:],
+            atol=1e-2,
+            rtol=1e-3,
+            err_msg=f"period={period}",
+        )
 
 
 @functools.cache

@@ -29,6 +29,16 @@ from tests.solution.test_egm_assets_law_terms import (
     _params,
     _phased_law_model,
 )
+from tests.solution.test_egm_markov_states import (
+    Health as _MarkovHealth,
+)
+from tests.solution.test_egm_markov_states import (
+    MarkovRegimeId,
+    _same_grid_markov_model,
+)
+from tests.solution.test_egm_markov_states import (
+    _params as _markov_params,
+)
 from tests.test_models import dcegm_paper_twin
 from tests.test_models.deterministic import dcegm_variants
 from tests.test_models.deterministic.base import RegimeId as FullRegimeId
@@ -329,3 +339,56 @@ def test_phase_variant_law_term_simulates_with_the_simulate_variant():
         np.testing.assert_allclose(
             wealth[1:], wealth[:-1] - consumption[:-1], atol=1e-6
         )
+
+
+def test_dcegm_simulated_markov_health_path_matches_brute_force():
+    """A Markov discrete state evolves identically under both solvers.
+
+    The forward draw of `next_health` is solver-agnostic: both solves publish
+    the same `weight_working_life__next_health` vector and simulation draws
+    from it with per-subject keys, so under one seed the realized health path
+    is identical whether the regime was solved by brute force or DC-EGM. The
+    health law reads only `health` and `age`, so a consumption-grid
+    disagreement in the wealth path cannot perturb it — the realized paths
+    match exactly. This is the simulate-side property of carrying a stochastic
+    discrete state through a DC-EGM regime; consumption parity itself is
+    covered by `test_dcegm_simulated_consumption_matches_brute_force`.
+    """
+    params = _markov_params()
+    n_subjects = 6
+    initial_conditions = {
+        "wealth": jnp.array([10.0, 30.0, 50.0, 70.0, 90.0, 40.0]),
+        "health": jnp.array(
+            [
+                _MarkovHealth.good,
+                _MarkovHealth.bad,
+                _MarkovHealth.good,
+                _MarkovHealth.bad,
+                _MarkovHealth.good,
+                _MarkovHealth.bad,
+            ],
+            dtype=jnp.int32,
+        ),
+        "age": jnp.full(n_subjects, 40.0),
+        "regime_id": jnp.full(n_subjects, MarkovRegimeId.working_life, dtype=jnp.int32),
+    }
+
+    realized = {}
+    for solver in ["brute_force", "dcegm"]:
+        result = _same_grid_markov_model(solver).simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=None,
+            log_level="debug",
+            seed=7,
+        )
+        realized[solver] = (
+            result.to_dataframe(use_labels=False)
+            .query("regime_name == 'working_life'")
+            .sort_values(["subject_id", "period"])
+        )
+
+    np.testing.assert_array_equal(
+        realized["dcegm"]["health"].to_numpy(),
+        realized["brute_force"]["health"].to_numpy(),
+    )
