@@ -283,7 +283,9 @@ def _solve_regime_period(
             **state_action_space.states,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
-            **flat_params[regime_name],
+            **_egm_kernel_params(
+                regime=regime, regime_name=regime_name, flat_params=flat_params
+            ),
             period=jnp.int32(period),
             age=ages.values[period],
         )
@@ -578,23 +580,53 @@ def _build_lower_args(
     state_action_space = regime.solution.state_action_space(
         regime_params=flat_params[regime_name],
     )
+    if is_egm_kernel:
+        return {
+            **dict(state_action_space.states),
+            "next_regime_to_egm_carry": next_regime_to_egm_carry,
+            "next_regime_to_V_arr": next_regime_to_V_arr,
+            **_egm_kernel_params(
+                regime=regime, regime_name=regime_name, flat_params=flat_params
+            ),
+            "period": jnp.int32(period),
+            "age": ages.values[period],
+        }
     common = {
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **dict(flat_params[regime_name]),
         "period": jnp.int32(period),
         "age": ages.values[period],
     }
-    if is_egm_kernel:
-        return {
-            **dict(state_action_space.states),
-            "next_regime_to_egm_carry": next_regime_to_egm_carry,
-            **common,
-        }
     return {
         **dict(state_action_space.states),
         **dict(state_action_space.actions),
         **common,
     }
+
+
+def _egm_kernel_params(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    flat_params: FlatParams,
+) -> dict[str, object]:
+    """Flat params fed into a DC-EGM kernel: the source's plus its targets'.
+
+    A DC-EGM source carrying into a *different* target regime evaluates that
+    target's resources / transition functions in its per-asset-node solve,
+    reading the target's params (e.g. a pension factor the source never
+    reads). These are model-level shared values, so the target's
+    `flat_params` entry carries the right value; union them in. The kernel
+    threads its `**kwargs` into the per-combo pool, and its captured functions
+    read only the keys they need, so a target's extra params are harmless to
+    the source functions that do not. Mirrors the fixed-param binding done at
+    model build (`_partial_fixed_params_into_regimes`) for the free-param path.
+    """
+    params: dict[str, object] = dict(flat_params[regime_name])
+    for target_name in regime.solution.transitions:
+        for key, value in flat_params.get(target_name, MappingProxyType({})).items():
+            params.setdefault(key, value)
+    return params
 
 
 def _resolve_compilation_workers(*, max_compilation_workers: int | None) -> int:
