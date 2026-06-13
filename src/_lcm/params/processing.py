@@ -43,8 +43,11 @@ from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.typing import UserParams
 
+# Number of `__`-delimited parts in a flat param qname. A plain function
+# param is `regime__function__param` (3); a target-regime-specific transition
+# param inserts the target regime: `regime__target_regime__function__param` (4).
 _NUM_PARTS_FUNCTION_PARAM = 3
-_NUM_PARTS_PER_TARGET_PARAM = 4
+_NUM_PARTS_PER_TARGET_SPECIFIC_PARAM = 4
 
 
 def process_params(
@@ -60,9 +63,10 @@ def process_params(
     - Regime level: `{"regime_0": {"arg_0": 0.0}}` — propagates within regime_0
     - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct
       specification; for per-target transition params this broadcasts over
-      the targets
-    - Target level: `{"regime_0": {"target_0": {"func": {"arg_0": 0.0}}}}` —
-      target-specific value for a per-target transition function
+      the target regimes
+    - Target-regime level —
+      `{"regime_0": {"target_regime_0": {"func": {"arg_0": 0.0}}}}` is the
+      target-regime-specific value for a per-target transition function
 
     The output always matches the params_template skeleton. Every numeric
     leaf — Python `bool` / `int` / `float`, typed JAX or numpy arrays, and
@@ -366,7 +370,7 @@ def _find_candidates(
     if qname in params_flat:
         candidates.append(qname)
 
-    if len(tree_path) == _NUM_PARTS_PER_TARGET_PARAM:
+    if len(tree_path) == _NUM_PARTS_PER_TARGET_SPECIFIC_PARAM:
         coarse_qname = qname_from_tree_path((tree_path[0], *tree_path[2:]))
         if coarse_qname in params_flat:
             candidates.append(coarse_qname)
