@@ -187,17 +187,47 @@ def process_regimes(
         isinstance(user_regime.solver, DCEGM) for user_regime in user_regimes.values()
     )
 
+    # Each regime's flat param names in the engine's binding vocabulary, keyed
+    # by regime. A DC-EGM source regime that carries into a *different* target
+    # regime evaluates that target's resources / transition functions in its
+    # per-asset-node solve, so it must know the target's param leaves (e.g. a
+    # pension factor the source itself never reads); the kernel binds them from
+    # the union of the source and its reachable carry targets' fixed params.
+    regime_to_params_template = MappingProxyType(
+        {
+            regime_name: create_regime_params_template(user_regime)
+            for regime_name, user_regime in user_regimes.items()
+        }
+    )
+    regime_to_granular_param_expansions = MappingProxyType(
+        {
+            regime_name: _granular_param_expansions(
+                nested_transitions_by_phase=(
+                    solve_nested_transitions[regime_name],
+                    simulate_nested_transitions[regime_name],
+                ),
+                regime_params_template=regime_to_params_template[regime_name],
+            )
+            for regime_name in user_regimes
+        }
+    )
+    regime_to_flat_param_names = MappingProxyType(
+        {
+            regime_name: _engine_flat_param_names(
+                regime_params_template=regime_to_params_template[regime_name],
+                granular_param_expansions=regime_to_granular_param_expansions[
+                    regime_name
+                ],
+            )
+            for regime_name in user_regimes
+        }
+    )
+
     canonical_regimes: dict[RegimeName, Regime] = {}
     for regime_name, user_regime in user_regimes.items():
         spec = specs[regime_name]
-        regime_params_template = create_regime_params_template(user_regime)
-        granular_param_expansions = _granular_param_expansions(
-            nested_transitions_by_phase=(
-                solve_nested_transitions[regime_name],
-                simulate_nested_transitions[regime_name],
-            ),
-            regime_params_template=regime_params_template,
-        )
+        regime_params_template = regime_to_params_template[regime_name]
+        granular_param_expansions = regime_to_granular_param_expansions[regime_name]
 
         solution = _build_solution_phase(
             spec=spec,
@@ -207,6 +237,7 @@ def process_regimes(
             all_grids=all_grids,
             regime_params_template=regime_params_template,
             granular_param_expansions=granular_param_expansions,
+            regime_to_flat_param_names=regime_to_flat_param_names,
             regime_names_to_ids=regime_names_to_ids,
             variables=regime_to_variables[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
@@ -269,6 +300,7 @@ def _build_solution_phase(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
+    regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     regime_names_to_ids: RegimeNamesToIds,
     variables: Variables,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
@@ -293,6 +325,11 @@ def _build_solution_phase(
         regime_params_template: The regime's parameter template.
         granular_param_expansions: Immutable mapping of coarse-template law
             keys to granular qname prefixes.
+        regime_to_flat_param_names: Immutable mapping of every regime name to
+            its flat param names in the engine's binding vocabulary. A DC-EGM
+            source carrying into a different target regime reads the target's
+            params in its per-asset-node solve, so the kernel build needs the
+            whole mapping, not only the source regime's own params.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         variables: States and actions of the regime with kind/topology/process tags.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
@@ -396,6 +433,7 @@ def _build_solution_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             regimes_to_active_periods=regimes_to_active_periods,
             flat_param_names=flat_param_names,
+            regime_to_flat_param_names=regime_to_flat_param_names,
             enable_jit=enable_jit,
             has_taste_shocks=has_taste_shocks,
         ),

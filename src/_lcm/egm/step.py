@@ -204,6 +204,7 @@ def build_egm_step_functions(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     flat_param_names: frozenset[str],
+    regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     state_action_space: StateActionSpace,
     has_taste_shocks: bool,
 ) -> tuple[MappingProxyType[int, EgmStepFunction], EgmCarry]:
@@ -234,6 +235,11 @@ def build_egm_step_functions(
         regimes_to_active_periods: Immutable mapping of regime names to their
             active period tuples.
         flat_param_names: Frozenset of flat parameter names for the regime.
+        regime_to_flat_param_names: Immutable mapping of every regime name to
+            its flat parameter names. A carry target's resources / transition
+            functions read the target regime's params, so the validator admits
+            and the kernel binds the union of the source and its reachable
+            carry targets' params.
         state_action_space: The regime's state-action space (source of the
             discrete-action grids and their canonical order).
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
@@ -321,6 +327,7 @@ def build_egm_step_functions(
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
+            regime_to_flat_param_names=regime_to_flat_param_names,
             own_discrete_state_names=own_discrete_state_names,
             own_passive_state_names=own_passive_state_names,
             own_discrete_action_names=tuple(own_discrete_action_values),
@@ -2145,6 +2152,7 @@ def _find_unsupported_feature(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
+    regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     own_discrete_state_names: tuple[StateName, ...],
     own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_names: tuple[ActionName, ...],
@@ -2163,7 +2171,7 @@ def _find_unsupported_feature(
             transitions=transitions,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             own_discrete_state_names=own_discrete_state_names,
-            flat_param_names=flat_param_names,
+            allowed_param_names=flat_param_names | regime_to_flat_param_names[target],
         )
         if message is not None:
             break
@@ -2199,9 +2207,16 @@ def _find_unsupported_target_feature(
     transitions: TransitionFunctionsMapping,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     own_discrete_state_names: tuple[StateName, ...],
-    flat_param_names: frozenset[str],
+    allowed_param_names: frozenset[str],
 ) -> str | None:
-    """Return a message naming the first unsupported feature of one target."""
+    """Return a message naming the first unsupported feature of one target.
+
+    `allowed_param_names` is the union of the source regime's flat params and
+    the target regime's flat params: a cross-regime carry evaluates the
+    target's resources / transition functions, which read the *target's*
+    params (e.g. a pension factor the source never reads), so admitting the
+    target's params mirrors the kernel's runtime reach.
+    """
     target_info = regime_to_v_interpolation_info[target]
     target_process_states = _get_process_state_names(v_interpolation_info=target_info)
     if user_regimes[target].terminal:
@@ -2245,7 +2260,7 @@ def _find_unsupported_target_feature(
         {child_state_name}
         | set(target_info.state_names)
         | set(child_action_names)
-        | set(flat_param_names)
+        | set(allowed_param_names)
         | {"age", "period"}
     )
     extra_resources_args = sorted(resources_arg_names - allowed_resources_args)
