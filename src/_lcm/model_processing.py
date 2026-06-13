@@ -462,6 +462,24 @@ def _partial_fixed_params_into_regimes(
                 if solution.egm_step is not None
                 else None
             ),
+            # A terminal regime's carry producer evaluates the regime's own
+            # bequest utility on the wealth grid; that utility may reach a
+            # model-level fixed param (e.g. a consumption-equivalence scale)
+            # through a helper function. The solve loop invokes the producer
+            # with only the live (free) params, so bind the regime's fixed
+            # params here — matching the partialling done for `egm_step` and
+            # `max_Q_over_a`.
+            egm_carry_producer=(
+                functools.partial(
+                    solution.egm_carry_producer,
+                    **_filter_kwargs_for_func(
+                        func=solution.egm_carry_producer,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if solution.egm_carry_producer is not None
+                else None
+            ),
         )
 
         # Build new simulation phase with partialled functions
