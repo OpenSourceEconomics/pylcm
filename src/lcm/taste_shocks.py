@@ -20,6 +20,9 @@ class ExtremeValueTasteShocks:
     The semantics are solver-independent: the solve replaces the hard maximum
     over discrete-action axes with the smoothed expected maximum
     `scale * logsumexp(Qc / scale)`, and the simulation draws the discrete
-    action by adding `scale * Gumbel(0, 1)` noise to the per-discrete-action
-    values before the argmax.
+    action by adding mean-zero `scale * (Gumbel(0, 1) - EULER_GAMMA)` noise
+    (`EULER_GAMMA` the Euler-Mascheroni constant, the mean of a standard
+    Gumbel) to the per-discrete-action values before the argmax. Centering
+    makes the simulated expected maximum equal the smoothed value the solve
+    assigns.
     """
