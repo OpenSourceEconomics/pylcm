@@ -1,4 +1,5 @@
 import functools
+import gc
 import logging
 import os
 import time
@@ -218,6 +219,15 @@ def solve(
         # (NaN-bearing) solution rather than a truncated one.
         if validation_raises(logger) and running_any_nan.item():
             break
+
+        # Release the device buffers rolled off this period (the superseded
+        # continuation V/carry and the period's transient working set) before
+        # the next period's kernel allocates. They are unreferenced after the
+        # roll, but their JAX arrays sit in registered pytrees that CPython's
+        # cyclic collector frees only when it next runs — forcing a collection
+        # here returns the device pool promptly, capping peak resident across
+        # the loop (mirrors the forward-sim memory rework in `result.py`).
+        gc.collect()
 
     if diagnostics_enabled:
         try:
