@@ -24,6 +24,7 @@ from lcm import (
     MarkovTransition,
     Model,
     categorical,
+    fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
@@ -196,4 +197,93 @@ def test_discrete_combo_batch_size_leaves_value_function_unchanged(
                 rtol=1e-12,
                 atol=1e-12,
                 err_msg=f"period={period}, regime={regime_name}",
+            )
+
+
+@categorical(ordered=False)
+class Marital:
+    single: ScalarInt
+    married: ScalarInt
+
+
+def utility_two_combos(
+    consumption: ContinuousAction, health: DiscreteState, married: DiscreteState
+) -> FloatND:
+    penalty = jnp.where(
+        health == Health.bad, 0.2, jnp.where(health == Health.fair, 0.1, 0.0)
+    )
+    bonus = jnp.where(married == Marital.married, 0.05, 0.0)
+    return jnp.log(consumption) - penalty + bonus
+
+
+@functools.cache
+def _two_combo_model(batch_size: int) -> Model:
+    """Asset-row DC-EGM with TWO discrete combo axes (health + married)."""
+    ages = _ages()
+    last_age = ages.exact_values[-1]
+    working = UserRegime(
+        transition={
+            "working": MarkovTransition(stay_prob),
+            "dead": MarkovTransition(death_prob),
+        },
+        active=lambda age, la=last_age: age < la,
+        actions={"consumption": CONSUMPTION_GRID},
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
+            "health": DiscreteGrid(Health, batch_size=batch_size),
+            "married": DiscreteGrid(Marital, batch_size=batch_size),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "health": MarkovTransition(health_transition),
+            "married": fixed_transition("married"),
+        },
+        functions={
+            "utility": utility_two_combos,
+            "resources": resources,
+            "savings": savings,
+            "inverse_marginal_utility": inverse_marginal_utility,
+        },
+        solver=DCEGM(
+            continuous_state="wealth",
+            continuous_action="consumption",
+            resources="resources",
+            post_decision_function="savings",
+            savings_grid=SAVINGS_GRID,
+            n_constrained_points=32,
+        ),
+    )
+    dead = UserRegime(
+        transition=None,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=200)},
+        functions={"utility": bequest},
+    )
+    return Model(
+        regimes={"working": working, "dead": dead},
+        ages=ages,
+        regime_id_class=RegimeId,
+    )
+
+
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_two_discrete_combo_axes_splayed_together_match_unsplayed(batch_size: int):
+    """Splaying TWO combo axes at once does not change the solved V.
+
+    With more than one splayed axis the kernel runs a single `lax.map` over the
+    flattened (health-by-married) product (one scan carry) rather than nesting a
+    `lax.map` per axis. The value function at every period must match the
+    unsplayed `batch_size=0` solve exactly, with the combo axes in the same
+    canonical order — guarding the flatten-and-transpose path.
+    """
+    reference = _two_combo_model(0).solve(params=_params(), log_level="debug")
+    splayed = _two_combo_model(batch_size).solve(params=_params(), log_level="debug")
+    assert set(reference) == set(splayed)
+    for period in sorted(reference):
+        assert set(reference[period]) == set(splayed[period])
+        for regime_name in reference[period]:
+            ref_V = np.asarray(reference[period][regime_name])
+            got_V = np.asarray(splayed[period][regime_name])
+            assert ref_V.shape == got_V.shape
+            np.testing.assert_allclose(
+                got_V, ref_V, rtol=1e-12, atol=1e-12, err_msg=f"period={period}"
             )
