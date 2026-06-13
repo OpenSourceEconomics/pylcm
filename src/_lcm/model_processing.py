@@ -26,6 +26,7 @@ from _lcm.params.processing import (
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
+from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.processing import (
     Regime,
     process_regimes,
@@ -482,6 +483,24 @@ def _validate_param_types(flat_params: FlatParams) -> None:
     for regime_name, regime_params in flat_params.items():
         for key, value in regime_params.items():
             _check_leaf(value, f"{regime_name}__{key}")
+
+
+def fail_if_negative_taste_shock_scale(flat_params: FlatParams) -> None:
+    """Raise if any regime's taste-shock scale is negative.
+
+    A scale of `0` is valid (the hard maximum); a negative scale would
+    multiply the Gumbel draw by a negative number in simulation and has no
+    consistent solve interpretation, so it is rejected.
+    """
+    for regime_name, regime_params in flat_params.items():
+        scale = regime_params.get(TASTE_SHOCK_SCALE_PARAM)
+        if isinstance(scale, Array) and float(scale) < 0:
+            msg = (
+                f"The taste-shock scale of regime {regime_name!r} is "
+                f"{float(scale)}, but it must be non-negative (0 recovers the "
+                "hard maximum)."
+            )
+            raise InvalidParamsError(msg)
 
 
 def _check_leaf(value: object, path: str) -> None:
