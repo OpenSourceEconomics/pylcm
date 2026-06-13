@@ -140,7 +140,7 @@ from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
-from dags import concatenate_functions
+from dags import concatenate_functions, with_signature
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EgmCarry, build_template_egm_carry
@@ -149,7 +149,7 @@ from _lcm.egm.interp import interp_on_padded_grid, locate_on_grid
 from _lcm.egm.upper_envelope import get_upper_envelope
 from _lcm.egm.validation import _reachable_target_names, savings_stage_reads_euler_state
 from _lcm.engine import StateActionSpace
-from _lcm.grids import ContinuousGrid
+from _lcm.grids import ContinuousGrid, Grid
 from _lcm.logsum import logsum_and_softmax
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
@@ -171,6 +171,7 @@ from _lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
+from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
@@ -286,6 +287,16 @@ def build_egm_step_functions(
     own_discrete_action_values = MappingProxyType(
         dict(state_action_space.discrete_actions)
     )
+    # `batch_size` on a discrete-state, process, or passive-state grid splays
+    # that combo axis (per-axis `productmap` blocks) to shed memory; 0 keeps
+    # the fused vmap. Discrete-action axes are never split (the discrete-action
+    # logsum needs every action value at once), so they map to 0.
+    combo_state_batch_sizes = MappingProxyType(
+        {
+            name: cast("Grid", user_regimes[regime_name].states[name]).batch_size
+            for name in own_discrete_state_names + own_passive_state_names
+        }
+    )
     # Canonical position of the Euler axis in the published V array: after
     # the discrete-state axes, at its slot within the continuous-state order.
     euler_axis_in_V = len(own_discrete_state_names) + tuple(
@@ -363,6 +374,7 @@ def build_egm_step_functions(
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 asset_row_mode=asset_row_mode,
                 euler_batch_size=euler_batch_size,
+                combo_state_batch_sizes=combo_state_batch_sizes,
             )
         built[(carry_targets, scalar_targets)] = kernel
 
@@ -467,6 +479,7 @@ def _get_egm_step(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     asset_row_mode: bool,
     euler_batch_size: int,
+    combo_state_batch_sizes: MappingProxyType[StateName, int],
 ) -> EgmStepFunction:
     """Build the EGM kernel for one continuation-target configuration.
 
@@ -543,19 +556,53 @@ def _get_egm_step(
         )
 
         if pieces.combo_names:
-            combo_grids = tuple(
-                jnp.asarray(kwargs[name])
-                for name in own_discrete_state_names + own_passive_state_names
-            ) + tuple(own_discrete_action_values.values())
-            mesh = jnp.meshgrid(*combo_grids, indexing="ij")
-            flat_combos = tuple(m.ravel() for m in mesh)
-            V_rows, grid_rows, policy_rows, value_rows, marginal_rows = jax.vmap(
-                solve_one_combo
-            )(flat_combos)
-            dims = tuple(int(g.shape[0]) for g in combo_grids)
-            V_stack = V_rows.reshape(*dims, state_grid.shape[0])
+            combo_var_names = (
+                own_discrete_state_names
+                + own_passive_state_names
+                + tuple(own_discrete_action_values)
+            )
+
+            @with_signature(args=list(combo_var_names))
+            def solve_one_combo_over_axes(
+                **combo_values: ScalarFloat | ScalarInt,
+            ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+                return solve_one_combo(
+                    tuple(combo_values[name] for name in combo_var_names)
+                )
+
+            # Map the per-combo solve over the Cartesian product of the combo
+            # axes via the same per-axis `productmap` the brute solver uses: a
+            # discrete state / process / passive grid's `batch_size` splays its
+            # axis into `lax.map` blocks (shedding memory), actions stay fused
+            # (the discrete-action logsum needs every value at once). The
+            # outputs come back with the combo axes (in `combo_var_names`
+            # order) as leading dims — no manual reshape — preserving whole
+            # discrete axes for the carry.
+            mapped = productmap(
+                # `productmap` handles a pytree (tuple) return at runtime — its
+                # `FunctionWithArrayReturn` bound just lists single arrays.
+                func=solve_one_combo_over_axes,  # ty: ignore[invalid-argument-type]
+                variables=combo_var_names,
+                batch_sizes={
+                    **dict(combo_state_batch_sizes),
+                    **dict.fromkeys(own_discrete_action_values, 0),
+                },
+            )
+            combo_axis_values = {
+                **{
+                    name: jnp.asarray(kwargs[name])
+                    for name in own_discrete_state_names + own_passive_state_names
+                },
+                **{
+                    name: jnp.asarray(values)
+                    for name, values in own_discrete_action_values.items()
+                },
+            }
+            V_stack, grid_stack, policy_stack, value_stack, marginal_stack = mapped(
+                **combo_axis_values
+            )
             n_state_axes = len(own_discrete_state_names) + len(own_passive_state_names)
-            action_axes = tuple(range(n_state_axes, len(combo_grids)))
+            action_axes = tuple(range(n_state_axes, len(combo_var_names)))
             if action_axes:
                 V_arr, _ = logsum_and_softmax(
                     values=V_stack, scale=own_taste_shock_scale, axes=action_axes
@@ -566,10 +613,10 @@ def _get_egm_step(
             # layout interleaves it with the passive axes in V state order.
             V_arr = jnp.moveaxis(V_arr, -1, pieces.euler_axis_in_V)
             carry = EgmCarry(
-                endog_grid=grid_rows.reshape(*dims, n_pad),
-                policy=policy_rows.reshape(*dims, n_pad),
-                value=value_rows.reshape(*dims, n_pad),
-                marginal_utility=marginal_rows.reshape(*dims, n_pad),
+                endog_grid=grid_stack,
+                policy=policy_stack,
+                value=value_stack,
+                marginal_utility=marginal_stack,
                 taste_shock_scale=own_taste_shock_scale,
             )
         else:
