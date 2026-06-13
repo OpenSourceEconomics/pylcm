@@ -6,8 +6,9 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 from dags import with_signature
+from jax import Array
 
-from _lcm.logsum import logsum_and_softmax
+from _lcm.logsum import EULER_GAMMA, logsum_and_softmax
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.typing import (
     ActionName,
@@ -179,9 +180,9 @@ def get_argmax_and_max_Q_over_a(
         has_taste_shocks: Whether the regime declares EV1 taste shocks. When
             set, the returned function takes a leading `taste_shock_key`
             argument and draws the discrete action by Gumbel-max: per-discrete-
-            combination `scale * Gumbel(0, 1)` noise is added to the masked
-            maxima over the continuous axes before the discrete argmax —
-            exactly logit-consistent with the smoothed solve.
+            combination mean-zero `scale * (Gumbel(0, 1) - EULER_GAMMA)` noise
+            is added to the masked maxima over the continuous axes before the
+            discrete argmax — exactly logit-consistent with the smoothed solve.
 
     Returns:
         Function that calculates the argument maximizing Q over the feasible continuous
@@ -230,7 +231,9 @@ def get_argmax_and_max_Q_over_a(
             continuous_argmax = jnp.argmax(Q_flat, axis=1)
             Qc = Q_flat.max(axis=1)
             scale = states_actions_params[TASTE_SHOCK_SCALE_PARAM]
-            noise = scale * jax.random.gumbel(taste_shock_key, Qc.shape)
+            noise = draw_taste_shock_noise(
+                key=taste_shock_key, shape=Qc.shape, scale=scale
+            )
             noisy_Qc = jnp.where(jnp.isneginf(Qc), -jnp.inf, Qc + noise)
             discrete_argmax = jnp.argmax(noisy_Qc)
             flat_index = (
@@ -262,6 +265,31 @@ def get_argmax_and_max_Q_over_a(
             return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 
     return argmax_and_max_Q_over_a
+
+
+def draw_taste_shock_noise(
+    *,
+    key: Array,
+    shape: tuple[int, ...],
+    scale: FloatND,
+) -> FloatND:
+    """Draw the additive, mean-zero EV1 taste-shock noise for discrete choices.
+
+    The draw is `scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)`. A raw
+    Gumbel(0, 1) has mean `EULER_GAMMA`, so subtracting it makes the shock
+    mean-zero — the condition under which the solve's smoothed maximum
+    `scale * logsumexp(Qc / scale)` equals the expected realized maximum.
+
+    Args:
+        key: JAX PRNG key for the Gumbel draw.
+        shape: Shape of the noise array (one draw per discrete-action cell).
+        scale: Taste-shock scale; broadcasts against the draw.
+
+    Returns:
+        Mean-zero additive noise of the given shape.
+
+    """
+    return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)
 
 
 def _get_extra_param_names(

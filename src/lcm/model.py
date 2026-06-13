@@ -16,6 +16,7 @@ from _lcm.grids import DiscreteGrid
 from _lcm.model_processing import (
     _validate_param_types,
     build_regimes_and_template,
+    fail_if_negative_taste_shock_scale,
     validate_model_inputs,
 )
 from _lcm.pandas_utils import (
@@ -784,4 +785,5 @@ class Model:
             },
         )
         _validate_param_types(flat_params)
+        fail_if_negative_taste_shock_scale(flat_params)
         return flat_params
