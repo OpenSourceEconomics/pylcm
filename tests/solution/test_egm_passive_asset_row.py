@@ -19,6 +19,7 @@ import functools
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
@@ -284,3 +285,170 @@ def _euler_axis(value_array: np.ndarray) -> int:
     """Axis of the Euler (wealth) state — the one matching the wealth grid."""
     n_wealth = int(WEALTH_GRID.to_jax().shape[0])
     return next(axis for axis, size in enumerate(value_array.shape) if size == n_wealth)
+
+
+# --- Regime-transition prob through a param-dependent Euler-state chain ------
+#
+# The means-tested survival probability reads the Euler state `wealth` through
+# a DAG-computed intermediate that itself reads a model param (a capital-income
+# return rate), mirroring an SSI/Medicaid eligibility share
+# `medicaid_eligibility_share <- countable_income <- capital_income(assets, r)`.
+# The regime simultaneously carries a passive AIME axis and an income process
+# axis, so the per-asset-node savings-stage probability evaluation must receive
+# the qualified param alongside the Euler node.
+
+RATE_OF_RETURN = 0.04
+
+
+def capital_income(wealth: ContinuousState, rate_of_return: float) -> FloatND:
+    """Capital income on current wealth — reads the Euler state and a param."""
+    return rate_of_return * wealth
+
+
+def countable_income(capital_income: FloatND) -> FloatND:
+    return capital_income
+
+
+def medicaid_eligibility_share(countable_income: FloatND) -> FloatND:
+    """SSI-style smoothstep eligibility share over the countable income band."""
+    return smoothstep_in_band(countable_income / RATE_OF_RETURN)
+
+
+def survival_of_share(medicaid_eligibility_share: FloatND) -> FloatND:
+    return SURVIVAL_LOW + (SURVIVAL_HIGH - SURVIVAL_LOW) * medicaid_eligibility_share
+
+
+def stay_prob_share(
+    medicaid_eligibility_share: FloatND, age: int, final_age_alive: float
+) -> FloatND:
+    return jnp.where(
+        age >= final_age_alive, 0.0, survival_of_share(medicaid_eligibility_share)
+    )
+
+
+def death_prob_share(
+    medicaid_eligibility_share: FloatND, age: int, final_age_alive: float
+) -> FloatND:
+    return 1.0 - stay_prob_share(medicaid_eligibility_share, age, final_age_alive)
+
+
+def _means_test_intermediates() -> dict:
+    return {
+        "capital_income": capital_income,
+        "countable_income": countable_income,
+        "medicaid_eligibility_share": medicaid_eligibility_share,
+    }
+
+
+@functools.cache
+def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
+    """Euler `wealth` + passive `aime` + process `income`; means-tested prob.
+
+    The survival probability reads `wealth` through the param-dependent chain
+    `capital_income(wealth, rate_of_return)`, triggering asset-row mode while
+    the regime carries the passive AIME and income-process axes. When
+    `rate_is_fixed`, the return rate is supplied through `fixed_params` (so it
+    is partialled at model build and dropped from the live params template)
+    rather than as a free solve param.
+    """
+    is_dcegm = solver == "dcegm"
+    states = {
+        "wealth": WEALTH_GRID,
+        "aime": AIME_GRID,
+        "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
+    }
+    working = UserRegime(
+        transition={
+            "working_life": MarkovTransition(stay_prob_share),
+            "dead": MarkovTransition(death_prob_share),
+        },
+        active=_active,
+        actions={
+            "labor_supply": DiscreteGrid(LaborChoice),
+            "consumption": CONSUMPTION_GRID,
+        },
+        states=states,
+        state_transitions={
+            "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
+            "aime": next_aime,
+        },
+        constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
+        functions=(
+            {
+                **_shared_functions(),
+                "resources": resources,
+                "savings": savings,
+                "inverse_marginal_utility": inverse_marginal_utility,
+                **_means_test_intermediates(),
+            }
+            if is_dcegm
+            else {
+                **_shared_functions(),
+                "resources": resources,
+                **_means_test_intermediates(),
+            }
+        ),
+        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+    )
+    fixed_params = (
+        {"working_life": {"capital_income": {"rate_of_return": RATE_OF_RETURN}}}
+        if rate_is_fixed
+        else {}
+    )
+    return Model(
+        regimes={"working_life": working, "dead": dead},
+        ages=_ages(),
+        regime_id_class=PassiveAssetRowRegimeId,
+        fixed_params=fixed_params,
+    )
+
+
+def _means_test_params(*, rate_is_fixed: bool) -> dict:
+    params = _params()
+    if not rate_is_fixed:
+        params["working_life"]["capital_income"] = {"rate_of_return": RATE_OF_RETURN}
+    return params
+
+
+@pytest.mark.parametrize("rate_is_fixed", [False, True])
+def test_means_tested_prob_through_param_intermediate_matches_brute_force(
+    rate_is_fixed: bool,  # noqa: FBT001
+):
+    """A means-tested survival prob `share <- capital_income(wealth, r)` matches.
+
+    The stay probability reads the Euler state `wealth` through a param-dependent
+    intermediate chain (the SSI/Medicaid eligibility-share shape), so the regime
+    solves per exogenous asset node while carrying the passive AIME and income
+    process axes. The per-asset-node regime-transition-probability evaluation
+    receives the qualified param `capital_income__rate_of_return` — whether the
+    return rate is a free solve param or supplied through `fixed_params` (and
+    thus partialled into the prebuilt kernel). The probability's wealth slope
+    carries the first-order term
+    $\\partial P_{stay}/\\partial wealth \\cdot EV_{stay}$ into the marginal
+    value. Values agree with the dense-grid brute-force oracle across the full
+    wealth-by-AIME-by-income grid.
+    """
+    params = _means_test_params(rate_is_fixed=rate_is_fixed)
+    dcegm_solution: PeriodToRegimeToVArr = _means_tested_prob_model(
+        "dcegm", rate_is_fixed=rate_is_fixed
+    ).solve(params=params, log_level="debug")
+    brute_solution: PeriodToRegimeToVArr = _means_tested_prob_model(
+        "brute_force", rate_is_fixed=rate_is_fixed
+    ).solve(params=params, log_level="debug")
+    for period in sorted(brute_solution)[:-1]:
+        brute_V = np.asarray(brute_solution[period]["working_life"])
+        dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
+        assert brute_V.shape == dcegm_V.shape
+        flat_dcegm = np.moveaxis(dcegm_V, _euler_axis(dcegm_V), -1).reshape(
+            -1, dcegm_V.shape[_euler_axis(dcegm_V)]
+        )
+        flat_brute = np.moveaxis(brute_V, _euler_axis(brute_V), -1).reshape(
+            -1, brute_V.shape[_euler_axis(brute_V)]
+        )
+        np.testing.assert_allclose(
+            flat_dcegm[:, N_BRUTE_UNSTABLE_NODES:],
+            flat_brute[:, N_BRUTE_UNSTABLE_NODES:],
+            atol=1e-2,
+            rtol=1e-3,
+            err_msg=f"period={period}",
+        )
