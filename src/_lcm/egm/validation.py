@@ -771,12 +771,15 @@ def _fail_if_grid_hygiene_violated(
                     f"distributed={grid.distributed})."
                 )
                 raise ModelInitializationError(msg)
-    if euler_grid.batch_size != 0 or euler_grid.distributed:
+    # `batch_size` on the Euler grid is honored: it splays the per-asset-node
+    # solve into blocks (`lax.map`) to shed peak working-set memory, leaving the
+    # value function unchanged. `distributed` remains disallowed — a continuous
+    # axis cannot be sharded (rejected at grid construction).
+    if euler_grid.distributed:
         msg = (
             f"The grid of the Euler state '{solver.continuous_state}' in "
-            f"regime '{regime_name}' must not be batched or distributed in a "
-            f"DCEGM regime (got batch_size={euler_grid.batch_size}, "
-            f"distributed={euler_grid.distributed})."
+            f"regime '{regime_name}' must not be distributed in a DCEGM regime "
+            f"(got distributed={euler_grid.distributed})."
         )
         raise ModelInitializationError(msg)
     if solver.savings_grid.batch_size != 0 or solver.savings_grid.distributed:
