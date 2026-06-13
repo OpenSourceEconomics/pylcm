@@ -63,6 +63,7 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
                 n_refined=n_refined,
                 jump_thresh=solver.fues_jump_thresh,
                 n_points_to_scan=solver.fues_n_points_to_scan,
+                scan_unroll=solver.fues_scan_unroll,
             )
 
         return fues_backend

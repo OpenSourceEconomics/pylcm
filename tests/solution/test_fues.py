@@ -211,3 +211,31 @@ def test_overflow_is_reported_via_n_kept():
     )
 
     assert int(n_kept) > 4
+
+
+@pytest.mark.parametrize("scan_unroll", [2, 4])
+def test_scan_unroll_does_not_change_refinement(scan_unroll):
+    """`scan_unroll` is a loop-dispatch knob: the envelope is bit-identical.
+
+    Unrolling the sequential envelope scan `scan_unroll`-fold cuts the number
+    of dispatched scan iterations but evaluates the same arithmetic in the same
+    order, so the refined grid, policy, value, and kept-point count are exactly
+    equal to the default (`scan_unroll == 1`).
+    """
+    grid, policy, value = _crossing_segments_candidates()
+
+    baseline = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=12
+    )
+    unrolled = fues.refine_envelope(
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        n_refined=12,
+        scan_unroll=scan_unroll,
+    )
+
+    for baseline_arr, unrolled_arr in zip(baseline, unrolled, strict=True):
+        np.testing.assert_array_equal(
+            np.asarray(baseline_arr), np.asarray(unrolled_arr)
+        )

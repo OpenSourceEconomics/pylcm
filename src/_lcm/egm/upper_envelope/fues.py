@@ -39,6 +39,7 @@ def refine_envelope(
     n_refined: int,
     jump_thresh: float = 2.0,
     n_points_to_scan: int = 10,
+    scan_unroll: int = 1,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its upper envelope.
 
@@ -60,6 +61,10 @@ def refine_envelope(
         n_points_to_scan: Number of subsequent (or preceding) candidates the
             bounded scans inspect when searching for the next point on a given
             segment.
+        scan_unroll: Loop-unroll factor passed to the envelope `lax.scan`'s
+            `unroll=`. Cuts the scan's dispatch count `scan_unroll`-fold
+            without changing the numerics; the default `1` leaves the scan
+            un-unrolled.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each
@@ -98,7 +103,7 @@ def refine_envelope(
 
     indices = jnp.arange(1, n_input, dtype=jnp.int32)
     carry_final, (block_grid, block_policy, block_value, block_count) = jax.lax.scan(
-        step, carry_init, indices
+        step, carry_init, indices, unroll=scan_unroll
     )
 
     # Compact the per-step blocks: route each valid block row to its position

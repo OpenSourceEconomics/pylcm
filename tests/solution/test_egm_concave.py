@@ -7,10 +7,13 @@ wealth levels, where the credit-constrained segment is exact and the brute-force
 solver is unstable.
 """
 
+from dataclasses import replace
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
     AgeGrid,
     IrregSpacedGrid,
@@ -23,6 +26,7 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm_examples.iskhakov_et_al_2017 import dead
 from lcm_examples.mortality import WEALTH_GRID
 from tests.solution.test_retirement_only_oracle import (
     ANALYTICAL_CASES,
@@ -31,6 +35,7 @@ from tests.solution.test_retirement_only_oracle import (
 )
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
+    DCEGM_SOLVER,
     dcegm_retirement,
     get_retirement_only_model,
     get_retirement_only_params,
@@ -345,3 +350,43 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
         expected[3:],
         atol=1e-3,
     )
+
+
+@pytest.mark.parametrize("scan_unroll", [2, 4])
+def test_fues_scan_unroll_leaves_dcegm_value_function_unchanged(scan_unroll):
+    """`fues_scan_unroll` changes only loop dispatch: V is bit-identical.
+
+    The solver's `fues_scan_unroll` knob unrolls the FUES envelope scan to cut
+    its dispatch count; it must not touch the numerics. A full DC-EGM solve at
+    `fues_scan_unroll > 1` yields the exact same value function array as the
+    default `fues_scan_unroll == 1`, period by period.
+    """
+    n_periods = 3
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    params = get_retirement_only_params(n_periods)
+
+    def solve_with_unroll(unroll: int) -> PeriodToRegimeToVArr:
+        solver = replace(DCEGM_SOLVER, fues_scan_unroll=unroll)
+        model = Model(
+            regimes={
+                "retirement": dcegm_retirement.replace(
+                    active=lambda age, la=last_age: age < la,
+                    solver=solver,
+                ),
+                "dead": dead,
+            },
+            ages=ages,
+            regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        )
+        return model.solve(params=params, log_level="debug")
+
+    baseline = solve_with_unroll(1)
+    unrolled = solve_with_unroll(scan_unroll)
+
+    for period in baseline:
+        for regime in baseline[period]:
+            np.testing.assert_array_equal(
+                np.asarray(baseline[period][regime]),
+                np.asarray(unrolled[period][regime]),
+            )

@@ -92,6 +92,16 @@ class DCEGM:
     fues_n_points_to_scan: int = 10
     """Number of points the FUES forward scan inspects after a candidate."""
 
+    fues_scan_unroll: int = 1
+    """Loop-unroll factor for the FUES envelope `lax.scan`.
+
+    Passed straight to the scan's `unroll=`: the sequential envelope scan emits
+    one dispatch per unrolled block instead of one per iteration, cutting the
+    dispatch count `fues_scan_unroll`-fold (a GPU latency mitigation). It
+    changes only loop dispatch, never the numerics. The default `1` leaves the
+    scan un-unrolled.
+    """
+
     refined_grid_factor: float = 1.2
     """Headroom factor sizing the refined (NaN-padded) envelope arrays."""
 
