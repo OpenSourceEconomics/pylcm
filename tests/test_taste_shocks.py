@@ -7,13 +7,15 @@ axes with the smoothed expected maximum `scale * logsumexp(Qc / scale)` after th
 masked max over continuous actions.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm import logsum
-from lcm.exceptions import ModelInitializationError
+from _lcm.regime_building.max_Q_over_a import draw_taste_shock_noise
+from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.taste_shocks import (
     ExtremeValueTasteShocks,
 )
@@ -146,6 +148,52 @@ def test_params_template_contains_taste_shock_scale():
     template = model.get_params_template()
 
     assert "scale" in template["alive"]["taste_shocks"]
+
+
+def test_taste_shock_noise_is_mean_zero():
+    """The simulation taste-shock draw has mean zero.
+
+    The solve uses `scale * logsumexp(Qc / scale)`, which equals the expected
+    maximum only for mean-zero EV1 shocks. A raw Gumbel(0, 1) draw has mean
+    `EULER_GAMMA`, so the draw is centered by it; the sample mean of a large
+    draw is therefore zero up to Monte Carlo error.
+    """
+    scale = jnp.array(2.0)
+    noise = draw_taste_shock_noise(key=jax.random.key(0), shape=(200_000,), scale=scale)
+    np.testing.assert_allclose(float(jnp.mean(noise)), 0.0, atol=0.03)
+
+
+def test_expected_max_with_taste_shock_noise_matches_logsum():
+    """The expected realized maximum equals the smoothed (logsum) solve value.
+
+    With the centered draw, `E[max_d (v_d + noise_d)]` reproduces
+    `scale * logsumexp(v / scale)` — the value the solve assigns — so solved
+    value and simulated realized value agree up to Monte Carlo error.
+    """
+    values = jnp.array([0.0, 1.0, 0.5])
+    scale = jnp.array(0.7)
+    n_draws = 400_000
+
+    noise = draw_taste_shock_noise(
+        key=jax.random.key(1), shape=(n_draws, values.size), scale=scale
+    )
+    simulated_expected_max = float(jnp.mean(jnp.max(values + noise, axis=1)))
+
+    solved_value, _ = logsum.logsum_and_softmax(values=values, scale=scale, axes=(0,))
+    np.testing.assert_allclose(simulated_expected_max, float(solved_value), atol=0.02)
+
+
+def test_negative_taste_shock_scale_raises():
+    """A negative taste-shock scale is rejected with a clear error.
+
+    `scale = 0` (the hard maximum) stays valid; only a negative scale, which
+    would multiply the Gumbel draw by a negative number in simulation, is an
+    error.
+    """
+    model = taste_shocks_toy.get_model()
+    params = taste_shocks_toy.get_params(scale=-0.1)
+    with pytest.raises(InvalidParamsError, match="scale"):
+        model.solve(params=params, log_level="debug")
 
 
 def test_taste_shocks_without_discrete_action_raises():

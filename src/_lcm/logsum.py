@@ -11,11 +11,20 @@ W = v_{\\max} + \\lambda \\log \\sum_d e^{(v_d - v_{\\max}) / \\lambda},
 with conditional choice probabilities $P_d = \\text{softmax}((v_d - v_{\\max}) /
 \\lambda)$. Max-rescaling makes `-inf` (infeasible) entries safe: they
 contribute zero weight and zero probability.
+
+The logsum equals the expected maximum $\\mathbb{E}[\\max_d (v_d + \\lambda
+\\varepsilon_d)]$ only for **mean-zero** EV1 shocks. A standard Gumbel(0, 1)
+draw has mean $\\gamma$ (the Euler-Mascheroni constant), so the simulation
+centers its draws by `EULER_GAMMA` to keep the simulated expected maximum
+consistent with this solved value.
 """
 
 import jax.numpy as jnp
 
 from lcm.typing import FloatND, ScalarFloat
+
+# Euler-Mascheroni constant: the mean of a standard Gumbel(0, 1) draw.
+EULER_GAMMA = 0.5772156649015329
 
 
 def logsum_and_softmax(
