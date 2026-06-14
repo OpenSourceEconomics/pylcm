@@ -23,5 +23,8 @@ hood.
   regime slots per-phase variants, with carried states as the flagship use.
 - [Beta-Delta (Quasi-Hyperbolic) Discounting](beta_delta.ipynb) — How to use the plugin
   system to model consumers with this particular form of time-inconsistent preferences.
+- [Discrete-Continuous Choice: Iskhakov et al. (2017)](iskhakov_et_al_2017.ipynb) — Why
+  discrete choices produce saw-tooth consumption functions, illustrated on the paper's
+  retirement model; will grow into a brute-force vs DC-EGM comparison.
 - [Internal Architecture](architecture.md) — Map of the source tree, the user/engine
   boundary, and the role each package plays.

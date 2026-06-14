@@ -316,8 +316,14 @@ def _simulate_subject_chunk(
             states = new_states
             simulation_results[regime_name][period] = result
 
+            # Out-of-regime subjects carry placeholder entries (possibly -inf,
+            # when their state is infeasible under this regime's problem);
+            # validate only the subjects simulated in this regime.
             log_nan_in_V(
-                logger=logger, regime_name=regime_name, age=age, V_arr=result.V_arr
+                logger=logger,
+                regime_name=regime_name,
+                age=age,
+                V_arr=jnp.where(result.in_regime, result.V_arr, 0.0),
             )
 
         subject_regime_ids = new_subject_regime_ids
@@ -466,7 +472,14 @@ def _simulate_regime_in_period(
     )
     if validation_enabled(logger):
         try:
-            validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
+            # Out-of-regime subjects carry placeholder entries (their state is
+            # meaningless under this regime's problem); validate only the
+            # subjects simulated in this regime.
+            validate_V(
+                V_arr=jnp.where(subject_ids_in_regime, V_arr, 0.0),
+                age=age,
+                regime_name=regime_name,
+            )
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
