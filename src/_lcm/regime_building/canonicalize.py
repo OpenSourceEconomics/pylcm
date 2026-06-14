@@ -148,9 +148,9 @@ def _canonicalize_phase_transitions(
     canonical: dict[StateName, MappingProxyType[RegimeName, _CanonicalLaw]] = {}
     for state_name, law in bare_laws.items():
         carriers = {
-            target_name
-            for target_name in reachable_targets
-            if state_name in states_per_regime.get(target_name, frozenset())
+            target_regime_name
+            for target_regime_name in reachable_targets
+            if state_name in states_per_regime.get(target_regime_name, frozenset())
         }
         if carriers:
             canonical[state_name] = MappingProxyType(
@@ -158,9 +158,9 @@ def _canonicalize_phase_transitions(
             )
     for state_name, named in per_target_laws.items():
         required = {
-            target_name
-            for target_name in reachable_targets
-            if state_name in states_per_regime.get(target_name, frozenset())
+            target_regime_name
+            for target_regime_name in reachable_targets
+            if state_name in states_per_regime.get(target_regime_name, frozenset())
         }
         errors += _per_target_law_errors(
             state_name=state_name,
@@ -171,9 +171,9 @@ def _canonicalize_phase_transitions(
             source_label=source_label,
         )
         cells = {
-            target_name: law
-            for target_name, law in named.items()
-            if target_name in required
+            target_regime_name: law
+            for target_regime_name, law in named.items()
+            if target_regime_name in required
         }
         if cells:
             canonical[state_name] = MappingProxyType(cells)
@@ -227,12 +227,12 @@ def _split_laws(
         if isinstance(raw, Mapping):
             named = cast("Mapping[RegimeName, _CanonicalLaw]", raw)
             per_target_laws[state_name] = {
-                target_name: _desugar_identity(
-                    law=cell,
+                target_regime_name: _desugar_identity(
+                    law=law,
                     state_name=state_name,
                     grid=phase_slice.grid_states.get(state_name),
                 )
-                for target_name, cell in named.items()
+                for target_regime_name, law in named.items()
             }
         else:
             bare_laws[state_name] = _desugar_identity(

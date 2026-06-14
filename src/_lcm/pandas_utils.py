@@ -23,6 +23,7 @@ from _lcm.typing import (
     StateName,
 )
 from _lcm.utils.ast_inspection import _get_func_indexing_params
+from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.ages import AgeGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
@@ -230,18 +231,23 @@ def convert_series_in_params(
         converted_regime: dict[str, object] = {}
         for func_param, value in regime_params.items():
             parts = tree_path_from_qname(func_param)
-            template_func_name = parts[0] if len(parts) > 1 else func_param
             param_name = parts[-1]
+            if len(parts) == ParamsQnameDepth.TARGETREGIME__FUNC__PARAM:
+                # Per-target transition param `target__func__param`; the
+                # engine keys the function `func__target`.
+                resolved_func_name = qname_from_tree_path((parts[1], parts[0]))
+            else:
+                resolved_func_name = parts[0] if len(parts) > 1 else func_param
 
             # Runtime grid/process params are scalar — no AST inspection
             if _is_runtime_grid_param(
-                func_name=template_func_name, user_regime=user_regime
+                func_name=resolved_func_name, user_regime=user_regime
             ):
                 converted_regime[func_param] = _convert_param_value(
                     value=value,
                     func=None,
                     param_name=param_name,
-                    func_name=template_func_name,
+                    func_name=resolved_func_name,
                     ages=ages,
                     user_regimes=user_regimes,
                     regime_names_to_ids=regime_names_to_ids,
@@ -249,13 +255,6 @@ def convert_series_in_params(
                 )
                 continue
 
-            # Resolve per-target template key before function lookup
-            resolved_func_name = (
-                _resolve_per_target_template_key(
-                    func_name=template_func_name, user_regime=user_regime
-                )
-                or template_func_name
-            )
             func = all_funcs[resolved_func_name]
             converted_regime[func_param] = _convert_param_value(
                 value=value,
@@ -482,53 +481,6 @@ def _resolve_categoricals(
                     raise ValueError(msg)
                 grids[name] = grid
     return grids
-
-
-def _resolve_per_target_template_key(
-    *,
-    func_name: FunctionName,
-    user_regime: UserRegime,
-) -> str | None:
-    """Translate a per-target template key to `get_all_functions()` format.
-
-    Template uses `to_{target}_{next_state}` (e.g., `to_working_next_health`).
-    `get_all_functions()` uses `next_{state}__{target}` (e.g.,
-    `next_health__working`). Return the translated key if `func_name`
-    matches the template pattern, or `None` if it doesn't.
-
-    Args:
-        func_name: The function name from the template
-            (e.g., `to_working_next_health`).
-        user_regime: The user-provided `Regime` to check for per-target transitions.
-
-    Returns:
-        The `get_all_functions()` key, or `None` if not a per-target key.
-
-    """
-    if not func_name.startswith("to_"):
-        return None
-
-    # Per-target template keys have the form "to_{target}_{next_state}".
-    # Find matching per-target transitions in the regime.
-    for state_name, raw in user_regime.state_transitions.items():
-        if isinstance(raw, Mapping):
-            for target_name in raw:
-                target = str(target_name)
-                next_state = f"next_{state_name}"
-                template_key = f"to_{target}_{next_state}"
-                if template_key == func_name:
-                    return qname_from_tree_path((next_state, target))
-
-    # Per-target regime transitions contribute "to_{target}_next_regime" keys.
-    transition = user_regime.transition
-    if isinstance(transition, Phased):
-        transition = transition.solve
-    if isinstance(transition, Mapping):
-        for target_name in transition:
-            if func_name == f"to_{target_name}_next_regime":
-                return qname_from_tree_path(("next_regime", str(target_name)))
-
-    return None
 
 
 def _is_runtime_grid_param(*, func_name: FunctionName, user_regime: UserRegime) -> bool:

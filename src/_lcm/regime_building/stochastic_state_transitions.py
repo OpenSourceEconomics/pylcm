@@ -69,14 +69,16 @@ def collect_stochastic_state_transitions(
                 user_regimes=user_regimes,
             )
         elif isinstance(raw, Mapping):
-            for raw_target_name, target_value in raw.items():
-                if not isinstance(target_value, MarkovTransition):
+            for raw_target_regime_name, law in raw.items():
+                if not isinstance(law, MarkovTransition):
                     continue
-                target_regime_name: RegimeName = cast("RegimeName", raw_target_name)
+                target_regime_name: RegimeName = cast(
+                    "RegimeName", raw_target_regime_name
+                )
                 _add_stochastic_entry(
                     entries=entries,
                     key=f"next_{state_name}__{target_regime_name}",
-                    markov=target_value,
+                    markov=law,
                     state_name=state_name,
                     target_regime_name=target_regime_name,
                     user_regime=user_regime,

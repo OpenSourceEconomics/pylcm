@@ -39,11 +39,9 @@ from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 from _lcm.typing import FlatParams, ParamsTemplate, RegimeName, RegimeParamsTemplate
 from _lcm.utils.containers import ensure_containers_are_immutable
-from _lcm.utils.namespace import flatten_regime_namespace
+from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.typing import UserParams
-
-_NUM_PARTS_FUNCTION_PARAM = 3
 
 
 def process_params(
@@ -53,11 +51,16 @@ def process_params(
 ) -> FlatParams:
     """Process user-provided params into internal params.
 
-    Users can provide parameters at exactly one of three levels:
+    Users can provide parameters at exactly one of these levels:
 
     - Model level: `{"arg_0": 0.0}` — propagates to all functions needing arg_0
     - Regime level: `{"regime_0": {"arg_0": 0.0}}` — propagates within regime_0
-    - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct specification
+    - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct
+      specification; for per-target transition params this broadcasts over
+      the target regimes
+    - Target-regime level —
+      `{"regime_0": {"target_regime_0": {"func": {"arg_0": 0.0}}}}` is the
+      target-regime-specific value for a per-target transition function
 
     The output always matches the params_template skeleton. Every numeric
     leaf — Python `bool` / `int` / `float`, typed JAX or numpy arrays, and
@@ -100,13 +103,16 @@ def broadcast_to_template(
     template: Mapping[str, Mapping],
     required: bool = True,
 ) -> FlatParams:
-    """Broadcast user params to template shape via 3-level resolution.
+    """Broadcast user params to template shape via most-to-least-specific resolution.
 
     For each template qname, search for a matching user value at:
 
-    1. Exact match: `regime__function__param`
-    2. Regime level: `regime__param`
-    3. Model level: `param`
+    1. Exact match: `regime__function__param`, or for per-target transition
+       params `regime__target__function__param`
+    2. Coarse function level (per-target qnames only):
+       `regime__function__param` — one value broadcasts over the targets
+    3. Regime level: `regime__param`
+    4. Model level: `param`
 
     Returns the resolved structure with leaves left as the user supplied
     them; dtype canonicalisation is a separate step
@@ -114,7 +120,7 @@ def broadcast_to_template(
 
     Args:
         params: User-provided values at any nesting depth.
-        template: Target structure defining all valid 3-part keys.
+        template: Target structure defining all valid keys.
         required: If True, raise when any template key has no match.
 
     Returns:
@@ -133,6 +139,7 @@ def broadcast_to_template(
 
     result: dict[str, dict[str, object]] = {name: {} for name in template}
     used_keys: set[str] = set()
+    missing: list[str] = []
 
     for qname in template_flat:
         candidates = _find_candidates(qname=qname, params_flat=params_flat)
@@ -151,16 +158,62 @@ def broadcast_to_template(
             result[regime][remainder] = params_flat[chosen]
             used_keys.add(chosen)
         elif required:
-            raise InvalidParamsError(f"Missing required parameter: {qname!r}")
+            missing.append(qname)
 
     unknown = set(params_flat) - used_keys
-    if unknown:
-        raise InvalidParamsError(f"Unknown keys: {sorted(unknown)}")
+    if missing or unknown:
+        messages = []
+        if missing:
+            messages.append(f"Missing required parameter(s): {missing}")
+        if unknown:
+            messages.append(f"Unknown keys: {sorted(unknown)}")
+        raise InvalidParamsError(" ".join(messages))
 
     return cast(
         "FlatParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
+
+
+def materialize_granular_transition_params(
+    *,
+    flat_params: FlatParams,
+    expansions: Mapping[str, Mapping[str, tuple[str, ...]]],
+) -> FlatParams:
+    """Expand coarse transition-law params to their per-target qnames.
+
+    Canonical flat params always key transition-law params per target
+    (`<target>__<law>__<param>`), matching the engine's target-prefixed
+    function qnames. A coarse user spelling resolves against the coarse
+    template key first; this pass replaces each such entry with one entry
+    per granular prefix, every target sharing the same leaf object —
+    bit-identical arithmetic and no per-target copies.
+
+    Args:
+        flat_params: Template-shaped output of `broadcast_to_template`
+            (after dtype canonicalisation).
+        expansions: Per regime, mapping of coarse law key to its granular
+            qname prefixes (`Regime.granular_param_expansions`).
+
+    Returns:
+        New immutable mapping with coarse transition-law entries replaced
+        by their granular spellings.
+
+    """
+    result: dict[str, MappingProxyType[str, object]] = {}
+    for regime_name, leaves in flat_params.items():
+        regime_expansions = expansions.get(regime_name, {})
+        materialized: dict[str, object] = {}
+        for param_qname, value in leaves.items():
+            path = tree_path_from_qname(param_qname)
+            prefixes = regime_expansions.get(path[0])
+            if len(path) == ParamsQnameDepth.REGIME__FUNC__PARAM - 1 and prefixes:
+                for prefix in prefixes:
+                    materialized[qname_from_tree_path((prefix, path[1]))] = value
+            else:
+                materialized[param_qname] = value
+        result[regime_name] = MappingProxyType(materialized)
+    return cast("FlatParams", MappingProxyType(result))
 
 
 def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
@@ -178,13 +231,25 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
         New immutable mapping with every leaf cast to its canonical dtype.
 
     """
+    # One cast per distinct input object: a value broadcast into several
+    # slots (e.g. a coarse value resolved into per-target template slots)
+    # stays one shared leaf, so downstream consumers can deduplicate by
+    # identity and large array leaves are not copied per slot.
+    memo: dict[int, Any] = {}
+
+    def _cast_shared(value: Any, *, name: str) -> Any:  # noqa: ANN401
+        key = id(value)
+        if key not in memo:
+            memo[key] = _cast_leaves_to_canonical_dtype(value, name=name)
+        return memo[key]
+
     return cast(
         "FlatParams",
         MappingProxyType(
             {
                 regime: MappingProxyType(
                     {
-                        param_qname: _cast_leaves_to_canonical_dtype(
+                        param_qname: _cast_shared(
                             value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
                         )
                         for param_qname, value in leaves.items()
@@ -280,7 +345,18 @@ def _find_candidates(
     qname: str,
     params_flat: Mapping[str, object],
 ) -> list[str]:
-    """Find candidate matches for a template qname at exact / regime / model levels."""
+    """Find candidate matches for a template qname, most to least specific.
+
+    Resolution levels:
+
+    1. Exact match: `regime__function__param`, or for per-target transition
+       params `regime__target__function__param`
+    2. Coarse function level (per-target qnames only):
+       `regime__function__param` — one value broadcasts over the targets
+    3. Regime level: `regime__param`
+    4. Model level: `param`
+
+    """
     tree_path = tree_path_from_qname(qname)
     param_name = tree_path[-1]
     candidates: list[str] = []
@@ -288,7 +364,12 @@ def _find_candidates(
     if qname in params_flat:
         candidates.append(qname)
 
-    if len(tree_path) == _NUM_PARTS_FUNCTION_PARAM:
+    if len(tree_path) == ParamsQnameDepth.REGIME__TARGETREGIME__FUNC__PARAM:
+        coarse_qname = qname_from_tree_path((tree_path[0], *tree_path[2:]))
+        if coarse_qname in params_flat:
+            candidates.append(coarse_qname)
+
+    if len(tree_path) >= ParamsQnameDepth.REGIME__FUNC__PARAM:
         regime_level_qname = qname_from_tree_path((tree_path[0], param_name))
         if regime_level_qname in params_flat:
             candidates.append(regime_level_qname)
@@ -299,7 +380,7 @@ def _find_candidates(
     return candidates
 
 
-def create_params_template(  # noqa: C901
+def create_params_template(
     regimes: MappingProxyType[RegimeName, Regime],
 ) -> ParamsTemplate:
     """Create params_template from internal regimes and validate name uniqueness.
@@ -319,40 +400,98 @@ def create_params_template(  # noqa: C901
 
     """
     template: dict[str, Any] = {}
-    regime_names: set[str] = set()
+    regime_names: set[str] = set(regimes)
     function_names: set[str] = set()
     arg_names: set[str] = set()
 
     for name, regime in regimes.items():
-        regime_names.add(name)
         regime_template = dict(regime.regime_params_template)
         template[name] = regime_template
 
         for key, val in regime_template.items():
-            if isinstance(val, (dict, Mapping)):
-                function_names.add(key)
-                for arg_name in val:
-                    # Check for separator in argument names
-                    if QNAME_DELIMITER in arg_name:
-                        raise InvalidNameError(
-                            f"Argument name {arg_name!r} in function {key!r} "
-                            f"cannot contain the separator '{QNAME_DELIMITER}'"
-                        )
-                    arg_names.add(arg_name)
-            else:
+            if not isinstance(val, (dict, Mapping)):
                 raise InvalidNameError(
                     f"Parameter {key!r} in regime {name!r} must be nested under "
                     f"a function name, e.g., {{'function_name': {{'{key}': type}}}}"
                 )
+            if key in regime_names:
+                # A target branch: per-target transition params nested under
+                # the target regime's name.
+                for func_key, func_val in val.items():
+                    if not isinstance(func_val, Mapping):
+                        raise InvalidNameError(
+                            f"{key!r} in regime {name!r} is a regime name, so "
+                            f"its entries must be per-target transition "
+                            f"functions with nested params; {func_key!r} maps "
+                            f"to a bare leaf."
+                        )
+                    function_names.add(func_key)
+                    arg_names |= _validated_arg_names(
+                        func_name=func_key, params=func_val, regime_name=name
+                    )
+            else:
+                function_names.add(key)
+                arg_names |= _validated_arg_names(
+                    func_name=key, params=val, regime_name=name
+                )
 
-    # Check for separator in regime names
+    _fail_if_template_names_invalid(
+        regime_names=regime_names,
+        function_names=function_names,
+        arg_names=arg_names,
+    )
+
+    return ensure_containers_are_immutable(template)
+
+
+def _validated_arg_names(
+    *,
+    func_name: str,
+    params: Mapping,
+    regime_name: str,
+) -> set[str]:
+    """Return a function entry's argument names, validating each leaf.
+
+    Argument names must be separator-free and map to bare leaves — a nested
+    mapping at this depth means the user nested params one level too deep.
+    """
+    arg_names: set[str] = set()
+    for arg_name, leaf in params.items():
+        if QNAME_DELIMITER in arg_name:
+            raise InvalidNameError(
+                f"Argument name {arg_name!r} in function {func_name!r} "
+                f"cannot contain the separator '{QNAME_DELIMITER}'"
+            )
+        if isinstance(leaf, Mapping):
+            raise InvalidNameError(
+                f"Parameter {arg_name!r} in regime {regime_name!r} is "
+                f"nested too deeply."
+            )
+        arg_names.add(arg_name)
+    return arg_names
+
+
+def _fail_if_template_names_invalid(
+    *,
+    regime_names: set[str],
+    function_names: set[str],
+    arg_names: set[str],
+) -> None:
+    """Validate separator-freedom and disjointness of template name sets.
+
+    Regime and function names must not contain the qname separator, and
+    regime names must be disjoint from both function and argument names so
+    parameter propagation stays unambiguous. Function names CAN overlap with
+    argument names across regimes — a function output in one regime may be a
+    parameter in another (e.g. `labor_income` is a function in `working` but
+    a param in `retired`).
+    """
     for name in regime_names:
         if QNAME_DELIMITER in name:
             raise InvalidNameError(
                 f"Regime name {name!r} cannot contain the separator '{QNAME_DELIMITER}'"
             )
 
-    # Check for separator in function names
     for name in function_names:
         if QNAME_DELIMITER in name:
             raise InvalidNameError(
@@ -360,7 +499,6 @@ def create_params_template(  # noqa: C901
                 f"'{QNAME_DELIMITER}'"
             )
 
-    # Check that names are disjoint
     regime_func_overlap = regime_names & function_names
     if regime_func_overlap:
         raise InvalidNameError(
@@ -375,23 +513,26 @@ def create_params_template(  # noqa: C901
             f"Overlap: {sorted(regime_arg_overlap)}"
         )
 
-    # Note: Function names CAN overlap with argument names across regimes.
-    # This happens when a function output in one regime is a parameter in another.
-    # E.g., labor_income is a function in 'working' but a param in 'retired'.
-
-    return ensure_containers_are_immutable(template)
-
 
 def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[str]:
     """Get all flat parameter names from a regime params template.
 
-    Converts nested template entries like {"utility": {"risk_aversion": type}} to
-    flat names like "utility__risk_aversion".
+    Converts nested template entries like `{"utility": {"risk_aversion": type}}`
+    to flat names like `utility__risk_aversion`; per-target branches like
+    `{"retired": {"next_wealth": {"exit_tax": type}}}` yield
+    `retired__next_wealth__exit_tax`.
 
     """
     result = set()
     for key, value in regime_params_template.items():
-        if isinstance(value, Mapping):
-            for param_name in value:
-                result.add(qname_from_tree_path((key, param_name)))
+        if not isinstance(value, Mapping):
+            continue
+        for inner_name, inner_value in value.items():
+            if isinstance(inner_value, Mapping):
+                result.update(
+                    qname_from_tree_path((key, inner_name, param_name))
+                    for param_name in inner_value
+                )
+            else:
+                result.add(qname_from_tree_path((key, inner_name)))
     return result

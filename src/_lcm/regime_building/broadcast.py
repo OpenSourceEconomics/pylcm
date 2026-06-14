@@ -239,12 +239,12 @@ def _phase_fixed_point(
     reachable: dict[RegimeName, frozenset[RegimeName]] = {}
     for regime_name, spec in specs.items():
         phase_slice: RegimePhaseSpec = getattr(spec, phase_name)
-        transition = phase_slice.regime_transition
-        if transition is None:
+        regime_transition = phase_slice.regime_transition
+        if regime_transition is None:
             reachable[regime_name] = frozenset()
-        elif isinstance(transition, Mapping):
+        elif isinstance(regime_transition, Mapping):
             reachable[regime_name] = (
-                frozenset(cast("Mapping[RegimeName, object]", transition))
+                frozenset(cast("Mapping[RegimeName, object]", regime_transition))
                 & all_regime_names
             )
         else:
@@ -317,14 +317,14 @@ def _regime_transition_roots(
     A per-target dict contributes every cell; a coarse transition contributes
     itself; a terminal regime contributes nothing.
     """
-    transition = phase_slice.regime_transition
-    if isinstance(transition, Mapping):
+    regime_transition = phase_slice.regime_transition
+    if isinstance(regime_transition, Mapping):
         return {
-            f"__next_regime_{target_name}": cast("UserFunction", cell)
-            for target_name, cell in transition.items()
+            f"__next_regime_{target_regime_name}": cast("UserFunction", cell)
+            for target_regime_name, cell in regime_transition.items()
         }
-    if transition is not None:
-        return {"__next_regime": cast("UserFunction", transition)}
+    if regime_transition is not None:
+        return {"__next_regime": cast("UserFunction", regime_transition)}
     return {}
 
 
@@ -342,18 +342,20 @@ def _law_roots(
     """
     roots: dict[str, UserFunction] = {}
     for state_name, raw in phase_slice.state_transitions.items():
-        cells: dict[RegimeName, object] = (
+        laws: dict[RegimeName, object] = (
             dict(cast("Mapping[RegimeName, object]", raw))
             if isinstance(raw, Mapping)
             else dict.fromkeys(reachable_targets, raw)
         )
-        for target_name, law in cells.items():
+        for target_regime_name, law in laws.items():
             if (
                 law is not None
-                and target_name in reachable_targets
-                and state_name in kept.get(target_name, frozenset())
+                and target_regime_name in reachable_targets
+                and state_name in kept.get(target_regime_name, frozenset())
             ):
-                roots[f"__law_{state_name}_{target_name}"] = cast("UserFunction", law)
+                roots[f"__law_{state_name}_{target_regime_name}"] = cast(
+                    "UserFunction", law
+                )
     return roots
 
 
@@ -388,16 +390,10 @@ def _merge_one_slot(
     for name, value in regime_slot.items():
         if value is None:
             if name not in model_slot:
-                hint = (
-                    f" `None` masks a model-level entry; use "
-                    f"`fixed_transition('{name}')` for a fixed state."
-                    if slot_name == "state_transitions"
-                    else ""
-                )
                 errors.append(
                     f"{slot_name}['{name}'] in regime '{regime_name}' is "
                     f"`None`, but no model-level entry provides '{name}' — "
-                    f"there is nothing to mask.{hint}",
+                    f"there is nothing to mask.",
                 )
         elif name in model_slot:
             errors.append(

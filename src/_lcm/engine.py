@@ -15,6 +15,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatRegimeParams,
+    FunctionName,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     RegimeName,
@@ -595,6 +596,18 @@ class Regime:
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
+
+    granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]] = (
+        MappingProxyType({})
+    )
+    """Immutable mapping of coarse-template law keys to granular qname prefixes.
+
+    A state law whose params the template keys coarsely (`next_<state>`)
+    binds granularly in the engine (`<target>__next_<state>`); each entry
+    lists every such prefix across both phases so canonical flat params can
+    materialize one shared leaf per target. Empty when every law's params
+    are user-granular or absent.
+    """
 
 
 @dataclasses.dataclass(frozen=True)

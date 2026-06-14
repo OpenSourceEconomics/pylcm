@@ -85,15 +85,29 @@ type _UserParamsLeaf = (
     | UserMappingLeaf
     | UserSequenceLeaf
 )
+# Values may be supplied at up to four nesting levels:
+# - model level: `{param: value}`
+# - regime level: `{regime: {param: value}}`
+# - function level: `{regime: {func: {param: value}}}`
+# - target level: `{regime: {target_regime: {transition_func: {param: value}}}}`
+#   — target-specific params for a per-target transition
 type UserParams = Mapping[
     str,
-    _UserParamsLeaf | Mapping[str, _UserParamsLeaf | Mapping[str, _UserParamsLeaf]],
+    _UserParamsLeaf
+    | Mapping[
+        str,
+        _UserParamsLeaf | Mapping[str, _UserParamsLeaf | Mapping[str, _UserParamsLeaf]],
+    ],
 ]
 
 
 # User-facing template; types rendered as strings. Keys are regime names, then
-# function names.
-type UserFacingParamsTemplate = dict[RegimeName, dict[FunctionName, dict[str, str]]]
+# function names — or target regime names, whose params nest one level deeper
+# under the per-target transition function.
+type UserFacingParamsTemplate = dict[
+    RegimeName,
+    dict[FunctionName | RegimeName, dict[str, str | dict[str, str]]],
+]
 
 
 @runtime_checkable

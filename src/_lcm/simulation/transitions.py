@@ -33,26 +33,24 @@ def create_regime_state_action_space(
     *,
     regime: Regime,
     regime_states: RegimeStates,
-    regime_params: FlatRegimeParams,
+    base: StateActionSpace,
 ) -> StateActionSpace:
     """Create the state-action space containing only the relevant subjects in a regime.
 
-    Continuous action grids declared with `pass_points_at_runtime=True` are
-    completed from `regime_params` (via
-    `regime.solution.state_action_space`).
+    `base` is the params-completed space
+    (`regime.solution.state_action_space(regime_params=...)`); params are
+    fixed within one simulate call, so the caller builds it once per regime
+    and this function only swaps in the current period's subject states.
 
     Args:
         regime: The internal regime instance.
         regime_states: State arrays for this regime, keyed by state name.
-        regime_params: Flat regime parameters supplied at runtime, used to
-            substitute runtime-supplied action gridpoints.
+        base: The params-completed state-action space for the regime.
 
     Returns:
         The state-action space for the subjects in the regime.
 
     """
-    base = regime.solution.state_action_space(regime_params=regime_params)
-
     states_for_state_action_space = {
         sn: regime_states[sn] for sn in regime.solution.state_names
     }
@@ -111,9 +109,9 @@ def calculate_next_states(
     # Sorted to fix a downstream-ordering bug when the nested iteration
     # yields names in a non-deterministic order.
     stochastic_next_function_names = sorted(
-        qname_from_tree_path((target_regime, transition_name))
-        for target_regime, target_transitions in (regime.simulation.transitions.items())
-        for transition_name in target_transitions
+        qname_from_tree_path((target_regime_name, transition_name))
+        for target_regime_name, bundle in (regime.simulation.transitions.items())
+        for transition_name in bundle
         if transition_name in stochastic_transition_names
     )
 
@@ -154,13 +152,16 @@ def calculate_next_states(
     # `StateName` keys directly.
     next_states_per_regime = MappingProxyType(
         {
-            target: MappingProxyType(
+            target_regime_name: MappingProxyType(
                 {
                     name.removeprefix("next_"): value
                     for name, value in target_next_states.items()
                 }
             )
-            for target, target_next_states in states_with_next_prefix.items()
+            for (
+                target_regime_name,
+                target_next_states,
+            ) in states_with_next_prefix.items()
         }
     )
 
@@ -295,7 +296,27 @@ def draw_key_from_dict(
 
     """
     regime_names = list(d)
-    regime_transition_probs = jnp.array(list(d.values())).T
+    regime_ids = jnp.asarray(
+        [regime_names_to_ids[regime_name] for regime_name in regime_names],
+        dtype=jnp.int32,
+    )
+    return _draw_random_regime_ids(keys, tuple(d.values()), regime_ids)
+
+
+@jax.jit
+def _draw_random_regime_ids(
+    keys: PRNGKeyND,
+    prob_rows: tuple[FloatND, ...],
+    regime_ids: Int1D,
+) -> Int1D:
+    """Draw one regime id per subject from per-target probability rows.
+
+    Jitted at module level so the per-subject vmap is traced once per
+    (subject-count, target-count) shape instead of on every period-regime
+    call — the draw sits in the simulation's inner loop, where re-tracing
+    would dominate host time.
+    """
+    regime_transition_probs = jnp.array(prob_rows).T
     # A regime whose transition reads no per-subject state or action (e.g. it
     # depends only on `age`) yields one unbatched distribution shared by
     # every subject. Broadcast it across the subjects' keys so the
@@ -305,24 +326,11 @@ def draw_key_from_dict(
             regime_transition_probs,
             (keys.shape[0], regime_transition_probs.shape[0]),
         )
-    regime_ids = jnp.asarray(
-        [regime_names_to_ids[regime_name] for regime_name in regime_names],
-        dtype=jnp.int32,
-    )
 
-    def random_id(
-        key: PRNGKeyND,
-        p: Float1D,
-    ) -> ScalarInt:
-        return jax.random.choice(
-            key,
-            regime_ids,
-            p=p,
-        )
+    def random_id(key: PRNGKeyND, p: Float1D) -> ScalarInt:
+        return jax.random.choice(key, regime_ids, p=p)
 
-    random_ids = vmap(random_id, in_axes=(0, 0))
-
-    return random_ids(keys, regime_transition_probs)
+    return vmap(random_id, in_axes=(0, 0))(keys, regime_transition_probs)
 
 
 def _advance_states_for_subjects(
@@ -357,9 +365,9 @@ def _advance_states_for_subjects(
         regime_name: dict(regime_states)
         for regime_name, regime_states in states_per_regime.items()
     }
-    for target, target_next_states in next_states_per_regime.items():
+    for target_regime_name, target_next_states in next_states_per_regime.items():
         for state_name, next_state_values in target_next_states.items():
-            current_arr = states_per_regime[target][state_name]
+            current_arr = states_per_regime[target_regime_name][state_name]
             target_dtype = current_arr.dtype
             # Preserve storage dtype only when the transition output is the
             # same numeric kind. Across kinds (e.g. int storage + float
@@ -370,7 +378,7 @@ def _advance_states_for_subjects(
                 if next_state_values.dtype.kind == target_dtype.kind
                 else next_state_values
             )
-            updated[target][state_name] = jnp.where(
+            updated[target_regime_name][state_name] = jnp.where(
                 subject_indices,
                 new_values,
                 current_arr,

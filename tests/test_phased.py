@@ -11,6 +11,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from dags import rename_arguments
 
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
@@ -565,6 +566,95 @@ def test_phased_law_params_template_unions_both_variants() -> None:
     template = model.get_params_template()
     assert "belief_drift" in template["working"]["next_wealth"]
     assert "true_drift" in template["working"]["next_wealth"]
+
+
+def _income_law(income: float, rho: float, sigma: float) -> float:
+    return rho * income + sigma
+
+
+def _build_wrong_beliefs_model() -> Model:
+    """One shared law, `rho` renamed apart per phase, `sigma` shared."""
+    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    working = UserRegime(
+        transition=_next_regime_working,
+        active=lambda age: age < 64,
+        states={"income": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
+        state_transitions={
+            "income": Phased(
+                solve=rename_arguments(_income_law, mapper={"rho": "rho_belief"}),
+                simulate=rename_arguments(_income_law, mapper={"rho": "rho_true"}),
+            ),
+        },
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=3)},
+        functions={
+            "utility": lambda consumption, income: jnp.log(consumption + 0.1 * income)
+        },
+    )
+    return Model(
+        regimes={"working": working, "dead": dead},
+        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        regime_id_class=_RegimeId,
+    )
+
+
+def _simulate_income_panel(
+    model: Model, *, rho_belief: float, rho_true: float
+) -> np.ndarray:
+    result = model.simulate(
+        params={
+            "discount_factor": 0.95,
+            "working": {
+                "next_income": {
+                    "rho_belief": rho_belief,
+                    "rho_true": rho_true,
+                    "sigma": 0.5,
+                },
+            },
+        },
+        period_to_regime_to_V_arr=None,
+        initial_conditions={
+            "age": jnp.array([60.0, 60.0]),
+            "income": jnp.array([2.0, 4.0]),
+            "regime_id": jnp.array([_RegimeId.working] * 2),
+        },
+        log_level="off",
+    )
+    df = result.to_dataframe().query("regime_name == 'working'")
+    return df.sort_values(["subject_id", "period"])["income"].to_numpy()
+
+
+def test_renamed_phased_law_params_union_with_shared_name() -> None:
+    """Per-side `rename_arguments` splits a param across phases while a name
+    kept on both sides stays one shared parameter: the template holds
+    `{rho_belief, rho_true, sigma}` under the law's single key."""
+    model = _build_wrong_beliefs_model()
+    template = model.get_params_template()
+    assert set(template["working"]["next_income"]) == {
+        "rho_belief",
+        "rho_true",
+        "sigma",
+    }
+
+
+def test_renamed_phased_law_realized_path_follows_rho_true() -> None:
+    """The simulated income path follows the simulate-side persistence:
+    `next_income = rho_true * income + sigma`."""
+    model = _build_wrong_beliefs_model()
+    income = _simulate_income_panel(model, rho_belief=0.95, rho_true=0.8)
+    np.testing.assert_allclose(
+        income,
+        [2.0, 0.8 * 2.0 + 0.5, 4.0, 0.8 * 4.0 + 0.5],
+        atol=1e-6,
+    )
+
+
+def test_renamed_phased_law_realized_path_ignores_rho_belief() -> None:
+    """`rho_belief` enters only the solve side: changing it leaves the
+    realized income path untouched."""
+    model = _build_wrong_beliefs_model()
+    income_high = _simulate_income_panel(model, rho_belief=0.95, rho_true=0.8)
+    income_low = _simulate_income_panel(model, rho_belief=0.2, rho_true=0.8)
+    np.testing.assert_allclose(income_high, income_low, atol=0)
 
 
 def _markov_law(wealth: float) -> FloatND:  # noqa: ARG001
