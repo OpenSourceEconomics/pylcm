@@ -17,7 +17,7 @@ from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     get_intrinsic_budget_constraint,
 )
-from _lcm.egm.carry import EgmCarry, build_template_egm_carry
+from _lcm.egm.carry import EGMCarry, build_template_egm_carry
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_stateless_terminal_carry_producer,
@@ -65,7 +65,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
-    EgmCarryProducer,
+    EGMCarryProducer,
     FunctionName,
     NextStateSimulationFunction,
     ProcessName,
@@ -470,6 +470,7 @@ def _build_solution_phase(
             if solver_kernels.egm_carry_template is not None
             else egm_carry_template
         ),
+        egm_reachable_targets=solver_kernels.egm_reachable_targets,
         _base_state_action_space=state_action_space,
     )
 
@@ -482,7 +483,7 @@ def _build_terminal_carry_producer(
     grids: MappingProxyType[StateOrActionName, Grid],
     model_has_dcegm_regime: bool,
     enable_jit: bool,
-) -> tuple[EgmCarryProducer | None, EgmCarry | None]:
+) -> tuple[EGMCarryProducer | None, EGMCarry | None]:
     """Build the EGM carry producer and template for a terminal regime.
 
     Terminal regimes produce closed-form carries when the model contains a
@@ -505,7 +506,7 @@ def _build_terminal_carry_producer(
     """
     if not (model_has_dcegm_regime and user_regime.terminal):
         return None, None
-    producer: EgmCarryProducer
+    producer: EGMCarryProducer
     discrete_state_names = tuple(
         name
         for name in variables.state_names

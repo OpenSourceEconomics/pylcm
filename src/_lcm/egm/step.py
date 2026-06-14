@@ -143,7 +143,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.carry import EgmCarry, build_template_egm_carry
+from _lcm.egm.carry import EGMCarry, build_template_egm_carry
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import interp_on_padded_grid, locate_on_grid
 from _lcm.egm.upper_envelope import get_upper_envelope
@@ -162,7 +162,7 @@ from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
-    EgmStepFunction,
+    EGMStepFunction,
     FunctionName,
     RegimeName,
     RegimeTransitionFunction,
@@ -210,7 +210,7 @@ def build_egm_step_functions(
     regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     state_action_space: StateActionSpace,
     has_taste_shocks: bool,
-) -> tuple[MappingProxyType[int, EgmStepFunction], EgmCarry]:
+) -> tuple[MappingProxyType[int, EGMStepFunction], EGMCarry, frozenset[RegimeName]]:
     """Build per-period DC-EGM kernels and the regime's carry template.
 
     Periods sharing the same continuation-target configuration share one
@@ -249,9 +249,11 @@ def build_egm_step_functions(
             discrete actions.
 
     Returns:
-        Tuple of the per-period kernel mapping and the regime's all-finite
-        carry template (leading axes: discrete states, then passive states,
-        then discrete actions).
+        Tuple of the per-period kernel mapping, the regime's all-finite carry
+        template (leading axes: discrete states, then passive states, then
+        discrete actions), and the regime's reachable-target names — the only
+        carry keys any of its kernels read, used to filter the rolling carry
+        mapping the solve loop hands each kernel.
 
     """
     n_pad = compute_egm_carry_length(solver=solver)
@@ -262,6 +264,11 @@ def build_egm_step_functions(
         "ContinuousGrid", user_regimes[regime_name].states[solver.continuous_state]
     )
     euler_batch_size = euler_grid.batch_size
+    # `batch_size` on the exogenous savings grid splays the inner per-savings-node
+    # continuation computation into `lax.map` blocks, shedding the dominant
+    # egm_step working buffer (savings x child-stochastic mesh x combos); 0 keeps
+    # the fused vmap. The upper envelope still runs on the gathered full grid.
+    savings_batch_size = solver.savings_grid.batch_size
     own_v_info = regime_to_v_interpolation_info[regime_name]
     # Any savings-stage Euler-state read (the Euler law's residual, regime
     # transition probabilities, stochastic transition weights, non-Euler
@@ -333,7 +340,7 @@ def build_egm_step_functions(
         configs.setdefault(target_split, []).append(period)
 
     built: dict[
-        tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]], EgmStepFunction
+        tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]], EGMStepFunction
     ] = {}
     for carry_targets, scalar_targets in configs:
         unsupported = _find_unsupported_feature(
@@ -375,16 +382,21 @@ def build_egm_step_functions(
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 asset_row_mode=asset_row_mode,
                 euler_batch_size=euler_batch_size,
+                savings_batch_size=savings_batch_size,
                 combo_state_batch_sizes=combo_state_batch_sizes,
             )
         built[(carry_targets, scalar_targets)] = kernel
 
-    result: dict[int, EgmStepFunction] = {}
+    result: dict[int, EGMStepFunction] = {}
     for target_split, periods in configs.items():
         for period in periods:
             result[period] = built[target_split]
 
-    return MappingProxyType(dict(sorted(result.items()))), carry_template
+    return (
+        MappingProxyType(dict(sorted(result.items()))),
+        carry_template,
+        reachable_targets,
+    )
 
 
 def get_egm_continuation_targets(
@@ -403,7 +415,7 @@ def get_egm_continuation_targets(
     without touching the kernel.
 
     - *Carry targets* have state-transition entries; their continuation is
-      interpolated from their `EgmCarry` rows.
+      interpolated from their `EGMCarry` rows.
     - *Scalar targets* are stateless (no transition entries, no states; e.g.
       a `dead` regime); their continuation is the constant value of their
       carry rows and their marginal continuation is zero. Only declared-
@@ -480,8 +492,9 @@ def _get_egm_step(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     asset_row_mode: bool,
     euler_batch_size: int,
+    savings_batch_size: int,
     combo_state_batch_sizes: MappingProxyType[StateName, int],
-) -> EgmStepFunction:
+) -> EGMStepFunction:
     """Build the EGM kernel for one continuation-target configuration.
 
     `asset_row_mode` selects the per-combo computation at build time: the
@@ -515,9 +528,9 @@ def _get_egm_step(
 
     def egm_step(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
-        next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+        next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
-    ) -> tuple[FloatND, EgmCarry]:
+    ) -> tuple[FloatND, EGMCarry]:
         """Run the DC-EGM step and publish V on the exogenous grid.
 
         Args:
@@ -554,6 +567,7 @@ def _get_egm_step(
             state_grid=state_grid,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
             euler_batch_size=euler_batch_size,
+            savings_batch_size=savings_batch_size,
         )
 
         if pieces.combo_names:
@@ -566,7 +580,7 @@ def _get_egm_step(
             @with_signature(args=list(combo_var_names))
             def solve_one_combo_over_axes(
                 **combo_values: ScalarFloat | ScalarInt,
-            ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+            ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
                 return solve_one_combo(
                     tuple(combo_values[name] for name in combo_var_names)
                 )
@@ -588,16 +602,14 @@ def _get_egm_step(
                     for name, values in own_discrete_action_values.items()
                 },
             }
-            V_stack, grid_stack, policy_stack, value_stack, marginal_stack = (
-                _map_combo_product(
-                    func=solve_one_combo_over_axes,
-                    combo_var_names=combo_var_names,
-                    combo_axis_values=combo_axis_values,
-                    batch_sizes={
-                        **dict(combo_state_batch_sizes),
-                        **dict.fromkeys(own_discrete_action_values, 0),
-                    },
-                )
+            V_stack, grid_stack, value_stack, marginal_stack = _map_combo_product(
+                func=solve_one_combo_over_axes,
+                combo_var_names=combo_var_names,
+                combo_axis_values=combo_axis_values,
+                batch_sizes={
+                    **dict(combo_state_batch_sizes),
+                    **dict.fromkeys(own_discrete_action_values, 0),
+                },
             )
             n_state_axes = len(own_discrete_state_names) + len(own_passive_state_names)
             action_axes = tuple(range(n_state_axes, len(combo_var_names)))
@@ -610,18 +622,16 @@ def _get_egm_step(
             # The combo layout puts the Euler axis last; the canonical V
             # layout interleaves it with the passive axes in V state order.
             V_arr = jnp.moveaxis(V_arr, -1, pieces.euler_axis_in_V)
-            carry = EgmCarry(
+            carry = EGMCarry(
                 endog_grid=grid_stack,
-                policy=policy_stack,
                 value=value_stack,
                 marginal_utility=marginal_stack,
                 taste_shock_scale=own_taste_shock_scale,
             )
         else:
-            V_arr, grid_row, policy_row, value_row, marginal_row = solve_one_combo(())
-            carry = EgmCarry(
+            V_arr, grid_row, value_row, marginal_row = solve_one_combo(())
+            carry = EGMCarry(
                 endog_grid=grid_row,
-                policy=policy_row,
                 value=value_row,
                 marginal_utility=marginal_row,
                 taste_shock_scale=own_taste_shock_scale,
@@ -938,11 +948,12 @@ def _get_solve_one_combo(
     pieces: _EgmKernelPieces,
     pool: dict[str, Any],
     state_grid: Float1D,
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
+    savings_batch_size: int,
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+    tuple[Float1D, Float1D, Float1D, Float1D],
 ]:
     """Build the per-combo EGM computation for one kernel invocation.
 
@@ -955,7 +966,7 @@ def _get_solve_one_combo(
 
     def solve_one_combo(
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
         """Run the EGM step for one (discrete x passive-node) combo.
 
         Takes the combo's values (discrete codes and passive node values)
@@ -963,8 +974,8 @@ def _get_solve_one_combo(
 
         Returns:
             Tuple of the combo's value row on the exogenous state grid and
-            its refined endogenous grid, policy, value, and marginal-utility
-            carry rows.
+            its refined endogenous grid, value, and marginal-utility carry
+            rows.
 
         """
         combo_pool = {
@@ -988,8 +999,10 @@ def _get_solve_one_combo(
             next_regime_to_egm_carry=next_regime_to_egm_carry,
             dtype=dtype,
         )
-        actions, endog_grid, values, expected_values = jax.vmap(compute_node)(
-            pieces.savings_nodes
+        actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
+            compute_node=compute_node,
+            savings_nodes=pieces.savings_nodes,
+            savings_batch_size=savings_batch_size,
         )
 
         def own_resources_of_state(state_value: ScalarFloat) -> ScalarFloat:
@@ -1057,7 +1070,6 @@ def _get_solve_one_combo(
         return (
             V_row,
             refined_grid.astype(dtype),
-            refined_policy.astype(dtype),
             value_row,
             marginal_utility_row,
         )
@@ -1070,11 +1082,12 @@ def _get_solve_one_combo_asset_rows(
     pieces: _EgmKernelPieces,
     pool: dict[str, Any],
     state_grid: Float1D,
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
+    savings_batch_size: int,
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+    tuple[Float1D, Float1D, Float1D, Float1D],
 ]:
     """Build the per-combo EGM computation solving per exogenous asset node.
 
@@ -1088,8 +1101,7 @@ def _get_solve_one_combo_asset_rows(
     the brute-force oracle evaluates the same decision-time functions. The
     per-combo carry row holds the per-node published points: abscissa the
     node resources (weakly ascending by the resources monotonicity check),
-    policy the published optimal action, value the published V, and
-    marginal the corrected
+    value the published V, and marginal the corrected
     $dV/dR = u'(c^*) + \\beta\\, (\\partial W/\\partial a)|_{A^*} / R'(a)$,
     NaN-padded to the carry length. The Euler-state gradient
     $\\partial W/\\partial a$ rebuilds the full continuation closure from
@@ -1102,7 +1114,7 @@ def _get_solve_one_combo_asset_rows(
 
     def solve_one_combo(
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
         """Run the per-asset-node EGM step for one (discrete x passive) combo.
 
         Takes the combo's values (discrete codes and passive node values)
@@ -1110,8 +1122,8 @@ def _get_solve_one_combo_asset_rows(
 
         Returns:
             Tuple of the combo's value row on the exogenous state grid and
-            its per-node endogenous grid, policy, value, and
-            marginal-utility carry rows.
+            its per-node endogenous grid, value, and marginal-utility carry
+            rows.
 
         """
         combo_pool = {
@@ -1148,7 +1160,7 @@ def _get_solve_one_combo_asset_rows(
 
         def solve_one_node(
             node_value: ScalarFloat,
-        ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
+        ) -> tuple[ScalarFloat, ScalarFloat]:
             """Run the single-post-state pipeline conditional on one node."""
             node_pool = {**combo_pool, pieces.euler_state_name: node_value}
 
@@ -1165,8 +1177,10 @@ def _get_solve_one_combo_asset_rows(
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
                 dtype=dtype,
             )
-            actions, endog_grid, values, expected_values = jax.vmap(compute_node)(
-                pieces.savings_nodes
+            actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
+                compute_node=compute_node,
+                savings_nodes=pieces.savings_nodes,
+                savings_batch_size=savings_batch_size,
             )
 
             resources_at_node, resources_gradient = jax.value_and_grad(
@@ -1236,23 +1250,22 @@ def _get_solve_one_combo_asset_rows(
             V_node = jnp.where(no_live_candidate, -jnp.inf, V_node)
             mu_node = jnp.where(jnp.isneginf(V_node) | no_live_candidate, 0.0, mu_node)
 
-            return V_node, policy_node, mu_node
+            return V_node, mu_node
 
         # Splay the per-asset-node solve into `lax.map` blocks of
         # `euler_batch_size` to shed peak working-set memory; `0` (or a size
         # covering the whole grid) keeps the fused vmap. The two are
         # numerically identical — only the schedule differs.
         if 0 < euler_batch_size < n_state:
-            V_vec, policy_vec, mu_vec = jax.lax.map(
+            V_vec, mu_vec = jax.lax.map(
                 solve_one_node, state_grid, batch_size=euler_batch_size
             )
         else:
-            V_vec, policy_vec, mu_vec = jax.vmap(solve_one_node)(state_grid)
+            V_vec, mu_vec = jax.vmap(solve_one_node)(state_grid)
         publish_resources = jax.vmap(own_resources_of_state)(state_grid)
 
         pad = jnp.full((pieces.n_pad - n_state,), jnp.nan, dtype=dtype)
         grid_row = jnp.concatenate([publish_resources.astype(dtype), pad])
-        policy_row = jnp.concatenate([policy_vec.astype(dtype), pad])
         value_row = jnp.concatenate([V_vec.astype(dtype), pad])
         marginal_row = jnp.concatenate([mu_vec.astype(dtype), pad])
 
@@ -1268,12 +1281,34 @@ def _get_solve_one_combo_asset_rows(
         return (
             V_vec.astype(dtype),
             grid_row,
-            policy_row,
             value_row,
             marginal_row,
         )
 
     return solve_one_combo
+
+
+def _compute_nodes_over_savings(
+    *,
+    compute_node: Callable,
+    savings_nodes: Float1D,
+    savings_batch_size: int,
+) -> tuple[FloatND, FloatND, FloatND, FloatND]:
+    """Run `compute_node` over every savings node, optionally splayed.
+
+    A positive `savings_batch_size` below the grid length splays the
+    per-savings-node continuation computation — the dominant egm_step working
+    buffer (savings nodes by the child stochastic mesh by the combo block) — into
+    `lax.map` blocks, shedding peak memory; 0 (or a size covering the whole
+    grid) keeps the fused vmap. The output is identical either way: the per-node
+    `(action, endogenous resources, value, expected continuation)` candidates
+    stacked along the savings axis, which the constrained-region assembly and
+    the upper envelope then consume on the full grid.
+    """
+    n_savings = savings_nodes.shape[0]
+    if 0 < savings_batch_size < n_savings:
+        return jax.lax.map(compute_node, savings_nodes, batch_size=savings_batch_size)
+    return jax.vmap(compute_node)(savings_nodes)
 
 
 def _get_compute_node(
@@ -1282,7 +1317,7 @@ def _get_compute_node(
     combo_pool: dict[str, Any],
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
     """Build the per-savings-node Euler inversion for one discrete combo."""
@@ -1349,7 +1384,7 @@ def _get_expected_continuation_value(
     *,
     pieces: _EgmKernelPieces,
     combo_pool: dict[str, Any],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
 ) -> Callable[[ScalarFloat], ScalarFloat]:
     """Build the expected-continuation map $W(A)$ for one combo pool.
@@ -1404,7 +1439,7 @@ def _get_expected_continuation_value(
 def _get_child_carry_reader(
     *,
     read: _ChildRead,
-    carry: EgmCarry,
+    carry: EGMCarry,
     combo_pool: dict[str, Any],
     post_decision_name: FunctionName,
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
@@ -1580,7 +1615,7 @@ def _compute_row_queries_and_gradients(
 def _expect_over_stochastic_nodes(
     *,
     read: _ChildRead,
-    carry: EgmCarry,
+    carry: EGMCarry,
     weight_vecs: tuple[Float1D, ...],
     deterministic_index: tuple[ScalarInt, ...],
     child_passive_values: tuple[ScalarFloat, ...],
@@ -1677,7 +1712,7 @@ def _interleave_child_index(
 
 def _aggregate_child_choices(
     *,
-    carry: EgmCarry,
+    carry: EGMCarry,
     child_index: tuple[ScalarInt, ...],
     child_passive_values: tuple[ScalarFloat, ...],
     child_passive_grids: tuple[Float1D, ...],
@@ -2273,7 +2308,7 @@ def _publish_node_V_and_policy(
     return V_node, policy_node
 
 
-def _get_raising_egm_step(*, reason: str) -> EgmStepFunction:
+def _get_raising_egm_step(*, reason: str) -> EGMStepFunction:
     """Build a kernel that raises at solve time for unsupported configurations.
 
     `Model` construction with a validated DC-EGM regime always succeeds;
@@ -2283,9 +2318,9 @@ def _get_raising_egm_step(*, reason: str) -> EgmStepFunction:
 
     def raising_egm_step(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+        next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
-    ) -> tuple[FloatND, EgmCarry]:
+    ) -> tuple[FloatND, EGMCarry]:
         raise NotImplementedError(reason)
 
     return raising_egm_step

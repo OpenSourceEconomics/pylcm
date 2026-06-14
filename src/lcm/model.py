@@ -338,6 +338,7 @@ class Model:
         max_compilation_workers: int | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
+        offload_carries_to_host: bool = False,
     ) -> PeriodToRegimeToVArr:
         """Solve the model using the pre-computed functions.
 
@@ -369,6 +370,16 @@ class Model:
             log_path: Directory for persisting diagnostic snapshots. Optional at
                 every level; snapshots are written only when it is set.
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
+            offload_carries_to_host: When `True`, the DC-EGM continuation carries
+                are moved to host memory between periods, so the accelerator holds
+                only the reachable-target subset each kernel re-uploads rather than
+                every carry-producing regime's carry at once. At scale the carry —
+                not the value function — is the dominant device resident (it spans
+                the dense endogenous grid and the discrete-action axis for every
+                regime), so this is the lever for fitting large DC-EGM models. Trades
+                per-period host round-trips for a large drop in peak device memory;
+                leave `False` for models that fit on the device, and a no-op on a
+                CPU-only host.
 
         Returns:
             Immutable mapping of period to a value function array for each regime.
@@ -389,6 +400,7 @@ class Model:
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
+            offload_carries_to_host=offload_carries_to_host,
         )
 
     def _solve_compiled(
@@ -400,6 +412,7 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
+        offload_carries_to_host: bool,
     ) -> PeriodToRegimeToVArr:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -416,6 +429,7 @@ class Model:
                 logger=log,
                 enable_jit=self.enable_jit,
                 max_compilation_workers=max_compilation_workers,
+                offload_carries_to_host=offload_carries_to_host,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -492,6 +506,7 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
+        offload_carries_to_host: bool = False,
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
@@ -547,6 +562,9 @@ class Model:
                 compilation. Only used when `period_to_regime_to_V_arr` is `None`
                 (i.e. when solve runs automatically). Defaults to the number of
                 physical CPU cores.
+            offload_carries_to_host: Forwarded to `solve` when this call solves
+                automatically (`period_to_regime_to_V_arr is None`); see
+                `Model.solve`. Ignored when a pre-computed solution is supplied.
 
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
@@ -622,6 +640,7 @@ class Model:
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
                 max_compilation_workers=max_compilation_workers,
+                offload_carries_to_host=offload_carries_to_host,
             )
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,

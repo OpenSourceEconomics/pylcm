@@ -28,8 +28,8 @@ import jax.numpy as jnp
 from dags import concatenate_functions
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.carry import EgmCarry
-from _lcm.typing import EconFunctionsMapping, EgmCarryProducer, StateName
+from _lcm.egm.carry import EGMCarry
+from _lcm.typing import EconFunctionsMapping, EGMCarryProducer, StateName
 from _lcm.utils.functools import get_union_of_args
 from lcm.typing import FloatND, IntND, ScalarFloat
 
@@ -38,7 +38,7 @@ from lcm.typing import FloatND, IntND, ScalarFloat
 N_STATELESS_CARRY_ROWS = 2
 
 
-def get_stateless_terminal_carry_producer() -> EgmCarryProducer:
+def get_stateless_terminal_carry_producer() -> EGMCarryProducer:
     """Build the carry producer for a terminal regime without states.
 
     Returns:
@@ -51,13 +51,12 @@ def get_stateless_terminal_carry_producer() -> EgmCarryProducer:
         *,
         V_arr: FloatND,
         **kwargs: FloatND | IntND,  # noqa: ARG001
-    ) -> EgmCarry:
+    ) -> EGMCarry:
         """Broadcast the scalar terminal value into constant carry rows."""
         dtype = canonical_float_dtype()
         zeros = jnp.zeros(N_STATELESS_CARRY_ROWS, dtype=dtype)
-        return EgmCarry(
+        return EGMCarry(
             endog_grid=jnp.linspace(0.0, 1.0, N_STATELESS_CARRY_ROWS, dtype=dtype),
-            policy=zeros,
             value=jnp.broadcast_to(
                 jnp.asarray(V_arr, dtype=dtype), (N_STATELESS_CARRY_ROWS,)
             ),
@@ -73,7 +72,7 @@ def get_terminal_wealth_carry_producer(
     functions: EconFunctionsMapping,
     state_name: StateName,
     discrete_state_names: tuple[StateName, ...] = (),
-) -> EgmCarryProducer:
+) -> EGMCarryProducer:
     """Build the carry producer for a terminal regime with one wealth state.
 
     The carry's value rows are the regime's value-function array (terminal
@@ -113,7 +112,7 @@ def get_terminal_wealth_carry_producer(
 
     def produce_terminal_wealth_carry(
         *, V_arr: FloatND, **kwargs: FloatND | IntND
-    ) -> EgmCarry:
+    ) -> EGMCarry:
         """Evaluate the terminal value and its wealth gradient on the grid."""
         dtype = canonical_float_dtype()
         wealth_grid = jnp.asarray(kwargs[state_name], dtype=dtype)
@@ -144,9 +143,8 @@ def get_terminal_wealth_carry_producer(
         endog_grid = jnp.broadcast_to(
             wealth_grid, (*leading_shape, wealth_grid.shape[0])
         )
-        return EgmCarry(
+        return EGMCarry(
             endog_grid=endog_grid,
-            policy=endog_grid,
             value=value,
             marginal_utility=jnp.where(
                 jnp.isneginf(value), 0.0, marginal_utility

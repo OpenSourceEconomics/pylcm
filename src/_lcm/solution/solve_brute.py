@@ -11,7 +11,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.carry import EgmCarry
+from _lcm.egm.carry import EGMCarry
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
@@ -38,6 +38,7 @@ def solve(
     logger: logging.Logger,
     enable_jit: bool,
     max_compilation_workers: int | None = None,
+    offload_carries_to_host: bool = False,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Solve a model using grid search.
 
@@ -54,6 +55,14 @@ def solve(
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
+        offload_carries_to_host: When `True`, the rolling `next_regime_to_egm_carry`
+            mapping is moved to host memory between periods, so the accelerator holds
+            only the reachable-target subset each kernel re-uploads at dispatch rather
+            than every carry-producing regime's carry at once. The carry — not the
+            value function — is the dominant DC-EGM resident at scale (it carries the
+            dense endogenous grid and the discrete-action axis for every regime). Trades
+            per-period host round-trips for a large drop in peak device memory; no-op on
+            a CPU-only host.
 
     Returns:
         Immutable mapping of periods to regime value function arrays.
@@ -127,7 +136,7 @@ def solve(
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}
-        period_egm_carries: dict[RegimeName, EgmCarry] = {}
+        period_egm_carries: dict[RegimeName, EGMCarry] = {}
 
         active_regimes = {
             regime_name: regime
@@ -200,6 +209,7 @@ def solve(
             period_egm_carries=period_egm_carries,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
+            offload_carries_to_host=offload_carries_to_host,
         )
         solution[period] = MappingProxyType(period_solution)
 
@@ -254,6 +264,64 @@ def solve(
     return MappingProxyType(solution)
 
 
+def _reachable_carry_subset(
+    *,
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    reachable_targets: frozenset[RegimeName],
+) -> MappingProxyType[RegimeName, EGMCarry]:
+    """The carries a regime's EGM kernel actually reads.
+
+    Each kernel only ever indexes `next_regime_to_egm_carry[target]` for its
+    reachable targets, so the full all-regimes mapping is needlessly large.
+    Filtering to the reachable subset keeps the kernel's carry pytree input
+    minimal: with the rolling carries host-offloaded, only this subset uploads
+    to the device per call rather than every regime's carry at once.
+
+    Iterates the source mapping's key order (stable across rolls) so the
+    filtered pytree structure matches between lowering and call. Membership is
+    tested defensively; reachable targets are always carry-producing.
+    """
+    return MappingProxyType(
+        {
+            name: next_regime_to_egm_carry[name]
+            for name in next_regime_to_egm_carry
+            if name in reachable_targets
+        }
+    )
+
+
+def _maybe_offload_carries_to_host(
+    *,
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    offload: bool,
+) -> MappingProxyType[RegimeName, EGMCarry]:
+    """Evict the rolled carries to host memory when offloading is enabled.
+
+    The rolling carry — the dense-endogenous-grid, per-discrete-action
+    continuation held for every carry-producing regime at once — is the
+    dominant device resident at scale. Moving it to host between periods leaves
+    the accelerator holding only the reachable-target subset each kernel
+    re-uploads at dispatch (`_reachable_carry_subset`). A no-op on a CPU-only
+    host. Returns the mapping unchanged when offloading is disabled.
+
+    Uses `jax.device_get` (host NumPy), not `jax.device_put(..., cpu_device)`:
+    under a sharded (distributed) solve the carries are device-sharded, and a
+    CPU-*committed* array re-uploaded to an AOT-compiled kernel is rejected for
+    disagreeing with the kernel's compiled input sharding. Host NumPy is
+    *uncommitted*, so JAX reshards it to the kernel's expected `in_shardings`
+    at dispatch instead of erroring.
+
+    `device_get` copies to host but leaves the device originals live. Freeing
+    them so the previous period's carries do not co-reside with the next
+    period's is done by the caller (`_roll_continuation_inputs`), which deletes
+    only *this* period's freshly-produced kernel outputs — never the shared
+    `egm_carry_template` buffers owned by the regimes and reused across solves.
+    """
+    if not offload:
+        return next_regime_to_egm_carry
+    return jax.device_get(next_regime_to_egm_carry)
+
+
 def _solve_regime_period(
     *,
     regime: Regime,
@@ -264,8 +332,8 @@ def _solve_regime_period(
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
-    period_egm_carries: dict[RegimeName, EgmCarry],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    period_egm_carries: dict[RegimeName, EGMCarry],
 ) -> FloatND:
     """Invoke one regime's solve kernel for one period.
 
@@ -292,7 +360,10 @@ def _solve_regime_period(
         V_arr, egm_carry = solve_kernel(
             **state_action_space.states,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_egm_carry=_reachable_carry_subset(
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                reachable_targets=regime.solution.egm_reachable_targets,
+            ),
             **_egm_kernel_params(
                 regime=regime, regime_name=regime_name, flat_params=flat_params
             ),
@@ -326,17 +397,23 @@ def _roll_continuation_inputs(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     period_solution: dict[RegimeName, FloatND],
-    period_egm_carries: dict[RegimeName, EgmCarry],
+    period_egm_carries: dict[RegimeName, EGMCarry],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    offload_carries_to_host: bool = False,
 ) -> tuple[
-    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EgmCarry]
+    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EGMCarry]
 ]:
     """Roll the per-period continuation mappings forward by one period.
 
     Both mappings keep their full template key sets — V for every regime,
     carries for every carry-producing regime — and update only the entries
     solved this period, so the pytree structure stays JIT-stable.
+
+    With `offload_carries_to_host`, the rolled carry mapping is evicted to host
+    memory (`_maybe_offload_carries_to_host`) so the accelerator holds only the
+    reachable-target subset each kernel re-uploads next period, rather than
+    every carry-producing regime's carry at once.
 
     Returns:
         Tuple of the rolled V mapping and the rolled carry mapping.
@@ -358,7 +435,22 @@ def _roll_continuation_inputs(
             for regime_name in next_regime_to_egm_carry
         }
     )
-    return rolled_V_arr, rolled_egm_carry
+    offloaded_egm_carry = _maybe_offload_carries_to_host(
+        next_regime_to_egm_carry=rolled_egm_carry,
+        offload=offload_carries_to_host,
+    )
+    if offload_carries_to_host:
+        # The host copies now hold the data, so free this period's freshly
+        # produced device carries — and only those. The carried-forward entries
+        # are either already host (prior offload) or the regimes' shared
+        # `egm_carry_template`, which must not be deleted (reused next period and
+        # across solves).
+        for fresh_carry in period_egm_carries.values():
+            for leaf in jax.tree_util.tree_leaves(fresh_carry):
+                delete = getattr(leaf, "delete", None)
+                if delete is not None:
+                    delete()
+    return rolled_V_arr, offloaded_egm_carry
 
 
 def _build_continuation_templates(
@@ -366,7 +458,7 @@ def _build_continuation_templates(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
 ) -> tuple[
-    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EgmCarry]
+    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EGMCarry]
 ]:
     """Build the period-invariant continuation-input templates.
 
@@ -440,7 +532,7 @@ def _compile_all_functions(
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     enable_jit: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
@@ -552,6 +644,7 @@ def _compile_all_functions(
         result = low.compile()
         elapsed = time.monotonic() - start
         logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
+        _log_kernel_memory(compiled=result, label=label, logger=logger)
         return func_id, result
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -571,6 +664,44 @@ def _compile_all_functions(
     }
 
 
+def _log_kernel_memory(
+    *,
+    compiled: jax.stages.Compiled,
+    label: str,
+    logger: logging.Logger,
+) -> None:
+    """Log XLA's compile-time memory analysis for one compiled kernel.
+
+    Gated on the `LCM_LOG_KERNEL_MEMORY` env var (off by default, zero cost).
+    `temp_size_in_bytes` is the peak scratch buffer XLA plans for the kernel —
+    the transient that binds the device at run time. Because it is computed at
+    compile, it is available even for configs whose *execution* would OOM, so
+    the egm_step working set can be sized (and swept against grid knobs) without
+    running or exhausting the device. `argument`/`output` sizes bound the
+    per-call resident inputs/outputs (the carry and V). Pair with
+    `XLA_FLAGS=--xla_dump_to=DIR` to name the HLO op behind the peak buffer.
+    """
+    if os.environ.get("LCM_LOG_KERNEL_MEMORY", "0") == "0":
+        return
+    try:
+        stats = compiled.memory_analysis()
+    except Exception as exc:  # noqa: BLE001 - backend may not support analysis
+        logger.info("  [mem] %s: memory_analysis unavailable (%s)", label, exc)
+        return
+    if stats is None:
+        logger.info("  [mem] %s: memory_analysis returned None", label)
+        return
+    gib = 1024**3
+    logger.info(
+        "  [mem] %s: temp=%.3f GiB  args=%.3f GiB  output=%.3f GiB  peak=%.3f GiB",
+        label,
+        stats.temp_size_in_bytes / gib,
+        stats.argument_size_in_bytes / gib,
+        stats.output_size_in_bytes / gib,
+        stats.peak_memory_in_bytes / gib,
+    )
+
+
 def _build_lower_args(
     *,
     regime: Regime,
@@ -580,7 +711,7 @@ def _build_lower_args(
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EgmCarry],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
 ) -> dict[str, object]:
     """Build the lowering arguments for one solve kernel.
 
@@ -593,7 +724,10 @@ def _build_lower_args(
     if is_egm_kernel:
         return {
             **dict(state_action_space.states),
-            "next_regime_to_egm_carry": next_regime_to_egm_carry,
+            "next_regime_to_egm_carry": _reachable_carry_subset(
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                reachable_targets=regime.solution.egm_reachable_targets,
+            ),
             "next_regime_to_V_arr": next_regime_to_V_arr,
             **_egm_kernel_params(
                 regime=regime, regime_name=regime_name, flat_params=flat_params

@@ -19,14 +19,17 @@ from typing import Literal
 from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
     WEALTH_GRID,
     LaborSupply,
     dead,
+    inverse_marginal_utility,
     is_working,
     labor_income,
+    next_wealth_from_savings,
+    resources,
+    savings,
     utility_retirement,
     utility_working,
 )
@@ -39,32 +42,6 @@ from tests.test_models.deterministic import base, retirement_only
 # interpolated from endogenous points spaced like the savings nodes — a
 # uniform grid under-resolves the lowest wealth nodes by orders of magnitude.
 SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in range(200)))
-
-
-def resources(wealth: ContinuousState) -> FloatND:
-    """Resources out of which consumption is paid; the classic case is wealth."""
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    """End-of-period savings (the post-decision state)."""
-    return resources - consumption
-
-
-def next_wealth_from_savings(
-    savings: FloatND, labor_income: FloatND, interest_rate: float
-) -> ContinuousState:
-    """Wealth transition written in terms of the post-decision state.
-
-    Algebraically identical to the base model's
-    `(1 + interest_rate) * (wealth - consumption) + labor_income`.
-    """
-    return (1 + interest_rate) * savings + labor_income
-
-
-def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
-    """Inverse of `u'(c) = 1/c` for log utility (work disutility is additive)."""
-    return 1.0 / marginal_continuation
 
 
 DCEGM_SOLVER = DCEGM(
