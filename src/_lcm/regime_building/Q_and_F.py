@@ -72,23 +72,23 @@ def get_Q_and_F(
 
     for target_regime_name in period_targets:
         # Transitions from the current regime to the target regime
-        target_transitions = transitions[target_regime_name]
+        bundle = transitions[target_regime_name]
 
         # Functions required to calculate the expected continuation values
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
             functions=functions,
-            transitions=target_transitions,
+            transitions=bundle,
         )
         next_stochastic_states_weights[target_regime_name] = (
             get_next_stochastic_weights_function(
                 functions=functions,
-                transitions=target_transitions,
+                transitions=bundle,
                 stochastic_transition_names=stochastic_transition_names,
                 regime_name=target_regime_name,
             )
         )
         joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            transitions=target_transitions,
+            transitions=bundle,
             stochastic_transition_names=stochastic_transition_names,
             regime_name=target_regime_name,
         )
@@ -101,12 +101,10 @@ def get_Q_and_F(
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
         # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
         next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([next_V_interpolator])
-            - set(target_transitions)
-            - {V_arr_name}
+            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
         )
         stochastic_variables = tuple(
-            key for key in target_transitions if key in stochastic_transition_names
+            key for key in bundle if key in stochastic_transition_names
         )
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
@@ -253,21 +251,21 @@ def get_compute_intermediates(
     next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
 
     for target_regime_name in period_targets:
-        target_transitions = transitions[target_regime_name]
+        bundle = transitions[target_regime_name]
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
             functions=functions,
-            transitions=target_transitions,
+            transitions=bundle,
         )
         next_stochastic_states_weights[target_regime_name] = (
             get_next_stochastic_weights_function(
                 functions=functions,
-                transitions=target_transitions,
+                transitions=bundle,
                 stochastic_transition_names=stochastic_transition_names,
                 regime_name=target_regime_name,
             )
         )
         joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            transitions=target_transitions,
+            transitions=bundle,
             stochastic_transition_names=stochastic_transition_names,
             regime_name=target_regime_name,
         )
@@ -278,12 +276,10 @@ def get_compute_intermediates(
             V_arr_name=V_arr_name,
         )
         next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([next_V_interpolator])
-            - set(target_transitions)
-            - {V_arr_name}
+            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
         )
         stochastic_variables = tuple(
-            key for key in target_transitions if key in stochastic_transition_names
+            key for key in bundle if key in stochastic_transition_names
         )
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
