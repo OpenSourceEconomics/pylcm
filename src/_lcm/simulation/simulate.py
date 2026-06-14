@@ -18,7 +18,7 @@ from _lcm.simulation.initial_conditions import (
     build_initial_states,
     trim_pad_from_raw_results,
 )
-from _lcm.simulation.random import draw_random_seed
+from _lcm.simulation.random import draw_random_seed, generate_simulation_keys
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
@@ -461,10 +461,25 @@ def _simulate_regime_in_period(
     # therefore only need to maximize the Q-function values over all actions.
     argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
 
+    taste_shock_kwargs = {}
+    if regime.has_taste_shocks:
+        # Per-subject Gumbel keys are generated for the full population and
+        # sliced by global subject index, so a subject's draw is invariant to
+        # how the population is chunked.
+        key, gumbel_keys = generate_simulation_keys(
+            key=key,
+            names=["taste_shock"],
+            n_initial_states=n_subjects,
+            subject_slice=subject_slice,
+            original_n_subjects=original_n_subjects,
+        )
+        taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
+
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
+        **taste_shock_kwargs,
         next_regime_to_V_arr=next_regime_to_V_arr,
         **flat_params[regime_name],
         period=jnp.int32(period),
