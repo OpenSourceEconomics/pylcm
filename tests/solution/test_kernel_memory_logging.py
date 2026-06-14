@@ -15,12 +15,18 @@ from tests.solution.test_egm_discrete import (
 
 
 def test_kernel_memory_dump_emits_at_log_level_off(monkeypatch, caplog):
-    """With the env var on, the `[mem]` lines surface even at `log_level="off"`."""
+    """With the env var on, the `[mem]` lines surface even at `log_level="off"`.
+
+    `log_level="off"` pins the `lcm` logger at `CRITICAL`; capturing at exactly
+    that level (rather than lowering it) tests the real off-path — the dump must
+    emit a record that clears the `CRITICAL` threshold, so a regression to a
+    lower level (e.g. `INFO`) would be suppressed and fail this test.
+    """
     monkeypatch.setenv("LCM_LOG_KERNEL_MEMORY", "1")
     model = _get_skill_model()
     params = _get_skill_model_params()
 
-    with caplog.at_level(logging.NOTSET, logger="lcm"):
+    with caplog.at_level(logging.CRITICAL, logger="lcm"):
         model.solve(params=params, log_level="off")
 
     # The decoupling is what's under test: a `[mem]` line surfaces at `off`. Its
