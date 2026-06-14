@@ -485,20 +485,19 @@ def _validate_param_types(flat_params: FlatParams) -> None:
             _check_leaf(value, f"{regime_name}__{key}")
 
 
-def fail_if_negative_taste_shock_scale(flat_params: FlatParams) -> None:
-    """Raise if any regime's taste-shock scale is negative.
+def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
+    """Raise if any regime's taste-shock scale is not strictly positive.
 
-    A scale of `0` is valid (the hard maximum); a negative scale would
-    multiply the Gumbel draw by a negative number in simulation and has no
-    consistent solve interpretation, so it is rejected.
+    Declaring taste shocks means opting into smoothing, so the scale must be
+    positive. The hard maximum is the no-taste-shocks model, reached by not
+    declaring taste shocks — not by `scale = 0`.
     """
     for regime_name, regime_params in flat_params.items():
         scale = regime_params.get(TASTE_SHOCK_SCALE_PARAM)
-        if isinstance(scale, Array) and float(scale) < 0:
+        if isinstance(scale, Array) and float(scale) <= 0:
             msg = (
                 f"The taste-shock scale of regime {regime_name!r} is "
-                f"{float(scale)}, but it must be non-negative (0 recovers the "
-                "hard maximum)."
+                f"{float(scale)}, but it must be strictly positive."
             )
             raise InvalidParamsError(msg)
 
