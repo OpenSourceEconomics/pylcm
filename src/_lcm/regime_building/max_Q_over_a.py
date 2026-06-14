@@ -234,7 +234,9 @@ def get_argmax_and_max_Q_over_a(
             noise = draw_taste_shock_noise(
                 key=taste_shock_key, shape=Qc.shape, scale=scale
             )
-            noisy_Qc = jnp.where(jnp.isneginf(Qc), -jnp.inf, Qc + noise)
+            # An infeasible discrete cell stays infeasible: the noise is
+            # finite, so `-inf + noise` is still `-inf`.
+            noisy_Qc = Qc + noise
             discrete_argmax = jnp.argmax(noisy_Qc)
             flat_index = (
                 discrete_argmax * n_continuous_cells

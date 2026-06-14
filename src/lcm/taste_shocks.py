@@ -15,7 +15,8 @@ class ExtremeValueTasteShocks:
     Declared on a `Regime` via `taste_shocks=ExtremeValueTasteShocks()`. One
     shock is drawn per combination of the regime's discrete actions; its scale
     is the runtime parameter `{"taste_shocks": {"scale": ...}}` in the regime's
-    params. A scale of `0.0` recovers the hard maximum.
+    params and must be strictly positive — the hard maximum is the
+    no-taste-shocks model, not a zero scale.
 
     The semantics are solver-independent: the solve replaces the hard maximum
     over discrete-action axes with the smoothed expected maximum

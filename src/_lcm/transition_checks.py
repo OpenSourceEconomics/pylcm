@@ -40,15 +40,13 @@ from dags.tree import tree_path_from_qname
 from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
 from _lcm.utils.logging import raise_or_warn, validation_enabled
+from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     InvalidStateTransitionProbabilitiesError,
 )
 from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
-
-# Within-regime flat param qname `target__law__param`.
-_NUM_PARTS_PER_TARGET_PARAM = 3
 
 
 def validate_transitions(
@@ -112,7 +110,8 @@ def _params_callable_for_state_transition(
             {
                 parts[2]: merged[name]
                 for name, parts in parts_by_name.items()
-                if len(parts) == _NUM_PARTS_PER_TARGET_PARAM and parts[1] == law_name
+                if len(parts) == ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
+                and parts[1] == law_name
             }
         )
 
