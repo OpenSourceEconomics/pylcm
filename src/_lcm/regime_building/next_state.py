@@ -92,10 +92,10 @@ def get_next_state_function_for_simulation(
 
     """
     per_target_funcs: dict[RegimeName, Callable[..., dict[str, FloatND | IntND]]] = {}
-    for target_regime_name, target_transitions in transitions.items():
-        extended = _extend_target_transitions_for_simulation(
+    for target_regime_name, bundle in transitions.items():
+        extended = _extend_bundle_for_simulation(
             target_regime_name=target_regime_name,
-            target_transitions=target_transitions,
+            bundle=bundle,
             all_grids=all_grids,
             variables=variables,
             stochastic_transition_names=stochastic_transition_names,
@@ -150,12 +150,10 @@ def get_next_stochastic_weights_function(
     )
 
 
-def _extend_target_transitions_for_simulation(
+def _extend_bundle_for_simulation(
     *,
     target_regime_name: RegimeName,
-    target_transitions: MappingProxyType[
-        TransitionFunctionName, Callable[..., FloatND | IntND]
-    ],
+    bundle: MappingProxyType[TransitionFunctionName, Callable[..., FloatND | IntND]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variables: Variables,
     stochastic_transition_names: frozenset[TransitionFunctionName],
@@ -173,7 +171,7 @@ def _extend_target_transitions_for_simulation(
 
     Args:
         target_regime_name: Target regime name.
-        target_transitions: Mapping of unqualified `next_<state>` transition names
+        bundle: Mapping of unqualified `next_<state>` transition names
             to functions, restricted to one target regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         variables: States and actions of the current regime with
@@ -186,9 +184,9 @@ def _extend_target_transitions_for_simulation(
     """
     process_names: frozenset[ProcessName] = frozenset(variables.process_names)
     extended: dict[TransitionFunctionName, Callable[..., FloatND | IntND]] = dict(
-        target_transitions
+        bundle
     )
-    for next_state_name in target_transitions:
+    for next_state_name in bundle:
         if next_state_name not in stochastic_transition_names:
             continue
         state_name = next_state_name.removeprefix("next_")

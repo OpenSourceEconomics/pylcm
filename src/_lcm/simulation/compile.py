@@ -375,9 +375,9 @@ def _build_next_state_args(
 
     stoch_transition_names = regime.simulation.stochastic_transition_names
     stoch_next_func_names = sorted(
-        qname_from_tree_path((target_regime, transition_name))
-        for target_regime, target_transitions in (regime.simulation.transitions.items())
-        for transition_name in target_transitions
+        qname_from_tree_path((target_regime_name, transition_name))
+        for target_regime_name, bundle in (regime.simulation.transitions.items())
+        for transition_name in bundle
         if transition_name in stoch_transition_names
     )
     _, stoch_keys = generate_simulation_keys(
