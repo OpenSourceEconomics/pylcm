@@ -644,6 +644,7 @@ def _compile_all_functions(
         result = low.compile()
         elapsed = time.monotonic() - start
         logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
+        _log_kernel_memory(compiled=result, label=label, logger=logger)
         return func_id, result
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -661,6 +662,44 @@ def _compile_all_functions(
     return {
         key: compiled[_func_dedup_key(func=func)] for key, func in all_functions.items()
     }
+
+
+def _log_kernel_memory(
+    *,
+    compiled: jax.stages.Compiled,
+    label: str,
+    logger: logging.Logger,
+) -> None:
+    """Log XLA's compile-time memory analysis for one compiled kernel.
+
+    Gated on the `LCM_LOG_KERNEL_MEMORY` env var (off by default, zero cost).
+    `temp_size_in_bytes` is the peak scratch buffer XLA plans for the kernel —
+    the transient that binds the device at run time. Because it is computed at
+    compile, it is available even for configs whose *execution* would OOM, so
+    the egm_step working set can be sized (and swept against grid knobs) without
+    running or exhausting the device. `argument`/`output` sizes bound the
+    per-call resident inputs/outputs (the carry and V). Pair with
+    `XLA_FLAGS=--xla_dump_to=DIR` to name the HLO op behind the peak buffer.
+    """
+    if os.environ.get("LCM_LOG_KERNEL_MEMORY", "0") == "0":
+        return
+    try:
+        stats = compiled.memory_analysis()
+    except Exception as exc:  # noqa: BLE001 - backend may not support analysis
+        logger.info("  [mem] %s: memory_analysis unavailable (%s)", label, exc)
+        return
+    if stats is None:
+        logger.info("  [mem] %s: memory_analysis returned None", label)
+        return
+    gib = 1024**3
+    logger.info(
+        "  [mem] %s: temp=%.3f GiB  args=%.3f GiB  output=%.3f GiB  peak=%.3f GiB",
+        label,
+        stats.temp_size_in_bytes / gib,
+        stats.argument_size_in_bytes / gib,
+        stats.output_size_in_bytes / gib,
+        stats.peak_memory_in_bytes / gib,
+    )
 
 
 def _build_lower_args(
