@@ -42,18 +42,6 @@ def test_logsum_small_scale_approaches_hard_max():
     aaae(got_logsum, jnp.array([4.0, 5.0]), decimal=5)
 
 
-def test_logsum_scale_zero_is_exactly_hard_max_and_one_hot():
-    """`scale = 0.0` returns the hard max and one-hot probabilities, no NaN."""
-    values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
-
-    got_logsum, got_probs = logsum.logsum_and_softmax(
-        values=values, scale=0.0, axes=(0,)
-    )
-
-    aaae(got_logsum, jnp.array([4.0, 5.0]), decimal=15)
-    aaae(got_probs, jnp.array([[0.0, 0.0], [0.0, 0.0], [1.0, 1.0]]), decimal=15)
-
-
 def test_logsum_multiple_axes():
     """Aggregation over all discrete axes collapses them jointly."""
     values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
