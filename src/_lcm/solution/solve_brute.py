@@ -310,6 +310,12 @@ def _maybe_offload_carries_to_host(
     disagreeing with the kernel's compiled input sharding. Host NumPy is
     *uncommitted*, so JAX reshards it to the kernel's expected `in_shardings`
     at dispatch instead of erroring.
+
+    `device_get` copies to host but leaves the device originals live. Freeing
+    them so the previous period's carries do not co-reside with the next
+    period's is done by the caller (`_roll_continuation_inputs`), which deletes
+    only *this* period's freshly-produced kernel outputs — never the shared
+    `egm_carry_template` buffers owned by the regimes and reused across solves.
     """
     if not offload:
         return next_regime_to_egm_carry
@@ -429,10 +435,22 @@ def _roll_continuation_inputs(
             for regime_name in next_regime_to_egm_carry
         }
     )
-    return rolled_V_arr, _maybe_offload_carries_to_host(
+    offloaded_egm_carry = _maybe_offload_carries_to_host(
         next_regime_to_egm_carry=rolled_egm_carry,
         offload=offload_carries_to_host,
     )
+    if offload_carries_to_host:
+        # The host copies now hold the data, so free this period's freshly
+        # produced device carries — and only those. The carried-forward entries
+        # are either already host (prior offload) or the regimes' shared
+        # `egm_carry_template`, which must not be deleted (reused next period and
+        # across solves).
+        for fresh_carry in period_egm_carries.values():
+            for leaf in jax.tree_util.tree_leaves(fresh_carry):
+                delete = getattr(leaf, "delete", None)
+                if delete is not None:
+                    delete()
+    return rolled_V_arr, offloaded_egm_carry
 
 
 def _build_continuation_templates(
