@@ -63,11 +63,16 @@ def interp_on_padded_grid(
     """
     xp_filled = jnp.where(jnp.isnan(xp), jnp.inf, xp)
     n_valid = jnp.sum(~jnp.isnan(xp))
+    # The bracket indices span the full query mesh (the dominant egm_step
+    # working buffer at scale), and never exceed the grid length (a few
+    # hundred), so int32 holds them with vast headroom. Under x64 `searchsorted`
+    # would default to int64 and double these gather-index buffers; the cast
+    # halves them with no effect on the gathered values.
     upper = jnp.clip(
         jnp.searchsorted(xp_filled, x_query, side="right"),
         1,
         jnp.maximum(n_valid - 1, 1),
-    )
+    ).astype(jnp.int32)
     lower = upper - 1
     xp_lower = xp[lower]
     fp_lower = fp[lower]
@@ -127,11 +132,13 @@ def locate_on_grid(
 
     """
     n_nodes = grid.shape[0]
+    # int32 bracket indices: the grid has at most a few hundred nodes, so the
+    # x64-default int64 only doubles the index buffers for nothing.
     upper = jnp.clip(
         jnp.searchsorted(grid, x_query, side="right"),
         1,
         n_nodes - 1,
-    )
+    ).astype(jnp.int32)
     lower = upper - 1
     bracket_width = grid[upper] - grid[lower]
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)

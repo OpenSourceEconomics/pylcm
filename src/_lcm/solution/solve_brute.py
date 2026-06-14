@@ -672,7 +672,13 @@ def _log_kernel_memory(
 ) -> None:
     """Log XLA's compile-time memory analysis for one compiled kernel.
 
-    Gated on the `LCM_LOG_KERNEL_MEMORY` env var (off by default, zero cost).
+    Gated on the `LCM_LOG_KERNEL_MEMORY` env var (off by default, zero cost),
+    independently of the solve `log_level`: the env var is the opt-in, so the
+    `[mem]` lines are emitted at a level that always clears the logger's
+    threshold — even at `log_level="off"`, where the debug NaN/Inf diagnostic
+    (its own per-period full-V transient) would otherwise have to be enabled to
+    see them, masking the real kernel peak.
+
     `temp_size_in_bytes` is the peak scratch buffer XLA plans for the kernel —
     the transient that binds the device at run time. Because it is computed at
     compile, it is available even for configs whose *execution* would OOM, so
@@ -683,16 +689,18 @@ def _log_kernel_memory(
     """
     if os.environ.get("LCM_LOG_KERNEL_MEMORY", "0") == "0":
         return
+    level = max(logger.getEffectiveLevel(), logging.INFO)
     try:
         stats = compiled.memory_analysis()
     except Exception as exc:  # noqa: BLE001 - backend may not support analysis
-        logger.info("  [mem] %s: memory_analysis unavailable (%s)", label, exc)
+        logger.log(level, "  [mem] %s: memory_analysis unavailable (%s)", label, exc)
         return
     if stats is None:
-        logger.info("  [mem] %s: memory_analysis returned None", label)
+        logger.log(level, "  [mem] %s: memory_analysis returned None", label)
         return
     gib = 1024**3
-    logger.info(
+    logger.log(
+        level,
         "  [mem] %s: temp=%.3f GiB  args=%.3f GiB  output=%.3f GiB  peak=%.3f GiB",
         label,
         stats.temp_size_in_bytes / gib,
