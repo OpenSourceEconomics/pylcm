@@ -795,12 +795,14 @@ def _fail_if_grid_hygiene_violated(
             f"(got distributed={euler_grid.distributed})."
         )
         raise ModelInitializationError(msg)
-    if solver.savings_grid.batch_size != 0 or solver.savings_grid.distributed:
+    # `batch_size` on the savings grid is honored: it splays the per-savings-node
+    # continuation computation into blocks (`lax.map`) to shed the dominant
+    # egm_step working buffer, leaving the value function unchanged. `distributed`
+    # remains disallowed — a continuous axis cannot be sharded.
+    if solver.savings_grid.distributed:
         msg = (
             f"The DCEGM savings grid of regime '{regime_name}' must not be "
-            f"batched or distributed (got "
-            f"batch_size={solver.savings_grid.batch_size}, "
-            f"distributed={solver.savings_grid.distributed})."
+            f"distributed (got distributed={solver.savings_grid.distributed})."
         )
         raise ModelInitializationError(msg)
     savings_max = float(jnp.max(solver.savings_grid.to_jax()))

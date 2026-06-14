@@ -264,6 +264,11 @@ def build_egm_step_functions(
         "ContinuousGrid", user_regimes[regime_name].states[solver.continuous_state]
     )
     euler_batch_size = euler_grid.batch_size
+    # `batch_size` on the exogenous savings grid splays the inner per-savings-node
+    # continuation computation into `lax.map` blocks, shedding the dominant
+    # egm_step working buffer (savings x child-stochastic mesh x combos); 0 keeps
+    # the fused vmap. The upper envelope still runs on the gathered full grid.
+    savings_batch_size = solver.savings_grid.batch_size
     own_v_info = regime_to_v_interpolation_info[regime_name]
     # Any savings-stage Euler-state read (the Euler law's residual, regime
     # transition probabilities, stochastic transition weights, non-Euler
@@ -377,6 +382,7 @@ def build_egm_step_functions(
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 asset_row_mode=asset_row_mode,
                 euler_batch_size=euler_batch_size,
+                savings_batch_size=savings_batch_size,
                 combo_state_batch_sizes=combo_state_batch_sizes,
             )
         built[(carry_targets, scalar_targets)] = kernel
@@ -486,6 +492,7 @@ def _get_egm_step(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     asset_row_mode: bool,
     euler_batch_size: int,
+    savings_batch_size: int,
     combo_state_batch_sizes: MappingProxyType[StateName, int],
 ) -> EGMStepFunction:
     """Build the EGM kernel for one continuation-target configuration.
@@ -560,6 +567,7 @@ def _get_egm_step(
             state_grid=state_grid,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
             euler_batch_size=euler_batch_size,
+            savings_batch_size=savings_batch_size,
         )
 
         if pieces.combo_names:
@@ -946,6 +954,7 @@ def _get_solve_one_combo(
     state_grid: Float1D,
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
+    savings_batch_size: int,
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
     tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
@@ -994,8 +1003,10 @@ def _get_solve_one_combo(
             next_regime_to_egm_carry=next_regime_to_egm_carry,
             dtype=dtype,
         )
-        actions, endog_grid, values, expected_values = jax.vmap(compute_node)(
-            pieces.savings_nodes
+        actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
+            compute_node=compute_node,
+            savings_nodes=pieces.savings_nodes,
+            savings_batch_size=savings_batch_size,
         )
 
         def own_resources_of_state(state_value: ScalarFloat) -> ScalarFloat:
@@ -1078,6 +1089,7 @@ def _get_solve_one_combo_asset_rows(
     state_grid: Float1D,
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
+    savings_batch_size: int,
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
     tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
@@ -1171,8 +1183,10 @@ def _get_solve_one_combo_asset_rows(
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
                 dtype=dtype,
             )
-            actions, endog_grid, values, expected_values = jax.vmap(compute_node)(
-                pieces.savings_nodes
+            actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
+                compute_node=compute_node,
+                savings_nodes=pieces.savings_nodes,
+                savings_batch_size=savings_batch_size,
             )
 
             resources_at_node, resources_gradient = jax.value_and_grad(
@@ -1280,6 +1294,29 @@ def _get_solve_one_combo_asset_rows(
         )
 
     return solve_one_combo
+
+
+def _compute_nodes_over_savings(
+    *,
+    compute_node: Callable,
+    savings_nodes: Float1D,
+    savings_batch_size: int,
+) -> tuple[FloatND, FloatND, FloatND, FloatND]:
+    """Run `compute_node` over every savings node, optionally splayed.
+
+    A positive `savings_batch_size` below the grid length splays the
+    per-savings-node continuation computation — the dominant egm_step working
+    buffer (savings nodes by the child stochastic mesh by the combo block) — into
+    `lax.map` blocks, shedding peak memory; 0 (or a size covering the whole
+    grid) keeps the fused vmap. The output is identical either way: the per-node
+    `(action, endogenous resources, value, expected continuation)` candidates
+    stacked along the savings axis, which the constrained-region assembly and
+    the upper envelope then consume on the full grid.
+    """
+    n_savings = savings_nodes.shape[0]
+    if 0 < savings_batch_size < n_savings:
+        return jax.lax.map(compute_node, savings_nodes, batch_size=savings_batch_size)
+    return jax.vmap(compute_node)(savings_nodes)
 
 
 def _get_compute_node(
