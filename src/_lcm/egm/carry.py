@@ -2,8 +2,8 @@
 
 Backward induction with DC-EGM threads more than the value-function array
 between adjacent periods: the parent's Euler inversion needs the child's
-optimal policy, value, and marginal utility on the child's endogenous
-(resources-space) grid. `EGMCarry` bundles these rows; the solve loop rolls a
+value and marginal utility on the child's endogenous (resources-space) grid.
+`EGMCarry` bundles these rows; the solve loop rolls a
 `next_regime_to_egm_carry` mapping alongside `next_regime_to_V_arr`, with one
 entry per carry-producing regime (DC-EGM regimes and terminal regimes a
 DC-EGM regime can target).
@@ -41,9 +41,6 @@ class EGMCarry:
     the left- and right-extrapolated policy values.
     """
 
-    policy: FloatND
-    """Optimal continuous action at `endog_grid` (NaN on padding slots)."""
-
     value: FloatND
     """Choice-specific value at `endog_grid`; `-inf` marks infeasible rows."""
 
@@ -65,7 +62,6 @@ class EGMCarry:
 # reject. Flatten order matches field declaration order.
 _EGM_CARRY_FIELDS = (
     "endog_grid",
-    "policy",
     "value",
     "marginal_utility",
     "taste_shock_scale",
@@ -106,15 +102,14 @@ def build_template_egm_carry(
             regimes without combo dimensions.
 
     Returns:
-        Carry with an ascending unit-interval grid and all-zero policy,
-        value, and marginal-utility rows, broadcast over `leading_shape`.
+        Carry with an ascending unit-interval grid and all-zero value and
+        marginal-utility rows, broadcast over `leading_shape`.
 
     """
     dtype = canonical_float_dtype()
     shape = (*leading_shape, n_rows)
     return EGMCarry(
         endog_grid=jnp.broadcast_to(jnp.linspace(0.0, 1.0, n_rows, dtype=dtype), shape),
-        policy=jnp.zeros(shape, dtype=dtype),
         value=jnp.zeros(shape, dtype=dtype),
         marginal_utility=jnp.zeros(shape, dtype=dtype),
         taste_shock_scale=jnp.asarray(0.0, dtype=dtype),

@@ -57,7 +57,6 @@ def get_stateless_terminal_carry_producer() -> EGMCarryProducer:
         zeros = jnp.zeros(N_STATELESS_CARRY_ROWS, dtype=dtype)
         return EGMCarry(
             endog_grid=jnp.linspace(0.0, 1.0, N_STATELESS_CARRY_ROWS, dtype=dtype),
-            policy=zeros,
             value=jnp.broadcast_to(
                 jnp.asarray(V_arr, dtype=dtype), (N_STATELESS_CARRY_ROWS,)
             ),
@@ -146,7 +145,6 @@ def get_terminal_wealth_carry_producer(
         )
         return EGMCarry(
             endog_grid=endog_grid,
-            policy=endog_grid,
             value=value,
             marginal_utility=jnp.where(
                 jnp.isneginf(value), 0.0, marginal_utility

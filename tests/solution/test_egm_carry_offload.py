@@ -4,12 +4,11 @@ At scale the rolling `next_regime_to_egm_carry` — a dense-endogenous-grid, per
 discrete-action carry held for *every* carry-producing regime at once — dwarfs the
 value function on the accelerator. `offload_carries_to_host=True` evicts it to host
 between periods; each period's kernels re-upload only their reachable-target subset
-(`_reachable_carry_subset`). The eviction is a `jax.device_put` to the CPU device, so
-on a CPU-only host it is a no-op and these tests assert the machine-independent
-guarantee: the value function is bit-identical with and without the flag.
+(`_reachable_carry_subset`). The eviction pulls the carry to an uncommitted host
+array, so on a CPU-only host it is a no-op and these tests assert the machine-
+independent guarantee: the value function is bit-identical with and without the flag.
 """
 
-import jax
 import pytest
 from numpy.testing import assert_array_equal
 
@@ -68,15 +67,13 @@ def test_offloaded_solve_returns_value_function_on_device():
     model = _get_skill_model()
     params = _get_skill_model_params()
 
-    solution = model.solve(
+    on_device = model.solve(params=params, log_level="warning")
+    offloaded = model.solve(
         params=params, log_level="warning", offload_carries_to_host=True
     )
 
-    cpu = jax.devices("cpu")[0]
-    # On a CPU-only host everything is on cpu; the assertion that matters across
-    # machines is that the solve completes and returns finite V (checked above by
-    # the parity test). Here we simply confirm the returned arrays are real device
-    # arrays, not host-detached placeholders.
-    for period in solution:
-        for v in solution[period].values():
-            assert v.devices() == {cpu}
+    # Offloading the carries leaves the published V on exactly the device(s) a
+    # plain solve places it on — the eviction touches the rolling carry only.
+    for period in on_device:
+        for regime_name, v in on_device[period].items():
+            assert offloaded[period][regime_name].devices() == v.devices()
