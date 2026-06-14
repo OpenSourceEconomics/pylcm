@@ -228,11 +228,11 @@ def _split_laws(
             named = cast("Mapping[RegimeName, _CanonicalLaw]", raw)
             per_target_laws[state_name] = {
                 target_regime_name: _desugar_identity(
-                    law=cell,
+                    law=law,
                     state_name=state_name,
                     grid=phase_slice.grid_states.get(state_name),
                 )
-                for target_regime_name, cell in named.items()
+                for target_regime_name, law in named.items()
             }
         else:
             bare_laws[state_name] = _desugar_identity(

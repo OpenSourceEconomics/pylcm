@@ -119,9 +119,9 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
             **{k: MappingProxyType(v) for k, v in function_params.items()},
             **{
                 target_regime_name: MappingProxyType(
-                    {k: MappingProxyType(v) for k, v in branch.items()}
+                    {k: MappingProxyType(v) for k, v in target_params.items()}
                 )
-                for target_regime_name, branch in per_target_params.items()
+                for target_regime_name, target_params in per_target_params.items()
             },
         }
     )
