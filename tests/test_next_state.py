@@ -41,7 +41,7 @@ def test_get_next_state_function_with_solve_target():
     flat_regime_params = {
         "discount_factor": jnp.asarray(1.0),
         "utility__disutility_of_work": jnp.asarray(1.0),
-        "next_wealth__interest_rate": jnp.asarray(0.05),
+        "working_life__next_wealth__interest_rate": jnp.asarray(0.05),
     }
     action = {"labor_supply": jnp.asarray(1), "consumption": jnp.asarray(10.0)}
     state = {"wealth": jnp.asarray(20.0)}
@@ -107,7 +107,7 @@ def test_get_next_state_function_with_simulate_target():
 def test_create_stochastic_next_func():
     labels = jnp.arange(2, dtype=jnp.int32)
     got_func = _create_discrete_stochastic_next_func(
-        target="t", next_state_name="next_a", labels=labels
+        target_regime_name="t", next_state_name="next_a", labels=labels
     )
 
     key = jnp.arange(2, dtype="uint32")  # PRNG dtype

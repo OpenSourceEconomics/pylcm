@@ -85,15 +85,18 @@ def _merge_derived_categoricals(
     user_regime: UserRegime,
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> dict[FunctionName, DiscreteGrid]:
-    """Merge model-level derived categoricals into one regime's mapping."""
+    """Merge model-level derived categoricals into one regime's mapping.
+
+    Follows the exactly-one-level rule of the other model-level regime
+    slots: a name is defined at model level or regime level, never both.
+    """
     merged = dict(user_regime.derived_categoricals)
     for var, grid in derived_categoricals.items():
-        existing = merged.get(var)
-        if existing is not None and existing.categories != grid.categories:
+        if var in merged:
             msg = (
-                f"Model-level derived_categoricals['{var}'] conflicts "
-                f"with regime '{regime_name}': {grid.categories} vs "
-                f"{existing.categories}."
+                f"Ambiguous specification for derived_categoricals['{var}'] "
+                f"in regime '{regime_name}': defined at model level and "
+                f"regime level. Remove one."
             )
             raise ModelInitializationError(msg)
         merged[var] = grid

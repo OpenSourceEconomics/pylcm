@@ -5,6 +5,7 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import pandas as pd
@@ -25,6 +26,7 @@ from _lcm.pandas_utils import (
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
+    materialize_granular_transition_params,
 )
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
@@ -318,16 +320,13 @@ class Model:
 
         """
         mutable = ensure_containers_are_mutable(self._params_template)
-        return {
-            regime: {
-                func: {
-                    param: getattr(typ, "__name__", str(typ))
-                    for param, typ in params.items()
-                }
-                for func, params in funcs.items()
-            }
-            for regime, funcs in mutable.items()
-        }
+
+        def _readable(value: object) -> object:
+            if isinstance(value, Mapping):
+                return {key: _readable(inner) for key, inner in value.items()}
+            return getattr(value, "__name__", str(value))
+
+        return cast("UserFacingParamsTemplate", _readable(mutable))
 
     @beartype(conf=PARAMS_CONF)
     def solve(
@@ -761,5 +760,12 @@ class Model:
                 regime_names_to_ids=self.regime_names_to_ids,
             )
         flat_params = cast_params_to_canonical_dtypes(flat_params)
+        flat_params = materialize_granular_transition_params(
+            flat_params=flat_params,
+            expansions={
+                regime_name: regime.granular_param_expansions
+                for regime_name, regime in self._regimes.items()
+            },
+        )
         _validate_param_types(flat_params)
         return flat_params

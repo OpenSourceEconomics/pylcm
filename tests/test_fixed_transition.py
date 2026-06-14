@@ -148,13 +148,12 @@ def test_name_mismatch_inside_per_target_dict_raises() -> None:
         )
 
 
-def test_unbound_none_state_transition_is_rejected_with_migration_hint() -> None:
-    """`None` masks a model-level law; unbound, it errors at model build with
-    a pointer to `fixed_transition` for the fixed-state intent."""
+def test_unbound_none_state_transition_is_rejected() -> None:
+    """`None` masks a model-level law; unbound, it errors at model build."""
     work = _build_regime(
         state_transitions={"health": None, "wealth": _next_wealth},
     )
-    with pytest.raises(ModelInitializationError, match=r"fixed_transition"):
+    with pytest.raises(ModelInitializationError, match=r"nothing to mask"):
         _build_model(work)
 
 

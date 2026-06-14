@@ -92,15 +92,15 @@ def get_next_state_function_for_simulation(
 
     """
     per_target_funcs: dict[RegimeName, Callable[..., dict[str, FloatND | IntND]]] = {}
-    for target, target_transitions in transitions.items():
-        extended = _extend_target_transitions_for_simulation(
-            target=target,
-            target_transitions=target_transitions,
+    for target_regime_name, bundle in transitions.items():
+        extended = _extend_bundle_for_simulation(
+            target_regime_name=target_regime_name,
+            bundle=bundle,
             all_grids=all_grids,
             variables=variables,
             stochastic_transition_names=stochastic_transition_names,
         )
-        per_target_funcs[target] = concatenate_functions(
+        per_target_funcs[target_regime_name] = concatenate_functions(
             functions=dict(extended) | dict(functions),
             targets=list(extended.keys()),
             return_type="dict",
@@ -150,12 +150,10 @@ def get_next_stochastic_weights_function(
     )
 
 
-def _extend_target_transitions_for_simulation(
+def _extend_bundle_for_simulation(
     *,
-    target: RegimeName,
-    target_transitions: MappingProxyType[
-        TransitionFunctionName, Callable[..., FloatND | IntND]
-    ],
+    target_regime_name: RegimeName,
+    bundle: MappingProxyType[TransitionFunctionName, Callable[..., FloatND | IntND]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variables: Variables,
     stochastic_transition_names: frozenset[TransitionFunctionName],
@@ -172,8 +170,8 @@ def _extend_target_transitions_for_simulation(
     it by name.
 
     Args:
-        target: Target regime name.
-        target_transitions: Mapping of unqualified `next_<state>` transition names
+        target_regime_name: Target regime name.
+        bundle: Mapping of unqualified `next_<state>` transition names
             to functions, restricted to one target regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         variables: States and actions of the current regime with
@@ -186,37 +184,37 @@ def _extend_target_transitions_for_simulation(
     """
     process_names: frozenset[ProcessName] = frozenset(variables.process_names)
     extended: dict[TransitionFunctionName, Callable[..., FloatND | IntND]] = dict(
-        target_transitions
+        bundle
     )
-    for next_state_name in target_transitions:
+    for next_state_name in bundle:
         if next_state_name not in stochastic_transition_names:
             continue
         state_name = next_state_name.removeprefix("next_")
         if state_name in process_names:
             extended[next_state_name] = _create_continuous_stochastic_next_func(
-                target=target,
+                target_regime_name=target_regime_name,
                 next_state_name=next_state_name,
                 all_grids=all_grids,
             )
         else:
             extended[next_state_name] = _create_discrete_stochastic_next_func(
-                target=target,
+                target_regime_name=target_regime_name,
                 next_state_name=next_state_name,
-                labels=all_grids[target][state_name].to_jax(),
+                labels=all_grids[target_regime_name][state_name].to_jax(),
             )
     return extended
 
 
 def _create_discrete_stochastic_next_func(
     *,
-    target: RegimeName,
+    target_regime_name: RegimeName,
     next_state_name: TransitionFunctionName,
     labels: DiscreteState,
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
     Args:
-        target: Target regime name.
+        target_regime_name: Target regime name.
         next_state_name: Transition function name with the `next_` prefix
             (e.g. `next_health`).
         labels: Category codes the discrete state can take (the DiscreteGrid
@@ -233,7 +231,7 @@ def _create_discrete_stochastic_next_func(
           dags-qualified `<target>__<next_state>`.
 
     """
-    qname = qname_from_tree_path((target, next_state_name))
+    qname = qname_from_tree_path((target_regime_name, next_state_name))
 
     @with_signature(
         args={f"weight_{qname}": "FloatND", f"key_{qname}": "PRNGKeyND"},
@@ -251,7 +249,7 @@ def _create_discrete_stochastic_next_func(
 
 def _create_continuous_stochastic_next_func(
     *,
-    target: RegimeName,
+    target_regime_name: RegimeName,
     next_state_name: TransitionFunctionName,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
 ) -> StochasticNextFunction:
@@ -262,7 +260,7 @@ def _create_continuous_stochastic_next_func(
     params before calling the process calculation function.
 
     Args:
-        target: Target regime name.
+        target_regime_name: Target regime name.
         next_state_name: Transition function name with the `next_` prefix
             (e.g. `next_<process>`).
         all_grids: Immutable mapping of regime names to Grid spec objects.
@@ -272,8 +270,8 @@ def _create_continuous_stochastic_next_func(
 
     """
     state_name = next_state_name.removeprefix("next_")
-    grid: _ContinuousStochasticProcess = all_grids[target][state_name]  # ty: ignore [invalid-assignment]
-    qname = qname_from_tree_path((target, next_state_name))
+    grid: _ContinuousStochasticProcess = all_grids[target_regime_name][state_name]  # ty: ignore [invalid-assignment]
+    qname = qname_from_tree_path((target_regime_name, next_state_name))
 
     if isinstance(grid, _AR1Process):
         return _create_ar1_next_func(qname=qname, state_name=state_name, grid=grid)

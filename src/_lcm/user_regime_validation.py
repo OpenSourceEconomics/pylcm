@@ -185,21 +185,21 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
                 f"reachable targets — use `transition=None` for a terminal "
                 f"regime.",
             )
-        for target_name, cell in side.items():
-            if not isinstance(target_name, str):
+        for target_regime_name, cell in side.items():
+            if not isinstance(target_regime_name, str):
                 error_messages.append(
-                    f"transition{label} per-target dict key {target_name!r} "
+                    f"transition{label} per-target dict key {target_regime_name!r} "
                     f"must be a string.",
                 )
             if isinstance(cell, Phased):
                 error_messages.append(
-                    f"transition{label}['{target_name}'] cannot be `Phased` — "
+                    f"transition{label}['{target_regime_name}'] cannot be `Phased` — "
                     f"`Phased` is outermost-only: wrap the whole entry, e.g. "
                     f"`Phased(solve={{...}}, simulate={{...}})`.",
                 )
             elif not isinstance(cell, MarkovTransition):
                 error_messages.append(
-                    f"transition{label}['{target_name}'] must be a "
+                    f"transition{label}['{target_regime_name}'] must be a "
                     f"`MarkovTransition`-wrapped probability function — "
                     f"deterministic per-target regime transitions are not yet "
                     f"supported (use the coarse form, or `MarkovTransition` "
@@ -563,33 +563,33 @@ def _validate_per_target_dict(
     """Validate a per-target transition dict for stochastic consistency and types."""
     error_messages: list[str] = []
     markov_count = 0
-    for target_name, target_value in targets.items():
-        if not isinstance(target_name, str):
+    for target_regime_name, law in targets.items():
+        if not isinstance(target_regime_name, str):
             error_messages.append(
                 f"state_transitions['{state_name}'] per-target dict key "
-                f"{target_name!r} must be a string.",
+                f"{target_regime_name!r} must be a string.",
             )
-        if isinstance(target_value, Phased):
+        if isinstance(law, Phased):
             error_messages.append(
-                f"state_transitions['{state_name}']['{target_name}'] cannot "
+                f"state_transitions['{state_name}']['{target_regime_name}'] cannot "
                 f"be `Phased` — `Phased` is outermost-only: wrap the whole "
                 f"entry, e.g. `Phased(solve={{...}}, simulate={{...}})`.",
             )
-        elif isinstance(target_value, MarkovTransition):
+        elif isinstance(law, MarkovTransition):
             markov_count += 1
-        elif isinstance(target_value, _IdentityTransition):
+        elif isinstance(law, _IdentityTransition):
             error_messages.extend(
                 _fixed_transition_name_mismatch(
                     state_name=state_name,
-                    value=target_value,
-                    label=f"['{target_name}']",
+                    value=law,
+                    label=f"['{target_regime_name}']",
                 )
             )
-        elif not callable(target_value):
+        elif not callable(law):
             error_messages.append(
-                f"state_transitions['{state_name}']['{target_name}'] must be "
+                f"state_transitions['{state_name}']['{target_regime_name}'] must be "
                 f"callable or MarkovTransition, got "
-                f"{type(target_value).__name__}.",
+                f"{type(law).__name__}.",
             )
     if 0 < markov_count < len(targets):
         error_messages.append(
