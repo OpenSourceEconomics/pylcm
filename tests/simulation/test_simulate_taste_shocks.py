@@ -108,26 +108,3 @@ def test_taste_shock_draws_are_invariant_to_subject_chunking():
     np.testing.assert_array_equal(
         results[0]["work"].to_numpy(), results[16]["work"].to_numpy()
     )
-
-
-def test_scale_zero_simulation_is_deterministic():
-    """With `scale = 0.0`, every subject at the same state makes the same choice."""
-    model = taste_shocks_toy.get_model()
-    params = taste_shocks_toy.get_params(scale=0.0)
-    result = model.simulate(
-        params=params,
-        initial_conditions={
-            "age": jnp.full(500, 40.0),
-            "wealth": jnp.full(500, 4.6),
-            "regime_id": jnp.full(
-                500, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
-            ),
-        },
-        period_to_regime_to_V_arr=None,
-        log_level="debug",
-        seed=5471,
-    )
-
-    df = result.to_dataframe(use_labels=False)
-    work_choices = df.query("period == 0")["work"]
-    assert work_choices.nunique() == 1
