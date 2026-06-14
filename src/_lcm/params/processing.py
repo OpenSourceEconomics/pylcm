@@ -39,15 +39,9 @@ from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 from _lcm.typing import FlatParams, ParamsTemplate, RegimeName, RegimeParamsTemplate
 from _lcm.utils.containers import ensure_containers_are_immutable
-from _lcm.utils.namespace import flatten_regime_namespace
+from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.typing import UserParams
-
-# Number of `__`-delimited parts in a flat param qname. A plain function
-# param is `regime__function__param` (3); a target-regime-specific transition
-# param inserts the target regime: `regime__target_regime__function__param` (4).
-_NUM_PARTS_FUNCTION_PARAM = 3
-_NUM_PARTS_PER_TARGET_SPECIFIC_PARAM = 4
 
 
 def process_params(
@@ -213,7 +207,7 @@ def materialize_granular_transition_params(
         for param_qname, value in leaves.items():
             path = tree_path_from_qname(param_qname)
             prefixes = regime_expansions.get(path[0])
-            if len(path) == _NUM_PARTS_FUNCTION_PARAM - 1 and prefixes:
+            if len(path) == ParamsQnameDepth.REGIME__FUNC__PARAM - 1 and prefixes:
                 for prefix in prefixes:
                     materialized[qname_from_tree_path((prefix, path[1]))] = value
             else:
@@ -370,12 +364,12 @@ def _find_candidates(
     if qname in params_flat:
         candidates.append(qname)
 
-    if len(tree_path) == _NUM_PARTS_PER_TARGET_SPECIFIC_PARAM:
+    if len(tree_path) == ParamsQnameDepth.REGIME__TARGETREGIME__FUNC__PARAM:
         coarse_qname = qname_from_tree_path((tree_path[0], *tree_path[2:]))
         if coarse_qname in params_flat:
             candidates.append(coarse_qname)
 
-    if len(tree_path) >= _NUM_PARTS_FUNCTION_PARAM:
+    if len(tree_path) >= ParamsQnameDepth.REGIME__FUNC__PARAM:
         regime_level_qname = qname_from_tree_path((tree_path[0], param_name))
         if regime_level_qname in params_flat:
             candidates.append(regime_level_qname)

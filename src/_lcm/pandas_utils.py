@@ -23,14 +23,12 @@ from _lcm.typing import (
     StateName,
 )
 from _lcm.utils.ast_inspection import _get_func_indexing_params
+from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.ages import AgeGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.typing import Float1D, FloatND, Int1D
-
-# Within-regime flat param qname `target__func__param`.
-_NUM_PARTS_PER_TARGET_PARAM = 3
 
 
 def has_series(params: Mapping) -> bool:
@@ -234,7 +232,7 @@ def convert_series_in_params(
         for func_param, value in regime_params.items():
             parts = tree_path_from_qname(func_param)
             param_name = parts[-1]
-            if len(parts) == _NUM_PARTS_PER_TARGET_PARAM:
+            if len(parts) == ParamsQnameDepth.TARGETREGIME__FUNC__PARAM:
                 # Per-target transition param `target__func__param`; the
                 # engine keys the function `func__target`.
                 resolved_func_name = qname_from_tree_path((parts[1], parts[0]))
