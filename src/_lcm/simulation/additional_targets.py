@@ -89,9 +89,9 @@ def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
     """
     stochastic_transition_names = regime.simulation.stochastic_transition_names
     return {
-        f"weight_{target_regime}__{transition_name}"
-        for target_regime, target_transitions in (regime.simulation.transitions.items())
-        for transition_name in target_transitions
+        f"weight_{target_regime_name}__{transition_name}"
+        for target_regime_name, bundle in (regime.simulation.transitions.items())
+        for transition_name in bundle
         if transition_name in stochastic_transition_names
     }
 

@@ -110,10 +110,8 @@ def calculate_next_states(
     # yields names in a non-deterministic order.
     stochastic_next_function_names = sorted(
         qname_from_tree_path((target_regime_name, transition_name))
-        for target_regime_name, target_transitions in (
-            regime.simulation.transitions.items()
-        )
-        for transition_name in target_transitions
+        for target_regime_name, bundle in (regime.simulation.transitions.items())
+        for transition_name in bundle
         if transition_name in stochastic_transition_names
     )
 

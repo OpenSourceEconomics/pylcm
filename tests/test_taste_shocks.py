@@ -42,16 +42,23 @@ def test_logsum_small_scale_approaches_hard_max():
     aaae(got_logsum, jnp.array([4.0, 5.0]), decimal=5)
 
 
-def test_logsum_scale_zero_is_exactly_hard_max_and_one_hot():
-    """`scale = 0.0` returns the hard max and one-hot probabilities, no NaN."""
-    values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
+def test_logsum_small_scale_does_not_overflow():
+    """A small positive scale keeps the smoothed value at the finite hard max.
+
+    `values / scale` overflows to `inf` in float32 when the scale is small
+    enough (here a normal float32 scale), but the smoothed maximum is bounded
+    by the hard max, so the result must stay finite with finite probabilities.
+    """
+    values = jnp.array([40.0, 50.0], dtype=jnp.float32)
 
     got_logsum, got_probs = logsum.logsum_and_softmax(
-        values=values, scale=0.0, axes=(0,)
+        values=values, scale=jnp.float32(1e-37), axes=(0,)
     )
 
-    aaae(got_logsum, jnp.array([4.0, 5.0]), decimal=15)
-    aaae(got_probs, jnp.array([[0.0, 0.0], [0.0, 0.0], [1.0, 1.0]]), decimal=15)
+    assert bool(jnp.isfinite(got_logsum).all())
+    aaae(got_logsum, jnp.float32(50.0), decimal=3)
+    assert not bool(jnp.isnan(got_probs).any())
+    aaae(got_probs, jnp.array([0.0, 1.0], dtype=jnp.float32), decimal=6)
 
 
 def test_logsum_multiple_axes():
@@ -131,12 +138,18 @@ def test_brute_force_solve_matches_reference_logsum_value_function():
 
 
 def test_smoothed_value_weakly_exceeds_hard_max_value():
-    """The EV1 expected maximum dominates the hard max pointwise."""
+    """The EV1 expected maximum dominates the hard max pointwise.
+
+    The smoothed value increases in the scale and tends to the hard max as the
+    scale vanishes, so a vanishing-scale solve serves as the hard-max baseline.
+    """
     model = taste_shocks_toy.get_model()
     smoothed = model.solve(
         params=taste_shocks_toy.get_params(scale=0.5), log_level="debug"
     )
-    hard = model.solve(params=taste_shocks_toy.get_params(scale=0.0), log_level="debug")
+    hard = model.solve(
+        params=taste_shocks_toy.get_params(scale=1e-8), log_level="debug"
+    )
 
     assert bool(jnp.all(smoothed[0]["alive"] >= hard[0]["alive"] - 1e-12))
 
@@ -183,15 +196,15 @@ def test_expected_max_with_taste_shock_noise_matches_logsum():
     np.testing.assert_allclose(simulated_expected_max, float(solved_value), atol=0.02)
 
 
-def test_negative_taste_shock_scale_raises():
-    """A negative taste-shock scale is rejected with a clear error.
+@pytest.mark.parametrize("scale", [0.0, -0.1])
+def test_nonpositive_taste_shock_scale_raises(scale):
+    """A taste-shock scale that is not strictly positive is rejected.
 
-    `scale = 0` (the hard maximum) stays valid; only a negative scale, which
-    would multiply the Gumbel draw by a negative number in simulation, is an
-    error.
+    Declaring taste shocks means opting into smoothing, so the scale must be
+    positive. The hard maximum is the no-taste-shocks model, not `scale = 0`.
     """
     model = taste_shocks_toy.get_model()
-    params = taste_shocks_toy.get_params(scale=-0.1)
+    params = taste_shocks_toy.get_params(scale=scale)
     with pytest.raises(InvalidParamsError, match="scale"):
         model.solve(params=params, log_level="debug")
 
