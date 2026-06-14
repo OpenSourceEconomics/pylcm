@@ -47,11 +47,18 @@ def logsum_and_softmax(
         and the choice probabilities (shape of `values`).
 
     """
-    scaled = values / scale
-    smoothed = scale * logsumexp(scaled, axis=axes)
-    # A fully infeasible slice has no valid choice: zero probability everywhere.
-    # `logsumexp` returns `-inf` for it without NaN, but `jax.nn.softmax` would
-    # divide `-inf` by `-inf` and return NaN, so guard the probabilities.
+    # Subtract the per-slice max before dividing by the scale: `values / scale`
+    # would overflow to `inf` for a tiny scale (e.g. float32 values near the
+    # max), but `(values - max) / scale <= 0` cannot. A fully infeasible slice
+    # has max `-inf`; shift it by `0` so the slice stays `-inf` instead of NaN.
+    v_max = jnp.max(values, axis=axes, keepdims=True)
+    finite_max = jnp.where(jnp.isneginf(v_max), 0.0, v_max)
+    shifted = (values - finite_max) / scale
+    smoothed = jnp.squeeze(finite_max, axis=axes) + scale * logsumexp(
+        shifted, axis=axes
+    )
+    # `logsumexp` returns `-inf` for a fully infeasible slice without NaN, but
+    # `jax.nn.softmax` would divide `-inf` by `-inf` there, so guard the probs.
     all_masked = jnp.all(jnp.isneginf(values), axis=axes, keepdims=True)
-    probs = jnp.where(all_masked, 0.0, jax.nn.softmax(scaled, axis=axes))
+    probs = jnp.where(all_masked, 0.0, jax.nn.softmax(shifted, axis=axes))
     return smoothed, probs

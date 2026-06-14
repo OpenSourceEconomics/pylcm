@@ -42,6 +42,25 @@ def test_logsum_small_scale_approaches_hard_max():
     aaae(got_logsum, jnp.array([4.0, 5.0]), decimal=5)
 
 
+def test_logsum_small_scale_does_not_overflow():
+    """A small positive scale keeps the smoothed value at the finite hard max.
+
+    `values / scale` overflows to `inf` in float32 when the scale is small
+    enough (here a normal float32 scale), but the smoothed maximum is bounded
+    by the hard max, so the result must stay finite with finite probabilities.
+    """
+    values = jnp.array([40.0, 50.0], dtype=jnp.float32)
+
+    got_logsum, got_probs = logsum.logsum_and_softmax(
+        values=values, scale=jnp.float32(1e-37), axes=(0,)
+    )
+
+    assert bool(jnp.isfinite(got_logsum).all())
+    aaae(got_logsum, jnp.float32(50.0), decimal=3)
+    assert not bool(jnp.isnan(got_probs).any())
+    aaae(got_probs, jnp.array([0.0, 1.0], dtype=jnp.float32), decimal=6)
+
+
 def test_logsum_multiple_axes():
     """Aggregation over all discrete axes collapses them jointly."""
     values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
