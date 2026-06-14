@@ -5,7 +5,7 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast, overload
 
 import jax
 import pandas as pd
@@ -58,6 +58,7 @@ from _lcm.typing import (
     FlatParams,
     FunctionName,
     ParamsTemplate,
+    PeriodToRegimeToSimPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
@@ -329,6 +330,32 @@ class Model:
 
         return cast("UserFacingParamsTemplate", _readable(mutable))
 
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        offload_carries_to_host: bool = ...,
+        return_simulation_policy: Literal[False] = ...,
+    ) -> PeriodToRegimeToVArr: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        offload_carries_to_host: bool = ...,
+        return_simulation_policy: Literal[True],
+    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]: ...
+
     @beartype(conf=PARAMS_CONF)
     def solve(
         self,
@@ -339,7 +366,8 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         offload_carries_to_host: bool = False,
-    ) -> PeriodToRegimeToVArr:
+        return_simulation_policy: bool = False,
+    ) -> PeriodToRegimeToVArr | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]:
         """Solve the model using the pre-computed functions.
 
         Args:
@@ -381,8 +409,17 @@ class Model:
                 leave `False` for models that fit on the device, and a no-op on a
                 CPU-only host.
 
+            return_simulation_policy: When `True`, also return the per-period
+                DC-EGM simulation policies (the off-grid consumption functions
+                `simulate` interpolates), as `(value_functions, policies)`.
+                Pass both back to `simulate` to drive off-grid simulation of a
+                separately-solved model. Defaults to `False` (value functions
+                only).
+
         Returns:
-            Immutable mapping of period to a value function array for each regime.
+            Immutable mapping of period to a value function array for each
+            regime; or, when `return_simulation_policy=True`, that mapping
+            paired with the per-period DC-EGM simulation-policy mapping.
 
         """
         log = get_logger(log_level=log_level)
@@ -393,15 +430,20 @@ class Model:
             ages=self.ages,
             logger=log,
         )
-        return self._solve_compiled(
-            flat_params=flat_params,
-            params=params,
-            log=log,
-            log_path=log_path,
-            log_keep_n_latest=log_keep_n_latest,
-            max_compilation_workers=max_compilation_workers,
-            offload_carries_to_host=offload_carries_to_host,
+        period_to_regime_to_V_arr, period_to_regime_to_sim_policy = (
+            self._solve_compiled(
+                flat_params=flat_params,
+                params=params,
+                log=log,
+                log_path=log_path,
+                log_keep_n_latest=log_keep_n_latest,
+                max_compilation_workers=max_compilation_workers,
+                offload_carries_to_host=offload_carries_to_host,
+            )
         )
+        if return_simulation_policy:
+            return period_to_regime_to_V_arr, period_to_regime_to_sim_policy
+        return period_to_regime_to_V_arr
 
     def _solve_compiled(
         self,
@@ -413,16 +455,18 @@ class Model:
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
         offload_carries_to_host: bool,
-    ) -> PeriodToRegimeToVArr:
+    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
+        Returns the value-function arrays and the per-period DC-EGM simulation
+        policies (the off-grid consumption functions `simulate` interpolates).
         With `log_path` set, a snapshot is written at `log_level="debug"`
         (every solve) and at `"warning"` / `"progress"` whenever the returned
         solution contains NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
         try:
-            period_to_regime_to_V_arr = solve(
+            period_to_regime_to_V_arr, period_to_regime_to_sim_policy = solve(
                 flat_params=flat_params,
                 ages=self.ages,
                 regimes=self._regimes,
@@ -454,7 +498,7 @@ class Model:
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
             )
-        return period_to_regime_to_V_arr
+        return period_to_regime_to_V_arr, period_to_regime_to_sim_policy
 
     def _resolve_simulate_regimes(
         self,
@@ -633,14 +677,19 @@ class Model:
             log=log,
         )
         if period_to_regime_to_V_arr is None:
-            period_to_regime_to_V_arr = self._solve_compiled(
-                flat_params=flat_params,
-                params=params,
-                log=log,
-                log_path=log_path,
-                log_keep_n_latest=log_keep_n_latest,
-                max_compilation_workers=max_compilation_workers,
-                offload_carries_to_host=offload_carries_to_host,
+            # Increment 2 will thread the published policy into off-grid
+            # simulation; for now simulation stays grid-restricted, so the
+            # policy is unpacked and dropped.
+            period_to_regime_to_V_arr, _period_to_regime_to_sim_policy = (
+                self._solve_compiled(
+                    flat_params=flat_params,
+                    params=params,
+                    log=log,
+                    log_path=log_path,
+                    log_keep_n_latest=log_keep_n_latest,
+                    max_compilation_workers=max_compilation_workers,
+                    offload_carries_to_host=offload_carries_to_host,
+                )
             )
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,

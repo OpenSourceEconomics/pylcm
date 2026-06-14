@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
@@ -39,7 +40,10 @@ def solve(
     enable_jit: bool,
     max_compilation_workers: int | None = None,
     offload_carries_to_host: bool = False,
-) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+) -> tuple[
+    MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    MappingProxyType[int, MappingProxyType[RegimeName, EGMSimPolicy]],
+]:
     """Solve a model using grid search.
 
     Args:
@@ -65,7 +69,10 @@ def solve(
             a CPU-only host.
 
     Returns:
-        Immutable mapping of periods to regime value function arrays.
+        Tuple of (the immutable mapping of periods to regime value-function
+        arrays, the immutable mapping of periods to each DC-EGM regime's
+        published `EGMSimPolicy` — the off-grid consumption function simulation
+        interpolates; empty for periods/regimes with no DC-EGM kernel).
 
     """
     next_regime_to_V_arr, next_regime_to_egm_carry = _build_continuation_templates(
@@ -85,6 +92,7 @@ def solve(
     )
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
+    sim_policies: dict[int, MappingProxyType[RegimeName, EGMSimPolicy]] = {}
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -118,12 +126,14 @@ def solve(
     #   logger's debug level.
     diagnostics_enabled = validation_enabled(logger)
     stats_enabled = logger.isEnabledFor(logging.DEBUG)
-    diagnostic_rows: list[_DiagnosticRow] = []
-    diagnostic_min: list[FloatND] = []
-    diagnostic_max: list[FloatND] = []
-    diagnostic_mean: list[FloatND] = []
-    running_any_nan: BoolND = jnp.zeros((), dtype=bool)
-    running_any_inf: BoolND = jnp.zeros((), dtype=bool)
+    (
+        diagnostic_rows,
+        diagnostic_min,
+        diagnostic_max,
+        diagnostic_mean,
+        running_any_nan,
+        running_any_inf,
+    ) = _init_diagnostic_accumulators()
 
     logger.info("Starting solution")
     total_start = time.monotonic()
@@ -137,6 +147,7 @@ def solve(
         period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}
         period_egm_carries: dict[RegimeName, EGMCarry] = {}
+        period_sim_policies: dict[RegimeName, EGMSimPolicy] = {}
 
         active_regimes = {
             regime_name: regime
@@ -162,6 +173,7 @@ def solve(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
                 period_egm_carries=period_egm_carries,
+                period_sim_policies=period_sim_policies,
             )
             # Async reductions: gated on log level. `"off"` skips
             # everything — no kernel launches, no host syncs, no
@@ -212,6 +224,7 @@ def solve(
             offload_carries_to_host=offload_carries_to_host,
         )
         solution[period] = MappingProxyType(period_solution)
+        sim_policies[period] = MappingProxyType(period_sim_policies)
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)
@@ -261,7 +274,7 @@ def solve(
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
-    return MappingProxyType(solution)
+    return MappingProxyType(solution), MappingProxyType(sim_policies)
 
 
 def _reachable_carry_subset(
@@ -322,6 +335,29 @@ def _maybe_offload_carries_to_host(
     return jax.device_get(next_regime_to_egm_carry)
 
 
+def _init_diagnostic_accumulators() -> tuple[
+    list[_DiagnosticRow],
+    list[FloatND],
+    list[FloatND],
+    list[FloatND],
+    BoolND,
+    BoolND,
+]:
+    """Initialize the per-period async diagnostics accumulators.
+
+    Returns the empty diagnostic-row, min, max, and mean lists, and the two
+    running NaN/Inf flag scalars (folded into across the backward-induction
+    loop). The two flags share the same immutable zero scalar initially; each
+    is reassigned independently inside the loop.
+    """
+    zero: BoolND = jnp.zeros((), dtype=bool)
+    rows: list[_DiagnosticRow] = []
+    mins: list[FloatND] = []
+    maxs: list[FloatND] = []
+    means: list[FloatND] = []
+    return rows, mins, maxs, means, zero, zero
+
+
 def _solve_regime_period(
     *,
     regime: Regime,
@@ -334,6 +370,7 @@ def _solve_regime_period(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     period_egm_carries: dict[RegimeName, EGMCarry],
+    period_sim_policies: dict[RegimeName, EGMSimPolicy],
 ) -> FloatND:
     """Invoke one regime's solve kernel for one period.
 
@@ -357,7 +394,7 @@ def _solve_regime_period(
 
     """
     if regime.solution.egm_step is not None:
-        V_arr, egm_carry = solve_kernel(
+        V_arr, egm_carry, sim_policy = solve_kernel(
             **state_action_space.states,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=_reachable_carry_subset(
@@ -371,6 +408,7 @@ def _solve_regime_period(
             age=ages.values[period],
         )
         period_egm_carries[regime_name] = egm_carry
+        period_sim_policies[regime_name] = sim_policy
         return V_arr
 
     V_arr = solve_kernel(

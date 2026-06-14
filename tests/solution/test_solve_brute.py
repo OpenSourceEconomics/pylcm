@@ -140,7 +140,7 @@ def test_solve_brute():
         active_periods=[0, 1],
     )
 
-    solution = solve(
+    solution, _sim_policies = solve(
         flat_params=MappingProxyType({"default": flat_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
@@ -201,7 +201,7 @@ def test_solve_brute_single_period_Qc_arr():
         active_periods=[0, 1],
     )
 
-    got = solve(
+    got, _sim_policies = solve(
         flat_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),

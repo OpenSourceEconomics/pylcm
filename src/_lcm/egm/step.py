@@ -146,6 +146,7 @@ from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import interp_on_padded_grid, locate_on_grid
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.egm.upper_envelope import get_upper_envelope
 from _lcm.egm.validation import _reachable_target_names, savings_stage_reads_euler_state
 from _lcm.engine import StateActionSpace
@@ -530,7 +531,7 @@ def _get_egm_step(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
         next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
-    ) -> tuple[FloatND, EGMCarry]:
+    ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         """Run the DC-EGM step and publish V on the exogenous grid.
 
         Args:
@@ -580,7 +581,7 @@ def _get_egm_step(
             @with_signature(args=list(combo_var_names))
             def solve_one_combo_over_axes(
                 **combo_values: ScalarFloat | ScalarInt,
-            ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+            ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
                 return solve_one_combo(
                     tuple(combo_values[name] for name in combo_var_names)
                 )
@@ -602,14 +603,16 @@ def _get_egm_step(
                     for name, values in own_discrete_action_values.items()
                 },
             }
-            V_stack, grid_stack, value_stack, marginal_stack = _map_combo_product(
-                func=solve_one_combo_over_axes,
-                combo_var_names=combo_var_names,
-                combo_axis_values=combo_axis_values,
-                batch_sizes={
-                    **dict(combo_state_batch_sizes),
-                    **dict.fromkeys(own_discrete_action_values, 0),
-                },
+            V_stack, grid_stack, policy_stack, value_stack, marginal_stack = (
+                _map_combo_product(
+                    func=solve_one_combo_over_axes,
+                    combo_var_names=combo_var_names,
+                    combo_axis_values=combo_axis_values,
+                    batch_sizes={
+                        **dict(combo_state_batch_sizes),
+                        **dict.fromkeys(own_discrete_action_values, 0),
+                    },
+                )
             )
             n_state_axes = len(own_discrete_state_names) + len(own_passive_state_names)
             action_axes = tuple(range(n_state_axes, len(combo_var_names)))
@@ -628,15 +631,17 @@ def _get_egm_step(
                 marginal_utility=marginal_stack,
                 taste_shock_scale=own_taste_shock_scale,
             )
+            sim_policy = EGMSimPolicy(endog_grid=grid_stack, policy=policy_stack)
         else:
-            V_arr, grid_row, value_row, marginal_row = solve_one_combo(())
+            V_arr, grid_row, policy_row, value_row, marginal_row = solve_one_combo(())
             carry = EGMCarry(
                 endog_grid=grid_row,
                 value=value_row,
                 marginal_utility=marginal_row,
                 taste_shock_scale=own_taste_shock_scale,
             )
-        return V_arr, carry
+            sim_policy = EGMSimPolicy(endog_grid=grid_row, policy=policy_row)
+        return V_arr, carry, sim_policy
 
     return egm_step
 
@@ -953,7 +958,7 @@ def _get_solve_one_combo(
     savings_batch_size: int,
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D],
+    tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
 ]:
     """Build the per-combo EGM computation for one kernel invocation.
 
@@ -966,7 +971,7 @@ def _get_solve_one_combo(
 
     def solve_one_combo(
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
         """Run the EGM step for one (discrete x passive-node) combo.
 
         Takes the combo's values (discrete codes and passive node values)
@@ -974,8 +979,8 @@ def _get_solve_one_combo(
 
         Returns:
             Tuple of the combo's value row on the exogenous state grid and
-            its refined endogenous grid, value, and marginal-utility carry
-            rows.
+            its refined endogenous grid, the published consumption policy on
+            that grid, and the value and marginal-utility carry rows.
 
         """
         combo_pool = {
@@ -1070,6 +1075,7 @@ def _get_solve_one_combo(
         return (
             V_row,
             refined_grid.astype(dtype),
+            refined_policy.astype(dtype),
             value_row,
             marginal_utility_row,
         )
@@ -1087,7 +1093,7 @@ def _get_solve_one_combo_asset_rows(
     savings_batch_size: int,
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D],
+    tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
 ]:
     """Build the per-combo EGM computation solving per exogenous asset node.
 
@@ -1114,7 +1120,7 @@ def _get_solve_one_combo_asset_rows(
 
     def solve_one_combo(
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
         """Run the per-asset-node EGM step for one (discrete x passive) combo.
 
         Takes the combo's values (discrete codes and passive node values)
@@ -1122,7 +1128,8 @@ def _get_solve_one_combo_asset_rows(
 
         Returns:
             Tuple of the combo's value row on the exogenous state grid and
-            its per-node endogenous grid, value, and marginal-utility carry
+            its per-node endogenous grid, the published consumption policy on
+            that grid, and the value and marginal-utility carry
             rows.
 
         """
@@ -1160,7 +1167,7 @@ def _get_solve_one_combo_asset_rows(
 
         def solve_one_node(
             node_value: ScalarFloat,
-        ) -> tuple[ScalarFloat, ScalarFloat]:
+        ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
             """Run the single-post-state pipeline conditional on one node."""
             node_pool = {**combo_pool, pieces.euler_state_name: node_value}
 
@@ -1250,22 +1257,23 @@ def _get_solve_one_combo_asset_rows(
             V_node = jnp.where(no_live_candidate, -jnp.inf, V_node)
             mu_node = jnp.where(jnp.isneginf(V_node) | no_live_candidate, 0.0, mu_node)
 
-            return V_node, mu_node
+            return V_node, policy_node, mu_node
 
         # Splay the per-asset-node solve into `lax.map` blocks of
         # `euler_batch_size` to shed peak working-set memory; `0` (or a size
         # covering the whole grid) keeps the fused vmap. The two are
         # numerically identical — only the schedule differs.
         if 0 < euler_batch_size < n_state:
-            V_vec, mu_vec = jax.lax.map(
+            V_vec, policy_vec, mu_vec = jax.lax.map(
                 solve_one_node, state_grid, batch_size=euler_batch_size
             )
         else:
-            V_vec, mu_vec = jax.vmap(solve_one_node)(state_grid)
+            V_vec, policy_vec, mu_vec = jax.vmap(solve_one_node)(state_grid)
         publish_resources = jax.vmap(own_resources_of_state)(state_grid)
 
         pad = jnp.full((pieces.n_pad - n_state,), jnp.nan, dtype=dtype)
         grid_row = jnp.concatenate([publish_resources.astype(dtype), pad])
+        policy_row = jnp.concatenate([policy_vec.astype(dtype), pad])
         value_row = jnp.concatenate([V_vec.astype(dtype), pad])
         marginal_row = jnp.concatenate([mu_vec.astype(dtype), pad])
 
@@ -1281,6 +1289,7 @@ def _get_solve_one_combo_asset_rows(
         return (
             V_vec.astype(dtype),
             grid_row,
+            policy_row,
             value_row,
             marginal_row,
         )
@@ -2320,7 +2329,7 @@ def _get_raising_egm_step(*, reason: str) -> EGMStepFunction:
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
-    ) -> tuple[FloatND, EGMCarry]:
+    ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         raise NotImplementedError(reason)
 
     return raising_egm_step

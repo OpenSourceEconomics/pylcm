@@ -15,6 +15,7 @@ from jax import Array
 from jaxtyping import Key
 
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 
@@ -99,6 +100,9 @@ type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # Type aliases for value function arrays
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
+type PeriodToRegimeToSimPolicy = MappingProxyType[
+    int, MappingProxyType[RegimeName, EGMSimPolicy]
+]
 
 
 @runtime_checkable
@@ -244,8 +248,9 @@ class EGMStepFunction(Protocol):
 
     Consumes the regime's exogenous state grids, the rolling value-function
     and EGM-carry mappings, and the regime's flat params; returns the
-    regime's value-function array on the exogenous state grid together with
-    the carry its parents interpolate.
+    regime's value-function array on the exogenous state grid, the carry its
+    parents interpolate, and the published consumption policy simulation
+    interpolates off-grid.
 
     Used for both type checking and beartype runtime checks.
 
@@ -256,7 +261,7 @@ class EGMStepFunction(Protocol):
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
-    ) -> tuple[FloatND, EGMCarry]: ...
+    ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...
 
 
 @runtime_checkable
