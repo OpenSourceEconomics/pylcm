@@ -239,12 +239,12 @@ def _phase_fixed_point(
     reachable: dict[RegimeName, frozenset[RegimeName]] = {}
     for regime_name, spec in specs.items():
         phase_slice: RegimePhaseSpec = getattr(spec, phase_name)
-        transition = phase_slice.regime_transition
-        if transition is None:
+        regime_transition = phase_slice.regime_transition
+        if regime_transition is None:
             reachable[regime_name] = frozenset()
-        elif isinstance(transition, Mapping):
+        elif isinstance(regime_transition, Mapping):
             reachable[regime_name] = (
-                frozenset(cast("Mapping[RegimeName, object]", transition))
+                frozenset(cast("Mapping[RegimeName, object]", regime_transition))
                 & all_regime_names
             )
         else:
@@ -317,14 +317,14 @@ def _regime_transition_roots(
     A per-target dict contributes every cell; a coarse transition contributes
     itself; a terminal regime contributes nothing.
     """
-    transition = phase_slice.regime_transition
-    if isinstance(transition, Mapping):
+    regime_transition = phase_slice.regime_transition
+    if isinstance(regime_transition, Mapping):
         return {
             f"__next_regime_{target_regime_name}": cast("UserFunction", cell)
-            for target_regime_name, cell in transition.items()
+            for target_regime_name, cell in regime_transition.items()
         }
-    if transition is not None:
-        return {"__next_regime": cast("UserFunction", transition)}
+    if regime_transition is not None:
+        return {"__next_regime": cast("UserFunction", regime_transition)}
     return {}
 
 
@@ -342,12 +342,12 @@ def _law_roots(
     """
     roots: dict[str, UserFunction] = {}
     for state_name, raw in phase_slice.state_transitions.items():
-        cells: dict[RegimeName, object] = (
+        laws: dict[RegimeName, object] = (
             dict(cast("Mapping[RegimeName, object]", raw))
             if isinstance(raw, Mapping)
             else dict.fromkeys(reachable_targets, raw)
         )
-        for target_regime_name, law in cells.items():
+        for target_regime_name, law in laws.items():
             if (
                 law is not None
                 and target_regime_name in reachable_targets
