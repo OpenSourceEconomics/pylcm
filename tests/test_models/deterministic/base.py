@@ -1,135 +1,28 @@
-"""Deterministic base model — extends lcm_examples.mortality with deterministic regime
-transitions (no stochastic mortality).
+"""Deterministic Iskhakov et al. (2017) retirement model, re-exported for tests.
+
+The model lives in `lcm_examples.iskhakov_et_al_2017`; this module keeps the
+historical test-suite import location stable.
 """
 
-import functools
-
-import jax.numpy as jnp
-
-from lcm import AgeGrid, DiscreteGrid, categorical
-from lcm.regime import Regime as UserRegime
-from lcm.typing import (
-    DiscreteAction,
-    ScalarInt,
-)
-from lcm_examples.mortality import (
+from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
     WEALTH_GRID,
     LaborSupply,
+    RegimeId,
     borrowing_constraint,
     dead,
+    get_model,
+    get_params,
     is_working,
     labor_income,
+    next_regime_from_retirement,
+    next_regime_from_working,
     next_wealth,
+    retirement,
     utility_retirement,
     utility_working,
+    working_life,
 )
-
-
-@categorical(ordered=False)
-class RegimeId:
-    working_life: ScalarInt
-    retirement: ScalarInt
-    dead: ScalarInt
-
-
-def next_regime_from_working(
-    labor_supply: DiscreteAction,
-    age: int,
-    final_age_alive: float,
-) -> ScalarInt:
-    return jnp.where(
-        age >= final_age_alive,
-        RegimeId.dead,
-        jnp.where(
-            labor_supply == LaborSupply.retire,
-            RegimeId.retirement,
-            RegimeId.working_life,
-        ),
-    )
-
-
-def next_regime_from_retirement(age: int, final_age_alive: float) -> ScalarInt:
-    return jnp.where(
-        age >= final_age_alive,
-        RegimeId.dead,
-        RegimeId.retirement,
-    )
-
-
-_DEFAULT_AGE_GRID = AgeGrid(start=40, stop=70, step="10Y")  # 4 periods
-_DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
-
-
-working_life = UserRegime(
-    actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": CONSUMPTION_GRID,
-    },
-    states={"wealth": WEALTH_GRID},
-    state_transitions={"wealth": next_wealth},
-    constraints={"borrowing_constraint": borrowing_constraint},
-    transition=next_regime_from_working,
-    functions={
-        "utility": utility_working,
-        "labor_income": labor_income,
-        "is_working": is_working,
-    },
-    active=lambda age: age < _DEFAULT_LAST_AGE,
-)
-
-retirement = UserRegime(
-    transition=next_regime_from_retirement,
-    actions={"consumption": CONSUMPTION_GRID},
-    states={"wealth": WEALTH_GRID},
-    state_transitions={"wealth": next_wealth},
-    constraints={"borrowing_constraint": borrowing_constraint},
-    functions={"utility": utility_retirement},
-    active=lambda age: age < _DEFAULT_LAST_AGE,
-)
-
-
-from lcm import Model  # noqa: E402
-
-
-@functools.cache
-def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
-    return Model(
-        regimes={
-            "working_life": working_life.replace(
-                active=lambda age, la=last_age: age < la
-            ),
-            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
-            "dead": dead,
-        },
-        ages=ages,
-        regime_id_class=RegimeId,
-    )
-
-
-def get_params(
-    n_periods: int,
-    discount_factor: float = 0.95,
-    disutility_of_work: float = 0.5,
-    interest_rate: float = 0.05,
-    wage: float = 10.0,
-) -> dict:
-    final_age_alive = 40 + (n_periods - 2) * 10
-    return {
-        "discount_factor": discount_factor,
-        "interest_rate": interest_rate,
-        "final_age_alive": final_age_alive,
-        "working_life": {
-            "utility": {"disutility_of_work": disutility_of_work},
-            "labor_income": {"wage": wage},
-        },
-        "retirement": {
-            "next_wealth": {"labor_income": 0.0},
-        },
-    }
-
 
 __all__ = [
     "CONSUMPTION_GRID",
