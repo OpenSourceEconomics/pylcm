@@ -3,12 +3,14 @@
 The continuation expectation runs over the product of the child regime's
 stochastic process nodes. That node axis is carried by the dominant `egm_step`
 working buffer (the savings nodes times the child stochastic mesh times the
-combo block). Splaying it processes the per-node reads in `lax.map` blocks
-rather than one fused vmap, shedding peak working-set memory. The per-node
-results are summed with the joint intrinsic weights either way, so the solved
-value function is identical to the unsplayed (`stochastic_node_batch_size=0`)
-solve, whatever the block size — including block sizes that do not divide the
-mesh.
+combo block). A positive block size accumulates the per-node reads in `lax.scan`
+blocks rather than one fused vmap, folding the weighted sum into the scan carry
+to shed peak working-set memory. The per-node results are summed with the joint
+intrinsic weights either way, so the solved value function matches the unsplayed
+(`stochastic_node_batch_size=0`) solve to tight numerical tolerance, whatever the
+block size — including block sizes that do not divide the mesh. The block
+reduction reorders the floating-point adds, so the match is to tolerance, not
+bit-identical.
 """
 
 import functools
@@ -86,11 +88,13 @@ def test_stochastic_node_batch_size_leaves_value_function_unchanged(
     """Splaying the child node expectation into blocks does not change the solved V.
 
     `stochastic_node_batch_size` only changes how the per-node continuation
-    reads are scheduled (`lax.map` blocks instead of one fused vmap), so the
-    value function at every period matches the unsplayed
-    `stochastic_node_batch_size=0` solve exactly — including a block size (3)
-    that does not divide the 5-node income mesh, and the boundary size equal to
-    the mesh length (which falls back to the vmap).
+    reads are scheduled and reduced (`lax.scan` blocks accumulating the weighted
+    sum, instead of one fused vmap), so the value function at every period
+    matches the unsplayed `stochastic_node_batch_size=0` solve to tight
+    numerical tolerance — including a block size (3) that does not divide the
+    5-node income mesh, and the boundary size equal to the mesh length (which
+    falls back to the vmap). The block reduction reorders the floating-point
+    adds, so the match is to tolerance, not bit-identical.
     """
     reference = _solve(0)
     splayed = _solve(stochastic_node_batch_size)
@@ -104,7 +108,7 @@ def test_stochastic_node_batch_size_leaves_value_function_unchanged(
             np.testing.assert_allclose(
                 got_V,
                 ref_V,
-                rtol=1e-12,
-                atol=1e-12,
+                rtol=1e-9,
+                atol=1e-9,
                 err_msg=f"period={period}, regime={regime_name}",
             )

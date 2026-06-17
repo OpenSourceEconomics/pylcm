@@ -6,8 +6,7 @@ backward induction:
 - `GridSearch()` (the default): grid search over the full state-action product.
 - `DCEGM(...)`: the endogenous grid method for discrete-continuous choice
   (Iskhakov, Jørgensen, Rust & Schjerning 2017, Quantitative Economics 8(2),
-  317-365, [doi:10.3982/QE643](https://doi.org/10.3982/QE643)) — published, but
-  its engine is not yet wired in.
+  317-365, [doi:10.3982/QE643](https://doi.org/10.3982/QE643)).
 
 The solvers are defined engine-side in `_lcm.solution.solvers`; this module is a
 thin re-export so user code (and `lcm.regime`) can name them, and the `Solver`

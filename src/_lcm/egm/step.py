@@ -1755,34 +1755,67 @@ def _expect_over_stochastic_nodes(
         indexing="ij",
     )
     flat_node_indices = tuple(mesh.ravel() for mesh in node_index_mesh)
-    # The expectation mesh (the product of the child's stochastic-node counts)
-    # is the dominant `egm_step` working buffer's child-node axis. A positive
-    # `stochastic_node_batch_size` below the mesh length runs the per-node reads
-    # in `lax.map` blocks, shedding that buffer's peak; `0` (or a size covering
-    # the whole mesh) keeps the fused vmap. The per-node results are summed with
-    # the joint weights below either way, so the value function is identical.
-    n_nodes = flat_node_indices[0].shape[0]
-    if 0 < stochastic_node_batch_size < n_nodes:
-        node_values, node_marginals = jax.lax.map(
-            read_at_nodes, flat_node_indices, batch_size=stochastic_node_batch_size
-        )
-    else:
-        node_values, node_marginals = jax.vmap(read_at_nodes)(flat_node_indices)
     joint_weights = weight_vecs[0][flat_node_indices[0]]
     for vec, indices in zip(weight_vecs[1:], flat_node_indices[1:], strict=True):
         joint_weights = joint_weights * vec[indices]
-    # Weight on results: a zero-weight node contributes exactly 0.0 even
-    # when its smoothed value is -inf (never 0 * inf = NaN). The else branch
-    # is `weights * 0.0` (not `0.0`) so a NaN weight poisons the sum instead
-    # of vanishing.
-    smoothed_value = jnp.sum(
-        jnp.where(joint_weights > 0.0, joint_weights * node_values, joint_weights * 0.0)
-    )
-    smoothed_marginal = jnp.sum(
-        jnp.where(
-            joint_weights > 0.0, joint_weights * node_marginals, joint_weights * 0.0
+
+    def _weighted_node_sum(values: FloatND, weights: FloatND) -> ScalarFloat:
+        # A zero-weight node contributes exactly 0.0 even when its smoothed
+        # value is -inf (never 0 * inf = NaN). The else branch is `weights *
+        # 0.0` (not a bare `0.0`) so a NaN weight poisons the sum instead of
+        # vanishing.
+        return jnp.sum(jnp.where(weights > 0.0, weights * values, weights * 0.0))
+
+    # The expectation mesh (the product of the child's stochastic-node counts)
+    # is the dominant `egm_step` working buffer's child-node axis. A positive
+    # `stochastic_node_batch_size` below the mesh length accumulates the
+    # weighted expectation in `lax.scan` blocks: each block reads only its
+    # `batch_size` nodes (shedding the per-node gather working-set) AND folds
+    # the weighted sum into the scan carry, so the full node-stacked
+    # `(..., n_nodes)` result is never materialised — the savings the single
+    # fused vmap below cannot reach, because there the reduction is downstream
+    # of the materialised stack. `0` (or a size covering the whole mesh) keeps
+    # that fused vmap + reduction. The weighted sum is associative, so the
+    # value function matches the fused solve to numerical tolerance (the block
+    # reduction reorders the floating-point adds).
+    n_nodes = flat_node_indices[0].shape[0]
+    if 0 < stochastic_node_batch_size < n_nodes:
+        n_blocks = -(-n_nodes // stochastic_node_batch_size)
+        pad = n_blocks * stochastic_node_batch_size - n_nodes
+        blocked_indices = tuple(
+            jnp.concatenate([indices, jnp.zeros(pad, dtype=indices.dtype)]).reshape(
+                n_blocks, stochastic_node_batch_size
+            )
+            for indices in flat_node_indices
         )
-    )
+        # Pad weights with 0.0, not the pad slots' real weights: the pad slots
+        # reuse node index 0, so their values are read but zero-weighted, and
+        # contribute exactly 0.0 to every block sum.
+        blocked_weights = jnp.concatenate(
+            [joint_weights, jnp.zeros(pad, dtype=joint_weights.dtype)]
+        ).reshape(n_blocks, stochastic_node_batch_size)
+
+        def accumulate(
+            carry: tuple[ScalarFloat, ScalarFloat],
+            block: tuple[tuple[IntND, ...], FloatND],
+        ) -> tuple[tuple[ScalarFloat, ScalarFloat], None]:
+            block_indices, block_weights = block
+            block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
+            acc_value, acc_marginal = carry
+            return (
+                acc_value + _weighted_node_sum(block_values, block_weights),
+                acc_marginal + _weighted_node_sum(block_marginals, block_weights),
+            ), None
+
+        zero = jnp.zeros((), dtype=joint_weights.dtype)
+        (smoothed_value, smoothed_marginal), _ = jax.lax.scan(
+            accumulate, (zero, zero), (blocked_indices, blocked_weights)
+        )
+        return smoothed_value, smoothed_marginal
+
+    node_values, node_marginals = jax.vmap(read_at_nodes)(flat_node_indices)
+    smoothed_value = _weighted_node_sum(node_values, joint_weights)
+    smoothed_marginal = _weighted_node_sum(node_marginals, joint_weights)
     return smoothed_value, smoothed_marginal
 
 
