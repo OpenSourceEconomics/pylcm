@@ -29,10 +29,7 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
-from _lcm.regime_building.max_Q_over_a import (
-    get_argmax_and_max_Q_over_a,
-    get_max_Q_over_a,
-)
+from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.next_state import get_next_state_function_for_simulation
 from _lcm.regime_building.phases import (
@@ -48,6 +45,7 @@ from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
+from _lcm.solution.registry import SOLVER_KERNEL_BUILDERS, SolverBuildContext
 from _lcm.state_action_space import create_state_action_space
 from _lcm.typing import (
     ArgmaxQOverAFunction,
@@ -55,7 +53,6 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
     FunctionName,
-    MaxQOverAFunction,
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
@@ -82,6 +79,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.solvers import DCEGM, BruteForce
 from lcm.transition import (
     MarkovTransition,
 )
@@ -116,6 +114,8 @@ def process_regimes(
         The processed canonical regimes.
 
     """
+    _fail_if_dcegm_solver_requested(user_regimes)
+
     # The canonical specs hold every law in target-granular form, resolved per
     # phase: the simulate slice additionally holds every carried-only state
     # and its law of motion, so the canonical mapping carries the law toward
@@ -196,6 +196,7 @@ def process_regimes(
             ages=ages,
             enable_jit=enable_jit,
             has_taste_shocks=user_regime.taste_shocks is not None,
+            solver=user_regime.solver,
         )
 
         simulation = _build_simulation_phase(
@@ -239,6 +240,29 @@ def process_regimes(
     return ensure_containers_are_immutable(canonical_regimes)
 
 
+def _fail_if_dcegm_solver_requested(
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+) -> None:
+    """Reject the not-yet-available DC-EGM solver at model build.
+
+    The `DCEGM` configuration is published so a model can name the solver and
+    its parameters, but the solver engine is not yet wired in; a regime that
+    requests it cannot be solved. `BruteForce` is the only available solver.
+    """
+    dcegm_regimes = sorted(
+        name
+        for name, user_regime in user_regimes.items()
+        if isinstance(user_regime.solver, DCEGM)
+    )
+    if dcegm_regimes:
+        msg = (
+            "The DC-EGM solver is not yet available. Regime(s) "
+            f"{dcegm_regimes} request `solver=DCEGM(...)`; use `BruteForce()` "
+            "(the default) until DC-EGM is wired in."
+        )
+        raise NotImplementedError(msg)
+
+
 def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
@@ -255,6 +279,7 @@ def _build_solution_phase(
     ages: AgeGrid,
     enable_jit: bool,
     has_taste_shocks: bool,
+    solver: BruteForce | DCEGM,
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -276,6 +301,8 @@ def _build_solution_phase(
         enable_jit: Whether to jit the internal functions.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
+        solver: The regime's solver configuration; selects the per-period
+            kernel builder dispatched through `SOLVER_KERNEL_BUILDERS`.
 
     Returns:
         Complete solve functions container.
@@ -345,13 +372,21 @@ def _build_solution_phase(
             enable_jit=enable_jit,
         )
 
-    max_Q_over_a = _build_max_Q_over_a_per_period(
-        state_action_space=state_action_space,
-        Q_and_F_functions=Q_and_F_functions,
-        grids=all_grids[regime_name],
-        enable_jit=enable_jit,
-        has_taste_shocks=has_taste_shocks,
+    # Dispatch the per-period kernel build on the regime's solver
+    # configuration. `BruteForce` builds the max-Q-over-a grid-search kernels;
+    # other solvers register their own builders in `SOLVER_KERNEL_BUILDERS`.
+    solver_kernel_builder = SOLVER_KERNEL_BUILDERS[type(solver)]
+    solver_kernels = solver_kernel_builder(
+        solver=solver,
+        context=SolverBuildContext(
+            state_action_space=state_action_space,
+            Q_and_F_functions=Q_and_F_functions,
+            grids=all_grids[regime_name],
+            enable_jit=enable_jit,
+            has_taste_shocks=has_taste_shocks,
+        ),
     )
+    max_Q_over_a = solver_kernels.max_Q_over_a
 
     return SolutionPhase(
         _variables=variables,
@@ -1659,40 +1694,6 @@ def _build_Q_and_F_per_period(
         for period in periods:
             result[period] = built[key]
 
-    return MappingProxyType(result)
-
-
-def _build_max_Q_over_a_per_period(
-    *,
-    state_action_space: StateActionSpace,
-    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    grids: MappingProxyType[StateOrActionName, Grid],
-    enable_jit: bool,
-    has_taste_shocks: bool = False,
-) -> MappingProxyType[int, MaxQOverAFunction]:
-    """Build max-Q-over-a closures for each period.
-
-    Periods sharing the same Q_and_F object reuse a single compiled function.
-    """
-    built: dict[int, MaxQOverAFunction] = {}
-    result: dict[int, MaxQOverAFunction] = {}
-    for period, Q_and_F in Q_and_F_functions.items():
-        q_id = id(Q_and_F)
-        if q_id not in built:
-            func = get_max_Q_over_a(
-                Q_and_F=Q_and_F,
-                batch_sizes={
-                    name: grid.batch_size
-                    for name, grid in grids.items()
-                    if name in state_action_space.state_names
-                },
-                action_names=state_action_space.action_names,
-                state_names=state_action_space.state_names,
-                n_discrete_action_axes=len(state_action_space.discrete_actions),
-                has_taste_shocks=has_taste_shocks,
-            )
-            built[q_id] = jax.jit(func) if enable_jit else func
-        result[period] = built[q_id]
     return MappingProxyType(result)
 
 
