@@ -19,7 +19,7 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import Solver, SolverBuildContext, SolverKernels
-from _lcm.typing import MaxQOverAFunction
+from _lcm.typing import EGMStepFunction, MaxQOverAFunction
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ActionName, FunctionName, StateName
 
@@ -166,19 +166,50 @@ class DCEGM(Solver):
         _fail_if_fues_n_points_to_scan_too_few(self.fues_n_points_to_scan)
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
 
-    def validate(self, *, context: SolverBuildContext) -> None:
-        """Reject the not-yet-available DC-EGM solver at model build."""
-        msg = (
-            "The DC-EGM solver is not yet available. A regime requests "
-            "`solver=DCEGM(...)`; use `GridSearch()` (the default) until the "
-            "DC-EGM engine is wired in."
-        )
-        raise NotImplementedError(msg)
-
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolverKernels:
-        """Unreachable — `validate` rejects DC-EGM before the kernel build."""
-        msg = "The DC-EGM solver is not yet available."
-        raise NotImplementedError(msg)
+        """Build per-period DC-EGM kernels and the regime's carry template.
+
+        The standalone `validate_dcegm_regimes` model-contract check (run during
+        regime processing) guarantees the regime is non-terminal, so the regime
+        transition probability function exists. Numerical-builder imports are
+        function-local so the public `lcm.solvers` façade stays a thin
+        re-export that pulls in no engine modules.
+        """
+        import jax  # noqa: PLC0415
+
+        from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
+
+        assert context.compute_regime_transition_probs is not None  # noqa: S101
+        egm_step, egm_carry_template, egm_reachable_targets = build_egm_step_functions(
+            solver=self,
+            regime_name=context.regime_name,
+            user_regimes=context.user_regimes,
+            functions=context.functions,
+            constraints=context.constraints,
+            transitions=context.transitions,
+            stochastic_transition_names=context.stochastic_transition_names,
+            compute_regime_transition_probs=context.compute_regime_transition_probs,
+            regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
+            regimes_to_active_periods=context.regimes_to_active_periods,
+            flat_param_names=context.flat_param_names,
+            regime_to_flat_param_names=context.regime_to_flat_param_names,
+            state_action_space=context.state_action_space,
+            has_taste_shocks=context.has_taste_shocks,
+        )
+        if context.enable_jit:
+            jitted_by_id: dict[int, EGMStepFunction] = {}
+            for func in egm_step.values():
+                if id(func) not in jitted_by_id:
+                    jitted_by_id[id(func)] = jax.jit(func)
+            egm_step = MappingProxyType(
+                {period: jitted_by_id[id(func)] for period, func in egm_step.items()}
+            )
+        return SolverKernels(
+            max_Q_over_a=MappingProxyType({}),
+            egm_step=egm_step,
+            egm_carry_template=egm_carry_template,
+            egm_reachable_targets=egm_reachable_targets,
+        )
 
 
 def _fail_if_savings_grid_is_stochastic(savings_grid: ContinuousGrid) -> None:

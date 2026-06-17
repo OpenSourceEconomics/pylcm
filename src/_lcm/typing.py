@@ -14,6 +14,8 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from jax import Array
 from jaxtyping import Key
 
+from _lcm.egm.carry import EGMCarry
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 
@@ -98,6 +100,12 @@ type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # Type aliases for value function arrays
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
+# Sparse over regimes: the inner mapping carries an entry only for regimes
+# solved by DC-EGM. Brute-force and terminal regimes publish no `EGMSimPolicy`,
+# so their names are absent — callers must not assume the full regime keyset.
+type PeriodToRegimeToSimPolicy = MappingProxyType[
+    int, MappingProxyType[RegimeName, EGMSimPolicy]
+]
 
 
 @runtime_checkable
@@ -235,6 +243,47 @@ class MaxQOverAFunction(Protocol):
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: Any,  # noqa: ANN401
     ) -> FloatND: ...
+
+
+@runtime_checkable
+class EGMStepFunction(Protocol):
+    """The per-period DC-EGM kernel for one regime.
+
+    Consumes the regime's exogenous state grids, the rolling value-function
+    and EGM-carry mappings, and the regime's flat params; returns the
+    regime's value-function array on the exogenous state grid, the carry its
+    parents interpolate, and the published consumption policy simulation
+    interpolates off-grid.
+
+    Used for both type checking and beartype runtime checks.
+
+    """
+
+    def __call__(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+        **kwargs: Any,  # noqa: ANN401
+    ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...
+
+
+@runtime_checkable
+class EGMCarryProducer(Protocol):
+    """Closed-form carry producer for a terminal regime.
+
+    Maps the regime's solved value-function array (plus its state grids and
+    flat params) to the EGM carry a DC-EGM parent interpolates.
+
+    Used for both type checking and beartype runtime checks.
+
+    """
+
+    def __call__(
+        self,
+        *,
+        V_arr: FloatND,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> EGMCarry: ...
 
 
 @runtime_checkable

@@ -7,55 +7,26 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
-### Phase grammar, cross-regime transitions, and model-level regime slots
+- Adds the DC-EGM solver (Iskhakov, Jørgensen, Rust & Schjerning 2017) as a
+  per-regime alternative to grid search: `Regime(solver=lcm.DCEGM(...))`.
+  Euler-equation inversion on an exogenous savings grid with a fast
+  upper-envelope scan (Dobrescu & Shanker 2022) — no consumption grid enters
+  the solve, and the credit-constrained segment is exact. Requires declared
+  `resources`, post-decision, and `inverse_marginal_utility` regime functions;
+  the model contract is validated at `Model` construction. Supports discrete
+  states and actions, EV1 taste shocks, stochastic processes, and passive
+  continuous states. Forward simulation works with grid-restricted consumption
+  (the intrinsic budget constraint is applied as a feasibility mask).
 
-- `Phased(solve=..., simulate=...)` gives any regime-slot value a per-phase
-  variant; a bare value broadcasts to both phases. Carried states —
-  `Phased(solve=callable, simulate=Grid)` in `states` — are derived functions
-  during backward induction and genuine seeded-and-evolved states in
-  simulation. See the [phase grammar](docs/explanations/phase_grammar.ipynb)
-  explanation.
+- Adds regime-level EV1 taste shocks as a model property:
+  `Regime(taste_shocks=lcm.ExtremeValueTasteShocks())` with the scale as the
+  runtime param `{"taste_shocks": {"scale": ...}}`. The solve aggregates
+  discrete actions by the smoothed expected maximum and simulation draws the
+  discrete action by Gumbel-max — identical solutions under either solver.
 
-- `fixed_transition(state_name)` marks a fixed state (identity law) in
-  `state_transitions`. The `None` spelling for fixed states is removed; a
-  regime-level `None` now masks a model-level entry instead.
-
-- Regime transitions take a third form: a per-target dict
-  `{target_regime: MarkovTransition(prob_func)}` whose key set declares the regime's
-  reachable targets — omitted regimes are structurally unreachable. Per-target
-  dicts in `state_transitions` hand state values across regime boundaries,
-  including into states the source regime does not carry and across grids that
-  differ between regimes.
-
-- Model-level regime slots: `Model(functions=..., constraints=..., states=...,
-  state_transitions=..., actions=...)` declares shared structure once and
-  merges it into every regime under the exactly-one-level rule. Broadcast
-  states and actions are pruned per regime by DAG reachability;
-  `model.pruned_variables` records the result.
-
-- `model.user_regimes` holds plain `lcm.regime.Regime` instances, finalized at
-  model build (model-level slots merged, default `H` injected, completeness
-  validated).
-
-### Per-target parameters
-
-- Per-target transition parameters nest under the target regime's name in the
-  params template — `template[regime][target][func][param]` — replacing the
-  `to_<target>_…` spelling. Param qnames parallel engine function qnames.
-
-- Parameters resolve at four levels, most to least specific: target / function
-  (one value broadcasts over the law's targets) / regime / model. Exactly one
-  level per parameter; multi-level specifications are ambiguity errors.
-
-- Canonical flat params always key transition-law params per target, every
-  target of a broadcast value sharing one leaf object. A coarse regime
-  transition is evaluated once and shared, so it takes no per-target
-  parameters.
-
-- Model-level `derived_categoricals` follow the exactly-one-level rule of the
-  other model-level slots: a name declared at model level and regime level is
-  an ambiguity error, also when the grids match.
-
+- Promotes the Iskhakov et al. (2017) retirement model to
+  `lcm_examples.iskhakov_et_al_2017` (brute-force and DC-EGM variants) with an
+  explanation notebook comparing the two solvers.
 
 ## 0.0.1
 

@@ -15,6 +15,7 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
+from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
 from _lcm.params.processing import (
@@ -174,6 +175,12 @@ def validate_model_inputs(
 
     """
     _fail_if_invalid_n_subjects(n_subjects=n_subjects)
+
+    # DC-EGM contract checks run before the generic checks below: a contract
+    # violation (e.g. a missing resources function) typically also leaves
+    # variables unused, and the contract-specific message is the actionable
+    # one.
+    validate_dcegm_regimes(user_regimes=user_regimes)
 
     error_messages: list[str] = []
 
@@ -394,7 +401,22 @@ def _partial_fixed_params_into_regimes(
     result: dict[RegimeName, Regime] = {}
     for regime_name, regime in raw_regimes.items():
         regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
-        if not regime_fixed:
+        # A DC-EGM source carrying into a *different* target regime evaluates
+        # that target's resources / transition functions in its per-asset-node
+        # solve, reading the target's fixed params (e.g. a pension factor the
+        # source never reads). These are model-level shared values, so the
+        # target's `fixed_flat_params` entry carries the right value; union
+        # them into the params bound into the source's `egm_step` kernel. The
+        # kernel threads its `**kwargs` into the per-combo pool, and the
+        # captured functions read only the keys they need, so the extra
+        # carry-target params are harmless to the functions that don't.
+        egm_fixed = dict(regime_fixed)
+        for target_name in regime.solution.transitions:
+            for key, value in fixed_flat_params.get(
+                target_name, MappingProxyType({})
+            ).items():
+                egm_fixed.setdefault(key, value)
+        if not regime_fixed and not egm_fixed:
             result[regime_name] = regime
             continue
 
@@ -420,6 +442,43 @@ def _partial_fixed_params_into_regimes(
                     ),
                 )
                 if solution.compute_regime_transition_probs is not None
+                else None
+            ),
+            # The DC-EGM kernels are prebuilt closures that capture the
+            # regime's savings-stage functions (regime-transition
+            # probabilities, transition weights, the child resources and
+            # next-state maps) before fixed params are partialled. The kernel
+            # threads its `**kwargs` straight into the per-combo pool those
+            # captured functions read, so binding the union of the regime's
+            # and its carry targets' fixed params here restores the params
+            # removed from `flat_params` for every one of them at once —
+            # matching what the live params supply.
+            egm_step=(
+                MappingProxyType(
+                    {
+                        period: functools.partial(func, **egm_fixed)
+                        for period, func in solution.egm_step.items()
+                    }
+                )
+                if solution.egm_step is not None
+                else None
+            ),
+            # A terminal regime's carry producer evaluates the regime's own
+            # bequest utility on the wealth grid; that utility may reach a
+            # model-level fixed param (e.g. a consumption-equivalence scale)
+            # through a helper function. The solve loop invokes the producer
+            # with only the live (free) params, so bind the regime's fixed
+            # params here — matching the partialling done for `egm_step` and
+            # `max_Q_over_a`.
+            egm_carry_producer=(
+                functools.partial(
+                    solution.egm_carry_producer,
+                    **_filter_kwargs_for_func(
+                        func=solution.egm_carry_producer,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if solution.egm_carry_producer is not None
                 else None
             ),
         )

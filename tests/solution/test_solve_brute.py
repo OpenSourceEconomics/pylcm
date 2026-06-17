@@ -23,6 +23,9 @@ class MockSolutionPhase:
     _base_state_action_space: StateActionSpace
     grids: MappingProxyType[StateOrActionName, Grid]
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
+    egm_step: None = None
+    egm_carry_producer: None = None
+    egm_carry_template: None = None
 
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space
@@ -137,7 +140,7 @@ def test_solve_brute():
         active_periods=[0, 1],
     )
 
-    solution = solve(
+    solution, _sim_policies = solve(
         flat_params=MappingProxyType({"default": flat_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
@@ -198,7 +201,7 @@ def test_solve_brute_single_period_Qc_arr():
         active_periods=[0, 1],
     )
 
-    got = solve(
+    got, _sim_policies = solve(
         flat_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
