@@ -61,6 +61,15 @@ $ pre-commit install
 If you have any questions, feel free to ask them on the PyLCM
 [Zulip chat](https://ose.zulipchat.com/#narrow/channel/491562-PyLCM).
 
+## Acknowledgments
+
+PyLCM builds on the endogenous grid method (Carroll, 2006), its discrete-continuous
+extension (Iskhakov, Jørgensen, Rust & Schjerning, 2017), the Fast Upper-Envelope Scan
+(Dobrescu & Shanker, 2022), and the broader open-source ecosystem for dynamic
+programming — including OpenSourceEconomics, NumEconCopenhagen, and QuantEcon. See the
+[Credits & Acknowledgments](docs/credits.md) page for the full list of methods,
+replicated models, and software we are grateful to.
+
 ## License
 
 This project is licensed under the Apache License, Version 2.0. See the

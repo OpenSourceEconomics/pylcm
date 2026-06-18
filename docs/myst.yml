@@ -76,6 +76,8 @@ project:
         - file: development/setup.md
         - file: development/conventions.md
         - file: development/benchmarking.md
+    - file: credits.md
+      title: Credits & Acknowledgments
   error_rules:
     - rule: link-resolves
       severity: ignore
