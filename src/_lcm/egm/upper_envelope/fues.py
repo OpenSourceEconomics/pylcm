@@ -4,6 +4,9 @@ Implements the upper-envelope refinement of Dobrescu, L. I., & Shanker, A.
 (2022). Fast Upper-Envelope Scan for Discrete-Continuous Dynamic Programming.
 SSRN 4181302.
 
+Adapted from the `OpenSourceEconomics/upper-envelope` package (Apache-2.0,
+© The Upper-Envelope Authors) and substantially modified for pylcm's JAX kernel.
+
 Inverting the Euler equation in models with discrete choices yields a value
 *correspondence*: in non-concave regions, several candidate points share a
 neighborhood of the endogenous grid, each lying on a different choice-specific

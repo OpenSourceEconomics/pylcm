@@ -47,9 +47,11 @@ Endogenous Grid Method for Non-Smooth and Non-Concave Problems," *Review of Econ
 Dynamics* 17(2), 329–344,
 [doi:10.1016/j.red.2013.07.001](https://doi.org/10.1016/j.red.2013.07.001).
 
-- Reference implementations: [akshayshanker/FUES](https://github.com/akshayshanker/FUES)
-  and
-  [OpenSourceEconomics/upper-envelope](https://github.com/OpenSourceEconomics/upper-envelope).
+pylcm's FUES backend is **adapted from**
+[OpenSourceEconomics/upper-envelope](https://github.com/OpenSourceEconomics/upper-envelope)
+(Apache-2.0, © The Upper-Envelope Authors), then substantially modified for the JAX
+kernel. The reference implementation by the method's authors is
+[akshayshanker/FUES](https://github.com/akshayshanker/FUES).
 
 ### Multidimensional & nested EGM (reserved / planned backends)
 
