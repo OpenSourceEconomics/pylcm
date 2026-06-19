@@ -20,8 +20,8 @@ import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import (
-    _ChildRead,
-    _get_child_carry_reader,
+    ContinuationPlan,
+    bind_continuation,
 )
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import (
@@ -29,9 +29,7 @@ from _lcm.egm.interp import (
 )
 from _lcm.typing import (
     ActionName,
-    FunctionName,
     RegimeName,
-    RegimeTransitionFunction,
     StateName,
 )
 from lcm.typing import (
@@ -59,9 +57,6 @@ class _EgmKernelPieces:
     action_name: ActionName
     """Name of the regime's continuous action."""
 
-    post_decision_name: FunctionName
-    """Name of the post-decision function (the savings node's input slot)."""
-
     savings_nodes: Float1D
     """The exogenous end-of-period savings grid."""
 
@@ -84,23 +79,11 @@ class _EgmKernelPieces:
     envelope) and `n_euler_nodes` in asset-row mode (the carry is one published
     point per exogenous Euler node, with no envelope-workspace padding)."""
 
-    stochastic_node_batch_size: int
-    """Block size for splaying the child stochastic-node expectation (0 = fused)."""
-
     combo_names: tuple[StateName | ActionName, ...]
     """Discrete-state, passive-state, then discrete-action names (carry-axis order)."""
 
     euler_axis_in_V: int
     """Canonical axis of the Euler state in the published value-function array."""
-
-    carry_targets: tuple[RegimeName, ...]
-    """Targets whose continuation is interpolated from their carry rows."""
-
-    scalar_targets: tuple[RegimeName, ...]
-    """Stateless targets contributing a constant continuation value."""
-
-    child_reads: Mapping[RegimeName, _ChildRead]
-    """Per-carry-target statics of the child carry read."""
 
     utility_func: UserFunction
     """The regime's concatenated utility function."""
@@ -120,8 +103,8 @@ class _EgmKernelPieces:
     refine: Callable[..., tuple[Float1D, Float1D, Float1D, ScalarInt]]
     """The configured upper-envelope backend."""
 
-    compute_regime_transition_probs: RegimeTransitionFunction
-    """Regime transition probability function for solve."""
+    continuation_plan: ContinuationPlan
+    """Build-time statics of the per-savings-node continuation aggregation."""
 
 
 def _get_solve_one_combo(
@@ -292,7 +275,12 @@ def _get_compute_node(
     dtype: Any,  # noqa: ANN401
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
     """Build the per-savings-node Euler inversion for one discrete combo."""
-    regime_transition_probs = pieces.compute_regime_transition_probs(**combo_pool)
+    continuation = bind_continuation(
+        plan=pieces.continuation_plan,
+        combo_pool=combo_pool,
+        next_regime_to_egm_carry=next_regime_to_egm_carry,
+        dtype=dtype,
+    )
 
     def inverse_marginal_utility(
         marginal_continuation: ScalarFloat,
@@ -301,45 +289,11 @@ def _get_compute_node(
             marginal_continuation=marginal_continuation, **combo_pool
         )
 
-    child_readers = {
-        target: _get_child_carry_reader(
-            read=pieces.child_reads[target],
-            carry=next_regime_to_egm_carry[target],
-            combo_pool=combo_pool,
-            post_decision_name=pieces.post_decision_name,
-            stochastic_node_batch_size=pieces.stochastic_node_batch_size,
-        )
-        for target in pieces.carry_targets
-    }
-
     def compute_node(
         savings_value: ScalarFloat,
     ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
         """Euler-invert one savings node against the continuation."""
-        expected_marginal = jnp.asarray(0.0, dtype=dtype)
-        expected_value = jnp.asarray(0.0, dtype=dtype)
-        for target in pieces.carry_targets:
-            # The smoothed marginal is already in savings space: the composed
-            # gradient factor is applied per carry row inside the read.
-            smoothed_value, smoothed_marginal = child_readers[target](savings_value)
-            prob = regime_transition_probs[target]
-            # Zero unreachable-target contributions on the results, never by
-            # multiplying into a possibly non-finite value. The else branch
-            # is `prob * 0.0` (not `0.0`) so a NaN probability poisons the
-            # sum instead of vanishing.
-            expected_marginal = expected_marginal + jnp.where(
-                prob > 0.0, prob * smoothed_marginal, prob * 0.0
-            )
-            expected_value = expected_value + jnp.where(
-                prob > 0.0, prob * smoothed_value, prob * 0.0
-            )
-        for target in pieces.scalar_targets:
-            prob = regime_transition_probs[target]
-            constant_value = next_regime_to_egm_carry[target].value[0]
-            expected_value = expected_value + jnp.where(
-                prob > 0.0, prob * constant_value, prob * 0.0
-            )
-
+        expected_value, expected_marginal = continuation(savings_value)
         action = invert_euler(
             expected_marginal_continuation=expected_marginal,
             discount_factor=discount_factor,

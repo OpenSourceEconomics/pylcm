@@ -21,7 +21,7 @@ import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import (
-    _get_child_carry_reader,
+    bind_continuation,
 )
 from _lcm.egm.interp import (
     interp_on_padded_grid,
@@ -278,36 +278,15 @@ def _get_expected_continuation_value(
     terms (Danskin does not cancel them: the probabilities are not the
     softmax of the values they weight).
     """
-    regime_transition_probs = pieces.compute_regime_transition_probs(**combo_pool)
-    child_readers = {
-        target: _get_child_carry_reader(
-            read=pieces.child_reads[target],
-            carry=next_regime_to_egm_carry[target],
-            combo_pool=combo_pool,
-            post_decision_name=pieces.post_decision_name,
-            stochastic_node_batch_size=pieces.stochastic_node_batch_size,
-        )
-        for target in pieces.carry_targets
-    }
+    continuation = bind_continuation(
+        plan=pieces.continuation_plan,
+        combo_pool=combo_pool,
+        next_regime_to_egm_carry=next_regime_to_egm_carry,
+        dtype=dtype,
+    )
 
     def expected_continuation(savings_value: ScalarFloat) -> ScalarFloat:
-        expected_value = jnp.asarray(0.0, dtype=dtype)
-        for target in pieces.carry_targets:
-            smoothed_value, _ = child_readers[target](savings_value)
-            prob = regime_transition_probs[target]
-            # Zero unreachable-target contributions on the results, never by
-            # multiplying into a possibly non-finite value. The else branch
-            # is `prob * 0.0` (not `0.0`) so a NaN probability poisons the
-            # sum instead of vanishing.
-            expected_value = expected_value + jnp.where(
-                prob > 0.0, prob * smoothed_value, prob * 0.0
-            )
-        for target in pieces.scalar_targets:
-            prob = regime_transition_probs[target]
-            constant_value = next_regime_to_egm_carry[target].value[0]
-            expected_value = expected_value + jnp.where(
-                prob > 0.0, prob * constant_value, prob * 0.0
-            )
+        expected_value, _ = continuation(savings_value)
         return expected_value
 
     return expected_continuation

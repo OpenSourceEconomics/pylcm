@@ -145,6 +145,7 @@ from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.asset_row import _get_solve_one_combo_asset_rows
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry
 from _lcm.egm.continuation import (
+    ContinuationPlan,
     _build_child_reads,
     get_egm_continuation_targets,
 )
@@ -714,10 +715,17 @@ def _build_kernel_pieces(
         post_decision_name=solver.post_decision_function,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
+    continuation_plan = ContinuationPlan(
+        carry_targets=carry_targets,
+        scalar_targets=scalar_targets,
+        child_reads=child_reads,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        post_decision_name=solver.post_decision_function,
+        stochastic_node_batch_size=solver.stochastic_node_batch_size,
+    )
     return _EgmKernelPieces(
         euler_state_name=solver.continuous_state,
         action_name=solver.continuous_action,
-        post_decision_name=solver.post_decision_function,
         savings_nodes=savings_nodes,
         borrowing_limit=savings_nodes[0],
         n_constrained=n_constrained,
@@ -728,14 +736,10 @@ def _build_kernel_pieces(
         ** (1.0 / max(n_constrained - 1, 1)),
         n_pad=n_pad,
         n_carry_rows=n_carry_rows,
-        stochastic_node_batch_size=solver.stochastic_node_batch_size,
         combo_names=own_discrete_state_names
         + own_passive_state_names
         + tuple(own_discrete_action_values),
         euler_axis_in_V=euler_axis_in_V,
-        carry_targets=carry_targets,
-        scalar_targets=scalar_targets,
-        child_reads=child_reads,
         utility_func=_concatenate_regime_function(
             functions=functions, target="utility"
         ),
@@ -750,7 +754,7 @@ def _build_kernel_pieces(
         ),
         build_H_kwargs=_get_build_H_kwargs(functions),
         refine=get_upper_envelope(solver=solver, n_refined=n_pad),
-        compute_regime_transition_probs=compute_regime_transition_probs,
+        continuation_plan=continuation_plan,
     )
 
 

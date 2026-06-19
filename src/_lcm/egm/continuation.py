@@ -47,6 +47,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FunctionName,
     RegimeName,
+    RegimeTransitionFunction,
     StateName,
     TransitionFunctionName,
     TransitionFunctionsMapping,
@@ -213,6 +214,101 @@ class _ChildRead:
 
     row_block_shape: tuple[int, ...]
     """Shape of the carry's row block: passive sizes, then action sizes."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContinuationPlan:
+    """Build-time statics for the per-savings-node continuation aggregation.
+
+    Binding a plan to one combo pool and the next period's carries (via
+    `bind_continuation`) yields the regime's expected continuation value and
+    marginal continuation as a function of end-of-period savings, aggregated
+    over all reachable targets. The EGM step and the asset-row step read only
+    that bound callable, never these statics directly.
+    """
+
+    carry_targets: tuple[RegimeName, ...]
+    """Targets whose continuation is interpolated from their carry rows."""
+
+    scalar_targets: tuple[RegimeName, ...]
+    """Stateless targets contributing a constant continuation value."""
+
+    child_reads: Mapping[RegimeName, _ChildRead]
+    """Per-carry-target statics of the child carry read."""
+
+    compute_regime_transition_probs: RegimeTransitionFunction
+    """Regime transition probability function for solve."""
+
+    post_decision_name: FunctionName
+    """Name of the post-decision function (the savings node's input slot)."""
+
+    stochastic_node_batch_size: int
+    """Block size for splaying the child stochastic-node expectation (0 = fused)."""
+
+
+def bind_continuation(
+    *,
+    plan: ContinuationPlan,
+    combo_pool: dict[str, Any],
+    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    dtype: Any,  # noqa: ANN401
+) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
+    """Bind a continuation plan to one combo pool and the next period's carries.
+
+    Returns a map from an end-of-period savings node to the regime's expected
+    continuation value and expected marginal continuation (both in savings
+    space): per-carry-target smoothed carry reads weighted by the
+    regime-transition probabilities, plus the scalar targets' constant values.
+    The probabilities, transition weights, and child next-state reads are all
+    evaluated from `combo_pool` *inside* this builder, so when the pool's Euler
+    slot is a traced value (asset-row mode) the value's gradient carries their
+    first-order terms (e.g. $\\sum \\partial P/\\partial a \\cdot EV$) —
+    precomputing them outside the differentiated closure would silently drop
+    those terms (Danskin does not cancel them: the probabilities are not the
+    softmax of the values they weight).
+    """
+    regime_transition_probs = plan.compute_regime_transition_probs(**combo_pool)
+    child_readers = {
+        target: _get_child_carry_reader(
+            read=plan.child_reads[target],
+            carry=next_regime_to_egm_carry[target],
+            combo_pool=combo_pool,
+            post_decision_name=plan.post_decision_name,
+            stochastic_node_batch_size=plan.stochastic_node_batch_size,
+        )
+        for target in plan.carry_targets
+    }
+
+    def continuation(
+        savings_value: ScalarFloat,
+    ) -> tuple[ScalarFloat, ScalarFloat]:
+        """Expected continuation value and marginal at one savings node."""
+        expected_marginal = jnp.asarray(0.0, dtype=dtype)
+        expected_value = jnp.asarray(0.0, dtype=dtype)
+        for target in plan.carry_targets:
+            # The smoothed marginal is already in savings space: the composed
+            # gradient factor is applied per carry row inside the read.
+            smoothed_value, smoothed_marginal = child_readers[target](savings_value)
+            prob = regime_transition_probs[target]
+            # Zero unreachable-target contributions on the results, never by
+            # multiplying into a possibly non-finite value. The else branch is
+            # `prob * 0.0` (not `0.0`) so a NaN probability poisons the sum
+            # instead of vanishing.
+            expected_marginal = expected_marginal + jnp.where(
+                prob > 0.0, prob * smoothed_marginal, prob * 0.0
+            )
+            expected_value = expected_value + jnp.where(
+                prob > 0.0, prob * smoothed_value, prob * 0.0
+            )
+        for target in plan.scalar_targets:
+            prob = regime_transition_probs[target]
+            constant_value = next_regime_to_egm_carry[target].value[0]
+            expected_value = expected_value + jnp.where(
+                prob > 0.0, prob * constant_value, prob * 0.0
+            )
+        return expected_value, expected_marginal
+
+    return continuation
 
 
 def _get_child_carry_reader(
