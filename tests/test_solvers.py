@@ -23,6 +23,7 @@ from lcm_examples.iskhakov_et_al_2017 import (
     retirement,
     working_life,
 )
+from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
 _N_PERIODS = 4
 _PARAMS = get_params(
@@ -89,8 +90,13 @@ def test_dcegm_config_constructs():
 
 def test_model_with_dcegm_solver_builds():
     """Selecting the DC-EGM solver builds the model: the engine wires the
-    solver's kernels in rather than rejecting the configuration."""
-    model = _build_model(working_solver=_valid_dcegm())
+    solver's kernels in rather than rejecting the configuration.
+
+    Uses a regime that satisfies the DC-EGM contract (resources,
+    post-decision, and inverse-marginal-utility functions); a stock
+    grid-search regime would be rejected for missing them.
+    """
+    model = build_dcegm_model()
     assert isinstance(model.user_regimes["working_life"].solver, DCEGM)
 
 
