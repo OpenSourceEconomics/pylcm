@@ -1,15 +1,17 @@
 """The solver-selection seam.
 
 A regime carries a `solver` configuration selecting its backward-induction
-algorithm. `BruteForce()` is the default and routes the existing grid search
-through the builder registry; `DCEGM(...)` is a published configuration whose
-engine is not yet available, so requesting it is rejected at model build.
+algorithm. `GridSearch()` is the default and runs the existing grid search; the
+engine dispatches polymorphically on the solver instance
+(`solver.build_period_kernels`), not on its type. `DCEGM(...)` is a published
+configuration whose engine is not yet available, so requesting it is rejected at
+model build.
 """
 
 import pytest
 from numpy.testing import assert_array_equal
 
-from lcm import DCEGM, AgeGrid, BruteForce, Model
+from lcm import DCEGM, AgeGrid, GridSearch, Model
 from lcm.exceptions import RegimeInitializationError
 from lcm_examples.iskhakov_et_al_2017 import (
     WEALTH_GRID,
@@ -58,17 +60,17 @@ def _valid_dcegm() -> DCEGM:
     )
 
 
-def test_regime_solver_defaults_to_brute_force():
-    """A regime with no solver specified uses `BruteForce()`."""
-    assert working_life.solver == BruteForce()
+def test_regime_solver_defaults_to_grid_search():
+    """A regime with no solver specified uses `GridSearch()`."""
+    assert working_life.solver == GridSearch()
 
 
-def test_explicit_brute_force_matches_default_solution():
-    """Setting `solver=BruteForce()` explicitly yields the same value function
-    as leaving the solver at its default — the dispatch through the registry
-    changes no numerics."""
+def test_explicit_grid_search_matches_default_solution():
+    """Setting `solver=GridSearch()` explicitly yields the same value function
+    as leaving the solver at its default — the polymorphic dispatch changes no
+    numerics."""
     default = _build_model().solve(log_level="debug", params=_PARAMS)
-    explicit = _build_model(working_solver=BruteForce()).solve(
+    explicit = _build_model(working_solver=GridSearch()).solve(
         log_level="debug", params=_PARAMS
     )
     for period, regime_to_V_arr in default.items():

@@ -45,7 +45,7 @@ from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
-from _lcm.solution.registry import SOLVER_KERNEL_BUILDERS, SolverBuildContext
+from _lcm.solution.contract import SolverBuildContext
 from _lcm.state_action_space import create_state_action_space
 from _lcm.typing import (
     ArgmaxQOverAFunction,
@@ -79,7 +79,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, BruteForce
+from lcm.solvers import Solver
 from lcm.transition import (
     MarkovTransition,
 )
@@ -114,8 +114,6 @@ def process_regimes(
         The processed canonical regimes.
 
     """
-    _fail_if_dcegm_solver_requested(user_regimes)
-
     # The canonical specs hold every law in target-granular form, resolved per
     # phase: the simulate slice additionally holds every carried-only state
     # and its law of motion, so the canonical mapping carries the law toward
@@ -240,29 +238,6 @@ def process_regimes(
     return ensure_containers_are_immutable(canonical_regimes)
 
 
-def _fail_if_dcegm_solver_requested(
-    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
-) -> None:
-    """Reject the not-yet-available DC-EGM solver at model build.
-
-    The `DCEGM` configuration is published so a model can name the solver and
-    its parameters, but the solver engine is not yet wired in; a regime that
-    requests it cannot be solved. `BruteForce` is the only available solver.
-    """
-    dcegm_regimes = sorted(
-        name
-        for name, user_regime in user_regimes.items()
-        if isinstance(user_regime.solver, DCEGM)
-    )
-    if dcegm_regimes:
-        msg = (
-            "The DC-EGM solver is not yet available. Regime(s) "
-            f"{dcegm_regimes} request `solver=DCEGM(...)`; use `BruteForce()` "
-            "(the default) until DC-EGM is wired in."
-        )
-        raise NotImplementedError(msg)
-
-
 def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
@@ -279,7 +254,7 @@ def _build_solution_phase(
     ages: AgeGrid,
     enable_jit: bool,
     has_taste_shocks: bool,
-    solver: BruteForce | DCEGM,
+    solver: Solver,
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -301,8 +276,8 @@ def _build_solution_phase(
         enable_jit: Whether to jit the internal functions.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
-        solver: The regime's solver configuration; selects the per-period
-            kernel builder dispatched through `SOLVER_KERNEL_BUILDERS`.
+        solver: The regime's solver; the engine calls `validate` then
+            `build_period_kernels` on it to obtain the per-period kernels.
 
     Returns:
         Complete solve functions container.
@@ -372,20 +347,19 @@ def _build_solution_phase(
             enable_jit=enable_jit,
         )
 
-    # Dispatch the per-period kernel build on the regime's solver
-    # configuration. `BruteForce` builds the max-Q-over-a grid-search kernels;
-    # other solvers register their own builders in `SOLVER_KERNEL_BUILDERS`.
-    solver_kernel_builder = SOLVER_KERNEL_BUILDERS[type(solver)]
-    solver_kernels = solver_kernel_builder(
-        solver=solver,
-        context=SolverBuildContext(
-            state_action_space=state_action_space,
-            Q_and_F_functions=Q_and_F_functions,
-            grids=all_grids[regime_name],
-            enable_jit=enable_jit,
-            has_taste_shocks=has_taste_shocks,
-        ),
+    # Dispatch the per-period kernel build polymorphically on the regime's
+    # solver: `validate` rejects out-of-scope configurations at build time,
+    # then `build_period_kernels` returns the per-period kernels. `GridSearch`
+    # builds the max-Q-over-a grid-search kernels.
+    context = SolverBuildContext(
+        state_action_space=state_action_space,
+        Q_and_F_functions=Q_and_F_functions,
+        grids=all_grids[regime_name],
+        enable_jit=enable_jit,
+        has_taste_shocks=has_taste_shocks,
     )
+    solver.validate(context=context)
+    solver_kernels = solver.build_period_kernels(context=context)
     max_Q_over_a = solver_kernels.max_Q_over_a
 
     return SolutionPhase(

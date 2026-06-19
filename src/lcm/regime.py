@@ -30,7 +30,7 @@ from _lcm.utils.containers import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import DCEGM, BruteForce
+from lcm.solvers import GridSearch, Solver
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import MarkovTransition
 from lcm.typing import FloatND, UserFunction
@@ -147,10 +147,10 @@ class Regime:
     )
     """Categorical grids for DAG function outputs not in states/actions."""
 
-    solver: BruteForce | DCEGM = field(default_factory=BruteForce)
+    solver: Solver = field(default_factory=GridSearch)
     """Solution algorithm for this regime during backward induction.
 
-    - `BruteForce()` (default): grid search over the full state-action product.
+    - `GridSearch()` (default): grid search over the full state-action product.
     - `DCEGM(...)`: endogenous grid method for one continuous state and one
       continuous action; the regime must satisfy the DC-EGM model contract,
       which is validated at `Model` construction time.
