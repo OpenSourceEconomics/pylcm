@@ -127,6 +127,7 @@ class SimulationResult:
         additional_targets: list[str] | Literal["all"] | None = None,
         *,
         use_labels: bool = True,
+        target_batch_size: int | None = None,
     ) -> pd.DataFrame:
         """Convert simulation results to a flat pandas DataFrame.
 
@@ -137,12 +138,20 @@ class SimulationResult:
                 - "all": Compute all available targets (see `available_targets`)
                 Targets can be any function defined in a regime. Each target is
                 computed for the regimes where it exists; rows from regimes without
-                that target will have NaN. When `simulate` ran with
-                `subject_batch_size` set, target evaluation is chunked over subjects
-                with that batch size (bounding device memory; values are unchanged).
+                that target will have NaN.
             use_labels: If True (default), discrete variables (states, actions, and
                 regime) are returned as pandas Categorical dtype with string labels.
                 If False, discrete variables are returned as integer codes.
+            target_batch_size: Chunk size for the `additional_targets` evaluation.
+                A positive value below the in-regime row count processes the rows in
+                chunks, pulling each chunk to host before the next runs, so the fused
+                target-DAG device workspace is bounded by the chunk rather than the
+                full population. `None` (default) falls back to the
+                `subject_batch_size` the simulation ran with. Set it explicitly to
+                bound target-eval device memory independently of the simulate — e.g.
+                when the simulate ran single-pass under a distributed grid, where
+                raising `subject_batch_size` is not available. Values are identical
+                to the single-pass evaluation.
 
         Returns:
             DataFrame with simulation results.
@@ -153,6 +162,10 @@ class SimulationResult:
             available_targets=self.available_targets,
         )
 
+        effective_target_batch_size = (
+            self._subject_batch_size if target_batch_size is None else target_batch_size
+        )
+
         df = _create_flat_dataframe(
             raw_results=self._raw_results,
             regimes=self._regimes,
@@ -160,7 +173,7 @@ class SimulationResult:
             metadata=self._metadata,
             additional_targets=resolved_targets,
             ages=self._ages,
-            subject_batch_size=self._subject_batch_size,
+            target_batch_size=effective_target_batch_size,
         )
 
         if use_labels:

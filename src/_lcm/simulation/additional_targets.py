@@ -99,12 +99,12 @@ def _compute_targets(
     targets: list[str],
     regime: Regime,
     regime_params: FlatRegimeParams,
-    subject_batch_size: int | None = None,
+    target_batch_size: int | None = None,
 ) -> dict[str, FloatND | IntND | BoolND | np.ndarray]:
     """Compute additional targets for a regime.
 
     The target DAG is vmapped over the regime's in-regime subject-period rows. When
-    `subject_batch_size` is a positive value below the row count, the rows are
+    `target_batch_size` is a positive value below the row count, the rows are
     processed in chunks and each chunk's outputs are pulled to host before the next
     runs, so the fused-DAG device workspace is bounded by the chunk rather than the
     full population. `0`/`None` (or any value at least the row count) evaluates in a
@@ -124,7 +124,7 @@ def _compute_targets(
     inputs = {k: v for k, v in data.items() if k in variables}
     n_rows = len(data["period"])
 
-    if not subject_batch_size or subject_batch_size >= n_rows:
+    if not target_batch_size or target_batch_size >= n_rows:
         kwargs = {k: jnp.asarray(v) for k, v in inputs.items()}
         result = vectorized_func(**all_params, **kwargs)
         return {k: jnp.squeeze(v) for k, v in result.items()}
@@ -133,8 +133,8 @@ def _compute_targets(
     # time. Squeeze the *concatenated* result, never a chunk — an uneven final
     # chunk of one row would otherwise lose its row axis.
     chunk_outputs: list[dict[str, np.ndarray]] = []
-    for start in range(0, n_rows, subject_batch_size):
-        stop = min(start + subject_batch_size, n_rows)
+    for start in range(0, n_rows, target_batch_size):
+        stop = min(start + target_batch_size, n_rows)
         chunk_kwargs = {k: jnp.asarray(v[start:stop]) for k, v in inputs.items()}
         chunk_result = vectorized_func(**all_params, **chunk_kwargs)
         chunk_outputs.append({k: np.asarray(v) for k, v in chunk_result.items()})

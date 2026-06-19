@@ -155,3 +155,43 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
     v_arr = result.raw_results["work"][0].V_arr
     assert isinstance(v_arr, jax.Array)
     assert v_arr.devices() == {jax.devices("cpu")[0]}
+
+
+def _target_batch_df(*, target_batch_size: int) -> pd.DataFrame:
+    """Simulate in a single pass, then chunk only the `to_dataframe` target eval."""
+    model = get_multi_regime_model(n_periods=6, distribution_type="normal")
+    params = get_multi_regime_params("normal")
+    result = model.simulate(
+        log_level="off",
+        params=params,
+        initial_conditions=_INITIAL_CONDITIONS,
+        period_to_regime_to_V_arr=None,
+        seed=42,
+        subject_batch_size=0,
+    )
+    return (
+        result.to_dataframe(
+            additional_targets=["utility"], target_batch_size=target_batch_size
+        )
+        .sort_values(["subject_id", "period"])
+        .reset_index(drop=True)
+    )
+
+
+@pytest.mark.parametrize("target_batch_size", [2, 3, 100])
+def test_to_dataframe_targets_are_invariant_to_target_batch_size(
+    target_batch_size: int,
+) -> None:
+    """`to_dataframe(target_batch_size=N)` chunks the target eval on its own knob.
+
+    The post-simulate `additional_targets` DAG (`utility`) is evaluated over the
+    in-regime rows in chunks of `target_batch_size`, independently of the simulate's
+    `subject_batch_size` (here `0` — the single-pass case a distributed/sharded
+    simulate produces, where raising `subject_batch_size` is unavailable). An even
+    split (2 over 7), an uneven one (3 → 3, 3, 1), and a chunk larger than the
+    population (100 → single chunk) each reproduce the single-pass `utility` column
+    exactly.
+    """
+    baseline = _target_batch_df(target_batch_size=0)
+    batched = _target_batch_df(target_batch_size=target_batch_size)
+    _assert_columns_invariant(baseline, batched)

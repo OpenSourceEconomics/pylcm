@@ -28,7 +28,7 @@ def _create_flat_dataframe(
     metadata: ResultMetadata,
     additional_targets: list[str] | None,
     ages: AgeGrid,
-    subject_batch_size: int | None = None,
+    target_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Create a single flat DataFrame from all regime results.
 
@@ -49,7 +49,7 @@ def _create_flat_dataframe(
             regime_params=flat_params[name],
             additional_targets=additional_targets,
             ages=ages,
-            subject_batch_size=subject_batch_size,
+            target_batch_size=target_batch_size,
         )
         for name in metadata.regime_names
         if raw_results[name]
@@ -72,7 +72,7 @@ def _process_regime(
     regime_params: FlatRegimeParams,
     additional_targets: list[str] | None,
     ages: AgeGrid,
-    subject_batch_size: int | None = None,
+    target_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Process results for a single regime into a DataFrame.
 
@@ -115,7 +115,7 @@ def _process_regime(
                 targets=targets_for_regime,
                 regime=regime,
                 regime_params=regime_params,
-                subject_batch_size=subject_batch_size,
+                target_batch_size=target_batch_size,
             )
             data.update(target_values)
 
