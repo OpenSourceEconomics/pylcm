@@ -12,6 +12,8 @@ Submodules:
   nodes) that the EGM step consumes per savings node.
 - `_lcm.egm.step_core`: the textbook single-post-state DC-EGM solve (Euler
   inversion → constrained candidates → upper envelope → publish V + carry).
+- `_lcm.egm.asset_row`: the per-Euler-node solve for Euler-state-dependent
+  savings stages (maps `step_core` over the asset grid; the ACA path).
 - `_lcm.egm.budget`: resources and post-decision (budget) evaluation.
 - `_lcm.egm.euler`: Euler-equation inversion to candidate consumption.
 - `_lcm.egm.carry`: the per-period marginal-utility carry passed between periods.
