@@ -151,10 +151,63 @@ def interp_on_prepared_grid(
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
     lower = upper - 1
-    xp_lower = xp[lower]
-    fp_lower = fp[lower]
-    fp_upper = fp[upper]
-    bracket_width = xp[upper] - xp_lower
+    return _interp_between_nodes(
+        x_query=x_query,
+        xp_lower=xp[lower],
+        xp_upper=xp[upper],
+        fp_lower=fp[lower],
+        fp_upper=fp[upper],
+        slope_lower=None if fp_slopes is None else fp_slopes[lower],
+        slope_upper=None if fp_slopes is None else fp_slopes[upper],
+    )
+
+
+def _interp_between_nodes(
+    *,
+    x_query: FloatND,
+    xp_lower: FloatND,
+    xp_upper: FloatND,
+    fp_lower: FloatND,
+    fp_upper: FloatND,
+    slope_lower: FloatND | None = None,
+    slope_upper: FloatND | None = None,
+) -> FloatND:
+    """Interpolate a query between its two bracketing grid nodes.
+
+    The pure two-node arithmetic of the padded-grid interpolant, shared by
+    `interp_on_prepared_grid` (which gathers the bracket from a full row) and
+    the streamed asset-row publish (which captures the bracket directly during
+    the upper-envelope scan). Having both paths reduce to this one function
+    guarantees the streamed value cannot diverge from the row-then-interpolate
+    value: only *which two nodes* differs, not the arithmetic on them.
+
+    The bracket must already be edge-clamped to a real pair of nodes (queries
+    below the first node bracket the first pair, queries at or above the last
+    bracket the last pair). The interpolant is then edge-safe by construction:
+
+    - At a zero-width bracket (a duplicated kink abscissa) the relative position
+      is forced to `1.0`, so the right node's value applies and the zero width
+      is never used as a divisor.
+    - A `-inf` endpoint yields `-inf` wherever it carries positive weight
+      (instead of the NaN of `fp_lower + rel * (fp_upper - fp_lower)`) and
+      contributes exactly nothing at weight zero.
+
+    Args:
+        x_query: Point(s) at which to evaluate the interpolant.
+        xp_lower: Lower bracket node abscissa.
+        xp_upper: Upper bracket node abscissa.
+        fp_lower: Function value at the lower node.
+        fp_upper: Function value at the upper node.
+        slope_lower: Node derivative at the lower node; `None` selects linear
+            interpolation.
+        slope_upper: Node derivative at the upper node; `None` selects linear
+            interpolation.
+
+    Returns:
+        Interpolated value(s) with the shape of `x_query`.
+
+    """
+    bracket_width = xp_upper - xp_lower
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
     # Zero-width brackets arise only when a duplicated abscissa sits at the end
     # of the non-NaN prefix; queries there are at or above the duplicate, so
@@ -172,7 +225,7 @@ def interp_on_prepared_grid(
     linear = jnp.where(weight_lower > 0.0, weight_lower * fp_lower, 0.0) + jnp.where(
         relative_position > 0.0, relative_position * fp_upper, 0.0
     )
-    if fp_slopes is None:
+    if slope_lower is None or slope_upper is None:
         return linear
     return linear + _hermite_correction(
         relative_position=relative_position,
@@ -180,8 +233,8 @@ def interp_on_prepared_grid(
         safe_width=safe_width,
         fp_lower=fp_lower,
         fp_upper=fp_upper,
-        slope_lower=fp_slopes[lower],
-        slope_upper=fp_slopes[upper],
+        slope_lower=slope_lower,
+        slope_upper=slope_upper,
     )
 
 

@@ -161,7 +161,7 @@ from _lcm.egm.step_core import (
     _EgmKernelPieces,
     _get_solve_one_combo,
 )
-from _lcm.egm.upper_envelope import get_upper_envelope
+from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope
 from _lcm.egm.validation import _reachable_target_names, savings_stage_reads_euler_state
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, Grid
@@ -754,6 +754,7 @@ def _build_kernel_pieces(
         ),
         build_H_kwargs=_get_build_H_kwargs(functions),
         refine=get_upper_envelope(solver=solver, n_refined=n_pad),
+        refine_to_bracket=get_bracket_finder(solver=solver),
         continuation_plan=continuation_plan,
     )
 

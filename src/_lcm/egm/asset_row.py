@@ -24,6 +24,7 @@ from _lcm.egm.continuation import (
     bind_continuation,
 )
 from _lcm.egm.interp import (
+    _interp_between_nodes,
     interp_on_padded_grid,
 )
 from _lcm.egm.step_core import (
@@ -31,6 +32,9 @@ from _lcm.egm.step_core import (
     _compute_nodes_over_savings,
     _EgmKernelPieces,
     _get_compute_node,
+)
+from _lcm.egm.upper_envelope.fues import (
+    QueryBracket,
 )
 from _lcm.typing import (
     RegimeName,
@@ -171,17 +175,19 @@ def _get_solve_one_combo_asset_rows(
             # Same `-inf` masking as the default per-combo computation: dead
             # candidates become the envelope scan's absent form (NaN).
             candidate_dead = jnp.isneginf(candidate_value)
-            refined_grid, refined_policy, refined_value, n_kept = pieces.refine(
+            # The node reads its refined envelope at exactly one query
+            # (`resources_at_node`), so the scan streams the bracketing pair
+            # instead of materializing the NaN-padded `n_pad` envelope rows —
+            # the per-(combo, node) envelope working set is O(1), not O(n_pad).
+            bracket = pieces.refine_to_bracket(
                 endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
                 policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
                 value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+                x_query=resources_at_node,
             )
 
-            V_node, policy_node = _publish_node_V_and_policy(
-                refined_grid=refined_grid,
-                refined_policy=refined_policy,
-                refined_value=refined_value,
-                n_kept=n_kept,
+            V_node, policy_node = publish_node_from_bracket(
+                bracket=bracket,
                 n_pad=pieces.n_pad,
                 resources_at_node=resources_at_node,
                 borrowing_limit=pieces.borrowing_limit,
@@ -372,3 +378,127 @@ def _publish_node_V_and_policy(
     V_node = jnp.where(overflowed, jnp.nan, V_node).astype(dtype)
     policy_node = jnp.where(overflowed, jnp.nan, policy_node).astype(dtype)
     return V_node, policy_node
+
+
+def publish_node_from_bracket(
+    *,
+    bracket: QueryBracket,
+    n_pad: int,
+    resources_at_node: ScalarFloat,
+    borrowing_limit: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    discounted_expected_value_at_limit: ScalarFloat,
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Publish one asset node's value and optimal action from its query bracket.
+
+    The streamed counterpart of `_publish_node_V_and_policy`: it consumes the
+    two envelope nodes that `refine_to_bracket` captured around
+    `resources_at_node` instead of the full NaN-padded refined row, so the
+    `n_pad` envelope is never materialized. The published economics are
+    identical:
+
+    - The value is the cubic-Hermite read of the envelope between the two
+      bracket nodes (the value slope at each node is `grad(utility_of_action)`
+      at that node's policy, the envelope-theorem marginal), floored at the
+      closed-form constrained value, which is a feasible-policy lower bound.
+    - Below the lowest envelope node the closed-form constrained value is
+      published outright; the winning branch sets the action (the closed-form
+      `R - borrowing_limit` where constrained wins, the interpolated policy
+      otherwise).
+    - Envelope overflow (`n_kept > n_pad`) NaN-poisons both outputs, identical
+      to the row path, so the solve loop's NaN diagnostics surface the offending
+      (regime, period).
+
+    Because the value and policy arithmetic is the shared `_interp_between_nodes`
+    primitive — the same one the row path reaches through
+    `interp_on_padded_grid` — the streamed publish cannot diverge from
+    row-then-interpolate: only the bracket-finding differs.
+
+    Args:
+        bracket: The query bracket from `refine_to_bracket`.
+        n_pad: Static length of the envelope-refinement workspace (the overflow
+            threshold).
+        resources_at_node: Resources at this exogenous Euler node (the row's
+            single publish query).
+        borrowing_limit: Lower bound of the savings grid.
+        utility_of_action: Utility with everything but the continuous action
+            bound.
+        discounted_expected_value_at_limit: Discounted expected continuation
+            value at the lowest savings node.
+
+    Returns:
+        Tuple of the node's published value and published optimal action.
+
+    """
+    dtype = resources_at_node.dtype
+    overflowed = bracket.n_kept > n_pad
+
+    # The value Hermite slope is the envelope-theorem marginal `u'(c*)`, masked
+    # exactly as the row path: NaN where the node's policy is NaN (a padded
+    # slot), 0.0 where the node's value is `-inf` (an infeasible endpoint), so
+    # `_interp_between_nodes` falls back to the linear rule on those brackets.
+    slope_lower = _node_value_slope(
+        policy=bracket.lower_policy,
+        value=bracket.lower_value,
+        utility_of_action=utility_of_action,
+    )
+    slope_upper = _node_value_slope(
+        policy=bracket.upper_policy,
+        value=bracket.upper_value,
+        utility_of_action=utility_of_action,
+    )
+
+    value_interpolated = _interp_between_nodes(
+        x_query=resources_at_node,
+        xp_lower=bracket.lower_grid,
+        xp_upper=bracket.upper_grid,
+        fp_lower=bracket.lower_value,
+        fp_upper=bracket.upper_value,
+        slope_lower=slope_lower,
+        slope_upper=slope_upper,
+    )
+    policy_interpolated = _interp_between_nodes(
+        x_query=resources_at_node,
+        xp_lower=bracket.lower_grid,
+        xp_upper=bracket.upper_grid,
+        fp_lower=bracket.lower_policy,
+        fp_upper=bracket.upper_policy,
+    )
+
+    closed_form_action = resources_at_node - borrowing_limit
+    value_constrained = jnp.where(
+        closed_form_action > 0.0,
+        utility_of_action(jnp.maximum(closed_form_action, jnp.finfo(dtype).tiny))
+        + discounted_expected_value_at_limit,
+        -jnp.inf,
+    )
+    below_refined = (closed_form_action > 0.0) & (
+        resources_at_node <= bracket.first_grid
+    )
+    constrained_wins = below_refined | (value_constrained >= value_interpolated)
+    V_node = jnp.where(
+        below_refined,
+        value_constrained,
+        jnp.maximum(value_interpolated, value_constrained),
+    )
+    policy_node = jnp.where(constrained_wins, closed_form_action, policy_interpolated)
+    V_node = jnp.where(overflowed, jnp.nan, V_node).astype(dtype)
+    policy_node = jnp.where(overflowed, jnp.nan, policy_node).astype(dtype)
+    return V_node, policy_node
+
+
+def _node_value_slope(
+    *,
+    policy: ScalarFloat,
+    value: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+) -> ScalarFloat:
+    """Envelope-theorem value slope at one bracket node, masked like the row.
+
+    The slope is `grad(utility_of_action)` at the node's policy — NaN where the
+    policy is a padded NaN slot, 0.0 where the node value is `-inf` — matching
+    the per-node masking the row path applies before interpolating.
+    """
+    slope = jax.grad(utility_of_action)(jnp.where(jnp.isnan(policy), 1.0, policy))
+    slope = jnp.where(jnp.isnan(policy), jnp.nan, slope)
+    return jnp.where(jnp.isneginf(value), 0.0, slope)

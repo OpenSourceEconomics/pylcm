@@ -8,11 +8,16 @@ step itself. Currently implemented: the Fast Upper-Envelope Scan
 (`_lcm.egm.upper_envelope.fues`).
 """
 
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
-from _lcm.egm.upper_envelope.fues import refine_envelope
+from _lcm.egm.upper_envelope.fues import (
+    QueryBracket,
+    refine_envelope,
+    refine_to_bracket,
+)
 from lcm.solvers import DCEGM
-from lcm.typing import Float1D, ScalarInt
+from lcm.typing import Float1D, ScalarFloat, ScalarInt
 
 
 @runtime_checkable
@@ -66,6 +71,50 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             )
 
         return fues_backend
+
+    msg = f"Unknown upper-envelope backend: {solver.upper_envelope!r}."
+    raise ValueError(msg)
+
+
+def get_bracket_finder(*, solver: DCEGM) -> Callable[..., QueryBracket]:
+    """Build the streaming single-query bracket finder for the asset-row solve.
+
+    The geometry-only counterpart of `get_upper_envelope` for asset-row mode,
+    where the refined envelope is read at exactly one query per node: it returns
+    the two bracketing envelope nodes (plus the first node and the kept count)
+    without materializing the NaN-padded `n_pad` rows. It is FUES-local and
+    deliberately not on the `UpperEnvelopeBackend` Protocol — the backend
+    returns envelope geometry; the asset-row module owns the EGM economics
+    (utility gradients, the borrowing limit, the constrained floor).
+
+    Args:
+        solver: The regime's DC-EGM solver configuration; the `fues_*` fields
+            parametrize the scan.
+
+    Returns:
+        The configured bracket finder.
+
+    """
+    if solver.upper_envelope == "fues":
+
+        def fues_bracket_finder(
+            *,
+            endog_grid: Float1D,
+            policy: Float1D,
+            value: Float1D,
+            x_query: ScalarFloat,
+        ) -> QueryBracket:
+            """Run the streaming FUES scan with the solver's thresholds."""
+            return refine_to_bracket(
+                endog_grid=endog_grid,
+                policy=policy,
+                value=value,
+                x_query=x_query,
+                jump_thresh=solver.fues_jump_thresh,
+                n_points_to_scan=solver.fues_n_points_to_scan,
+            )
+
+        return fues_bracket_finder
 
     msg = f"Unknown upper-envelope backend: {solver.upper_envelope!r}."
     raise ValueError(msg)

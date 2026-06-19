@@ -27,6 +27,7 @@ from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import (
     interp_on_padded_grid,
 )
+from _lcm.egm.upper_envelope.fues import QueryBracket
 from _lcm.typing import (
     ActionName,
     RegimeName,
@@ -101,7 +102,10 @@ class _EgmKernelPieces:
     """Closure assembling the Bellman aggregator's keyword arguments."""
 
     refine: Callable[..., tuple[Float1D, Float1D, Float1D, ScalarInt]]
-    """The configured upper-envelope backend."""
+    """The configured upper-envelope backend (single-post-state carry)."""
+
+    refine_to_bracket: Callable[..., QueryBracket]
+    """The streaming single-query bracket finder (asset-row publish)."""
 
     continuation_plan: ContinuationPlan
     """Build-time statics of the per-savings-node continuation aggregation."""
