@@ -10,6 +10,8 @@ Submodules:
 - `_lcm.egm.continuation`: the expected next-period value and marginal over the
   regime's targets (multi-target carry, passive blend, taste shocks, stochastic
   nodes) that the EGM step consumes per savings node.
+- `_lcm.egm.step_core`: the textbook single-post-state DC-EGM solve (Euler
+  inversion → constrained candidates → upper envelope → publish V + carry).
 - `_lcm.egm.budget`: resources and post-decision (budget) evaluation.
 - `_lcm.egm.euler`: Euler-equation inversion to candidate consumption.
 - `_lcm.egm.carry`: the per-period marginal-utility carry passed between periods.

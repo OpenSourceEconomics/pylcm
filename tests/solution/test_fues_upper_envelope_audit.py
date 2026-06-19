@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from _lcm.egm.interp import interp_on_padded_grid
-from _lcm.egm.step import _publish_V_and_carry_rows
+from _lcm.egm.step_core import _publish_V_and_carry_rows
 from _lcm.egm.upper_envelope.fues import _intersect_lines, refine_envelope
 from tests.conftest import X64_ENABLED
 
