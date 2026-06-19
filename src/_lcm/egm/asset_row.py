@@ -28,6 +28,7 @@ from _lcm.egm.interp import (
     interp_on_padded_grid,
 )
 from _lcm.egm.step_core import (
+    _candidate_supgradient,
     _compute_constrained_candidates,
     _compute_nodes_over_savings,
     _EgmKernelPieces,
@@ -175,14 +176,22 @@ def _get_solve_one_combo_asset_rows(
             # Same `-inf` masking as the default per-combo computation: dead
             # candidates become the envelope scan's absent form (NaN).
             candidate_dead = jnp.isneginf(candidate_value)
-            # The node reads its refined envelope at exactly one query
-            # (`resources_at_node`), so the scan streams the bracketing pair
-            # instead of materializing the NaN-padded `n_pad` envelope rows —
-            # the per-(combo, node) envelope working set is O(1), not O(n_pad).
+            candidate_marginal = _candidate_supgradient(
+                policy=candidate_policy,
+                dead=candidate_dead,
+                utility_of_action=utility_of_action,
+            )
+            # The node reads its refined envelope at one query
+            # (`resources_at_node`): FUES streams the bracketing pair (the
+            # `n_pad` envelope never materializes), while RFC has no streamed
+            # finder and materializes the full envelope before locating the same
+            # bracket — the published `(V, policy)` is identical, but RFC's
+            # asset-row path does not yet get the streaming `n_pad` memory win.
             bracket = pieces.refine_to_bracket(
                 endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
                 policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
                 value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+                marginal_utility=candidate_marginal,
                 x_query=resources_at_node,
             )
 

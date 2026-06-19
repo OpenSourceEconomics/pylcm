@@ -34,6 +34,7 @@ from _lcm.typing import (
     StateName,
 )
 from lcm.typing import (
+    BoolND,
     Float1D,
     FloatND,
     ScalarBool,
@@ -201,10 +202,16 @@ def _get_solve_one_combo(
         # Mask the triple to NaN — the scan's absent form. NaN-valued
         # candidates stay as they are: genuine poison must keep propagating.
         candidate_dead = jnp.isneginf(candidate_value)
+        candidate_marginal = _candidate_supgradient(
+            policy=candidate_policy,
+            dead=candidate_dead,
+            utility_of_action=utility_of_action,
+        )
         refined_grid, refined_policy, refined_value, n_kept = pieces.refine(
             endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
             policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
             value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+            marginal_utility=candidate_marginal,
         )
 
         V_row, value_row, marginal_utility_row = _publish_V_and_carry_rows(
@@ -308,6 +315,35 @@ def _get_compute_node(
         return action, endog_point, value, expected_value
 
     return compute_node
+
+
+def _candidate_supgradient(
+    *,
+    policy: Float1D,
+    dead: BoolND,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+) -> Float1D:
+    """Compute the candidate value-row supgradient $\\mu = \\partial v / \\partial R$.
+
+    By the envelope theorem the value row's slope in resources is the marginal
+    utility of consumption $u'(c)$ at the candidate's optimal action — the
+    same exact slope the published carry row carries. The upper-envelope
+    backend reads it as the tangent gradient at each candidate; FUES ignores
+    it. Dead candidates get $0$ (they are dropped before the dominance test).
+
+    Args:
+        policy: Candidate policy (consumption) values.
+        dead: Indicator of dead candidates (their continuation is `-inf`).
+        utility_of_action: Utility with everything but the continuous action
+            bound.
+
+    Returns:
+        Supgradient per candidate.
+
+    """
+    safe_policy = jnp.where(dead, 1.0, policy)
+    marginal = jax.vmap(jax.grad(utility_of_action))(safe_policy)
+    return jnp.where(dead, 0.0, marginal)
 
 
 def _compute_constrained_candidates(

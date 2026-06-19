@@ -155,14 +155,27 @@ class DCEGM(Solver):
     error compounds across periods.
     """
 
-    upper_envelope: Literal["fues"] = "fues"
-    """Upper-envelope refinement backend removing dominated Euler candidates."""
+    upper_envelope: Literal["fues", "rfc"] = "fues"
+    """Upper-envelope refinement backend removing dominated Euler candidates.
+
+    - `"fues"`: the Fast Upper-Envelope Scan — a sequential scan that inserts
+      exact segment-crossing points.
+    - `"rfc"`: the Rooftop-Cut algorithm — a parallel dominance test that only
+      deletes points (a kink lands between retained points, recovered by the
+      Hermite carry read) and generalizes to multidimensional grids.
+    """
 
     fues_jump_thresh: float = 2.0
     """Segment-switch threshold on `|ΔA / ΔR|` in the FUES scan."""
 
     fues_n_points_to_scan: int = 10
     """Number of points the FUES forward scan inspects after a candidate."""
+
+    rfc_jump_thresh: float = 2.0
+    """Segment-switch threshold on `|Δc / ΔR|` in the rooftop cut."""
+
+    rfc_search_radius: int = 10
+    """Number of neighbors on each side the rooftop-cut dominance test inspects."""
 
     refined_grid_factor: float = 1.2
     """Headroom factor sizing the refined (NaN-padded) envelope arrays."""
@@ -189,6 +202,8 @@ class DCEGM(Solver):
         _fail_if_fues_jump_thresh_non_positive(self.fues_jump_thresh)
         _fail_if_n_constrained_points_too_few(self.n_constrained_points)
         _fail_if_fues_n_points_to_scan_too_few(self.fues_n_points_to_scan)
+        _fail_if_rfc_jump_thresh_non_positive(self.rfc_jump_thresh)
+        _fail_if_rfc_search_radius_too_few(self.rfc_search_radius)
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
@@ -495,6 +510,28 @@ def _fail_if_fues_jump_thresh_non_positive(fues_jump_thresh: float) -> None:
             f"DCEGM.fues_jump_thresh must be a finite positive value, got "
             f"{fues_jump_thresh}. It is the segment-switch threshold on "
             "`|ΔA / ΔR|` in the FUES scan."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_rfc_jump_thresh_non_positive(rfc_jump_thresh: float) -> None:
+    # `not (x > 0.0)` rejects NaN too: `nan <= 0.0` is False, so the segment-
+    # switch comparison would silently misbehave on a non-finite threshold.
+    if not (math.isfinite(rfc_jump_thresh) and rfc_jump_thresh > 0.0):
+        msg = (
+            f"DCEGM.rfc_jump_thresh must be a finite positive value, got "
+            f"{rfc_jump_thresh}. It is the segment-switch threshold on "
+            "`|Δc / ΔR|` in the rooftop cut."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_rfc_search_radius_too_few(rfc_search_radius: int) -> None:
+    if rfc_search_radius < 1:
+        msg = (
+            f"DCEGM.rfc_search_radius must be at least 1, got "
+            f"{rfc_search_radius}. The rooftop-cut dominance test must inspect "
+            "at least one neighbor on each side of a candidate."
         )
         raise RegimeInitializationError(msg)
 

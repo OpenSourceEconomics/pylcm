@@ -754,7 +754,7 @@ def _build_kernel_pieces(
         ),
         build_H_kwargs=_get_build_H_kwargs(functions),
         refine=get_upper_envelope(solver=solver, n_refined=n_pad),
-        refine_to_bracket=get_bracket_finder(solver=solver),
+        refine_to_bracket=get_bracket_finder(solver=solver, n_refined=n_pad),
         continuation_plan=continuation_plan,
     )
 
