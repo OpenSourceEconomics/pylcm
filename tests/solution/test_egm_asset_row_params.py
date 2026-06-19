@@ -31,7 +31,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, BruteForce
+from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -233,7 +233,7 @@ def _resources_param_model(solver: str) -> Model:
             if is_dcegm
             else {"utility": utility, "resources": resources_with_rate}
         ),
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -340,7 +340,7 @@ def _smoothstep_intermediate_model(solver: str, *, rate_is_fixed: bool) -> Model
             if is_dcegm
             else {"utility": utility, "resources": resources, **intermediates}
         ),
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     fixed_params = (
         {"working_life": {"capital_income": {"rate_of_return": RATE_OF_RETURN}}}
@@ -469,7 +469,7 @@ def _imputed_pension_model(solver: str) -> Model:
             if is_dcegm
             else {"utility": utility, "resources": resources_with_pension_brute}
         ),
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

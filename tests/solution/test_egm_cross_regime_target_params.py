@@ -30,7 +30,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, BruteForce
+from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -241,7 +241,7 @@ def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
             if is_dcegm
             else {"utility": utility, "resources": resources_young}
         ),
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     pension_funcs = {"accrued_pension": accrued_pension, "pension_value": pension_value}
     old = UserRegime(
@@ -267,7 +267,7 @@ def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
             if is_dcegm
             else {"utility": utility, "resources": resources_old, **pension_funcs}
         ),
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     dead = UserRegime(
         transition=None,

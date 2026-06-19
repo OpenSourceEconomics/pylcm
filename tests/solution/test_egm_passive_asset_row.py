@@ -33,7 +33,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, BruteForce
+from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -220,7 +220,7 @@ def _model(solver: str) -> Model:
             if is_dcegm
             else {**_shared_functions(), "resources": resources}
         ),
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -407,7 +407,7 @@ def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
                 **_means_test_intermediates(),
             }
         ),
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     fixed_params = (
         {"working_life": {"capital_income": {"rate_of_return": RATE_OF_RETURN}}}

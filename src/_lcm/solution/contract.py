@@ -8,22 +8,26 @@ override `validate` for a build-time model-contract check (the default is a
 no-op). `SolverBuildContext` carries everything a solver may read to build one
 regime's kernels; `SolverKernels` is what it hands back.
 
-This module is an engine leaf and stays cycle-safe: the public `lcm.solvers`
-façade re-exports `Solver` and is itself imported by `lcm.regime`, so anything
-`contract` imported at runtime that reached back into `lcm.solvers` would close
-a cycle. The heavy annotation-only types (`UserRegime`, `StateActionSpace`,
-`VInterpolationInfo`, `EGMCarry`) therefore live under `TYPE_CHECKING`: PEP 649
-keeps the annotations deferred, `@dataclass` reads only the annotation keys, and
-neither dataclass is a beartyped callable, so nothing forces their runtime
-resolution.
+This module is an engine leaf. Reaching `lcm.regime` would close an import
+cycle — it imports the `lcm.solvers` façade, which re-exports `Solver` from
+here. `UserRegime` and `VInterpolationInfo` (whose module imports `lcm.regime`)
+are therefore referenced through two-form aliases: precise element types for ty
+under `TYPE_CHECKING`, a bare container for the beartype claw at runtime. The
+remaining engine types (`StateActionSpace`, `EGMCarry`) live in sibling leaves
+with no path back to `lcm.solvers`, so they import normally and beartype checks
+them precisely. The widened runtime aliases are required because the claw
+beartypes each dataclass `__init__`, and under PEP 649 that forces the field
+annotations to resolve to real objects when a context is constructed.
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
+from _lcm.egm.carry import EGMCarry
+from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
 from _lcm.typing import (
     ConstraintFunctionsMapping,
@@ -39,10 +43,20 @@ from _lcm.typing import (
 )
 
 if TYPE_CHECKING:
-    from _lcm.egm.carry import EGMCarry
-    from _lcm.engine import StateActionSpace
     from _lcm.regime_building.V import VInterpolationInfo
     from lcm.regime import Regime as UserRegime
+
+    UserRegimesMapping: TypeAlias = Mapping[RegimeName, UserRegime]  # noqa: UP040
+    RegimeToVInterpolationInfo: TypeAlias = MappingProxyType[  # noqa: UP040
+        RegimeName, VInterpolationInfo
+    ]
+else:
+    # `lcm.regime` — reached directly, and transitively through
+    # `_lcm.regime_building.V` — closes a cycle via the `lcm.solvers` façade,
+    # which re-exports `Solver` from this module. ty reads the precise element
+    # types above; the beartype claw checks only the outer container at runtime.
+    UserRegimesMapping = Mapping
+    RegimeToVInterpolationInfo = MappingProxyType
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -56,7 +70,7 @@ class SolverBuildContext:
     regime_name: RegimeName
     """Name of the regime the kernels are built for."""
 
-    user_regimes: Mapping[RegimeName, UserRegime]
+    user_regimes: UserRegimesMapping
     """Mapping of regime names to user-provided `Regime` instances."""
 
     state_action_space: StateActionSpace
@@ -83,7 +97,7 @@ class SolverBuildContext:
     compute_regime_transition_probs: RegimeTransitionFunction | None
     """Regime transition probability function, or `None` for terminal regimes."""
 
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo]
+    regime_to_v_interpolation_info: RegimeToVInterpolationInfo
     """Immutable mapping of regime names to V-interpolation info."""
 
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]

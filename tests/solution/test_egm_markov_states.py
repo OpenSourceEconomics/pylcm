@@ -33,7 +33,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, BruteForce
+from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -220,7 +220,7 @@ def _same_grid_markov_model(solver: str) -> Model:
             **(_dcegm_functions() if is_dcegm else {}),
             "utility": utility_with_health,
         },
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -339,7 +339,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
             ),
             "utility": utility_early,
         },
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     late = UserRegime(
         transition={
@@ -358,7 +358,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
             **(_dcegm_functions() if is_dcegm else {}),
             "utility": utility_with_health,
         },
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"early": early, "late": late, "dead": dead},
@@ -466,7 +466,7 @@ def _joint_process_markov_model(solver: str) -> Model:
             ),
             "utility": utility_with_health_only,
         },
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -571,7 +571,7 @@ def _point_mass_floor_model(solver: str) -> Model:
             "utility": utility_with_health,
             "income_transfer": income_transfer if is_dcegm else income_transfer_brute,
         },
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

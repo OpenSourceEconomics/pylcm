@@ -34,7 +34,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, BruteForce
+from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -270,7 +270,7 @@ def _survival_prob_model(solver: str) -> Model:
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={**(_dcegm_functions() if is_dcegm else {}), "utility": utility},
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -319,7 +319,7 @@ def _markov_health_model(solver: str) -> Model:
             **(_dcegm_functions() if is_dcegm else {}),
             "utility": utility_with_health,
         },
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -377,7 +377,7 @@ def _passive_skill_model(solver: str) -> Model:
             **(_dcegm_functions() if is_dcegm else {}),
             "utility": utility_with_skill,
         },
-        solver=DCEGM_SOLVER if is_dcegm else BruteForce(),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

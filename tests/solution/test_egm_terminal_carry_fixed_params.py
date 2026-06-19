@@ -27,7 +27,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, BruteForce
+from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -173,7 +173,7 @@ def _get_model(solver: str, *, scale_is_fixed: bool) -> Model:
                 n_constrained_points=64,
             )
             if is_dcegm
-            else BruteForce()
+            else GridSearch()
         ),
         active=lambda age, la=last_age: age < la,
     )

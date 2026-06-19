@@ -22,7 +22,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import _default_H
-from lcm.solvers import BruteForce
+from lcm.solvers import GridSearch
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -448,14 +448,14 @@ def test_coarse_transition_reaching_brute_regime_raises():
     regime's transition is a bare callable: the brute-force non-terminal
     regime becomes a declared target.
     """
-    with pytest.raises(ModelInitializationError, match="BruteForce"):
+    with pytest.raises(ModelInitializationError, match="GridSearch"):
         _three_regime_model_with_brute_worker(base.next_regime_from_retirement)
 
 
 def test_non_dcegm_non_terminal_target_raises():
     """A DC-EGM regime may not target a brute-force non-terminal regime."""
     brute_target = dcegm_variants.dcegm_retirement.replace(
-        solver=BruteForce(),
+        solver=GridSearch(),
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
@@ -506,12 +506,12 @@ def test_brute_force_inverse_marginal_utility_keeps_its_params():
 
 
 def test_brute_force_solver_explicit_equals_default():
-    """`solver=BruteForce()` is the default: identical solution either way."""
+    """`solver=GridSearch()` is the default: identical solution either way."""
     params = retirement_only.get_params(N_PERIODS)
 
     default_model = retirement_only.get_model(N_PERIODS)
     explicit = retirement_only.retirement.replace(
-        solver=BruteForce(),
+        solver=GridSearch(),
         active=lambda age: age < 60,
     )
     explicit_model = _build_model(explicit)
