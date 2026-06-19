@@ -3,6 +3,8 @@
 Submodules:
 
 - `_lcm.egm.validation`: DC-EGM model-contract validation.
+- `_lcm.egm.regime_introspection`: pure spec-introspection of regimes and carry
+  targets, shared by the kernel build, continuation, and scope checks.
 - `_lcm.egm.budget`: resources and post-decision (budget) evaluation.
 - `_lcm.egm.euler`: Euler-equation inversion to candidate consumption.
 - `_lcm.egm.carry`: the per-period marginal-utility carry passed between periods.
