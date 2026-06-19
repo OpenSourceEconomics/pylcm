@@ -6,34 +6,40 @@ then `solver.build_period_kernels(context)` — with no switch on solver type.
 Add a solver by subclassing `Solver` and implementing `build_period_kernels`;
 override `validate` for a build-time model-contract check (the default is a
 no-op). `SolverBuildContext` carries everything a solver may read to build one
-regime's kernels; `SolverKernels` is what it hands back.
+regime's kernels; `SolutionKernels` is what it hands back.
+
+Each entry of `SolutionKernels.period_kernels` is a `PeriodKernel`: a single
+non-jitted period adapter that wraps the solver's shared jitted core, calls it
+with the solver's own argument layout, and assembles a `KernelResult` outside
+JIT. The solve loop invokes the same adapter for every solver, branching only on
+which optional outputs (`carry`, `sim_policy`) are present, never on solver type.
 
 This module is an engine leaf. Reaching `lcm.regime` would close an import
 cycle — it imports the `lcm.solvers` façade, which re-exports `Solver` from
 here. `UserRegime` and `VInterpolationInfo` (whose module imports `lcm.regime`)
 are therefore referenced through two-form aliases: precise element types for ty
 under `TYPE_CHECKING`, a bare container for the beartype claw at runtime. The
-remaining engine types (`StateActionSpace`, `EGMCarry`) live in sibling leaves
-with no path back to `lcm.solvers`, so they import normally and beartype checks
-them precisely. The widened runtime aliases are required because the claw
-beartypes each dataclass `__init__`, and under PEP 649 that forces the field
-annotations to resolve to real objects when a context is constructed.
+remaining engine types (`StateActionSpace`, `EGMCarry`, `EGMSimPolicy`) live in
+sibling leaves with no path back to `lcm.solvers`, so they import normally and
+beartype checks them precisely. The widened runtime aliases are required because
+the claw beartypes each dataclass `__init__`, and under PEP 649 that forces the
+field annotations to resolve to real objects when an instance is constructed.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
 from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
-    EGMStepFunction,
-    MaxQOverAFunction,
+    FlatParams,
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
@@ -41,6 +47,13 @@ from _lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
+from lcm.ages import AgeGrid
+from lcm.typing import FloatND
+
+# The cross-period continuation channel a DC-EGM parent interpolates. Named
+# solver-agnostically on the seam so the engine threads it without knowing it is
+# an EGM carry; today the only continuation payload is the EGM carry itself.
+type ContinuationPayload = EGMCarry
 
 if TYPE_CHECKING:
     from _lcm.regime_building.V import VInterpolationInfo
@@ -122,26 +135,95 @@ class SolverBuildContext:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SolverKernels:
-    """Per-period solve kernels produced by a solver."""
+class KernelResult:
+    """One regime-period solve output, assembled outside JIT.
 
-    max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
-    """Immutable mapping of period to max-Q-over-actions kernels.
+    The solve loop reads `V_arr` from every kernel and branches only on whether
+    the optional generic outputs are present — never on solver type:
 
-    Empty for solvers that replace the grid search with their own kernels.
+    - `carry` is the cross-period continuation a DC-EGM parent interpolates;
+      `None` for a regime that publishes no continuation.
+    - `sim_policy` is the off-grid consumption policy DC-EGM forward simulation
+      can interpolate; `None` for a regime that publishes none.
     """
 
-    egm_step: MappingProxyType[int, EGMStepFunction] | None = None
-    """Immutable mapping of period to DC-EGM kernels, or `None`."""
+    V_arr: FloatND
+    """The regime's value-function array on its exogenous state grid."""
 
-    egm_carry_template: EGMCarry | None = None
-    """All-finite template carry with the regime's static shapes, or `None`."""
+    carry: ContinuationPayload | None = None
+    """Continuation payload for a DC-EGM parent, or `None`."""
 
-    egm_reachable_targets: frozenset[RegimeName] = frozenset()
-    """The regime's reachable-target names — the only carry keys its kernels
-    read. The solve loop filters the rolling carry mapping to these before
-    handing it to each kernel, so the device need not hold every regime's
-    carry at once."""
+    sim_policy: EGMSimPolicy | None = None
+    """Published off-grid simulation policy, or `None`."""
+
+
+@runtime_checkable
+class PeriodKernel(Protocol):
+    """One regime's per-period solve adapter — the loop's uniform call target.
+
+    A single non-jitted closure per regime-period that wraps the solver's shared
+    jitted core (deduped across periods by core identity), calls it with the
+    solver's own argument layout, and assembles a `KernelResult` outside JIT.
+    Plain closures satisfy this structurally; the loop never inspects the solver
+    type. `core` exposes the shared jitted function so AOT compilation can
+    deduplicate and lower it; `build_lower_args` builds that core's lowering
+    kwargs.
+    """
+
+    core: Callable
+    """The shared jitted core, exposed for AOT identity-dedup and lowering."""
+
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> PeriodKernel:
+        """Return a copy with the regime's fixed params bound into the core.
+
+        The adapter owns its solver's binding rule — which fixed params reach
+        the core (and any inline closure it wraps) — so the engine binds fixed
+        params without a solver-type switch.
+        """
+        ...
+
+    def build_lower_args(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> Mapping[str, object]:
+        """Build the core's lowering arguments for this period."""
+        ...
+
+    def __call__(
+        self,
+        *,
+        compiled_core: Callable,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Invoke the compiled core and assemble the period's `KernelResult`."""
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class SolutionKernels:
+    """Per-period solve adapters produced by a solver."""
+
+    period_kernels: Mapping[int, PeriodKernel]
+    """Immutable mapping of period to the regime's uniform period adapter."""
+
+    continuation_template: ContinuationPayload | None = None
+    """All-finite template continuation with the regime's static shapes.
+
+    `None` for a regime that publishes no continuation. Initializes the rolling
+    `next_regime_to_egm_carry` mapping and serves as the lowering argument when
+    AOT-compiling a parent's kernel.
+    """
 
 
 class Solver(ABC):
@@ -154,8 +236,8 @@ class Solver(ABC):
     """
 
     @abstractmethod
-    def build_period_kernels(self, *, context: SolverBuildContext) -> SolverKernels:
-        """Build the regime's per-period solve kernels."""
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build the regime's per-period solve adapters."""
 
     def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Check the regime is in scope for this solver. Default: no-op."""

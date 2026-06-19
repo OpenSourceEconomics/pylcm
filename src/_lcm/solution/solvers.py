@@ -1,27 +1,50 @@
 """The built-in regime solvers.
 
-`GridSearch` (the default) runs the existing max-Q-over-a grid search;
-`DCEGM` is a published configuration whose engine is not yet wired in, so a
-regime requesting it is rejected at model build by its `validate`. Both are
-`Solver` subclasses. The kernel-building imports (`jax`, `get_max_Q_over_a`)
-are function-local so the public `lcm.solvers` façade stays a thin re-export
-that pulls in no numerical engine modules.
+`GridSearch` (the default) runs the existing max-Q-over-a grid search; `DCEGM`
+runs the discrete-continuous endogenous grid method. Both are `Solver`
+subclasses whose `build_period_kernels` returns one `PeriodKernel` per period —
+a non-jitted adapter that wraps the solver's shared jitted core, calls it with
+the solver's own argument layout, and assembles a `KernelResult` outside JIT.
+The solve loop invokes every adapter the same way, so no solver-type fork
+survives in the loop.
+
+Compilation reuse is preserved: only the shared core is `jax.jit`'d and
+identity-deduped (`id(Q_and_F)` for grid search, function identity for the EGM
+step), so periods sharing a core reuse one compiled program. The adapters that
+wrap a shared core are themselves never jitted.
+
+The kernel-building imports (`jax`, `get_max_Q_over_a`, `build_egm_step_functions`)
+are function-local so the public `lcm.solvers` façade stays a thin re-export that
+pulls in no numerical engine modules.
 """
 
+import functools
 import math
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal
 
+import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.egm.carry import EGMCarry
+from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.solution.contract import Solver, SolverBuildContext, SolverKernels
-from _lcm.typing import EGMStepFunction, MaxQOverAFunction
+from _lcm.solution.contract import (
+    ContinuationPayload,
+    KernelResult,
+    PeriodKernel,
+    SolutionKernels,
+    Solver,
+    SolverBuildContext,
+)
+from _lcm.typing import EGMStepFunction, FlatParams, MaxQOverAFunction, RegimeName
+from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ActionName, FunctionName, StateName
+from lcm.typing import ActionName, FloatND, FunctionName, StateName
 
 
 @beartype(conf=REGIME_CONF)
@@ -29,18 +52,18 @@ from lcm.typing import ActionName, FunctionName, StateName
 class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
 
-    def build_period_kernels(self, *, context: SolverBuildContext) -> SolverKernels:
-        """Build max-Q-over-a closures for each period.
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build one max-Q-over-a period adapter per period.
 
-        Periods sharing the same Q_and_F object reuse a single compiled
-        function.
+        Periods sharing the same Q_and_F object reuse a single jitted core,
+        and therefore a single compiled program.
         """
         import jax  # noqa: PLC0415
 
         from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a  # noqa: PLC0415
 
         built: dict[int, MaxQOverAFunction] = {}
-        result: dict[int, MaxQOverAFunction] = {}
+        result: dict[int, PeriodKernel] = {}
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
             if q_id not in built:
@@ -59,8 +82,10 @@ class GridSearch(Solver):
                     has_taste_shocks=context.has_taste_shocks,
                 )
                 built[q_id] = jax.jit(func) if context.enable_jit else func
-            result[period] = built[q_id]
-        return SolverKernels(max_Q_over_a=MappingProxyType(result))
+            result[period] = _GridSearchPeriodKernel(
+                core=built[q_id], regime_name=context.regime_name
+            )
+        return SolutionKernels(period_kernels=MappingProxyType(result))
 
 
 @beartype(conf=REGIME_CONF)
@@ -166,14 +191,15 @@ class DCEGM(Solver):
         _fail_if_fues_n_points_to_scan_too_few(self.fues_n_points_to_scan)
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
 
-    def build_period_kernels(self, *, context: SolverBuildContext) -> SolverKernels:
-        """Build per-period DC-EGM kernels and the regime's carry template.
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build one DC-EGM period adapter per period and the carry template.
 
         The standalone `validate_dcegm_regimes` model-contract check (run during
         regime processing) guarantees the regime is non-terminal, so the regime
-        transition probability function exists. Numerical-builder imports are
-        function-local so the public `lcm.solvers` façade stays a thin
-        re-export that pulls in no engine modules.
+        transition probability function exists. Periods sharing one EGM-step core
+        reuse a single jitted core, and therefore a single compiled program.
+        Numerical-builder imports are function-local so the public `lcm.solvers`
+        façade stays a thin re-export that pulls in no engine modules.
         """
         import jax  # noqa: PLC0415
 
@@ -204,12 +230,237 @@ class DCEGM(Solver):
             egm_step = MappingProxyType(
                 {period: jitted_by_id[id(func)] for period, func in egm_step.items()}
             )
-        return SolverKernels(
-            max_Q_over_a=MappingProxyType({}),
-            egm_step=egm_step,
-            egm_carry_template=egm_carry_template,
-            egm_reachable_targets=egm_reachable_targets,
+        period_kernels = MappingProxyType(
+            {
+                period: _DCEGMPeriodKernel(
+                    core=core,
+                    regime_name=context.regime_name,
+                    reachable_targets=egm_reachable_targets,
+                    transition_target_names=tuple(context.transitions),
+                )
+                for period, core in egm_step.items()
+            }
         )
+        return SolutionKernels(
+            period_kernels=period_kernels,
+            continuation_template=egm_carry_template,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _GridSearchPeriodKernel:
+    """The grid-search period adapter — wraps one max-Q-over-a core.
+
+    Closes over the regime name (to project its flat params) and the shared
+    jitted core. Calling it evaluates Q on the full state-action product and
+    maximizes over the actions, returning a `KernelResult` whose only output is
+    the value-function array — no continuation, no simulation policy.
+    """
+
+    core: Callable
+    """The shared jitted max-Q-over-a core (`id`-deduped across periods)."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params this adapter projects."""
+
+    def with_fixed_params(
+        self, *, fixed_flat_params: FlatParams
+    ) -> _GridSearchPeriodKernel:
+        """Bind the regime's fixed params into the core.
+
+        The core threads its `**kwargs` into the per-combo pool, so binding the
+        regime's own fixed params restores the values removed from the live
+        `flat_params`; the captured functions read only the keys they need.
+        """
+        regime_fixed = dict(
+            fixed_flat_params.get(self.regime_name, MappingProxyType({}))
+        )
+        if not regime_fixed:
+            return self
+        return replace(self, core=functools.partial(self.core, **regime_fixed))
+
+    def build_lower_args(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> Mapping[str, object]:
+        """Build the core's lowering arguments: the full state-action product."""
+        return {
+            **dict(state_action_space.states),
+            **dict(state_action_space.actions),
+            "next_regime_to_V_arr": next_regime_to_V_arr,
+            **dict(flat_params[self.regime_name]),
+            "period": jnp.int32(period),
+            "age": ages.values[period],
+        }
+
+    def __call__(
+        self,
+        *,
+        compiled_core: Callable,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Evaluate the grid search and assemble the `KernelResult`."""
+        V_arr = compiled_core(
+            **state_action_space.states,
+            **state_action_space.actions,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **flat_params[self.regime_name],
+            period=jnp.int32(period),
+            age=ages.values[period],
+        )
+        return KernelResult(V_arr=V_arr)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _DCEGMPeriodKernel:
+    """The DC-EGM period adapter — wraps one EGM-step core.
+
+    Closes over the regime name, its reachable carry targets, and the names of
+    its transition targets (to union their params). Calling it inverts the Euler
+    equation on the savings grid and returns a `KernelResult` carrying the value
+    function, the continuation a parent interpolates, and the published off-grid
+    simulation policy.
+    """
+
+    core: Callable
+    """The shared jitted EGM-step core (`id`-deduped across periods)."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params this adapter projects."""
+
+    reachable_targets: frozenset[RegimeName]
+    """The carry keys the EGM core reads; the rolling carry is filtered to these."""
+
+    transition_target_names: tuple[RegimeName, ...]
+    """Names of the regime's transition targets, whose params are unioned in."""
+
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _DCEGMPeriodKernel:
+        """Bind the regime's and its carry targets' fixed params into the core.
+
+        A DC-EGM source carrying into a *different* target regime evaluates that
+        target's resources / transition functions in its per-asset-node solve,
+        reading the target's fixed params. The core threads its `**kwargs`
+        straight into the per-combo pool those captured functions read, so
+        binding the union of the regime's and its carry targets' fixed params
+        restores the values removed from the live `flat_params` for all of them
+        at once.
+        """
+        egm_fixed = dict(fixed_flat_params.get(self.regime_name, MappingProxyType({})))
+        for target_name in self.transition_target_names:
+            for key, value in fixed_flat_params.get(
+                target_name, MappingProxyType({})
+            ).items():
+                egm_fixed.setdefault(key, value)
+        if not egm_fixed:
+            return self
+        return replace(self, core=functools.partial(self.core, **egm_fixed))
+
+    def build_lower_args(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> Mapping[str, object]:
+        """Build the core's lowering arguments: states, carries, EGM params."""
+        return {
+            **dict(state_action_space.states),
+            "next_regime_to_egm_carry": _reachable_carry_subset(
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                reachable_targets=self.reachable_targets,
+            ),
+            "next_regime_to_V_arr": next_regime_to_V_arr,
+            **self._egm_kernel_params(flat_params=flat_params),
+            "period": jnp.int32(period),
+            "age": ages.values[period],
+        }
+
+    def __call__(
+        self,
+        *,
+        compiled_core: Callable,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Run the DC-EGM step and assemble the `KernelResult`."""
+        V_arr, egm_carry, sim_policy = compiled_core(
+            **state_action_space.states,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=_reachable_carry_subset(
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                reachable_targets=self.reachable_targets,
+            ),
+            **self._egm_kernel_params(flat_params=flat_params),
+            period=jnp.int32(period),
+            age=ages.values[period],
+        )
+        return KernelResult(V_arr=V_arr, carry=egm_carry, sim_policy=sim_policy)
+
+    def _egm_kernel_params(self, *, flat_params: FlatParams) -> dict[str, object]:
+        """Flat params fed into the DC-EGM core: the source's plus its targets'.
+
+        A DC-EGM source carrying into a *different* target regime evaluates that
+        target's resources / transition functions in its per-asset-node solve,
+        reading the target's params (e.g. a pension factor the source never
+        reads). These are model-level shared values, so the target's
+        `flat_params` entry carries the right value; union them in. The core
+        threads its `**kwargs` into the per-combo pool, and its captured
+        functions read only the keys they need, so a target's extra params are
+        harmless to the source functions that do not. Mirrors the fixed-param
+        binding done at model build (`_partial_fixed_params_into_regimes`) for
+        the free-param path.
+        """
+        params: dict[str, object] = dict(flat_params[self.regime_name])
+        for target_name in self.transition_target_names:
+            for key, value in flat_params.get(
+                target_name, MappingProxyType({})
+            ).items():
+                params.setdefault(key, value)
+        return params
+
+
+def _reachable_carry_subset(
+    *,
+    next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+    reachable_targets: frozenset[RegimeName],
+) -> MappingProxyType[RegimeName, EGMCarry]:
+    """The carries a regime's EGM core actually reads.
+
+    Each core only ever indexes `next_regime_to_egm_carry[target]` for its
+    reachable targets, so the full all-regimes mapping is needlessly large.
+    Filtering to the reachable subset keeps the core's carry pytree input
+    minimal — only this subset is passed per call rather than every regime's
+    carry at once.
+
+    Iterates the source mapping's key order (stable across rolls) so the
+    filtered pytree structure matches between lowering and call. Membership is
+    tested defensively; reachable targets are always carry-producing.
+    """
+    return MappingProxyType(
+        {
+            name: next_regime_to_egm_carry[name]
+            for name in next_regime_to_egm_carry
+            if name in reachable_targets
+        }
+    )
 
 
 def _fail_if_savings_grid_is_stochastic(savings_grid: ContinuousGrid) -> None:

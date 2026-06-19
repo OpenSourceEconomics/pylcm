@@ -13,12 +13,14 @@ from dataclasses import replace
 import pytest
 from numpy.testing import assert_array_equal
 
+from _lcm.solution.solve_brute import _func_dedup_key
 from lcm import DCEGM, AgeGrid, GridSearch, LinSpacedGrid, Model, NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
 from lcm_examples.iskhakov_et_al_2017 import (
     WEALTH_GRID,
     RegimeId,
     dead,
+    get_model,
     get_params,
     retirement,
     working_life,
@@ -157,3 +159,30 @@ def test_dcegm_zero_points_to_scan_is_rejected():
     """The FUES forward scan must inspect at least one point."""
     with pytest.raises(RegimeInitializationError, match="fues_n_points_to_scan"):
         _dcegm(fues_n_points_to_scan=0)
+
+
+def test_period_kernels_sharing_a_config_reuse_one_compiled_core():
+    """Periods of a grid-search regime that share a Q-and-F configuration wrap
+    the same jitted core, so AOT compilation lowers it once.
+
+    Each period adapter exposes its shared jitted `core`; periods grouped by
+    target configuration reuse one core object, so the count of distinct cores
+    (the dedup key the AOT step keys on) is strictly fewer than the number of
+    active periods rather than one compilation per period.
+    """
+    model = get_model(n_periods=6)
+    retirement_phase = model._regimes["retirement"].solution
+    period_kernels = retirement_phase.period_kernels
+
+    # The retirement regime is active in several periods (it is solved by grid
+    # search); a model that shared no core would expose one core per period.
+    assert len(period_kernels) > 1
+
+    distinct_cores = {_func_dedup_key(func=k.core) for k in period_kernels.values()}
+    assert len(distinct_cores) < len(period_kernels)
+
+    # Every period's core is one of the deduped representatives the AOT step
+    # would compile — no per-period adapter introduces a fresh compilation.
+    assert all(
+        _func_dedup_key(func=k.core) in distinct_cores for k in period_kernels.values()
+    )

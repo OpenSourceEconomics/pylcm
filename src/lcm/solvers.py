@@ -15,13 +15,13 @@ polymorphically on the solver instance (`solver.build_period_kernels(context)`),
 not on its type.
 """
 
-from _lcm.solution.contract import Solver, SolverBuildContext, SolverKernels
+from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
 from _lcm.solution.solvers import DCEGM, GridSearch
 
 __all__ = [
     "DCEGM",
     "GridSearch",
+    "SolutionKernels",
     "Solver",
     "SolverBuildContext",
-    "SolverKernels",
 ]

@@ -401,36 +401,42 @@ def _partial_fixed_params_into_regimes(
     result: dict[RegimeName, Regime] = {}
     for regime_name, regime in raw_regimes.items():
         regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
-        # A DC-EGM source carrying into a *different* target regime evaluates
-        # that target's resources / transition functions in its per-asset-node
-        # solve, reading the target's fixed params (e.g. a pension factor the
-        # source never reads). These are model-level shared values, so the
-        # target's `fixed_flat_params` entry carries the right value; union
-        # them into the params bound into the source's `egm_step` kernel. The
-        # kernel threads its `**kwargs` into the per-combo pool, and the
-        # captured functions read only the keys they need, so the extra
-        # carry-target params are harmless to the functions that don't.
-        egm_fixed = dict(regime_fixed)
-        for target_name in regime.solution.transitions:
-            for key, value in fixed_flat_params.get(
-                target_name, MappingProxyType({})
-            ).items():
-                egm_fixed.setdefault(key, value)
-        if not regime_fixed and not egm_fixed:
+        # A DC-EGM source carrying into a *different* target regime also binds
+        # that target's fixed params (it reads the target's resources /
+        # transition functions in its per-asset-node solve). Gate the rebuild on
+        # whether any fixed param reachable from this regime — its own or a
+        # transition target's — exists; the per-adapter `with_fixed_params`
+        # decides which of them actually reach each core.
+        reachable_fixed = bool(regime_fixed) or any(
+            fixed_flat_params.get(target_name, MappingProxyType({}))
+            for target_name in regime.solution.transitions
+        )
+        if not reachable_fixed:
             result[regime_name] = regime
             continue
 
         # Build new solution phase with partialled functions. The resolved
         # fixed params also land on the phase itself — its
         # `state_action_space` consults them for runtime grid substitution.
+        #
+        # Each period adapter owns its solver's binding rule: a grid-search
+        # adapter binds the regime's own fixed params into its core; a DC-EGM
+        # adapter binds the union of the regime's and its carry targets' fixed
+        # params (a source reads a different target's params in its per-asset
+        # solve); a terminal carry-producing adapter binds the regime's fixed
+        # params into both its base core and the carry producer. So the engine
+        # threads fixed params through `with_fixed_params` without a solver-type
+        # switch.
         solution = regime.solution
         new_solve = dataclasses.replace(
             solution,
             resolved_fixed_params=MappingProxyType(regime_fixed),
-            max_Q_over_a=MappingProxyType(
+            period_kernels=MappingProxyType(
                 {
-                    period: functools.partial(func, **regime_fixed)
-                    for period, func in solution.max_Q_over_a.items()
+                    period: kernel.with_fixed_params(
+                        fixed_flat_params=fixed_flat_params
+                    )
+                    for period, kernel in solution.period_kernels.items()
                 }
             ),
             compute_regime_transition_probs=(
@@ -442,43 +448,6 @@ def _partial_fixed_params_into_regimes(
                     ),
                 )
                 if solution.compute_regime_transition_probs is not None
-                else None
-            ),
-            # The DC-EGM kernels are prebuilt closures that capture the
-            # regime's savings-stage functions (regime-transition
-            # probabilities, transition weights, the child resources and
-            # next-state maps) before fixed params are partialled. The kernel
-            # threads its `**kwargs` straight into the per-combo pool those
-            # captured functions read, so binding the union of the regime's
-            # and its carry targets' fixed params here restores the params
-            # removed from `flat_params` for every one of them at once —
-            # matching what the live params supply.
-            egm_step=(
-                MappingProxyType(
-                    {
-                        period: functools.partial(func, **egm_fixed)
-                        for period, func in solution.egm_step.items()
-                    }
-                )
-                if solution.egm_step is not None
-                else None
-            ),
-            # A terminal regime's carry producer evaluates the regime's own
-            # bequest utility on the wealth grid; that utility may reach a
-            # model-level fixed param (e.g. a consumption-equivalence scale)
-            # through a helper function. The solve loop invokes the producer
-            # with only the live (free) params, so bind the regime's fixed
-            # params here — matching the partialling done for `egm_step` and
-            # `max_Q_over_a`.
-            egm_carry_producer=(
-                functools.partial(
-                    solution.egm_carry_producer,
-                    **_filter_kwargs_for_func(
-                        func=solution.egm_carry_producer,
-                        kwargs=regime_fixed,
-                    ),
-                )
-                if solution.egm_carry_producer is not None
                 else None
             ),
         )

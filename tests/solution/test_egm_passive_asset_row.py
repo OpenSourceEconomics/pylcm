@@ -290,7 +290,7 @@ def test_asset_row_carry_rows_are_the_euler_grid_not_the_envelope_workspace():
     size, not the larger savings/envelope candidate length — the difference is
     pure storage the parent never reads (the NaN tail is masked on interpolation).
     """
-    template = _model("dcegm")._regimes["working_life"].solution.egm_carry_template
+    template = _model("dcegm")._regimes["working_life"].solution.continuation_template
     assert template is not None
     n_euler = int(WEALTH_GRID.to_jax().shape[0])
     # The envelope workspace would have been ceil(1.2 * (n_savings + n_constrained))

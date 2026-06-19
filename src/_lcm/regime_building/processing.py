@@ -3,6 +3,7 @@ import inspect
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
@@ -58,7 +59,12 @@ from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
-from _lcm.solution.contract import SolverBuildContext
+from _lcm.solution.contract import (
+    ContinuationPayload,
+    KernelResult,
+    PeriodKernel,
+    SolverBuildContext,
+)
 from _lcm.state_action_space import create_state_action_space
 from _lcm.typing import (
     ArgmaxQOverAFunction,
@@ -66,6 +72,7 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
     EGMCarryProducer,
+    FlatParams,
     FunctionName,
     NextStateSimulationFunction,
     ProcessName,
@@ -419,9 +426,9 @@ def _build_solution_phase(
 
     # Dispatch the per-period kernel build polymorphically on the regime's
     # solver: `validate` rejects out-of-scope configurations at build time,
-    # then `build_period_kernels` returns the per-period kernels. `GridSearch`
-    # builds the max-Q-over-a grid-search kernels; `DCEGM` builds the EGM
-    # kernels and the regime's carry template.
+    # then `build_period_kernels` returns one uniform period adapter per period
+    # plus the regime's continuation template. `GridSearch` wraps the
+    # max-Q-over-a grid search; `DCEGM` wraps the EGM step.
     context = SolverBuildContext(
         regime_name=regime_name,
         user_regimes=user_regimes,
@@ -443,6 +450,12 @@ def _build_solution_phase(
     solver.validate(context=context)
     solver_kernels = solver.build_period_kernels(context=context)
 
+    # The terminal continuation publisher is a cross-solver concern, not the
+    # grid search's: a terminal regime in a model with a DC-EGM regime must
+    # publish a closed-form carry so a DC-EGM parent can interpolate its value
+    # and marginal utility. Build the producer engine-side and compose it as an
+    # output decorator around each period adapter, so the solver stays unaware
+    # of the continuation it is being asked to emit.
     egm_carry_producer, egm_carry_template = _build_terminal_carry_producer(
         user_regime=user_regimes[regime_name],
         functions=core.functions,
@@ -451,6 +464,20 @@ def _build_solution_phase(
         model_has_dcegm_regime=model_has_dcegm_regime,
         enable_jit=enable_jit,
     )
+    period_kernels = solver_kernels.period_kernels
+    continuation_template = solver_kernels.continuation_template
+    if egm_carry_producer is not None:
+        period_kernels = MappingProxyType(
+            {
+                period: _TerminalCarryPeriodKernel(
+                    base=kernel,
+                    carry_producer=egm_carry_producer,
+                    regime_name=regime_name,
+                )
+                for period, kernel in period_kernels.items()
+            }
+        )
+        continuation_template = egm_carry_template
 
     return SolutionPhase(
         _variables=variables,
@@ -460,18 +487,129 @@ def _build_solution_phase(
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
-        max_Q_over_a=solver_kernels.max_Q_over_a,
+        period_kernels=period_kernels,
         compute_intermediates=compute_intermediates,
-        egm_step=solver_kernels.egm_step,
-        egm_carry_producer=egm_carry_producer,
-        egm_carry_template=(
-            solver_kernels.egm_carry_template
-            if solver_kernels.egm_carry_template is not None
-            else egm_carry_template
-        ),
-        egm_reachable_targets=solver_kernels.egm_reachable_targets,
+        continuation_template=continuation_template,
         _base_state_action_space=state_action_space,
     )
+
+
+def _filter_kwargs_for_func(
+    *, func: Callable, kwargs: Mapping[str, object]
+) -> Mapping[str, object]:
+    """Filter kwargs to only those accepted by func's signature."""
+    try:
+        sig = inspect.signature(func)
+    except ValueError, TypeError:
+        return kwargs
+    params = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return kwargs
+    return {k: v for k, v in kwargs.items() if k in params}
+
+
+@dataclass(frozen=True, kw_only=True)
+class _TerminalCarryPeriodKernel:
+    """Engine-owned output decorator publishing a terminal regime's carry.
+
+    Wraps a grid-search period adapter so that, after the base kernel computes
+    the value-function array, the regime's closed-form carry producer turns that
+    array into the continuation a DC-EGM parent interpolates. Publishing a carry
+    is a cross-solver concern, so the wrapped solver stays unaware of it.
+
+    `core` and `build_lower_args` delegate to the base adapter: the carry
+    producer is a separately built (and jitted) closure invoked inline, not part
+    of the AOT-compiled core, so AOT compilation deduplicates and lowers exactly
+    the base grid-search core.
+    """
+
+    base: PeriodKernel
+    """The wrapped grid-search period adapter."""
+
+    carry_producer: EGMCarryProducer
+    """Closed-form producer mapping the value array to the regime's carry."""
+
+    regime_name: RegimeName
+    """Name of the terminal regime whose flat params the producer reads."""
+
+    @property
+    def core(self) -> Callable:
+        """The base adapter's shared jitted core, for AOT dedup and lowering."""
+        return self.base.core
+
+    def with_fixed_params(
+        self, *, fixed_flat_params: FlatParams
+    ) -> _TerminalCarryPeriodKernel:
+        """Bind fixed params into both the base core and the carry producer.
+
+        A terminal regime's carry producer evaluates the regime's own bequest
+        utility on the wealth grid; that utility may reach a model-level fixed
+        param (e.g. a consumption-equivalence scale) through a helper. The solve
+        loop invokes the producer with only the live (free) params, so bind the
+        regime's fixed params here — matching the base adapter's core binding.
+        """
+        regime_fixed = dict(
+            fixed_flat_params.get(self.regime_name, MappingProxyType({}))
+        )
+        base = self.base.with_fixed_params(fixed_flat_params=fixed_flat_params)
+        carry_producer = self.carry_producer
+        if regime_fixed:
+            carry_producer = functools.partial(
+                carry_producer,
+                **_filter_kwargs_for_func(func=carry_producer, kwargs=regime_fixed),
+            )
+        return dataclass_replace(self, base=base, carry_producer=carry_producer)
+
+    def build_lower_args(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> Mapping[str, object]:
+        """Build the base core's lowering arguments (the carry producer is jitted
+        separately at build time, so it is not part of the AOT-compiled core)."""
+        return self.base.build_lower_args(
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+        )
+
+    def __call__(
+        self,
+        *,
+        compiled_core: Callable,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Run the base kernel, then publish the regime's continuation carry."""
+        result = self.base(
+            compiled_core=compiled_core,
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+        )
+        carry = self.carry_producer(
+            V_arr=result.V_arr,
+            **state_action_space.states,
+            **flat_params[self.regime_name],
+            period=jnp.int32(period),
+            age=ages.values[period],
+        )
+        return KernelResult(V_arr=result.V_arr, carry=carry)
 
 
 def _build_terminal_carry_producer(

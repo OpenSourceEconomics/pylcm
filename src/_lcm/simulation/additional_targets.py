@@ -73,7 +73,7 @@ def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     excluded = {"H", DCEGM_BUDGET_CONSTRAINT_NAME} | (
         _get_stochastic_weight_function_names(regime)
     )
-    if regime.solution.egm_step is not None:
+    if regime.solution.solves_via_dcegm:
         excluded.add("inverse_marginal_utility")
     sim = regime.simulation
     return {name for name in sim.functions if name not in excluded} | {

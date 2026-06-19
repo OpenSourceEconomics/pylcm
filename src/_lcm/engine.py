@@ -2,7 +2,7 @@ import dataclasses
 from collections.abc import Callable, Iterator, Mapping
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 import jax
 from jax import Array
@@ -15,11 +15,8 @@ from _lcm.typing import (
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
-    EGMCarryProducer,
-    EGMStepFunction,
     FlatRegimeParams,
     FunctionName,
-    MaxQOverAFunction,
     NextStateSimulationFunction,
     RegimeName,
     RegimeParamsTemplate,
@@ -44,6 +41,23 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
 )
+
+# The cross-period continuation channel a parent interpolates; today the only
+# payload is the EGM carry. Aliased here (rather than imported from
+# `_lcm.solution.contract`) because that module imports this one — naming the
+# carry directly keeps the engine a leaf of the contract, not a peer in a cycle.
+type ContinuationPayload = EGMCarry
+
+if TYPE_CHECKING:
+    from _lcm.solution.contract import PeriodKernel
+
+    # The contract module imports this one at runtime, so `PeriodKernel` is
+    # reachable only under `TYPE_CHECKING`. ty reads the precise element type;
+    # the beartype claw checks only the outer `Mapping` container at runtime
+    # (see the runtime alias below).
+    PeriodKernelsMapping: TypeAlias = Mapping[int, PeriodKernel]  # noqa: UP040
+else:
+    PeriodKernelsMapping = Mapping
 
 
 @dataclasses.dataclass(frozen=True)
@@ -314,40 +328,23 @@ class SolutionPhase:
     compute_regime_transition_probs: RegimeTransitionFunction | None
     """Regime transition probability function for solve, or `None`."""
 
-    max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
-    """Immutable mapping of period to max-Q-over-actions functions."""
+    period_kernels: PeriodKernelsMapping
+    """Immutable mapping of period to the regime's uniform period adapter.
 
-    egm_step: MappingProxyType[int, EGMStepFunction] | None = None
-    """Immutable mapping of period to DC-EGM kernels, or `None`.
-
-    Populated for regimes configured with `solver=DCEGM(...)`; the solve
-    loop dispatches to these instead of `max_Q_over_a`.
+    Every regime — grid search or DC-EGM — exposes one adapter per period; the
+    solve loop invokes them the same way and reads each `KernelResult` without
+    branching on solver type. A grid-search adapter for a terminal regime in a
+    model with a DC-EGM regime is wrapped by an engine-owned output decorator so
+    it additionally publishes the regime's closed-form continuation carry.
     """
 
-    egm_carry_producer: EGMCarryProducer | None = None
-    """Closed-form EGM carry producer, or `None`.
+    continuation_template: ContinuationPayload | None = None
+    """All-finite template continuation with the regime's static shapes.
 
-    Populated for terminal regimes when the model contains a DC-EGM regime;
-    the solve loop invokes it on the regime's value-function array each
-    period.
-    """
-
-    egm_carry_template: EGMCarry | None = None
-    """All-finite template carry with the regime's static shapes, or `None`.
-
-    Populated for every carry-producing regime (DC-EGM regimes and terminal
-    regimes in a model with a DC-EGM regime). Initializes the rolling
-    `next_regime_to_egm_carry` mapping and serves as the lowering argument
-    when AOT-compiling EGM kernels.
-    """
-
-    egm_reachable_targets: frozenset[RegimeName] = frozenset()
-    """The regime's reachable-target names (empty unless it has an `egm_step`).
-
-    The only carry keys the regime's kernels read; the solve loop filters the
-    rolling `next_regime_to_egm_carry` to these before handing it to each
-    kernel, so the device holds only the reachable subset rather than every
-    carry-producing regime's carry at once.
+    Populated for every continuation-producing regime (DC-EGM regimes and
+    terminal regimes in a model with a DC-EGM regime). Initializes the rolling
+    `next_regime_to_egm_carry` mapping and serves as the lowering argument when
+    AOT-compiling a parent's kernel; `None` for a regime that publishes none.
     """
 
     compute_intermediates: MappingProxyType[int, Callable]
@@ -367,6 +364,19 @@ class SolutionPhase:
 
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
+
+    @property
+    def solves_via_dcegm(self) -> bool:
+        """Whether this regime is solved by the DC-EGM kernel.
+
+        A DC-EGM regime is the non-terminal regime that publishes a
+        continuation: a grid-search regime publishes none, and a terminal
+        carry-producing regime is terminal (no regime-transition probs).
+        """
+        return (
+            self.compute_regime_transition_probs is not None
+            and self.continuation_template is not None
+        )
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
