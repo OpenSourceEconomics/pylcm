@@ -22,11 +22,12 @@ import jax.numpy as jnp
 from lcm.typing import FloatND
 
 
-class UconCloud(NamedTuple):
-    """Endogenous cloud produced by the unconstrained inverse-Euler step.
+class RegionCloud(NamedTuple):
+    """Endogenous cloud produced by a region's inverse-Euler step.
 
     Each field is shaped like the post-decision $(a, b)$ grid; entry $(i, j)$ is the
-    current state and policy at which post-decision node $(a_i, b_j)$ is optimal.
+    current state and policy at which post-decision node $(a_i, b_j)$ is optimal,
+    conditional on the constraint region (`ucon`, `dcon`, ...) the cloud was built for.
     """
 
     m_endog: FloatND
@@ -55,7 +56,7 @@ def invert_ucon_cloud(
     discount_factor: float,
     crra: float,
     match_rate: float,
-) -> UconCloud:
+) -> RegionCloud:
     """Invert the two intratemporal FOCs on the unconstrained region.
 
     Args:
@@ -78,11 +79,54 @@ def invert_ucon_cloud(
     m_endog = a + consumption + deposit
     n_endog = b - deposit - match_rate * jnp.log1p(deposit)
     value = _crra_utility(consumption, crra) + discount_factor * post_decision_value
-    return UconCloud(
+    return RegionCloud(
         m_endog=m_endog,
         n_endog=n_endog,
         consumption=consumption,
         deposit=deposit,
+        value=value,
+        value_grad_m=discount_factor * w_a,
+        value_grad_n=discount_factor * w_b,
+    )
+
+
+def invert_dcon_cloud(
+    *,
+    a: FloatND,
+    b: FloatND,
+    w_a: FloatND,
+    w_b: FloatND,
+    post_decision_value: FloatND,
+    discount_factor: float,
+    crra: float,
+) -> RegionCloud:
+    """Invert the consumption FOC on the deposit-constrained region (`dcon`, `d = 0`).
+
+    Where the pension is unattractive enough that the optimal deposit hits its lower
+    bound, the deposit is pinned to zero and only the consumption FOC `u'(c) = beta*w_a`
+    is inverted. With `d = 0` the pension is unchanged (`n = b`) and the liquid budget
+    identity is `a = m - c`.
+
+    Args:
+        a: Liquid post-decision balance at each node.
+        b: Pension post-decision balance at each node.
+        w_a: Post-decision value gradient with respect to `a`.
+        w_b: Post-decision value gradient with respect to `b`.
+        post_decision_value: Post-decision value `w(a, b)` at each node.
+        discount_factor: Discount factor.
+        crra: Coefficient of relative risk aversion.
+
+    Returns:
+        The deposit-constrained endogenous cloud.
+
+    """
+    consumption = (discount_factor * w_a) ** (-1.0 / crra)
+    value = _crra_utility(consumption, crra) + discount_factor * post_decision_value
+    return RegionCloud(
+        m_endog=a + consumption,
+        n_endog=b,
+        consumption=consumption,
+        deposit=jnp.zeros_like(consumption),
         value=value,
         value_grad_m=discount_factor * w_a,
         value_grad_n=discount_factor * w_b,
