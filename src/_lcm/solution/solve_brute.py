@@ -247,14 +247,7 @@ def solve(
         if validation_raises(logger) and running_any_nan.item():
             break
 
-        # Release the device buffers rolled off this period (the superseded
-        # continuation V/carry and the period's transient working set) before
-        # the next period's kernel allocates. They are unreferenced after the
-        # roll, but their JAX arrays sit in registered pytrees that CPython's
-        # cyclic collector frees only when it next runs — forcing a collection
-        # here returns the device pool promptly, capping peak resident across
-        # the loop (mirrors the forward-sim memory rework in `result.py`).
-        gc.collect()
+        _collect_rolled_carries(period_egm_carries=period_egm_carries)
 
     if diagnostics_enabled:
         try:
@@ -279,6 +272,26 @@ def solve(
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
     return MappingProxyType(solution), MappingProxyType(sim_policies)
+
+
+def _collect_rolled_carries(*, period_egm_carries: dict[RegimeName, EGMCarry]) -> None:
+    """Return the device buffers rolled off the period just solved.
+
+    The superseded continuation V/carry and the period's transient working set
+    are unreferenced once the period rolls, but a rolled continuation carry sits
+    in a registered pytree that CPython's cyclic collector frees only when it
+    next runs — forcing a collection here returns the device pool promptly,
+    capping peak resident across the loop (mirrors the forward-sim memory rework
+    in `result.py`).
+
+    Gated on whether this period actually produced a carry (the generic
+    per-period kernel output the loop already tracks), not on the solver type:
+    a period whose kernels publish no carry rolls no such buffer, so the
+    collection — which otherwise dominates small warm solves with no memory
+    gain — is skipped for it.
+    """
+    if period_egm_carries:
+        gc.collect()
 
 
 def _init_diagnostic_accumulators() -> tuple[
