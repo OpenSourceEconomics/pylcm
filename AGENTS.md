@@ -107,7 +107,8 @@ automation. Python 3.14+ is required.
 
 **Solution (`src/_lcm/solution/`)**
 
-- `solve_brute.py`: Brute force dynamic programming solver using backward induction
+- `backward_induction.py`: Brute force dynamic programming solver using backward
+  induction
 - Entry point: `model.solve()` method
 
 **Simulation (`src/_lcm/simulation/`)**

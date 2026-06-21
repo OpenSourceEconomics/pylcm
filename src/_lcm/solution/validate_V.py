@@ -1,6 +1,6 @@
 """Value-function NaN check fired during solve and simulate.
 
-`validate_V` runs after each backward-induction period in `solve_brute.py`
+`validate_V` runs after each backward-induction period in `backward_induction.py`
 and once on the V handed to `simulate.py`. On NaN it invokes the
 diagnostic-intermediates closure (built during regime canonicalization in
 `regime_building/diagnostics.py`) to pinpoint which intermediate
