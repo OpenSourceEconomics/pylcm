@@ -10,6 +10,12 @@ utility reading the *Euler* state but allows utility reading a *passive*
 state — so the keeper is expressible today. That guard is asserted against the
 validator directly (no kernel trace, no solve). The full GPU solve is gated
 off the local box, which OOMs on a DC-EGM solve.
+
+The oracle pair is the DC-EGM keeper and its brute-force (GridSearch) twin,
+which solves the same economics with housing as a regular fixed continuous
+state and consumption a grid-searched action. The two value functions agree up
+to the brute solver's consumption-grid resolution; the value-parity test that
+asserts this is GPU-gated like the solve above.
 """
 
 from types import MappingProxyType
@@ -75,3 +81,55 @@ def test_housing_keeper_solves_to_finite_values():
         assert np.all(np.isfinite(keeper_V)), f"period={period}"
         housing_increments = np.diff(keeper_V, axis=-1)
         assert np.all(housing_increments > 0.0), f"period={period}"
+
+
+@pytest.mark.skip(reason="gpu-01 only: DC-EGM solve OOMs the local box")
+def test_housing_keeper_dcegm_matches_brute():
+    """The keeper DC-EGM value function matches its brute-force twin.
+
+    Both variants solve the same keeper economics — utility
+    `CRRA(consumption) + alpha * log(housing)`, the budget
+    `(1 + r) * liquid_assets + (1 + r_H) * housing * (1 - delta) + income`, a
+    fixed house, and Markov income — over the same liquid-asset, housing, and
+    income grids. The DC-EGM keeper inverts the Euler equation on the liquid
+    state with housing riding along as a passive axis; the brute twin grid-
+    searches consumption with housing a regular fixed continuous state and the
+    liquid-asset law reading consumption directly.
+
+    DC-EGM is exact up to interpolation, so it is the more accurate solver; the
+    brute value function is bounded above by it and approaches it as the
+    consumption grid refines. The two therefore agree to the brute solver's
+    consumption-grid resolution. The lowest liquid-asset nodes are excluded:
+    there the coarse consumption grid makes brute force itself unreliable (the
+    same exclusion the passive-state DC-EGM oracle uses).
+    """
+    dcegm_solution = build_model("dcegm").solve(
+        params=build_params("dcegm"), log_level="debug"
+    )
+    brute_solution = build_model("brute").solve(
+        params=build_params("brute"), log_level="debug"
+    )
+
+    n_liquid = LIQUID_ASSETS_GRID.to_jax().shape[0]
+    n_housing = HOUSING_GRID.to_jax().shape[0]
+    n_income = 2
+    expected_shape = (n_income, n_liquid, n_housing)
+
+    n_brute_unstable_nodes = 2
+    for period in sorted(brute_solution)[:-1]:
+        dcegm_V = np.asarray(dcegm_solution[period]["keeper"])
+        brute_V = np.asarray(brute_solution[period]["keeper"])
+        assert dcegm_V.shape == brute_V.shape == expected_shape, f"period={period}"
+        # DC-EGM is the more accurate solver: it dominates brute up to the
+        # interpolation error the tolerance below absorbs.
+        assert np.all(
+            dcegm_V[:, n_brute_unstable_nodes:, :]
+            >= brute_V[:, n_brute_unstable_nodes:, :] - 1e-2
+        ), f"period={period}"
+        np.testing.assert_allclose(
+            dcegm_V[:, n_brute_unstable_nodes:, :],
+            brute_V[:, n_brute_unstable_nodes:, :],
+            atol=1e-2,
+            rtol=1e-3,
+            err_msg=f"period={period}",
+        )

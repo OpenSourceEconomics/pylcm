@@ -21,12 +21,23 @@ utility *reads the passive housing state directly* through the service flow
 the **Euler** state, but reading a passive state is allowed — so the keeper is
 expressible today.
 
+A brute-force (GridSearch) twin solves the same economics without the
+Euler/passive split: housing becomes a regular fixed continuous state,
+consumption a grid-searched action, and the liquid-asset law of motion
+`(1 + r) * liquid_assets + (1 + r_H) * housing * (1 - delta) + income -
+consumption` reads consumption directly. A borrowing constraint keeps
+post-decision liquid assets at or above the borrowing limit, the floor of the
+DC-EGM savings grid. The two solutions are the oracle pair: as the brute
+consumption grid refines the two value functions converge.
+
 Calibration mirrors the InverseDCDP `housing.py` defaults (`r=0.024`,
 `r_H=0.10`, `beta=0.945`, `alpha=0.66`, `delta=0.10`, `gamma_c=1.458`,
 `b=0.01`, income states `(0.1, 1.0)` with the Markov matrix
 `((0.09, 0.91), (0.06, 0.94))`). Grids are kept tiny — this is a feasibility
 probe, not an accuracy benchmark.
 """
+
+from typing import Literal
 
 import jax.numpy as jnp
 
@@ -43,6 +54,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.transition import fixed_transition
 from lcm.typing import (
+    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
@@ -143,6 +155,59 @@ def inverse_marginal_utility(marginal_continuation: FloatND, gamma_c: float) -> 
     return marginal_continuation ** (-1.0 / gamma_c)
 
 
+def next_liquid_assets_brute(
+    liquid_assets: ContinuousState,
+    housing: ContinuousState,
+    income_value: FloatND,
+    consumption: ContinuousAction,
+    r: float,
+    r_H: float,
+    delta: float,
+) -> ContinuousState:
+    """Brute-force liquid-asset law: cash-on-hand minus consumption.
+
+    Reads the continuous action `consumption` directly rather than splitting
+    resources and a post-decision `savings`, so the grid-searched twin needs
+    no Euler machinery. Equal to `resources - consumption` of the DC-EGM
+    keeper.
+    """
+    return (
+        (1.0 + r) * liquid_assets
+        + (1.0 + r_H) * housing * (1.0 - delta)
+        + income_value
+        - consumption
+    )
+
+
+def borrowing_constraint(
+    liquid_assets: ContinuousState,
+    housing: ContinuousState,
+    income_value: FloatND,
+    consumption: ContinuousAction,
+    r: float,
+    r_H: float,
+    delta: float,
+    borrowing_limit: float,
+) -> BoolND:
+    """Keep post-decision liquid assets at or above the borrowing limit.
+
+    Mirrors the DC-EGM savings grid, whose floor is the borrowing limit `b`:
+    feasible consumption leaves `next_liquid_assets_brute >= borrowing_limit`.
+    """
+    return (
+        next_liquid_assets_brute(
+            liquid_assets=liquid_assets,
+            housing=housing,
+            income_value=income_value,
+            consumption=consumption,
+            r=r,
+            r_H=r_H,
+            delta=delta,
+        )
+        >= borrowing_limit
+    )
+
+
 def income_transition(income: DiscreteState) -> FloatND:
     """Markov income law: the row of `Pi` for the current income node.
 
@@ -180,13 +245,38 @@ def _active(age: int) -> bool:
     return age < 40 + (N_PERIODS - 1) * 10
 
 
-def build_working_regime() -> UserRegime:
-    """Build the keeper DC-EGM regime (the user-facing `Regime`).
+def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRegime:
+    """Build the keeper working regime (the user-facing `Regime`).
 
-    Liquid assets are the Euler state, consumption the continuous action,
-    housing a passive (identity-transition) continuous state read by utility,
-    and income a two-state Markov discrete state entering resources.
+    - `"dcegm"`: liquid assets are the Euler state, consumption the continuous
+      action, housing a passive (identity-transition) continuous state read by
+      utility, and income a two-state Markov discrete state entering resources.
+    - `"brute"`: the same economics solved by grid search — housing is a
+      regular fixed continuous state, the liquid-asset law of motion reads
+      consumption directly, and a borrowing constraint keeps post-decision
+      liquid assets at or above the borrowing limit. No Euler/passive split.
     """
+    if variant == "brute":
+        return UserRegime(
+            transition=next_regime,
+            active=_active,
+            actions={"consumption": CONSUMPTION_GRID},
+            states={
+                "liquid_assets": LIQUID_ASSETS_GRID,
+                "housing": HOUSING_GRID,
+                "income": DiscreteGrid(Income),
+            },
+            state_transitions={
+                "liquid_assets": next_liquid_assets_brute,
+                "housing": fixed_transition("housing"),
+                "income": MarkovTransition(income_transition),
+            },
+            constraints={"borrowing_constraint": borrowing_constraint},
+            functions={
+                "utility": utility,
+                "income_value": income_value,
+            },
+        )
     return UserRegime(
         transition=next_regime,
         active=_active,
@@ -212,26 +302,46 @@ def build_working_regime() -> UserRegime:
     )
 
 
-def build_model() -> Model:
+def build_model(variant: Literal["dcegm", "brute"] = "dcegm") -> Model:
     """Build the keeper model (the GPU solve target).
 
-    A single non-terminal keeper regime plus the shared terminal `dead`
-    regime.
+    A single non-terminal keeper regime — DC-EGM or its brute-force twin — plus
+    the shared terminal `dead` regime.
     """
     return Model(
-        regimes={"keeper": build_working_regime(), "dead": dead},
+        regimes={"keeper": build_working_regime(variant), "dead": dead},
         ages=_ages(),
         regime_id_class=HousingKeeperRegimeId,
     )
 
 
-def build_params() -> dict:
+def build_params(variant: Literal["dcegm", "brute"] = "dcegm") -> dict:
     """Calibration parameters for the keeper model.
 
     Mirrors the InverseDCDP `housing.py` defaults for the preference and
     return parameters; the income process enters resources through
-    `income_value`, so it needs no params here.
+    `income_value`, so it needs no params here. The brute twin carries the
+    same `r`, `r_H`, `delta` on its liquid-asset law and borrowing constraint,
+    plus the borrowing limit that floors post-decision liquid assets.
     """
+    if variant == "brute":
+        # Transition params nest under the state-keyed name `next_<state>`, not
+        # the Python function name, so the liquid-asset law's `r`, `r_H`,
+        # `delta` live under `next_liquid_assets`.
+        return {
+            "discount_factor": 0.945,
+            "final_age_alive": 40 + (N_PERIODS - 2) * 10,
+            "keeper": {
+                "utility": {"gamma_c": 1.458, "alpha": 0.66},
+                "next_liquid_assets": {"r": 0.024, "r_H": 0.10, "delta": 0.10},
+                "borrowing_constraint": {
+                    "r": 0.024,
+                    "r_H": 0.10,
+                    "delta": 0.10,
+                    "borrowing_limit": BORROWING_LIMIT,
+                },
+            },
+        }
     return {
         "discount_factor": 0.945,
         "final_age_alive": 40 + (N_PERIODS - 2) * 10,
