@@ -42,9 +42,19 @@ def utility(consumption: ContinuousAction, crra: float) -> FloatND:
     return _crra(consumption, crra)
 
 
-def bequest(liquid: ContinuousState, pension: ContinuousState, crra: float) -> FloatND:
-    """Consume liquid wealth plus the lump-sum pension payout in the final period."""
-    return _crra(liquid + pension, crra)
+def bequest(
+    liquid: ContinuousState,
+    pension: ContinuousState,
+    crra: float,
+    pension_bequest_weight: float,
+) -> FloatND:
+    """Consume liquid wealth plus the lump-sum pension payout in the final period.
+
+    `pension_bequest_weight` is 1.0 for the model proper (the full pension balance is
+    paid out); a value below 1 makes pension wealth marginally less valuable than
+    liquid, which is what produces an interior-deposit (unconstrained) region.
+    """
+    return _crra(liquid + pension_bequest_weight * pension, crra)
 
 
 def next_liquid(
@@ -136,6 +146,7 @@ def get_params(
     return_pension: float = 0.06,
     match_rate: float = 1.0,
     wage: float = 10.0,
+    pension_bequest_weight: float = 1.0,
 ) -> dict:
     """Get parameters for the two-asset model (pension return exceeds liquid return)."""
     final_age_alive = 40 + (n_periods - 2) * 10
@@ -150,5 +161,10 @@ def get_params(
                 "match_rate": match_rate,
             },
         },
-        "dead": {"utility": {"crra": crra}},
+        "dead": {
+            "utility": {
+                "crra": crra,
+                "pension_bequest_weight": pension_bequest_weight,
+            }
+        },
     }
