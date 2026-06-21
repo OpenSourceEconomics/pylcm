@@ -2,6 +2,7 @@ import inspect
 import math
 from collections.abc import Callable
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +18,8 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
-from _lcm.utils.dispatchers import productmap
+from _lcm.utils.dispatchers import productmap, vmap_1d
+from _lcm.utils.functools import allow_args, allow_only_kwargs
 from lcm.typing import BoolND, FloatND, IntND
 
 # Flat param name of the EV1 taste-shock scale (template pseudo-function entry).
@@ -32,6 +34,8 @@ def get_max_Q_over_a(
     state_names: tuple[StateName, ...],
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
+    co_map_state_names: tuple[StateName, ...] = (),
+    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -67,12 +71,26 @@ def get_max_Q_over_a(
             set, the hard maximum over the discrete-action axes is replaced by
             the smoothed expected maximum with the runtime scale param
             `taste_shocks__scale`.
+        co_map_state_names: Tuple of fixed (never-transitioning) distributed state
+            names, the leading axes of the value-function array. Each is mapped by an
+            outer `vmap` that co-maps the matching axis of every `next_regime_to_V_arr`
+            leaf carrying it, so the continuation-V interpolation reads only the
+            device-local slice and XLA inserts no all-gather. Must be a leading prefix
+            of `state_names`.
+        co_map_v_arr_in_axes: Per-co-map-state `in_axes` for `next_regime_to_V_arr`,
+            aligned with `co_map_state_names`. Each entry is an immutable mapping of
+            regime name to `0` (the leaf carries that state as its current leading
+            axis — slice it) or `None` (the leaf does not carry it — pass it through,
+            e.g. a target regime where the state is pruned).
 
     Returns:
         V, i.e., the function that calculates the maximum of the Q-function over all
         feasible actions.
 
     """
+    _fail_if_co_map_states_not_leading(
+        state_names=state_names, co_map_state_names=co_map_state_names
+    )
     # Extract extra param names from Q_and_F's signature (flat regime params)
     extra_param_names = _get_extra_param_names(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
@@ -138,7 +156,36 @@ def get_max_Q_over_a(
             )
             return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
-    return productmap(func=max_Q_over_a, variables=state_names, batch_sizes=batch_sizes)
+    inner_state_names = tuple(
+        name for name in state_names if name not in co_map_state_names
+    )
+    mapped = productmap(
+        func=max_Q_over_a,
+        variables=inner_state_names,
+        batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+    )
+    if not co_map_state_names:
+        return mapped
+
+    # Co-map each fixed distributed state — the leading V-array axes — with the
+    # matching axis of every `next_regime_to_V_arr` leaf that carries it, outermost
+    # state first. Each map peels the state's leading axis off both the state grid and
+    # the continuation V, so the interpolation reads the device-local slice and
+    # produces axes in `state_names` order. A leaf that does not carry the state (e.g.
+    # a target regime where it is pruned) maps with `None` and passes through. The
+    # vmaps need positional dispatch, so `allow_args` first and restore the kwargs
+    # interface afterwards.
+    mapped = allow_args(mapped)
+    for state_name, v_arr_in_axes in zip(
+        reversed(co_map_state_names), reversed(co_map_v_arr_in_axes), strict=True
+    ):
+        mapped = vmap_1d(
+            func=mapped,
+            variables=(state_name,),
+            co_mapped_in_axes=MappingProxyType({"next_regime_to_V_arr": v_arr_in_axes}),
+            callable_with="only_args",
+        )
+    return cast("MaxQOverAFunction", allow_only_kwargs(mapped, enforce=False))
 
 
 def get_argmax_and_max_Q_over_a(
@@ -292,6 +339,27 @@ def draw_taste_shock_noise(
 
     """
     return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)
+
+
+def _fail_if_co_map_states_not_leading(
+    *,
+    state_names: tuple[StateName, ...],
+    co_map_state_names: tuple[StateName, ...],
+) -> None:
+    """Fail if the co-mapped states are not a leading prefix of `state_names`.
+
+    The co-map peels axes off the front of each `next_regime_to_V_arr` leaf, so the
+    co-mapped states must be exactly the leading axes of the value-function array, in
+    order.
+    """
+    leading = state_names[: len(co_map_state_names)]
+    if tuple(co_map_state_names) != leading:
+        msg = (
+            "Co-mapped states must be the leading axes of the value-function array, "
+            f"in order. Got co_map_state_names={co_map_state_names} but the leading "
+            f"state_names are {leading}."
+        )
+        raise ValueError(msg)
 
 
 def _get_extra_param_names(

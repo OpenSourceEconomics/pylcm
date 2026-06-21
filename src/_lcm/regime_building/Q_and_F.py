@@ -18,6 +18,7 @@ from _lcm.typing import (
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
+    StateName,
     TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
@@ -37,6 +38,7 @@ def get_Q_and_F(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    co_map_state_names: tuple[StateName, ...] = (),
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -56,6 +58,10 @@ def get_Q_and_F(
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
             info.
+        co_map_state_names: Tuple of state names co-mapped with the continuation V —
+            their axes are sliced off each `next_V_arr` leaf by the backward-induction
+            co-map, so their coordinates are dropped from the interpolation. Only fixed
+            (never-transitioning) distributed states qualify.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -97,6 +103,7 @@ def get_Q_and_F(
             v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
             state_prefix="next_",
             V_arr_name=V_arr_name,
+            co_map_state_names=co_map_state_names,
         )
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
         # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
@@ -117,6 +124,11 @@ def get_Q_and_F(
     # ----------------------------------------------------------------------------------
 
     _build_H_kwargs = _get_build_H_kwargs(functions)
+
+    # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
+    # induction co-map, so their `next_`-prefixed coordinates are not passed to
+    # the interpolator (which no longer indexes those axes).
+    _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[
@@ -175,7 +187,11 @@ def get_Q_and_F(
                 for k in next_V_extra_param_names[target_regime_name]
             }
             next_V_at_stochastic_states_arr = next_V[target_regime_name](
-                **next_states,
+                **{
+                    name: val
+                    for name, val in next_states.items()
+                    if name not in _co_map_next_names
+                },
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
