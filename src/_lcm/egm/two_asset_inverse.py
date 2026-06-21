@@ -133,6 +133,107 @@ def invert_dcon_cloud(
     )
 
 
+def invert_acon_cloud(
+    *,
+    consumption: FloatND,
+    b: FloatND,
+    post_decision_value_at_zero_a: FloatND,
+    w_b_at_zero_a: FloatND,
+    discount_factor: float,
+    crra: float,
+    match_rate: float,
+) -> RegionCloud:
+    """Invert the deposit FOC on the borrowing-constrained region (`acon`, `a = 0`).
+
+    Where the liquid borrowing constraint binds the liquid post-decision balance is
+    pinned at `a = 0`, so the liquid Euler holds only with a non-negative multiplier and
+    cannot be inverted for consumption. Instead the region is parameterized by a
+    consumption sweep against the pension post-decision balance `b` at `a = 0`:
+    consumption is exogenous, and the still-interior deposit is recovered from its FOC
+    `u'(c) = beta * w_b * (1 + chi / (1 + d))`. The liquid budget at the corner is
+    `m = c + d` (no liquid savings), and the pension budget inverts to
+    `n = b - d - chi*log(1 + d)`.
+
+    Args:
+        consumption: Exogenous consumption sweep at each node (`a = 0` corner).
+        b: Pension post-decision balance at each node (evaluated at `a = 0`).
+        post_decision_value_at_zero_a: Post-decision value `w(0, b)` at each node.
+        w_b_at_zero_a: Post-decision value gradient w.r.t. `b`, at `a = 0`.
+        discount_factor: Discount factor.
+        crra: Coefficient of relative risk aversion.
+        match_rate: Pension employer-match coefficient `chi`.
+
+    Returns:
+        The borrowing-constrained endogenous cloud.
+
+    """
+    marginal_utility = consumption ** (-crra)
+    # Deposit FOC at the corner: u'(c) = beta*w_b*(1 + chi/(1 + d)); solve for d.
+    deposit_ratio = marginal_utility / (discount_factor * w_b_at_zero_a)
+    deposit = match_rate / (deposit_ratio - 1.0) - 1.0
+    value = (
+        _crra_utility(consumption, crra)
+        + discount_factor * post_decision_value_at_zero_a
+    )
+    return RegionCloud(
+        # a = 0 -> m = c + d; pension budget inverts as in the unconstrained region.
+        m_endog=consumption + deposit,
+        n_endog=b - deposit - match_rate * jnp.log1p(deposit),
+        consumption=consumption,
+        deposit=deposit,
+        value=value,
+        # At the binding budget the marginal value of liquid wealth is the common
+        # marginal value u'(c) (equal to the deposit FOC's right-hand side).
+        value_grad_m=marginal_utility,
+        value_grad_n=discount_factor * w_b_at_zero_a,
+    )
+
+
+def invert_con_cloud(
+    *,
+    consumption: FloatND,
+    b: FloatND,
+    post_decision_value_at_zero_a: FloatND,
+    w_b_at_zero_a: FloatND,
+    discount_factor: float,
+    crra: float,
+) -> RegionCloud:
+    """Build the fully-constrained corner cloud (`con`, `a = 0` and `d = 0`).
+
+    Where both the borrowing constraint and the deposit lower bound bind, neither FOC
+    holds with equality and there is nothing to invert: the agent consumes its entire
+    liquid budget (`m = c`, since `a = 0` and `d = 0`) and the pension is unchanged
+    (`n = b`). The region is the deep-constrained corner of the state space,
+    parameterized by a consumption sweep against the pension balance at `a = 0`.
+
+    Args:
+        consumption: Exogenous consumption sweep at each node (`m = c` at the corner).
+        b: Pension post-decision balance at each node (`n = b`, no deposit).
+        post_decision_value_at_zero_a: Post-decision value `w(0, b)` at each node.
+        w_b_at_zero_a: Post-decision value gradient w.r.t. `b`, at `a = 0`.
+        discount_factor: Discount factor.
+        crra: Coefficient of relative risk aversion.
+
+    Returns:
+        The fully-constrained endogenous cloud.
+
+    """
+    value = (
+        _crra_utility(consumption, crra)
+        + discount_factor * post_decision_value_at_zero_a
+    )
+    return RegionCloud(
+        m_endog=consumption,
+        n_endog=b,
+        consumption=consumption,
+        deposit=jnp.zeros_like(consumption),
+        value=value,
+        # All extra liquid is consumed at the corner, so dV/dm = u'(c).
+        value_grad_m=consumption ** (-crra),
+        value_grad_n=discount_factor * w_b_at_zero_a,
+    )
+
+
 def _crra_utility(consumption: FloatND, crra: float) -> FloatND:
     return jnp.where(
         crra == 1.0,
