@@ -96,6 +96,7 @@ def vmap_1d(
     func: FunctionWithArrayReturn,
     variables: tuple[str, ...],
     callable_with: Literal["only_args", "only_kwargs"] = "only_kwargs",
+    co_mapped_in_axes: MappingProxyType[str, Any] | None = None,
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func is mapped over the specified variables.
 
@@ -110,6 +111,11 @@ def vmap_1d(
             function. If "only_args", the returned function can only be called with
             positional arguments. If "only_kwargs", the returned function can only be
             called with keyword arguments.
+        co_mapped_in_axes: Immutable mapping of argument name to the `in_axes` spec to
+            use for that argument, instead of the default `None` (unmapped). A scalar
+            axis index maps that axis of the argument (broadcasting over its pytree
+            leaves); use this to co-map a state's grid axis with the matching axis of a
+            pytree argument so the body sees only the corresponding slice.
 
     Returns:
         A callable with the same arguments as func (but with an additional leading
@@ -133,19 +139,23 @@ def vmap_1d(
 
     positions = [parameters.index(var) for var in variables]
 
+    co_mapped_in_axes = co_mapped_in_axes or MappingProxyType({})
+
     # Handle empty variables case - nothing to vmap over
-    if not positions:
+    if not positions and not co_mapped_in_axes:
         vmapped = func
     else:
         # Create in_axes to apply vmap over variables. This has one entry for each
         # argument of func, indicating whether the argument should be mapped over or
         # not. None means that the argument should not be mapped over, 0 means that it
-        # should be mapped over the leading axis of the input.
-        in_axes_for_vmap: list[int | None] = cast(
-            "list[int | None]", [None] * len(parameters)
-        )
+        # should be mapped over the leading axis of the input. A `co_mapped_in_axes`
+        # entry overrides the default for that argument — a scalar axis index there
+        # maps that axis of every pytree leaf, co-mapping it with the variables.
+        in_axes_for_vmap: list[Any] = cast("list[Any]", [None] * len(parameters))
         for p in positions:
             in_axes_for_vmap[p] = 0
+        for name, axes in co_mapped_in_axes.items():
+            in_axes_for_vmap[parameters.index(name)] = axes
 
         vmapped = vmap(func, in_axes=in_axes_for_vmap)
     vmapped.__signature__ = signature  # ty: ignore[invalid-assignment]

@@ -1,4 +1,5 @@
 import itertools
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
@@ -244,6 +245,26 @@ def test_vmap_1d():
     exp = jnp.array([-2, -4])
 
     aaae(got, exp)
+
+
+def test_vmap_1d_co_maps_pytree_argument_leading_axis_with_variable():
+    """A co-mapped pytree argument is sliced along each leaf's leading axis in
+    lockstep with the mapped variable, so the body sees only the matching slice."""
+    table = MappingProxyType({"r": jnp.arange(6).reshape(3, 2)})
+
+    def func(idx, table):  # noqa: ARG001
+        # `table["r"]` is already the per-idx slice (shape (2,)); a leftover
+        # leading axis would make this the full (3, 2) and break the stack.
+        return table["r"]
+
+    mapped = vmap_1d(
+        func=func,
+        variables=("idx",),
+        co_mapped_in_axes=MappingProxyType({"table": 0}),
+    )
+    got = mapped(idx=jnp.arange(3), table=table)
+
+    aaae(got, table["r"])
 
 
 def test_vmap_1d_error():
