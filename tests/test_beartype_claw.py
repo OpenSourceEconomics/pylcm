@@ -27,7 +27,7 @@ from beartype.roar import BeartypeCallHintViolation
 from _lcm.engine import _build_regime_sharding
 from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
 from _lcm.simulation.simulate import _compute_starting_periods
-from _lcm.solution.solve_brute import _log_per_period_stats
+from _lcm.solution.backward_induction import _log_per_period_stats
 from _lcm.state_action_space import _validate_all_states_present
 from _lcm.transition_checks import _validate_regime_transition_probs
 from lcm import AgeGrid, LinSpacedGrid, Model

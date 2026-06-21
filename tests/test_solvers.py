@@ -13,7 +13,7 @@ from dataclasses import replace
 import pytest
 from numpy.testing import assert_array_equal
 
-from _lcm.solution.solve_brute import _func_dedup_key
+from _lcm.solution.backward_induction import _func_dedup_key
 from lcm import DCEGM, AgeGrid, GridSearch, LinSpacedGrid, Model, NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
 from lcm_examples.iskhakov_et_al_2017 import (

@@ -9,8 +9,8 @@ from _lcm.engine import Regime, StateActionSpace
 from _lcm.grids import Grid
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
+from _lcm.solution.backward_induction import solve
 from _lcm.solution.contract import PeriodKernel
-from _lcm.solution.solve_brute import solve
 from _lcm.solution.solvers import _GridSearchPeriodKernel
 from _lcm.typing import MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
@@ -62,7 +62,7 @@ class MockRegime(Regime):
         object.__setattr__(self, "active_periods", active_periods)
 
 
-def test_solve_brute():
+def test_backward_induction():
     """Test solve brute with hand written inputs.
 
     Normally, these inputs would be created from a model specification. For now this can
@@ -169,7 +169,7 @@ def test_solve_brute():
     assert "default" in solution[1]
 
 
-def test_solve_brute_single_period_Qc_arr():
+def test_backward_induction_single_period_Qc_arr():
     state_action_space = StateActionSpace(
         discrete_actions=MappingProxyType(
             {

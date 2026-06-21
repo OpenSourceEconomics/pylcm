@@ -1,4 +1,4 @@
-"""Tests for the post-loop diagnostics path in `solve_brute.solve`.
+"""Tests for the post-loop diagnostics path in `backward_induction.solve`.
 
 These cover:
 - happy path at `log_level="warning"` runs without raising;
