@@ -22,6 +22,7 @@ from _lcm.typing import PeriodToRegimeToVArr
 from lcm import AgeGrid, Model
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
+from tests.conftest import X64_ENABLED
 from tests.solution.test_egm_process_states import (
     CONSUMPTION_GRID,
     N_INCOME_NODES,
@@ -39,6 +40,11 @@ from tests.solution.test_egm_process_states import (
     savings,
     utility_consumption_only,
 )
+
+# The block reduction reorders the weighted-sum adds: in float64 the match to the
+# unsplayed solve is tight, in float32 the reordering shows at single-precision scale.
+_INVARIANCE_RTOL = 1e-9 if X64_ENABLED else 1e-4
+_INVARIANCE_ATOL = 1e-9 if X64_ENABLED else 1e-4
 
 
 @functools.cache
@@ -108,7 +114,7 @@ def test_stochastic_node_batch_size_leaves_value_function_unchanged(
             np.testing.assert_allclose(
                 got_V,
                 ref_V,
-                rtol=1e-9,
-                atol=1e-9,
+                rtol=_INVARIANCE_RTOL,
+                atol=_INVARIANCE_ATOL,
                 err_msg=f"period={period}, regime={regime_name}",
             )

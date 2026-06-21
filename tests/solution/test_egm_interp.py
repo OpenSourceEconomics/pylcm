@@ -292,7 +292,7 @@ def test_prepared_interpolation_holds_no_grid_by_query_intermediate():
     `O(queries * n_pad)` working buffer the NaN preamble used to create.
     """
     n_grid, n_query = 64, 11
-    xp = jnp.arange(n_grid, dtype=jnp.float64)
+    xp = jnp.arange(n_grid, dtype=float)
     fp = jnp.sqrt(xp)
     queries = jnp.linspace(0.0, n_grid, n_query)
 

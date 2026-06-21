@@ -35,6 +35,13 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import X64_ENABLED
+
+# Splaying a combo axis only reschedules the `lax.map`; in float64 the solved V is
+# reproduced essentially exactly, in float32 the gather/reduce order shifts within
+# single-precision rounding.
+_INVARIANCE_RTOL = 1e-12 if X64_ENABLED else 1e-4
+_INVARIANCE_ATOL = 1e-12 if X64_ENABLED else 1e-4
 
 N_PERIODS = 4
 N_WEALTH = 40
@@ -194,8 +201,8 @@ def test_discrete_combo_batch_size_leaves_value_function_unchanged(
             np.testing.assert_allclose(
                 got_V,
                 ref_V,
-                rtol=1e-12,
-                atol=1e-12,
+                rtol=_INVARIANCE_RTOL,
+                atol=_INVARIANCE_ATOL,
                 err_msg=f"period={period}, regime={regime_name}",
             )
 
@@ -285,5 +292,9 @@ def test_two_discrete_combo_axes_splayed_together_match_unsplayed(batch_size: in
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
             np.testing.assert_allclose(
-                got_V, ref_V, rtol=1e-12, atol=1e-12, err_msg=f"period={period}"
+                got_V,
+                ref_V,
+                rtol=_INVARIANCE_RTOL,
+                atol=_INVARIANCE_ATOL,
+                err_msg=f"period={period}",
             )
