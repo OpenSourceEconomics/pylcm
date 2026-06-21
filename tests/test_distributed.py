@@ -233,7 +233,9 @@ def _compiled_solve_kernel_hlo(model: Model, *, regime_name: str, period: int) -
         "age": model.ages.values[period],  # noqa: PD011
     }
     kernel = regime.solution.max_Q_over_a[period]
-    return jax.jit(kernel).lower(**lower_args).compile().as_text()
+    hlo = jax.jit(kernel).lower(**lower_args).compile().as_text()
+    assert hlo is not None
+    return hlo
 
 
 @_skip_pytest_parallel
