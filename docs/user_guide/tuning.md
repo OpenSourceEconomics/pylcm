@@ -199,6 +199,32 @@ fails the pool preallocation outright — an `OUT_OF_MEMORY` on device 0 within 
 startup (not mid-solve) — so request GPUs exclusively.
 ```
 
+```{warning}
+**Never materialize a JAX array at module import.** A module-level `jnp.array(...)`
+constant — a lookup table, a grid of breakpoints, a coefficient vector — runs the moment
+the module is imported, and the first JAX device array in a process triggers the entire
+`PREALLOCATE=true` pool reservation on device 0. So the constant reserves the device the
+instant your model code is imported, *before any solve runs* — including in processes
+that import the code only to enumerate or schedule work and never call `solve()`. A
+second such process then fails the reservation outright: the same `OUT_OF_MEMORY` on
+device 0 within seconds of startup as above, with no solve in sight.
+```
+
+Keep module-level numeric constants as NumPy host arrays and convert them to JAX inside
+the function that uses them, where the conversion runs under the solve's traced (and
+sharded) context:
+
+```python
+import jax.numpy as jnp
+import numpy as np
+
+HOURS = np.array([0.0, 1000.0, 2000.0])  # host array at module scope — no device use
+
+
+def working_hours(labor_supply):
+    return jnp.asarray(HOURS)[labor_supply]  # device array only inside the solve
+```
+
 **A stable multi-GPU configuration.** One environment that holds up at production scale,
 trading compile-time kernel search and launch batching for memory headroom:
 

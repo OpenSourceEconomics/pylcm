@@ -102,10 +102,10 @@ tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-# Pinned to aca-model's broadcast-grammar migration while this PR is open
-# (aca-model main still uses the removed `None` state-transition spelling);
-# flip back to branch = "main" once both sides have merged.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "fc84f59c0f5727686951a13527fb550545947d4f" }
+# Pinned to the aca-model version this solver-seam work is developed against
+# (feat/dcegm-solver: main's audit fixes + the DC-EGM solver + smooth-share
+# eligibility); flip back to branch = "main" once both sides have merged.
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "54fb8df1f83865eee421a4b656676ce4e6787928" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }

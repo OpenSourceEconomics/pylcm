@@ -276,17 +276,17 @@ The numerical checks fired at solve / simulate time live outside `regime_buildin
   sum-to-1. State checks are gated by `log_level != "off"` because the Cartesian product
   can blow up on models with many continuous-grid-dependent stochastic states.
 - `_lcm/solution/validate_V.py` runs *during* backward induction (after each period in
-  `solve_brute.py`, and once on the V handed to `simulate.py`). On NaN it invokes the
-  diagnostic-intermediates closure built in `regime_building/diagnostics.py` to pinpoint
-  which intermediate (`U`, `F`, `E[V]`, `Q`) produced the NaN.
+  `backward_induction.py`, and once on the V handed to `simulate.py`). On NaN it invokes
+  the diagnostic-intermediates closure built in `regime_building/diagnostics.py` to
+  pinpoint which intermediate (`U`, `F`, `E[V]`, `Q`) produced the NaN.
 
 ## Solve and simulate
 
 ```
 _lcm/solution/
-├── solve_brute.py      ← backward induction loop:
-│                          V[T], V[T-1], ..., V[0] via max_Q_over_a
-└── validate_V.py       ← per-period NaN / Inf validation
+├── backward_induction.py  ← backward induction loop:
+│                             V[T], V[T-1], ..., V[0] via max_Q_over_a
+└── validate_V.py          ← per-period NaN / Inf validation
 
 _lcm/simulation/
 ├── simulate.py         ← forward sampling loop with state-action draws
@@ -425,8 +425,8 @@ If you're reading the codebase for the first time, the path of least confusion i
 1. **`_lcm/regime_building/processing.py`** for per-regime canonicalisation — the
    longest single file and the heart of the build.
 1. **`_lcm/engine.py`** for the canonical dataclasses the DP machinery consumes.
-1. **`_lcm/solution/solve_brute.py`** and **`_lcm/simulation/simulate.py`** for the
-   actual DP and sampling.
+1. **`_lcm/solution/backward_induction.py`** and **`_lcm/simulation/simulate.py`** for
+   the actual DP and sampling.
 
 By the time you reach (6), the canonical form should feel familiar and the JAX-traced
 code becomes easy to read.

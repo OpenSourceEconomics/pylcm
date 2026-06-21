@@ -29,10 +29,7 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
-from _lcm.regime_building.max_Q_over_a import (
-    get_argmax_and_max_Q_over_a,
-    get_max_Q_over_a,
-)
+from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.next_state import get_next_state_function_for_simulation
 from _lcm.regime_building.phases import (
@@ -48,6 +45,7 @@ from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
+from _lcm.solution.contract import SolverBuildContext
 from _lcm.state_action_space import create_state_action_space
 from _lcm.typing import (
     ArgmaxQOverAFunction,
@@ -55,7 +53,6 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
     FunctionName,
-    MaxQOverAFunction,
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
@@ -82,6 +79,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.solvers import Solver
 from lcm.transition import (
     MarkovTransition,
 )
@@ -196,6 +194,7 @@ def process_regimes(
             ages=ages,
             enable_jit=enable_jit,
             has_taste_shocks=user_regime.taste_shocks is not None,
+            solver=user_regime.solver,
         )
 
         simulation = _build_simulation_phase(
@@ -255,6 +254,7 @@ def _build_solution_phase(
     ages: AgeGrid,
     enable_jit: bool,
     has_taste_shocks: bool,
+    solver: Solver,
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -276,6 +276,8 @@ def _build_solution_phase(
         enable_jit: Whether to jit the internal functions.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
+        solver: The regime's solver; the engine calls `validate` then
+            `build_period_kernels` on it to obtain the per-period kernels.
 
     Returns:
         Complete solve functions container.
@@ -345,13 +347,20 @@ def _build_solution_phase(
             enable_jit=enable_jit,
         )
 
-    max_Q_over_a = _build_max_Q_over_a_per_period(
+    # Dispatch the per-period kernel build polymorphically on the regime's
+    # solver: `validate` rejects out-of-scope configurations at build time,
+    # then `build_period_kernels` returns the per-period kernels. `GridSearch`
+    # builds the max-Q-over-a grid-search kernels.
+    context = SolverBuildContext(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
         enable_jit=enable_jit,
         has_taste_shocks=has_taste_shocks,
     )
+    solver.validate(context=context)
+    solver_kernels = solver.build_period_kernels(context=context)
+    max_Q_over_a = solver_kernels.max_Q_over_a
 
     return SolutionPhase(
         _variables=variables,
@@ -1659,40 +1668,6 @@ def _build_Q_and_F_per_period(
         for period in periods:
             result[period] = built[key]
 
-    return MappingProxyType(result)
-
-
-def _build_max_Q_over_a_per_period(
-    *,
-    state_action_space: StateActionSpace,
-    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    grids: MappingProxyType[StateOrActionName, Grid],
-    enable_jit: bool,
-    has_taste_shocks: bool = False,
-) -> MappingProxyType[int, MaxQOverAFunction]:
-    """Build max-Q-over-a closures for each period.
-
-    Periods sharing the same Q_and_F object reuse a single compiled function.
-    """
-    built: dict[int, MaxQOverAFunction] = {}
-    result: dict[int, MaxQOverAFunction] = {}
-    for period, Q_and_F in Q_and_F_functions.items():
-        q_id = id(Q_and_F)
-        if q_id not in built:
-            func = get_max_Q_over_a(
-                Q_and_F=Q_and_F,
-                batch_sizes={
-                    name: grid.batch_size
-                    for name, grid in grids.items()
-                    if name in state_action_space.state_names
-                },
-                action_names=state_action_space.action_names,
-                state_names=state_action_space.state_names,
-                n_discrete_action_axes=len(state_action_space.discrete_actions),
-                has_taste_shocks=has_taste_shocks,
-            )
-            built[q_id] = jax.jit(func) if enable_jit else func
-        result[period] = built[q_id]
     return MappingProxyType(result)
 
 

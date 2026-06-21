@@ -30,6 +30,7 @@ from _lcm.utils.containers import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
+from lcm.solvers import GridSearch, Solver
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import MarkovTransition
 from lcm.typing import FloatND, UserFunction
@@ -145,6 +146,15 @@ class Regime:
         default_factory=lambda: MappingProxyType({})
     )
     """Categorical grids for DAG function outputs not in states/actions."""
+
+    solver: Solver = field(default_factory=GridSearch)
+    """Solution algorithm for this regime during backward induction.
+
+    - `GridSearch()` (default): grid search over the full state-action product.
+    - `DCEGM(...)`: endogenous grid method for one continuous state and one
+      continuous action; the regime must satisfy the DC-EGM model contract,
+      which is validated at `Model` construction time.
+    """
 
     taste_shocks: ExtremeValueTasteShocks | None = None
     """EV1 taste shocks on the regime's discrete-action combinations.

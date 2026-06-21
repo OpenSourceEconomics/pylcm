@@ -273,7 +273,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/websocket-client-1.9.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
       - pypi: .
-      - pypi: git+https://github.com/opensourceeconomics/aca-model?rev=fc84f59c0f5727686951a13527fb550545947d4f#fc84f59c0f5727686951a13527fb550545947d4f
+      - pypi: git+https://github.com/opensourceeconomics/aca-model?rev=54fb8df1f83865eee421a4b656676ce4e6787928#54fb8df1f83865eee421a4b656676ce4e6787928
       - pypi: git+https://github.com/opensourceeconomics/dags?branch=main#b82a152a9eaf6b7060e05428e1982673af45a1b9
       - pypi: https://files.pythonhosted.org/packages/12/46/b0fd4b04f86577921feb97d8e2cf028afe04f614d17fb5013de9282c9216/nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/18/2a/d4cd8506d2044e082f8cd921be57392e6a9b5ccd3ffdf050362430a3d5d5/nvidia_cuda_cccl_cu12-12.9.27-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
@@ -15359,9 +15359,9 @@ packages:
   - flatten-dict
   - networkx>=3.6
   requires_python: '>=3.11'
-- pypi: git+https://github.com/opensourceeconomics/aca-model?rev=fc84f59c0f5727686951a13527fb550545947d4f#fc84f59c0f5727686951a13527fb550545947d4f
+- pypi: git+https://github.com/opensourceeconomics/aca-model?rev=54fb8df1f83865eee421a4b656676ce4e6787928#54fb8df1f83865eee421a4b656676ce4e6787928
   name: aca-model
-  version: 0.1.dev26+gfc84f59c0
+  version: 0.1.dev50+g54fb8df1f
   requires_dist:
   - attrs
   - beartype
