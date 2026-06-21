@@ -1,0 +1,194 @@
+"""Spec for NEGM build-time validation (the fail-loudly model contract).
+
+A regime with `solver=NEGM(...)` must satisfy the nesting contract on top of the
+inner DC-EGM contract. Every violation raises `ModelInitializationError` at model
+build, naming the offending feature **and** the correct alternative solver. The
+checks run on the user regimes directly (`validate_negm_regimes`), so each case
+constructs regimes and asserts the rejection without building kernels or solving.
+
+The cases mutate the valid kinked-toy NEGM regime one rule at a time:
+
+1. no outer margin (outer action absent) → use `DCEGM`,
+2. outer action equals the inner continuous action, or outer post-decision
+   equals the inner post-decision → reject (distinct margins),
+3. coupled-2-Euler: the outer post-decision enters the inner Euler-state
+   transition → use the 2-D EGM foundation,
+4. taste-shock ordering: a taste-shocked discrete choice exists → reject.
+"""
+
+import dataclasses
+
+import jax.numpy as jnp
+import pytest
+
+from _lcm.egm.negm_validation import (
+    _fail_if_margins_not_distinct,
+    validate_negm_regimes,
+)
+from lcm import DiscreteGrid, ExtremeValueTasteShocks, categorical
+from lcm.exceptions import ModelInitializationError
+from lcm.regime import Regime as UserRegime
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+)
+from tests.test_models import negm_kinked_toy
+
+_VALID = negm_kinked_toy.build_alive_regime()
+
+
+def _validate(regime: UserRegime) -> None:
+    """Run the NEGM contract check on a single-regime mapping."""
+    validate_negm_regimes(user_regimes={"alive": regime})
+
+
+def test_valid_kinked_toy_negm_regime_passes_validation():
+    """The kinked-toy NEGM regime satisfies the nesting contract."""
+    _validate(_VALID)
+
+
+def test_outer_action_absent_is_rejected_with_dcegm_pointer():
+    """A regime with no outer continuous action is a pure 1-D problem.
+
+    Dropping the durable action (and the durable state it moves) leaves a
+    single continuous action; NEGM would silently run as plain DC-EGM, so it is
+    rejected with a pointer to `DCEGM`.
+    """
+    regime = _VALID.replace(
+        actions={"consumption": negm_kinked_toy.CONSUMPTION_GRID},
+    )
+    with pytest.raises(ModelInitializationError, match="use `DCEGM`"):
+        _validate(regime)
+
+
+def test_outer_post_decision_not_declared_is_rejected():
+    """An outer post-decision that is neither a function nor a transition fails."""
+    solver = dataclasses.replace(
+        negm_kinked_toy.NEGM_SOLVER, outer_post_decision="not_a_function"
+    )
+    regime = _VALID.replace(solver=solver)
+    with pytest.raises(ModelInitializationError, match="neither a declared function"):
+        _validate(regime)
+
+
+def test_margin_distinctness_recheck_rejects_outer_action_equal_to_inner_action():
+    """The model-build re-check rejects an outer action equal to the inner one.
+
+    `NEGM.__post_init__` enforces distinctness at construction (so a coincident
+    `NEGM` cannot be built); the validator carries the same check as a single
+    fail-loud model-build point, exercised here against an inner config whose
+    continuous action matches the solver's outer action.
+    """
+    solver = negm_kinked_toy.NEGM_SOLVER
+    inner_action_clashes = dataclasses.replace(
+        solver.inner, continuous_action="illiquid_investment"
+    )
+    with pytest.raises(ModelInitializationError, match="coincides with the inner"):
+        _fail_if_margins_not_distinct(
+            regime_name="alive", solver=solver, inner=inner_action_clashes
+        )
+
+
+def test_margin_distinctness_recheck_rejects_outer_equal_to_inner_post_decision():
+    """The model-build re-check rejects a coincident post-decision function."""
+    solver = negm_kinked_toy.NEGM_SOLVER
+    inner_post_clashes = dataclasses.replace(
+        solver.inner, post_decision_function="next_illiquid"
+    )
+    with pytest.raises(ModelInitializationError, match="coincides with"):
+        _fail_if_margins_not_distinct(
+            regime_name="alive", solver=solver, inner=inner_post_clashes
+        )
+
+
+def _euler_law_reading_outer_margin(
+    liquid_savings: FloatND, next_illiquid: ContinuousState
+) -> ContinuousState:
+    """A liquid Euler law that reads the outer post-decision (the pension shape).
+
+    The next-period liquid wealth depends on the durable stock the outer choice
+    sets, so the `c` and the outer FOCs invert on the same continuation.
+    """
+    rate = jnp.where(liquid_savings < 0.0, 0.12, 0.03)
+    return (1.0 + rate) * liquid_savings + 0.01 * next_illiquid
+
+
+def test_outer_margin_entering_inner_euler_law_is_rejected_with_2d_pointer():
+    """The DS pension coupling fails fast with a pointer to the 2-D foundation.
+
+    When the inner Euler-state transition reads the outer post-decision, the
+    inner Euler inversion is no longer independent of the outer choice, so
+    NEGM's deterministic outer max is invalid.
+    """
+    regime = _VALID.replace(
+        state_transitions={
+            "wealth": _euler_law_reading_outer_margin,
+            "illiquid": negm_kinked_toy.durable_transition,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="G2EGM / multidim-RFC"):
+        _validate(regime)
+
+
+def _utility_coupling_consumption_and_durable_move(
+    consumption: ContinuousAction, next_illiquid: ContinuousState
+) -> FloatND:
+    """A utility that multiplies consumption by the outer post-decision.
+
+    The cross-term makes the inner marginal utility depend on the outer choice,
+    so the durable margin is not additively separable from consumption.
+    """
+    flow = consumption * (1.0 + 0.01 * next_illiquid)
+    return flow ** (1.0 - 2.0) / (1.0 - 2.0)
+
+
+def test_utility_coupling_the_two_margins_is_rejected_with_2d_pointer():
+    """A non-additively-separable utility cross-term fails fast.
+
+    NEGM treats the outer margin's utility term as a constant in the inner Euler
+    inversion; a cross-term in `(consumption, next_illiquid)` breaks that.
+    """
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "utility": _utility_coupling_consumption_and_durable_move,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="G2EGM / multidim-RFC"):
+        _validate(regime)
+
+
+@categorical(ordered=False)
+class _Work:
+    work: ScalarInt
+    rest: ScalarInt
+
+
+def _is_working(labor_supply: DiscreteAction) -> FloatND:
+    return labor_supply == _Work.work
+
+
+def test_taste_shocked_discrete_choice_is_rejected_with_ordering_explanation():
+    """A taste-shocked discrete choice violates the aggregation ordering.
+
+    NEGM wraps its outer search around the inner solve (which performs the
+    discrete `logsumexp`), so the outer max sits outside the taste-shock
+    aggregation — the wrong order. The regime is rejected with the §2.3
+    explanation.
+    """
+    regime = _VALID.replace(
+        actions={
+            **dict(_VALID.actions),
+            "labor_supply": DiscreteGrid(_Work),
+        },
+        functions={
+            **dict(_VALID.functions),
+            "is_working": _is_working,
+        },
+        taste_shocks=ExtremeValueTasteShocks(),
+    )
+    with pytest.raises(ModelInitializationError, match="outermost aggregation"):
+        _validate(regime)

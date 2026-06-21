@@ -19,6 +19,7 @@ from _lcm.egm.budget import (
     get_intrinsic_budget_constraint,
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry
+from _lcm.egm.negm_validation import validate_negm_regimes
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_stateless_terminal_carry_producer,
@@ -140,6 +141,7 @@ def process_regimes(
     # beat the generic unused-variable check); this call covers direct
     # `process_regimes` callers.
     validate_dcegm_regimes(user_regimes=user_regimes)
+    validate_negm_regimes(user_regimes=user_regimes)
 
     # The canonical specs hold every law in target-granular form, resolved per
     # phase: the simulate slice additionally holds every carried-only state

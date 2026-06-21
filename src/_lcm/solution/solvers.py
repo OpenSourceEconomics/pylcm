@@ -247,6 +247,119 @@ class DCEGM(Solver):
         )
 
 
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class NEGM(Solver):
+    """Nested-EGM solver: an outer grid search over a durable/illiquid margin.
+
+    NEGM solves a model with one continuous margin the Euler equation cleanly
+    inverts on (liquid consumption-savings) plus a second continuous margin
+    that does not admit a clean inverse-Euler (a durable/illiquid stock with
+    adjustment frictions) by nesting:
+
+    - an *inner* standard 1-D DC-EGM solve of the consumption-savings problem,
+      conditional on the outer margin being fixed (this is exactly the existing
+      `DCEGM` kernel, with the outer margin entering inner resources and utility
+      as a constant and indexing the child durable state);
+    - an *outer* deterministic `max` over a grid of the outer post-decision
+      margin plus mandatory kink candidates (the no-adjustment point `s' = s`,
+      the floor corner).
+
+    The outer step is a search, not a second inverse-Euler: the outer value is
+    generically non-concave (adjustment-cost kink, floor corners), so a second
+    EGM inversion would be invalid there.
+
+    The `NEGM(inner=DCEGM(...), …)` composition makes "NEGM nests the 1-D
+    DC-EGM" literal: it reuses every inner field and its upper-envelope backend,
+    reuses `DCEGM.__post_init__` validation wholesale, and keeps the
+    outer-margin contract in one place. The model-contract check
+    `validate_negm_regimes` rejects, at `Model` construction, any model NEGM
+    does not fit (no outer margin, a coupled-2-Euler pension shape, a
+    taste-shock-ordering violation), naming the offending feature and the
+    correct alternative solver.
+    """
+
+    inner: DCEGM
+    """The inner 1-D DC-EGM config.
+
+    Carries the liquid Euler state, the consumption action, the resources and
+    post-decision functions, the savings grid, and the upper-envelope backend.
+    Its `__post_init__` guards run on construction, so an invalid inner config
+    is rejected before NEGM's own guards.
+    """
+
+    outer_action: ActionName
+    """The outer continuous action — the durable/illiquid choice.
+
+    Forbidden as the inner DC-EGM continuous action (the two margins must be
+    distinct).
+    """
+
+    outer_post_decision: FunctionName
+    """The outer post-decision function `s'` in `Regime.functions`.
+
+    The inner `resources` and the child-state index both read its value as a
+    constant. Forbidden as the inner DC-EGM post-decision function.
+    """
+
+    outer_grid: ContinuousGrid
+    """Exogenous grid over the outer post-decision margin `s'`."""
+
+    outer_no_adjustment_candidate: FunctionName | None = None
+    """State-specific kink candidate (the no-adjustment point `s' = s`).
+
+    Inserted per node because a fixed exogenous outer grid misses
+    state-specific kinks. `None` only when the model provably has no adjustment
+    kink.
+    """
+
+    def __post_init__(self) -> None:
+        _fail_if_outer_grid_is_stochastic(self.outer_grid)
+        _fail_if_outer_action_is_inner_action(
+            outer_action=self.outer_action, inner=self.inner
+        )
+        _fail_if_outer_post_decision_is_inner_post_decision(
+            outer_post_decision=self.outer_post_decision, inner=self.inner
+        )
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build one NEGM period adapter per period, wrapping the inner kernels.
+
+        The standalone `validate_negm_regimes` model-contract check (run during
+        regime processing) guarantees the outer margin is present and distinct
+        from the inner margin, that the outer margin is not Euler-coupled to the
+        inner state, and that any taste-shocked discrete choice is the outermost
+        aggregation. The inner DC-EGM period kernels are built once (with the
+        outer margin bound so it enters the inner resources and utility as a
+        constant and indexes the child durable state); each is wrapped in an
+        outer adapter that sweeps the outer grid plus the mandatory per-node
+        candidates and collapses the outer axis by `max`.
+        """
+        inner_kernels = self.inner.build_period_kernels(context=context)
+        outer_grid_values = self.outer_grid.to_jax()
+        candidate_func = (
+            context.functions[self.outer_no_adjustment_candidate]
+            if self.outer_no_adjustment_candidate is not None
+            else None
+        )
+        period_kernels = MappingProxyType(
+            {
+                period: _NEGMPeriodKernel(
+                    inner_kernel=inner_kernel,
+                    regime_name=context.regime_name,
+                    outer_grid_values=outer_grid_values,
+                    outer_post_decision=self.outer_post_decision,
+                    outer_no_adjustment_candidate=candidate_func,
+                )
+                for period, inner_kernel in inner_kernels.period_kernels.items()
+            }
+        )
+        return SolutionKernels(
+            period_kernels=period_kernels,
+            continuation_template=inner_kernels.continuation_template,
+        )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _GridSearchPeriodKernel:
     """The grid-search period adapter — wraps one max-Q-over-a core.
@@ -437,6 +550,188 @@ class _DCEGMPeriodKernel:
         return params
 
 
+@dataclass(frozen=True, kw_only=True)
+class _NEGMPeriodKernel:
+    """The NEGM period adapter — an outer search wrapping one inner DC-EGM kernel.
+
+    Holds the inner DC-EGM period adapter, the exogenous outer grid, and the
+    names of the outer post-decision and the optional no-adjustment candidate.
+    Calling it runs the inner kernel once per outer-grid node (plus the per-node
+    candidates) with the outer post-decision value bound as a constant, then
+    collapses the outer axis by `max`, tracking the argmax-`s'` for the
+    simulation policy. The reduction is the same shape brute would search, but
+    with the inner consumption margin off-grid (the accuracy win). The adapter
+    is non-jitted: it calls the shared jitted inner core, matching
+    `_DCEGMPeriodKernel`.
+    """
+
+    inner_kernel: PeriodKernel
+    """The inner DC-EGM period adapter whose shared jitted core is swept."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params the outer node binds into."""
+
+    outer_grid_values: FloatND
+    """Exogenous grid over the outer post-decision margin `s'`."""
+
+    outer_post_decision: FunctionName
+    """Name of the outer post-decision function bound per outer-grid node."""
+
+    outer_no_adjustment_candidate: Callable | None
+    """The no-adjustment candidate function `s' = s`, or `None`.
+
+    Evaluated against the regime's durable state at call time to produce the
+    state-specific per-node candidate inserted into the outer search.
+    """
+
+    @property
+    def core(self) -> Callable:
+        """The shared jitted inner core, exposed for AOT identity-dedup."""
+        return self.inner_kernel.core
+
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _NEGMPeriodKernel:
+        """Bind the regime's fixed params into the inner kernel."""
+        return replace(
+            self,
+            inner_kernel=self.inner_kernel.with_fixed_params(
+                fixed_flat_params=fixed_flat_params
+            ),
+        )
+
+    def build_lower_args(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> Mapping[str, object]:
+        """Delegate the inner core's lowering arguments, bound at one outer node.
+
+        The outer sweep binds `outer_post_decision` into the regime's flat
+        params at the first outer-grid node, so the lowered inner program
+        matches the shape every per-node call traces; the outer axis is added
+        outside the jitted core by the `__call__` sweep.
+        """
+        return self.inner_kernel.build_lower_args(
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            flat_params=_with_outer_post_decision(
+                flat_params=flat_params,
+                regime_name=self.regime_name,
+                outer_post_decision=self.outer_post_decision,
+                value=self.outer_grid_values[0],
+            ),
+            period=period,
+            ages=ages,
+        )
+
+    def __call__(
+        self,
+        *,
+        compiled_core: Callable,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Sweep the outer grid, collapse by `max`, and assemble the result.
+
+        For each outer-grid node `s'_j` (plus the per-node no-adjustment
+        candidate), the inner DC-EGM kernel is run with `outer_post_decision`
+        bound to `s'_j`, yielding `W_j`, the inner value over the liquid
+        endogenous grid at durable `s'_j`. The outer axis is collapsed by
+        `V = max_j W_j`, stacking the candidate nodes onto the exogenous grid;
+        the argmax over that stacked axis is the outer simulation policy.
+        """
+        outer_nodes = self._outer_nodes(
+            state_action_space=state_action_space, flat_params=flat_params
+        )
+        inner_results = [
+            self.inner_kernel(
+                compiled_core=compiled_core,
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                flat_params=_with_outer_post_decision(
+                    flat_params=flat_params,
+                    regime_name=self.regime_name,
+                    outer_post_decision=self.outer_post_decision,
+                    value=node,
+                ),
+                period=period,
+                ages=ages,
+            )
+            for node in outer_nodes
+        ]
+        stacked_V = jnp.stack([result.V_arr for result in inner_results], axis=0)
+        V_arr = jnp.max(stacked_V, axis=0)
+        # The inner carry and simulation policy at the selected outer node are
+        # the prototype's published continuation; multi-node carry selection by
+        # the outer argmax is deferred to the cross-algorithm interface bundle
+        # (design §6).
+        return KernelResult(
+            V_arr=V_arr,
+            carry=inner_results[0].carry,
+            sim_policy=inner_results[0].sim_policy,
+        )
+
+    def _outer_nodes(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        flat_params: FlatParams,
+    ) -> list[FloatND]:
+        """The outer post-decision nodes: the exogenous grid plus candidates.
+
+        Each exogenous-grid node is a scalar `s'_j`. When a no-adjustment
+        candidate is declared, the state-specific point `s' = s` is evaluated
+        against the regime's durable state and appended, so the outer search
+        always covers the friction kink a fixed exogenous grid would miss.
+        """
+        nodes: list[FloatND] = [
+            self.outer_grid_values[index]
+            for index in range(self.outer_grid_values.shape[0])
+        ]
+        if self.outer_no_adjustment_candidate is not None:
+            nodes.append(
+                self.outer_no_adjustment_candidate(
+                    **dict(state_action_space.states),
+                    **dict(flat_params[self.regime_name]),
+                )
+            )
+        return nodes
+
+
+def _with_outer_post_decision(
+    *,
+    flat_params: FlatParams,
+    regime_name: RegimeName,
+    outer_post_decision: FunctionName,
+    value: FloatND,
+) -> FlatParams:
+    """Bind the outer post-decision value into the regime's flat params.
+
+    The inner DC-EGM core threads its per-combo pool from `flat_params`, so
+    binding `outer_post_decision` there makes the inner resources and the
+    child-state index read the fixed outer node as a constant.
+    """
+    regime_params = {**dict(flat_params[regime_name]), outer_post_decision: value}
+    return MappingProxyType(
+        {
+            name: (
+                MappingProxyType(regime_params) if name == regime_name else regime_pool
+            )
+            for name, regime_pool in flat_params.items()
+        }
+    )
+
+
 def _reachable_carry_subset(
     *,
     next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -528,5 +823,44 @@ def _fail_if_stochastic_node_batch_size_negative(
             f"{stochastic_node_batch_size}. It is the block size for splaying the "
             "child stochastic-node expectation into `lax.map` blocks; 0 keeps the "
             "fused vmap."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_outer_grid_is_stochastic(outer_grid: ContinuousGrid) -> None:
+    if isinstance(outer_grid, _ContinuousStochasticProcess):
+        msg = (
+            "NEGM.outer_grid must be a deterministic continuous grid, not a "
+            f"stochastic process ({type(outer_grid).__name__}). The outer grid "
+            "is the exogenous search grid over the durable post-decision margin; "
+            "it carries no transition. A stochastic durable margin belongs in a "
+            "process state, not the NEGM outer search."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_outer_action_is_inner_action(
+    *, outer_action: ActionName, inner: DCEGM
+) -> None:
+    if outer_action == inner.continuous_action:
+        msg = (
+            f"NEGM.outer_action '{outer_action}' coincides with the inner "
+            f"DC-EGM continuous action '{inner.continuous_action}'. The outer "
+            "durable/illiquid margin and the inner consumption margin must be "
+            "distinct actions."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_outer_post_decision_is_inner_post_decision(
+    *, outer_post_decision: FunctionName, inner: DCEGM
+) -> None:
+    if outer_post_decision == inner.post_decision_function:
+        msg = (
+            f"NEGM.outer_post_decision '{outer_post_decision}' coincides with "
+            f"the inner DC-EGM post-decision function "
+            f"'{inner.post_decision_function}'. The outer post-decision (the "
+            "next-period durable stock) and the inner post-decision (the liquid "
+            "savings) must be distinct functions."
         )
         raise RegimeInitializationError(msg)
