@@ -19,6 +19,9 @@ import jax.numpy as jnp
 
 from lcm.typing import BoolND, Float1D, Float2D, FloatND, Int2D
 
+# A grid needs at least this many rows and columns to contain one cell (two triangles).
+_MIN_GRID_SIDE = 2
+
 
 def triangulate_regular_grid(*, n_rows: int, n_cols: int) -> Int2D:
     """Split each cell of an `n_rows` by `n_cols` regular grid into two triangles.
@@ -37,6 +40,12 @@ def triangulate_regular_grid(*, n_rows: int, n_cols: int) -> Int2D:
         three flat node indices of one triangle.
 
     """
+    if n_rows < _MIN_GRID_SIDE or n_cols < _MIN_GRID_SIDE:
+        msg = (
+            "triangulate_regular_grid needs at least 2 rows and 2 columns to form a "
+            f"cell, got n_rows={n_rows}, n_cols={n_cols}."
+        )
+        raise ValueError(msg)
     rows = jnp.arange(n_rows - 1)[:, None]
     cols = jnp.arange(n_cols - 1)[None, :]
     n00 = (rows * n_cols + cols).reshape(-1)

@@ -41,9 +41,15 @@ class RegionCloud(NamedTuple):
     value: FloatND
     """Value `u(c) + discount_factor * w` at the endogenous state."""
     value_grad_m: FloatND
-    """Marginal value of liquid wealth, `discount_factor * w_a`."""
+    """Marginal value of liquid wealth `dV/dm`, equal to `u'(c)` at the optimum.
+
+    By the envelope theorem this is `discount_factor * w_a` where the liquid Euler
+    equation holds (`ucon`/`dcon`), and `u'(c)` directly at the borrowing-constrained
+    corner (`acon`/`con`), where all extra liquid is consumed — the two coincide at the
+    optimal policy.
+    """
     value_grad_n: FloatND
-    """Marginal value of pension wealth, `discount_factor * w_b`."""
+    """Marginal value of pension wealth `dV/dn`, equal to `discount_factor * w_b`."""
 
 
 def invert_ucon_cloud(

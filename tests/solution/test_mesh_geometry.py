@@ -11,6 +11,7 @@ threshold.
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.mesh_geometry import (
     barycentric_weights,
@@ -30,6 +31,17 @@ def test_triangulate_cell_count():
     """An `n_rows` by `n_cols` grid yields `2*(n_rows-1)*(n_cols-1)` triangles."""
     simplices = triangulate_regular_grid(n_rows=4, n_cols=5)
     assert simplices.shape == (2 * 3 * 4, 3)
+
+
+def test_triangulate_rejects_grids_too_small_to_have_a_cell():
+    """A grid with fewer than two rows or columns has no cell and is rejected.
+
+    Returning an empty simplex array would silently drop the whole segment; the
+    triangulation fails loudly instead.
+    """
+    for n_rows, n_cols in [(1, 5), (5, 1), (1, 1)]:
+        with pytest.raises(ValueError, match="at least 2"):
+            triangulate_regular_grid(n_rows=n_rows, n_cols=n_cols)
 
 
 def test_barycentric_weights_at_vertex_are_one_hot():
