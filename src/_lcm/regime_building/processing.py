@@ -540,8 +540,12 @@ class _TerminalCarryPeriodKernel:
 
     @property
     def core(self) -> Callable:
-        """The base adapter's shared jitted core, for AOT dedup and lowering."""
+        """The base adapter's shared jitted core, for any single-core reader."""
         return self.base.core
+
+    def cores(self) -> Mapping[str, Callable]:
+        """Delegate to the base adapter's cores (a terminal regime is single-core)."""
+        return self.base.cores()
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
@@ -569,6 +573,7 @@ class _TerminalCarryPeriodKernel:
     def build_lower_args(
         self,
         *,
+        core_key: str = "main",
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -579,6 +584,7 @@ class _TerminalCarryPeriodKernel:
         """Build the base core's lowering arguments (the carry producer is jitted
         separately at build time, so it is not part of the AOT-compiled core)."""
         return self.base.build_lower_args(
+            core_key=core_key,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
@@ -590,7 +596,7 @@ class _TerminalCarryPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -600,7 +606,7 @@ class _TerminalCarryPeriodKernel:
     ) -> KernelResult:
         """Run the base kernel, then publish the regime's continuation carry."""
         result = self.base(
-            compiled_core=compiled_core,
+            compiled_cores=compiled_cores,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=next_regime_to_egm_carry,

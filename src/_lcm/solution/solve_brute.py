@@ -164,7 +164,7 @@ def solve(
                 regime=regime,
                 regime_name=regime_name,
                 period=period,
-                compiled_core=compiled_functions[(regime_name, period)],
+                compiled_cores=compiled_functions[(regime_name, period)],
                 state_action_space=base_state_action_spaces[regime_name],
                 flat_params=flat_params,
                 ages=ages,
@@ -322,7 +322,7 @@ def _solve_regime_period(
     regime: Regime,
     regime_name: RegimeName,
     period: int,
-    compiled_core: Callable,
+    compiled_cores: MappingProxyType[str, Callable],
     state_action_space: StateActionSpace,
     flat_params: FlatParams,
     ages: AgeGrid,
@@ -334,8 +334,8 @@ def _solve_regime_period(
     """Invoke one regime's period adapter for one period.
 
     Every regime exposes the same kind of adapter; the loop never branches on
-    solver type. The adapter wraps the regime's shared jitted core (passed in
-    AOT-compiled as `compiled_core`), calls it with the solver's own argument
+    solver type. The adapter wraps the regime's shared jitted core(s) (passed in
+    AOT-compiled as `compiled_cores`), calls them with the solver's own argument
     layout, and returns a `KernelResult`. The only branches here are on the
     optional generic outputs — `carry` (the continuation a DC-EGM parent
     interpolates) and `sim_policy` (the off-grid simulation policy) — which a
@@ -348,13 +348,17 @@ def _solve_regime_period(
     `jax.jit` function is traced once with abstract shapes, not recompiled
     for every distinct (period, age) pair.
 
+    The adapter is handed its full per-key compiled-core map (`compiled_cores`):
+    a single-core kernel reads `["main"]`, the NEGM kernel reads `["keeper"]`
+    and `["adjuster"]`.
+
     Returns:
         The regime's value-function array.
 
     """
     period_kernel = regime.solution.period_kernels[period]
     result = period_kernel(
-        compiled_core=compiled_core,
+        compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_egm_carry=next_regime_to_egm_carry,
@@ -491,16 +495,18 @@ def _compile_all_functions(
     enable_jit: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
-) -> dict[tuple[RegimeName, int], Callable]:
+) -> dict[tuple[RegimeName, int], MappingProxyType[str, Callable]]:
     """AOT-compile all unique solve cores in parallel.
 
-    Each regime exposes one period adapter per period; the adapter wraps a
-    shared jitted core. Many periods share the same core object, so this
-    deduplicates the cores by identity, lowers each unique core once
-    (sequential — tracing is single-threaded), then compiles the XLA programs in
-    parallel via a thread pool (XLA releases the GIL during compilation). Each
-    adapter builds its own core's lowering arguments via `build_lower_args`, so
-    the loop stays free of any solver-type fork.
+    Each regime exposes one period adapter per period; the adapter wraps one or
+    more shared jitted cores, keyed by a stable per-kernel name (`cores()`).
+    Most kernels carry a single `"main"` core; the NEGM kernel carries a
+    `"keeper"` and an `"adjuster"` core, each a distinct traced program. Many
+    periods share the same core object, so this deduplicates the cores by
+    identity, lowers each unique core once (sequential — tracing is
+    single-threaded) with the adapter's per-key lowering arguments, then compiles
+    the XLA programs in parallel via a thread pool (XLA releases the GIL during
+    compilation). The loop stays free of any solver-type fork.
 
     When JIT is disabled (`enable_jit=False`), returns the raw cores without
     compilation.
@@ -519,30 +525,32 @@ def _compile_all_functions(
         logger: Logger for compilation progress.
 
     Returns:
-        Dict of (regime_name, period) to callable (compiled or raw) core.
+        Dict of (regime_name, period) to the immutable mapping of core key to
+        compiled (or raw) core.
 
     """
-    # Collect all (regime, period) -> shared jitted core mappings off the
-    # period adapters.
-    all_functions: dict[tuple[RegimeName, int], Callable] = {}
+    # Collect all (regime, period, core_key) -> shared jitted core mappings off
+    # the period adapters.
+    all_functions: dict[tuple[RegimeName, int, str], Callable] = {}
     for regime_name, regime in regimes.items():
         for period in regime.active_periods:
-            all_functions[(regime_name, period)] = regime.solution.period_kernels[
-                period
-            ].core
+            cores = regime.solution.period_kernels[period].cores()
+            for core_key, core in cores.items():
+                all_functions[(regime_name, period, core_key)] = core
 
-    # If JIT is disabled, return raw cores directly.
+    # If JIT is disabled, return the raw cores keyed by core_key per (regime,
+    # period).
     if not enable_jit:
-        return all_functions
+        return _group_cores_by_regime_period(all_functions)
 
     # Deduplicate by identity (or by underlying function for partials), keeping
-    # one representative (regime, period) per unique core so its adapter can
-    # build the lowering arguments.
-    unique: dict[Hashable, tuple[Callable, RegimeName, int]] = {}
-    for (regime_name, period), func in all_functions.items():
+    # one representative (regime, period, core_key) per unique core so its
+    # adapter can build the lowering arguments for that key.
+    unique: dict[Hashable, tuple[Callable, RegimeName, int, str]] = {}
+    for (regime_name, period, core_key), func in all_functions.items():
         func_id = _func_dedup_key(func=func)
         if func_id not in unique:
-            unique[func_id] = (func, regime_name, period)
+            unique[func_id] = (func, regime_name, period, core_key)
 
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
@@ -550,20 +558,24 @@ def _compile_all_functions(
     n_unique = len(unique)
 
     logger.info(
-        "AOT compilation: %d unique functions (%d regime-period pairs, %d workers)",
+        "AOT compilation: %d unique functions (%d regime-period-core triples, "
+        "%d workers)",
         n_unique,
         len(all_functions),
         n_workers,
     )
 
     # Phase 1: Lower all unique cores (sequential — tracing is not thread-safe
-    # and must happen on the main thread). Each adapter builds its own core's
+    # and must happen on the main thread). Each adapter builds the named core's
     # lowering arguments off a fresh, params-completed state-action space.
     lowered: dict[Hashable, jax.stages.Lowered] = {}
     labels: dict[Hashable, str] = {}
-    for i, (func_id, (func, regime_name, period)) in enumerate(unique.items(), 1):
+    for i, (func_id, (func, regime_name, period, core_key)) in enumerate(
+        unique.items(), 1
+    ):
         regime = regimes[regime_name]
         lower_args = regime.solution.period_kernels[period].build_lower_args(
+            core_key=core_key,
             state_action_space=regime.solution.state_action_space(
                 regime_params=flat_params[regime_name],
             ),
@@ -573,7 +585,7 @@ def _compile_all_functions(
             period=period,
             ages=ages,
         )
-        label = f"{regime_name} (age {ages.values[period].item()})"
+        label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
         labels[func_id] = label
         logger.info("%d/%d  %s", i, n_unique, label)
         logger.info("  lowering ...")
@@ -610,10 +622,28 @@ def _compile_all_functions(
             func_id, comp = future.result()
             compiled[func_id] = comp
 
-    # Map back to (regime, period) keys.
-    return {
-        key: compiled[_func_dedup_key(func=func)] for key, func in all_functions.items()
-    }
+    # Map back to (regime, period) keys, grouping the compiled cores by core key.
+    return _group_cores_by_regime_period(
+        {
+            key: compiled[_func_dedup_key(func=func)]
+            for key, func in all_functions.items()
+        }
+    )
+
+
+def _group_cores_by_regime_period(
+    cores_by_triple: dict[tuple[RegimeName, int, str], Callable],
+) -> dict[tuple[RegimeName, int], MappingProxyType[str, Callable]]:
+    """Group (regime, period, core_key) -> core into (regime, period) -> {key: core}.
+
+    The solve loop dispatches each period adapter with its full per-key core map,
+    so a multi-core kernel (NEGM's keeper/adjuster) receives both compiled cores
+    while a single-core kernel receives `{"main": ...}`.
+    """
+    grouped: dict[tuple[RegimeName, int], dict[str, Callable]] = {}
+    for (regime_name, period, core_key), core in cores_by_triple.items():
+        grouped.setdefault((regime_name, period), {})[core_key] = core
+    return {key: MappingProxyType(cores) for key, cores in grouped.items()}
 
 
 def _log_kernel_memory(

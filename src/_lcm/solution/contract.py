@@ -162,19 +162,40 @@ class PeriodKernel(Protocol):
     """One regime's per-period solve adapter — the loop's uniform call target.
 
     A single non-jitted closure per regime-period that wraps the solver's shared
-    jitted core (deduped across periods by core identity), calls it with the
+    jitted core(s) (deduped across periods by core identity), calls them with the
     solver's own argument layout, and assembles a `KernelResult` outside JIT.
     Plain closures satisfy this structurally; the loop never inspects the solver
-    type. `core` exposes the shared jitted function so AOT compilation can
-    deduplicate and lower it; `build_lower_args` builds that core's lowering
-    kwargs.
+    type. `cores()` exposes the shared jitted function(s) keyed by a stable
+    per-kernel name so AOT compilation can deduplicate and lower each;
+    `build_lower_args` builds a named core's lowering kwargs.
+
+    Most kernels carry exactly one core (`{"main": ...}`); the NEGM kernel
+    carries two (`{"keeper": ..., "adjuster": ...}`), a per-durable-state passive
+    DC-EGM keeper alongside the adjuster sweep. The AOT contract lowers, compiles,
+    and dispatches each core by its key, so a multi-core kernel never collapses
+    into one program.
     """
 
-    core: Callable
-    """The shared jitted core, exposed for AOT identity-dedup and lowering."""
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the shared jitted core(s), keyed by stable per-kernel name.
+
+        Each value is a distinct traced program AOT compilation lowers and
+        deduplicates independently; `build_lower_args(core_key=...)` builds the
+        matching lowering kwargs and `__call__` reads the compiled cores back by
+        the same key.
+        """
+        ...
+
+    @property
+    def core(self) -> Callable:
+        """The kernel's `"main"` core, for any single-core reader.
+
+        Defaults to `cores()["main"]`; multi-core kernels override or omit it.
+        """
+        ...
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> PeriodKernel:
-        """Return a copy with the regime's fixed params bound into the core.
+        """Return a copy with the regime's fixed params bound into the core(s).
 
         The adapter owns its solver's binding rule — which fixed params reach
         the core (and any inline closure it wraps) — so the engine binds fixed
@@ -185,6 +206,7 @@ class PeriodKernel(Protocol):
     def build_lower_args(
         self,
         *,
+        core_key: str,
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -192,13 +214,17 @@ class PeriodKernel(Protocol):
         period: int,
         ages: AgeGrid,
     ) -> Mapping[str, object]:
-        """Build the core's lowering arguments for this period."""
+        """Build the named core's lowering arguments for this period.
+
+        Single-core kernels ignore `core_key`; the NEGM kernel dispatches the
+        keeper-vs-adjuster lowering off it.
+        """
         ...
 
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -206,7 +232,11 @@ class PeriodKernel(Protocol):
         period: int,
         ages: AgeGrid,
     ) -> KernelResult:
-        """Invoke the compiled core and assemble the period's `KernelResult`."""
+        """Invoke the compiled core(s) and assemble the period's `KernelResult`.
+
+        Single-core kernels read `compiled_cores["main"]`; the NEGM kernel reads
+        `["keeper"]` and `["adjuster"]`.
+        """
         ...
 
 

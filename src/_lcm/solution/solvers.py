@@ -19,12 +19,11 @@ pulls in no numerical engine modules.
 """
 
 import functools
-import inspect
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax.numpy as jnp
 from beartype import beartype
@@ -33,6 +32,7 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
+from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import (
     ContinuationPayload,
@@ -42,10 +42,17 @@ from _lcm.solution.contract import (
     Solver,
     SolverBuildContext,
 )
-from _lcm.typing import EGMStepFunction, FlatParams, MaxQOverAFunction, RegimeName
+from _lcm.typing import (
+    EGMStepFunction,
+    FlatParams,
+    MaxQOverAFunction,
+    RegimeName,
+    TransitionFunction,
+    TransitionFunctionsMapping,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ActionName, FloatND, FunctionName, StateName
+from lcm.typing import ActionName, ContinuousState, FloatND, FunctionName, StateName
 
 
 @beartype(conf=REGIME_CONF)
@@ -336,48 +343,47 @@ class NEGM(Solver):
         outer adapter that sweeps the outer grid plus the mandatory per-node
         candidates and collapses the outer axis by `max`.
         """
-        # The outer post-decision is the inner kernel's bound durable margin: its
-        # value is supplied per outer-grid node (`_with_outer_post_decision`), not
-        # recomputed from the outer action. Strip its transition from the inner
-        # build so the child-carry next-state function does not demand the outer
-        # action; `read_child` sources the bound value from the combo pool instead.
-        inner_context = replace(
+        # The adjuster is the inner DC-EGM with the outer post-decision
+        # transition stripped: its value is supplied per outer-grid node
+        # (`_with_outer_post_decision`), not recomputed from the outer action, so
+        # the child-carry next-state function must not demand the outer action;
+        # `read_child` sources the bound value from the combo pool instead.
+        adjuster_context = replace(
             context,
-            transitions=MappingProxyType(
-                {
-                    target: MappingProxyType(
-                        {
-                            name: func
-                            for name, func in target_transitions.items()
-                            if name != self.outer_post_decision
-                        }
-                    )
-                    for target, target_transitions in context.transitions.items()
-                }
+            transitions=_strip_outer_transition(
+                transitions=context.transitions,
+                outer_post_decision=self.outer_post_decision,
             ),
         )
-        inner_kernels = self.inner.build_period_kernels(context=inner_context)
-        outer_grid_values = self.outer_grid.to_jax()
-        candidate_func = (
-            context.functions[self.outer_no_adjustment_candidate]
-            if self.outer_no_adjustment_candidate is not None
-            else None
+        adjuster_kernels = self.inner.build_period_kernels(context=adjuster_context)
+        # The keeper is a normal passive DC-EGM: the outer post-decision
+        # transition is replaced by the identity `next_<durable>(durable) =
+        # durable`, so the durable becomes a genuine decision-independent passive
+        # state. `credited(s, s) = 0` makes keeping free.
+        keeper_context = replace(
+            context,
+            transitions=_identity_outer_transition(
+                transitions=context.transitions,
+                outer_post_decision=self.outer_post_decision,
+            ),
         )
+        keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
+        outer_grid_values = self.outer_grid.to_jax()
         period_kernels = MappingProxyType(
             {
                 period: _NEGMPeriodKernel(
-                    inner_kernel=inner_kernel,
+                    keeper_kernel=keeper_kernels.period_kernels[period],
+                    adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_post_decision=self.outer_post_decision,
-                    outer_no_adjustment_candidate=candidate_func,
                 )
-                for period, inner_kernel in inner_kernels.period_kernels.items()
+                for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
         )
         return SolutionKernels(
             period_kernels=period_kernels,
-            continuation_template=inner_kernels.continuation_template,
+            continuation_template=keeper_kernels.continuation_template,
         )
 
 
@@ -396,6 +402,10 @@ class _GridSearchPeriodKernel:
 
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
+
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the single max-Q-over-a core under the `"main"` key."""
+        return MappingProxyType({"main": self.core})
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
@@ -416,6 +426,7 @@ class _GridSearchPeriodKernel:
     def build_lower_args(
         self,
         *,
+        core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
@@ -436,7 +447,7 @@ class _GridSearchPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
@@ -445,7 +456,7 @@ class _GridSearchPeriodKernel:
         ages: AgeGrid,
     ) -> KernelResult:
         """Evaluate the grid search and assemble the `KernelResult`."""
-        V_arr = compiled_core(
+        V_arr = compiled_cores["main"](
             **state_action_space.states,
             **state_action_space.actions,
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -479,6 +490,10 @@ class _DCEGMPeriodKernel:
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the single EGM-step core under the `"main"` key."""
+        return MappingProxyType({"main": self.core})
+
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _DCEGMPeriodKernel:
         """Bind the regime's and its carry targets' fixed params into the core.
 
@@ -503,6 +518,7 @@ class _DCEGMPeriodKernel:
     def build_lower_args(
         self,
         *,
+        core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -526,7 +542,7 @@ class _DCEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -535,7 +551,7 @@ class _DCEGMPeriodKernel:
         ages: AgeGrid,
     ) -> KernelResult:
         """Run the DC-EGM step and assemble the `KernelResult`."""
-        V_arr, egm_carry, sim_policy = compiled_core(
+        V_arr, egm_carry, sim_policy = compiled_cores["main"](
             **state_action_space.states,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=_reachable_carry_subset(
@@ -573,21 +589,30 @@ class _DCEGMPeriodKernel:
 
 @dataclass(frozen=True, kw_only=True)
 class _NEGMPeriodKernel:
-    """The NEGM period adapter — an outer search wrapping one inner DC-EGM kernel.
+    """The NEGM period adapter — a keeper plus an adjuster outer search.
 
-    Holds the inner DC-EGM period adapter, the exogenous outer grid, and the
-    names of the outer post-decision and the optional no-adjustment candidate.
-    Calling it runs the inner kernel once per outer-grid node (plus the per-node
-    candidates) with the outer post-decision value bound as a constant, then
-    collapses the outer axis by `max`, tracking the argmax-`s'` for the
-    simulation policy. The reduction is the same shape brute would search, but
-    with the inner consumption margin off-grid (the accuracy win). The adapter
-    is non-jitted: it calls the shared jitted inner core, matching
-    `_DCEGMPeriodKernel`.
+    Holds two inner DC-EGM period adapters and the exogenous outer grid. The
+    outer durable choice splits into two distinct traced programs:
+
+    - the *keeper* — a per-durable-state passive DC-EGM (`next_illiquid =
+      illiquid`, identity) that keeps the durable stock unchanged for free
+      (`credited(s, s) = 0`), run once over the full durable grid; and
+    - the *adjuster* — the inner DC-EGM with the outer transition stripped, run
+      once per exogenous outer-grid node with `outer_post_decision` bound to that
+      node as a constant.
+
+    Calling it runs the keeper once and the adjuster once per outer-grid node,
+    then collapses the stacked outer axis by `V = max(V_keeper, V_adjuster_sweep)`
+    — the same shape brute would search, but with the inner consumption margin
+    off-grid (the accuracy win). The adapter is non-jitted: it calls the shared
+    jitted inner cores, matching `_DCEGMPeriodKernel`.
     """
 
-    inner_kernel: PeriodKernel
-    """The inner DC-EGM period adapter whose shared jitted core is swept."""
+    keeper_kernel: PeriodKernel
+    """The keeper inner adapter — a passive per-durable-state DC-EGM."""
+
+    adjuster_kernel: PeriodKernel
+    """The adjuster inner adapter whose shared jitted core is swept."""
 
     regime_name: RegimeName
     """Name of the regime whose flat params the outer node binds into."""
@@ -598,23 +623,35 @@ class _NEGMPeriodKernel:
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
 
-    outer_no_adjustment_candidate: Callable | None
-    """The no-adjustment candidate function `s' = s`, or `None`.
-
-    Evaluated against the regime's durable state at call time to produce the
-    state-specific per-node candidate inserted into the outer search.
-    """
-
     @property
     def core(self) -> Callable:
-        """The shared jitted inner core, exposed for AOT identity-dedup."""
-        return self.inner_kernel.core
+        """The shared jitted adjuster core, exposed for any single-core reader."""
+        return self.adjuster_kernel.core
+
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the keeper and adjuster inner cores, keyed independently.
+
+        Each is a distinct traced DC-EGM program — the keeper is a passive
+        per-durable-state solve (`next_illiquid = illiquid`, identity), the
+        adjuster strips that transition and binds the outer node as a constant —
+        so AOT compilation lowers and compiles each under its own key rather than
+        collapsing both into one program.
+        """
+        return MappingProxyType(
+            {
+                "keeper": self.keeper_kernel.core,
+                "adjuster": self.adjuster_kernel.core,
+            }
+        )
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _NEGMPeriodKernel:
-        """Bind the regime's fixed params into the inner kernel."""
+        """Bind the regime's fixed params into both inner kernels."""
         return replace(
             self,
-            inner_kernel=self.inner_kernel.with_fixed_params(
+            keeper_kernel=self.keeper_kernel.with_fixed_params(
+                fixed_flat_params=fixed_flat_params
+            ),
+            adjuster_kernel=self.adjuster_kernel.with_fixed_params(
                 fixed_flat_params=fixed_flat_params
             ),
         )
@@ -622,6 +659,7 @@ class _NEGMPeriodKernel:
     def build_lower_args(
         self,
         *,
+        core_key: str,
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -629,14 +667,28 @@ class _NEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
     ) -> Mapping[str, object]:
-        """Delegate the inner core's lowering arguments, bound at one outer node.
+        """Delegate the named inner core's lowering arguments.
 
-        The outer sweep binds `outer_post_decision` into the regime's flat
-        params at the first outer-grid node, so the lowered inner program
-        matches the shape every per-node call traces; the outer axis is added
-        outside the jitted core by the `__call__` sweep.
+        The keeper is a normal passive DC-EGM, lowered straight off the inner
+        kernel with no outer-node binding (its `next_illiquid = illiquid`
+        identity sources the durable as a genuine passive state). The adjuster
+        binds `outer_post_decision` into the regime's flat params at the first
+        outer-grid node, so its lowered inner program matches the shape every
+        per-node call traces; the outer axis is added outside the jitted core by
+        the `__call__` sweep.
         """
-        return self.inner_kernel.build_lower_args(
+        if core_key == "keeper":
+            return self.keeper_kernel.build_lower_args(
+                core_key="main",
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+            )
+        return self.adjuster_kernel.build_lower_args(
+            core_key="main",
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
@@ -653,7 +705,7 @@ class _NEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -661,21 +713,28 @@ class _NEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
     ) -> KernelResult:
-        """Sweep the outer grid, collapse by `max`, and assemble the result.
+        """Run keeper and adjuster sweep, collapse by `max`, assemble the result.
 
-        For each outer-grid node `s'_j` (plus the per-node no-adjustment
-        candidate), the inner DC-EGM kernel is run with `outer_post_decision`
-        bound to `s'_j`, yielding `W_j`, the inner value over the liquid
-        endogenous grid at durable `s'_j`. The outer axis is collapsed by
-        `V = max_j W_j`, stacking the candidate nodes onto the exogenous grid;
-        the argmax over that stacked axis is the outer simulation policy.
+        The keeper runs the passive DC-EGM once, yielding the value of leaving the
+        durable stock unchanged at every durable state. For each exogenous
+        outer-grid node `s'_j`, the adjuster runs with `outer_post_decision` bound
+        to `s'_j`, yielding `W_j`, the inner value over the liquid endogenous grid
+        at durable `s'_j`. The outer axis is collapsed by
+        `V = max(V_keeper, max_j W_j)`; the argmax over that stacked axis is the
+        outer simulation policy.
         """
-        outer_nodes = self._outer_nodes(
-            state_action_space=state_action_space, flat_params=flat_params
+        keeper_result = self.keeper_kernel(
+            compiled_cores={"main": compiled_cores["keeper"]},
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
         )
-        inner_results = [
-            self.inner_kernel(
-                compiled_core=compiled_core,
+        adjuster_results = [
+            self.adjuster_kernel(
+                compiled_cores={"main": compiled_cores["adjuster"]},
                 state_action_space=state_action_space,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
@@ -688,58 +747,90 @@ class _NEGMPeriodKernel:
                 period=period,
                 ages=ages,
             )
-            for node in outer_nodes
+            for node in self._outer_nodes()
         ]
-        stacked_V = jnp.stack([result.V_arr for result in inner_results], axis=0)
+        stacked_V = jnp.stack(
+            [keeper_result.V_arr, *(result.V_arr for result in adjuster_results)],
+            axis=0,
+        )
         V_arr = jnp.max(stacked_V, axis=0)
-        # The inner carry and simulation policy at the selected outer node are
-        # the prototype's published continuation; multi-node carry selection by
-        # the outer argmax is deferred to the cross-algorithm interface bundle
-        # (design §6).
+        # The keeper's carry and simulation policy are the prototype's published
+        # continuation; multi-node carry selection by the outer argmax is deferred
+        # to the cross-algorithm interface bundle (design §6).
         return KernelResult(
             V_arr=V_arr,
-            carry=inner_results[0].carry,
-            sim_policy=inner_results[0].sim_policy,
+            carry=keeper_result.carry,
+            sim_policy=keeper_result.sim_policy,
         )
 
-    def _outer_nodes(
-        self,
-        *,
-        state_action_space: StateActionSpace,
-        flat_params: FlatParams,
-    ) -> list[FloatND]:
-        """The outer post-decision nodes: the exogenous grid plus candidates.
+    def _outer_nodes(self) -> list[FloatND]:
+        """The exogenous outer post-decision nodes, each a scalar `s'_j`.
 
-        Each exogenous-grid node is a scalar `s'_j`. When a no-adjustment
-        candidate is declared, the state-specific point `s' = s` is evaluated
-        against the regime's durable state and appended, so the outer search
-        always covers the friction kink a fixed exogenous grid would miss.
+        The state-specific no-adjustment kink `s' = s` a fixed exogenous grid
+        would miss is covered by the keeper, not appended here.
         """
-        nodes: list[FloatND] = [
+        return [
             self.outer_grid_values[index]
             for index in range(self.outer_grid_values.shape[0])
         ]
-        if self.outer_no_adjustment_candidate is not None:
-            # The candidate reads only the durable state (and possibly params);
-            # filter the full state/param pool to its signature so unrelated
-            # states (e.g. the inner Euler state) are not passed as kwargs.
-            candidate_kwargs = {
-                **dict(state_action_space.states),
-                **dict(flat_params[self.regime_name]),
-            }
-            parameters = inspect.signature(
-                self.outer_no_adjustment_candidate
-            ).parameters
-            nodes.append(
-                self.outer_no_adjustment_candidate(
-                    **{
-                        name: value
-                        for name, value in candidate_kwargs.items()
-                        if name in parameters
-                    }
-                )
+
+
+def _strip_outer_transition(
+    *,
+    transitions: TransitionFunctionsMapping,
+    outer_post_decision: FunctionName,
+) -> TransitionFunctionsMapping:
+    """Drop the outer post-decision transition from every target's transitions.
+
+    The adjuster supplies the outer post-decision value per outer-grid node, so
+    its child-carry next-state function must not demand the outer action;
+    `read_child` sources the bound value from the combo pool instead.
+    """
+    return MappingProxyType(
+        {
+            target: MappingProxyType(
+                {
+                    name: func
+                    for name, func in target_transitions.items()
+                    if name != outer_post_decision
+                }
             )
-        return nodes
+            for target, target_transitions in transitions.items()
+        }
+    )
+
+
+def _identity_outer_transition(
+    *,
+    transitions: TransitionFunctionsMapping,
+    outer_post_decision: FunctionName,
+) -> TransitionFunctionsMapping:
+    """Replace the outer post-decision transition with the durable identity.
+
+    The keeper holds the durable stock fixed (`next_<durable> = <durable>`), so
+    each target's outer transition becomes the identity law on the durable state.
+    The durable state name is the transition name with the `next_` prefix
+    removed, mirroring the engine's `next_<state>` auto-naming. The durable then
+    reads as a genuine decision-independent passive state in the inner DC-EGM,
+    and `read_child` sources `next_<durable> = <durable>` without demanding the
+    outer action.
+    """
+    durable_state = outer_post_decision.removeprefix("next_")
+    identity = cast(
+        "TransitionFunction",
+        _IdentityTransition(durable_state, annotation=ContinuousState),
+    )
+    return MappingProxyType(
+        {
+            target: MappingProxyType(
+                {
+                    name: (identity if name == outer_post_decision else func)
+                    for name, func in target_transitions.items()
+                }
+            )
+            for target, target_transitions in transitions.items()
+        }
+    )
 
 
 def _with_outer_post_decision(
