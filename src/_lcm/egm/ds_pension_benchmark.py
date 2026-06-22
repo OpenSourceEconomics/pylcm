@@ -87,6 +87,9 @@ def benchmark_g2egm_ds_pension(
         wage: Working labor income.
         retirement_income: Retirement income.
         pension_payout_return: Factor the pension is paid out at on retirement.
+        post_decision_factor: Post-decision grid points per state grid point. Druedahl
+            & Jorgensen (2017) recommend roughly 4x (the post-decision grid drives
+            accuracy); the default 2x keeps the benchmark fast.
         low_liquid_skip: Liquid rows excluded as the borrowing-constrained band.
         pension_interior: Pension columns retained (excludes the off-grid edge layer).
 
