@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
-from lcm.typing import FloatND
+from lcm.typing import FloatND, ScalarFloat
 
 
 class RegionCloud(NamedTuple):
@@ -59,9 +59,9 @@ def invert_ucon_cloud(
     w_a: FloatND,
     w_b: FloatND,
     post_decision_value: FloatND,
-    discount_factor: float,
-    crra: float,
-    match_rate: float,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    match_rate: ScalarFloat | float,
 ) -> RegionCloud:
     """Invert the two intratemporal FOCs on the unconstrained region.
 
@@ -103,8 +103,8 @@ def invert_dcon_cloud(
     w_a: FloatND,
     w_b: FloatND,
     post_decision_value: FloatND,
-    discount_factor: float,
-    crra: float,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
 ) -> RegionCloud:
     """Invert the consumption FOC on the deposit-constrained region (`dcon`, `d = 0`).
 
@@ -145,9 +145,9 @@ def invert_acon_cloud(
     b: FloatND,
     post_decision_value_at_zero_a: FloatND,
     w_b_at_zero_a: FloatND,
-    discount_factor: float,
-    crra: float,
-    match_rate: float,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    match_rate: ScalarFloat | float,
 ) -> RegionCloud:
     """Invert the deposit FOC on the borrowing-constrained region (`acon`, `a = 0`).
 
@@ -201,8 +201,8 @@ def invert_con_cloud(
     b: FloatND,
     post_decision_value_at_zero_a: FloatND,
     w_b_at_zero_a: FloatND,
-    discount_factor: float,
-    crra: float,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
 ) -> RegionCloud:
     """Build the fully-constrained corner cloud (`con`, `a = 0` and `d = 0`).
 
@@ -240,7 +240,7 @@ def invert_con_cloud(
     )
 
 
-def _crra_utility(consumption: FloatND, crra: float) -> FloatND:
+def _crra_utility(consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
     return jnp.where(
         crra == 1.0,
         jnp.log(consumption),

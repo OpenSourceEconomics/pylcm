@@ -16,12 +16,14 @@ not on its type.
 """
 
 from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
-from _lcm.solution.solvers import DCEGM, GridSearch
+from _lcm.solution.solvers import DCEGM, GridSearch, OneAssetEGM, TwoDimEGM
 
 __all__ = [
     "DCEGM",
     "GridSearch",
+    "OneAssetEGM",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
+    "TwoDimEGM",
 ]

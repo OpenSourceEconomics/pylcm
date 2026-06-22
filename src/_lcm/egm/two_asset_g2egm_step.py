@@ -35,7 +35,7 @@ from _lcm.egm.two_asset_post_decision import (
     post_decision_value_and_grad_retiring,
 )
 from _lcm.egm.two_asset_segment_mesh import build_segment_mesh
-from lcm.typing import Float1D, FloatND
+from lcm.typing import Float1D, FloatND, ScalarFloat
 
 # Maps a post-decision `(a, b)` mesh to its value and gradients. The working step reads
 # next period's working value on the `(m, n)` grid; the retirement-boundary step reads
@@ -63,12 +63,12 @@ def g2egm_step(
     a_grid: Float1D,
     b_grid: Float1D,
     consumption_grid: Float1D,
-    discount_factor: float,
-    crra: float,
-    match_rate: float,
-    return_liquid: float,
-    return_pension: float,
-    wage: float,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    match_rate: ScalarFloat | float,
+    return_liquid: ScalarFloat | float,
+    return_pension: ScalarFloat | float,
+    wage: ScalarFloat | float,
     threshold: float = 0.25,
 ) -> G2EGMResult:
     """Solve one period of the two-asset model by the four-segment G2EGM envelope.
@@ -130,12 +130,12 @@ def g2egm_retiring_step(
     a_grid: Float1D,
     b_grid: Float1D,
     consumption_grid: Float1D,
-    discount_factor: float,
-    crra: float,
-    match_rate: float,
-    return_liquid: float,
-    pension_payout_return: float,
-    retirement_income: float,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    match_rate: ScalarFloat | float,
+    return_liquid: ScalarFloat | float,
+    pension_payout_return: ScalarFloat | float,
+    retirement_income: ScalarFloat | float,
     threshold: float = 0.25,
 ) -> G2EGMResult:
     """Solve the working->retired boundary period by the four-segment G2EGM envelope.
@@ -203,9 +203,9 @@ def _g2egm_envelope_step(
     a_grid: Float1D,
     b_grid: Float1D,
     consumption_grid: Float1D,
-    discount_factor: float,
-    crra: float,
-    match_rate: float,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    match_rate: ScalarFloat | float,
     threshold: float,
 ) -> G2EGMResult:
     """Run the four-segment G2EGM envelope given a post-decision reader.

@@ -23,7 +23,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
-from lcm.typing import Float1D
+from lcm.typing import Float1D, ScalarFloat
 
 
 class RetiredEGMResult(NamedTuple):
@@ -43,10 +43,10 @@ def egm_one_asset_step(
     next_marginal: Float1D,
     liquid_grid: Float1D,
     savings_grid: Float1D,
-    discount_factor: float,
-    crra: float,
-    return_liquid: float,
-    income: float,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    return_liquid: ScalarFloat | float,
+    income: ScalarFloat | float,
 ) -> RetiredEGMResult:
     """Solve one period of the 1-D consumption--saving problem by EGM.
 
@@ -98,7 +98,7 @@ def egm_one_asset_step(
     )
 
 
-def _crra_utility(consumption: Float1D, crra: float) -> Float1D:
+def _crra_utility(consumption: Float1D, crra: ScalarFloat | float) -> Float1D:
     return jnp.where(
         crra == 1.0,
         jnp.log(consumption),

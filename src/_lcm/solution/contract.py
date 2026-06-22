@@ -241,3 +241,17 @@ class Solver(ABC):
 
     def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Check the regime is in scope for this solver. Default: no-op."""
+
+    @property
+    def requires_continuation_carries(self) -> bool:
+        """Whether this solver reads a continuation carry from its targets.
+
+        An endogenous-grid solver inverts the Euler equation against its
+        target regimes' value *and marginal* on a continuation grid, so each
+        target — including a terminal one — must publish a carry the engine
+        rolls alongside `next_regime_to_V_arr`. Grid search reads only the
+        value array, so it needs no carry. The engine reads this off every
+        regime's solver to decide whether terminal regimes produce their
+        closed-form carries, without forking on the solver type.
+        """
+        return False

@@ -44,7 +44,7 @@ from _lcm.solution.contract import (
 from _lcm.typing import EGMStepFunction, FlatParams, MaxQOverAFunction, RegimeName
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ActionName, FloatND, FunctionName, StateName
+from lcm.typing import ActionName, Float1D, FloatND, FunctionName, StateName
 
 
 @beartype(conf=REGIME_CONF)
@@ -205,6 +205,11 @@ class DCEGM(Solver):
         _fail_if_rfc_jump_thresh_non_positive(self.rfc_jump_thresh)
         _fail_if_rfc_search_radius_too_few(self.rfc_search_radius)
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
+
+    @property
+    def requires_continuation_carries(self) -> bool:
+        """DC-EGM inverts the Euler equation against its targets' marginals."""
+        return True
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one DC-EGM period adapter per period and the carry template.
@@ -567,3 +572,552 @@ def _fail_if_stochastic_node_batch_size_negative(
             "fused vmap."
         )
         raise RegimeInitializationError(msg)
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class OneAssetEGM(Solver):
+    """Endogenous-grid solver for a 1-D consumption--saving regime.
+
+    A regime with exactly one continuous state (the liquid wealth), one
+    continuous consumption action, and no discrete choice is a plain
+    consumption--saving problem. The single continuous state needs no upper
+    envelope: inverting the consumption Euler equation on the post-decision
+    savings grid and mapping the resulting endogenous wealth back onto the
+    regular grid solves the period exactly. The step carries the marginal
+    value of liquid backward (the envelope theorem makes it exact, unlike a
+    finite difference of a coarse value array), so each period both reads its
+    continuation's marginal and publishes its own.
+    """
+
+    savings_grid: ContinuousGrid
+    """Exogenous post-decision savings grid `s = liquid - consumption` (>= 0)."""
+
+    @property
+    def requires_continuation_carries(self) -> bool:
+        """The 1-D EGM step reads its continuation's marginal value of liquid."""
+        return True
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build one 1-D EGM period adapter per active period.
+
+        Each period's adapter knows the single deterministic continuation
+        target (the transition target whose regime is active next period), so
+        it reads that target's value array and marginal-utility carry.
+        """
+        import jax  # noqa: PLC0415
+
+        savings_grid = self.savings_grid.to_jax()
+        liquid_grid = context.grids[context.state_action_space.state_names[0]].to_jax()
+
+        period_to_target = _period_to_continuation_target(context=context)
+        cores: dict[RegimeName, Callable] = {}
+        period_kernels: dict[int, PeriodKernel] = {}
+        for period, target in period_to_target.items():
+            if target not in cores:
+                core = _build_one_asset_core(savings_grid=savings_grid, target=target)
+                cores[target] = jax.jit(core) if context.enable_jit else core
+            period_kernels[period] = _OneAssetEGMPeriodKernel(
+                core=cores[target],
+                regime_name=context.regime_name,
+                continuation_target=target,
+                transition_target_names=tuple(context.transitions),
+            )
+        return SolutionKernels(
+            period_kernels=MappingProxyType(period_kernels),
+            continuation_template=_build_one_asset_carry_template(
+                liquid_grid=liquid_grid
+            ),
+        )
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class TwoDimEGM(Solver):
+    """Two-asset G2EGM solver for a regime with two continuous Euler states.
+
+    The working phase of the DS pension model couples a liquid state `m` and a
+    pension state `n` through the budget, with two continuous actions
+    (consumption and a one-directional pension deposit). The G2EGM step builds
+    the four KKT constraint segments on the post-decision `(a, b)` and
+    `(consumption, b)` grids, triangulates each into the current `(m, n)`
+    plane, and selects the best feasible policy by the recomputed Bellman
+    objective.
+
+    A working->working period reads the regime's own next-period value on the
+    `(m, n)` grid; the single working->retired boundary period reads the 1-D
+    retired continuation (value and marginal) through the lump-sum pension
+    payout. The continuation target per period is resolved at build time from
+    the active-period structure, so the right step is selected without a
+    runtime fork.
+    """
+
+    a_grid: ContinuousGrid
+    """Liquid post-decision grid for the `ucon`/`dcon` segments (include 0)."""
+
+    b_grid: ContinuousGrid
+    """Pension post-decision grid shared by all segments."""
+
+    consumption_grid: ContinuousGrid
+    """Consumption sweep for the `acon`/`con` segments at `a = 0`."""
+
+    threshold: float = 0.25
+    """Barycentric extrapolation tolerance for triangle admissibility."""
+
+    @property
+    def requires_continuation_carries(self) -> bool:
+        """The boundary step reads the retired regime's marginal value of liquid."""
+        return True
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build one G2EGM period adapter per active period.
+
+        Periods whose next period stays in this regime use the working->working
+        step; the single period whose next period leaves it (the retirement
+        boundary) uses the retiring step reading the 1-D retired continuation.
+        All periods share one jitted core (the boundary branch is selected by a
+        static Python flag), so they reuse a single compiled program.
+        """
+        import jax  # noqa: PLC0415
+
+        a_grid = self.a_grid.to_jax()
+        b_grid = self.b_grid.to_jax()
+        consumption_grid = self.consumption_grid.to_jax()
+
+        period_to_target = _period_to_continuation_target(context=context)
+        own_name = context.regime_name
+        boundary_targets = {
+            target for target in period_to_target.values() if target != own_name
+        }
+        boundary_prefix = next(iter(boundary_targets), own_name)
+        cores: dict[bool, Callable] = {}
+        period_kernels: dict[int, PeriodKernel] = {}
+        for period, target in period_to_target.items():
+            is_boundary = target != own_name
+            if is_boundary not in cores:
+                core = _build_two_dim_core(
+                    a_grid=a_grid,
+                    b_grid=b_grid,
+                    consumption_grid=consumption_grid,
+                    threshold=self.threshold,
+                    is_boundary=is_boundary,
+                    interior_prefix=own_name,
+                    boundary_prefix=boundary_prefix,
+                )
+                cores[is_boundary] = jax.jit(core) if context.enable_jit else core
+            period_kernels[period] = _TwoDimEGMPeriodKernel(
+                core=cores[is_boundary],
+                regime_name=own_name,
+                continuation_target=target,
+                is_boundary=is_boundary,
+                transition_target_names=tuple(context.transitions),
+            )
+        return SolutionKernels(period_kernels=MappingProxyType(period_kernels))
+
+
+@dataclass(frozen=True, kw_only=True)
+class _OneAssetEGMPeriodKernel:
+    """The 1-D EGM period adapter — wraps the shared `egm_one_asset_step` core.
+
+    Closes over the regime name, the period's single deterministic
+    continuation target (whose value array and marginal carry feed the Euler
+    inversion), and the transition target names (to union their params).
+    Returns a `KernelResult` carrying the value array and the marginal-value
+    carry a parent EGM regime interpolates.
+    """
+
+    core: Callable
+    """The shared jitted 1-D EGM-step core."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params this adapter projects."""
+
+    continuation_target: RegimeName
+    """The regime active next period; its value and marginal continue this one."""
+
+    transition_target_names: tuple[RegimeName, ...]
+    """Names of the regime's transition targets, whose params are unioned in."""
+
+    def with_fixed_params(
+        self, *, fixed_flat_params: FlatParams
+    ) -> _OneAssetEGMPeriodKernel:
+        """Bind the regime's and its targets' fixed params into the core."""
+        bound = _union_fixed_params(
+            fixed_flat_params=fixed_flat_params,
+            regime_name=self.regime_name,
+            transition_target_names=self.transition_target_names,
+        )
+        if not bound:
+            return self
+        return replace(self, core=functools.partial(self.core, **bound))
+
+    def build_lower_args(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,  # noqa: ARG002
+        ages: AgeGrid,  # noqa: ARG002
+    ) -> Mapping[str, object]:
+        """Build the core's lowering arguments: state, continuation, params."""
+        return {
+            **dict(state_action_space.states),
+            "next_value": next_regime_to_V_arr[self.continuation_target],
+            "next_marginal": next_regime_to_egm_carry[
+                self.continuation_target
+            ].marginal_utility,
+            **_union_free_params(
+                flat_params=flat_params,
+                regime_name=self.regime_name,
+                transition_target_names=self.transition_target_names,
+            ),
+        }
+
+    def __call__(
+        self,
+        *,
+        compiled_core: Callable,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,  # noqa: ARG002
+        ages: AgeGrid,  # noqa: ARG002
+    ) -> KernelResult:
+        """Run the 1-D EGM step and assemble the `KernelResult`."""
+        V_arr, carry = compiled_core(
+            **state_action_space.states,
+            next_value=next_regime_to_V_arr[self.continuation_target],
+            next_marginal=next_regime_to_egm_carry[
+                self.continuation_target
+            ].marginal_utility,
+            **_union_free_params(
+                flat_params=flat_params,
+                regime_name=self.regime_name,
+                transition_target_names=self.transition_target_names,
+            ),
+        )
+        return KernelResult(V_arr=V_arr, carry=carry)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _TwoDimEGMPeriodKernel:
+    """The two-asset G2EGM period adapter — wraps one G2EGM-step core.
+
+    Closes over the regime name, the period's continuation target, and the
+    transition target names. The working->working core reads the regime's own
+    next-period value on `(m, n)`; the boundary core additionally reads the
+    retired continuation's value and marginal carry. Returns a `KernelResult`
+    whose only output is the value array — a working parent reads it directly
+    as its 2-D continuation, so no carry is published.
+    """
+
+    core: Callable
+    """The shared jitted G2EGM-step core (one per boundary/interior branch)."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params this adapter projects."""
+
+    continuation_target: RegimeName
+    """The regime active next period; equals this regime except at the boundary."""
+
+    is_boundary: bool
+    """Whether next period leaves this regime (the retirement boundary step)."""
+
+    transition_target_names: tuple[RegimeName, ...]
+    """Names of the regime's transition targets, whose params are unioned in."""
+
+    def with_fixed_params(
+        self, *, fixed_flat_params: FlatParams
+    ) -> _TwoDimEGMPeriodKernel:
+        """Bind the regime's and its targets' fixed params into the core."""
+        bound = _union_fixed_params(
+            fixed_flat_params=fixed_flat_params,
+            regime_name=self.regime_name,
+            transition_target_names=self.transition_target_names,
+        )
+        if not bound:
+            return self
+        return replace(self, core=functools.partial(self.core, **bound))
+
+    def build_lower_args(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,  # noqa: ARG002
+        ages: AgeGrid,  # noqa: ARG002
+    ) -> Mapping[str, object]:
+        """Build the core's lowering arguments: states, continuation, params."""
+        return self._core_args(
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            flat_params=flat_params,
+        )
+
+    def __call__(
+        self,
+        *,
+        compiled_core: Callable,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,  # noqa: ARG002
+        ages: AgeGrid,  # noqa: ARG002
+    ) -> KernelResult:
+        """Run the G2EGM step and assemble the `KernelResult`."""
+        V_arr = compiled_core(
+            **self._core_args(
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                flat_params=flat_params,
+            )
+        )
+        return KernelResult(V_arr=V_arr)
+
+    def _core_args(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+    ) -> dict[str, object]:
+        """Assemble the core's keyword arguments for one period.
+
+        The state grids come from the state-action space. The interior step
+        reads the regime's own next-period value on `(m, n)`; the boundary step
+        reads the retired continuation's value and marginal-utility carry. Each
+        branch's core takes only the continuation it consumes, so the two
+        signatures differ and a working continuation (which carries no marginal)
+        is never demanded at the boundary.
+        """
+        states = dict(state_action_space.states)
+        continuation: dict[str, object]
+        if self.is_boundary:
+            continuation = {
+                "next_value_retired": next_regime_to_V_arr[self.continuation_target],
+                "next_marginal_retired": next_regime_to_egm_carry[
+                    self.continuation_target
+                ].marginal_utility,
+            }
+        else:
+            continuation = {
+                "next_value_working": next_regime_to_V_arr[self.continuation_target],
+            }
+        return {
+            "liquid": states["liquid"],
+            "pension": states["pension"],
+            **continuation,
+            **_union_free_params(
+                flat_params=flat_params,
+                regime_name=self.regime_name,
+                transition_target_names=self.transition_target_names,
+            ),
+        }
+
+
+def _build_one_asset_core(*, savings_grid: Float1D, target: RegimeName) -> Callable:
+    """Build the jitted-able 1-D EGM core closing over the savings grid.
+
+    The core reads the state grid (`liquid`), the continuation value and
+    marginal, and the regime's scalar params, runs `egm_one_asset_step`, and
+    returns the value array and the marginal-value carry on the liquid grid.
+    The liquid law params are qualified by the continuation target's transition
+    (`{target}__next_liquid__...`).
+    """
+    from _lcm.egm.one_asset_egm_step import egm_one_asset_step  # noqa: PLC0415
+
+    def core(
+        *,
+        liquid: Float1D,
+        next_value: Float1D,
+        next_marginal: Float1D,
+        **params: FloatND,
+    ) -> tuple[Float1D, EGMCarry]:
+        step = egm_one_asset_step(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid,
+            savings_grid=savings_grid,
+            discount_factor=params["H__discount_factor"],
+            crra=params["utility__crra"],
+            return_liquid=params[f"{target}__next_liquid__return_liquid"],
+            income=params[f"{target}__next_liquid__retirement_income"],
+        )
+        carry = EGMCarry(
+            endog_grid=liquid,
+            value=step.value,
+            marginal_utility=step.marginal,
+            taste_shock_scale=jnp.asarray(0.0, dtype=step.value.dtype),
+        )
+        return step.value, carry
+
+    return core
+
+
+def _build_two_dim_core(
+    *,
+    a_grid: Float1D,
+    b_grid: Float1D,
+    consumption_grid: Float1D,
+    threshold: float,
+    is_boundary: bool,
+    interior_prefix: RegimeName,
+    boundary_prefix: RegimeName,
+) -> Callable:
+    """Build the jitted-able G2EGM core for one branch (interior or boundary).
+
+    The interior branch reads the regime's own next-period working value on the
+    `(m, n)` grid; the boundary branch reads the 1-D retired value and marginal
+    through the lump-sum payout. Both subtract the additive work disutility the
+    generic envelope objective omits, so the returned value matches the engine's
+    working value (whose utility carries the disutility). Transition params are
+    qualified by the regime's own name (interior) or the retirement target
+    (boundary), since the boundary reads the retired liquid law.
+    """
+    from _lcm.egm.two_asset_g2egm_step import (  # noqa: PLC0415
+        g2egm_retiring_step,
+        g2egm_step,
+    )
+
+    def boundary_core(
+        *,
+        liquid: Float1D,
+        pension: Float1D,
+        next_value_retired: Float1D,
+        next_marginal_retired: Float1D,
+        **params: FloatND,
+    ) -> FloatND:
+        result = g2egm_retiring_step(
+            next_value_retired=next_value_retired,
+            next_marginal_retired=next_marginal_retired,
+            liquid_grid=liquid,
+            m_grid=liquid,
+            n_grid=pension,
+            a_grid=a_grid,
+            b_grid=b_grid,
+            consumption_grid=consumption_grid,
+            discount_factor=params["H__discount_factor"],
+            crra=params["utility__crra"],
+            match_rate=params[f"{boundary_prefix}__next_liquid__match_rate"],
+            return_liquid=params[f"{boundary_prefix}__next_liquid__return_liquid"],
+            pension_payout_return=params[
+                f"{boundary_prefix}__next_liquid__pension_payout_return"
+            ],
+            retirement_income=params[
+                f"{boundary_prefix}__next_liquid__retirement_income"
+            ],
+            threshold=threshold,
+        )
+        return result.value - params["utility__work_disutility"]
+
+    def interior_core(
+        *,
+        liquid: Float1D,
+        pension: Float1D,
+        next_value_working: FloatND,
+        **params: FloatND,
+    ) -> FloatND:
+        result = g2egm_step(
+            next_value=next_value_working,
+            m_grid=liquid,
+            n_grid=pension,
+            a_grid=a_grid,
+            b_grid=b_grid,
+            consumption_grid=consumption_grid,
+            discount_factor=params["H__discount_factor"],
+            crra=params["utility__crra"],
+            match_rate=params[f"{interior_prefix}__next_pension__match_rate"],
+            return_liquid=params[f"{interior_prefix}__next_liquid__return_liquid"],
+            return_pension=params[f"{interior_prefix}__next_pension__return_pension"],
+            wage=params[f"{interior_prefix}__next_liquid__wage"],
+            threshold=threshold,
+        )
+        return result.value - params["utility__work_disutility"]
+
+    return boundary_core if is_boundary else interior_core
+
+
+def _build_one_asset_carry_template(*, liquid_grid: Float1D) -> EGMCarry:
+    """Build the all-finite 1-D EGM carry template on the liquid grid."""
+    return EGMCarry(
+        endog_grid=liquid_grid,
+        value=jnp.zeros_like(liquid_grid),
+        marginal_utility=jnp.zeros_like(liquid_grid),
+        taste_shock_scale=jnp.asarray(0.0, dtype=liquid_grid.dtype),
+    )
+
+
+def _period_to_continuation_target(
+    *, context: SolverBuildContext
+) -> dict[int, RegimeName]:
+    """Resolve each active period's single deterministic continuation target.
+
+    The model's deterministic lifecycle transition reaches exactly one target
+    next period: the regime among this regime's transition targets that is
+    active at `period + 1`. The last active period continues into the target
+    active at the period beyond the horizon's interior (the terminal regime).
+    """
+    own_active = set(context.regimes_to_active_periods[context.regime_name])
+    target_active = {
+        target: set(context.regimes_to_active_periods[target])
+        for target in context.transitions
+    }
+    result: dict[int, RegimeName] = {}
+    for period in sorted(own_active):
+        reached = [
+            target for target, active in target_active.items() if (period + 1) in active
+        ]
+        if len(reached) != 1:
+            msg = (
+                f"Regime '{context.regime_name}' does not reach exactly one "
+                f"active target at period {period + 1}: candidates {reached}. "
+                "The endogenous-grid solvers require a deterministic "
+                "lifecycle transition (one active target per period)."
+            )
+            raise RegimeInitializationError(msg)
+        result[period] = reached[0]
+    return result
+
+
+def _union_free_params(
+    *,
+    flat_params: FlatParams,
+    regime_name: RegimeName,
+    transition_target_names: tuple[RegimeName, ...],
+) -> dict[str, object]:
+    """Union the regime's free params with its transition targets' free params.
+
+    The boundary step evaluates the target regime's transition params (e.g. the
+    pension payout factor the source never reads), so the core needs the union;
+    captured functions read only the keys they need.
+    """
+    params: dict[str, object] = dict(flat_params[regime_name])
+    for target_name in transition_target_names:
+        for key, value in flat_params.get(target_name, MappingProxyType({})).items():
+            params.setdefault(key, value)
+    return params
+
+
+def _union_fixed_params(
+    *,
+    fixed_flat_params: FlatParams,
+    regime_name: RegimeName,
+    transition_target_names: tuple[RegimeName, ...],
+) -> dict[str, object]:
+    """Union the regime's and its targets' fixed params for core binding."""
+    bound = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
+    for target_name in transition_target_names:
+        for key, value in fixed_flat_params.get(
+            target_name, MappingProxyType({})
+        ).items():
+            bound.setdefault(key, value)
+    return bound

@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.ndimage import map_coordinates
 
-from lcm.typing import Float1D, FloatND
+from lcm.typing import Float1D, FloatND, ScalarFloat
 
 
 class PostDecision(NamedTuple):
@@ -39,9 +39,9 @@ def post_decision_value_and_grad(
     n_grid: Float1D,
     a: FloatND,
     b: FloatND,
-    return_liquid: float,
-    return_pension: float,
-    wage: float,
+    return_liquid: ScalarFloat | float,
+    return_pension: ScalarFloat | float,
+    wage: ScalarFloat | float,
 ) -> PostDecision:
     """Evaluate the post-decision value and its gradients on the `(a, b)` grid.
 
@@ -86,9 +86,9 @@ def post_decision_value_and_grad_retiring(
     liquid_grid: Float1D,
     a: FloatND,
     b: FloatND,
-    return_liquid: float,
-    pension_payout_return: float,
-    retirement_income: float,
+    return_liquid: ScalarFloat | float,
+    pension_payout_return: ScalarFloat | float,
+    retirement_income: ScalarFloat | float,
 ) -> PostDecision:
     """Post-decision value and gradients at the working->retired boundary.
 

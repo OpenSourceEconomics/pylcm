@@ -35,6 +35,7 @@ import jax.numpy as jnp
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
 from lcm.regime import Regime
+from lcm.solvers import GridSearch, Solver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
@@ -182,13 +183,22 @@ def get_model(
     n_deposit: int = 8,
     liquid_max: float = 20.0,
     pension_max: float = 15.0,
+    solvers: dict[str, Solver] | None = None,
 ) -> Model:
     """Create the three-regime (working, retired, dead) DS pension model.
 
     The agent works for `retirement_period` periods, then is retired for the rest of
     the `n_periods`-period horizon, with a terminal (dead) period. Grid sizes default
     to a small oracle scale; pass larger values for a finer reference solve.
+
+    Args:
+        solvers: Optional mapping of regime name to its `Solver`. A name absent from
+            the mapping (or `solvers=None`) keeps the default `GridSearch` — so the
+            default model is the dense-grid brute oracle. Pass
+            `{"working": TwoDimEGM(...)}` to drive the working regime by the two-asset
+            G2EGM method, and `{"retired": OneAssetEGM(...)}` for the 1-D retired EGM.
     """
+    solvers = solvers or {}
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     retirement_age = ages.exact_values[retirement_period]
     final_age = ages.exact_values[-1]
@@ -216,6 +226,7 @@ def get_model(
         },
         functions={"utility": utility_working},
         active=lambda age, ra=retirement_age: age < ra,
+        solver=solvers.get("working", GridSearch()),
     )
     retired = Regime(
         actions={"consumption": consumption_grid},
@@ -233,11 +244,13 @@ def get_model(
         },
         functions={"utility": utility_retired},
         active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
+        solver=solvers.get("retired", GridSearch()),
     )
     dead = Regime(
         transition=None,
         states={"liquid": liquid_grid},
         functions={"utility": bequest},
+        solver=solvers.get("dead", GridSearch()),
     )
     return Model(
         regimes={"working": working, "retired": retired, "dead": dead},

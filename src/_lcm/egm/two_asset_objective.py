@@ -19,7 +19,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from jax.scipy.ndimage import map_coordinates
 
-from lcm.typing import BoolND, Float1D, Float2D, FloatND
+from lcm.typing import BoolND, Float1D, Float2D, FloatND, ScalarFloat
 
 
 def build_two_asset_objective(
@@ -27,9 +27,9 @@ def build_two_asset_objective(
     post_decision_value: Float2D,
     a_grid: Float1D,
     b_grid: Float1D,
-    discount_factor: float,
-    crra: float,
-    match_rate: float,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    match_rate: ScalarFloat | float,
 ) -> Callable[[Float1D, Float1D], tuple[FloatND, BoolND]]:
     """Build the `(state, policy) -> (value, feasible)` objective evaluator.
 
@@ -88,7 +88,7 @@ def build_two_asset_objective(
     return objective
 
 
-def _crra_utility(consumption: FloatND, crra: float) -> FloatND:
+def _crra_utility(consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
     return jnp.where(
         crra == 1.0,
         jnp.log(consumption),

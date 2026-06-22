@@ -194,8 +194,9 @@ def process_regimes(
         }
     )
 
-    model_has_dcegm_regime = any(
-        isinstance(user_regime.solver, DCEGM) for user_regime in user_regimes.values()
+    model_has_egm_regime = any(
+        user_regime.solver.requires_continuation_carries
+        for user_regime in user_regimes.values()
     )
 
     # Each regime's flat param names in the engine's binding vocabulary, keyed
@@ -257,7 +258,7 @@ def process_regimes(
             ages=ages,
             enable_jit=enable_jit,
             solver=user_regime.solver,
-            model_has_dcegm_regime=model_has_dcegm_regime,
+            model_has_egm_regime=model_has_egm_regime,
             has_taste_shocks=user_regime.taste_shocks is not None,
         )
 
@@ -321,7 +322,7 @@ def _build_solution_phase(
     ages: AgeGrid,
     enable_jit: bool,
     solver: Solver,
-    model_has_dcegm_regime: bool,
+    model_has_egm_regime: bool,
     has_taste_shocks: bool,
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
@@ -351,8 +352,9 @@ def _build_solution_phase(
         enable_jit: Whether to jit the internal functions.
         solver: The regime's solver; the engine calls `validate` then
             `build_period_kernels` on it to obtain the per-period kernels.
-        model_has_dcegm_regime: Whether any regime of the model uses the
-            DC-EGM solver (terminal regimes then produce EGM carries).
+        model_has_egm_regime: Whether any regime of the model uses a solver
+            that reads continuation carries (an endogenous-grid solver);
+            terminal regimes then produce their closed-form carries.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
 
@@ -461,7 +463,7 @@ def _build_solution_phase(
         functions=core.functions,
         variables=variables,
         grids=all_grids[regime_name],
-        model_has_dcegm_regime=model_has_dcegm_regime,
+        model_has_egm_regime=model_has_egm_regime,
         enable_jit=enable_jit,
     )
     period_kernels = solver_kernels.period_kernels
@@ -618,13 +620,13 @@ def _build_terminal_carry_producer(
     functions: EconFunctionsMapping,
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
-    model_has_dcegm_regime: bool,
+    model_has_egm_regime: bool,
     enable_jit: bool,
 ) -> tuple[EGMCarryProducer | None, EGMCarry | None]:
     """Build the EGM carry producer and template for a terminal regime.
 
-    Terminal regimes produce closed-form carries when the model contains a
-    DC-EGM regime, so a DC-EGM parent can interpolate their value and
+    Terminal regimes produce closed-form carries when the model contains an
+    endogenous-grid regime, so an EGM parent can interpolate their value and
     marginal utility. Cases:
 
     - no states ⇒ constant-value, zero-marginal-utility broadcast rows
@@ -632,16 +634,16 @@ def _build_terminal_carry_producer(
       the fixed (non-process) kind ⇒ terminal utility and its wealth gradient
       on the regime's own state grid, with the discrete states as the carry's
       leading axes (one wealth row per discrete combo)
-    - anything else ⇒ no producer (a DC-EGM regime targeting such a terminal
+    - anything else ⇒ no producer (an EGM regime targeting such a terminal
       regime is rejected by the EGM kernel builder)
 
     Returns:
         Tuple of the producer and the regime's carry template, both `None`
-        for non-terminal regimes, for models without a DC-EGM regime, and
-        for unsupported terminal shapes.
+        for non-terminal regimes, for models without an endogenous-grid
+        regime, and for unsupported terminal shapes.
 
     """
-    if not (model_has_dcegm_regime and user_regime.terminal):
+    if not (model_has_egm_regime and user_regime.terminal):
         return None, None
     producer: EGMCarryProducer
     discrete_state_names = tuple(
