@@ -27,6 +27,7 @@ from typing import Literal, cast
 
 import jax.numpy as jnp
 from beartype import beartype
+from dags import with_signature
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.egm.carry import EGMCarry
@@ -43,6 +44,8 @@ from _lcm.solution.contract import (
     SolverBuildContext,
 )
 from _lcm.typing import (
+    EconFunction,
+    EconFunctionsMapping,
     EGMStepFunction,
     FlatParams,
     MaxQOverAFunction,
@@ -356,14 +359,22 @@ class NEGM(Solver):
             ),
         )
         adjuster_kernels = self.inner.build_period_kernels(context=adjuster_context)
-        # The keeper is a normal passive DC-EGM: the outer post-decision
-        # transition is replaced by the identity `next_<durable>(durable) =
-        # durable`, so the durable becomes a genuine decision-independent passive
-        # state. `credited(s, s) = 0` makes keeping free.
+        # The keeper is a normal passive DC-EGM: the outer post-decision is held
+        # at the current durable stock (`next_<durable> = <durable>`), so the
+        # durable becomes a genuine decision-independent passive state and
+        # `credited(s, s) = 0` makes keeping free. The identity is injected in two
+        # places that both read the outer post-decision: the transitions (so the
+        # child read indexes the unchanged durable) and the econ functions (so the
+        # inner resources DAG computes it from the durable leaf rather than
+        # demanding it as a bound param, as the adjuster does).
         keeper_context = replace(
             context,
             transitions=_identity_outer_transition(
                 transitions=context.transitions,
+                outer_post_decision=self.outer_post_decision,
+            ),
+            functions=_with_identity_outer_function(
+                functions=context.functions,
                 outer_post_decision=self.outer_post_decision,
             ),
         )
@@ -829,6 +840,35 @@ def _identity_outer_transition(
                 }
             )
             for target, target_transitions in transitions.items()
+        }
+    )
+
+
+def _with_identity_outer_function(
+    *,
+    functions: EconFunctionsMapping,
+    outer_post_decision: FunctionName,
+) -> EconFunctionsMapping:
+    """Add the durable-identity outer post-decision to the econ-function DAG.
+
+    The inner resources function reads the outer post-decision (`next_<durable>`)
+    by name. The adjuster binds it as a per-node param; the keeper instead holds
+    it at the current durable stock, so the resources DAG computes
+    `next_<durable> = <durable>` from the durable leaf state. The injected
+    function declares the durable state as its single parameter, so DAG
+    concatenation wires the durable combo value into resources.
+    """
+    durable_state = outer_post_decision.removeprefix("next_")
+
+    @with_signature(args=[durable_state])
+    def keep_outer_post_decision(**kwargs: FloatND) -> FloatND:
+        return kwargs[durable_state]
+
+    keep_outer_post_decision.__name__ = outer_post_decision
+    return MappingProxyType(
+        {
+            **dict(functions),
+            outer_post_decision: cast("EconFunction", keep_outer_post_decision),
         }
     )
 
