@@ -105,7 +105,10 @@ def first_envelope(
             policy = interpolate_on_triangle(node_values=node_policy, weights=weights)
             value, feasible = objective(target, policy)
             admissible = is_admissible(weights=weights, threshold=threshold) & valid
-            candidate = jnp.where(admissible & feasible, value, -jnp.inf)
+            # Mask non-finite value/policy to -inf so a NaN candidate (from a
+            # degenerate triangle or clamped continuation) cannot be selected by argmax.
+            finite = jnp.isfinite(value) & jnp.all(jnp.isfinite(policy))
+            candidate = jnp.where(admissible & feasible & finite, value, -jnp.inf)
             return candidate, policy
 
         candidates, policies = jax.vmap(per_triangle)(

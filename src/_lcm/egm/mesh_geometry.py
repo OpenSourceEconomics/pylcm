@@ -79,9 +79,12 @@ def barycentric_weights(*, triangle: Float2D, query: Float1D) -> Float1D:
 def is_admissible(*, weights: Float1D, threshold: float) -> BoolND:
     """Whether a triangle is an admissible candidate for its query.
 
-    A triangle is admissible when every barycentric weight exceeds `-threshold`
-    (`threshold >= 0`): strictly covering triangles (all weights non-negative) qualify,
-    and so do mildly extrapolated ones within the band. The within-segment envelope
+    A triangle is admissible when every barycentric weight is at least `-threshold`
+    (`threshold >= 0`) and finite: strictly covering triangles (weights non-negative)
+    qualify, and so do mildly extrapolated ones within the band. Equality at the
+    boundary `-threshold` is admissible, matching the reference rejection rule (a weight
+    is rejected only when strictly below `-threshold`). A degenerate (collinear-image)
+    triangle yields non-finite weights and is inadmissible. The within-segment envelope
     then maximizes over all admissible triangles rather than only the covering one.
 
     Args:
@@ -89,10 +92,10 @@ def is_admissible(*, weights: Float1D, threshold: float) -> BoolND:
         threshold: Non-negative extrapolation tolerance on each weight.
 
     Returns:
-        Boolean scalar: `True` if every weight exceeds `-threshold`.
+        Boolean scalar: `True` if every weight is finite and at least `-threshold`.
 
     """
-    return jnp.all(weights > -threshold)
+    return jnp.all((weights >= -threshold) & jnp.isfinite(weights))
 
 
 def interpolate_on_triangle(*, node_values: Float2D, weights: Float1D) -> FloatND:

@@ -84,6 +84,32 @@ def test_extrapolated_target_is_admissible_under_reference_threshold():
     assert not bool(is_admissible(weights=weights, threshold=0.1))
 
 
+def test_weight_exactly_at_negative_threshold_is_admissible():
+    """A weight exactly at `-threshold` is admissible (reference rejects only below it).
+
+    For the triangle `(0,0),(1,0),(0,1)` the target `(0.625, 0.625)` has weights
+    `(-0.25, 0.625, 0.625)`; at the reference threshold 0.25 the boundary weight `-0.25`
+    must keep the triangle admissible, so a competing simplex cannot win by a hair.
+    """
+    triangle = jnp.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    weights = barycentric_weights(triangle=triangle, query=jnp.array([0.625, 0.625]))
+    np.testing.assert_allclose(np.asarray(weights), [-0.25, 0.625, 0.625], atol=1e-12)
+    assert bool(is_admissible(weights=weights, threshold=0.25))
+
+
+def test_degenerate_triangle_is_inadmissible():
+    """A collinear-image triangle yields non-finite weights and is inadmissible.
+
+    The mapped triangle `(0,0),(1,0),(2,0)` is degenerate (zero area), so its weights
+    are non-finite; admissibility must reject it rather than let a NaN weight slip
+    through as a candidate.
+    """
+    triangle = jnp.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
+    weights = barycentric_weights(triangle=triangle, query=jnp.array([1.0, 0.0]))
+    assert not np.all(np.isfinite(np.asarray(weights)))
+    assert not bool(is_admissible(weights=weights, threshold=0.25))
+
+
 def test_interpolate_reproduces_affine_field():
     """Barycentric interpolation reproduces an affine field exactly at any query."""
     triangle = jnp.array([[0.0, 0.0], [2.0, 0.0], [0.0, 2.0]])
