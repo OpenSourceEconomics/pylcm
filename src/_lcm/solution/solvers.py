@@ -27,7 +27,8 @@ from typing import Literal, cast
 
 import jax.numpy as jnp
 from beartype import beartype
-from dags import with_signature
+from dags import get_annotations, with_signature
+from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.egm.carry import EGMCarry
@@ -55,7 +56,14 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ActionName, ContinuousState, FloatND, FunctionName, StateName
+from lcm.typing import (
+    ActionName,
+    ContinuousState,
+    FloatND,
+    FunctionName,
+    StateName,
+    StateOrActionName,
+)
 
 
 @beartype(conf=REGIME_CONF)
@@ -859,8 +867,18 @@ def _with_identity_outer_function(
     concatenation wires the durable combo value into resources.
     """
     durable_state = outer_post_decision.removeprefix("next_")
+    # Copy the durable's annotation (and the outer post-decision's consumer
+    # annotation) off the existing functions so the DAG's annotation-consistency
+    # check, which requires every consumer of a leaf to agree, stays satisfied.
+    durable_annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
+    outer_annotation = _annotation_of_arg(
+        functions=functions, arg_name=outer_post_decision
+    )
 
-    @with_signature(args=[durable_state])
+    @with_signature(
+        args={durable_state: durable_annotation},
+        return_annotation=outer_annotation,
+    )
     def keep_outer_post_decision(**kwargs: FloatND) -> FloatND:
         return kwargs[durable_state]
 
@@ -871,6 +889,24 @@ def _with_identity_outer_function(
             outer_post_decision: cast("EconFunction", keep_outer_post_decision),
         }
     )
+
+
+def _annotation_of_arg(
+    *, functions: EconFunctionsMapping, arg_name: StateOrActionName
+) -> str:
+    """Return the annotation the regime's functions use for one argument.
+
+    The DAG's annotation-consistency check requires every consumer of a leaf to
+    agree on its annotation, so the injected keeper function copies it from the
+    first regime function that declares the argument. Falls back to `"FloatND"`
+    when no function annotates it.
+    """
+    for func in functions.values():
+        annotations = ensure_annotations_are_strings(get_annotations(func))
+        annotation = annotations.get(arg_name, "no_annotation_found")
+        if annotation != "no_annotation_found":
+            return annotation
+    return "FloatND"
 
 
 def _with_outer_post_decision(
