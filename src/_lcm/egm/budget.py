@@ -22,7 +22,7 @@ from _lcm.typing import (
     FunctionName,
     StateOrActionName,
 )
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, NEGM
 from lcm.typing import BoolND, FloatND
 
 DCEGM_BUDGET_CONSTRAINT_NAME: FunctionName = "dcegm_budget_constraint"
@@ -30,7 +30,7 @@ DCEGM_BUDGET_CONSTRAINT_NAME: FunctionName = "dcegm_budget_constraint"
 
 def get_intrinsic_budget_constraint(
     *,
-    solver: DCEGM,
+    solver: DCEGM | NEGM,
     functions: EconFunctionsMapping,
 ) -> ConstraintFunction:
     """Build the budget-feasibility mask the EGM solve enforces intrinsically.
@@ -40,8 +40,14 @@ def get_intrinsic_budget_constraint(
     `continuous_action <= resources - borrowing_limit`, where the borrowing
     limit is the savings grid's lowest node.
 
+    A `NEGM` regime nests the same 1-D consumption-savings solve, so its mask
+    is built from the inner `DCEGM` config (`solver.inner`): the bound governs
+    the inner liquid margin, with the outer durable margin already folded into
+    the inner resources.
+
     Args:
-        solver: The regime's DC-EGM solver configuration.
+        solver: The regime's DC-EGM solver configuration, or the NEGM solver
+            whose inner DC-EGM config supplies the liquid margin.
         functions: The regime's processed functions, used to stamp argument
             annotations consistent with the rest of the DAG (the resources
             function's return annotation, and the continuous action's
@@ -52,9 +58,10 @@ def get_intrinsic_budget_constraint(
         function.
 
     """
-    borrowing_limit = float(solver.savings_grid.to_jax()[0])
-    action_name = solver.continuous_action
-    resources_name = solver.resources
+    inner = solver.inner if isinstance(solver, NEGM) else solver
+    borrowing_limit = float(inner.savings_grid.to_jax()[0])
+    action_name = inner.continuous_action
+    resources_name = inner.resources
 
     @with_signature(
         args={

@@ -5,17 +5,20 @@ outer deterministic grid search over a durable/illiquid margin. Its
 `__post_init__` guards reject — at construction, with a
 `RegimeInitializationError` — an outer grid that is a stochastic process, an
 outer action that coincides with the inner continuous action, and an outer
-post-decision that coincides with the inner post-decision. Each case here
-constructs an `NEGM`/`DCEGM` and asserts the right error; none solves a model.
+post-decision that coincides with the inner post-decision. The remaining case
+builds a NEGM model and asserts its simulate phase carries the inner DC-EGM
+budget constraint. Nothing here solves a model.
 """
 
 import dataclasses
 
 import pytest
 
+from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.grids import ContinuousGrid
 from lcm import DCEGM, NEGM, LinSpacedGrid, NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
+from tests.test_models import negm_kinked_toy
 
 _INNER = DCEGM(
     continuous_state="wealth",
@@ -88,3 +91,19 @@ def test_negm_invalid_inner_dcegm_is_rejected_by_inner_guards():
     process = NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0)
     with pytest.raises(RegimeInitializationError, match="savings_grid"):
         dataclasses.replace(_INNER, savings_grid=process)
+
+
+def test_negm_simulate_phase_synthesizes_inner_budget_constraint():
+    """A NEGM regime's simulate phase carries the inner DC-EGM budget mask.
+
+    NEGM nests the same 1-D consumption-savings solve as `DCEGM`, so the
+    forward-simulation grid argmax needs the inner liquid feasibility mask
+    `consumption <= resources - borrowing_limit` exactly as a DC-EGM regime
+    does. The mask is built from `solver.inner`. The solve phase is
+    unaffected — the inner EGM kernels enforce the bound intrinsically and
+    never see the synthesized constraint.
+    """
+    model = negm_kinked_toy.build_model()
+    alive = model._regimes["alive"]
+    assert DCEGM_BUDGET_CONSTRAINT_NAME in alive.simulation.constraints
+    assert DCEGM_BUDGET_CONSTRAINT_NAME not in alive.solution.constraints

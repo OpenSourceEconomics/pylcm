@@ -726,11 +726,12 @@ def _build_simulation_phase(
     Q_and_F always uses the solve (non-vmapped) regime transition probs because
     it evaluates on the Cartesian grid, not per-subject.
 
-    For a DC-EGM regime, the budget constraint the EGM solve enforces
+    For a DC-EGM or NEGM regime, the budget constraint the EGM solve enforces
     intrinsically is synthesized and injected into the constraint set: the
     simulate-phase grid argmax needs it as a feasibility mask exactly like a
-    user-declared borrowing constraint of a brute-force regime. The solve
-    phase is unaffected — the EGM kernels never see it.
+    user-declared borrowing constraint of a brute-force regime. NEGM nests the
+    same inner 1-D solve, so the mask comes from its inner DC-EGM config. The
+    solve phase is unaffected — the EGM kernels never see it.
 
     Args:
         spec: The regime's per-phase specification.
@@ -757,8 +758,8 @@ def _build_simulation_phase(
             function, used for Q_and_F in both phases.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
-        solver: The regime's solver configuration; a DC-EGM regime gets the
-            synthesized intrinsic budget constraint.
+        solver: The regime's solver configuration; a DC-EGM or NEGM regime
+            gets the synthesized intrinsic budget constraint.
 
     Returns:
         Complete simulate functions container.
@@ -779,7 +780,7 @@ def _build_simulation_phase(
     )
     functions = core.functions
     constraints = core.constraints
-    if isinstance(solver, DCEGM):
+    if isinstance(solver, (DCEGM, NEGM)):
         if (
             DCEGM_BUDGET_CONSTRAINT_NAME in core.functions
             or DCEGM_BUDGET_CONSTRAINT_NAME in core.constraints
@@ -788,7 +789,7 @@ def _build_simulation_phase(
                 f"Regime '{regime_name}' declares a function or constraint "
                 f"named '{DCEGM_BUDGET_CONSTRAINT_NAME}'. That name is "
                 "reserved for the budget constraint the simulate phase "
-                "synthesizes for DC-EGM regimes; rename it."
+                "synthesizes for DC-EGM and NEGM regimes; rename it."
             )
             raise ModelInitializationError(msg)
         constraints = MappingProxyType(
