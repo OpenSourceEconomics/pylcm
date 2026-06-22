@@ -8,11 +8,15 @@ extrapolation is far from the brute value. The four-segment upper envelope adds 
 On the region the post-decision grid can reach, the envelope matches the brute solve
 and is dramatically better than `ucon`-only at the corners.
 
-Residual: the top pension edge (`n` at the grid maximum) is an uncovered hole.
-Reaching `n_endog = n_max` needs a pension post-decision balance whose carried-forward
-value leaves the next-period grid, so no segment's cloud produces a candidate there.
-The v3 design fills such holes with a direct-Bellman fallback (not part of this
-assembly); the test asserts on the covered region and pins the hole as known.
+The objective masks any candidate whose reconstructed post-decision balance leaves the
+post-decision grid (the continuation reader clamps to the boundary, so an out-of-grid
+candidate would otherwise receive a fabricated value), and the direct-Bellman hole-fill
+covers common-grid targets no segment reaches.
+
+Residual: the top pension edge (`n` at the grid maximum) stays an uncovered hole. There
+the optimal pension post-decision balance exceeds the grid maximum, so neither a segment
+candidate nor the hole-fill has an in-domain continuation — a grid-coverage limit, not
+an algorithm gap. The test asserts on the covered region and pins the edge as known.
 """
 
 import jax.numpy as jnp
@@ -32,7 +36,7 @@ _P = {
 }
 _M_GRID = jnp.linspace(1.0, 100.0, 12)
 _N_GRID = jnp.linspace(0.0, 50.0, 10)
-_B_GRID = jnp.linspace(0.5, 46.0, 16)
+_B_GRID = jnp.linspace(0.0, 46.0, 16)
 
 
 def _solve():
@@ -103,6 +107,11 @@ def test_g2egm_value_is_monotone_in_both_assets_on_the_covered_region():
 
 
 def test_g2egm_top_pension_edge_is_a_known_uncovered_hole():
-    """The top pension column is an uncovered hole (no segment cloud reaches it)."""
+    """The top pension column stays uncovered: its optimal post-state leaves the grid.
+
+    Neither a segment candidate nor the direct-Bellman hole-fill has an in-domain
+    continuation there, so the value is `-inf` — a grid-coverage limit, not a gap the
+    hole-fill can close.
+    """
     g2egm, _brute, _ucon = _solve()
     assert np.all(np.isneginf(g2egm[:, 9]))

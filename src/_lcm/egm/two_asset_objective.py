@@ -70,11 +70,18 @@ def build_two_asset_objective(
         # finite (it is masked out by `feasible`), never NaN.
         safe_consumption = jnp.where(consumption > 0.0, consumption, 1.0)
         value = _crra_utility(safe_consumption, crra) + discount_factor * post_value
+        # The continuation reader clamps post-states to the grid boundary, so a
+        # candidate whose reconstructed `(a, b)` leaves the post-decision grid gets a
+        # fabricated continuation. Require the post-state inside the grid (subsuming the
+        # economic `a >= 0`, `b >= 0` floors when the grid starts there), so only
+        # candidates with a genuine continuation value are eligible for the envelope.
         feasible = (
             (consumption > 0.0)
             & (deposit >= 0.0)
-            & (liquid_post >= 0.0)
-            & (pension_post >= 0.0)
+            & (liquid_post >= a_grid[0])
+            & (liquid_post <= a_grid[-1])
+            & (pension_post >= b_grid[0])
+            & (pension_post <= b_grid[-1])
         )
         return value, feasible
 

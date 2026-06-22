@@ -15,9 +15,10 @@ poisoning extrapolation. `ucon`/`dcon` are built on the post-decision $(a, b)$ g
 `acon`/`con` are built on the $(consumption, b)$ grid at $a = 0$.
 """
 
+import jax
 import jax.numpy as jnp
 
-from _lcm.egm.mesh_envelope import first_envelope, second_envelope
+from _lcm.egm.mesh_envelope import ObjectiveEvaluator, first_envelope, second_envelope
 from _lcm.egm.two_asset_inverse import (
     invert_acon_cloud,
     invert_con_cloud,
@@ -164,4 +165,44 @@ def g2egm_step(
         segment_values=jnp.stack(segment_values, axis=0),
         segment_policies=jnp.stack(segment_policies, axis=0),
     )
-    return result.value.reshape(m_mesh.shape)
+
+    # Targets no admissible segment candidate reaches (envelope value `-inf`) are filled
+    # by a direct-Bellman search over a coarse policy grid — the v3 hole-fill. A target
+    # whose optimal post-state leaves the post-decision grid stays a hole (no in-domain
+    # candidate exists), which is a grid-coverage limit, not an algorithm gap.
+    deposit_grid = jnp.linspace(0.0, b_grid[-1] - b_grid[0], consumption_grid.shape[0])
+    hole_value = _direct_bellman_fill(
+        targets=targets,
+        objective=objective,
+        consumption_grid=consumption_grid,
+        deposit_grid=deposit_grid,
+    )
+    filled = jnp.where(jnp.isfinite(result.value), result.value, hole_value)
+    return filled.reshape(m_mesh.shape)
+
+
+def _direct_bellman_fill(
+    *,
+    targets: FloatND,
+    objective: ObjectiveEvaluator,
+    consumption_grid: Float1D,
+    deposit_grid: Float1D,
+) -> FloatND:
+    """Maximize the recomputed objective over a coarse policy grid, per target.
+
+    The fallback for common-grid targets no segment mesh covers: a direct-Bellman search
+    over the `(consumption, deposit)` product grid, masking infeasible candidates. The
+    result is `-inf` only where every coarse candidate is infeasible (the optimal
+    post-state leaves the post-decision grid).
+    """
+    c_mesh, d_mesh = jnp.meshgrid(consumption_grid, deposit_grid, indexing="ij")
+    candidates = jnp.stack([c_mesh.reshape(-1), d_mesh.reshape(-1)], axis=1)
+
+    def at_target(target: FloatND) -> FloatND:
+        def per_candidate(policy: FloatND) -> FloatND:
+            value, feasible = objective(target, policy)
+            return jnp.where(feasible & jnp.isfinite(value), value, -jnp.inf)
+
+        return jnp.max(jax.vmap(per_candidate)(candidates))
+
+    return jax.vmap(at_target)(targets)
