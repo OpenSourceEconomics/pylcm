@@ -19,6 +19,7 @@ pulls in no numerical engine modules.
 """
 
 import functools
+import inspect
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -719,10 +720,23 @@ class _NEGMPeriodKernel:
             for index in range(self.outer_grid_values.shape[0])
         ]
         if self.outer_no_adjustment_candidate is not None:
+            # The candidate reads only the durable state (and possibly params);
+            # filter the full state/param pool to its signature so unrelated
+            # states (e.g. the inner Euler state) are not passed as kwargs.
+            candidate_kwargs = {
+                **dict(state_action_space.states),
+                **dict(flat_params[self.regime_name]),
+            }
+            parameters = inspect.signature(
+                self.outer_no_adjustment_candidate
+            ).parameters
             nodes.append(
                 self.outer_no_adjustment_candidate(
-                    **dict(state_action_space.states),
-                    **dict(flat_params[self.regime_name]),
+                    **{
+                        name: value
+                        for name, value in candidate_kwargs.items()
+                        if name in parameters
+                    }
                 )
             )
         return nodes
