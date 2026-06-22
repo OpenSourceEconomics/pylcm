@@ -59,7 +59,7 @@ class RegimeId:
     dead: ScalarInt
 
 
-def credited(illiquid: ContinuousState, next_illiquid: FloatND) -> FloatND:
+def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> FloatND:
     """Net liquid cost of moving the durable to `next_illiquid` (`s'`).
 
     A deposit (`s' > Z`) costs its face value; a withdrawal (`s' < Z`) returns
@@ -74,7 +74,7 @@ def credited(illiquid: ContinuousState, next_illiquid: FloatND) -> FloatND:
 
 
 def resources(
-    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: FloatND
+    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: ContinuousState
 ) -> FloatND:
     """Liquid resources consumption is paid out of, given the fixed outer node.
 
