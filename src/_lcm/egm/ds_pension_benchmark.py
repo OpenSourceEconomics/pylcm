@@ -65,6 +65,7 @@ def benchmark_g2egm_ds_pension(
     wage: float = 1.0,
     retirement_income: float = 0.50,
     pension_payout_return: float = 1.04,
+    post_decision_factor: float = 2.0,
     low_liquid_skip: int = 3,
     pension_interior: int = 6,
 ) -> MethodBenchmark:
@@ -95,9 +96,13 @@ def benchmark_g2egm_ds_pension(
     """
     liquid_grid = jnp.linspace(0.1, liquid_max, n_liquid)
     pension_grid = jnp.linspace(0.0, pension_max, n_pension)
-    a_grid = jnp.linspace(0.0, liquid_max, max(18, n_liquid + 2))
-    b_grid = jnp.linspace(0.0, 2.0 * pension_max, 16)
-    consumption_grid = jnp.linspace(0.1, liquid_max, max(18, n_liquid + 2))
+    # The post-decision (endogenous) grids drive accuracy, so they scale with the state
+    # resolution rather than staying fixed; under-refining them caps the Euler error.
+    n_a = max(18, int(post_decision_factor * n_liquid))
+    n_b = max(18, int(post_decision_factor * n_pension))
+    a_grid = jnp.linspace(0.0, liquid_max, n_a)
+    b_grid = jnp.linspace(0.0, 2.0 * pension_max, n_b)
+    consumption_grid = jnp.linspace(0.1, liquid_max, n_a)
     savings_grid = jnp.linspace(0.0, liquid_max, 4 * n_liquid)
 
     def solve() -> dict[int, G2EGMResult]:
