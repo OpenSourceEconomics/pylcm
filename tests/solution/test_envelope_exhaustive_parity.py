@@ -13,7 +13,6 @@ import numpy as np
 
 from _lcm.egm.mesh_envelope import SegmentMesh, first_envelope
 from _lcm.egm.two_asset_inverse import RegionCloud
-from _lcm.egm.two_asset_objective import build_two_asset_objective
 from _lcm.egm.two_asset_segment_mesh import build_segment_mesh
 
 
@@ -29,8 +28,9 @@ def _barycentric(triangle, query):
 def _exhaustive_first_envelope(*, mesh, targets, objective, threshold):
     """Host reference: max recomputed objective over every admissible triangle.
 
-    Mirrors `first_envelope`'s argmax semantics (the first maximizer wins) so the two
-    are bit-comparable on the value and the winning policy.
+    Mirrors `first_envelope`'s argmax semantics (the first maximizer wins) and its
+    admissibility rule (a weight is rejected only strictly below `-threshold`), so the
+    two are bit-comparable on the value and the winning policy.
     """
     node_state = np.asarray(mesh.node_state)
     node_policy = np.asarray(mesh.node_policy)
@@ -43,7 +43,7 @@ def _exhaustive_first_envelope(*, mesh, targets, objective, threshold):
             weights = _barycentric(node_state[triple], query)
             policy = weights @ node_policy[triple]
             value, feasible = objective(jnp.asarray(query), jnp.asarray(policy))
-            admissible = bool(np.all(weights > -threshold)) and bool(
+            admissible = bool(np.all(weights >= -threshold)) and bool(
                 np.all(valid[triple])
             )
             keep = admissible and bool(feasible)
@@ -57,6 +57,45 @@ def _exhaustive_first_envelope(*, mesh, targets, objective, threshold):
 
 def _identity_objective(_state, policy):
     return policy[0], jnp.ones((), dtype=bool)
+
+
+def _affine_two_asset_objective(*, post_value_coeffs, discount_factor, crra, domain):
+    """An independent two-asset Bellman objective with an affine continuation.
+
+    Reimplements the budget identities, CRRA utility, and in-domain feasibility of the
+    production objective from scratch, so the parity test shares nothing with production
+    except `first_envelope` (the unit under test) and the mesh input. The continuation
+    is affine `w(a, b) = ca*a + cb*b + c0`, which a bilinear continuation reader
+    reproduces exactly, so the two objectives coincide on in-domain candidates without
+    importing the production reader.
+    """
+    ca, cb, c0 = post_value_coeffs
+    a_lo, a_hi, b_lo, b_hi = domain
+    match_rate = 1.0
+
+    def objective(state, policy):
+        consumption, deposit = policy[0], policy[1]
+        liquid_post = state[0] - consumption - deposit
+        pension_post = state[1] + deposit + match_rate * jnp.log1p(deposit)
+        post_value = ca * liquid_post + cb * pension_post + c0
+        safe_consumption = jnp.where(consumption > 0.0, consumption, 1.0)
+        utility = jnp.where(
+            crra == 1.0,
+            jnp.log(safe_consumption),
+            safe_consumption ** (1.0 - crra) / (1.0 - crra),
+        )
+        value = utility + discount_factor * post_value
+        feasible = (
+            (consumption > 0.0)
+            & (deposit >= 0.0)
+            & (liquid_post >= a_lo)
+            & (liquid_post <= a_hi)
+            & (pension_post >= b_lo)
+            & (pension_post <= b_hi)
+        )
+        return value, feasible
+
+    return objective
 
 
 def test_first_envelope_matches_exhaustive_on_the_f3_extrapolation_case():
@@ -88,8 +127,8 @@ def test_first_envelope_matches_exhaustive_on_the_f3_extrapolation_case():
     np.testing.assert_allclose(np.asarray(jax_policies), ref_policies, atol=1e-9)
 
 
-def test_first_envelope_matches_exhaustive_with_the_two_asset_objective():
-    """On a region-cloud mesh and the real objective the two implementations agree."""
+def test_first_envelope_matches_exhaustive_with_a_two_asset_objective():
+    """On a region-cloud mesh and a CRRA objective the two implementations agree."""
     a_mesh, b_mesh = jnp.meshgrid(jnp.arange(3.0), jnp.arange(3.0), indexing="ij")
     cloud = RegionCloud(
         m_endog=2.0 + 1.5 * a_mesh,
@@ -101,15 +140,11 @@ def test_first_envelope_matches_exhaustive_with_the_two_asset_objective():
         value_grad_n=jnp.zeros((3, 3)),
     )
     mesh = build_segment_mesh(cloud=cloud, region_label=0)
-    grid = jnp.linspace(0.0, 10.0, 11)
-    value_mesh = jnp.meshgrid(grid, grid, indexing="ij")
-    objective = build_two_asset_objective(
-        post_decision_value=2.0 * value_mesh[0] + 3.0 * value_mesh[1] + 1.0,
-        a_grid=grid,
-        b_grid=grid,
+    objective = _affine_two_asset_objective(
+        post_value_coeffs=(2.0, 3.0, 1.0),
         discount_factor=0.95,
         crra=2.0,
-        match_rate=1.0,
+        domain=(0.0, 10.0, 0.0, 10.0),
     )
     targets = jnp.array([[3.0, 3.0], [4.0, 4.0], [3.5, 4.5], [2.5, 2.5]])
     jax_values, jax_policies = first_envelope(
