@@ -60,11 +60,20 @@ class EnvelopeResult(NamedTuple):
     """The published upper-envelope value and policy on the common target grid."""
 
     value: FloatND
-    """Envelope value per target, shape `(n_target,)`."""
+    """Envelope value per target, shape `(n_target,)` (`-inf` where no candidate)."""
     policy: Float2D
     """Winning policy per target, shape `(n_target, n_policy)`."""
     segment: IntND
-    """Index of the winning segment per target, shape `(n_target,)`."""
+    """Stack index of the winning segment per target, shape `(n_target,)`."""
+    region_label: IntND
+    """KKT region label of the winning segment per target, shape `(n_target,)`.
+
+    The winning segment's own `SegmentMesh.region_label`, not its position in the
+    stack — meaningful only where `has_candidate` is `True` (otherwise the value is
+    `-inf` and the argmax falls back to stack index 0).
+    """
+    has_candidate: BoolND
+    """Whether any segment supplied a finite candidate, shape `(n_target,)`."""
 
 
 def first_envelope(
@@ -121,7 +130,10 @@ def first_envelope(
 
 
 def second_envelope(
-    *, segment_values: Float2D, segment_policies: FloatND
+    *,
+    segment_values: Float2D,
+    segment_policies: FloatND,
+    region_labels: IntND,
 ) -> EnvelopeResult:
     """Take the per-target maximum across segments and gather the winning policy.
 
@@ -129,13 +141,24 @@ def second_envelope(
         segment_values: First-envelope values, shape `(n_segment, n_target)`.
         segment_policies: First-envelope policies, shape
             `(n_segment, n_target, n_policy)`.
+        region_labels: KKT region label of each stacked segment, shape `(n_segment,)`,
+            in the same stack order as `segment_values`.
 
     Returns:
-        The envelope value, winning policy, and winning segment index per target.
+        The envelope value, winning policy, winning segment stack index, the winner's
+        KKT region label, and a per-target flag for whether any candidate was finite.
 
     """
     winning_segment = jnp.argmax(segment_values, axis=0).astype(jnp.int32)
     value = jnp.max(segment_values, axis=0)
     target_index = jnp.arange(segment_values.shape[1])
     policy = segment_policies[winning_segment, target_index]
-    return EnvelopeResult(value=value, policy=policy, segment=winning_segment)
+    region_label = region_labels[winning_segment]
+    has_candidate = jnp.isfinite(value)
+    return EnvelopeResult(
+        value=value,
+        policy=policy,
+        segment=winning_segment,
+        region_label=region_label,
+        has_candidate=has_candidate,
+    )

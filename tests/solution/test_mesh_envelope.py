@@ -125,8 +125,34 @@ def test_second_envelope_takes_max_segment_and_gathers_policy():
         ]
     )
     result = second_envelope(
-        segment_values=segment_values, segment_policies=segment_policies
+        segment_values=segment_values,
+        segment_policies=segment_policies,
+        region_labels=jnp.array([2, 3], dtype=jnp.int32),
     )
     np.testing.assert_allclose(np.asarray(result.value), [0.7, 0.9], atol=1e-9)
     np.testing.assert_array_equal(np.asarray(result.segment), [1, 0])
     np.testing.assert_allclose(np.asarray(result.policy), [[20.0], [11.0]], atol=1e-9)
+
+
+def test_second_envelope_reports_winning_region_label():
+    """The result carries each winner's KKT region label, not its stack index.
+
+    With segments stacked in the order `(acon=2, con=3)`, target 0's winner is the
+    second-stacked segment, so its region label is 3 — distinct from the stack index 1.
+    """
+    result = second_envelope(
+        segment_values=jnp.array([[0.3, 0.9], [0.7, 0.2]]),
+        segment_policies=jnp.array([[[10.0], [11.0]], [[20.0], [21.0]]]),
+        region_labels=jnp.array([2, 3], dtype=jnp.int32),
+    )
+    np.testing.assert_array_equal(np.asarray(result.region_label), [3, 2])
+
+
+def test_second_envelope_flags_targets_with_no_candidate():
+    """A target where every segment is `-inf` is flagged as having no candidate."""
+    result = second_envelope(
+        segment_values=jnp.array([[-jnp.inf, 0.5], [-jnp.inf, 0.2]]),
+        segment_policies=jnp.array([[[10.0], [11.0]], [[20.0], [21.0]]]),
+        region_labels=jnp.array([0, 1], dtype=jnp.int32),
+    )
+    np.testing.assert_array_equal(np.asarray(result.has_candidate), [False, True])

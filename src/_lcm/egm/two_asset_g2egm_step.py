@@ -164,6 +164,7 @@ def g2egm_step(
     result = second_envelope(
         segment_values=jnp.stack(segment_values, axis=0),
         segment_policies=jnp.stack(segment_policies, axis=0),
+        region_labels=jnp.array([m.region_label for m in meshes], dtype=jnp.int32),
     )
 
     # Targets no admissible segment candidate reaches (envelope value `-inf`) are filled
