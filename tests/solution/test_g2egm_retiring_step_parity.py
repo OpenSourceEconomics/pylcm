@@ -68,7 +68,7 @@ def _solve_to_boundary():
         pension_payout_return=_PAYOUT,
         retirement_income=_RET_INCOME,
     )
-    v_working = np.asarray(v_working_raw) - _WORK_DISUTILITY
+    v_working = np.asarray(v_working_raw.value) - _WORK_DISUTILITY
     return v_working, np.asarray(brute[2]["working"])
 
 

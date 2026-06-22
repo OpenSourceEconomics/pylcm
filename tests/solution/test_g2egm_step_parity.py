@@ -53,7 +53,7 @@ def _solve():
             b_grid=_B_GRID,
             consumption_grid=jnp.linspace(0.5, 90.0, 18),
             **_P,
-        )
+        ).value
     )
     ucon_only = np.asarray(
         egm_step(
@@ -115,3 +115,29 @@ def test_g2egm_top_pension_edge_is_a_known_uncovered_hole():
     """
     g2egm, _brute, _ucon = _solve()
     assert np.all(np.isneginf(g2egm[:, 9]))
+
+
+def test_g2egm_publishes_a_feasible_policy_on_the_covered_region():
+    """The published consumption/deposit policy is feasible where the grid covers.
+
+    On the covered region the optimal consumption is positive, the deposit is
+    non-negative, and the two respect the liquid budget `c + d <= m`.
+    """
+    model = get_model(n_periods=2)
+    params = get_params(n_periods=2, pension_bequest_weight=0.5)
+    next_value = jnp.asarray(model.solve(params=params, log_level="off")[1]["dead"])
+    result = g2egm_step(
+        next_value=next_value,
+        m_grid=_M_GRID,
+        n_grid=_N_GRID,
+        a_grid=jnp.linspace(0.0, 85.0, 18),
+        b_grid=_B_GRID,
+        consumption_grid=jnp.linspace(0.5, 90.0, 18),
+        **_P,
+    )
+    consumption = np.asarray(result.consumption)[_COVERED]
+    deposit = np.asarray(result.deposit)[_COVERED]
+    liquid = np.asarray(_M_GRID)[:, None] * np.ones_like(consumption)
+    assert np.all(consumption > 0.0)
+    assert np.all(deposit >= -1e-9)
+    assert np.all(consumption + deposit <= liquid + 1e-6)

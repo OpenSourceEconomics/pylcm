@@ -45,7 +45,7 @@ def _g2egm_step(next_value):
         b_grid=_B_GRID,
         consumption_grid=_CONSUMPTION_GRID,
         **_P,
-    )
+    ).value
 
 
 def _solve_chain():

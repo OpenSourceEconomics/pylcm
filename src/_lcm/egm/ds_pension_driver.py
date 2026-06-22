@@ -122,12 +122,12 @@ def solve_ds_pension_g2egm(
         retirement_income=retirement_income,
         threshold=threshold,
     )
-    next_working_value = boundary_value - work_disutility
+    next_working_value = boundary_value.value - work_disutility
     solution[retirement_period - 1] = {"working": next_working_value}
 
     # Earlier working periods: read the 2-D working continuation.
     for period in range(retirement_period - 2, -1, -1):
-        value = g2egm_step(
+        step = g2egm_step(
             next_value=next_working_value,
             m_grid=liquid_grid,
             n_grid=pension_grid,
@@ -142,7 +142,7 @@ def solve_ds_pension_g2egm(
             wage=wage,
             threshold=threshold,
         )
-        next_working_value = value - work_disutility
+        next_working_value = step.value - work_disutility
         solution[period] = {"working": next_working_value}
 
     return solution

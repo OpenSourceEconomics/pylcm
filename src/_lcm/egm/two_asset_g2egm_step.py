@@ -16,6 +16,7 @@ poisoning extrapolation. `ucon`/`dcon` are built on the post-decision $(a, b)$ g
 """
 
 from collections.abc import Callable
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -43,6 +44,17 @@ from lcm.typing import Float1D, FloatND
 PostDecisionReader = Callable[[FloatND, FloatND], PostDecision]
 
 
+class G2EGMResult(NamedTuple):
+    """One G2EGM step's value and policy on the regular working `(m, n)` grid."""
+
+    value: FloatND
+    """This period's upper-envelope value, shape `(len(m_grid), len(n_grid))`."""
+    consumption: FloatND
+    """Optimal consumption per `(m, n)` target (invalid at uncovered holes)."""
+    deposit: FloatND
+    """Optimal pension deposit per `(m, n)` target (invalid at uncovered holes)."""
+
+
 def g2egm_step(
     *,
     next_value: FloatND,
@@ -58,7 +70,7 @@ def g2egm_step(
     return_pension: float,
     wage: float,
     threshold: float = 0.25,
-) -> FloatND:
+) -> G2EGMResult:
     """Solve one period of the two-asset model by the four-segment G2EGM envelope.
 
     Args:
@@ -78,7 +90,7 @@ def g2egm_step(
         threshold: Barycentric extrapolation tolerance for triangle admissibility.
 
     Returns:
-        This period's upper-envelope value on the regular `(m, n)` grid.
+        This period's upper-envelope value and policy on the regular `(m, n)` grid.
 
     """
 
@@ -125,7 +137,7 @@ def g2egm_retiring_step(
     pension_payout_return: float,
     retirement_income: float,
     threshold: float = 0.25,
-) -> FloatND:
+) -> G2EGMResult:
     """Solve the working->retired boundary period by the four-segment G2EGM envelope.
 
     Identical to `g2egm_step` except the post-decision continuation is the 1-D retired
@@ -153,7 +165,7 @@ def g2egm_retiring_step(
         threshold: Barycentric extrapolation tolerance for triangle admissibility.
 
     Returns:
-        This period's upper-envelope value on the regular working `(m, n)` grid.
+        This period's upper-envelope value and policy on the working `(m, n)` grid.
 
     """
 
@@ -195,7 +207,7 @@ def _g2egm_envelope_step(
     crra: float,
     match_rate: float,
     threshold: float,
-) -> FloatND:
+) -> G2EGMResult:
     """Run the four-segment G2EGM envelope given a post-decision reader.
 
     The reader supplies the post-decision value and gradients on the `(a, b)` mesh; the
@@ -295,7 +307,11 @@ def _g2egm_envelope_step(
         deposit_grid=deposit_grid,
     )
     filled = jnp.where(jnp.isfinite(result.value), result.value, hole_value)
-    return filled.reshape(m_mesh.shape)
+    return G2EGMResult(
+        value=filled.reshape(m_mesh.shape),
+        consumption=result.policy[:, 0].reshape(m_mesh.shape),
+        deposit=result.policy[:, 1].reshape(m_mesh.shape),
+    )
 
 
 def _direct_bellman_fill(
