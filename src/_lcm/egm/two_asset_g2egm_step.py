@@ -15,6 +15,8 @@ poisoning extrapolation. `ucon`/`dcon` are built on the post-decision $(a, b)$ g
 `acon`/`con` are built on the $(consumption, b)$ grid at $a = 0$.
 """
 
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
 
@@ -26,9 +28,19 @@ from _lcm.egm.two_asset_inverse import (
     invert_ucon_cloud,
 )
 from _lcm.egm.two_asset_objective import build_two_asset_objective
-from _lcm.egm.two_asset_post_decision import post_decision_value_and_grad
+from _lcm.egm.two_asset_post_decision import (
+    PostDecision,
+    post_decision_value_and_grad,
+    post_decision_value_and_grad_retiring,
+)
 from _lcm.egm.two_asset_segment_mesh import build_segment_mesh
 from lcm.typing import Float1D, FloatND
+
+# Maps a post-decision `(a, b)` mesh to its value and gradients. The working step reads
+# next period's working value on the `(m, n)` grid; the retirement-boundary step reads
+# the 1-D retired value through the lump-sum payout. The envelope core is identical
+# either way — only this reader differs.
+PostDecisionReader = Callable[[FloatND, FloatND], PostDecision]
 
 
 def g2egm_step(
@@ -69,18 +81,131 @@ def g2egm_step(
         This period's upper-envelope value on the regular `(m, n)` grid.
 
     """
-    # ucon / dcon: candidate clouds on the (a, b) post-decision grid.
-    a_mesh, b_mesh = jnp.meshgrid(a_grid, b_grid, indexing="ij")
-    post = post_decision_value_and_grad(
-        next_value=next_value,
+
+    def post_reader(a: FloatND, b: FloatND) -> PostDecision:
+        return post_decision_value_and_grad(
+            next_value=next_value,
+            m_grid=m_grid,
+            n_grid=n_grid,
+            a=a,
+            b=b,
+            return_liquid=return_liquid,
+            return_pension=return_pension,
+            wage=wage,
+        )
+
+    return _g2egm_envelope_step(
+        post_reader=post_reader,
         m_grid=m_grid,
         n_grid=n_grid,
-        a=a_mesh,
-        b=b_mesh,
-        return_liquid=return_liquid,
-        return_pension=return_pension,
-        wage=wage,
+        a_grid=a_grid,
+        b_grid=b_grid,
+        consumption_grid=consumption_grid,
+        discount_factor=discount_factor,
+        crra=crra,
+        match_rate=match_rate,
+        threshold=threshold,
     )
+
+
+def g2egm_retiring_step(
+    *,
+    next_value_retired: Float1D,
+    next_marginal_retired: Float1D,
+    liquid_grid: Float1D,
+    m_grid: Float1D,
+    n_grid: Float1D,
+    a_grid: Float1D,
+    b_grid: Float1D,
+    consumption_grid: Float1D,
+    discount_factor: float,
+    crra: float,
+    match_rate: float,
+    return_liquid: float,
+    pension_payout_return: float,
+    retirement_income: float,
+    threshold: float = 0.25,
+) -> FloatND:
+    """Solve the working->retired boundary period by the four-segment G2EGM envelope.
+
+    Identical to `g2egm_step` except the post-decision continuation is the 1-D retired
+    value read through the lump-sum payout (`post_decision_value_and_grad_retiring`):
+    on retirement the pension is paid out into liquid, so both post-decision balances
+    feed a single retired liquid state. The endogenous-grid machinery, segments, and
+    envelope are unchanged.
+
+    Args:
+        next_value_retired: Next period's retired value on `liquid_grid`.
+        next_marginal_retired: Next period's retired marginal value of liquid on
+            `liquid_grid`.
+        liquid_grid: Regular retired liquid-state grid (ascending, evenly spaced).
+        m_grid: Regular working liquid-state grid (ascending, evenly spaced).
+        n_grid: Regular working pension-state grid (ascending, evenly spaced).
+        a_grid: Liquid post-decision grid for `ucon`/`dcon`.
+        b_grid: Pension post-decision grid (shared by all segments).
+        consumption_grid: Consumption sweep for `acon`/`con` at `a = 0`.
+        discount_factor: Discount factor `beta`.
+        crra: Coefficient of relative risk aversion `rho`.
+        match_rate: Pension employer-match coefficient `chi`.
+        return_liquid: Liquid net return `r^a`.
+        pension_payout_return: Factor the pension balance is paid out at on retirement.
+        retirement_income: First retirement income added to the retired liquid state.
+        threshold: Barycentric extrapolation tolerance for triangle admissibility.
+
+    Returns:
+        This period's upper-envelope value on the regular working `(m, n)` grid.
+
+    """
+
+    def post_reader(a: FloatND, b: FloatND) -> PostDecision:
+        return post_decision_value_and_grad_retiring(
+            next_value_retired=next_value_retired,
+            next_marginal_retired=next_marginal_retired,
+            liquid_grid=liquid_grid,
+            a=a,
+            b=b,
+            return_liquid=return_liquid,
+            pension_payout_return=pension_payout_return,
+            retirement_income=retirement_income,
+        )
+
+    return _g2egm_envelope_step(
+        post_reader=post_reader,
+        m_grid=m_grid,
+        n_grid=n_grid,
+        a_grid=a_grid,
+        b_grid=b_grid,
+        consumption_grid=consumption_grid,
+        discount_factor=discount_factor,
+        crra=crra,
+        match_rate=match_rate,
+        threshold=threshold,
+    )
+
+
+def _g2egm_envelope_step(
+    *,
+    post_reader: PostDecisionReader,
+    m_grid: Float1D,
+    n_grid: Float1D,
+    a_grid: Float1D,
+    b_grid: Float1D,
+    consumption_grid: Float1D,
+    discount_factor: float,
+    crra: float,
+    match_rate: float,
+    threshold: float,
+) -> FloatND:
+    """Run the four-segment G2EGM envelope given a post-decision reader.
+
+    The reader supplies the post-decision value and gradients on the `(a, b)` mesh; the
+    rest — the four KKT-segment inverses, triangulated meshes, within- and
+    across-segment envelopes, and the direct-Bellman hole-fill — is independent of
+    whether the continuation is the working or the retired value.
+    """
+    # ucon / dcon: candidate clouds on the (a, b) post-decision grid.
+    a_mesh, b_mesh = jnp.meshgrid(a_grid, b_grid, indexing="ij")
+    post = post_reader(a_mesh, b_mesh)
     ucon = invert_ucon_cloud(
         a=a_mesh,
         b=b_mesh,
@@ -103,16 +228,7 @@ def g2egm_step(
 
     # acon / con: candidate clouds on the (consumption, b) grid at a = 0.
     a_zero = jnp.zeros_like(b_grid)
-    post_zero = post_decision_value_and_grad(
-        next_value=next_value,
-        m_grid=m_grid,
-        n_grid=n_grid,
-        a=a_zero,
-        b=b_grid,
-        return_liquid=return_liquid,
-        return_pension=return_pension,
-        wage=wage,
-    )
+    post_zero = post_reader(a_zero, b_grid)
     c_mesh, cb_mesh = jnp.meshgrid(consumption_grid, b_grid, indexing="ij")
     value_at_zero = jnp.broadcast_to(post_zero.value[None, :], c_mesh.shape)
     grad_b_at_zero = jnp.broadcast_to(post_zero.grad_b[None, :], c_mesh.shape)
