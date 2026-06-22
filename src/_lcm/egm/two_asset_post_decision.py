@@ -15,6 +15,7 @@ of the value read). The interpolation is exact for an affine $V'$.
 from typing import NamedTuple
 
 import jax
+import jax.numpy as jnp
 from jax.scipy.ndimage import map_coordinates
 
 from lcm.typing import Float1D, FloatND
@@ -75,4 +76,61 @@ def post_decision_value_and_grad(
         value=value.reshape(a.shape),
         grad_a=grad_a.reshape(a.shape),
         grad_b=grad_b.reshape(a.shape),
+    )
+
+
+def post_decision_value_and_grad_retiring(
+    *,
+    next_value_retired: Float1D,
+    next_marginal_retired: Float1D,
+    liquid_grid: Float1D,
+    a: FloatND,
+    b: FloatND,
+    return_liquid: float,
+    pension_payout_return: float,
+    retirement_income: float,
+) -> PostDecision:
+    """Post-decision value and gradients at the working->retired boundary.
+
+    On the working->retired transition the pension is paid out as a lump sum, so both
+    post-decision balances feed a single retired liquid state
+    $\\ell' = (1 + r^a)\\,a + \\pi\\,b + y_{\\text{ret}}$ ($\\pi$ the pension payout
+    return, $y_{\\text{ret}}$ the first retirement income). The post-decision value is
+    the 1-D retired value read there, $w(a, b) = V_{\\text{ret}}(\\ell')$, and the
+    gradients follow by the chain rule with the **carried** retired marginal
+    $V'_{\\text{ret}}$ (exact, not a finite difference of the value array):
+    $w_a = (1 + r^a)\\,V'_{\\text{ret}}$ and $w_b = \\pi\\,V'_{\\text{ret}}$.
+
+    Args:
+        next_value_retired: Next period's retired value on `liquid_grid`, shape
+            `(len(liquid_grid),)`.
+        next_marginal_retired: Next period's retired marginal value of liquid on
+            `liquid_grid`, shape `(len(liquid_grid),)`.
+        liquid_grid: Regular retired liquid-state grid (ascending, evenly spaced).
+        a: Liquid post-decision balance at each node.
+        b: Pension post-decision balance at each node.
+        return_liquid: Liquid gross return minus one, `r^a`.
+        pension_payout_return: Factor the pension balance is paid out at on retirement.
+        retirement_income: First retirement income added to the retired liquid state.
+
+    Returns:
+        Post-decision value and gradients, one entry per `(a, b)` node.
+
+    """
+    gross_return = 1.0 + return_liquid
+    origin = liquid_grid[0]
+    step = liquid_grid[1] - liquid_grid[0]
+
+    def read_at(liquid_next: FloatND, values: Float1D) -> FloatND:
+        index = (liquid_next - origin) / step
+        return map_coordinates(values, [jnp.atleast_1d(index)], order=1, mode="nearest")
+
+    liquid_next = gross_return * a + pension_payout_return * b + retirement_income
+    flat_liquid = liquid_next.reshape(-1)
+    value = read_at(flat_liquid, next_value_retired)
+    marginal = read_at(flat_liquid, next_marginal_retired)
+    return PostDecision(
+        value=value.reshape(a.shape),
+        grad_a=(gross_return * marginal).reshape(a.shape),
+        grad_b=(pension_payout_return * marginal).reshape(a.shape),
     )
