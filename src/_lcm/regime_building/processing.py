@@ -101,7 +101,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, Solver
+from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import (
     MarkovTransition,
 )
@@ -196,8 +196,12 @@ def process_regimes(
         }
     )
 
+    # A NEGM regime nests a DC-EGM kernel that reads terminal carries exactly as a
+    # plain DC-EGM regime does, so terminal regimes in a NEGM model must build carry
+    # producers too.
     model_has_dcegm_regime = any(
-        isinstance(user_regime.solver, DCEGM) for user_regime in user_regimes.values()
+        isinstance(user_regime.solver, (DCEGM, NEGM))
+        for user_regime in user_regimes.values()
     )
 
     # Each regime's flat param names in the engine's binding vocabulary, keyed
