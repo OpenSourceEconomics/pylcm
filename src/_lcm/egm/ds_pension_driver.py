@@ -89,7 +89,7 @@ def solve_ds_pension_g2egm(
     retired_marginal = bequest_marginal
     next_retired_value = bequest_value
     for period in range(n_periods - 2, retirement_period - 1, -1):
-        value, retired_marginal = egm_one_asset_step(
+        step = egm_one_asset_step(
             next_value=next_retired_value,
             next_marginal=retired_marginal,
             liquid_grid=liquid_grid,
@@ -99,8 +99,9 @@ def solve_ds_pension_g2egm(
             return_liquid=return_liquid,
             income=retirement_income,
         )
-        solution[period] = {"retired": value}
-        next_retired_value = value
+        retired_marginal = step.marginal
+        solution[period] = {"retired": step.value}
+        next_retired_value = step.value
 
     # Working->retired boundary period: read the 1-D retired continuation through the
     # lump-sum payout.

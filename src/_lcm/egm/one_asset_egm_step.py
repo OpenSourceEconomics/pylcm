@@ -19,9 +19,22 @@ array is badly inaccurate where the value is steep (low liquid). Each step there
 both consumes `next_marginal` and publishes this period's marginal.
 """
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 
 from lcm.typing import Float1D
+
+
+class RetiredEGMResult(NamedTuple):
+    """A retired EGM step's value, marginal value of liquid, and consumption policy."""
+
+    value: Float1D
+    """This period's value on `liquid_grid`."""
+    marginal: Float1D
+    """This period's marginal value of liquid `V' = u'(c*)` on `liquid_grid`."""
+    consumption: Float1D
+    """This period's optimal consumption on `liquid_grid`."""
 
 
 def egm_one_asset_step(
@@ -34,7 +47,7 @@ def egm_one_asset_step(
     crra: float,
     return_liquid: float,
     income: float,
-) -> tuple[Float1D, Float1D]:
+) -> RetiredEGMResult:
     """Solve one period of the 1-D consumption--saving problem by EGM.
 
     Args:
@@ -51,8 +64,8 @@ def egm_one_asset_step(
         income: Deterministic income added to next-period liquid.
 
     Returns:
-        Tuple of this period's value and marginal value of liquid on `liquid_grid`,
-        each shape `(n_liquid,)`.
+        This period's value, marginal value of liquid, and consumption policy on
+        `liquid_grid`.
 
     """
     gross_return = 1.0 + return_liquid
@@ -80,7 +93,9 @@ def egm_one_asset_step(
     # Envelope theorem: the marginal value of liquid is the marginal utility of the
     # optimal consumption.
     marginal = consumption_on_grid ** (-crra)
-    return value, marginal
+    return RetiredEGMResult(
+        value=value, marginal=marginal, consumption=consumption_on_grid
+    )
 
 
 def _crra_utility(consumption: Float1D, crra: float) -> Float1D:

@@ -48,14 +48,14 @@ def _bequest_marginal():
 def test_retired_egm_matches_brute_on_the_liquid_interior():
     """One retired EGM step from the terminal bequest matches the brute solve."""
     v_dead, brute_retired = _brute_retired()
-    v_retired, _marginal = egm_one_asset_step(
+    step = egm_one_asset_step(
         next_value=v_dead,
         next_marginal=_bequest_marginal(),
         liquid_grid=_LIQUID_GRID,
         savings_grid=_SAVINGS_GRID,
         **_P,
     )
-    v_retired = np.asarray(v_retired)
+    v_retired = np.asarray(step.value)
     assert np.isfinite(v_retired).all()
     rel = np.abs(v_retired[_INTERIOR] - brute_retired[_INTERIOR]) / np.abs(
         brute_retired[_INTERIOR]
@@ -67,14 +67,17 @@ def test_retired_egm_matches_brute_on_the_liquid_interior():
 def test_retired_egm_value_is_increasing_in_liquid():
     """More liquid wealth is weakly more valuable in retirement."""
     v_dead, _brute = _brute_retired()
-    v_retired, marginal = egm_one_asset_step(
+    step = egm_one_asset_step(
         next_value=v_dead,
         next_marginal=_bequest_marginal(),
         liquid_grid=_LIQUID_GRID,
         savings_grid=_SAVINGS_GRID,
         **_P,
     )
-    assert np.all(np.diff(np.asarray(v_retired)) >= -1e-6)
+    assert np.all(np.diff(np.asarray(step.value)) >= -1e-6)
     # The marginal value of liquid is positive and decreasing (concave value).
-    assert np.all(np.asarray(marginal) > 0)
-    assert np.all(np.diff(np.asarray(marginal)) <= 1e-6)
+    assert np.all(np.asarray(step.marginal) > 0)
+    assert np.all(np.diff(np.asarray(step.marginal)) <= 1e-6)
+    # Consumption is positive and weakly increasing in liquid wealth.
+    assert np.all(np.asarray(step.consumption) > 0)
+    assert np.all(np.diff(np.asarray(step.consumption)) >= -1e-6)

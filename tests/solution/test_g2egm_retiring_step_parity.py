@@ -42,7 +42,7 @@ def _solve_to_boundary():
         params=get_params(), log_level="off"
     )
     v_dead = jnp.asarray(brute[4]["dead"])
-    v_retired, marginal_retired = egm_one_asset_step(
+    retired = egm_one_asset_step(
         next_value=v_dead,
         next_marginal=_LIQUID_GRID ** (-_CRRA),
         liquid_grid=_LIQUID_GRID,
@@ -53,8 +53,8 @@ def _solve_to_boundary():
         income=_RET_INCOME,
     )
     v_working_raw = g2egm_retiring_step(
-        next_value_retired=v_retired,
-        next_marginal_retired=marginal_retired,
+        next_value_retired=retired.value,
+        next_marginal_retired=retired.marginal,
         liquid_grid=_LIQUID_GRID,
         m_grid=_LIQUID_GRID,
         n_grid=_PENSION_GRID,
