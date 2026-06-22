@@ -335,7 +335,27 @@ class NEGM(Solver):
         outer adapter that sweeps the outer grid plus the mandatory per-node
         candidates and collapses the outer axis by `max`.
         """
-        inner_kernels = self.inner.build_period_kernels(context=context)
+        # The outer post-decision is the inner kernel's bound durable margin: its
+        # value is supplied per outer-grid node (`_with_outer_post_decision`), not
+        # recomputed from the outer action. Strip its transition from the inner
+        # build so the child-carry next-state function does not demand the outer
+        # action; `read_child` sources the bound value from the combo pool instead.
+        inner_context = replace(
+            context,
+            transitions=MappingProxyType(
+                {
+                    target: MappingProxyType(
+                        {
+                            name: func
+                            for name, func in target_transitions.items()
+                            if name != self.outer_post_decision
+                        }
+                    )
+                    for target, target_transitions in context.transitions.items()
+                }
+            ),
+        )
+        inner_kernels = self.inner.build_period_kernels(context=inner_context)
         outer_grid_values = self.outer_grid.to_jax()
         candidate_func = (
             context.functions[self.outer_no_adjustment_candidate]
