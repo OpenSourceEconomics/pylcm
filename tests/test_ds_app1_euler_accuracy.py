@@ -170,3 +170,22 @@ def test_app1_timing_measures_compile_after_a_warm_cache():
     )
     timing = app1_timing(tau=1.0, n_grid=300, n_periods=_LOCAL_N_PERIODS, n_runs=2)
     assert timing["compile_time"] > 0.0
+
+
+def test_app1_taste_shock_variant_is_in_paper_ballpark():
+    """The taste-shock retirement variant (Table 6, scale 0.05) scores a sane error.
+
+    EV1 taste shocks smooth the work/retire margin but leave the continuous
+    consumption Euler equation intact, so the mean log10 error stays in the same
+    band as the deterministic Table 2 baseline.
+    """
+    error = app1_euler_error(
+        tau=1.0,
+        n_grid=1000,
+        n_periods=_LOCAL_N_PERIODS,
+        n_subjects=_LOCAL_N_SUBJECTS,
+        seed=0,
+        taste_shock_scale=0.05,
+    )
+    assert np.isfinite(error)
+    assert -4.0 < error < -1.0

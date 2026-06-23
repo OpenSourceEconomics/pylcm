@@ -52,6 +52,7 @@ from lcm import (
 )
 from lcm.regime import Regime
 from lcm.solvers import DCEGM
+from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm_examples.iskhakov_et_al_2017 import (
     LaborSupply,
     RegimeId,
@@ -89,6 +90,7 @@ def build_app1_model(
     n_periods: int = N_PERIODS,
     asset_max: float = ASSET_MAX,
     upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues",
+    taste_shock_scale: float = 0.0,
 ) -> Model:
     """Build the DS-2026 Application 1 model solved by DC-EGM/FUES.
 
@@ -133,6 +135,9 @@ def build_app1_model(
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     last_age = ages.exact_values[-1]
 
+    taste_shock_kwargs = (
+        {"taste_shocks": ExtremeValueTasteShocks()} if taste_shock_scale > 0.0 else {}
+    )
     working_life = Regime(
         transition=next_regime_from_working,
         actions={
@@ -151,6 +156,7 @@ def build_app1_model(
         },
         solver=solver,
         active=lambda age, la=last_age: age < la,
+        **taste_shock_kwargs,
     )
     retirement = Regime(
         transition=next_regime_from_retirement,
@@ -185,6 +191,7 @@ def build_app1_params(
     interest_rate: float = INTEREST_RATE,
     discount_factor: float = DISCOUNT_FACTOR,
     wage: float = WAGE,
+    taste_shock_scale: float = 0.0,
 ) -> dict:
     """Build the parameter dict for the Application 1 model.
 
@@ -202,14 +209,17 @@ def build_app1_params(
     # All but the final period is a decision period; death arrives at the last
     # decision age, so `final_age_alive` is the second-to-last age.
     final_age_alive = n_periods - 2
+    working_life_params: dict = {
+        "utility": {"disutility_of_work": tau},
+        "labor_income": {"wage": wage},
+    }
+    if taste_shock_scale > 0.0:
+        working_life_params["taste_shocks"] = {"scale": taste_shock_scale}
     return {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
         "final_age_alive": final_age_alive,
-        "working_life": {
-            "utility": {"disutility_of_work": tau},
-            "labor_income": {"wage": wage},
-        },
+        "working_life": working_life_params,
         "retirement": {
             "next_wealth": {"labor_income": 0.0},
         },
@@ -306,6 +316,7 @@ def app1_euler_error(
     discount_factor: float = DISCOUNT_FACTOR,
     wage: float = WAGE,
     upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues",
+    taste_shock_scale: float = 0.0,
 ) -> float:
     """Solve, simulate, and score the FUES Euler error for one `(tau, n_grid)`.
 
@@ -329,6 +340,7 @@ def app1_euler_error(
         n_periods=n_periods,
         asset_max=asset_max,
         upper_envelope=upper_envelope,
+        taste_shock_scale=taste_shock_scale,
     )
     params = build_app1_params(
         tau=tau,
@@ -336,6 +348,7 @@ def app1_euler_error(
         interest_rate=interest_rate,
         discount_factor=discount_factor,
         wage=wage,
+        taste_shock_scale=taste_shock_scale,
     )
     result = model.simulate(
         params=params,
@@ -418,6 +431,7 @@ def app1_timing(
     interest_rate: float = INTEREST_RATE,
     discount_factor: float = DISCOUNT_FACTOR,
     wage: float = WAGE,
+    taste_shock_scale: float = 0.0,
 ) -> dict[str, float]:
     """Measure compile and steady-state run time of one DC-EGM solve.
 
@@ -447,6 +461,7 @@ def app1_timing(
         n_periods=n_periods,
         asset_max=asset_max,
         upper_envelope=upper_envelope,
+        taste_shock_scale=taste_shock_scale,
     )
     params = build_app1_params(
         tau=tau,
@@ -454,6 +469,7 @@ def app1_timing(
         interest_rate=interest_rate,
         discount_factor=discount_factor,
         wage=wage,
+        taste_shock_scale=taste_shock_scale,
     )
 
     # Clear the JAX compilation cache so the first solve genuinely compiles even
