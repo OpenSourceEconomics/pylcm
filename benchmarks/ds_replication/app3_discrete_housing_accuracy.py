@@ -67,8 +67,10 @@ the VFI column only.
 
 import functools
 import logging
+import time
 from collections.abc import Sequence
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -365,6 +367,7 @@ def _build_solved(
     tau: float,
     variant: str = "brute",
     upper_envelope: str = "fues",
+    use_taxes: bool = False,
 ):
     """Build and solve the App.3 model (brute or DC-EGM), caching the solution."""
     model = app3.build_model(
@@ -375,10 +378,70 @@ def _build_solved(
         n_consumption=n_consumption,
         asset_max=asset_max,
         upper_envelope=upper_envelope,
+        use_taxes=use_taxes,
     )
-    params = app3.build_params(variant=variant, n_periods=n_periods, tau=tau)
+    params = app3.build_params(
+        variant=variant, n_periods=n_periods, tau=tau, use_taxes=use_taxes
+    )
     solution = model.solve(params=params, log_level="off")
     return model, params, solution
+
+
+def app3_timing(
+    *,
+    n_assets: int,
+    n_wage_nodes: int = 5,
+    n_periods: int = N_PERIODS,
+    n_consumption: int = 60,
+    asset_max: float = ASSET_MAX,
+    tau: float = 0.07,
+    variant: str = "dcegm",
+    upper_envelope: str = "fues",
+    use_taxes: bool = False,
+    n_runs: int = 3,
+) -> dict[str, float]:
+    """Measure compile and steady-state run time of one App.3 solve.
+
+    The first solve times compile-plus-run; later solves of the same model reuse
+    the cached executable and time pure execution, so the compile cost is the
+    difference. Every solve is forced to completion with `block_until_ready`.
+    """
+    model = app3.build_model(
+        variant=variant,
+        n_assets=n_assets,
+        n_wage_nodes=n_wage_nodes,
+        n_periods=n_periods,
+        n_consumption=n_consumption,
+        asset_max=asset_max,
+        upper_envelope=upper_envelope,
+        use_taxes=use_taxes,
+    )
+    params = app3.build_params(
+        variant=variant, n_periods=n_periods, tau=tau, use_taxes=use_taxes
+    )
+
+    jax.clear_caches()
+    start = time.perf_counter()
+    jax.block_until_ready(model.solve(params=params, log_level="off"))
+    compile_plus_run = time.perf_counter() - start
+
+    runtimes = []
+    for _ in range(n_runs):
+        start = time.perf_counter()
+        jax.block_until_ready(model.solve(params=params, log_level="off"))
+        runtimes.append(time.perf_counter() - start)
+    runtime = min(runtimes)
+
+    result = {"compile_time": compile_plus_run - runtime, "runtime": runtime}
+    _logger.info(
+        "DS App.3 %s timing (use_taxes=%s): n_assets=%d -> compile=%.3fs run=%.3fs",
+        upper_envelope.upper() if variant == "dcegm" else "VFI",
+        use_taxes,
+        n_assets,
+        result["compile_time"],
+        result["runtime"],
+    )
+    return result
 
 
 def app3_vfi_euler_error(
@@ -396,6 +459,7 @@ def app3_vfi_euler_error(
     alpha: float = ALPHA,
     variant: str = "brute",
     upper_envelope: str = "fues",
+    use_taxes: bool = False,
 ) -> float:
     """Solve the App.3 model (brute or DC-EGM) and score the consumption Euler error.
 
@@ -430,6 +494,7 @@ def app3_vfi_euler_error(
         tau=tau,
         variant=variant,
         upper_envelope=upper_envelope,
+        use_taxes=use_taxes,
     )
     wage_nodes, wage_transition = _wage_nodes_and_transition(n_wage_nodes=n_wage_nodes)
 

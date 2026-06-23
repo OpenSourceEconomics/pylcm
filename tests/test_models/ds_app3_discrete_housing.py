@@ -111,6 +111,56 @@ N_WAGE_NODES = 5
 # params template without hardcoding the function name.
 RESOURCES_FUNCTION_NAME = "resources"
 
+# Piecewise-linear capital-income (asset-return) tax schedule for the with-tax
+# variant (Table 5). The paper prints the bracket numbers only in Figure 9; these
+# are the authors' replication values (`akshayshanker/FUES`,
+# `config_HR/STD_RES_SETTINGS_4_TAXES/master.yml`), an Australia-2015-16 schedule
+# written directly as a function of assets, `T(a) = B + tau_a * (a - a0)` on each
+# bracket `[a0, a1)`. Two level jumps (+0.10 at a=3.87, +0.15 at a=15) plus rate
+# kinks make the budget non-monotone — why Table 5 compares only FUES vs VFI.
+TAX_BRACKET_LOWER = (0.0, 2.20, 2.50, 2.75, 3.87, 6.97, 8.36, 12.0, 15.0, 20.0)
+TAX_BRACKET_OFFSET = (
+    0.0,
+    0.0,
+    0.00342,
+    0.00852,
+    0.11412,
+    0.05,
+    0.076688,
+    0.174968,
+    0.378968,
+    0.525968,
+)
+TAX_BRACKET_RATE = (
+    0.0,
+    0.0114,
+    0.0204,
+    0.005,
+    0.024,
+    0.0192,
+    0.027,
+    0.018,
+    0.0294,
+    0.0294,
+)
+
+
+def piecewise_capital_income_tax(assets: ContinuousState) -> FloatND:
+    """Piecewise-linear capital-income tax `T(a)` on the asset return.
+
+    Selects the bracket `[a0, a1)` containing `assets` (left-closed, so a value on
+    a boundary uses the upper bracket) and returns `B + tau_a * (a - a0)`. The
+    bracket offsets `B` carry the level jumps, so `T` is discontinuous at the jump
+    boundaries — the non-monotone budget the FUES upper envelope is built for.
+    """
+    lower = jnp.asarray(TAX_BRACKET_LOWER)
+    offset = jnp.asarray(TAX_BRACKET_OFFSET)
+    rate = jnp.asarray(TAX_BRACKET_RATE)
+    index = jnp.clip(
+        jnp.searchsorted(lower, assets, side="right") - 1, 0, lower.size - 1
+    )
+    return offset[index] + rate[index] * (assets - lower[index])
+
 
 @categorical(ordered=False)
 class DiscreteHousingRegimeId:
@@ -316,6 +366,64 @@ def borrowing_constraint(
     )
 
 
+def resources_taxed(
+    assets: ContinuousState,
+    wage_income: FloatND,
+    housing_flow: FloatND,
+    interest_rate: float,
+) -> FloatND:
+    """Resources with the piecewise capital-income tax (Table 5 with-tax variant).
+
+    `(1 + r) a - T(a) + y + housing_flow`, with `T(a)` the piecewise-linear
+    schedule. The tax's level jumps make resources non-monotone in `assets`, so
+    the inner consumption Euler inversion meets the kinked/jumped budget the FUES
+    upper envelope resolves.
+    """
+    return (
+        (1.0 + interest_rate) * assets
+        - piecewise_capital_income_tax(assets)
+        + wage_income
+        + housing_flow
+    )
+
+
+def next_assets_brute_taxed(
+    assets: ContinuousState,
+    wage_income: FloatND,
+    housing_flow: FloatND,
+    consumption: ContinuousAction,
+    interest_rate: float,
+) -> ContinuousState:
+    """Brute-force financial-asset law with the piecewise capital-income tax."""
+    return (
+        (1.0 + interest_rate) * assets
+        - piecewise_capital_income_tax(assets)
+        + wage_income
+        + housing_flow
+        - consumption
+    )
+
+
+def borrowing_constraint_taxed(
+    assets: ContinuousState,
+    wage_income: FloatND,
+    housing_flow: FloatND,
+    consumption: ContinuousAction,
+    interest_rate: float,
+) -> BoolND:
+    """Keep post-decision assets non-negative under the piecewise tax."""
+    return (
+        next_assets_brute_taxed(
+            assets=assets,
+            wage_income=wage_income,
+            housing_flow=housing_flow,
+            consumption=consumption,
+            interest_rate=interest_rate,
+        )
+        >= 0.0
+    )
+
+
 def bequest(
     assets: ContinuousState,
     housing: DiscreteState,
@@ -348,14 +456,18 @@ def build_model(
     asset_max: float = 40.0,
     n_consumption: int = 30,
     upper_envelope: Literal["fues", "mss", "ltm", "rfc"] = "fues",
+    use_taxes: bool = False,
 ) -> Model:
-    """Build the DS App.3 discrete-housing model (no-tax variant).
+    """Build the DS App.3 discrete-housing model.
 
     Args:
         variant: `"dcegm"` builds the DC-EGM regime (financial assets the Euler
             state, consumption inverted, the housing choice a discrete action);
             `"brute"` builds the grid-search (VFI) twin solving the same
             economics with no Euler machinery — the Table 4 methods.
+        use_taxes: When `True`, the budget carries the piecewise-linear
+            capital-income tax `T(a)` (the with-tax Table 5 variant, FUES vs VFI
+            only); when `False`, the no-tax Table 4/7 budget.
         n_assets: Number of financial-asset grid points; also the number of
             clustered exogenous savings nodes the DC-EGM solver scans.
         n_wage_nodes: Number of Markov wage discretisation nodes (the paper uses
@@ -385,6 +497,10 @@ def build_model(
     )
     wage_process = RouwenhorstAR1Process(n_points=n_wage_nodes)
 
+    resources_func = resources_taxed if use_taxes else resources
+    asset_law_brute = next_assets_brute_taxed if use_taxes else next_assets_brute
+    borrowing = borrowing_constraint_taxed if use_taxes else borrowing_constraint
+
     dead = UserRegime(
         transition=None,
         active=lambda age, fa=final_age_alive: age >= fa,
@@ -402,14 +518,14 @@ def build_model(
                 "wage": wage_process,
             },
             state_transitions={
-                "assets": next_assets_brute,
+                "assets": asset_law_brute,
                 "housing": next_housing,
             },
             actions={
                 "consumption": consumption_grid,
                 "housing_choice": DiscreteGrid(Housing),
             },
-            constraints={"borrowing_constraint": borrowing_constraint},
+            constraints={"borrowing_constraint": borrowing},
             functions={
                 "utility": utility,
                 "serviced_housing": serviced_housing,
@@ -445,7 +561,7 @@ def build_model(
             "serviced_housing": serviced_housing,
             "wage_income": wage_income,
             "housing_flow": housing_flow,
-            "resources": resources,
+            "resources": resources_func,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -479,6 +595,7 @@ def build_params(
     rental_price: float = 0.1,
     rental_service: float = 1.0,
     capital_income_tax: float = 0.0,
+    use_taxes: bool = False,
     rho_w: float = 0.977,
     sigma_w: float = 0.063,
     mu_w: float = 0.0,
@@ -522,10 +639,13 @@ def build_params(
     # The final period is the terminal bequest regime, so the last living age is
     # the second-to-last age.
     final_age_alive = n_periods - 2
-    budget_params = {
-        "interest_rate": interest_rate,
-        "capital_income_tax": capital_income_tax,
-    }
+    # The with-tax budget functions read the piecewise schedule directly, so they
+    # take no `capital_income_tax` rate; the no-tax budget keeps the linear hook.
+    budget_params = (
+        {"interest_rate": interest_rate}
+        if use_taxes
+        else {"interest_rate": interest_rate, "capital_income_tax": capital_income_tax}
+    )
     shared_working = {
         "utility": {"alpha": alpha, "kappa": kappa, "iota": iota},
         "serviced_housing": {"rental_service": rental_service},
