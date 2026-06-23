@@ -175,7 +175,7 @@ class DCEGM(Solver):
     error compounds across periods.
     """
 
-    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues"
+    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues"
     """Upper-envelope refinement backend removing dominated Euler candidates.
 
     - `"fues"`: the Fast Upper-Envelope Scan — a sequential scan that inserts
@@ -187,6 +187,10 @@ class DCEGM(Solver):
       scan that evaluates the envelope at every candidate abscissa (the
       quadratic baseline of Dobrescu & Shanker 2026; a kink lands between
       output nodes, recovered by the downstream read).
+    - `"mss"`: HARK's EGM upper envelope — a left-to-right sweep that keeps the
+      max-value branch at every abscissa *and* inserts the exact
+      segment-crossing point, so it tracks the FUES envelope tightly (the `MSS`
+      method of Dobrescu & Shanker 2026).
     """
 
     fues_jump_thresh: float = 2.0

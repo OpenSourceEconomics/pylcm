@@ -88,7 +88,7 @@ def build_app1_model(
     n_grid: int,
     n_periods: int = N_PERIODS,
     asset_max: float = ASSET_MAX,
-    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues",
+    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues",
 ) -> Model:
     """Build the DS-2026 Application 1 model solved by DC-EGM/FUES.
 
@@ -305,7 +305,7 @@ def app1_euler_error(
     interest_rate: float = INTEREST_RATE,
     discount_factor: float = DISCOUNT_FACTOR,
     wage: float = WAGE,
-    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues",
+    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues",
 ) -> float:
     """Solve, simulate, and score the FUES Euler error for one `(tau, n_grid)`.
 
@@ -369,7 +369,7 @@ def app1_accuracy_table(
     n_periods: int = N_PERIODS,
     n_subjects: int = 1000,
     seed: int = 0,
-    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues",
+    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues",
 ) -> pd.DataFrame:
     """Run the `tau`-by-grid Euler-error sweep, reproducing the FUES column.
 
@@ -411,7 +411,7 @@ def app1_timing(
     *,
     tau: float,
     n_grid: int,
-    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues",
+    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues",
     n_periods: int = N_PERIODS,
     n_runs: int = 3,
     asset_max: float = ASSET_MAX,
@@ -481,7 +481,12 @@ def app1_timing(
 
 def app1_timing_table(
     *,
-    upper_envelopes: Sequence[Literal["fues", "rfc", "ltm"]] = ("fues", "rfc", "ltm"),
+    upper_envelopes: Sequence[Literal["fues", "rfc", "ltm", "mss"]] = (
+        "fues",
+        "rfc",
+        "ltm",
+        "mss",
+    ),
     taus: Sequence[float] = (1.0,),
     n_grids: Sequence[int] = PAPER_GRIDS,
     n_periods: int = N_PERIODS,

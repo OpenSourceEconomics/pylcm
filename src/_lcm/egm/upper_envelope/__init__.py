@@ -13,15 +13,18 @@ step itself. Currently implemented:
   generalizes to multidimensional endogenous grids, and
 - the local-upper-bound brute method (`_lcm.egm.upper_envelope.ltm`), an
   $O(K^2)$ dense segment scan that evaluates the envelope at every candidate
-  abscissa (the quadratic baseline of Dobrescu & Shanker 2026).
+  abscissa (the quadratic baseline of Dobrescu & Shanker 2026), and
+- HARK's EGM upper envelope (`_lcm.egm.upper_envelope.mss`), a left-to-right
+  sweep that keeps the max-value branch at every abscissa *and* inserts the
+  exact segment-crossing point (the `MSS` method of Dobrescu & Shanker 2026).
 
 All backends share one signature: they consume the candidate
 `(endog_grid, policy, value)` rows plus the candidate supgradient
 `marginal_utility` ($\\mu = \\partial v / \\partial R$, exact by the envelope
 theorem) and return a NaN-padded weakly-ascending refined `(grid, policy,
-value)` triple plus the kept-point count. FUES and LTM ignore the supgradient
-(they recover slopes from the segments); RFC uses it to build each point's
-tangent.
+value)` triple plus the kept-point count. FUES, LTM, and MSS ignore the
+supgradient (they recover slopes from the segments); RFC uses it to build each
+point's tangent.
 """
 
 from collections.abc import Callable
@@ -38,6 +41,7 @@ from _lcm.egm.upper_envelope.fues import (
     refine_envelope as refine_envelope_fues,
 )
 from _lcm.egm.upper_envelope.ltm import refine_envelope as refine_envelope_ltm
+from _lcm.egm.upper_envelope.mss import refine_envelope as refine_envelope_mss
 from _lcm.egm.upper_envelope.rfc import refine_envelope as refine_envelope_rfc
 from lcm.solvers import DCEGM
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
@@ -151,6 +155,30 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
 
         return ltm_backend
 
+    if solver.upper_envelope == "mss":
+
+        def mss_backend(
+            *,
+            endog_grid: Float1D,
+            policy: Float1D,
+            value: Float1D,
+            marginal_utility: Float1D,
+        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+            """Run HARK's EGM upper-envelope sweep with crossing insertion.
+
+            MSS recovers segment slopes from the candidate chain, so the
+            candidate supgradient is not consumed.
+            """
+            del marginal_utility
+            return refine_envelope_mss(
+                endog_grid=endog_grid,
+                policy=policy,
+                value=value,
+                n_refined=n_refined,
+            )
+
+        return mss_backend
+
     msg = f"Unknown upper-envelope backend: {solver.upper_envelope!r}."
     raise ValueError(msg)
 
@@ -170,7 +198,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
     - `"fues"` streams it: `refine_to_bracket` runs the FUES scan and folds each
       step's emissions into an O(1) bracket-capture carry, so the NaN-padded
       `n_pad` envelope never materializes.
-    - `"rfc"` and `"ltm"` do *not* stream: their dense per-pair tests have no
+    - `"rfc"`, `"ltm"`, and `"mss"` do *not* stream: their dense scans have no
       sequential carry to fold a bracket out of, so the finder materializes the
       full refined envelope and locates the same
       `searchsorted(side="right")`-clamped bracket the row path would read. The
@@ -291,6 +319,43 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             )
 
         return ltm_bracket_finder
+
+    if solver.upper_envelope == "mss":
+
+        def mss_bracket_finder(
+            *,
+            endog_grid: Float1D,
+            policy: Float1D,
+            value: Float1D,
+            marginal_utility: Float1D,
+            x_query: ScalarFloat,
+        ) -> QueryBracket:
+            """Locate the query bracket from MSS's full refined envelope.
+
+            Runs the HARK sweep to a full NaN-padded envelope row, then reads the
+            bracket the row path would: the `searchsorted(side="right")` pair
+            clamped to `[1, max(n_kept - 1, 1)]` (the `interp_on_prepared_grid`
+            rule), so the published value cannot diverge from
+            full-envelope-then-interpolate. Like RFC and LTM, MSS has no
+            sequential carry to stream a bracket from, so it does not get
+            refine-to-query's `n_pad` memory win.
+            """
+            del marginal_utility
+            refined_grid, refined_policy, refined_value, n_kept = refine_envelope_mss(
+                endog_grid=endog_grid,
+                policy=policy,
+                value=value,
+                n_refined=n_refined,
+            )
+            return _bracket_from_refined_row(
+                refined_grid=refined_grid,
+                refined_policy=refined_policy,
+                refined_value=refined_value,
+                n_kept=n_kept,
+                x_query=x_query,
+            )
+
+        return mss_bracket_finder
 
     msg = f"Unknown upper-envelope backend: {solver.upper_envelope!r}."
     raise ValueError(msg)
