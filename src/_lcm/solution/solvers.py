@@ -393,12 +393,18 @@ class NEGM(Solver):
         # (`_with_outer_post_decision`), not recomputed from the outer action, so
         # the child-carry next-state function must not demand the outer action;
         # `read_child` sources the bound value from the combo pool instead.
+        # `_with_outer_post_decision` binds `outer_post_decision` into the
+        # regime's flat params at runtime, so the inner kernel reads it as a
+        # bound param — admit it as a flat param at build time too, so the inner
+        # scope check accepts the inner resources / utility reading it (the
+        # service-flow `utility(serviced(next_<durable>))` pattern).
         adjuster_context = replace(
             context,
             transitions=_strip_outer_transition(
                 transitions=context.transitions,
                 outer_post_decision=self.outer_post_decision,
             ),
+            flat_param_names=context.flat_param_names | {self.outer_post_decision},
         )
         adjuster_kernels = self.inner.build_period_kernels(context=adjuster_context)
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
