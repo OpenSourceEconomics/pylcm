@@ -23,15 +23,18 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax.numpy as jnp
 from beartype import beartype
+from dags import get_annotations, with_signature
+from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
+from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import (
     ContinuationPayload,
@@ -41,10 +44,27 @@ from _lcm.solution.contract import (
     Solver,
     SolverBuildContext,
 )
-from _lcm.typing import EGMStepFunction, FlatParams, MaxQOverAFunction, RegimeName
+from _lcm.typing import (
+    EconFunction,
+    EconFunctionsMapping,
+    EGMStepFunction,
+    FlatParams,
+    MaxQOverAFunction,
+    RegimeName,
+    TransitionFunction,
+    TransitionFunctionsMapping,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ActionName, Float1D, FloatND, FunctionName, StateName
+from lcm.typing import (
+    ActionName,
+    ContinuousState,
+    Float1D,
+    FloatND,
+    FunctionName,
+    StateName,
+    StateOrActionName,
+)
 
 
 @beartype(conf=REGIME_CONF)
@@ -267,6 +287,151 @@ class DCEGM(Solver):
         )
 
 
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class NEGM(Solver):
+    """Nested-EGM solver: an outer grid search over a durable/illiquid margin.
+
+    NEGM solves a model with one continuous margin the Euler equation cleanly
+    inverts on (liquid consumption-savings) plus a second continuous margin
+    that does not admit a clean inverse-Euler (a durable/illiquid stock with
+    adjustment frictions) by nesting:
+
+    - an *inner* standard 1-D DC-EGM solve of the consumption-savings problem,
+      conditional on the outer margin being fixed (this is exactly the existing
+      `DCEGM` kernel, with the outer margin entering inner resources and utility
+      as a constant and indexing the child durable state);
+    - an *outer* deterministic `max` over a grid of the outer post-decision
+      margin plus mandatory kink candidates (the no-adjustment point `s' = s`,
+      the floor corner).
+
+    The outer step is a search, not a second inverse-Euler: the outer value is
+    generically non-concave (adjustment-cost kink, floor corners), so a second
+    EGM inversion would be invalid there.
+
+    The `NEGM(inner=DCEGM(...), …)` composition makes "NEGM nests the 1-D
+    DC-EGM" literal: it reuses every inner field and its upper-envelope backend,
+    reuses `DCEGM.__post_init__` validation wholesale, and keeps the
+    outer-margin contract in one place. The model-contract check
+    `validate_negm_regimes` rejects, at `Model` construction, any model NEGM
+    does not fit (no outer margin, a coupled-2-Euler pension shape, a
+    taste-shock-ordering violation), naming the offending feature and the
+    correct alternative solver.
+    """
+
+    inner: DCEGM
+    """The inner 1-D DC-EGM config.
+
+    Carries the liquid Euler state, the consumption action, the resources and
+    post-decision functions, the savings grid, and the upper-envelope backend.
+    Its `__post_init__` guards run on construction, so an invalid inner config
+    is rejected before NEGM's own guards.
+    """
+
+    outer_action: ActionName
+    """The outer continuous action — the durable/illiquid choice.
+
+    Forbidden as the inner DC-EGM continuous action (the two margins must be
+    distinct).
+    """
+
+    outer_post_decision: FunctionName
+    """The outer post-decision function `s'` in `Regime.functions`.
+
+    The inner `resources` and the child-state index both read its value as a
+    constant. Forbidden as the inner DC-EGM post-decision function.
+    """
+
+    outer_grid: ContinuousGrid
+    """Exogenous grid over the outer post-decision margin `s'`."""
+
+    outer_no_adjustment_candidate: FunctionName | None = None
+    """State-specific kink candidate (the no-adjustment point `s' = s`).
+
+    Inserted per node because a fixed exogenous outer grid misses
+    state-specific kinks. `None` only when the model provably has no adjustment
+    kink.
+    """
+
+    def __post_init__(self) -> None:
+        _fail_if_outer_grid_is_stochastic(self.outer_grid)
+        _fail_if_outer_action_is_inner_action(
+            outer_action=self.outer_action, inner=self.inner
+        )
+        _fail_if_outer_post_decision_is_inner_post_decision(
+            outer_post_decision=self.outer_post_decision, inner=self.inner
+        )
+
+    @property
+    def requires_continuation_carries(self) -> bool:
+        """NEGM nests a DC-EGM solve that inverts the Euler equation."""
+        return True
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build one NEGM period adapter per period, wrapping the inner kernels.
+
+        The standalone `validate_negm_regimes` model-contract check (run during
+        regime processing) guarantees the outer margin is present and distinct
+        from the inner margin, that the outer margin is not Euler-coupled to the
+        inner state, and that any taste-shocked discrete choice is the outermost
+        aggregation. The inner DC-EGM period kernels are built once (with the
+        outer margin bound so it enters the inner resources and utility as a
+        constant and indexes the child durable state); each is wrapped in an
+        outer adapter that sweeps the outer grid plus the mandatory per-node
+        candidates and collapses the outer axis by `max`.
+        """
+        # The adjuster is the inner DC-EGM with the outer post-decision
+        # transition stripped: its value is supplied per outer-grid node
+        # (`_with_outer_post_decision`), not recomputed from the outer action, so
+        # the child-carry next-state function must not demand the outer action;
+        # `read_child` sources the bound value from the combo pool instead.
+        adjuster_context = replace(
+            context,
+            transitions=_strip_outer_transition(
+                transitions=context.transitions,
+                outer_post_decision=self.outer_post_decision,
+            ),
+        )
+        adjuster_kernels = self.inner.build_period_kernels(context=adjuster_context)
+        # The keeper is a normal passive DC-EGM: the outer post-decision is held
+        # at the current durable stock (`next_<durable> = <durable>`), so the
+        # durable becomes a genuine decision-independent passive state and
+        # `credited(s, s) = 0` makes keeping free. The identity is injected in two
+        # places that both read the outer post-decision: the transitions (so the
+        # child read indexes the unchanged durable) and the econ functions (so the
+        # inner resources DAG computes it from the durable leaf rather than
+        # demanding it as a bound param, as the adjuster does).
+        keeper_context = replace(
+            context,
+            transitions=_identity_outer_transition(
+                transitions=context.transitions,
+                outer_post_decision=self.outer_post_decision,
+            ),
+            functions=_with_identity_outer_function(
+                functions=context.functions,
+                outer_post_decision=self.outer_post_decision,
+            ),
+        )
+        keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
+        outer_grid_values = self.outer_grid.to_jax()
+        period_kernels = MappingProxyType(
+            {
+                period: _NEGMPeriodKernel(
+                    keeper_kernel=keeper_kernels.period_kernels[period],
+                    adjuster_kernel=adjuster_kernel,
+                    regime_name=context.regime_name,
+                    outer_grid_values=outer_grid_values,
+                    outer_post_decision=self.outer_post_decision,
+                )
+                for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
+            }
+        )
+        return SolutionKernels(
+            period_kernels=period_kernels,
+            continuation_template=keeper_kernels.continuation_template,
+        )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _GridSearchPeriodKernel:
     """The grid-search period adapter — wraps one max-Q-over-a core.
@@ -282,6 +447,10 @@ class _GridSearchPeriodKernel:
 
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
+
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the single max-Q-over-a core under the `"main"` key."""
+        return MappingProxyType({"main": self.core})
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
@@ -302,6 +471,7 @@ class _GridSearchPeriodKernel:
     def build_lower_args(
         self,
         *,
+        core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
@@ -322,7 +492,7 @@ class _GridSearchPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
@@ -331,7 +501,7 @@ class _GridSearchPeriodKernel:
         ages: AgeGrid,
     ) -> KernelResult:
         """Evaluate the grid search and assemble the `KernelResult`."""
-        V_arr = compiled_core(
+        V_arr = compiled_cores["main"](
             **state_action_space.states,
             **state_action_space.actions,
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -365,6 +535,10 @@ class _DCEGMPeriodKernel:
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the single EGM-step core under the `"main"` key."""
+        return MappingProxyType({"main": self.core})
+
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _DCEGMPeriodKernel:
         """Bind the regime's and its carry targets' fixed params into the core.
 
@@ -389,6 +563,7 @@ class _DCEGMPeriodKernel:
     def build_lower_args(
         self,
         *,
+        core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -412,7 +587,7 @@ class _DCEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -421,7 +596,7 @@ class _DCEGMPeriodKernel:
         ages: AgeGrid,
     ) -> KernelResult:
         """Run the DC-EGM step and assemble the `KernelResult`."""
-        V_arr, egm_carry, sim_policy = compiled_core(
+        V_arr, egm_carry, sim_policy = compiled_cores["main"](
             **state_action_space.states,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=_reachable_carry_subset(
@@ -455,6 +630,333 @@ class _DCEGMPeriodKernel:
             ).items():
                 params.setdefault(key, value)
         return params
+
+
+@dataclass(frozen=True, kw_only=True)
+class _NEGMPeriodKernel:
+    """The NEGM period adapter — a keeper plus an adjuster outer search.
+
+    Holds two inner DC-EGM period adapters and the exogenous outer grid. The
+    outer durable choice splits into two distinct traced programs:
+
+    - the *keeper* — a per-durable-state passive DC-EGM (`next_illiquid =
+      illiquid`, identity) that keeps the durable stock unchanged for free
+      (`credited(s, s) = 0`), run once over the full durable grid; and
+    - the *adjuster* — the inner DC-EGM with the outer transition stripped, run
+      once per exogenous outer-grid node with `outer_post_decision` bound to that
+      node as a constant.
+
+    Calling it runs the keeper once and the adjuster once per outer-grid node,
+    then collapses the stacked outer axis by `V = max(V_keeper, V_adjuster_sweep)`
+    — the same shape brute would search, but with the inner consumption margin
+    off-grid (the accuracy win). The adapter is non-jitted: it calls the shared
+    jitted inner cores, matching `_DCEGMPeriodKernel`.
+    """
+
+    keeper_kernel: PeriodKernel
+    """The keeper inner adapter — a passive per-durable-state DC-EGM."""
+
+    adjuster_kernel: PeriodKernel
+    """The adjuster inner adapter whose shared jitted core is swept."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params the outer node binds into."""
+
+    outer_grid_values: FloatND
+    """Exogenous grid over the outer post-decision margin `s'`."""
+
+    outer_post_decision: FunctionName
+    """Name of the outer post-decision function bound per outer-grid node."""
+
+    @property
+    def core(self) -> Callable:
+        """The shared jitted adjuster core, exposed for any single-core reader."""
+        return self.adjuster_kernel.core
+
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the keeper and adjuster inner cores, keyed independently.
+
+        Each is a distinct traced DC-EGM program — the keeper is a passive
+        per-durable-state solve (`next_illiquid = illiquid`, identity), the
+        adjuster strips that transition and binds the outer node as a constant —
+        so AOT compilation lowers and compiles each under its own key rather than
+        collapsing both into one program.
+        """
+        return MappingProxyType(
+            {
+                "keeper": self.keeper_kernel.core,
+                "adjuster": self.adjuster_kernel.core,
+            }
+        )
+
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _NEGMPeriodKernel:
+        """Bind the regime's fixed params into both inner kernels."""
+        return replace(
+            self,
+            keeper_kernel=self.keeper_kernel.with_fixed_params(
+                fixed_flat_params=fixed_flat_params
+            ),
+            adjuster_kernel=self.adjuster_kernel.with_fixed_params(
+                fixed_flat_params=fixed_flat_params
+            ),
+        )
+
+    def build_lower_args(
+        self,
+        *,
+        core_key: str,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> Mapping[str, object]:
+        """Delegate the named inner core's lowering arguments.
+
+        The keeper is a normal passive DC-EGM, lowered straight off the inner
+        kernel with no outer-node binding (its `next_illiquid = illiquid`
+        identity sources the durable as a genuine passive state). The adjuster
+        binds `outer_post_decision` into the regime's flat params at the first
+        outer-grid node, so its lowered inner program matches the shape every
+        per-node call traces; the outer axis is added outside the jitted core by
+        the `__call__` sweep.
+        """
+        if core_key == "keeper":
+            return self.keeper_kernel.build_lower_args(
+                core_key="main",
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+            )
+        return self.adjuster_kernel.build_lower_args(
+            core_key="main",
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            flat_params=_with_outer_post_decision(
+                flat_params=flat_params,
+                regime_name=self.regime_name,
+                outer_post_decision=self.outer_post_decision,
+                value=self.outer_grid_values[0],
+            ),
+            period=period,
+            ages=ages,
+        )
+
+    def __call__(
+        self,
+        *,
+        compiled_cores: Mapping[str, Callable],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Run keeper and adjuster sweep, collapse by `max`, assemble the result.
+
+        The keeper runs the passive DC-EGM once, yielding the value of leaving the
+        durable stock unchanged at every durable state. For each exogenous
+        outer-grid node `s'_j`, the adjuster runs with `outer_post_decision` bound
+        to `s'_j`, yielding `W_j`, the inner value over the liquid endogenous grid
+        at durable `s'_j`. The outer axis is collapsed by
+        `V = max(V_keeper, max_j W_j)`; the argmax over that stacked axis is the
+        outer simulation policy.
+        """
+        keeper_result = self.keeper_kernel(
+            compiled_cores={"main": compiled_cores["keeper"]},
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+        )
+        adjuster_results = [
+            self.adjuster_kernel(
+                compiled_cores={"main": compiled_cores["adjuster"]},
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                flat_params=_with_outer_post_decision(
+                    flat_params=flat_params,
+                    regime_name=self.regime_name,
+                    outer_post_decision=self.outer_post_decision,
+                    value=node,
+                ),
+                period=period,
+                ages=ages,
+            )
+            for node in self._outer_nodes()
+        ]
+        stacked_V = jnp.stack(
+            [keeper_result.V_arr, *(result.V_arr for result in adjuster_results)],
+            axis=0,
+        )
+        V_arr = jnp.max(stacked_V, axis=0)
+        # The keeper's carry and simulation policy are the prototype's published
+        # continuation; multi-node carry selection by the outer argmax is deferred
+        # to the cross-algorithm interface bundle (design §6).
+        return KernelResult(
+            V_arr=V_arr,
+            carry=keeper_result.carry,
+            sim_policy=keeper_result.sim_policy,
+        )
+
+    def _outer_nodes(self) -> list[FloatND]:
+        """The exogenous outer post-decision nodes, each a scalar `s'_j`.
+
+        The state-specific no-adjustment kink `s' = s` a fixed exogenous grid
+        would miss is covered by the keeper, not appended here.
+        """
+        return [
+            self.outer_grid_values[index]
+            for index in range(self.outer_grid_values.shape[0])
+        ]
+
+
+def _strip_outer_transition(
+    *,
+    transitions: TransitionFunctionsMapping,
+    outer_post_decision: FunctionName,
+) -> TransitionFunctionsMapping:
+    """Drop the outer post-decision transition from every target's transitions.
+
+    The adjuster supplies the outer post-decision value per outer-grid node, so
+    its child-carry next-state function must not demand the outer action;
+    `read_child` sources the bound value from the combo pool instead.
+    """
+    return MappingProxyType(
+        {
+            target: MappingProxyType(
+                {
+                    name: func
+                    for name, func in target_transitions.items()
+                    if name != outer_post_decision
+                }
+            )
+            for target, target_transitions in transitions.items()
+        }
+    )
+
+
+def _identity_outer_transition(
+    *,
+    transitions: TransitionFunctionsMapping,
+    outer_post_decision: FunctionName,
+) -> TransitionFunctionsMapping:
+    """Replace the outer post-decision transition with the durable identity.
+
+    The keeper holds the durable stock fixed (`next_<durable> = <durable>`), so
+    each target's outer transition becomes the identity law on the durable state.
+    The durable state name is the transition name with the `next_` prefix
+    removed, mirroring the engine's `next_<state>` auto-naming. The durable then
+    reads as a genuine decision-independent passive state in the inner DC-EGM,
+    and `read_child` sources `next_<durable> = <durable>` without demanding the
+    outer action.
+    """
+    durable_state = outer_post_decision.removeprefix("next_")
+    identity = cast(
+        "TransitionFunction",
+        _IdentityTransition(durable_state, annotation=ContinuousState),
+    )
+    return MappingProxyType(
+        {
+            target: MappingProxyType(
+                {
+                    name: (identity if name == outer_post_decision else func)
+                    for name, func in target_transitions.items()
+                }
+            )
+            for target, target_transitions in transitions.items()
+        }
+    )
+
+
+def _with_identity_outer_function(
+    *,
+    functions: EconFunctionsMapping,
+    outer_post_decision: FunctionName,
+) -> EconFunctionsMapping:
+    """Add the durable-identity outer post-decision to the econ-function DAG.
+
+    The inner resources function reads the outer post-decision (`next_<durable>`)
+    by name. The adjuster binds it as a per-node param; the keeper instead holds
+    it at the current durable stock, so the resources DAG computes
+    `next_<durable> = <durable>` from the durable leaf state. The injected
+    function declares the durable state as its single parameter, so DAG
+    concatenation wires the durable combo value into resources.
+    """
+    durable_state = outer_post_decision.removeprefix("next_")
+    # Copy the durable's annotation (and the outer post-decision's consumer
+    # annotation) off the existing functions so the DAG's annotation-consistency
+    # check, which requires every consumer of a leaf to agree, stays satisfied.
+    durable_annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
+    outer_annotation = _annotation_of_arg(
+        functions=functions, arg_name=outer_post_decision
+    )
+
+    @with_signature(
+        args={durable_state: durable_annotation},
+        return_annotation=outer_annotation,
+    )
+    def keep_outer_post_decision(**kwargs: FloatND) -> FloatND:
+        return kwargs[durable_state]
+
+    keep_outer_post_decision.__name__ = outer_post_decision
+    return MappingProxyType(
+        {
+            **dict(functions),
+            outer_post_decision: cast("EconFunction", keep_outer_post_decision),
+        }
+    )
+
+
+def _annotation_of_arg(
+    *, functions: EconFunctionsMapping, arg_name: StateOrActionName
+) -> str:
+    """Return the annotation the regime's functions use for one argument.
+
+    The DAG's annotation-consistency check requires every consumer of a leaf to
+    agree on its annotation, so the injected keeper function copies it from the
+    first regime function that declares the argument. Falls back to `"FloatND"`
+    when no function annotates it.
+    """
+    for func in functions.values():
+        annotations = ensure_annotations_are_strings(get_annotations(func))
+        annotation = annotations.get(arg_name, "no_annotation_found")
+        if annotation != "no_annotation_found":
+            return annotation
+    return "FloatND"
+
+
+def _with_outer_post_decision(
+    *,
+    flat_params: FlatParams,
+    regime_name: RegimeName,
+    outer_post_decision: FunctionName,
+    value: FloatND,
+) -> FlatParams:
+    """Bind the outer post-decision value into the regime's flat params.
+
+    The inner DC-EGM core threads its per-combo pool from `flat_params`, so
+    binding `outer_post_decision` there makes the inner resources and the
+    child-state index read the fixed outer node as a constant.
+    """
+    regime_params = {**dict(flat_params[regime_name]), outer_post_decision: value}
+    return MappingProxyType(
+        {
+            name: (
+                MappingProxyType(regime_params) if name == regime_name else regime_pool
+            )
+            for name, regime_pool in flat_params.items()
+        }
+    )
 
 
 def _reachable_carry_subset(
@@ -738,6 +1240,10 @@ class _OneAssetEGMPeriodKernel:
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the single EGM-step core under the `"main"` key."""
+        return MappingProxyType({"main": self.core})
+
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
     ) -> _OneAssetEGMPeriodKernel:
@@ -754,6 +1260,7 @@ class _OneAssetEGMPeriodKernel:
     def build_lower_args(
         self,
         *,
+        core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -778,7 +1285,7 @@ class _OneAssetEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -787,7 +1294,7 @@ class _OneAssetEGMPeriodKernel:
         ages: AgeGrid,  # noqa: ARG002
     ) -> KernelResult:
         """Run the 1-D EGM step and assemble the `KernelResult`."""
-        V_arr, carry = compiled_core(
+        V_arr, carry = compiled_cores["main"](
             **state_action_space.states,
             next_value=next_regime_to_V_arr[self.continuation_target],
             next_marginal=next_regime_to_egm_carry[
@@ -829,6 +1336,10 @@ class _TwoDimEGMPeriodKernel:
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the single EGM-step core under the `"main"` key."""
+        return MappingProxyType({"main": self.core})
+
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
     ) -> _TwoDimEGMPeriodKernel:
@@ -845,6 +1356,7 @@ class _TwoDimEGMPeriodKernel:
     def build_lower_args(
         self,
         *,
+        core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -863,7 +1375,7 @@ class _TwoDimEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -872,7 +1384,7 @@ class _TwoDimEGMPeriodKernel:
         ages: AgeGrid,  # noqa: ARG002
     ) -> KernelResult:
         """Run the G2EGM step and assemble the `KernelResult`."""
-        V_arr = compiled_core(
+        V_arr = compiled_cores["main"](
             **self._core_args(
                 state_action_space=state_action_space,
                 next_regime_to_V_arr=next_regime_to_V_arr,
@@ -1121,3 +1633,42 @@ def _union_fixed_params(
         ).items():
             bound.setdefault(key, value)
     return bound
+
+
+def _fail_if_outer_grid_is_stochastic(outer_grid: ContinuousGrid) -> None:
+    if isinstance(outer_grid, _ContinuousStochasticProcess):
+        msg = (
+            "NEGM.outer_grid must be a deterministic continuous grid, not a "
+            f"stochastic process ({type(outer_grid).__name__}). The outer grid "
+            "is the exogenous search grid over the durable post-decision margin; "
+            "it carries no transition. A stochastic durable margin belongs in a "
+            "process state, not the NEGM outer search."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_outer_action_is_inner_action(
+    *, outer_action: ActionName, inner: DCEGM
+) -> None:
+    if outer_action == inner.continuous_action:
+        msg = (
+            f"NEGM.outer_action '{outer_action}' coincides with the inner "
+            f"DC-EGM continuous action '{inner.continuous_action}'. The outer "
+            "durable/illiquid margin and the inner consumption margin must be "
+            "distinct actions."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_outer_post_decision_is_inner_post_decision(
+    *, outer_post_decision: FunctionName, inner: DCEGM
+) -> None:
+    if outer_post_decision == inner.post_decision_function:
+        msg = (
+            f"NEGM.outer_post_decision '{outer_post_decision}' coincides with "
+            f"the inner DC-EGM post-decision function "
+            f"'{inner.post_decision_function}'. The outer post-decision (the "
+            "next-period durable stock) and the inner post-decision (the liquid "
+            "savings) must be distinct functions."
+        )
+        raise RegimeInitializationError(msg)

@@ -89,7 +89,13 @@ from lcm.regime import (  # noqa: E402
     Regime,
 )
 from lcm.result import SimulationResult  # noqa: E402
-from lcm.solvers import DCEGM, GridSearch  # noqa: E402
+from lcm.solvers import (  # noqa: E402
+    DCEGM,
+    NEGM,
+    GridSearch,
+    OneAssetEGM,
+    TwoDimEGM,
+)
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import fixed_transition  # noqa: E402
 
@@ -110,6 +116,7 @@ jax.tree_util.register_pytree_node(
 
 __all__ = [
     "DCEGM",
+    "NEGM",
     "AgeGrid",
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
@@ -122,6 +129,7 @@ __all__ = [
     "Model",
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
+    "OneAssetEGM",
     "Phased",
     "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
@@ -133,6 +141,7 @@ __all__ = [
     "SolveSnapshot",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
+    "TwoDimEGM",
     "UniformIIDProcess",
     "__version__",
     "categorical",

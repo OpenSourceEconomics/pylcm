@@ -1,0 +1,321 @@
+"""Build-time validation of the NEGM model contract.
+
+A regime configured with `solver=NEGM(inner=DCEGM(...), ...)` must satisfy the
+nested-EGM contract on top of the inner DC-EGM contract. NEGM is a
+**1-D-inner + outer-search** algorithm: the inner consumption-savings problem is
+solved by DC-EGM conditional on a fixed outer (durable/illiquid) margin, and the
+outer margin is a deterministic grid search. Every violation raises
+`ModelInitializationError` at `Model` construction, naming the offending feature
+**and** the correct alternative solver, so no rejection path silently degrades to
+a different algorithm. The inner 1-D DC-EGM contract is validated separately,
+against the outer-margin-bound inner view the kernel builds; this module checks
+only the *outer*/nesting contract. The rules, in the order they are checked:
+
+- the outer margin exists: `outer_action` is a continuous action of the regime
+  and `outer_post_decision` is a function the regime declares — a regime with
+  no outer margin is a pure 1-D consumption-savings problem and must use
+  `DCEGM`,
+- the two margins are distinct: the outer action is not the inner continuous
+  action and the outer post-decision is not the inner post-decision (also
+  guarded at `NEGM` construction; re-checked here for a single fail-loud point),
+- no coupled-2-Euler structure: the outer post-decision enters the inner
+  resources and/or an additively-separable utility term and the child-state
+  index ONLY. If it enters the inner Euler-state transition or any other
+  savings-stage function (the differentiated continuation pool), the `c` and the
+  outer FOCs invert on the same continuation — the DS pension shape — and NEGM's
+  deterministic outer max is invalid; the model needs the 2-D EGM foundation
+  (G2EGM / multidim-RFC),
+- discrete-aggregation ordering: a taste-shocked discrete choice must be the
+  outermost aggregation, with the outer search living inside each discrete
+  branch. The single-inner-`DCEGM` composition wraps the outer max *around* the
+  inner solve (which already performs the discrete `logsumexp`), so the outer
+  max sits outside the discrete aggregation — the wrong order
+  (`max_{s'} logsumexp_d ≠ logsumexp_d max_{s'}`). A taste-shocked NEGM regime is
+  therefore rejected.
+
+The coupled-2-Euler detector is structural and deliberately over-rejects:
+catching the DS pension coupling (the outer post-decision feeding the inner
+Euler law) and accepting the kinked-toy / housing-adjuster shape (the outer
+post-decision read only by inner resources/utility and indexing the child
+durable state) is the boundary it provably distinguishes. A model that couples
+the two margins through a channel other than the inner Euler law and the
+savings-stage functions — e.g. a non-additively-separable utility cross-term in
+`(c, s')` — is rejected by the additive-separability check on utility.
+"""
+
+import inspect
+from collections.abc import Mapping
+from typing import cast
+
+from _lcm.egm.validation import (
+    _continuous_non_process_names,
+    _dag_ancestors,
+    _resolve_solve_functions,
+    _savings_stage_candidates,
+    _solve_grids,
+    _without,
+)
+from _lcm.typing import FunctionName, RegimeName
+from lcm.exceptions import ModelInitializationError
+from lcm.regime import Regime as UserRegime
+from lcm.solvers import DCEGM, NEGM
+from lcm.typing import UserFunction
+
+
+def validate_negm_regimes(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> None:
+    """Validate the NEGM contract for every regime with an `NEGM` solver.
+
+    Args:
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances.
+
+    Raises:
+        ModelInitializationError: If any regime with `solver=NEGM(...)` violates
+            the NEGM model contract.
+
+    """
+    for regime_name, user_regime in user_regimes.items():
+        if isinstance(user_regime.solver, NEGM):
+            _validate_negm_regime(
+                regime_name=regime_name,
+                user_regime=user_regime,
+            )
+
+
+def _validate_negm_regime(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+) -> None:
+    """Run all NEGM contract checks for a single regime, in order."""
+    solver = cast("NEGM", user_regime.solver)
+    inner = solver.inner
+
+    functions = _resolve_solve_functions(user_regime=user_regime)
+
+    _fail_if_outer_margin_absent(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=functions,
+        solver=solver,
+    )
+    _fail_if_margins_not_distinct(regime_name=regime_name, solver=solver, inner=inner)
+    _fail_if_outer_margin_euler_coupled(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=functions,
+        solver=solver,
+    )
+    _fail_if_taste_shock_ordering_violated(
+        regime_name=regime_name, user_regime=user_regime
+    )
+
+
+def _fail_if_outer_margin_absent(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: NEGM,
+) -> None:
+    """The outer durable margin must be a real action and post-decision function.
+
+    A regime that declares no outer continuous margin (the outer action is not
+    among its continuous actions, or the outer post-decision is not a declared
+    function) is a pure 1-D consumption-savings problem; NEGM would silently run
+    as plain DC-EGM, so it is rejected with the `DCEGM` pointer.
+    """
+    continuous_actions = _continuous_non_process_names(
+        grids=_solve_grids(slot=user_regime.actions)
+    )
+    if solver.outer_action not in continuous_actions:
+        msg = (
+            f"NEGM.outer_action '{solver.outer_action}' is not a continuous "
+            f"action of regime '{regime_name}'. NEGM nests an outer continuous "
+            f"margin; this regime declares none (continuous actions: "
+            f"{continuous_actions}) — use `DCEGM` for a pure 1-D "
+            "consumption-savings regime."
+        )
+        raise ModelInitializationError(msg)
+    # The outer post-decision `s'` is either a declared regime function or the
+    # auto-generated transition `next_<state>` of the durable state (its law of
+    # motion produces the next durable stock).
+    transition_names = {f"next_{name}" for name in user_regime.states}
+    if (
+        solver.outer_post_decision not in functions
+        and solver.outer_post_decision not in transition_names
+    ):
+        msg = (
+            f"NEGM.outer_post_decision '{solver.outer_post_decision}' is neither "
+            f"a declared function of regime '{regime_name}' nor the transition "
+            "of one of its states. The outer post-decision (the next-period "
+            "durable stock) must be a regime function or the durable state's "
+            f"`next_<state>` law that the inner resources and the child-state "
+            "index read; declare it, or use `DCEGM` for a pure 1-D "
+            "consumption-savings regime."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _fail_if_margins_not_distinct(
+    *,
+    regime_name: RegimeName,
+    solver: NEGM,
+    inner: DCEGM,
+) -> None:
+    """The outer and inner margins must be distinct actions and post-decisions.
+
+    Re-checks the construction-time guards at model build so every NEGM
+    rejection surfaces from one validation entry point.
+    """
+    if solver.outer_action == inner.continuous_action:
+        msg = (
+            f"NEGM.outer_action '{solver.outer_action}' of regime "
+            f"'{regime_name}' coincides with the inner DC-EGM continuous action "
+            f"'{inner.continuous_action}'. The outer durable/illiquid margin and "
+            "the inner consumption margin must be distinct actions."
+        )
+        raise ModelInitializationError(msg)
+    if solver.outer_post_decision == inner.post_decision_function:
+        msg = (
+            f"NEGM.outer_post_decision '{solver.outer_post_decision}' of regime "
+            f"'{regime_name}' coincides with the inner DC-EGM post-decision "
+            f"function '{inner.post_decision_function}'. The outer post-decision "
+            "(the next-period durable stock) and the inner post-decision (the "
+            "liquid savings) must be distinct functions."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _fail_if_outer_margin_euler_coupled(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: NEGM,
+) -> None:
+    """The outer margin must not enter the inner differentiated-Euler pool.
+
+    NEGM's deterministic outer max is valid only when the inner 1-D Euler
+    inversion is independent of the outer choice: the outer post-decision may be
+    read by the inner resources and an additively-separable utility term, and it
+    indexes the child durable state — but it must NOT enter the inner
+    Euler-state transition or any other savings-stage function (the regime
+    transition, stochastic weights, non-Euler state laws). Those functions feed
+    the differentiated continuation the inner Euler equation inverts on, so the
+    `c` and outer FOCs would invert on the same continuation — the DS pension
+    coupling — which a single inverse-Euler cannot represent.
+
+    The post-decision and resources functions are removed from the DAG (they
+    become leaves), so an ancestor hit on the outer post-decision is a genuine
+    decision-time coupling, not the legitimate resources read.
+    """
+    inner = solver.inner
+    opaque_functions = _without(
+        functions=functions,
+        names={inner.post_decision_function, inner.resources},
+    )
+    coupling_msg = (
+        f"the outer margin '{solver.outer_post_decision}' is Euler-coupled to "
+        f"the inner state '{inner.continuous_state}' of regime '{regime_name}' "
+        "through the shared continuation"
+    )
+    for _role, label, func in _savings_stage_candidates(
+        user_regime=user_regime, solver=inner
+    ):
+        ancestors = _dag_ancestors(functions=opaque_functions, target_func=func)
+        if solver.outer_post_decision in ancestors:
+            msg = (
+                f"In regime '{regime_name}', the {label} reads the outer "
+                f"post-decision '{solver.outer_post_decision}', so {coupling_msg}: "
+                "the inner Euler inversion is no longer independent of the outer "
+                "choice. NEGM's deterministic outer max is invalid here — use the "
+                "2-D EGM foundation (G2EGM / multidim-RFC), not NEGM."
+            )
+            raise ModelInitializationError(msg)
+
+    # Utility may carry the outer margin only additively-separably from the
+    # inner action: a cross-term in (consumption, outer post-decision) makes the
+    # inner marginal utility depend on the outer choice, so the inner Euler
+    # inversion couples to it.
+    _fail_if_utility_couples_action_and_outer_margin(
+        regime_name=regime_name,
+        functions=functions,
+        solver=solver,
+    )
+
+
+def _fail_if_utility_couples_action_and_outer_margin(
+    *,
+    regime_name: RegimeName,
+    functions: dict[FunctionName, UserFunction],
+    solver: NEGM,
+) -> None:
+    """Utility must read the outer margin additively-separably from consumption.
+
+    The inner Euler inversion treats the outer margin's utility term as a
+    constant (`u(c, s') = ũ(c) + g(s')`). If `utility` reaches both the inner
+    continuous action and the outer post-decision through a single function that
+    multiplies/composes them (a cross-term), the inner marginal utility depends
+    on the outer choice and the deterministic outer max over a frozen inner
+    inversion is invalid. The structural proxy: no individual utility-DAG
+    function may take both the inner action and the outer post-decision (or the
+    outer action) as direct arguments.
+    """
+    inner = solver.inner
+    outer_names = {solver.outer_action, solver.outer_post_decision}
+    utility_dag_names = _dag_ancestors(
+        functions=functions,
+        target_func=functions["utility"],
+    ) | {"utility"}
+    for func_name in utility_dag_names:
+        func = functions.get(func_name)
+        if func is None:
+            continue
+        arg_names = set(inspect.signature(func).parameters)
+        if inner.continuous_action in arg_names and arg_names & outer_names:
+            crossed = sorted(arg_names & outer_names)
+            msg = (
+                f"In regime '{regime_name}', the utility-DAG function "
+                f"'{func_name}' takes both the inner consumption action "
+                f"'{inner.continuous_action}' and the outer margin {crossed} as "
+                "arguments, so utility couples the two margins (it is not "
+                "additively separable in them). The inner marginal utility then "
+                "depends on the outer choice, so NEGM's deterministic outer max "
+                "over a frozen inner Euler inversion is invalid — use the 2-D EGM "
+                "foundation (G2EGM / multidim-RFC), not NEGM."
+            )
+            raise ModelInitializationError(msg)
+
+
+def _fail_if_taste_shock_ordering_violated(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+) -> None:
+    """A taste-shocked discrete choice must be the outermost aggregation.
+
+    The single-inner-`DCEGM` composition wraps the outer search around the whole
+    inner solve, which already performs the discrete `logsumexp` aggregation.
+    The outer max therefore sits *outside* the discrete aggregation, computing
+    `max_{s'} logsumexp_d` — but with EV taste shocks the correct order is
+    `logsumexp_d max_{s'}`, the search nested inside each discrete branch
+    (`max_{s'} logsumexp_d ≠ logsumexp_d max_{s'}`). A taste-shocked NEGM regime
+    is rejected until the outer search can be pushed inside each discrete branch.
+    """
+    if user_regime.taste_shocks is not None:
+        msg = (
+            f"Regime '{regime_name}' declares EV1 taste shocks and uses the NEGM "
+            "solver. NEGM wraps its outer durable-margin search around the inner "
+            "DC-EGM solve, which performs the discrete-choice aggregation — so "
+            "the outer max sits outside the taste-shock aggregation. With taste "
+            "shocks the discrete choice must be the outermost aggregation, with "
+            "the outer search nested inside each discrete branch "
+            "(max over the durable margin of logsumexp over the discrete choice "
+            "is not logsumexp of the max). Remove the taste shocks or use the "
+            "grid-search solver for this regime."
+        )
+        raise ModelInitializationError(msg)

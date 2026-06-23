@@ -19,6 +19,7 @@ from _lcm.egm.budget import (
     get_intrinsic_budget_constraint,
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry
+from _lcm.egm.negm_validation import validate_negm_regimes
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_stateless_terminal_carry_producer,
@@ -100,7 +101,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, Solver
+from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import (
     MarkovTransition,
 )
@@ -140,6 +141,7 @@ def process_regimes(
     # beat the generic unused-variable check); this call covers direct
     # `process_regimes` callers.
     validate_dcegm_regimes(user_regimes=user_regimes)
+    validate_negm_regimes(user_regimes=user_regimes)
 
     # The canonical specs hold every law in target-granular form, resolved per
     # phase: the simulate slice additionally holds every carried-only state
@@ -536,8 +538,12 @@ class _TerminalCarryPeriodKernel:
 
     @property
     def core(self) -> Callable:
-        """The base adapter's shared jitted core, for AOT dedup and lowering."""
+        """The base adapter's shared jitted core, for any single-core reader."""
         return self.base.core
+
+    def cores(self) -> Mapping[str, Callable]:
+        """Delegate to the base adapter's cores (a terminal regime is single-core)."""
+        return self.base.cores()
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
@@ -565,6 +571,7 @@ class _TerminalCarryPeriodKernel:
     def build_lower_args(
         self,
         *,
+        core_key: str = "main",
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -575,6 +582,7 @@ class _TerminalCarryPeriodKernel:
         """Build the base core's lowering arguments (the carry producer is jitted
         separately at build time, so it is not part of the AOT-compiled core)."""
         return self.base.build_lower_args(
+            core_key=core_key,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
@@ -586,7 +594,7 @@ class _TerminalCarryPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_core: Callable,
+        compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -596,7 +604,7 @@ class _TerminalCarryPeriodKernel:
     ) -> KernelResult:
         """Run the base kernel, then publish the regime's continuation carry."""
         result = self.base(
-            compiled_core=compiled_core,
+            compiled_cores=compiled_cores,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
@@ -716,11 +724,12 @@ def _build_simulation_phase(
     Q_and_F always uses the solve (non-vmapped) regime transition probs because
     it evaluates on the Cartesian grid, not per-subject.
 
-    For a DC-EGM regime, the budget constraint the EGM solve enforces
+    For a DC-EGM or NEGM regime, the budget constraint the EGM solve enforces
     intrinsically is synthesized and injected into the constraint set: the
     simulate-phase grid argmax needs it as a feasibility mask exactly like a
-    user-declared borrowing constraint of a brute-force regime. The solve
-    phase is unaffected — the EGM kernels never see it.
+    user-declared borrowing constraint of a brute-force regime. NEGM nests the
+    same inner 1-D solve, so the mask comes from its inner DC-EGM config. The
+    solve phase is unaffected — the EGM kernels never see it.
 
     Args:
         spec: The regime's per-phase specification.
@@ -747,8 +756,8 @@ def _build_simulation_phase(
             function, used for Q_and_F in both phases.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
-        solver: The regime's solver configuration; a DC-EGM regime gets the
-            synthesized intrinsic budget constraint.
+        solver: The regime's solver configuration; a DC-EGM or NEGM regime
+            gets the synthesized intrinsic budget constraint.
 
     Returns:
         Complete simulate functions container.
@@ -769,7 +778,7 @@ def _build_simulation_phase(
     )
     functions = core.functions
     constraints = core.constraints
-    if isinstance(solver, DCEGM):
+    if isinstance(solver, (DCEGM, NEGM)):
         if (
             DCEGM_BUDGET_CONSTRAINT_NAME in core.functions
             or DCEGM_BUDGET_CONSTRAINT_NAME in core.constraints
@@ -778,7 +787,7 @@ def _build_simulation_phase(
                 f"Regime '{regime_name}' declares a function or constraint "
                 f"named '{DCEGM_BUDGET_CONSTRAINT_NAME}'. That name is "
                 "reserved for the budget constraint the simulate phase "
-                "synthesizes for DC-EGM regimes; rename it."
+                "synthesizes for DC-EGM and NEGM regimes; rename it."
             )
             raise ModelInitializationError(msg)
         constraints = MappingProxyType(

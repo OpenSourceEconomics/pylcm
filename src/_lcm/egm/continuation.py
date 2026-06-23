@@ -372,8 +372,17 @@ def _get_child_carry_reader(
             )
             if not is_stochastic
         )
+        # A passive next-state is normally produced by `next_state_func`. Under
+        # NEGM the outer post-decision's transition is stripped (it is bound per
+        # outer-grid node, not recomputed), so that margin's next value is read
+        # from the combo pool instead.
         child_passive_values = tuple(
-            cast("ScalarFloat", next_states[f"next_{name}"])
+            cast(
+                "ScalarFloat",
+                next_states[f"next_{name}"]
+                if f"next_{name}" in next_states
+                else combo_pool[f"next_{name}"],
+            )
             for name in read.passive_state_names
         )
         deterministic_resources_kwargs = {

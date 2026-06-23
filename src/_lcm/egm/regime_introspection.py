@@ -11,7 +11,8 @@ modules import from.
 from collections.abc import Callable
 from typing import Any, cast
 
-from dags import concatenate_functions
+from dags import concatenate_functions, get_annotations, with_signature
+from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
@@ -21,8 +22,24 @@ from _lcm.utils.functools import get_union_of_args
 from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, NEGM
 from lcm.typing import ScalarFloat, UserFunction
+
+
+def _as_dcegm(user_regime: UserRegime) -> DCEGM | None:
+    """Return the DC-EGM config a carry target solves its inner Euler with.
+
+    A `DCEGM` regime solves directly; a `NEGM` regime nests the same 1-D
+    DC-EGM consumption-savings solve, so its child read uses `solver.inner`. Any
+    other solver (e.g. a terminal grid-search regime) returns `None` — the
+    target's carry lives in M-space and is read with the identity map.
+    """
+    solver = user_regime.solver
+    if isinstance(solver, DCEGM):
+        return solver
+    if isinstance(solver, NEGM):
+        return solver.inner
+    return None
 
 
 def _get_discrete_state_names(
@@ -70,12 +87,13 @@ def _get_process_state_names(
 def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
     """Name of a carry target's continuous (Euler) state.
 
-    For a DC-EGM target this is its configured Euler state; for a terminal
-    target it is its only state (uniqueness is checked by
+    For a DC-EGM or NEGM target this is its configured (inner) Euler state; for a
+    terminal target it is its only state (uniqueness is checked by
     `_find_unsupported_feature`).
     """
-    if isinstance(user_regime.solver, DCEGM):
-        return user_regime.solver.continuous_state
+    dcegm = _as_dcegm(user_regime)
+    if dcegm is not None:
+        return dcegm.continuous_state
     return next(iter(user_regime.states))
 
 
@@ -113,14 +131,14 @@ def _get_child_resources_function(
 ) -> Callable[..., ScalarFloat]:
     """Build the closed-over resources map of one carry target.
 
-    For a DC-EGM target the map is its declared resources function (resolved
-    to the solve-phase variant); for a terminal target the carry lives in
-    M-space and the map is the identity. The returned callable takes the
+    For a DC-EGM or NEGM target the map is its (inner) resources function
+    (resolved to the solve-phase variant); for a terminal target the carry lives
+    in M-space and the map is the identity. The returned callable takes the
     child's state, passive, and discrete-action values as keyword arguments
     (child names) so the kernel can compose it with the state transition and
     differentiate the composition per carry row.
     """
-    if isinstance(user_regime.solver, DCEGM):
+    if _as_dcegm(user_regime) is not None:
         return _concatenate_child_resources(user_regime=user_regime)
 
     state_name = next(iter(user_regime.states))
@@ -133,7 +151,7 @@ def _get_child_resources_function(
 
 def _get_child_resources_arg_names(*, user_regime: UserRegime) -> set[str]:
     """Argument names of a carry target's resources map."""
-    if isinstance(user_regime.solver, DCEGM):
+    if _as_dcegm(user_regime) is not None:
         return set(
             get_union_of_args([_concatenate_child_resources(user_regime=user_regime)])
         )
@@ -141,7 +159,7 @@ def _get_child_resources_arg_names(*, user_regime: UserRegime) -> set[str]:
 
 
 def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
-    """Concatenate a DC-EGM target's resources function from its user DAG.
+    """Concatenate a DC-EGM / NEGM target's resources function from its user DAG.
 
     Each user function's params are renamed to their qualified names
     (`<func>__<param>`) before concatenation, matching the engine's binding
@@ -150,12 +168,18 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     `Phased` function or a carried state's solve law) are resolved to their
     solve variant and baked into the DAG, so their outputs are computed from
     leaf states and params rather than demanded as leaves.
+
+    For a NEGM target the published continuation is the keeper's (the durable
+    stays put), so the inner resources' outer post-decision is replaced by the
+    durable identity `next_<durable> = <durable>`. The child resources then read
+    `<durable>` (a bound passive state) rather than demanding the outer
+    post-decision as an unbound leaf.
     """
     # Imported lazily: `regime_building.processing` imports the solver
     # registry, which imports this module, so a top-level import would cycle.
     from _lcm.regime_building import processing as _proc  # noqa: PLC0415
 
-    solver = cast("DCEGM", user_regime.solver)
+    dcegm = cast("DCEGM", _as_dcegm(user_regime))
     regime_params_template = create_regime_params_template(user_regime)
     resolved: dict[str, UserFunction] = {}
     for name, func in user_regime.functions.items():
@@ -168,6 +192,11 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     for name, value in user_regime.states.items():
         if isinstance(value, Phased) and name not in resolved:
             resolved[name] = cast("UserFunction", value.solve)
+    if isinstance(user_regime.solver, NEGM):
+        resolved[user_regime.solver.outer_post_decision] = _keeper_identity_function(
+            outer_post_decision=user_regime.solver.outer_post_decision,
+            functions=resolved,
+        )
     qnamed = {
         name: _proc._rename_params_to_qnames(  # noqa: SLF001
             func=func,
@@ -178,7 +207,43 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     }
     return concatenate_functions(
         functions=qnamed,
-        targets=solver.resources,
+        targets=dcegm.resources,
         enforce_signature=False,
         set_annotations=True,
     )
+
+
+def _keeper_identity_function(
+    *, outer_post_decision: FunctionName, functions: dict[str, UserFunction]
+) -> UserFunction:
+    """Build the keeper identity `next_<durable>(durable) = durable`.
+
+    The injected function declares the durable state as its single argument and
+    copies its annotation off the first regime function that declares it, so the
+    DAG's annotation-consistency check (which requires every consumer of a leaf
+    to agree) stays satisfied.
+    """
+    durable_state = outer_post_decision.removeprefix("next_")
+    annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
+
+    @with_signature(args={durable_state: annotation}, return_annotation=annotation)
+    def keep_outer_post_decision(**kwargs: ScalarFloat) -> ScalarFloat:
+        return kwargs[durable_state]
+
+    keep_outer_post_decision.__name__ = outer_post_decision
+    return cast("UserFunction", keep_outer_post_decision)
+
+
+def _annotation_of_arg(
+    *, functions: dict[str, UserFunction], arg_name: StateName
+) -> str:
+    """Return the annotation the regime's functions use for one argument.
+
+    Falls back to `"FloatND"` when no function annotates it.
+    """
+    for func in functions.values():
+        annotations = ensure_annotations_are_strings(get_annotations(func))
+        annotation = annotations.get(arg_name, "no_annotation_found")
+        if annotation != "no_annotation_found":
+            return annotation
+    return "FloatND"
