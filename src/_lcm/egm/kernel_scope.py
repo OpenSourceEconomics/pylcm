@@ -70,6 +70,8 @@ def _find_unsupported_feature(
             stochastic_transition_names=stochastic_transition_names,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             own_discrete_state_names=own_discrete_state_names,
+            euler_state_name=solver.continuous_state,
+            own_passive_state_names=own_passive_state_names,
             allowed_param_names=flat_param_names | regime_to_flat_param_names[target],
         )
         if message is not None:
@@ -107,6 +109,8 @@ def _find_unsupported_target_feature(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     own_discrete_state_names: tuple[StateName, ...],
+    euler_state_name: StateName,
+    own_passive_state_names: tuple[StateName, ...],
     allowed_param_names: frozenset[str],
 ) -> str | None:
     """Return a message naming the first unsupported feature of one target.
@@ -126,6 +130,8 @@ def _find_unsupported_target_feature(
             target_info=target_info,
             stochastic_transition_names=stochastic_transition_names,
             own_discrete_state_names=own_discrete_state_names,
+            euler_state_name=euler_state_name,
+            own_passive_state_names=own_passive_state_names,
         )
         if terminal_message is not None:
             return terminal_message
@@ -181,20 +187,24 @@ def _find_unsupported_terminal_target_feature(
     target_info: VInterpolationInfo,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     own_discrete_state_names: tuple[StateName, ...],
+    euler_state_name: StateName,
+    own_passive_state_names: tuple[StateName, ...],
 ) -> str | None:
     """Return a message naming the first unsupported feature of a terminal target.
 
-    A terminal carry covers exactly one continuous state and no actions. It
-    may additionally carry discrete states, but only those reached by a
-    *deterministic* transition into a parent-carried discrete combo axis. The
-    carry holds the terminal utility on the target's own discrete grid (one
-    wealth row per target discrete combo); the parent selects the row by
-    integer-indexing the carry's leading axis at the deterministic next-state
-    code — the identity transition selects the parent's own combo, an
-    action-driven transition (e.g. `next_housing = housing_choice`) selects the
-    chosen combo. A *stochastic* transition into the discrete state would need
-    an expectation over its node distribution rather than a single-index gather,
-    which is a separate, unsupported gap.
+    A terminal carry covers the parent's Euler continuous state and no actions.
+    It may additionally carry:
+    - discrete states reached by a *deterministic* transition into a
+      parent-carried discrete combo axis (the carry holds one row per target
+      discrete combo; the parent gathers the row at the next-state code), and
+    - passive continuous states the parent itself carries (the durable / outer
+      margin of a NEGM parent): the carry holds those as leading axes the parent
+      interpolates, the same alignment the non-terminal child read uses (the
+      Dobrescu-Shanker housing-bequest shape, `bequest(liquid, housing)`).
+
+    A *stochastic* transition into a discrete state would need an expectation
+    over its node distribution rather than a single-index gather, which is a
+    separate, unsupported gap.
     """
     own_discrete = set(own_discrete_state_names)
     for name, grid in target_info.discrete_states.items():
@@ -219,18 +229,64 @@ def _find_unsupported_terminal_target_feature(
                 "deterministically (the carry is gathered at a single "
                 "next-state code, not integrated over a node distribution)."
             )
-    n_continuous = len(target_info.continuous_states)
-    if n_continuous != 1:
-        return (
-            f"its terminal target regime '{target}' has continuous states "
-            f"{list(target_info.continuous_states)}; exactly one continuous "
-            "state is supported."
-        )
+    continuous_message = _find_unsupported_terminal_continuous_state(
+        target=target,
+        user_regime=user_regime,
+        target_info=target_info,
+        euler_state_name=euler_state_name,
+        own_passive_state_names=own_passive_state_names,
+    )
+    if continuous_message is not None:
+        return continuous_message
     if user_regime.actions:
         return (
             f"its terminal target regime '{target}' has actions "
             f"{list(user_regime.actions)}, so its carry is not "
             "its utility on the state grid."
+        )
+    return None
+
+
+def _find_unsupported_terminal_continuous_state(
+    *,
+    target: RegimeName,
+    user_regime: UserRegime,
+    target_info: VInterpolationInfo,
+    euler_state_name: StateName,
+    own_passive_state_names: tuple[StateName, ...],
+) -> str | None:
+    """Return a message if the terminal's continuous states are out of scope.
+
+    The terminal carry's endogenous grid is the parent's Euler-state grid, so
+    the terminal must declare that state first (the parent's child read takes
+    the first state as the Euler axis); any further continuous states must be
+    passive states the parent itself carries (the durable / outer margin).
+    """
+    continuous_state_names = list(target_info.continuous_states)
+    if euler_state_name not in continuous_state_names:
+        return (
+            f"its terminal target regime '{target}' has continuous states "
+            f"{continuous_state_names}, none of which is the parent's Euler "
+            f"state '{euler_state_name}'; the terminal carry's endogenous grid "
+            "is the parent's Euler-state grid."
+        )
+    if next(iter(user_regime.states), None) != euler_state_name:
+        return (
+            f"its terminal target regime '{target}' must declare the parent's "
+            f"Euler state '{euler_state_name}' as its first state; the parent's "
+            "child read takes the terminal's first state as the Euler axis."
+        )
+    unsupported_extra = [
+        name
+        for name in continuous_state_names
+        if name != euler_state_name and name not in set(own_passive_state_names)
+    ]
+    if unsupported_extra:
+        return (
+            f"its terminal target regime '{target}' has continuous states "
+            f"{unsupported_extra} the parent does not carry as passive states; "
+            "a terminal carry's extra continuous states must be passive states "
+            "shared with the parent (the durable / outer margin)."
         )
     return None
 

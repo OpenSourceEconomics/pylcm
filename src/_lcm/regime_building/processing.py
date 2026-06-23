@@ -663,25 +663,37 @@ def _build_terminal_carry_producer(
         not isinstance(grids[name], _ContinuousStochasticProcess)
         for name in discrete_state_names
     )
+    continuous_state_names = tuple(variables.continuous_state_names)
+    euler_state_name = next(iter(user_regime.states), None)
     if not variables.state_names:
         producer = get_stateless_terminal_carry_producer()
         template = build_template_egm_carry(n_rows=N_STATELESS_CARRY_ROWS)
     elif (
-        len(variables.continuous_state_names) == 1
+        len(continuous_state_names) >= 1
         and has_only_fixed_discrete_states
         and not user_regime.actions
+        and euler_state_name in continuous_state_names
     ):
-        state_name = variables.continuous_state_names[0]
+        # The parent's child read picks the terminal's Euler state as its first
+        # declared state (`_get_child_state_name`); the remaining continuous
+        # states are the passive (durable / outer) margins it interpolates as
+        # leading carry axes — the NEGM housing-bequest shape.
+        passive_state_names = tuple(
+            name for name in continuous_state_names if name != euler_state_name
+        )
         producer = get_terminal_wealth_carry_producer(
             functions=functions,
-            state_name=state_name,
+            state_name=euler_state_name,
             discrete_state_names=discrete_state_names,
+            passive_state_names=passive_state_names,
+            continuous_state_order=continuous_state_names,
         )
         leading_shape = tuple(
-            int(grids[name].to_jax().shape[0]) for name in discrete_state_names
+            int(grids[name].to_jax().shape[0])
+            for name in discrete_state_names + passive_state_names
         )
         template = build_template_egm_carry(
-            n_rows=int(grids[state_name].to_jax().shape[0]),
+            n_rows=int(grids[euler_state_name].to_jax().shape[0]),
             leading_shape=leading_shape,
         )
     else:

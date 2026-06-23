@@ -72,32 +72,42 @@ def get_terminal_wealth_carry_producer(
     functions: EconFunctionsMapping,
     state_name: StateName,
     discrete_state_names: tuple[StateName, ...] = (),
+    passive_state_names: tuple[StateName, ...] = (),
+    continuous_state_order: tuple[StateName, ...] = (),
 ) -> EGMCarryProducer:
-    """Build the carry producer for a terminal regime with one wealth state.
+    """Build the carry producer for a terminal regime with one Euler state.
 
     The carry's value rows are the regime's value-function array (terminal
-    value equals utility on the wealth grid) and its marginal-utility rows
-    are `jax.grad` of the utility DAG with respect to the wealth state. The
+    value equals utility on the state grid) and its marginal-utility rows
+    are `jax.grad` of the utility DAG with respect to the Euler state. The
     rows live in M-space ($R \\equiv M$), so the endogenous grid is the
-    wealth grid itself.
+    Euler-state grid itself.
 
-    With shared discrete states the carry has those axes leading, in the
-    `discrete_state_names` order (the value-function array's discrete-axis
-    order); each discrete combo holds the terminal utility and its wealth
-    gradient evaluated at that combo's discrete codes. The parent selects its
-    own combo by integer indexing the leading axes.
+    The carry's leading axes are the shared discrete states, then the passive
+    continuous states (the durable / outer margin of a NEGM parent), both in
+    value-function-array order; the Euler state is the trailing (row) axis. Each
+    leading combo holds the terminal utility and its Euler-state gradient
+    evaluated at that combo's discrete codes and passive node values. The parent
+    integer-indexes the discrete axes and interpolates the passive axes — the
+    same alignment the non-terminal child read uses.
 
     Args:
         functions: The terminal regime's processed functions (params renamed
             to qualified names).
-        state_name: Name of the regime's wealth state.
+        state_name: Name of the regime's Euler state (the parent's continuous
+            state, gradient and endogenous-grid axis).
         discrete_state_names: Shared discrete-state names in value-function
-            (carry leading-axis) order; empty for a single-wealth carry.
+            (carry leading-axis) order; empty for a single-Euler-state carry.
+        passive_state_names: Passive continuous-state names in value-function
+            order — carried as interpolated leading axes; empty for a single
+            continuous state.
+        continuous_state_order: The value-function array's continuous-axis
+            order, used to transpose `V_arr` into `(discrete…, passive…,
+            Euler)`; empty defaults to `(state_name,)`.
 
     Returns:
-        Producer mapping the wealth grid, the shared discrete grids, the
-        regime's flat params, and its value-function array to the terminal
-        carry.
+        Producer mapping the state grids, the regime's flat params, and its
+        value-function array to the terminal carry.
 
     """
     utility_func = concatenate_functions(
@@ -107,42 +117,70 @@ def get_terminal_wealth_carry_producer(
         set_annotations=True,
     )
     utility_extra_arg_names = tuple(
-        get_union_of_args([utility_func]) - {state_name} - set(discrete_state_names),
+        get_union_of_args([utility_func])
+        - {state_name}
+        - set(discrete_state_names)
+        - set(passive_state_names),
     )
+    cont_order = continuous_state_order or (state_name,)
 
     def produce_terminal_wealth_carry(
         *, V_arr: FloatND, **kwargs: FloatND | IntND
     ) -> EGMCarry:
-        """Evaluate the terminal value and its wealth gradient on the grid."""
+        """Evaluate the terminal value and its Euler-state gradient on the grid."""
         dtype = canonical_float_dtype()
-        wealth_grid = jnp.asarray(kwargs[state_name], dtype=dtype)
+        euler_grid = jnp.asarray(kwargs[state_name], dtype=dtype)
+        passive_grids = tuple(
+            jnp.asarray(kwargs[name], dtype=dtype) for name in passive_state_names
+        )
         extra = {name: kwargs[name] for name in utility_extra_arg_names}
         discrete_grids = tuple(kwargs[name] for name in discrete_state_names)
 
-        def wealth_gradient_at_combo(
+        def euler_gradient_at_combo(
             discrete_codes: tuple[IntND, ...],
         ) -> FloatND:
-            """Wealth gradient on the grid for one shared discrete combo."""
+            """Euler-state gradient block for one shared discrete combo.
+
+            Returns a `(passive…, Euler)` block — the gradient evaluated over
+            the mesh of passive node values (leading) and the Euler grid
+            (trailing).
+            """
             discrete_kwargs = dict(
                 zip(discrete_state_names, discrete_codes, strict=True)
             )
 
-            def utility_of_wealth(wealth_value: ScalarFloat) -> ScalarFloat:
+            def utility_at_point(
+                euler_value: ScalarFloat, passive_values: tuple[ScalarFloat, ...]
+            ) -> ScalarFloat:
+                passive_kwargs = dict(
+                    zip(passive_state_names, passive_values, strict=True)
+                )
                 return utility_func(
-                    **{state_name: wealth_value}, **discrete_kwargs, **extra
+                    **{state_name: euler_value},
+                    **discrete_kwargs,
+                    **passive_kwargs,
+                    **extra,
                 )
 
-            return jax.vmap(jax.grad(utility_of_wealth))(wealth_grid)
+            grad_euler = jax.grad(utility_at_point, argnums=0)
+            mesh = jnp.meshgrid(*passive_grids, euler_grid, indexing="ij")
+            flat = jnp.stack([axis.ravel() for axis in mesh], axis=-1)
+            grad_flat = jax.vmap(lambda row: grad_euler(row[-1], tuple(row[:-1])))(flat)
+            return grad_flat.reshape(mesh[0].shape)
 
-        value = jnp.asarray(V_arr, dtype=dtype)
+        value = _reorder_terminal_value(
+            V_arr=jnp.asarray(V_arr, dtype=dtype),
+            n_discrete=len(discrete_state_names),
+            continuous_state_order=cont_order,
+            passive_state_names=passive_state_names,
+            euler_state_name=state_name,
+        )
         marginal_utility = _grad_over_discrete_combos(
-            wealth_gradient_at_combo=wealth_gradient_at_combo,
+            wealth_gradient_at_combo=euler_gradient_at_combo,
             discrete_grids=discrete_grids,
         )
         leading_shape = value.shape[:-1]
-        endog_grid = jnp.broadcast_to(
-            wealth_grid, (*leading_shape, wealth_grid.shape[0])
-        )
+        endog_grid = jnp.broadcast_to(euler_grid, (*leading_shape, euler_grid.shape[0]))
         return EGMCarry(
             endog_grid=endog_grid,
             value=value,
@@ -153,6 +191,29 @@ def get_terminal_wealth_carry_producer(
         )
 
     return produce_terminal_wealth_carry
+
+
+def _reorder_terminal_value(
+    *,
+    V_arr: FloatND,
+    n_discrete: int,
+    continuous_state_order: tuple[StateName, ...],
+    passive_state_names: tuple[StateName, ...],
+    euler_state_name: StateName,
+) -> FloatND:
+    """Transpose `V_arr` into carry layout `(discrete…, passive…, Euler)`.
+
+    `V_arr` has its discrete axes leading, then its continuous axes in
+    `continuous_state_order`. The carry wants the passive continuous states
+    (in value-function order) before the Euler state, which trails as the row
+    axis; the discrete axes keep their leading positions.
+    """
+    target_continuous = (*passive_state_names, euler_state_name)
+    continuous_perm = [
+        n_discrete + continuous_state_order.index(name) for name in target_continuous
+    ]
+    axes = list(range(n_discrete)) + continuous_perm
+    return jnp.transpose(V_arr, axes)
 
 
 def _grad_over_discrete_combos(
