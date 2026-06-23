@@ -12,7 +12,6 @@ kernel build rather than with the model-construction validators.
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
 
 from _lcm.egm.regime_introspection import (
     _concatenate_regime_function,
@@ -170,17 +169,6 @@ def _find_unsupported_target_feature(
             "only the child's states and discrete actions, the regime's "
             "params, and age/period."
         )
-    for process_name in target_process_states:
-        grid = target_info.discrete_states[process_name]
-        if (
-            process_name in resources_arg_names
-            and not cast("_ContinuousStochasticProcess", grid).is_fully_specified
-        ):
-            return (
-                f"the resources function of target regime '{target}' reads "
-                f"the process state '{process_name}', whose grid points are "
-                "supplied at runtime."
-            )
     return None
 
 

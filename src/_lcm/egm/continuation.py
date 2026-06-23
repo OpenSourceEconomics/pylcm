@@ -186,9 +186,19 @@ class _ChildRead:
     """Per stochastic dimension: the node values fed into the resources query.
 
     Process dimensions carry the continuous AR(1) grid points (NaN when
-    supplied at runtime); Markov-discrete dimensions carry the integer
-    category codes (which equal the carry's leading-axis indices).
+    supplied at runtime — `process_grid_names` then names the runtime grid
+    that overrides the placeholder); Markov-discrete dimensions carry the
+    integer category codes (which equal the carry's leading-axis indices).
     """
+
+    process_grid_names: tuple[StateName | None, ...]
+    """Per stochastic dimension: the process state's name, or `None`.
+
+    A continuous AR(1) process state with runtime-supplied distribution params
+    has its grid points resolved only at solve time; this names the state whose
+    resolved grid the kernel substitutes for the build-time placeholder in
+    `stochastic_node_values`. `None` for Markov-discrete dimensions and for
+    fully-specified processes (whose build-time grid is already final)."""
 
     weight_keys: tuple[str, ...]
     """`weight_<target>__next_<state>` keys aligned with the stochastic dims."""
@@ -252,6 +262,7 @@ def bind_continuation(
     combo_pool: dict[str, Any],
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
+    resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
     """Bind a continuation plan to one combo pool and the next period's carries.
 
@@ -266,6 +277,12 @@ def bind_continuation(
     precomputing them outside the differentiated closure would silently drop
     those terms (Danskin does not cancel them: the probabilities are not the
     softmax of the values they weight).
+
+    `resolved_process_grids` maps each runtime-resolved process state name to
+    its solve-time grid (the node values its distribution params imply). A
+    child read whose stochastic dimension is such a process substitutes that
+    grid for the build-time NaN placeholder, so a resources function reading
+    the process node integrates over the resolved nodes.
     """
     regime_transition_probs = plan.compute_regime_transition_probs(**combo_pool)
     child_readers = {
@@ -275,6 +292,7 @@ def bind_continuation(
             combo_pool=combo_pool,
             post_decision_name=plan.post_decision_name,
             stochastic_node_batch_size=plan.stochastic_node_batch_size,
+            resolved_process_grids=resolved_process_grids,
         )
         for target in plan.carry_targets
     }
@@ -318,6 +336,7 @@ def _get_child_carry_reader(
     combo_pool: dict[str, Any],
     post_decision_name: FunctionName,
     stochastic_node_batch_size: int,
+    resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
     """Build the per-savings-node carry read of one target for one combo.
 
@@ -333,7 +352,20 @@ def _get_child_carry_reader(
     once per combo (they depend on the current node values, params, and — in
     asset-row mode — the combo pool's Euler value, never on the savings
     node — validated).
+
+    A runtime-resolved process dimension reads its node values from
+    `resolved_process_grids` (keyed by the process state name) rather than the
+    build-time NaN placeholder in `read.stochastic_node_values`, so a resources
+    function reading the process node integrates over the resolved nodes.
     """
+    stochastic_node_values = tuple(
+        resolved_process_grids[name]
+        if name is not None and name in resolved_process_grids
+        else values
+        for name, values in zip(
+            read.process_grid_names, read.stochastic_node_values, strict=True
+        )
+    )
     weight_vecs: tuple[Float1D, ...] = ()
     if read.weights_func is not None:
         weights = read.weights_func(**combo_pool)
@@ -435,6 +467,7 @@ def _get_child_carry_reader(
             carry=carry,
             prepared_search_grid=prepared_search_grid,
             prepared_valid_length=prepared_valid_length,
+            stochastic_node_values=stochastic_node_values,
             weight_vecs=weight_vecs,
             deterministic_index=deterministic_index,
             child_passive_values=child_passive_values,
@@ -522,6 +555,7 @@ def _expect_over_stochastic_nodes(
     carry: EGMCarry,
     prepared_search_grid: FloatND,
     prepared_valid_length: IntND,
+    stochastic_node_values: tuple[FloatND | IntND, ...],
     weight_vecs: tuple[Float1D, ...],
     deterministic_index: tuple[ScalarInt, ...],
     child_passive_values: tuple[ScalarFloat, ...],
@@ -556,7 +590,7 @@ def _expect_over_stochastic_nodes(
             stochastic_values = tuple(
                 values[index]
                 for values, index in zip(
-                    read.stochastic_node_values, node_indices, strict=True
+                    stochastic_node_values, node_indices, strict=True
                 )
             )
             queries, gradients = queries_and_gradients(stochastic_values)
@@ -581,7 +615,7 @@ def _expect_over_stochastic_nodes(
     node_index_mesh = jnp.meshgrid(
         *(
             jnp.arange(values.shape[0], dtype=jnp.int32)
-            for values in read.stochastic_node_values
+            for values in stochastic_node_values
         ),
         indexing="ij",
     )
@@ -949,6 +983,22 @@ def _build_child_reads(
             )
             for name in stochastic_state_names
         )
+        # A process state whose distribution params arrive at runtime has its
+        # `to_jax()` grid as a NaN placeholder above; name it so the kernel
+        # substitutes the resolved grid (the same node values the regime's own
+        # combo axes iterate, shared with the source regime) at solve time. A
+        # fully-specified process keeps its final build-time grid (`None`).
+        process_grid_names = tuple(
+            name
+            if (
+                isinstance(
+                    target_info.discrete_states[name], _ContinuousStochasticProcess
+                )
+                and not target_info.discrete_states[name].is_fully_specified
+            )
+            else None
+            for name in stochastic_state_names
+        )
         weight_keys = tuple(
             f"weight_{target}__next_{name}" for name in stochastic_state_names
         )
@@ -1018,6 +1068,7 @@ def _build_child_reads(
             stochastic_flags=stochastic_flags,
             stochastic_state_names=stochastic_state_names,
             stochastic_node_values=stochastic_node_values,
+            process_grid_names=process_grid_names,
             weight_keys=weight_keys,
             weights_func=weights_func,
             passive_state_names=passive_state_names,

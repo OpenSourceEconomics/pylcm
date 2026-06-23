@@ -12,7 +12,7 @@ each node's scalar value and optimal action at its single resources query. The
 per-combo carry holds the per-node published points, not the envelope workspace.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -39,9 +39,11 @@ from _lcm.egm.upper_envelope.fues import (
 )
 from _lcm.typing import (
     RegimeName,
+    StateName,
 )
 from lcm.typing import (
     Float1D,
+    FloatND,
     ScalarFloat,
     ScalarInt,
 )
@@ -55,6 +57,7 @@ def _get_solve_one_combo_asset_rows(
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
     savings_batch_size: int,
+    resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
     tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
@@ -126,6 +129,7 @@ def _get_solve_one_combo_asset_rows(
                 combo_pool=node_pool,
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
                 dtype=dtype,
+                resolved_process_grids=resolved_process_grids,
             )
             return expected_continuation(savings_value)
 
@@ -147,6 +151,7 @@ def _get_solve_one_combo_asset_rows(
                 utility_of_action=utility_of_action,
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
                 dtype=dtype,
+                resolved_process_grids=resolved_process_grids,
             )
             actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
                 compute_node=compute_node,
@@ -277,6 +282,7 @@ def _get_expected_continuation_value(
     combo_pool: dict[str, Any],
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
+    resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], ScalarFloat]:
     """Build the expected-continuation map $W(A)$ for one combo pool.
 
@@ -298,6 +304,7 @@ def _get_expected_continuation_value(
         combo_pool=combo_pool,
         next_regime_to_egm_carry=next_regime_to_egm_carry,
         dtype=dtype,
+        resolved_process_grids=resolved_process_grids,
     )
 
     def expected_continuation(savings_value: ScalarFloat) -> ScalarFloat:

@@ -120,6 +120,7 @@ def _get_solve_one_combo(
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
     savings_batch_size: int,
+    resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
     tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
@@ -129,6 +130,10 @@ def _get_solve_one_combo(
     `euler_batch_size` is accepted for a uniform builder signature but unused:
     the single-post-state kernel solves once per combo, with no per-asset-node
     axis to splay (only the asset-row kernel honors it).
+
+    `resolved_process_grids` maps each runtime-resolved process state to its
+    solve-time grid, threaded into the continuation so a resources function
+    reading a process node integrates over the resolved nodes.
     """
     del euler_batch_size
     dtype = state_grid.dtype
@@ -167,6 +172,7 @@ def _get_solve_one_combo(
             utility_of_action=utility_of_action,
             next_regime_to_egm_carry=next_regime_to_egm_carry,
             dtype=dtype,
+            resolved_process_grids=resolved_process_grids,
         )
         actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
             compute_node=compute_node,
@@ -284,6 +290,7 @@ def _get_compute_node(
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
+    resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
     """Build the per-savings-node Euler inversion for one discrete combo."""
     continuation = bind_continuation(
@@ -291,6 +298,7 @@ def _get_compute_node(
         combo_pool=combo_pool,
         next_regime_to_egm_carry=next_regime_to_egm_carry,
         dtype=dtype,
+        resolved_process_grids=resolved_process_grids,
     )
 
     def inverse_marginal_utility(

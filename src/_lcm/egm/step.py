@@ -155,6 +155,7 @@ from _lcm.egm.regime_introspection import (
     _concatenate_regime_function,
     _get_discrete_state_names,
     _get_passive_state_names,
+    _get_process_state_names,
 )
 from _lcm.egm.step_core import (
     CONSTRAINED_OFFSET_FRACTION,
@@ -303,6 +304,15 @@ def build_egm_step_functions(
     own_discrete_action_values = MappingProxyType(
         dict(state_action_space.discrete_actions)
     )
+    # Process states whose distribution params arrive at runtime have their
+    # grids resolved per solve; thread those resolved grids into the
+    # continuation so a process-reading resources function integrates over the
+    # solve-time nodes rather than the build-time NaN placeholder.
+    own_runtime_process_names = tuple(
+        name
+        for name in _get_process_state_names(v_interpolation_info=own_v_info)
+        if not own_v_info.discrete_states[name].is_fully_specified
+    )
     # `batch_size` on a discrete-state, process, or passive-state grid splays
     # that combo axis (per-axis `productmap` blocks) to shed memory; 0 keeps
     # the fused vmap. Discrete-action axes are never split (the discrete-action
@@ -388,6 +398,7 @@ def build_egm_step_functions(
                 own_discrete_state_names=own_discrete_state_names,
                 own_passive_state_names=own_passive_state_names,
                 own_discrete_action_values=own_discrete_action_values,
+                own_runtime_process_names=own_runtime_process_names,
                 euler_axis_in_V=euler_axis_in_V,
                 has_taste_shocks=has_taste_shocks,
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -445,6 +456,7 @@ def _get_egm_step(
     own_discrete_state_names: tuple[StateName, ...],
     own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_values: MappingProxyType[ActionName, Any],
+    own_runtime_process_names: tuple[StateName, ...],
     euler_axis_in_V: int,
     has_taste_shocks: bool,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
@@ -520,6 +532,12 @@ def _get_egm_step(
             if has_taste_shocks
             else jnp.asarray(0.0, dtype=dtype)
         )
+        resolved_process_grids = MappingProxyType(
+            {
+                name: jnp.asarray(kwargs[name], dtype=dtype)
+                for name in own_runtime_process_names
+            }
+        )
         solve_one_combo = get_solve_one_combo(
             pieces=pieces,
             pool=pool,
@@ -527,6 +545,7 @@ def _get_egm_step(
             next_regime_to_egm_carry=next_regime_to_egm_carry,
             euler_batch_size=euler_batch_size,
             savings_batch_size=savings_batch_size,
+            resolved_process_grids=resolved_process_grids,
         )
 
         if pieces.combo_names:
