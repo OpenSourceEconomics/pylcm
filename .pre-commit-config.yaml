@@ -39,7 +39,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: tests/mock_regime.py|^tests/test_models/|^tests/data/
+        exclude: tests/mock_regime.py|^tests/test_models/|^tests/data/|tests/solution/_envelope_oracle.py
       - id: no-commit-to-branch
         args:
           - --branch
