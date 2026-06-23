@@ -363,17 +363,20 @@ def _build_solved(
     n_consumption: int,
     asset_max: float,
     tau: float,
+    variant: str = "brute",
+    upper_envelope: str = "fues",
 ):
-    """Build and solve the brute App.3 model, caching the solution arrays."""
+    """Build and solve the App.3 model (brute or DC-EGM), caching the solution."""
     model = app3.build_model(
-        variant="brute",
+        variant=variant,
         n_assets=n_assets,
         n_wage_nodes=n_wage_nodes,
         n_periods=n_periods,
         n_consumption=n_consumption,
         asset_max=asset_max,
+        upper_envelope=upper_envelope,
     )
-    params = app3.build_params(variant="brute", n_periods=n_periods, tau=tau)
+    params = app3.build_params(variant=variant, n_periods=n_periods, tau=tau)
     solution = model.solve(params=params, log_level="off")
     return model, params, solution
 
@@ -391,8 +394,10 @@ def app3_vfi_euler_error(
     interest_rate: float = INTEREST_RATE,
     discount_factor: float = DISCOUNT_FACTOR,
     alpha: float = ALPHA,
+    variant: str = "brute",
+    upper_envelope: str = "fues",
 ) -> float:
-    """Solve the brute App.3 model and score the VFI consumption Euler error.
+    """Solve the App.3 model (brute or DC-EGM) and score the consumption Euler error.
 
     Solves the discrete-housing model by grid search (VFI), simulates a sample
     path and a full-grid policy panel, and returns the mean log10 stochastic
@@ -423,6 +428,8 @@ def app3_vfi_euler_error(
         n_consumption=n_consumption,
         asset_max=asset_max,
         tau=tau,
+        variant=variant,
+        upper_envelope=upper_envelope,
     )
     wage_nodes, wage_transition = _wage_nodes_and_transition(n_wage_nodes=n_wage_nodes)
 
