@@ -190,6 +190,22 @@ def _liquid_housing_grids(model) -> tuple[np.ndarray, np.ndarray]:
     return liquid, housing
 
 
+# Cap on the per-axis resolution of the policy-reconstruction seed grid. The
+# panel simulate argmaxes over (consumption x housing_investment) per seeded
+# subject, so a full liquid x housing seed at paper NG (NG^2 subjects) blows up
+# device memory; a capped seed grid keeps the panel small while still resolving
+# the consumption policy for linear interpolation.
+_MAX_POLICY_SEED_POINTS = 16
+
+
+def _subsample(grid: np.ndarray, max_points: int) -> np.ndarray:
+    """Return at most `max_points` evenly-spaced nodes of `grid`, ends included."""
+    if len(grid) <= max_points:
+        return grid
+    index = np.unique(np.linspace(0, len(grid) - 1, max_points).round().astype(int))
+    return grid[index]
+
+
 def _policy_interpolators(
     *,
     model,
@@ -203,13 +219,18 @@ def _policy_interpolators(
 ) -> dict[tuple[int, int], RegularGridInterpolator]:
     """Build a per-`(period, wage)` consumption interpolator over `(liquid, housing)`.
 
-    The period-`p` consumption policy is read off a fresh simulation seeded over
-    the full `(liquid, housing, wage)` *regular* grid at period `p`'s age: the
-    first simulated period then lands exactly on that regular grid, so its chosen
+    The period-`p` consumption policy is read off a fresh simulation seeded over a
+    `(liquid, housing, wage)` *regular* grid at period `p`'s age: the first
+    simulated period then lands exactly on that regular grid, so its chosen
     consumption reshapes into a `RegularGridInterpolator` on `(liquid, housing)`
     per wage node. Seeding once at age 0 and reading later periods would not work
-    — the agent evolves off the regular grid after period 0.
+    — the agent evolves off the regular grid after period 0. The seed grid is
+    subsampled to `_MAX_POLICY_SEED_POINTS` per axis so the panel stays within
+    device memory at paper-scale NG; the policy is smooth enough that the coarser
+    interpolation grid is adequate.
     """
+    liquid_grid = _subsample(liquid_grid, _MAX_POLICY_SEED_POINTS)
+    housing_grid = _subsample(housing_grid, _MAX_POLICY_SEED_POINTS)
     liquid = np.repeat(liquid_grid, len(housing_grid) * len(wage_nodes))
     housing = np.tile(np.repeat(housing_grid, len(wage_nodes)), len(liquid_grid))
     wage = np.tile(wage_nodes, len(liquid_grid) * len(housing_grid))

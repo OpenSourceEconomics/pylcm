@@ -99,6 +99,19 @@ def _nearest_wage_index(wage_values: np.ndarray, nodes: np.ndarray) -> np.ndarra
     return np.abs(wage_values[:, None] - nodes[None, :]).argmin(axis=1)
 
 
+# Cap on the liquid-seed resolution of the policy reconstruction; bounds the
+# panel size so the Euler scales to paper-scale NG (see `_policy_lookup`).
+_MAX_POLICY_SEED_LIQUID = 24
+
+
+def _subsample(grid: np.ndarray, max_points: int) -> np.ndarray:
+    """Return at most `max_points` evenly-spaced nodes of `grid`, ends included."""
+    if len(grid) <= max_points:
+        return grid
+    index = np.unique(np.linspace(0, len(grid) - 1, max_points).round().astype(int))
+    return grid[index]
+
+
 @functools.cache
 def _build_solved(
     *,
@@ -167,6 +180,11 @@ def _policy_lookup(
     to the sorted liquid samples and the chosen consumption, ready for linear
     interpolation in liquid at an arbitrary `a'`.
     """
+    # Subsample the liquid seed so the panel (liquid x n_housing x wage subjects,
+    # each argmaxing over consumption x housing_choice) stays within device
+    # memory at paper-scale NG; consumption is smooth in liquid, so a coarser
+    # interpolation grid is adequate.
+    liquid_grid = _subsample(liquid_grid, _MAX_POLICY_SEED_LIQUID)
     ages = model.ages.exact_values
     lookup: dict[tuple[int, int, int], tuple[np.ndarray, np.ndarray]] = {}
     for period in range(n_periods):
