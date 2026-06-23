@@ -21,6 +21,7 @@ import pytest
 from benchmarks.ds_replication.app1_retirement_accuracy import (
     app1_accuracy_table,
     app1_euler_error,
+    app1_timing,
     sample_path_euler_error,
 )
 
@@ -137,3 +138,17 @@ def test_app1_rfc_euler_error_is_in_the_same_regime_as_fues():
     assert np.isfinite(rfc)
     assert -4.0 < rfc < -1.0
     assert abs(rfc - fues) < 1.0
+
+
+def test_app1_timing_separates_compile_from_runtime():
+    """The first solve times compile-plus-run; later solves time pure execution.
+
+    JAX caches the compiled solve, so the compile cost (first-call time minus the
+    steady-state runtime) is strictly positive, and the steady-state runtime is a
+    finite, positive number.
+    """
+    timing = app1_timing(tau=1.0, n_grid=300, n_periods=_LOCAL_N_PERIODS, n_runs=2)
+    assert np.isfinite(timing["compile_time"])
+    assert np.isfinite(timing["runtime"])
+    assert timing["runtime"] > 0.0
+    assert timing["compile_time"] > 0.0

@@ -34,9 +34,11 @@ for the paper's `tau`-by-grid sweep. The full grids `{1000, 2000, 3000, 6000,
 
 import functools
 import logging
+import time
 from collections.abc import Sequence
 from typing import Literal
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -402,4 +404,125 @@ def app1_accuracy_table(
         for tau in taus
         for n_grid in n_grids
     ]
+    return pd.DataFrame(rows)
+
+
+def app1_timing(
+    *,
+    tau: float,
+    n_grid: int,
+    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues",
+    n_periods: int = N_PERIODS,
+    n_runs: int = 3,
+    asset_max: float = ASSET_MAX,
+    interest_rate: float = INTEREST_RATE,
+    discount_factor: float = DISCOUNT_FACTOR,
+    wage: float = WAGE,
+) -> dict[str, float]:
+    """Measure compile and steady-state run time of one DC-EGM solve.
+
+    JAX JIT-compiles on the first solve and reuses the cached executable on later
+    solves of the same model, so the first call times compile-plus-run and the
+    later calls time pure execution; the compile cost is the difference. Every
+    solve is forced to completion with `block_until_ready` before the clock is
+    read, since JAX dispatch is asynchronous.
+
+    Args:
+        tau: Per-period utility cost of working.
+        n_grid: Number of financial-asset grid points.
+        upper_envelope: DC-EGM upper-envelope backend to time.
+        n_periods: Number of model periods.
+        n_runs: Number of post-compile solves; the fastest is the runtime estimate.
+        asset_max: Upper bound of the asset grid.
+        interest_rate: Net asset return.
+        discount_factor: Discount factor.
+        wage: Deterministic per-period wage while working.
+
+    Returns:
+        Mapping with `compile_time` and `runtime` in seconds.
+
+    """
+    model = build_app1_model(
+        n_grid=n_grid,
+        n_periods=n_periods,
+        asset_max=asset_max,
+        upper_envelope=upper_envelope,
+    )
+    params = build_app1_params(
+        tau=tau,
+        n_periods=n_periods,
+        interest_rate=interest_rate,
+        discount_factor=discount_factor,
+        wage=wage,
+    )
+
+    start = time.perf_counter()
+    jax.block_until_ready(model.solve(params=params, log_level="off"))
+    compile_plus_run = time.perf_counter() - start
+
+    runtimes = []
+    for _ in range(n_runs):
+        start = time.perf_counter()
+        jax.block_until_ready(model.solve(params=params, log_level="off"))
+        runtimes.append(time.perf_counter() - start)
+    runtime = min(runtimes)
+
+    result = {"compile_time": compile_plus_run - runtime, "runtime": runtime}
+    _logger.info(
+        "DS App.1 %s timing: tau=%.2f n_grid=%d -> compile=%.3fs run=%.3fs",
+        upper_envelope.upper(),
+        tau,
+        n_grid,
+        result["compile_time"],
+        result["runtime"],
+    )
+    return result
+
+
+def app1_timing_table(
+    *,
+    upper_envelopes: Sequence[Literal["fues", "rfc", "ltm"]] = ("fues", "rfc", "ltm"),
+    taus: Sequence[float] = (1.0,),
+    n_grids: Sequence[int] = PAPER_GRIDS,
+    n_periods: int = N_PERIODS,
+    n_runs: int = 3,
+) -> pd.DataFrame:
+    """Sweep compile and run time across methods and grids (the Table 1 shape).
+
+    One model solve per `(method, tau, n_grid)` cell, with compile and runtime as
+    separate columns. The full paper grids are GPU/CI-scale; pass smaller
+    `n_grids` for a local run.
+
+    Args:
+        upper_envelopes: DC-EGM upper-envelope backends to compare.
+        taus: Work-cost values to sweep.
+        n_grids: Asset-grid sizes to sweep.
+        n_periods: Number of model periods.
+        n_runs: Number of post-compile solves per cell.
+
+    Returns:
+        Long-format DataFrame with columns `method`, `tau`, `n_grid`,
+        `compile_time`, and `runtime`.
+
+    """
+    rows = []
+    for upper_envelope in upper_envelopes:
+        for tau in taus:
+            for n_grid in n_grids:
+                timing = app1_timing(
+                    tau=tau,
+                    n_grid=n_grid,
+                    upper_envelope=upper_envelope,
+                    n_periods=n_periods,
+                    n_runs=n_runs,
+                )
+                rows.append(
+                    {
+                        "method": upper_envelope,
+                        "tau": tau,
+                        "n_grid": n_grid,
+                        "compile_time": timing["compile_time"],
+                        "runtime": timing["runtime"],
+                    }
+                )
     return pd.DataFrame(rows)
