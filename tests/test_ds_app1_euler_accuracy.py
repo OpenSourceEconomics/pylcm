@@ -6,7 +6,8 @@ working, an absorbing retirement choice, and a constant gross return. The paper'
 Table 2 reports the FUES accuracy column as the mean `log10` consumption Euler
 error along a simulated sample path (Judd 1992). FUES is pylcm's default DC-EGM
 upper envelope, so the harness solves the model with DC-EGM, simulates, and scores
-the Euler equation along the working-regime path.
+the Euler equation along the working-regime path. The same harness scores the RFC
+column (the paper's fourth method) by passing `upper_envelope="rfc"`.
 
 These tests run a single small solve at a time (asset grid <= 1000, shortened
 horizon) so they stay local-safe; the full paper grids {1000..10000} at T=50 are a
@@ -114,3 +115,25 @@ def test_sample_path_euler_error_recovers_a_planted_residual():
     )
     error = sample_path_euler_error(panel=panel, interest_rate=r, discount_factor=beta)
     assert error == pytest.approx(np.log10(0.1), abs=1e-9)
+
+
+def test_app1_rfc_euler_error_is_in_the_same_regime_as_fues():
+    """RFC-1D reproduces the FUES accuracy regime on Application 1.
+
+    The rooftop-cut (`upper_envelope="rfc"`) and the FUES scan are both exact at
+    the endogenous nodes and reintroduce the residual only through the policy
+    interpolation onto the coarse grid, so on this retirement model they land in
+    the same mean log10 Euler-error band.
+    """
+    config = {
+        "tau": 1.0,
+        "n_grid": 1000,
+        "n_periods": _LOCAL_N_PERIODS,
+        "n_subjects": _LOCAL_N_SUBJECTS,
+        "seed": 0,
+    }
+    fues = app1_euler_error(upper_envelope="fues", **config)
+    rfc = app1_euler_error(upper_envelope="rfc", **config)
+    assert np.isfinite(rfc)
+    assert -4.0 < rfc < -1.0
+    assert abs(rfc - fues) < 1.0

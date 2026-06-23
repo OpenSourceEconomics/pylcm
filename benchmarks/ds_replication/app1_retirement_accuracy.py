@@ -35,6 +35,7 @@ for the paper's `tau`-by-grid sweep. The full grids `{1000, 2000, 3000, 6000,
 import functools
 import logging
 from collections.abc import Sequence
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -85,6 +86,7 @@ def build_app1_model(
     n_grid: int,
     n_periods: int = N_PERIODS,
     asset_max: float = ASSET_MAX,
+    upper_envelope: Literal["fues", "rfc"] = "fues",
 ) -> Model:
     """Build the DS-2026 Application 1 model solved by DC-EGM/FUES.
 
@@ -118,6 +120,7 @@ def build_app1_model(
         resources="resources",
         post_decision_function="savings",
         savings_grid=savings_grid,
+        upper_envelope=upper_envelope,
         # The final decision period consumes everything, so its carry in the
         # queried resources range is constrained-segment points only; a small
         # count keeps the geometric spacing ratio and the carry interpolation
@@ -300,6 +303,7 @@ def app1_euler_error(
     interest_rate: float = INTEREST_RATE,
     discount_factor: float = DISCOUNT_FACTOR,
     wage: float = WAGE,
+    upper_envelope: Literal["fues", "rfc"] = "fues",
 ) -> float:
     """Solve, simulate, and score the FUES Euler error for one `(tau, n_grid)`.
 
@@ -318,7 +322,12 @@ def app1_euler_error(
         The mean log10 consumption Euler error along the simulated sample path.
 
     """
-    model = build_app1_model(n_grid=n_grid, n_periods=n_periods, asset_max=asset_max)
+    model = build_app1_model(
+        n_grid=n_grid,
+        n_periods=n_periods,
+        asset_max=asset_max,
+        upper_envelope=upper_envelope,
+    )
     params = build_app1_params(
         tau=tau,
         n_periods=n_periods,
@@ -342,7 +351,8 @@ def app1_euler_error(
         discount_factor=discount_factor,
     )
     _logger.info(
-        "DS App.1 FUES Euler error: tau=%.2f n_grid=%d -> %.3f",
+        "DS App.1 %s Euler error: tau=%.2f n_grid=%d -> %.3f",
+        upper_envelope.upper(),
         tau,
         n_grid,
         euler_error,
@@ -357,6 +367,7 @@ def app1_accuracy_table(
     n_periods: int = N_PERIODS,
     n_subjects: int = 1000,
     seed: int = 0,
+    upper_envelope: Literal["fues", "rfc"] = "fues",
 ) -> pd.DataFrame:
     """Run the `tau`-by-grid Euler-error sweep, reproducing the FUES column.
 
@@ -379,12 +390,13 @@ def app1_accuracy_table(
         {
             "tau": tau,
             "n_grid": n_grid,
-            "fues_euler_error": app1_euler_error(
+            f"{upper_envelope}_euler_error": app1_euler_error(
                 tau=tau,
                 n_grid=n_grid,
                 n_periods=n_periods,
                 n_subjects=n_subjects,
                 seed=seed,
+                upper_envelope=upper_envelope,
             ),
         }
         for tau in taus
