@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -62,7 +62,14 @@ def get_Q_and_F(
         for a non-terminal period.
 
     """
-    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
+    U_and_F = _get_U_and_F(
+        functions=functions,
+        constraints=constraints,
+        deterministic_transitions=_get_deterministic_transitions(
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+        ),
+    )
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
@@ -242,7 +249,14 @@ def get_compute_intermediates(
         Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
 
     """
-    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
+    U_and_F = _get_U_and_F(
+        functions=functions,
+        constraints=constraints,
+        deterministic_transitions=_get_deterministic_transitions(
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+        ),
+    )
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
@@ -501,10 +515,36 @@ def _get_joint_weights_function(
     )
 
 
+def _get_deterministic_transitions(
+    *,
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
+) -> Mapping[TransitionFunctionName, TransitionFunction]:
+    """Merge the deterministic `next_<state>` transitions across all targets.
+
+    Iterates every target bundle, not just this period's targets: the within-
+    period durable law (`next_<durable>`) lives in the source regime's own
+    self-transition bundle and is needed even in periods bound for a terminal
+    target that does not carry it. Own-regime within-period laws are
+    target-independent, so the first occurrence of each `next_<state>` name is
+    kept. Stochastic transitions are excluded — a within-period utility or
+    constraint cannot read an unrealised stochastic next state.
+    """
+    merged: dict[TransitionFunctionName, TransitionFunction] = {}
+    for bundle in transitions.values():
+        for name, func in bundle.items():
+            if name not in stochastic_transition_names:
+                merged.setdefault(name, func)
+    return MappingProxyType(merged)
+
+
 def _get_U_and_F(
     *,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
+    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
+        MappingProxyType({})
+    ),
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -516,13 +556,24 @@ def _get_U_and_F(
     Args:
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
+        deterministic_transitions: Mapping of `next_<state>` names to deterministic
+            own-regime transition functions, made available so within-period utility
+            or feasibility that reads a chosen next state (the NEGM service-flow
+            `next_<durable>`, or a budget constraint reading it) resolves it from the
+            current states and actions. Pruned away when unread, so the grid-search
+            path is unchanged.
 
     Returns:
         The instantaneous utility and feasibility function.
 
     """
     combined = {
-        "feasibility": _get_feasibility(functions=functions, constraints=constraints),
+        "feasibility": _get_feasibility(
+            functions=functions,
+            constraints=constraints,
+            deterministic_transitions=deterministic_transitions,
+        ),
+        **dict(deterministic_transitions),
         **{k: v for k, v in functions.items() if k != "H"},
     }
     return concatenate_functions(
@@ -537,12 +588,19 @@ def _get_feasibility(
     *,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
+    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
+        MappingProxyType({})
+    ),
 ) -> ConstraintFunction:
     """Create a function that combines all constraint functions into a single one.
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
+        deterministic_transitions: Mapping of `next_<state>` names to deterministic
+            transition functions, so a constraint reading a chosen next state (the
+            NEGM budget constraint reading `next_<durable>`) resolves it. Pruned when
+            unread.
 
     Returns:
         The combined constraint function (feasibility).
@@ -550,7 +608,9 @@ def _get_feasibility(
     """
     if constraints:
         combined_constraint = concatenate_functions(
-            functions=dict(constraints) | dict(functions),
+            functions=dict(deterministic_transitions)
+            | dict(constraints)
+            | dict(functions),
             targets=list(constraints),
             aggregator=jnp.logical_and,
             aggregator_return_type="Feasibility",
