@@ -66,8 +66,10 @@ are local-safe because the lifecycle is short.
 
 import functools
 import logging
+import time
 from collections.abc import Sequence
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -137,6 +139,47 @@ def _build_solved(
     params = app2.build_params(tau=tau)
     solution = model.solve(params=params, log_level="off")
     return model, params, solution
+
+
+def app2_negm_timing(
+    *,
+    n_grid: int,
+    n_periods: int = N_PERIODS,
+    n_consumption: int = 400,
+    tau: float = 0.07,
+    n_runs: int = 3,
+) -> dict[str, float]:
+    """Measure compile and steady-state run time of one NEGM solve.
+
+    The first solve times compile-plus-run; later solves of the same model reuse
+    the cached executable and time pure execution, so the compile cost is the
+    difference. Every solve is forced to completion with `block_until_ready`.
+    """
+    model = app2.build_model(
+        n_grid=n_grid, n_periods=n_periods, n_consumption=n_consumption
+    )
+    params = app2.build_params(tau=tau)
+
+    jax.clear_caches()
+    start = time.perf_counter()
+    jax.block_until_ready(model.solve(params=params, log_level="off"))
+    compile_plus_run = time.perf_counter() - start
+
+    runtimes = []
+    for _ in range(n_runs):
+        start = time.perf_counter()
+        jax.block_until_ready(model.solve(params=params, log_level="off"))
+        runtimes.append(time.perf_counter() - start)
+    runtime = min(runtimes)
+
+    result = {"compile_time": compile_plus_run - runtime, "runtime": runtime}
+    _logger.info(
+        "DS App.2 NEGM timing: n_grid=%d -> compile=%.3fs run=%.3fs",
+        n_grid,
+        result["compile_time"],
+        result["runtime"],
+    )
+    return result
 
 
 def _liquid_housing_grids(model) -> tuple[np.ndarray, np.ndarray]:
