@@ -77,9 +77,9 @@ def table12_app1(*, out: Path, smoke: bool) -> None:
     taus = SMOKE["app1_taus"] if smoke else PAPER_TAUS
     methods = ("fues", "rfc", "ltm", "mss")
     accuracy = pd.concat(
-        app1_accuracy_table(upper_envelope=ue, taus=taus, n_grids=grids).assign(
-            method=ue
-        )
+        app1_accuracy_table(upper_envelope=ue, taus=taus, n_grids=grids)
+        .rename(columns={f"{ue}_euler_error": "euler_error"})
+        .assign(method=ue)
         for ue in methods
     )
     timing = app1_timing_table(upper_envelopes=methods, taus=(taus[0],), n_grids=grids)
