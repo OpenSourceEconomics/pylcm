@@ -152,3 +152,21 @@ def test_app1_timing_separates_compile_from_runtime():
     assert np.isfinite(timing["runtime"])
     assert timing["runtime"] > 0.0
     assert timing["compile_time"] > 0.0
+
+
+def test_app1_timing_measures_compile_after_a_warm_cache():
+    """Compile time stays positive even if the same config was solved earlier.
+
+    `app1_timing` clears the JAX compilation cache before its first solve, so a
+    prior solve of the same `(method, shape)` does not warm-start the compile
+    measurement into noise.
+    """
+    app1_euler_error(
+        tau=1.0,
+        n_grid=300,
+        n_periods=_LOCAL_N_PERIODS,
+        n_subjects=_LOCAL_N_SUBJECTS,
+        seed=0,
+    )
+    timing = app1_timing(tau=1.0, n_grid=300, n_periods=_LOCAL_N_PERIODS, n_runs=2)
+    assert timing["compile_time"] > 0.0

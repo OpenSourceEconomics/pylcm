@@ -456,6 +456,11 @@ def app1_timing(
         wage=wage,
     )
 
+    # Clear the JAX compilation cache so the first solve genuinely compiles even
+    # if a solve of this (method, shape) ran earlier in the process; otherwise the
+    # cached executable turns the first call into pure runtime and the compile
+    # estimate collapses to measurement noise.
+    jax.clear_caches()
     start = time.perf_counter()
     jax.block_until_ready(model.solve(params=params, log_level="off"))
     compile_plus_run = time.perf_counter() - start
