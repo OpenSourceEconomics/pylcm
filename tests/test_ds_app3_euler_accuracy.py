@@ -198,6 +198,105 @@ def test_sample_path_euler_error_drops_housing_switch_points():
         )
 
 
+def test_sample_path_euler_error_with_taxes_uses_after_tax_marginal_return():
+    """With taxes the scorer discounts by `1 + r - T'(a')`, not the gross `1 + r`.
+
+    The with-tax budget is `R = (1 + r) a - T(a) + y + h`, so a unit of saving earns
+    `1 + r - T'(a')` and the interior consumption Euler equation reads
+    `u'(c_t) = beta (1 + r - tau_k) E[u'(c_{t+1})]`, with `tau_k` the marginal rate
+    of the bracket holding `a'`. At `a' = 5.0` the bracket `[3.87, 6.97)` has
+    `tau_k = 0.024`, so the implied consumption uses the return `1.06 - 0.024`.
+    """
+    alpha, beta, r = 0.77, 0.93, 0.06
+    after_tax_return = 1.0 + r - 0.024  # bracket [3.87, 6.97) marginal rate
+    wage_nodes = np.array([-0.4, 0.4])
+    wage_transition = np.array([[0.25, 0.75], [0.5, 0.5]])
+    c_next_node0, c_next_node1 = 4.0, 8.0
+    expected_marginal = 0.25 * alpha / c_next_node0 + 0.75 * alpha / c_next_node1
+    c_euler = alpha / (beta * after_tax_return * expected_marginal)
+    c_t = c_euler / 1.1  # so |c_euler / c_t - 1| = 0.1
+
+    sample_panel = pd.DataFrame(
+        {
+            "subject_id": [0, 0],
+            "period": [0, 1],
+            "regime_name": ["working", "working"],
+            "assets": [10.0, 5.0],  # a' = 5.0 sits in bracket [3.87, 6.97)
+            "wage": [wage_nodes[0], wage_nodes[0]],
+            "consumption": [c_t, 6.0],
+            "housing": ["own_h2", "own_h2"],
+            "housing_choice": ["own_h2", "own_h2"],
+        }
+    )
+    policy_panel = pd.DataFrame(
+        {
+            "subject_id": [0, 1],
+            "period": [1, 1],
+            "regime_name": ["working", "working"],
+            "assets": [5.0, 5.0],
+            "wage": [wage_nodes[0], wage_nodes[1]],
+            "consumption": [c_next_node0, c_next_node1],
+            "housing": ["own_h2", "own_h2"],
+            "housing_choice": ["own_h2", "own_h2"],
+        }
+    )
+    error = sample_path_euler_error(
+        sample_panel=sample_panel,
+        policy_panel=policy_panel,
+        wage_nodes=wage_nodes,
+        wage_transition=wage_transition,
+        interest_rate=r,
+        discount_factor=beta,
+        alpha=alpha,
+        use_taxes=True,
+    )
+    assert error == pytest.approx(np.log10(0.1), abs=1e-9)
+
+
+def test_sample_path_euler_error_with_taxes_excludes_tax_notch_points():
+    """A point whose next assets sit on a tax-bracket boundary is not scored.
+
+    At a bracket boundary the capital-income tax's level jump makes `T'` one-sided
+    or undefined, so the smooth Euler equality does not hold there. With the single
+    transition landing exactly on the boundary `a' = 6.97`, no point survives the
+    with-tax filter and the scorer raises.
+    """
+    wage_nodes = np.array([-0.4, 0.4])
+    wage_transition = np.array([[0.5, 0.5], [0.5, 0.5]])
+    sample_panel = pd.DataFrame(
+        {
+            "subject_id": [0, 0],
+            "period": [0, 1],
+            "regime_name": ["working", "working"],
+            "assets": [10.0, 6.97],  # a' = 6.97 is the bracket boundary
+            "wage": [wage_nodes[0], wage_nodes[0]],
+            "consumption": [3.0, 6.0],
+            "housing": ["own_h2", "own_h2"],
+            "housing_choice": ["own_h2", "own_h2"],
+        }
+    )
+    policy_panel = pd.DataFrame(
+        {
+            "subject_id": [0],
+            "period": [1],
+            "regime_name": ["working"],
+            "assets": [6.97],
+            "wage": [wage_nodes[0]],
+            "consumption": [6.0],
+            "housing": ["own_h2"],
+            "housing_choice": ["own_h2"],
+        }
+    )
+    with pytest.raises(ValueError, match="No valid interior"):
+        sample_path_euler_error(
+            sample_panel=sample_panel,
+            policy_panel=policy_panel,
+            wage_nodes=wage_nodes,
+            wage_transition=wage_transition,
+            use_taxes=True,
+        )
+
+
 def test_wage_transition_rows_are_probabilities():
     """The Rouwenhorst wage transition matrix has rows summing to one."""
     _nodes, transition = _wage_nodes_and_transition(n_wage_nodes=5)

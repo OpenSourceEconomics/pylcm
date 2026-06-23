@@ -243,7 +243,40 @@ def _expected_next_marginal_utility(
     return expected_marginal
 
 
-def sample_path_euler_error(
+def _euler_marginal_return(
+    *, next_assets: float, interest_rate: float, use_taxes: bool
+) -> float:
+    """Marginal return on a unit of saving, `1 + r - T'(a')`.
+
+    Without taxes the gross return `1 + r`. With the piecewise-linear capital-income
+    tax `T`, a unit of saving nets the realized bracket marginal rate
+    `tau_k = T'(a')`, so the interior consumption Euler equation discounts by
+    `1 + r - tau_k`. The bracket of `a'` is selected left-closed, matching
+    `piecewise_capital_income_tax`.
+    """
+    if not use_taxes:
+        return 1.0 + interest_rate
+    bracket = min(
+        max(
+            int(np.searchsorted(app3.TAX_BRACKET_LOWER, next_assets, side="right")) - 1,
+            0,
+        ),
+        len(app3.TAX_BRACKET_LOWER) - 1,
+    )
+    return 1.0 + interest_rate - app3.TAX_BRACKET_RATE[bracket]
+
+
+def _is_near_tax_notch(*, next_assets: float, tol: float) -> bool:
+    """Whether `next_assets` sits within `tol` of a tax-bracket boundary.
+
+    At a bracket boundary the capital-income tax's level jump makes `T'` ill-defined
+    (a one-sided derivative against a discontinuity), so the smooth Euler equality
+    does not apply and the point is excluded from the with-tax score.
+    """
+    return any(abs(next_assets - lower) <= tol for lower in app3.TAX_BRACKET_LOWER[1:])
+
+
+def sample_path_euler_error(  # noqa: C901
     *,
     sample_panel: pd.DataFrame,
     policy_panel: pd.DataFrame,
@@ -252,6 +285,8 @@ def sample_path_euler_error(
     interest_rate: float = INTEREST_RATE,
     discount_factor: float = DISCOUNT_FACTOR,
     alpha: float = ALPHA,
+    use_taxes: bool = False,
+    tax_notch_tol: float = 1e-3,
 ) -> float:
     """Mean log10 stochastic consumption Euler error along a simulated path.
 
@@ -266,8 +301,10 @@ def sample_path_euler_error(
     `(H', wage_j)` cell interpolated at the chosen post-decision financial
     assets `a' = assets_t - consumption_t + (1 + r) * (...)` read off the path as
     the next period's `assets`. The implied consumption is
-    `c_euler_t = alpha / (beta * (1 + r) * E_t[u'(c_{t+1})])` and the metric is
-    `mean(log10(|c_euler_t / c_t - 1|))`.
+    `c_euler_t = alpha / (beta * (1 + r - T'(a')) * E_t[u'(c_{t+1})])` and the metric
+    is `mean(log10(|c_euler_t / c_t - 1|))`. Without taxes `T' = 0` and the return is
+    the gross `1 + r`; with taxes the realized bracket marginal rate enters and points
+    whose `a'` sits on a bracket boundary are excluded.
 
     Args:
         sample_panel: Long-format simulation panel of the scored sample path,
@@ -282,6 +319,12 @@ def sample_path_euler_error(
         discount_factor: Discount factor `beta`.
         alpha: Consumption weight in the Cobb-Douglas log utility (so
             `u'(c) = alpha / c`).
+        use_taxes: Whether the model carries the piecewise capital-income tax. When
+            `True`, the Euler return is `1 + r - T'(a')` (the realized bracket
+            marginal rate) and points whose `a'` lands on a bracket boundary are
+            dropped; when `False`, the gross return `1 + r` is used (Table 4/7 path).
+        tax_notch_tol: Half-width of the excluded neighborhood around each tax-bracket
+            boundary, in asset units. Only consulted when `use_taxes` is `True`.
 
     Returns:
         The mean base-10 log relative consumption Euler error over the valid
@@ -323,6 +366,12 @@ def sample_path_euler_error(
         next_assets = assets[t + 1]
         if next_assets <= 1e-6:
             continue
+        # At a tax-bracket boundary `T'` is ill-defined (one-sided against the level
+        # jump), so the smooth Euler equality does not apply there.
+        if use_taxes and _is_near_tax_notch(
+            next_assets=float(next_assets), tol=tax_notch_tol
+        ):
+            continue
         # No housing switch this period and next: the discrete housing-adjustment
         # margin is a value-function kink the smooth Euler equation skips.
         if housing[t] != housing_choice[t]:
@@ -343,8 +392,13 @@ def sample_path_euler_error(
         if not np.isfinite(expected_marginal) or expected_marginal <= 0.0:
             continue
 
+        marginal_return = _euler_marginal_return(
+            next_assets=float(next_assets),
+            interest_rate=interest_rate,
+            use_taxes=use_taxes,
+        )
         consumption_euler = alpha / (
-            discount_factor * (1.0 + interest_rate) * expected_marginal
+            discount_factor * marginal_return * expected_marginal
         )
         relative_error = abs(consumption_euler / consumption[t] - 1.0)
         if relative_error > 0.0:
@@ -525,6 +579,7 @@ def app3_vfi_euler_error(
         interest_rate=interest_rate,
         discount_factor=discount_factor,
         alpha=alpha,
+        use_taxes=use_taxes,
     )
     _logger.info(
         "DS App.3 VFI Euler error: n_assets=%d n_wage=%d -> %.3f",
