@@ -175,7 +175,7 @@ class DCEGM(Solver):
     error compounds across periods.
     """
 
-    upper_envelope: Literal["fues", "rfc"] = "fues"
+    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues"
     """Upper-envelope refinement backend removing dominated Euler candidates.
 
     - `"fues"`: the Fast Upper-Envelope Scan — a sequential scan that inserts
@@ -183,6 +183,10 @@ class DCEGM(Solver):
     - `"rfc"`: the Rooftop-Cut algorithm — a parallel dominance test that only
       deletes points (a kink lands between retained points, recovered by the
       Hermite carry read) and generalizes to multidimensional grids.
+    - `"ltm"`: the local-upper-bound brute method — an `O(K^2)` dense segment
+      scan that evaluates the envelope at every candidate abscissa (the
+      quadratic baseline of Dobrescu & Shanker 2026; a kink lands between
+      output nodes, recovered by the downstream read).
     """
 
     fues_jump_thresh: float = 2.0

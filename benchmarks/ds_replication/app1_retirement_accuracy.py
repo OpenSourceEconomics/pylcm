@@ -86,7 +86,7 @@ def build_app1_model(
     n_grid: int,
     n_periods: int = N_PERIODS,
     asset_max: float = ASSET_MAX,
-    upper_envelope: Literal["fues", "rfc"] = "fues",
+    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues",
 ) -> Model:
     """Build the DS-2026 Application 1 model solved by DC-EGM/FUES.
 
@@ -303,7 +303,7 @@ def app1_euler_error(
     interest_rate: float = INTEREST_RATE,
     discount_factor: float = DISCOUNT_FACTOR,
     wage: float = WAGE,
-    upper_envelope: Literal["fues", "rfc"] = "fues",
+    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues",
 ) -> float:
     """Solve, simulate, and score the FUES Euler error for one `(tau, n_grid)`.
 
@@ -367,7 +367,7 @@ def app1_accuracy_table(
     n_periods: int = N_PERIODS,
     n_subjects: int = 1000,
     seed: int = 0,
-    upper_envelope: Literal["fues", "rfc"] = "fues",
+    upper_envelope: Literal["fues", "rfc", "ltm"] = "fues",
 ) -> pd.DataFrame:
     """Run the `tau`-by-grid Euler-error sweep, reproducing the FUES column.
 
