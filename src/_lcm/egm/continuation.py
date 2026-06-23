@@ -37,6 +37,7 @@ from _lcm.egm.regime_introspection import (
     _get_discrete_state_names,
     _get_passive_state_names,
 )
+from _lcm.grids import Grid
 from _lcm.logsum import logsum_and_softmax
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
@@ -60,6 +61,13 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
 )
+
+
+def _is_runtime_process(grid: Grid) -> bool:
+    """Whether the grid is a process whose nodes resolve only at solve time."""
+    return (
+        isinstance(grid, _ContinuousStochasticProcess) and not grid.is_fully_specified
+    )
 
 
 def get_egm_continuation_targets(
@@ -989,14 +997,7 @@ def _build_child_reads(
         # combo axes iterate, shared with the source regime) at solve time. A
         # fully-specified process keeps its final build-time grid (`None`).
         process_grid_names = tuple(
-            name
-            if (
-                isinstance(
-                    target_info.discrete_states[name], _ContinuousStochasticProcess
-                )
-                and not target_info.discrete_states[name].is_fully_specified
-            )
-            else None
+            name if _is_runtime_process(target_info.discrete_states[name]) else None
             for name in stochastic_state_names
         )
         weight_keys = tuple(

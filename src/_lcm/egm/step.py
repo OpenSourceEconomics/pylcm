@@ -147,6 +147,7 @@ from _lcm.egm.carry import EGMCarry, build_template_egm_carry
 from _lcm.egm.continuation import (
     ContinuationPlan,
     _build_child_reads,
+    _is_runtime_process,
     get_egm_continuation_targets,
 )
 from _lcm.egm.kernel_scope import _find_unsupported_feature
@@ -311,7 +312,7 @@ def build_egm_step_functions(
     own_runtime_process_names = tuple(
         name
         for name in _get_process_state_names(v_interpolation_info=own_v_info)
-        if not own_v_info.discrete_states[name].is_fully_specified
+        if _is_runtime_process(own_v_info.discrete_states[name])
     )
     # `batch_size` on a discrete-state, process, or passive-state grid splays
     # that combo axis (per-axis `productmap` blocks) to shed memory; 0 keeps
@@ -371,6 +372,7 @@ def build_egm_step_functions(
             constraints=constraints,
             carry_targets=carry_targets,
             transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,

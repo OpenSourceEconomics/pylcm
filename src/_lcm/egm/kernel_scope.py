@@ -29,7 +29,6 @@ from _lcm.typing import (
     RegimeName,
     RegimeTransitionFunction,
     StateName,
-    TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
@@ -47,6 +46,7 @@ def _find_unsupported_feature(
     constraints: ConstraintFunctionsMapping,
     carry_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
@@ -67,6 +67,7 @@ def _find_unsupported_feature(
             user_regimes=user_regimes,
             functions=functions,
             transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             own_discrete_state_names=own_discrete_state_names,
             allowed_param_names=flat_param_names | regime_to_flat_param_names[target],
@@ -103,6 +104,7 @@ def _find_unsupported_target_feature(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     own_discrete_state_names: tuple[StateName, ...],
     allowed_param_names: frozenset[str],
@@ -122,7 +124,7 @@ def _find_unsupported_target_feature(
             target=target,
             user_regime=user_regimes[target],
             target_info=target_info,
-            target_transitions=transitions[target],
+            stochastic_transition_names=stochastic_transition_names,
             own_discrete_state_names=own_discrete_state_names,
         )
         if terminal_message is not None:
@@ -177,28 +179,30 @@ def _find_unsupported_terminal_target_feature(
     target: RegimeName,
     user_regime: UserRegime,
     target_info: VInterpolationInfo,
-    target_transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     own_discrete_state_names: tuple[StateName, ...],
 ) -> str | None:
     """Return a message naming the first unsupported feature of a terminal target.
 
     A terminal carry covers exactly one continuous state and no actions. It
-    may additionally carry discrete states, but only those that are *shared*
-    with the parent's own discrete combo axes and reached by the *identity*
-    (fixed) transition: at a parent combo with the state at value $k$ the
-    terminal carry row is its utility evaluated at $k$, so the parent selects
-    its own combo by integer indexing the carry's leading axis. A terminal
-    discrete state that the parent does not carry has no parent axis to align
-    to; one reached by a stochastic or non-identity transition is a separate,
-    unsupported gap.
+    may additionally carry discrete states, but only those reached by a
+    *deterministic* transition into a parent-carried discrete combo axis. The
+    carry holds the terminal utility on the target's own discrete grid (one
+    wealth row per target discrete combo); the parent selects the row by
+    integer-indexing the carry's leading axis at the deterministic next-state
+    code — the identity transition selects the parent's own combo, an
+    action-driven transition (e.g. `next_housing = housing_choice`) selects the
+    chosen combo. A *stochastic* transition into the discrete state would need
+    an expectation over its node distribution rather than a single-index gather,
+    which is a separate, unsupported gap.
     """
     own_discrete = set(own_discrete_state_names)
     for name, grid in target_info.discrete_states.items():
         if isinstance(grid, _ContinuousStochasticProcess):
             return (
                 f"its terminal target regime '{target}' has the process state "
-                f"'{name}'; terminal carries cover discrete states shared with "
-                "the parent via an identity transition only."
+                f"'{name}'; terminal carries cover deterministically-reached "
+                "discrete states only."
             )
         if name not in own_discrete:
             return (
@@ -207,13 +211,13 @@ def _find_unsupported_terminal_target_feature(
                 "discrete states must be shared with the parent's own discrete "
                 "combo axes."
             )
-        transition = target_transitions.get(f"next_{name}")
-        if not getattr(transition, "_is_auto_identity", False):
+        if f"next_{name}" in stochastic_transition_names:
             return (
                 f"its terminal target regime '{target}' is reached by a "
-                f"non-identity transition into the discrete state '{name}'; a "
-                "terminal carry's discrete states must be shared with the "
-                "parent via an identity (fixed) transition."
+                f"stochastic transition into the discrete state '{name}'; a "
+                "terminal carry's discrete states must be reached "
+                "deterministically (the carry is gathered at a single "
+                "next-state code, not integrated over a node distribution)."
             )
     n_continuous = len(target_info.continuous_states)
     if n_continuous != 1:
