@@ -339,9 +339,15 @@ def build_model(
     final_age = int(ages.exact_values[-1])
     retirement_age = min(RETIREMENT_AGE, final_age)
 
+    # Housing must stay strictly positive: the CES service flow
+    # `H^{1-gamma_H}` diverges to -inf at `H = 0` (you cannot live in zero
+    # house), so a grid node at 0 puts a -inf sentinel in the value function
+    # that contaminates the off-grid interpolation. Floor the housing and outer
+    # (next-housing choice) grids at a small positive stock.
+    housing_min = housing_max / (2.0 * n_grid)
     liquid_grid = LinSpacedGrid(start=0.0, stop=liquid_max, n_points=n_grid)
-    housing_grid = LinSpacedGrid(start=0.0, stop=housing_max, n_points=n_grid)
-    outer_grid = LinSpacedGrid(start=0.0, stop=housing_max, n_points=n_grid)
+    housing_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
+    outer_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
     consumption_grid = LinSpacedGrid(
         start=0.05, stop=consumption_max, n_points=n_consumption
     )
