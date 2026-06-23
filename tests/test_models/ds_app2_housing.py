@@ -56,6 +56,7 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
+    BoolND,
     ContinuousAction,
     ContinuousState,
     FloatND,
@@ -345,6 +346,20 @@ def build_model(
     # that contaminates the off-grid interpolation. Floor the housing and outer
     # (next-housing choice) grids at a small positive stock.
     housing_min = housing_max / (2.0 * n_grid)
+
+    def housing_stays_positive(next_housing: ContinuousState) -> BoolND:
+        """The chosen next house must stay at or above the housing floor.
+
+        The NEGM solve searches `next_housing` on the floored outer grid, but
+        the forward simulation re-optimises over the symmetric
+        `housing_investment` action grid, which can drive
+        `next_housing = housing + housing_investment` below the floor. A
+        non-positive house gives NaN CES service utility that the feasibility
+        mask does not catch, so the simulate argmax can select a NaN-valued
+        action. This cut mirrors the solve's floored outer grid.
+        """
+        return next_housing >= housing_min
+
     liquid_grid = LinSpacedGrid(start=0.0, stop=liquid_max, n_points=n_grid)
     housing_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
     outer_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
@@ -407,6 +422,7 @@ def build_model(
             "income": _working_income,
             "wage_income": wage_income,
         },
+        constraints={"housing_stays_positive": housing_stays_positive},
         solver=negm_solver,
     )
 
@@ -423,6 +439,7 @@ def build_model(
             "housing_investment": housing_investment_grid,
         },
         functions={**shared_functions, "income": _retirement_income},
+        constraints={"housing_stays_positive": housing_stays_positive},
         solver=negm_solver,
     )
 
