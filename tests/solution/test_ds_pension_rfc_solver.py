@@ -25,8 +25,10 @@ _B_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=16)
 _CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=18)
 _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
 
-# Pension interior, away from the top-pension boundary and the low-liquid corner.
-_WORKING_INTERIOR = {2: np.s_[3:, :9], 1: np.s_[3:, :8], 0: np.s_[3:, :7]}
+# Pension interior, away from the top-pension boundary and the low-liquid corner. The
+# corner-accuracy gap propagates one liquid row inward per backward period (as the
+# top-pension hole does), so the interior floor rises one row earlier each period back.
+_WORKING_INTERIOR = {2: np.s_[3:, :9], 1: np.s_[4:, :8], 0: np.s_[5:, :7]}
 
 
 def _rfc_model():
