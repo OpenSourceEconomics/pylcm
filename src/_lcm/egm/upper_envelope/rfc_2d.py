@@ -110,6 +110,7 @@ def rfc_publish_2d(
     survivor_values: Float1D,
     survivor_policies: Float2D,
     target_states: Float2D,
+    valid: BoolND | None = None,
     k: int = K_PUBLISH_DEFAULT,
     extrapolation_threshold: float = EXTRAPOLATION_THRESHOLD_DEFAULT,
 ) -> tuple[Float1D, Float2D]:
@@ -123,11 +124,19 @@ def rfc_publish_2d(
     survivor values exactly and is affine-exact in the hull. A target with no containing
     triangle (outside the survivor support) falls back to its nearest survivor.
 
+    The `valid` mask lets a caller pass the *full* candidate cloud plus the cut's
+    keep-mask rather than a pre-filtered survivor array — the jit-friendly form, since
+    compacting survivors would change the array shape. Deleted candidates are pushed to
+    infinite distance (so they never enter a target's neighbourhood) and any triangle
+    that would use one as a vertex is rejected.
+
     Args:
-        survivor_states: Surviving candidate states, shape `(s, d)` with `d == 2`.
-        survivor_values: Surviving candidate values, shape `(s,)`.
-        survivor_policies: Surviving candidate policy vectors, shape `(s, dp)`.
+        survivor_states: Candidate states, shape `(s, d)` with `d == 2`.
+        survivor_values: Candidate values, shape `(s,)`.
+        survivor_policies: Candidate policy vectors, shape `(s, dp)`.
         target_states: Query states, shape `(t, 2)`.
+        valid: Optional keep-mask, shape `(s,)`; `True` for surviving candidates. When
+            omitted every candidate is treated as a survivor.
         k: Number of nearest survivors that form the local simplex search set.
         extrapolation_threshold: Non-negative barycentric tolerance; a triangle counts
             as containing the target when every weight is at least its negation.
@@ -140,13 +149,16 @@ def rfc_publish_2d(
     triangles = jnp.asarray(
         list(itertools.combinations(range(k_eff), 3)), dtype=jnp.int32
     )
+    keep = jnp.ones(n_survivors, dtype=bool) if valid is None else valid
 
     def publish_one(query: Float1D) -> tuple[ScalarFloat, Float1D]:
-        distance = jnp.linalg.norm(survivor_states - query, axis=1)
+        raw_distance = jnp.linalg.norm(survivor_states - query, axis=1)
+        distance = jnp.where(keep, raw_distance, jnp.inf)
         _, nearest_idx = jax.lax.top_k(-distance, k_eff)
         verts = survivor_states[nearest_idx]
         local_values = survivor_values[nearest_idx]
         local_policies = survivor_policies[nearest_idx]
+        local_valid = keep[nearest_idx]
 
         a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
         p0, p1, p2 = verts[a], verts[b], verts[c]
@@ -166,11 +178,13 @@ def rfc_publish_2d(
         w0 = 1.0 - w1 - w2
 
         nondegenerate = denom > DEGENERATE_AREA_FLOOR
+        triangle_valid = local_valid[a] & local_valid[b] & local_valid[c]
         contains = (
             (w0 >= -extrapolation_threshold)
             & (w1 >= -extrapolation_threshold)
             & (w2 >= -extrapolation_threshold)
             & nondegenerate
+            & triangle_valid
         )
         # Among containing triangles prefer the largest area (most robust weights).
         score = jnp.where(contains, denom, -jnp.inf)
