@@ -1316,6 +1316,15 @@ class TwoDimEGM(Solver):
     threshold: float = 0.25
     """Barycentric extrapolation tolerance for triangle admissibility."""
 
+    upper_envelope: Literal["g2egm", "rfc"] = "g2egm"
+    """Multidimensional upper-envelope backend.
+
+    `"g2egm"` triangulates each KKT segment and takes within- then across-segment
+    maxima; `"rfc"` merges the segment clouds and selects by the Dobrescu-Shanker
+    rooftop-cut delete plus a single local-simplex publish. The retirement-boundary
+    period always uses the G2EGM step (the RFC step has no retiring variant yet).
+    """
+
     @property
     def requires_continuation_carries(self) -> bool:
         """The boundary step reads the retired regime's marginal value of liquid."""
@@ -1355,6 +1364,7 @@ class TwoDimEGM(Solver):
                     is_boundary=is_boundary,
                     interior_prefix=own_name,
                     boundary_prefix=boundary_prefix,
+                    upper_envelope=self.upper_envelope,
                 )
                 cores[is_boundary] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _TwoDimEGMPeriodKernel(
@@ -1634,8 +1644,9 @@ def _build_two_dim_core(
     is_boundary: bool,
     interior_prefix: RegimeName,
     boundary_prefix: RegimeName,
+    upper_envelope: Literal["g2egm", "rfc"] = "g2egm",
 ) -> Callable:
-    """Build the jitted-able G2EGM core for one branch (interior or boundary).
+    """Build the jitted-able two-asset core for one branch (interior or boundary).
 
     The interior branch reads the regime's own next-period working value on the
     `(m, n)` grid; the boundary branch reads the 1-D retired value and marginal
@@ -1644,7 +1655,11 @@ def _build_two_dim_core(
     working value (whose utility carries the disutility). Transition params are
     qualified by the regime's own name (interior) or the retirement target
     (boundary), since the boundary reads the retired liquid law.
+
+    `upper_envelope` selects the interior step's envelope — the G2EGM mesh or the
+    combined-cloud RFC. The boundary (retiring) step is always G2EGM.
     """
+    from _lcm.egm.rfc_two_asset_step import rfc_two_asset_step  # noqa: PLC0415
     from _lcm.egm.two_asset_g2egm_step import (  # noqa: PLC0415
         g2egm_retiring_step,
         g2egm_step,
@@ -1688,21 +1703,43 @@ def _build_two_dim_core(
         next_value_working: FloatND,
         **params: FloatND,
     ) -> FloatND:
-        result = g2egm_step(
-            next_value=next_value_working,
-            m_grid=liquid,
-            n_grid=pension,
-            a_grid=a_grid,
-            b_grid=b_grid,
-            consumption_grid=consumption_grid,
-            discount_factor=params["H__discount_factor"],
-            crra=params["utility__crra"],
-            match_rate=params[f"{interior_prefix}__next_pension__match_rate"],
-            return_liquid=params[f"{interior_prefix}__next_liquid__return_liquid"],
-            return_pension=params[f"{interior_prefix}__next_pension__return_pension"],
-            wage=params[f"{interior_prefix}__next_liquid__wage"],
-            threshold=threshold,
-        )
+        discount_factor = params["H__discount_factor"]
+        crra = params["utility__crra"]
+        match_rate = params[f"{interior_prefix}__next_pension__match_rate"]
+        return_liquid = params[f"{interior_prefix}__next_liquid__return_liquid"]
+        return_pension = params[f"{interior_prefix}__next_pension__return_pension"]
+        wage = params[f"{interior_prefix}__next_liquid__wage"]
+        if upper_envelope == "rfc":
+            result = rfc_two_asset_step(
+                next_value=next_value_working,
+                m_grid=liquid,
+                n_grid=pension,
+                a_grid=a_grid,
+                b_grid=b_grid,
+                consumption_grid=consumption_grid,
+                discount_factor=discount_factor,
+                crra=crra,
+                match_rate=match_rate,
+                return_liquid=return_liquid,
+                return_pension=return_pension,
+                wage=wage,
+            )
+        else:
+            result = g2egm_step(
+                next_value=next_value_working,
+                m_grid=liquid,
+                n_grid=pension,
+                a_grid=a_grid,
+                b_grid=b_grid,
+                consumption_grid=consumption_grid,
+                discount_factor=discount_factor,
+                crra=crra,
+                match_rate=match_rate,
+                return_liquid=return_liquid,
+                return_pension=return_pension,
+                wage=wage,
+                threshold=threshold,
+            )
         return result.value - params["utility__work_disutility"]
 
     return boundary_core if is_boundary else interior_core
