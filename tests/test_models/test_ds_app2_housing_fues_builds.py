@@ -10,6 +10,8 @@ Application 3's discrete-housing model with Application 2's separable-CES utilit
 These checks build the model at a tiny grid and assert structure only.
 """
 
+import pytest
+
 from lcm import DCEGM, DiscreteGrid, GridSearch, Model
 from tests.test_models import ds_app2_housing_fues as fues
 
@@ -45,6 +47,17 @@ def test_housing_levels_scale_with_n_housing():
     housing_grid = model.user_regimes["working"].states["housing"]
     assert isinstance(housing_grid, DiscreteGrid)
     assert len(housing_grid.to_jax()) == 7
+
+
+def test_single_housing_level_is_rejected():
+    """A single housing level (`n_housing=1`) is rejected with a clear error.
+
+    The stock-level spacing divides by `n_housing - 1`, so a one-level alphabet
+    has no well-defined spacing; the builder must reject it rather than divide by
+    zero.
+    """
+    with pytest.raises(ValueError, match="n_housing"):
+        fues.build_model(variant="dcegm", n_grid=6, n_housing=1, n_periods=4)
 
 
 def test_three_regimes_with_terminal_dead():

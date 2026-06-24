@@ -177,6 +177,20 @@ def inverse_marginal_utility(
     return (alpha / marginal_continuation) ** (1.0 / gamma_c)
 
 
+def _fail_if_too_few_housing_levels(*, n_housing: int) -> None:
+    """Reject a housing alphabet too small to space the stock levels.
+
+    The discrete stock levels are spaced by `(n_housing - 1)`, so at least two
+    levels are required.
+    """
+    if n_housing < 2:
+        msg = (
+            "n_housing must be at least 2: the discrete housing-level spacing "
+            f"divides by (n_housing - 1), got n_housing={n_housing}."
+        )
+        raise ValueError(msg)
+
+
 def build_model(  # noqa: C901
     *,
     variant: Literal["dcegm", "brute"] = "dcegm",
@@ -215,6 +229,7 @@ def build_model(  # noqa: C901
     """
     n_housing = n_grid if n_housing is None else n_housing
     n_savings = n_grid if n_savings is None else n_savings
+    _fail_if_too_few_housing_levels(n_housing=n_housing)
 
     if n_periods is None:
         ages = AgeGrid(start=START_AGE, stop=TERMINAL_AGE, step="Y")
