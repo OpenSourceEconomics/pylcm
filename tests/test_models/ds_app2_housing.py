@@ -107,36 +107,31 @@ def housing_cost(
 ) -> FloatND:
     """Net liquid cost of moving the house from `H` to `next_housing` (`H'`).
 
-    Written in net-investment form so it is exactly zero at the no-trade point
-    `H' = H` — the requirement the NEGM keeper kernel imposes: the keeper holds
-    the stock (`H' = H` is injected) and must face no transaction cost, exactly
-    as the kinked-toy `credited` template returns zero at its no-adjustment
-    node. Buying additional housing (`H' > H`) costs `(1 + τ)` per unit (face
-    value plus the proportional transaction cost); selling (`H' < H`) credits
-    `(1 + r_H)` per unit returned:
+    The DS budget (eq. 12) gives the discrete adjust/keep choice `d ∈ {0, 1}` a
+    round-trip transaction cost: adjusting (`d = 1`) sells the whole old house at
+    `(1 + r_H)·H` and rebuys the whole new house at `(1 + τ)·H'`, while keeping
+    (`d = 0`, `H' = H`) is free. The net liquid cost is therefore
 
-    - keeper (`H' = H`): cost `0` — keeping is free,
-    - adjuster up (`H' > H`): cost `(1 + τ)·(H' - H)`,
-    - adjuster down (`H' < H`): cost `(1 + r_H)·(H' - H) < 0` (a credit).
+    - keep (`H' = H`): cost `0`,
+    - adjust (`H' ≠ H`): cost `(1 + τ)·H' - (1 + r_H)·H`.
 
-    The DS budget (eq. 12) writes the adjuster as selling the whole old house at
-    `(1 + r_H)·H` and rebuying at `(1 + τ)·H'`, which charges a round-trip cost
-    even when `H' = H`; the net-investment form here charges the proportional
-    cost on the *traded* amount instead, so the no-trade point is free and the
-    `max(V_keeper, V_adjuster)` aggregation is continuous through `H' = H`. The
-    two coincide for `H' ≠ H` up to the resale/repurchase normalization — a
-    collected question (Q6) pending confirmation of which DS intends.
+    Because the proportional cost `τ` falls on the *whole* new stock, any
+    adjustment — however small — pays about `τ·H` more than keeping. That
+    discrete wedge opens the DS (S, s) inaction band: keeping for free dominates
+    a region of `H'`, so `max(V_keeper, V_adjuster)` is flat there. A
+    net-investment cost (proportional to the traded difference `H' - H`) would
+    vanish near the no-trade point and leave no band.
+
+    The keep branch costing exactly `0` is also the invariant the NEGM keeper
+    kernel relies on: it holds the stock (`H' = H` is injected) and its
+    `credited(H, H) = 0` makes the published cash-on-hand carry correct.
 
     Reads only the held housing state and the outer post-decision `next_housing`
     — never the inner consumption action or the liquid Euler state — so it is a
     constant per outer-grid node, as the NEGM contract requires.
     """
-    investment = next_housing - housing
-    return jnp.where(
-        investment >= 0.0,
-        (1.0 + tau) * investment,
-        (1.0 + return_housing) * investment,
-    )
+    round_trip_cost = (1.0 + tau) * next_housing - (1.0 + return_housing) * housing
+    return jnp.where(next_housing == housing, 0.0, round_trip_cost)
 
 
 def resources(

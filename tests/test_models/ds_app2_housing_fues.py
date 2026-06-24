@@ -37,12 +37,14 @@ converges to the paper's continuous EGM-FUES.
 The housing levels are an `n_housing`-point grid over `[housing_min, housing_max]`
 floored at `housing_min = housing_max / (2 * n_housing)`, so the separable CES
 housing service flow `H'^{1-gamma_H}` never hits its `H' = 0` singularity. The
-proportional transaction cost is charged net-investment form so the no-trade
-point is free:
+proportional transaction cost is the DS eq. 12 round-trip cost — adjusting sells
+the whole old house and rebuys the whole new house, keeping is free:
 
-- buying (`H' > H`): cost `(1 + tau) * (H' - H)`,
-- selling (`H' < H`): cost `(1 + r_H) * (H' - H)` (a credit),
+- adjusting (`H' ≠ H`): cost `(1 + tau) * H' - (1 + r_H) * H`,
 - keeping (`H' = H`): cost `0`.
+
+The cost falls on the whole new stock, so any move pays about `tau * H` more than
+keeping — the discrete wedge that opens the DS (S, s) inaction band.
 
 Liquid resources are `R = (1 + r) * a + y - housing_cost`, with DC-EGM
 consumption recovery `c = R - a'`. Utility is the Application 2 separable CES
@@ -298,17 +300,18 @@ def build_model(  # noqa: C901
     ) -> FloatND:
         """Net liquid cost of moving the house from `H` to `H'`.
 
-        Net-investment form, zero at the no-trade point `H' = H`: buying costs
-        `(1 + tau)` per unit, selling credits `(1 + r_H)` per unit. Reads only
-        the held housing state and the discrete choice — a constant per
-        discrete-choice cell in the inner resources DAG.
+        DS eq. 12 round-trip cost: choosing a different stock (`H' ≠ H`) sells
+        the whole old house at `(1 + r_H)·H` and rebuys the whole new house at
+        `(1 + τ)·H'`, while keeping the same stock is free. The proportional cost
+        falls on the whole new stock, so any move pays about `τ·H` more than
+        keeping — the discrete wedge that opens the DS (S, s) inaction band.
+        Reads only the held housing state and the discrete choice — a constant
+        per discrete-choice cell in the inner resources DAG.
         """
-        investment = stock_levels[housing_choice] - stock_levels[housing]
-        return jnp.where(
-            investment >= 0.0,
-            (1.0 + tau) * investment,
-            (1.0 + return_housing) * investment,
-        )
+        round_trip_cost = (1.0 + tau) * stock_levels[housing_choice] - (
+            1.0 + return_housing
+        ) * stock_levels[housing]
+        return jnp.where(housing_choice == housing, 0.0, round_trip_cost)
 
     def resources(
         liquid: ContinuousState,

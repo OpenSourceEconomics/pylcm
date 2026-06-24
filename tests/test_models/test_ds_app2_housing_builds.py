@@ -18,6 +18,8 @@ NEGM forbids, building the model would raise `ModelInitializationError`. A model
 that builds therefore *is* an accepted NEGM model.
 """
 
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from lcm import NEGM, Model
@@ -110,6 +112,69 @@ def test_build_params_threads_the_transaction_cost():
     cost_fn = ds_app2_housing.HOUSING_COST_FUNCTION_NAME
     assert params_low["working"][cost_fn]["tau"] == 0.05
     assert params_high["working"][cost_fn]["tau"] == 0.12
+
+
+def test_keeping_the_house_is_free():
+    """Holding the house (`H' = H`) incurs no transaction cost.
+
+    The keep branch of the DS adjust/keep choice pays nothing — the NEGM keeper
+    kernel relies on this (its `credited(H, H) = 0` invariant), and the (S, s)
+    inaction band is defined by the region where keeping for free dominates.
+    """
+    cost = ds_app2_housing.housing_cost(
+        housing=jnp.asarray(4.0),
+        next_housing=jnp.asarray(4.0),
+        return_housing=0.03,
+        tau=0.07,
+    )
+    np.testing.assert_allclose(float(cost), 0.0, atol=1e-12)
+
+
+@pytest.mark.parametrize("next_housing", [6.0, 2.5])
+def test_adjusting_pays_the_eq12_round_trip_cost(next_housing: float):
+    """Adjusting the house pays the DS eq. 12 round-trip cost.
+
+    The adjuster sells the whole old house at `(1 + r_H)·H` and rebuys the whole
+    new house at `(1 + τ)·H'`, so the net liquid cost is
+    `(1 + τ)·H' - (1 + r_H)·H` for any `H' ≠ H` — both when trading up and when
+    trading down (the full stock turns over, not just the traded difference).
+    """
+    housing, tau, return_housing = 4.0, 0.07, 0.03
+    cost = ds_app2_housing.housing_cost(
+        housing=jnp.asarray(housing),
+        next_housing=jnp.asarray(next_housing),
+        return_housing=return_housing,
+        tau=tau,
+    )
+    expected = (1.0 + tau) * next_housing - (1.0 + return_housing) * housing
+    np.testing.assert_allclose(float(cost), expected, rtol=1e-12)
+
+
+def test_round_trip_cost_creates_an_inaction_wedge():
+    """Any adjustment jumps the cost discretely above the free keep.
+
+    The round-trip cost charges the proportional `τ` on the *whole* new stock, so
+    moving to a house infinitesimally larger than `H` costs about `τ·H` — a
+    discrete jump from the zero cost of keeping. That wedge is what produces the
+    DS (S, s) inaction band, unlike a net-investment cost (proportional to the
+    small traded amount), which vanishes near the no-trade point.
+    """
+    housing, tau = 4.0, 0.07
+    keep = ds_app2_housing.housing_cost(
+        housing=jnp.asarray(housing),
+        next_housing=jnp.asarray(housing),
+        return_housing=0.0,
+        tau=tau,
+    )
+    nudge = ds_app2_housing.housing_cost(
+        housing=jnp.asarray(housing),
+        next_housing=jnp.asarray(housing + 1e-6),
+        return_housing=0.0,
+        tau=tau,
+    )
+    assert float(keep) == 0.0
+    # The wedge is ~τ·H, far above any net-investment cost on a 1e-6 trade.
+    assert float(nudge) > 0.9 * tau * housing
 
 
 @pytest.mark.skip(reason="gpu-01 only: 2-D+AR1 NEGM solve OOMs locally")
