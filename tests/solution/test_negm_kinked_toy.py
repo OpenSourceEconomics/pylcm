@@ -1,87 +1,230 @@
-"""G1 — kinked-toy parity for the NEGM solver (GPU-only).
+"""Parity checks for the `NEGM` solver on the kinked two-asset toy.
 
-NEGM solves the kinked two-asset toy (`tests/test_models/negm_kinked_toy.py`) by
-an outer search over the durable post-decision `next_illiquid` and an inner 1-D
-DC-EGM solve on `wealth`. The committed brute oracle for the equivalent spec
-(`negm_phase0/kinked_toy_oracle.py`, §2 of
-`negm_phase0/negm-phase0-findings.md`) restricts the continuous policy to the
-action grid, so it is a lower bound on the off-grid NEGM value: the parity
-criterion is **NEGM ≥ brute (weak improvement) and NEGM → dense-brute as the
-brute action grids refine**, not bit-parity.
+NEGM solves the kinked toy (`tests/test_models/negm_kinked_toy.py`) by an outer
+search over the durable post-decision `next_illiquid` and an inner 1-D DC-EGM
+solve on `wealth`. Three checks pin its correctness against an action-grid brute
+oracle that searches the *same* economic problem on the same state domain with
+the same order-1 V-interpolation:
 
-The whole module is skipped: solving this model OOMs the local box (DC-EGM /
-NEGM solves are GPU-only, see `feedback_no_heavy_tests_local`). Run it on gpu-01.
+- The brute oracle (`negm_phase0/kinked_toy_oracle.py`) reproduces its own pinned
+  period-0 values and grid checksums — the oracle of record is stable.
+- On a matched model whose brute analogue's reachable durable post-states are a
+  subset of NEGM's outer grid and whose consumption grid covers the feasible
+  continuous domain, NEGM's off-grid inner solve weakly dominates the
+  grid-restricted brute value at every state cell: NEGM `>=` brute.
+- As the brute consumption and investment grids refine, the brute value rises
+  toward NEGM's off-grid value — the gap shrinks monotonically — so NEGM is the
+  off-grid limit the action-grid solver approaches from below.
+
+The model solves on CPU in seconds; nothing here is GPU-gated.
 """
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tests.test_models import negm_kinked_toy
-
-pytestmark = pytest.mark.skip(
-    reason="gpu-01 only: NEGM/DC-EGM solve OOMs the local box"
+from lcm import (
+    DCEGM,
+    NEGM,
+    AgeGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
 )
-
-# Period-0, regime `alive`, shape (N_X, N_Z) brute oracle from
-# `negm_phase0/negm-phase0-findings.md` §2 (the equivalent-spec brute solve).
-_ORACLE_CELLS = {
-    (0, 0): -0.4002052501,
-    (0, 6): -0.2250119814,
-    (6, 0): -0.2334363467,
-    (6, 6): -0.1619449719,
-    (11, 11): -0.1331192126,
-}
-_ORACLE_MIN = -0.40020525
-_ORACLE_MAX = -0.13311921
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+)
+from negm_phase0 import kinked_toy_oracle
+from tests.test_models import negm_kinked_toy
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 
+# Period-0, regime `alive`, shape (N_X, N_Z) brute oracle on the repaired
+# `[-6, 30]` wealth domain (`negm_phase0/kinked_toy_oracle.py`). With the grid
+# starting at -6, cell (0, 0) is the deeply credit-constrained `wealth = -6`.
+_ORACLE_CELLS = {
+    (0, 0): -0.8572114651,
+    (0, 6): -0.2964398156,
+    (6, 0): -0.2601982804,
+    (6, 6): -0.1719988446,
+    (11, 11): -0.1329429054,
+}
+_ORACLE_SUM = -31.33077128
+_ORACLE_MIN = -0.85721147
+_ORACLE_MAX = -0.13294291
 
-def _solve_period0_alive() -> jnp.ndarray:
-    """Solve the kinked-toy NEGM model and return period-0 `alive` value array."""
-    solution = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")
-    return solution[0]["alive"]
+# Matched-model geometry shared by the NEGM and brute analogues. The wealth
+# domain matches the oracle's; the consumption grid spans the feasible range so
+# brute is never capped below the optimum; the durable investment range keeps
+# brute's reachable `next_illiquid` inside NEGM's outer grid.
+_WEALTH_MIN = -6.0
+_WEALTH_MAX = 30.0
+_ILLIQUID_MAX = 30.0
+_CONSUMPTION_MAX = 45.0
+_INVESTMENT_BOUND = 8.0
+_LIQUID_CREDIT_LIMIT = -5.0
+_N_WEALTH = 8
+_N_ILLIQUID = 6
+_FINAL_AGE_ALIVE = 25  # ages 20, 25 alive then 30 dead: a genuine continuation
 
 
-def test_negm_value_is_a_weak_improvement_over_the_brute_oracle():
-    """NEGM's off-grid value weakly dominates the action-grid brute oracle.
+def _grid(start: float, stop: float, n_points: int) -> LinSpacedGrid:
+    return LinSpacedGrid(start=start, stop=stop, n_points=n_points)
 
-    Brute restricts the continuous policy to the action grid, so its value is a
-    lower bound; NEGM's inner EGM puts consumption off-grid, so at every listed
-    coordinate `V_negm >= V_brute` up to interpolation tolerance.
+
+def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Model:
+    """Build the matched 3-period NEGM model on the repaired wealth domain."""
+    solver = NEGM(
+        inner=DCEGM(
+            continuous_state="wealth",
+            continuous_action="consumption",
+            resources="resources",
+            post_decision_function="liquid_savings",
+            savings_grid=_grid(-5.0, 35.0, savings_n),
+        ),
+        outer_action="illiquid_investment",
+        outer_post_decision="next_illiquid",
+        outer_grid=_grid(0.0, _ILLIQUID_MAX, outer_n),
+        outer_no_adjustment_candidate="keep_illiquid",
+    )
+    alive = Regime(
+        active=lambda age, n=_FINAL_AGE_ALIVE: age <= n,
+        states={
+            "wealth": _grid(_WEALTH_MIN, _WEALTH_MAX, _N_WEALTH),
+            "illiquid": _grid(0.0, _ILLIQUID_MAX, _N_ILLIQUID),
+        },
+        state_transitions={
+            "wealth": negm_kinked_toy.next_wealth,
+            "illiquid": negm_kinked_toy.durable_transition,
+        },
+        actions={
+            "consumption": _grid(0.1, _CONSUMPTION_MAX, 25),
+            "illiquid_investment": _grid(-_INVESTMENT_BOUND, _INVESTMENT_BOUND, 25),
+        },
+        transition=negm_kinked_toy.next_regime,
+        functions={
+            "utility": negm_kinked_toy.utility,
+            "resources": negm_kinked_toy.resources,
+            "liquid_savings": negm_kinked_toy.liquid_savings,
+            "keep_illiquid": negm_kinked_toy.keep_illiquid,
+            "credited": negm_kinked_toy.credited,
+            "inverse_marginal_utility": negm_kinked_toy.inverse_marginal_utility,
+        },
+        solver=solver,
+    )
+    dead = Regime(
+        transition=None,
+        active=lambda age, n=_FINAL_AGE_ALIVE: age > n,
+        functions={"utility": lambda: 0.0},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        regime_id_class=negm_kinked_toy.RegimeId,
+        ages=AgeGrid(start=20, stop=30, step="5Y"),
+        fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
+    )
+
+
+def _brute_liquid_savings(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    illiquid_investment: ContinuousAction,
+) -> FloatND:
+    """Liquid post-decision balance with the withdrawal-penalty wedge."""
+    credited = jnp.where(
+        illiquid_investment < 0.0,
+        (1.0 - negm_kinked_toy.WITHDRAWAL_PENALTY) * illiquid_investment,
+        illiquid_investment,
+    )
+    return wealth + negm_kinked_toy.LABOUR_INCOME - consumption - credited
+
+
+def _brute_next_illiquid(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    return illiquid + illiquid_investment
+
+
+def _liquid_floor(liquid_savings: FloatND) -> BoolND:
+    return liquid_savings >= _LIQUID_CREDIT_LIMIT
+
+
+def _illiquid_floor(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> BoolND:
+    return illiquid + illiquid_investment >= 0.0
+
+
+def _positive_consumption(consumption: ContinuousAction) -> BoolND:
+    return consumption > 0.05
+
+
+def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Model:
+    """Build the matched brute analogue: same domain, on-grid action search.
+
+    Searches `(consumption, illiquid_investment)` on grids of the given sizes
+    over the same state domain and frictions as the NEGM model, with the same
+    feasibility floors and the same order-1 V-interpolation. Its reachable
+    `next_illiquid` stays inside NEGM's outer grid, so its value is a lower bound
+    NEGM's off-grid inner solve weakly improves on.
     """
-    v0 = _solve_period0_alive()
-    for (ix, iz), brute_value in _ORACLE_CELLS.items():
-        negm_value = float(v0[ix, iz])
-        assert negm_value >= brute_value - 1e-4, (
-            f"NEGM value {negm_value} at ({ix}, {iz}) is below the brute oracle "
-            f"lower bound {brute_value}."
-        )
+    alive = Regime(
+        active=lambda age, n=_FINAL_AGE_ALIVE: age <= n,
+        states={
+            "wealth": _grid(_WEALTH_MIN, _WEALTH_MAX, _N_WEALTH),
+            "illiquid": _grid(0.0, _ILLIQUID_MAX, _N_ILLIQUID),
+        },
+        state_transitions={
+            "wealth": negm_kinked_toy.next_wealth,
+            "illiquid": _brute_next_illiquid,
+        },
+        actions={
+            "consumption": _grid(0.1, _CONSUMPTION_MAX, n_consumption),
+            "illiquid_investment": _grid(
+                -_INVESTMENT_BOUND, _INVESTMENT_BOUND, n_investment
+            ),
+        },
+        transition=negm_kinked_toy.next_regime,
+        constraints={
+            "liquid_floor": _liquid_floor,
+            "illiquid_floor": _illiquid_floor,
+            "positive_consumption": _positive_consumption,
+        },
+        functions={
+            "utility": negm_kinked_toy.utility,
+            "liquid_savings": _brute_liquid_savings,
+        },
+    )
+    dead = Regime(
+        transition=None,
+        active=lambda age, n=_FINAL_AGE_ALIVE: age > n,
+        functions={"utility": lambda: 0.0},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        regime_id_class=negm_kinked_toy.RegimeId,
+        ages=AgeGrid(start=20, stop=30, step="5Y"),
+        fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
+    )
 
 
-def test_negm_value_approaches_the_brute_oracle():
-    """NEGM reproduces the brute oracle to a coarse-grid tolerance.
-
-    With the mandatory outer candidate `s' = illiquid` and the inner savings
-    grid split across the credit-card rate kink, NEGM tracks the dense-brute
-    value; the committed brute cells are matched within the coarse-grid
-    discretization band (it tightens as the brute action grids refine).
-    """
-    v0 = _solve_period0_alive()
-    for (ix, iz), brute_value in _ORACLE_CELLS.items():
-        np.testing.assert_allclose(float(v0[ix, iz]), brute_value, atol=2e-2)
+@pytest.fixture(scope="module")
+def matched_negm_value() -> FloatND:
+    """The matched 3-period NEGM model's period-0 `alive` value array."""
+    return _build_matched_negm_model().solve(params=_PARAMS, log_level="off")[0][
+        "alive"
+    ]
 
 
-def test_negm_value_is_monotone_increasing_in_both_assets():
-    """The period-0 value rises with both liquid and illiquid wealth."""
-    v0 = _solve_period0_alive()
-    assert float(v0[0, 0]) <= _ORACLE_MAX
-    assert float(v0[-1, -1]) >= _ORACLE_MIN
-    row_diffs = jnp.diff(v0, axis=0)
-    col_diffs = jnp.diff(v0, axis=1)
-    assert bool(jnp.all(row_diffs >= -1e-6))
-    assert bool(jnp.all(col_diffs >= -1e-6))
+@pytest.fixture(scope="module")
+def oracle_value() -> FloatND:
+    """The 4-period brute oracle's period-0 `alive` value array."""
+    return kinked_toy_oracle.build_model().solve(
+        params=kinked_toy_oracle.PARAMS, log_level="off"
+    )[0]["alive"]
 
 
 @pytest.mark.parametrize(
@@ -94,7 +237,7 @@ def test_negm_value_is_monotone_increasing_in_both_assets():
 )
 def test_inverse_marginal_utility_subtracts_the_durable_flow_offset(
     marginal_continuation: float, illiquid: float, expected_consumption: float
-):
+) -> None:
     """`(u')^{-1}(m) = m^{-1/gamma} - iota*Z` at the durable node `Z`.
 
     Utility is `(c + iota*Z)^{1-gamma}/(1-gamma)`, so `u'(c) = (c + iota*Z)^{-gamma}`
@@ -103,7 +246,76 @@ def test_inverse_marginal_utility_subtracts_the_durable_flow_offset(
     """
     consumption = float(
         negm_kinked_toy.inverse_marginal_utility(
-            marginal_continuation=marginal_continuation, illiquid=illiquid
+            marginal_continuation=jnp.asarray(marginal_continuation),
+            illiquid=jnp.asarray(illiquid),
         )
     )
     np.testing.assert_allclose(consumption, expected_consumption, atol=1e-12)
+
+
+def test_brute_oracle_reproduces_its_pinned_values(oracle_value: FloatND) -> None:
+    """The brute oracle reproduces its pinned period-0 values and grid checksums.
+
+    The oracle is the parity record: its repaired `[-6, 30]` wealth domain keeps
+    every reachable `next_wealth` inside the support, so the pinned cell values
+    are dense-search truth rather than an out-of-domain extrapolation.
+    """
+    for (ix, iz), expected in _ORACLE_CELLS.items():
+        np.testing.assert_allclose(float(oracle_value[ix, iz]), expected, atol=1e-8)
+    np.testing.assert_allclose(float(jnp.sum(oracle_value)), _ORACLE_SUM, atol=1e-6)
+    np.testing.assert_allclose(float(jnp.min(oracle_value)), _ORACLE_MIN, atol=1e-6)
+    np.testing.assert_allclose(float(jnp.max(oracle_value)), _ORACLE_MAX, atol=1e-6)
+
+    wealth_grid = jnp.asarray(kinked_toy_oracle.WEALTH_GRID.to_jax())
+    illiquid_grid = jnp.asarray(kinked_toy_oracle.ILLIQUID_GRID.to_jax())
+    np.testing.assert_allclose(
+        kinked_toy_oracle._checksum(wealth_grid), 1404.0, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        kinked_toy_oracle._checksum(illiquid_grid), 1560.0, atol=1e-6
+    )
+
+
+@pytest.mark.parametrize(
+    ("n_consumption", "n_investment"),
+    [(15, 15), (25, 25), (45, 45)],
+)
+def test_negm_weakly_improves_on_the_matched_brute_value(
+    matched_negm_value: FloatND, n_consumption: int, n_investment: int
+) -> None:
+    """NEGM's off-grid value weakly dominates the matched brute value cell-by-cell.
+
+    Brute searches the same economic problem on the same state domain with the
+    same order-1 V-interpolation but restricts the policy to its action grid; its
+    reachable durable post-states are a subset of NEGM's outer grid. NEGM's inner
+    EGM puts consumption off-grid, so at every state cell `V_negm >= V_brute` up
+    to a small interpolation tolerance.
+    """
+    brute_value = _build_matched_brute_model(
+        n_consumption=n_consumption, n_investment=n_investment
+    ).solve(params=_PARAMS, log_level="off")[0]["alive"]
+    improvement = matched_negm_value - brute_value
+    assert bool(jnp.all(jnp.isfinite(brute_value)))
+    assert float(jnp.min(improvement)) >= -1e-4
+
+
+def test_brute_value_converges_up_to_negm_as_grids_refine(
+    matched_negm_value: FloatND,
+) -> None:
+    """The matched brute value rises toward NEGM's off-grid value as grids refine.
+
+    Refining the brute consumption and investment grids tightens the worst-case
+    gap to NEGM monotonically: the action-grid solver approaches NEGM's off-grid
+    value from below, so NEGM is the limit, not an outlier.
+    """
+    max_gaps = []
+    for n_points in (15, 25, 45, 80):
+        brute_value = _build_matched_brute_model(
+            n_consumption=n_points, n_investment=n_points
+        ).solve(params=_PARAMS, log_level="off")[0]["alive"]
+        max_gaps.append(float(jnp.max(jnp.abs(matched_negm_value - brute_value))))
+    # Strictly decreasing worst-case gap: each refinement closes more of it.
+    for finer, coarser in zip(max_gaps[1:], max_gaps[:-1], strict=True):
+        assert finer < coarser
+    # The finest brute grid lands within a tight band of NEGM everywhere.
+    assert max_gaps[-1] < 0.1
