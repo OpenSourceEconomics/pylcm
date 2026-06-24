@@ -36,9 +36,9 @@ governs the optimum:
   period (`housing == housing_choice` at both `t` and `t+1`) — the housing
   switch is a value-function kink the smooth consumption Euler equation skips.
 
-pylcm's simulate is grid-restricted for all solvers, so the local magnitude at
-coarse grids is coarse-grid, not a methodological ceiling; the paper grids (NG in
-{250...1000}) are a gpu-01 sweep.
+pylcm's simulate is grid-restricted for all solvers, so the magnitude at coarse
+grids is coarse-grid, not a methodological ceiling; the paper grids (NG in
+{250...1000}) exceed local memory and require a GPU sweep.
 """
 
 import functools
@@ -502,8 +502,8 @@ def app2_fues_accuracy_table(
 ) -> pd.DataFrame:
     """Run the EGM-FUES Euler-error sweep across liquid-grid sizes.
 
-    One solve+simulate per grid size. The paper grids (NG in {250...1000}) are a
-    gpu-01 sweep; pass smaller `n_grids` for a local run.
+    One solve+simulate per grid size. The paper grids (NG in {250...1000}) exceed
+    local memory and require a GPU sweep; pass smaller `n_grids` for a local run.
     """
     rows = [
         {

@@ -1,11 +1,11 @@
-"""Produce the paper-scale DS-2026 comparison tables in one run (gpu-01).
+"""Produce the paper-scale DS-2026 comparison tables in one run.
 
 Every model, method, oracle, and harness for Dobrescu & Shanker (2026) is built
 and CPU-validated at small grids. The *paper-scale* table numbers (App.1 grids up
 to 10000, App.2 NG up to 1000, App.3 W up to 4000) exceed local memory, so this
-script runs the full sweeps on a GPU box.
+script runs the full sweeps on a CUDA-capable GPU.
 
-Run on gpu-01 with the CUDA env, e.g.
+Run with the CUDA env, e.g.
 
     XLA_PYTHON_CLIENT_PREALLOCATE=false \\
         pixi run --environment tests-cuda12 \\
@@ -47,7 +47,7 @@ from benchmarks.ds_replication.app3_discrete_housing_accuracy import (
 
 _logger = logging.getLogger("lcm")
 
-# Paper grids per application (the local box cannot hold these).
+# Paper grids per application (exceed local memory; require a CUDA-capable GPU).
 APP2_NG = (250, 500, 750, 1000)
 APP2_TAUS = (0.05, 0.07, 0.12)
 APP3_W = (1000, 2000, 4000)

@@ -57,11 +57,11 @@ samples that are linearly interpolated in `(liquid, housing)` to evaluate
 `c_{t+1}(a', H', wage_j)`.
 
 pylcm's simulate is grid-restricted for **all** solvers (so is the App.1 FUES
-column), so the local magnitude at coarse grids is *coarse-grid*, not a
-methodological ceiling — it falls monotonically as the grid refines. The full
-paper grids (NG in {250...1000}, many wage nodes) are a gpu-01/CI sweep, exactly
-like App.1's `{1000...10000}`; the small grids here (n_grid <= ~20, <= 5 wage nodes)
-are local-safe because the lifecycle is short.
+column), so the magnitude at coarse grids is *coarse-grid*, not a methodological
+ceiling — it falls monotonically as the grid refines. The full paper grids (NG in
+{250...1000}, many wage nodes) exceed local memory and require a GPU/CI sweep,
+exactly like App.1's `{1000...10000}`; the small grids here (n_grid <= ~20, <= 5
+wage nodes) run locally because the lifecycle is short.
 """
 
 import functools
@@ -535,8 +535,8 @@ def app2_negm_accuracy_table(
 ) -> pd.DataFrame:
     """Run the NEGM Euler-error sweep across per-axis grid sizes.
 
-    One solve+simulate per grid size. The paper grids (NG in {250...1000}) are a
-    gpu-01 sweep; pass smaller `n_grids` for a local run.
+    One solve+simulate per grid size. The paper grids (NG in {250...1000}) exceed
+    local memory and require a GPU sweep; pass smaller `n_grids` for a local run.
 
     Args:
         n_grids: Per-axis grid sizes to sweep.
