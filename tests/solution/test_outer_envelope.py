@@ -14,13 +14,79 @@ exercise that construction in isolation, with synthetic keeper and adjuster
 rows, so the envelope logic is pinned independently of the toy model and oracle.
 """
 
+from types import MappingProxyType
+from typing import cast
+
 import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.outer_envelope import build_outer_envelope_carry
-from lcm.typing import Float1D
+from _lcm.solution.solvers import _build_coh_shift_function
+from _lcm.typing import EconFunctionsMapping
+from lcm.typing import Float1D, FloatND
+
+
+def test_coh_shift_cancels_a_separable_state_in_the_resources_difference() -> None:
+    """The credited-cost shift ignores a resources term that is constant in `next`.
+
+    The cash-on-hand shift is the keeper-minus-adjuster difference of the
+    regime's inner resources, where only the outer post-decision (`next_housing`)
+    varies between the two evaluations. Any resources term that does not depend on
+    that outer choice — here a separable wage income `y(wage)` and the
+    `(1+r)·liquid` wealth term — appears identically in both legs and cancels, so
+    the shift equals `housing_cost(next=outer) - housing_cost(next=keep)` and is
+    independent of the wage state. The builder must therefore evaluate the
+    resources function even though the model reads a `wage` state the shift does
+    not depend on, rather than failing because no `wage` value was supplied.
+    """
+
+    def income(wage: FloatND) -> FloatND:
+        """A wage-only resources term, additively separable from the house cost."""
+        return jnp.exp(wage)
+
+    def housing_cost(housing: FloatND, next_housing: FloatND) -> FloatND:
+        """Round-trip cost of moving the house from `housing` to `next_housing`."""
+        return next_housing - housing
+
+    def resources(
+        liquid: FloatND, income: FloatND, housing_cost: FloatND, return_liquid: float
+    ) -> FloatND:
+        """`(1+r)*liquid + y - housing_cost`, separable in wage and wealth."""
+        return (1.0 + return_liquid) * liquid + income - housing_cost
+
+    shift_func = _build_coh_shift_function(
+        functions=cast(
+            "EconFunctionsMapping",
+            MappingProxyType(
+                {
+                    "resources": resources,
+                    "income": income,
+                    "housing_cost": housing_cost,
+                }
+            ),
+        ),
+        resources_name="resources",
+        euler_state_name="liquid",
+        durable_state_name="housing",
+        outer_post_decision="next_housing",
+    )
+
+    durable_values = jnp.asarray([1.0, 2.0])
+    outer_values = jnp.asarray([0.5, 1.5, 3.0])
+    shifts = shift_func(
+        durable_values=durable_values,
+        outer_values=outer_values,
+        return_liquid=0.05,
+    )
+
+    # shift(z, z') = resources(next=z) - resources(next=z')
+    #             = housing_cost(next=z') - housing_cost(next=z) = z' - z,
+    # with the wage income and (1+r)*liquid terms cancelling.
+    expected = outer_values[None, :] - durable_values[:, None]
+    assert shifts.shape == (2, 3)
+    np.testing.assert_allclose(np.asarray(shifts), np.asarray(expected), atol=1e-12)
 
 
 def _crra_value_row(*, coh: Float1D, level: float) -> Float1D:
@@ -140,6 +206,68 @@ def test_adjuster_winning_only_on_a_subinterval_is_captured() -> None:
     np.testing.assert_allclose(
         np.asarray(enveloped_ends), np.asarray(jnp.sqrt(ends)), atol=3e-2
     )
+
+
+def test_envelope_broadcasts_over_a_discrete_leading_axis() -> None:
+    """A discrete state ahead of the durable axis is enveloped cell-by-cell.
+
+    When the inner DC-EGM carries a discrete/process state (a Markov wage), the
+    carry's leading axes are `(discrete, durable)` — the durable is the last
+    leading axis, the discrete one precedes it. The credited shift depends only
+    on the durable margin, so it broadcasts over the discrete axis, and the upper
+    envelope is taken independently per `(discrete, durable)` cell. The published
+    carry must keep the discrete axis (here two nodes at different value levels)
+    and lift each cell by the winning adjuster's gain, never mixing the two
+    discrete nodes.
+    """
+    n_pad = 40
+    n_discrete = 2
+    coh = jnp.linspace(1.0, 9.0, n_pad)
+    delta = 0.25
+    shift = 2.0
+    # One durable state, two discrete nodes at value levels 0.0 and 1.0.
+    discrete_levels = jnp.asarray([0.0, 1.0])
+
+    keeper = EGMCarry(
+        endog_grid=jnp.broadcast_to(coh, (n_discrete, 1, n_pad)),
+        value=jnp.stack(
+            [_crra_value_row(coh=coh, level=lvl) for lvl in discrete_levels]
+        )[:, None, :],
+        marginal_utility=jnp.broadcast_to(
+            _identity_marginal(coh=coh), (n_discrete, 1, n_pad)
+        ),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    adjuster = EGMCarry(
+        endog_grid=jnp.broadcast_to(coh - shift, (n_discrete, 1, n_pad)),
+        value=jnp.stack(
+            [_crra_value_row(coh=coh, level=lvl + delta) for lvl in discrete_levels]
+        )[:, None, :],
+        marginal_utility=jnp.broadcast_to(
+            _identity_marginal(coh=coh), (n_discrete, 1, n_pad)
+        ),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+
+    carry = build_outer_envelope_carry(
+        keeper_carry=keeper,
+        adjuster_carries=(adjuster,),
+        coh_shifts=jnp.asarray([[shift]]),  # one durable state, one adjuster
+    )
+
+    assert carry.value.shape == (n_discrete, 1, n_pad)
+    query = jnp.asarray([3.0, 5.0, 7.0])
+    for node in range(n_discrete):
+        enveloped = interp_on_padded_grid(
+            x_query=query,
+            xp=carry.endog_grid[node, 0],
+            fp=carry.value[node, 0],
+            fp_slopes=carry.marginal_utility[node, 0],
+        )
+        expected = jnp.sqrt(query) + float(discrete_levels[node]) + delta
+        np.testing.assert_allclose(
+            np.asarray(enveloped), np.asarray(expected), atol=2e-2
+        )
 
 
 def test_keeper_wins_when_no_adjuster_improves() -> None:

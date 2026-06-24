@@ -704,7 +704,11 @@ class _NEGMPeriodKernel:
     """
 
     durable_grid_values: FloatND
-    """The durable state's grid — the carry's leading (passive) axis."""
+    """The durable state's grid — the carry's last leading (passive) axis.
+
+    Any discrete/process states precede the passive durable margin in the carry's
+    leading axes, so the durable is carry axis `-2`.
+    """
 
     @property
     def core(self) -> Callable:
@@ -920,27 +924,39 @@ def _build_coh_shift_function(
         enforce_signature=False,
         set_annotations=True,
     )
+    resources_arg_names = set(get_annotations(resources_func)) - {"return"}
+    bound_arg_names = {euler_state_name, durable_state_name, outer_post_decision}
 
     def coh_shifts(
         *, durable_values: FloatND, outer_values: FloatND, **params: object
     ) -> FloatND:
-        zero_wealth = jnp.zeros((), dtype=durable_values.dtype)
+        zero_reference = jnp.zeros((), dtype=durable_values.dtype)
+        # Every resources leaf other than the Euler state, the durable state, the
+        # outer post-decision, and the regime params is constant in the outer
+        # choice (the credited cost reads only the durable margin), so it appears
+        # identically in the keeper and adjuster legs and cancels in their
+        # difference. Hold each at a fixed reference — exactly as the Euler state
+        # is held at zero — so the shift is the pure credited-cost difference.
+        separable_arg_names = resources_arg_names - bound_arg_names - set(params)
+        separable_references = dict.fromkeys(separable_arg_names, zero_reference)
 
         def shift_one(durable: FloatND, outer: FloatND) -> FloatND:
             keeper_resources = resources_func(
                 **{
-                    euler_state_name: zero_wealth,
+                    euler_state_name: zero_reference,
                     durable_state_name: durable,
                     outer_post_decision: durable,
                 },
+                **separable_references,
                 **params,
             )
             adjuster_resources = resources_func(
                 **{
-                    euler_state_name: zero_wealth,
+                    euler_state_name: zero_reference,
                     durable_state_name: durable,
                     outer_post_decision: outer,
                 },
+                **separable_references,
                 **params,
             )
             return keeper_resources - adjuster_resources

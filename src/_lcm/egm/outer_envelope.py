@@ -50,9 +50,16 @@ def build_outer_envelope_carry(
     below the shared grid's lower end (its borrowing-constrained support starts
     higher) is masked to `-inf` there and cannot win in that region.
 
+    The carry's leading axes are the inner DC-EGM's outer states — any
+    discrete/process states first, then the single passive durable margin — so
+    the durable is the *last* leading axis (carry axis `-2`), with a grid axis
+    `-1`. The credited shift depends only on the durable margin and the adjuster
+    node, so it broadcasts over the discrete axes; the upper envelope is taken
+    independently per leading cell `(discrete..., durable)`.
+
     Args:
-        keeper_carry: The keeper's continuation carry — one row per durable
-            state, already in coh space (`credited(z, z) = 0`).
+        keeper_carry: The keeper's continuation carry — one row per leading cell
+            `(discrete..., durable)`, already in coh space (`credited(z, z) = 0`).
         adjuster_carries: One carry per outer-grid node, each in its own
             resources space; aligned with the columns of `coh_shifts`.
         coh_shifts: Per durable state (rows) and adjuster node (columns), the
@@ -61,17 +68,21 @@ def build_outer_envelope_carry(
 
     Returns:
         The published continuation carry — the coh-space upper envelope of the
-        keeper and all adjuster candidates, one row per durable state.
+        keeper and all adjuster candidates, one row per leading cell.
 
     """
     n_pad = keeper_carry.endog_grid.shape[-1]
-    n_durable = keeper_carry.endog_grid.shape[0]
+    leading_shape = keeper_carry.endog_grid.shape[:-1]
+    n_durable = coh_shifts.shape[0]
+    n_discrete_axes = len(leading_shape) - 1
 
-    # Stack the candidate rows on a leading axis: the keeper (shift 0) then every
-    # adjuster shifted into coh space. Each block is (n_durable, n_pad); the
-    # stack is (n_candidates, n_durable, n_pad).
+    # Stack the candidate rows on a fresh leading axis: the keeper (shift 0) then
+    # every adjuster. Each block is `(*leading, n_pad)`; the stack is
+    # `(n_candidates, *leading, n_pad)`.
+    n_candidates = 1 + len(adjuster_carries)
     keeper_shift = jnp.zeros((n_durable, 1), dtype=coh_shifts.dtype)
-    all_shifts = jnp.concatenate([keeper_shift, coh_shifts], axis=1)
+    # `(n_durable, n_candidates)` then transposed to `(n_candidates, n_durable)`.
+    all_shifts = jnp.concatenate([keeper_shift, coh_shifts], axis=1).T
 
     endog_stack = jnp.stack(
         [keeper_carry.endog_grid, *(c.endog_grid for c in adjuster_carries)], axis=0
@@ -87,19 +98,28 @@ def build_outer_envelope_carry(
         axis=0,
     )
 
-    # Shift each candidate's endogenous grid into coh space; the per-(durable,
-    # candidate) shift broadcasts over the grid axis. NaN padding stays NaN, so
-    # the per-row interpolation's padding handling is preserved.
-    endog_coh = endog_stack + all_shifts.T[:, :, None]
+    # Shift each candidate's endogenous grid into coh space. The shift depends on
+    # the candidate and the durable margin only; reshape it to
+    # `(n_candidates, 1, …, 1, n_durable, 1)` so it broadcasts over the discrete
+    # axes and the grid axis. NaN padding stays NaN, so the per-row
+    # interpolation's padding handling is preserved.
+    shift_shape = (n_candidates, *(1,) * n_discrete_axes, n_durable, 1)
+    endog_coh = endog_stack + all_shifts.reshape(shift_shape)
+
+    # Collapse the leading cells into one axis, upper-envelope each independently,
+    # then restore the leading shape.
+    flat_endog = endog_coh.reshape(n_candidates, -1, n_pad)
+    flat_value = value_stack.reshape(n_candidates, -1, n_pad)
+    flat_marginal = marginal_stack.reshape(n_candidates, -1, n_pad)
 
     refined_grid, refined_value, refined_marginal = jax.vmap(
         _envelope_one_durable_state, in_axes=(1, 1, 1, None)
-    )(endog_coh, value_stack, marginal_stack, n_pad)
+    )(flat_endog, flat_value, flat_marginal, n_pad)
 
     return EGMCarry(
-        endog_grid=refined_grid,
-        value=refined_value,
-        marginal_utility=refined_marginal,
+        endog_grid=refined_grid.reshape(*leading_shape, n_pad),
+        value=refined_value.reshape(*leading_shape, n_pad),
+        marginal_utility=refined_marginal.reshape(*leading_shape, n_pad),
         taste_shock_scale=keeper_carry.taste_shock_scale,
     )
 
