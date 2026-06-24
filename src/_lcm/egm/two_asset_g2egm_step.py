@@ -35,7 +35,7 @@ from _lcm.egm.two_asset_post_decision import (
     post_decision_value_and_grad_retiring,
 )
 from _lcm.egm.two_asset_segment_mesh import build_segment_mesh
-from lcm.typing import Float1D, FloatND, ScalarFloat
+from lcm.typing import Float1D, Float2D, FloatND, ScalarFloat
 
 # Maps a post-decision `(a, b)` mesh to its value and gradients. The working step reads
 # next period's working value on the `(m, n)` grid; the retirement-boundary step reads
@@ -300,17 +300,22 @@ def _g2egm_envelope_step(
     # whose optimal post-state leaves the post-decision grid stays a hole (no in-domain
     # candidate exists), which is a grid-coverage limit, not an algorithm gap.
     deposit_grid = jnp.linspace(0.0, b_grid[-1] - b_grid[0], consumption_grid.shape[0])
-    hole_value = _direct_bellman_fill(
+    hole_value, hole_policy = _direct_bellman_fill(
         targets=targets,
         objective=objective,
         consumption_grid=consumption_grid,
         deposit_grid=deposit_grid,
     )
-    filled = jnp.where(jnp.isfinite(result.value), result.value, hole_value)
+    # A target the segment envelope misses takes the hole-fill's value *and* its policy,
+    # so the published consumption and deposit stay consistent with the published value
+    # rather than the stale failed-envelope policy.
+    is_hole = ~jnp.isfinite(result.value)
+    filled_value = jnp.where(is_hole, hole_value, result.value)
+    filled_policy = jnp.where(is_hole[:, None], hole_policy, result.policy)
     return G2EGMResult(
-        value=filled.reshape(m_mesh.shape),
-        consumption=result.policy[:, 0].reshape(m_mesh.shape),
-        deposit=result.policy[:, 1].reshape(m_mesh.shape),
+        value=filled_value.reshape(m_mesh.shape),
+        consumption=filled_policy[:, 0].reshape(m_mesh.shape),
+        deposit=filled_policy[:, 1].reshape(m_mesh.shape),
     )
 
 
@@ -320,22 +325,28 @@ def _direct_bellman_fill(
     objective: ObjectiveEvaluator,
     consumption_grid: Float1D,
     deposit_grid: Float1D,
-) -> FloatND:
+) -> tuple[FloatND, Float2D]:
     """Maximize the recomputed objective over a coarse policy grid, per target.
 
     The fallback for common-grid targets no segment mesh covers: a direct-Bellman search
-    over the `(consumption, deposit)` product grid, masking infeasible candidates. The
-    result is `-inf` only where every coarse candidate is infeasible (the optimal
-    post-state leaves the post-decision grid).
+    over the `(consumption, deposit)` product grid, masking infeasible candidates.
+
+    Returns the per-target maximizing value and the `(consumption, deposit)` candidate
+    that attains it, so a hole cell's published policy matches its published value. The
+    value is `-inf` only where every coarse candidate is infeasible (the optimal
+    post-state leaves the post-decision grid); the returned policy there is the first
+    candidate and is meaningless, flagged by the `-inf` value.
     """
     c_mesh, d_mesh = jnp.meshgrid(consumption_grid, deposit_grid, indexing="ij")
     candidates = jnp.stack([c_mesh.reshape(-1), d_mesh.reshape(-1)], axis=1)
 
-    def at_target(target: FloatND) -> FloatND:
+    def at_target(target: FloatND) -> tuple[FloatND, Float1D]:
         def per_candidate(policy: FloatND) -> FloatND:
             value, feasible = objective(target, policy)
             return jnp.where(feasible & jnp.isfinite(value), value, -jnp.inf)
 
-        return jnp.max(jax.vmap(per_candidate)(candidates))
+        masked = jax.vmap(per_candidate)(candidates)
+        winner = jnp.argmax(masked)
+        return masked[winner], candidates[winner]
 
     return jax.vmap(at_target)(targets)
