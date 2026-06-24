@@ -329,3 +329,25 @@ def test_brute_value_converges_up_to_negm_as_grids_refine(
     # convergence), and lands within a tight band of NEGM everywhere.
     assert max_gaps[-1] < max_gaps[0]
     assert max_gaps[-1] < 0.1
+
+
+@pytest.mark.parametrize("outer_batch_size", [1, 8])
+def test_outer_batch_size_leaves_value_function_unchanged(outer_batch_size: int):
+    """Chunking the NEGM outer search yields the identical solved value function.
+
+    The outer durable search folds each candidate into a running maximum;
+    processing the outer-grid nodes in chunks of `outer_batch_size` instead of all
+    at once reduces them in the same order, so the solved value function is
+    bit-identical — the knob trades parallelism for bounded memory only.
+    """
+    base = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")
+    chunked = negm_kinked_toy.build_model(outer_batch_size=outer_batch_size).solve(
+        params=_PARAMS, log_level="off"
+    )
+    assert base.keys() == chunked.keys()
+    for period in base:
+        for regime in base[period]:
+            np.testing.assert_array_equal(
+                np.asarray(chunked[period][regime]),
+                np.asarray(base[period][regime]),
+            )

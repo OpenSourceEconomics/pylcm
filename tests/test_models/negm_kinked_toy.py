@@ -21,6 +21,8 @@ The outer search runs over `next_illiquid` with the no-adjustment candidate
 `s' = illiquid` (`Iz = 0`, the withdrawal-penalty kink).
 """
 
+from dataclasses import replace
+
 import jax.numpy as jnp
 
 from lcm import (
@@ -170,9 +172,13 @@ NEGM_SOLVER = NEGM(
 )
 
 
-def build_alive_regime() -> Regime:
-    """The non-terminal NEGM regime (two assets, two continuous actions)."""
+def build_alive_regime(*, outer_batch_size: int = 0) -> Regime:
+    """The non-terminal NEGM regime (two assets, two continuous actions).
+
+    `outer_batch_size` chunks the NEGM outer durable search (`0` = all at once).
+    """
     final_age_alive = 20 + (N_PERIODS - 2) * 5
+    solver = replace(NEGM_SOLVER, outer_batch_size=outer_batch_size)
     return Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
@@ -190,7 +196,7 @@ def build_alive_regime() -> Regime:
             "credited": credited,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
-        solver=NEGM_SOLVER,
+        solver=solver,
     )
 
 
@@ -204,11 +210,17 @@ def build_dead_regime() -> Regime:
     )
 
 
-def build_model() -> Model:
-    """Build the kinked-toy NEGM model (the G1 parity target)."""
+def build_model(*, outer_batch_size: int = 0) -> Model:
+    """Build the kinked-toy NEGM model (the G1 parity target).
+
+    `outer_batch_size` chunks the NEGM outer durable search (`0` = all at once).
+    """
     final_age_alive = 20 + (N_PERIODS - 2) * 5
     return Model(
-        regimes={"alive": build_alive_regime(), "dead": build_dead_regime()},
+        regimes={
+            "alive": build_alive_regime(outer_batch_size=outer_batch_size),
+            "dead": build_dead_regime(),
+        },
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},

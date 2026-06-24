@@ -56,12 +56,13 @@ def _fmt(value, spec):
     return format(value, spec) if value is not None else "OOM"
 
 
-def _row(*, ng: int, tau: float, liquid_batch_size: int) -> str:
-    kw = {"n_grid": ng, "tau": tau, "liquid_batch_size": liquid_batch_size}
-    fues_t = _safe("FUES timing", app2_fues_timing, **kw)
-    negm_t = _safe("NEGM timing", app2_negm_timing, **kw)
-    fues_e = _safe("FUES euler", app2_fues_euler_error, **kw)
-    negm_e = _safe("NEGM euler", app2_negm_euler_error, **kw)
+def _row(*, ng: int, tau: float, liquid_batch_size: int, outer_batch_size: int) -> str:
+    fues_kw = {"n_grid": ng, "tau": tau, "liquid_batch_size": liquid_batch_size}
+    negm_kw = {**fues_kw, "outer_batch_size": outer_batch_size}
+    fues_t = _safe("FUES timing", app2_fues_timing, **fues_kw)
+    negm_t = _safe("NEGM timing", app2_negm_timing, **negm_kw)
+    fues_e = _safe("FUES euler", app2_fues_euler_error, **fues_kw)
+    negm_e = _safe("NEGM euler", app2_negm_euler_error, **negm_kw)
     fc = fues_t["compile_time"] if fues_t else None
     fr = fues_t["runtime"] if fues_t else None
     nc = negm_t["compile_time"] if negm_t else None
@@ -84,6 +85,12 @@ def main() -> None:
         default=0,
         help="Chunk the liquid Euler grid to bound peak memory (0 = no chunking).",
     )
+    parser.add_argument(
+        "--outer-batch-size",
+        type=int,
+        default=0,
+        help="Chunk the NEGM outer durable search (0 = solve all nodes at once).",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
 
@@ -97,7 +104,12 @@ def main() -> None:
             start = time.perf_counter()
             _logger.info("=== App.2 NG=%d tau=%s ===", ng, tau)
             try:
-                row = _row(ng=ng, tau=tau, liquid_batch_size=args.liquid_batch_size)
+                row = _row(
+                    ng=ng,
+                    tau=tau,
+                    liquid_batch_size=args.liquid_batch_size,
+                    outer_batch_size=args.outer_batch_size,
+                )
             except Exception as exc:
                 row = f"| {ng} | {tau} | FAILED: {type(exc).__name__} | | | | | |\n"
                 _logger.exception("NG=%d tau=%s FAILED", ng, tau)

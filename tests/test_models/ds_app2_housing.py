@@ -305,6 +305,7 @@ def build_model(
     n_consumption: int = 30,
     n_savings: int = 60,
     liquid_batch_size: int = 0,
+    outer_batch_size: int = 0,
     _euler_couple_housing: bool = False,
 ) -> Model:
     """Build the DS App.2 housing NEGM model.
@@ -326,6 +327,12 @@ def build_model(
             peak device memory of the outer durable argmax (whose tensor carries
             the liquid axis) without changing the solved value function. `0`
             (the default) solves every liquid node in one kernel.
+        outer_batch_size: Optional chunking of the NEGM outer durable search. A
+            positive value folds the outer-grid nodes into the running outer
+            maximum in chunks of that many nodes, bounding the peak device memory
+            to one chunk rather than materialising every node's solve at once; it
+            leaves the solved value function unchanged. `0` (the default) solves
+            every outer node at once.
         _euler_couple_housing: Test-only flag that wires the outer housing
             post-decision into the inner Euler-state law, so the NEGM contract
             rejects the model — confirming the accepted model is not accepted by
@@ -395,6 +402,7 @@ def build_model(
         outer_post_decision="next_housing",
         outer_grid=outer_grid,
         outer_no_adjustment_candidate="keep_housing",
+        outer_batch_size=outer_batch_size,
     )
 
     shared_functions = {

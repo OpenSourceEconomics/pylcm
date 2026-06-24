@@ -132,6 +132,7 @@ def _build_solved(
     n_consumption: int,
     tau: float,
     liquid_batch_size: int = 0,
+    outer_batch_size: int = 0,
 ):
     """Build and solve the App.2 NEGM housing model, caching the solution."""
     model = app2.build_model(
@@ -139,6 +140,7 @@ def _build_solved(
         n_periods=n_periods,
         n_consumption=n_consumption,
         liquid_batch_size=liquid_batch_size,
+        outer_batch_size=outer_batch_size,
     )
     params = app2.build_params(tau=tau)
     solution = model.solve(params=params, log_level="off")
@@ -153,6 +155,7 @@ def app2_negm_timing(
     tau: float = 0.07,
     n_runs: int = 3,
     liquid_batch_size: int = 0,
+    outer_batch_size: int = 0,
 ) -> dict[str, float]:
     """Measure compile and steady-state run time of one NEGM solve.
 
@@ -160,14 +163,16 @@ def app2_negm_timing(
     the cached executable and time pure execution, so the compile cost is the
     difference. Every solve is forced to completion with `block_until_ready`.
 
-    `liquid_batch_size > 0` chunks the liquid Euler grid to bound peak device
-    memory at large `n_grid`; it leaves the solved value function unchanged.
+    `liquid_batch_size`/`outer_batch_size > 0` chunk the liquid Euler grid and the
+    NEGM outer durable search to bound peak device memory at large `n_grid`; both
+    leave the solved value function unchanged.
     """
     model = app2.build_model(
         n_grid=n_grid,
         n_periods=n_periods,
         n_consumption=n_consumption,
         liquid_batch_size=liquid_batch_size,
+        outer_batch_size=outer_batch_size,
     )
     params = app2.build_params(tau=tau)
 
@@ -434,6 +439,7 @@ def app2_negm_euler_error(
     alpha: float = ALPHA,
     gamma_c: float = GAMMA_C,
     liquid_batch_size: int = 0,
+    outer_batch_size: int = 0,
 ) -> float:
     """Solve the App.2 NEGM housing model and score the consumption Euler error.
 
@@ -464,6 +470,7 @@ def app2_negm_euler_error(
         n_consumption=n_consumption,
         tau=tau,
         liquid_batch_size=liquid_batch_size,
+        outer_batch_size=outer_batch_size,
     )
     wage_nodes, wage_transition = _wage_nodes_and_transition()
     liquid_grid, housing_grid = _liquid_housing_grids(model)

@@ -367,6 +367,19 @@ class NEGM(Solver):
     kink.
     """
 
+    outer_batch_size: int = 0
+    """Number of outer-grid nodes solved per chunk before folding into the
+    running outer maximum.
+
+    The outer search folds each node's solve into a running `(V_arr, envelope)`,
+    so the peak device memory holds one chunk of candidates regardless of the
+    outer-grid size. A positive value processes that many nodes at once (their
+    independent solves overlap) before reducing them; `0` (the default) solves
+    every node at once — fastest, but its peak grows with the outer-grid size.
+    It is a memory-vs-parallelism knob only: `max` is associative, so the solved
+    value function is identical across batch sizes.
+    """
+
     def __post_init__(self) -> None:
         _fail_if_outer_grid_is_stochastic(self.outer_grid)
         _fail_if_outer_action_is_inner_action(
@@ -375,6 +388,7 @@ class NEGM(Solver):
         _fail_if_outer_post_decision_is_inner_post_decision(
             outer_post_decision=self.outer_post_decision, inner=self.inner
         )
+        _fail_if_outer_batch_size_negative(self.outer_batch_size)
 
     @property
     def requires_continuation_carries(self) -> bool:
@@ -453,6 +467,7 @@ class NEGM(Solver):
                     outer_post_decision=self.outer_post_decision,
                     coh_shift_func=coh_shift_func,
                     durable_grid_values=durable_grid_values,
+                    outer_batch_size=self.outer_batch_size,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
@@ -714,6 +729,13 @@ class _NEGMPeriodKernel:
     leading axes, so the durable is carry axis `-2`.
     """
 
+    outer_batch_size: int
+    """Outer-grid nodes solved per chunk before folding into the running maximum.
+
+    `0` solves every node at once; a positive value bounds the peak memory to one
+    chunk of candidates. A memory-vs-parallelism knob only — value-invariant.
+    """
+
     @property
     def core(self) -> Callable:
         """The shared jitted adjuster core, exposed for any single-core reader."""
@@ -845,38 +867,45 @@ class _NEGMPeriodKernel:
             outer_values=self.outer_grid_values,
             **flat_params[self.regime_name],
         )
-        # Fold each adjuster outer-grid node into a running outer maximum one at a
-        # time — `V = max_j W_j` on the state grid and the coh-space envelope carry
-        # — rather than materialising every node's solve at once. `max` is
-        # associative and the envelope's shared coh grid is fixed at the keeper's,
-        # so folding is value-identical to a single stacked maximum while the peak
-        # device memory stays at one adjuster regardless of the outer-grid size.
-        # The keeper and every adjuster are DC-EGM kernels, so each always
-        # publishes a continuation carry.
+        # Fold the adjuster outer-grid nodes into a running outer maximum — `V =
+        # max_j W_j` on the state grid and the coh-space envelope carry — in chunks
+        # of `outer_batch_size`, rather than materialising every node's solve at
+        # once. Each chunk's independent solves overlap; reducing them into the
+        # running `(V_arr, envelope)` bounds the peak to one chunk of candidates.
+        # `max` is associative and the envelope's shared coh grid is fixed at the
+        # keeper's, so the chunked fold is value-identical to a single stacked
+        # maximum regardless of the chunk size. The keeper and every adjuster are
+        # DC-EGM kernels, so each always publishes a continuation carry.
         keeper_carry = cast("EGMCarry", keeper_result.carry)
         V_arr = keeper_result.V_arr
         envelope = init_outer_envelope(keeper_carry)
-        for adjuster_index, node in enumerate(self._outer_nodes()):
-            adjuster_result = self.adjuster_kernel(
-                compiled_cores={"main": compiled_cores["adjuster"]},
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
-                flat_params=_with_outer_post_decision(
-                    flat_params=flat_params,
-                    regime_name=self.regime_name,
-                    outer_post_decision=self.outer_post_decision,
-                    value=node,
-                ),
-                period=period,
-                ages=ages,
-            )
-            V_arr = jnp.maximum(V_arr, adjuster_result.V_arr)
-            envelope = fold_outer_envelope(
-                envelope,
-                cast("EGMCarry", adjuster_result.carry),
-                coh_shifts[:, adjuster_index],
-            )
+        nodes = self._outer_nodes()
+        chunk_size = self.outer_batch_size or len(nodes)
+        for chunk_start in range(0, len(nodes), chunk_size):
+            chunk_results = [
+                self.adjuster_kernel(
+                    compiled_cores={"main": compiled_cores["adjuster"]},
+                    state_action_space=state_action_space,
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    next_regime_to_egm_carry=next_regime_to_egm_carry,
+                    flat_params=_with_outer_post_decision(
+                        flat_params=flat_params,
+                        regime_name=self.regime_name,
+                        outer_post_decision=self.outer_post_decision,
+                        value=node,
+                    ),
+                    period=period,
+                    ages=ages,
+                )
+                for node in nodes[chunk_start : chunk_start + chunk_size]
+            ]
+            for offset, adjuster_result in enumerate(chunk_results):
+                V_arr = jnp.maximum(V_arr, adjuster_result.V_arr)
+                envelope = fold_outer_envelope(
+                    envelope,
+                    cast("EGMCarry", adjuster_result.carry),
+                    coh_shifts[:, chunk_start + offset],
+                )
         carry = finalize_outer_envelope(envelope)
         # The simulate phase re-optimizes the outer durable action by grid argmax
         # over the next-period value array, so the published `sim_policy` (the
@@ -1824,6 +1853,16 @@ def _union_fixed_params(
         ).items():
             bound.setdefault(key, value)
     return bound
+
+
+def _fail_if_outer_batch_size_negative(outer_batch_size: int) -> None:
+    if outer_batch_size < 0:
+        msg = (
+            f"NEGM.outer_batch_size must be non-negative, got {outer_batch_size}. "
+            "Use 0 to solve every outer-grid node at once, or a positive value to "
+            "fold the outer search in chunks of that many nodes."
+        )
+        raise RegimeInitializationError(msg)
 
 
 def _fail_if_outer_grid_is_stochastic(outer_grid: ContinuousGrid) -> None:
