@@ -108,23 +108,23 @@ def _envelope_one_durable_state(
     endog_coh: FloatND,
     value: FloatND,
     marginal: FloatND,
-    n_pad: int,
+    n_pad: int,  # noqa: ARG001
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Upper-envelope the candidate rows of one durable state on a shared coh grid.
 
-    `endog_coh`, `value`, `marginal` are `(n_candidates, n_pad)` — each row a
-    candidate's coh-shifted carry. The shared coh grid spans the joint finite coh
-    range; every candidate is interpolated onto it (queries below a candidate's
-    own support clamp to that candidate's lowest value, so a candidate whose
-    support starts higher is masked to `-inf` below its first finite node), and
-    the pointwise maximum over candidates is the envelope. The winning
-    candidate's marginal is carried at each node.
+    `endog_coh`, `value`, `marginal` are `(n_candidates, n_pad)` — row 0 the
+    keeper's coh-shifted carry, the rest the adjusters'. The keeper's own
+    endogenous grid (already cash-on-hand, already at the resolution the parent
+    queries) is the shared coh grid: every adjuster's value and marginal is
+    interpolated onto it (queries below an adjuster's own support clamp to its
+    lowest value, so an adjuster whose support starts higher is masked to `-inf`
+    there), and the pointwise maximum over candidates is the envelope. The
+    winning candidate's marginal is carried at each node. Using the keeper's grid
+    avoids a degenerate Euler node (a near-`1/eps` abscissa from a clamped
+    inversion) stretching a fresh linspace until it loses all resolution in the
+    economically relevant range.
     """
-    finite = jnp.isfinite(endog_coh) & jnp.isfinite(value)
-    safe_coh = jnp.where(finite, endog_coh, jnp.inf)
-    lower = jnp.min(safe_coh)
-    upper = jnp.max(jnp.where(finite, endog_coh, -jnp.inf))
-    shared_coh = jnp.linspace(lower, upper, n_pad)
+    shared_coh = endog_coh[0]
 
     def _read_candidate(
         cand_endog: Float1D, cand_value: Float1D, cand_marginal: Float1D

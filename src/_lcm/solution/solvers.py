@@ -25,13 +25,15 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal, cast
 
+import jax
 import jax.numpy as jnp
 from beartype import beartype
-from dags import get_annotations, with_signature
+from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.outer_envelope import build_outer_envelope_carry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
@@ -428,6 +430,15 @@ class NEGM(Solver):
         )
         keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
         outer_grid_values = self.outer_grid.to_jax()
+        durable_state = self.outer_post_decision.removeprefix("next_")
+        coh_shift_func = _build_coh_shift_function(
+            functions=context.functions,
+            resources_name=self.inner.resources,
+            euler_state_name=self.inner.continuous_state,
+            durable_state_name=durable_state,
+            outer_post_decision=self.outer_post_decision,
+        )
+        durable_grid_values = context.grids[durable_state].to_jax()
         period_kernels = MappingProxyType(
             {
                 period: _NEGMPeriodKernel(
@@ -436,6 +447,8 @@ class NEGM(Solver):
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_post_decision=self.outer_post_decision,
+                    coh_shift_func=coh_shift_func,
+                    durable_grid_values=durable_grid_values,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
@@ -682,6 +695,17 @@ class _NEGMPeriodKernel:
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
 
+    coh_shift_func: Callable[..., FloatND]
+    """Per-(durable, outer-node) cash-on-hand shift of each adjuster candidate.
+
+    Maps the durable grid, the outer grid, and the regime's flat params to the
+    shift matrix `credited(z, z'_j)` that lifts each adjuster's endogenous grid
+    into the keeper's cash-on-hand axis.
+    """
+
+    durable_grid_values: FloatND
+    """The durable state's grid — the carry's leading (passive) axis."""
+
     @property
     def core(self) -> Callable:
         """The shared jitted adjuster core, exposed for any single-core reader."""
@@ -704,7 +728,18 @@ class _NEGMPeriodKernel:
         )
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _NEGMPeriodKernel:
-        """Bind the regime's fixed params into both inner kernels."""
+        """Bind the regime's fixed params into both inner kernels and the shift.
+
+        The cash-on-hand shift evaluates the regime's inner resources, which may
+        read a fixed param, so the same fixed params removed from the live
+        `flat_params` are bound into `coh_shift_func` as well.
+        """
+        regime_fixed = dict(
+            fixed_flat_params.get(self.regime_name, MappingProxyType({}))
+        )
+        coh_shift_func = self.coh_shift_func
+        if regime_fixed:
+            coh_shift_func = functools.partial(coh_shift_func, **regime_fixed)
         return replace(
             self,
             keeper_kernel=self.keeper_kernel.with_fixed_params(
@@ -713,6 +748,7 @@ class _NEGMPeriodKernel:
             adjuster_kernel=self.adjuster_kernel.with_fixed_params(
                 fixed_flat_params=fixed_flat_params
             ),
+            coh_shift_func=coh_shift_func,
         )
 
     def build_lower_args(
@@ -813,12 +849,34 @@ class _NEGMPeriodKernel:
             axis=0,
         )
         V_arr = jnp.max(stacked_V, axis=0)
-        # The keeper's carry and simulation policy are the prototype's published
-        # continuation; multi-node carry selection by the outer argmax is deferred
-        # to the cross-algorithm interface bundle (design §6).
+        # The published continuation is the genuine cash-on-hand upper envelope of
+        # the keeper and every adjuster candidate, so the parent period's
+        # keeper-identity continuation read sees the best durable choice at every
+        # coh — not only the keeper's, and an adjuster that wins strictly between
+        # keeper nodes survives.
+        coh_shifts = self.coh_shift_func(
+            durable_values=self.durable_grid_values,
+            outer_values=self.outer_grid_values,
+            **flat_params[self.regime_name],
+        )
+        # The keeper and every adjuster are DC-EGM kernels, so each always
+        # publishes a continuation carry.
+        keeper_carry = cast("EGMCarry", keeper_result.carry)
+        adjuster_carries = tuple(
+            cast("EGMCarry", result.carry) for result in adjuster_results
+        )
+        carry = build_outer_envelope_carry(
+            keeper_carry=keeper_carry,
+            adjuster_carries=adjuster_carries,
+            coh_shifts=coh_shifts,
+        )
+        # The simulate phase re-optimizes the outer durable action by grid argmax
+        # over the next-period value array, so the published `sim_policy` (the
+        # keeper's off-grid inner consumption function) is not the channel that
+        # drives simulated durable choice; it rides through unchanged.
         return KernelResult(
             V_arr=V_arr,
-            carry=keeper_result.carry,
+            carry=carry,
             sim_policy=keeper_result.sim_policy,
         )
 
@@ -832,6 +890,68 @@ class _NEGMPeriodKernel:
             self.outer_grid_values[index]
             for index in range(self.outer_grid_values.shape[0])
         ]
+
+
+def _build_coh_shift_function(
+    *,
+    functions: EconFunctionsMapping,
+    resources_name: FunctionName,
+    euler_state_name: StateName,
+    durable_state_name: StateName,
+    outer_post_decision: FunctionName,
+) -> Callable[..., FloatND]:
+    """Build the per-(durable, outer-node) cash-on-hand shift of each adjuster.
+
+    Adjuster `j`'s inner endogenous grid lives in resources space `R_j = coh -
+    credited(z, z'_j)`; mapping it into the keeper's cash-on-hand axis adds back
+    `credited(z, z'_j)`. That credited cost is the keeper-minus-adjuster
+    difference of the regime's own inner resources at any fixed liquid wealth
+    (`resources` is affine in wealth, so wealth cancels):
+
+    `shift(z, z'_j) = resources(w0, z, next=z) - resources(w0, z, next=z'_j)`.
+
+    The returned callable takes the durable grid (`durable_values`), the outer
+    grid (`outer_values`), and the regime's flat params, and returns the shift
+    matrix of shape `(n_durable, n_outer)`.
+    """
+    resources_func = concatenate_functions(
+        functions={name: func for name, func in functions.items() if name != "H"},
+        targets=resources_name,
+        enforce_signature=False,
+        set_annotations=True,
+    )
+
+    def coh_shifts(
+        *, durable_values: FloatND, outer_values: FloatND, **params: object
+    ) -> FloatND:
+        zero_wealth = jnp.zeros((), dtype=durable_values.dtype)
+
+        def shift_one(durable: FloatND, outer: FloatND) -> FloatND:
+            keeper_resources = resources_func(
+                **{
+                    euler_state_name: zero_wealth,
+                    durable_state_name: durable,
+                    outer_post_decision: durable,
+                },
+                **params,
+            )
+            adjuster_resources = resources_func(
+                **{
+                    euler_state_name: zero_wealth,
+                    durable_state_name: durable,
+                    outer_post_decision: outer,
+                },
+                **params,
+            )
+            return keeper_resources - adjuster_resources
+
+        return jax.vmap(
+            lambda durable: jax.vmap(lambda outer: shift_one(durable, outer))(
+                outer_values
+            )
+        )(durable_values)
+
+    return coh_shifts
 
 
 def _strip_outer_transition(
