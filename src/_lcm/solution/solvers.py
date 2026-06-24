@@ -33,7 +33,11 @@ from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.outer_envelope import build_outer_envelope_carry
+from _lcm.egm.outer_envelope import (
+    finalize_outer_envelope,
+    fold_outer_envelope,
+    init_outer_envelope,
+)
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
@@ -831,8 +835,29 @@ class _NEGMPeriodKernel:
             period=period,
             ages=ages,
         )
-        adjuster_results = [
-            self.adjuster_kernel(
+        # The published continuation is the genuine cash-on-hand upper envelope of
+        # the keeper and every adjuster candidate, so the parent period's
+        # keeper-identity continuation read sees the best durable choice at every
+        # coh — not only the keeper's, and an adjuster that wins strictly between
+        # keeper nodes survives.
+        coh_shifts = self.coh_shift_func(
+            durable_values=self.durable_grid_values,
+            outer_values=self.outer_grid_values,
+            **flat_params[self.regime_name],
+        )
+        # Fold each adjuster outer-grid node into a running outer maximum one at a
+        # time — `V = max_j W_j` on the state grid and the coh-space envelope carry
+        # — rather than materialising every node's solve at once. `max` is
+        # associative and the envelope's shared coh grid is fixed at the keeper's,
+        # so folding is value-identical to a single stacked maximum while the peak
+        # device memory stays at one adjuster regardless of the outer-grid size.
+        # The keeper and every adjuster are DC-EGM kernels, so each always
+        # publishes a continuation carry.
+        keeper_carry = cast("EGMCarry", keeper_result.carry)
+        V_arr = keeper_result.V_arr
+        envelope = init_outer_envelope(keeper_carry)
+        for adjuster_index, node in enumerate(self._outer_nodes()):
+            adjuster_result = self.adjuster_kernel(
                 compiled_cores={"main": compiled_cores["adjuster"]},
                 state_action_space=state_action_space,
                 next_regime_to_V_arr=next_regime_to_V_arr,
@@ -846,34 +871,13 @@ class _NEGMPeriodKernel:
                 period=period,
                 ages=ages,
             )
-            for node in self._outer_nodes()
-        ]
-        stacked_V = jnp.stack(
-            [keeper_result.V_arr, *(result.V_arr for result in adjuster_results)],
-            axis=0,
-        )
-        V_arr = jnp.max(stacked_V, axis=0)
-        # The published continuation is the genuine cash-on-hand upper envelope of
-        # the keeper and every adjuster candidate, so the parent period's
-        # keeper-identity continuation read sees the best durable choice at every
-        # coh — not only the keeper's, and an adjuster that wins strictly between
-        # keeper nodes survives.
-        coh_shifts = self.coh_shift_func(
-            durable_values=self.durable_grid_values,
-            outer_values=self.outer_grid_values,
-            **flat_params[self.regime_name],
-        )
-        # The keeper and every adjuster are DC-EGM kernels, so each always
-        # publishes a continuation carry.
-        keeper_carry = cast("EGMCarry", keeper_result.carry)
-        adjuster_carries = tuple(
-            cast("EGMCarry", result.carry) for result in adjuster_results
-        )
-        carry = build_outer_envelope_carry(
-            keeper_carry=keeper_carry,
-            adjuster_carries=adjuster_carries,
-            coh_shifts=coh_shifts,
-        )
+            V_arr = jnp.maximum(V_arr, adjuster_result.V_arr)
+            envelope = fold_outer_envelope(
+                envelope,
+                cast("EGMCarry", adjuster_result.carry),
+                coh_shifts[:, adjuster_index],
+            )
+        carry = finalize_outer_envelope(envelope)
         # The simulate phase re-optimizes the outer durable action by grid argmax
         # over the next-period value array, so the published `sim_policy` (the
         # keeper's off-grid inner consumption function) is not the channel that
