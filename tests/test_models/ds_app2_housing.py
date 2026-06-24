@@ -347,18 +347,20 @@ def build_model(
     # (next-housing choice) grids at a small positive stock.
     housing_min = housing_max / (2.0 * n_grid)
 
-    def housing_stays_positive(next_housing: ContinuousState) -> BoolND:
-        """The chosen next house must stay at or above the housing floor.
+    def housing_stays_in_bounds(next_housing: ContinuousState) -> BoolND:
+        """The chosen next house must stay within `[housing_min, housing_max]`.
 
-        The NEGM solve searches `next_housing` on the floored outer grid, but
-        the forward simulation re-optimises over the symmetric
-        `housing_investment` action grid, which can drive
-        `next_housing = housing + housing_investment` below the floor. A
-        non-positive house gives NaN CES service utility that the feasibility
-        mask does not catch, so the simulate argmax can select a NaN-valued
-        action. This cut mirrors the solve's floored outer grid.
+        The NEGM solve searches `next_housing` on the floored, capped outer grid,
+        but the forward simulation re-optimises over the symmetric
+        `housing_investment` action grid `[-housing_max, housing_max]`, which can
+        drive `next_housing = housing + housing_investment` below the floor or
+        above the top outer node. Below the floor the CES service utility is NaN
+        (a non-positive house) and above the top node the policy extrapolates off
+        the solved outer grid; the budget feasibility mask catches neither, so the
+        simulate argmax could select an out-of-bounds action. This cut mirrors the
+        solve's floored, capped outer grid on both sides.
         """
-        return next_housing >= housing_min
+        return (next_housing >= housing_min) & (next_housing <= housing_max)
 
     liquid_grid = LinSpacedGrid(start=0.0, stop=liquid_max, n_points=n_grid)
     housing_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
@@ -422,7 +424,7 @@ def build_model(
             "income": _working_income,
             "wage_income": wage_income,
         },
-        constraints={"housing_stays_positive": housing_stays_positive},
+        constraints={"housing_stays_in_bounds": housing_stays_in_bounds},
         solver=negm_solver,
     )
 
@@ -439,7 +441,7 @@ def build_model(
             "housing_investment": housing_investment_grid,
         },
         functions={**shared_functions, "income": _retirement_income},
-        constraints={"housing_stays_positive": housing_stays_positive},
+        constraints={"housing_stays_in_bounds": housing_stays_in_bounds},
         solver=negm_solver,
     )
 
