@@ -574,9 +574,14 @@ def _inspect_candidate(
     secant_i_to_j_seg = _slope(x_a=grid_i, y_a=value_i, x_b=j_seg_grid, y_b=j_seg_value)
     below_j_segment = switches & j_seg_found & (secant < secant_i_to_j_seg)
 
+    # A value drop marks a dominated candidate only *within* a segment, where the
+    # envelope value is monotone in the grid. Across a segment switch the value may
+    # legitimately fall (the winning segment changes at a crossing), so a switch is
+    # judged geometrically by `below_j_segment`, not by the raw value comparison —
+    # otherwise the genuine crossing point of two branches is dropped as dominated.
     dropped = (
         ~candidate_valid
-        | (value_i < value_j)
+        | ((value_i < value_j) & ~switches)
         | (((grid_i - policy_i) < (grid_j - policy_j)) & (secant < grad_before))
         | below_j_segment
     )

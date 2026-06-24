@@ -191,17 +191,6 @@ def test_segment_id_label_forces_a_switch_a_flat_policy_notch_misses():
     )
 
 
-@pytest.mark.xfail(
-    reason="F5: when two branches cross exactly on a shared grid node, the "
-    "pre-scan coincident-abscissa collapse (fues.py:149-157) drops the "
-    "equal-value crossing copies before the segment-aware scan runs, and "
-    "crossing insertion fires only strictly between nodes. The on-node V-kink is "
-    "lost (both with and without segment_id). Closing it needs the same "
-    "segment-aware scan rewrite as F4/#387 (retain equal-maximal coincident "
-    "copies, order them left/right by segment, insert on-node crossings); remove "
-    "this marker when that lands.",
-    strict=True,
-)
 def test_f5_exact_grid_aligned_branch_crossing_gives_v_shaped_envelope():
     """A branch crossing exactly on a grid node yields the true V-shaped envelope.
 
