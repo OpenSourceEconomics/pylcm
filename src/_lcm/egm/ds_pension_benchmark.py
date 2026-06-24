@@ -2,11 +2,12 @@
 
 Reproduces the structure of the Dobrescu--Shanker pension comparison table: for each
 solution method and grid resolution, the total solve time and the distribution of
-unit-free consumption Euler errors. This module populates the **G2EGM** row by solving
-the DS pension model with the four-segment G2EGM steps, timing the solve, and pooling
-the working consumption Euler errors across the working->working periods (plus the
-retired Euler error). The RFC comparator row is added once the multidimensional RFC
-backend lands; `format_comparison_table` renders whatever rows it is given.
+unit-free consumption Euler errors. This module populates the **G2EGM** and **RFC**
+rows by solving the DS pension model with the corresponding interior two-asset step,
+timing the solve, and pooling the working consumption Euler errors across the
+working->working periods. `benchmark_ds_pension_methods` runs both at one grid
+resolution and `format_comparison_table` renders the rows — the DS-2024 multidimensional
+pension comparison this harness reproduces.
 
 The Euler error is reported on the unconstrained, grid-resolved interior — the
 low-liquid borrowing-constrained band and the off-grid top-pension boundary layer are
@@ -15,6 +16,7 @@ excluded, as they reflect grid extent rather than method accuracy.
 
 import time
 from dataclasses import dataclass
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -22,12 +24,16 @@ import numpy as np
 
 from _lcm.egm.euler_errors import working_consumption_euler_error_log10
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
+from _lcm.egm.rfc_two_asset_step import rfc_two_asset_step
 from _lcm.egm.two_asset_g2egm_step import (
     G2EGMResult,
     g2egm_retiring_step,
     g2egm_step,
 )
 from lcm.typing import Float1D
+
+StepKind = Literal["g2egm", "rfc"]
+_METHOD_NAMES: dict[StepKind, str] = {"g2egm": "G2EGM", "rfc": "RFC"}
 
 
 @dataclass(frozen=True)
@@ -48,8 +54,9 @@ class MethodBenchmark:
     """90th-percentile interior consumption Euler error, base-10 log relative."""
 
 
-def benchmark_g2egm_ds_pension(
+def _benchmark_ds_pension(
     *,
+    step_kind: StepKind,
     n_periods: int = 5,
     retirement_period: int = 3,
     n_liquid: int = 12,
@@ -109,7 +116,8 @@ def benchmark_g2egm_ds_pension(
     savings_grid = jnp.linspace(0.0, liquid_max, 4 * n_liquid)
 
     def solve() -> dict[int, G2EGMResult]:
-        return _solve_g2egm_policies(
+        return _solve_pension_policies(
+            step_kind=step_kind,
             n_periods=n_periods,
             retirement_period=retirement_period,
             liquid_grid=liquid_grid,
@@ -163,13 +171,35 @@ def benchmark_g2egm_ds_pension(
         [period_errors(period) for period in range(retirement_period - 1)]
     )
     return MethodBenchmark(
-        method="G2EGM",
+        method=_METHOD_NAMES[step_kind],
         n_liquid=n_liquid,
         n_pension=n_pension,
         solve_seconds=solve_seconds,
         euler_error_median_log10=float(np.median(all_errors)),
         euler_error_p90_log10=float(np.percentile(all_errors, 90)),
     )
+
+
+def benchmark_g2egm_ds_pension(**kwargs: object) -> MethodBenchmark:
+    """Benchmark the DS pension model solved by the four-segment G2EGM envelope."""
+    return _benchmark_ds_pension(step_kind="g2egm", **kwargs)  # ty: ignore[invalid-argument-type]
+
+
+def benchmark_rfc_ds_pension(**kwargs: object) -> MethodBenchmark:
+    """Benchmark the DS pension model solved by the combined-cloud RFC envelope."""
+    return _benchmark_ds_pension(step_kind="rfc", **kwargs)  # ty: ignore[invalid-argument-type]
+
+
+def benchmark_ds_pension_methods(**kwargs: object) -> list[MethodBenchmark]:
+    """Benchmark the DS pension model by G2EGM and RFC at the same grid resolution.
+
+    Returns the two method rows (G2EGM then RFC) for one grid resolution, ready for
+    `format_comparison_table` — the DS-2024 pension comparison the harness reproduces.
+    """
+    return [
+        benchmark_g2egm_ds_pension(**kwargs),
+        benchmark_rfc_ds_pension(**kwargs),
+    ]
 
 
 def format_comparison_table(rows: list[MethodBenchmark]) -> str:
@@ -187,8 +217,9 @@ def format_comparison_table(rows: list[MethodBenchmark]) -> str:
     return "\n".join([header, "-" * len(header), *body])
 
 
-def _solve_g2egm_policies(
+def _solve_pension_policies(
     *,
+    step_kind: StepKind,
     n_periods: int,
     retirement_period: int,
     liquid_grid: Float1D,
@@ -244,8 +275,11 @@ def _solve_g2egm_policies(
     )
     working_policies[retirement_period - 1] = boundary
     next_working_value = boundary.value - work_disutility
+    # The boundary (retiring) period always uses the G2EGM retiring step; the interior
+    # working->working steps use the selected envelope. RFC has no retiring variant.
+    interior_step = rfc_two_asset_step if step_kind == "rfc" else g2egm_step
     for period in range(retirement_period - 2, -1, -1):
-        step = g2egm_step(
+        step = interior_step(
             next_value=next_working_value,
             m_grid=liquid_grid,
             n_grid=pension_grid,
