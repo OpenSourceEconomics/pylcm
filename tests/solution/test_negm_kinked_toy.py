@@ -19,6 +19,7 @@ the same order-1 V-interpolation:
 The model solves on CPU in seconds; nothing here is GPU-gated.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -259,10 +260,13 @@ def test_brute_oracle_reproduces_its_pinned_values(oracle_value: FloatND) -> Non
     The oracle is the parity record: its repaired `[-6, 30]` wealth domain keeps
     every reachable `next_wealth` inside the support, so the pinned cell values
     are dense-search truth rather than an out-of-domain extrapolation.
+
+    The constants are pinned on CPU x64. The dense grid-search argmax breaks
+    near-ties between adjacent action nodes differently across backends, so exact
+    reproduction is a same-platform regression guard, not a cross-platform one.
     """
-    # The pinned values were recorded on one platform; cross-platform x64 reduction
-    # order differs, so the reproducibility band is a relative tolerance, not bit
-    # equality. 1e-4 still pins four significant figures of each dense-search cell.
+    if jax.default_backend() != "cpu":
+        pytest.skip("Oracle constants are pinned on CPU x64 (grid-search argmax ties).")
     for (ix, iz), expected in _ORACLE_CELLS.items():
         np.testing.assert_allclose(
             float(oracle_value[ix, iz]), expected, rtol=1e-4, atol=1e-6
