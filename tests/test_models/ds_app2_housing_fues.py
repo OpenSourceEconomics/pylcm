@@ -204,6 +204,7 @@ def build_model(  # noqa: C901
     housing_max: float = 20.0,
     n_periods: int | None = None,
     upper_envelope: Literal["fues", "mss", "ltm", "rfc"] = "fues",
+    liquid_batch_size: int = 0,
 ) -> Model:
     """Build the DS App.2 housing EGM-FUES discrete-housing model.
 
@@ -225,6 +226,13 @@ def build_model(  # noqa: C901
         n_periods: Optional shortened horizon for construction tests; `None` uses
             the full lifecycle to `TERMINAL_AGE`.
         upper_envelope: DC-EGM upper-envelope backend; the Table 3 method is FUES.
+        liquid_batch_size: Optional chunking of the liquid Euler-state grid. A
+            positive value splays the per-asset-node solve into
+            `ceil(n_grid / liquid_batch_size)` sequential chunks, bounding the
+            peak device memory of the discrete-housing argmax (whose tensor
+            carries the liquid axis) without changing the solved value function.
+            `0` (the default) solves every liquid node in one kernel. The
+            `"brute"` variant ignores it (grid search has no Euler asset row).
 
     Returns:
         The three-regime (working, retired, dead) discrete-housing model.
@@ -269,7 +277,9 @@ def build_model(  # noqa: C901
     )
 
     housing_class = _make_housing_levels(n_housing=n_housing)
-    liquid_grid = LinSpacedGrid(start=0.0, stop=liquid_max, n_points=n_grid)
+    liquid_grid = LinSpacedGrid(
+        start=0.0, stop=liquid_max, n_points=n_grid, batch_size=liquid_batch_size
+    )
     consumption_grid = LinSpacedGrid(
         start=0.05, stop=liquid_max, n_points=n_consumption
     )

@@ -22,7 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import NEGM, Model
+from lcm import NEGM, LinSpacedGrid, Model
 from lcm.exceptions import ModelInitializationError
 from lcm.solvers import DCEGM
 from tests.test_models import ds_app2_housing
@@ -188,6 +188,23 @@ def test_housing_model_solves_on_gpu():
     params = ds_app2_housing.build_params(tau=0.05)
     solution = model.solve(params=params, log_level="off")
     assert solution[0]["working"] is not None
+
+
+@pytest.mark.parametrize("liquid_batch_size", [0, 4])
+def test_liquid_batch_size_threads_to_the_liquid_grid(liquid_batch_size: int):
+    """`build_model(liquid_batch_size=k)` sets the liquid grid's `batch_size`.
+
+    The liquid Euler grid carries the batch size that splays the per-asset-node
+    solve into chunks, bounding peak device memory at large `n_grid`. It is a
+    memory knob only — the GPU sweep confirms the solved value function is
+    unchanged across batch sizes.
+    """
+    model = ds_app2_housing.build_model(
+        n_grid=5, n_periods=4, liquid_batch_size=liquid_batch_size
+    )
+    liquid_grid = model.user_regimes["working"].states["liquid"]
+    assert isinstance(liquid_grid, LinSpacedGrid)
+    assert liquid_grid.batch_size == liquid_batch_size
 
 
 def test_euler_coupled_housing_law_would_be_rejected():

@@ -46,7 +46,7 @@ def _solve():
         b_grid=_B_GRID,
         consumption_grid=jnp.linspace(0.5, 90.0, 18),
         radius=0.5,
-        **_P,
+        **_P,  # ty: ignore[invalid-argument-type]
     )
     return np.asarray(result.value), np.asarray(brute[0]["working"])
 

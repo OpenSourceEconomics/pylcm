@@ -120,6 +120,7 @@ def _build_solved(
     n_periods: int,
     n_consumption: int,
     tau: float,
+    liquid_batch_size: int = 0,
 ):
     """Build and solve the EGM-FUES App.2 model, caching the solution."""
     model = fues.build_model(
@@ -128,6 +129,7 @@ def _build_solved(
         n_housing=n_housing,
         n_periods=n_periods,
         n_consumption=n_consumption,
+        liquid_batch_size=liquid_batch_size,
     )
     params = fues.build_params(variant="dcegm", tau=tau)
     solution = model.solve(params=params, log_level="off")
@@ -365,6 +367,7 @@ def app2_fues_euler_error(
     discount_factor: float = DISCOUNT_FACTOR,
     alpha: float = ALPHA,
     gamma_c: float = GAMMA_C,
+    liquid_batch_size: int = 0,
 ) -> float:
     """Solve the EGM-FUES App.2 model and score the consumption Euler error."""
     model, params, solution = _build_solved(
@@ -373,6 +376,7 @@ def app2_fues_euler_error(
         n_periods=n_periods,
         n_consumption=n_consumption,
         tau=tau,
+        liquid_batch_size=liquid_batch_size,
     )
     wage_nodes, wage_transition = _wage_nodes_and_transition()
     liquid_grid = _liquid_grid(model)
@@ -452,12 +456,16 @@ def app2_fues_timing(
     n_consumption: int = 400,
     tau: float = 0.07,
     n_runs: int = 3,
+    liquid_batch_size: int = 0,
 ) -> dict[str, float]:
     """Measure compile and steady-state run time of one EGM-FUES solve.
 
     The first solve times compile-plus-run; later solves of the same model reuse
     the cached executable and time pure execution, so the compile cost is the
     difference. Every solve is forced to completion with `block_until_ready`.
+
+    `liquid_batch_size > 0` chunks the liquid Euler grid to bound peak device
+    memory at large `n_grid`; it leaves the solved value function unchanged.
     """
     model = fues.build_model(
         variant="dcegm",
@@ -465,6 +473,7 @@ def app2_fues_timing(
         n_housing=n_housing,
         n_periods=n_periods,
         n_consumption=n_consumption,
+        liquid_batch_size=liquid_batch_size,
     )
     params = fues.build_params(variant="dcegm", tau=tau)
 
