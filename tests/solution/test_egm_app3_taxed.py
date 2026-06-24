@@ -1,8 +1,9 @@
 """DC-EGM/FUES for the DS-2026 App.3 with-tax model matches VFI.
 
 Application 3's Table 5 adds a piecewise-linear capital-income tax to the
-discrete-housing model. The tax `T(a) = B + tau_a*(a - a0)` carries two level
-jumps (at a=3.87 and a=15) plus several rate kinks, so the budget is
+discrete-housing model. The tax `T(a) = B + tau_a*(a - a0)` carries three level
+discontinuities — up at a=3.87 and a=15, and down by about 0.14 at a=6.97 where
+the subsidy bracket resets the offset — plus several rate kinks, so the budget is
 non-monotone in assets — which is exactly why Table 5 compares only FUES (which
 resolves the jumps/kinks via the upper envelope) and VFI (grid search), dropping
 MSS/LTM.
@@ -53,18 +54,24 @@ def test_piecewise_tax_matches_the_bracket_schedule(assets: float, expected: flo
     np.testing.assert_allclose(got, expected, atol=1e-9)
 
 
-def test_tax_schedule_has_the_two_level_jumps():
-    """`T(a)` jumps up across the two bracket boundaries at a=3.87 and a=15.
+def test_tax_schedule_has_three_level_discontinuities():
+    """`T(a)` jumps up at a=3.87 and a=15 and drops down at a=6.97.
 
-    The level jumps are what make the budget non-monotone and force the FUES-vs-
-    VFI-only comparison; a continuous schedule would admit MSS/LTM too.
+    The level jumps at a=3.87 (+0.10) and a=15 (+0.15) raise the tax; the
+    subsidy bracket `[6.97, 8.36)` resets the offset to 0.05, so `T` drops by
+    about 0.14 at a=6.97. All three discontinuities make the budget non-monotone
+    and force the FUES-vs-VFI-only comparison; a continuous schedule would admit
+    MSS/LTM too.
     """
     below_first = float(piecewise_capital_income_tax(jnp.asarray(3.86)))
     at_first = float(piecewise_capital_income_tax(jnp.asarray(3.87)))
+    below_subsidy = float(piecewise_capital_income_tax(jnp.asarray(6.96)))
+    at_subsidy = float(piecewise_capital_income_tax(jnp.asarray(6.97)))
     below_second = float(piecewise_capital_income_tax(jnp.asarray(14.99)))
     at_second = float(piecewise_capital_income_tax(jnp.asarray(15.0)))
     assert at_first - below_first > 0.05
     assert at_second - below_second > 0.05
+    assert at_subsidy - below_subsidy < -0.1
 
 
 def test_app3_taxed_fues_matches_vfi_on_asset_interior():

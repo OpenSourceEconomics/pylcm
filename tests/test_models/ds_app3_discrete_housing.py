@@ -116,8 +116,10 @@ RESOURCES_FUNCTION_NAME = "resources"
 # are the authors' replication values (`akshayshanker/FUES`,
 # `config_HR/STD_RES_SETTINGS_4_TAXES/master.yml`), an Australia-2015-16 schedule
 # written directly as a function of assets, `T(a) = B + tau_a * (a - a0)` on each
-# bracket `[a0, a1)`. Two level jumps (+0.10 at a=3.87, +0.15 at a=15) plus rate
-# kinks make the budget non-monotone — why Table 5 compares only FUES vs VFI.
+# bracket `[a0, a1)`. Three level discontinuities (up +0.10 at a=3.87, down ~0.14
+# at a=6.97 where the subsidy bracket resets the offset to 0.05, up +0.15 at
+# a=15) plus rate kinks make the budget non-monotone — why Table 5 compares only
+# FUES vs VFI.
 TAX_BRACKET_LOWER = (0.0, 2.20, 2.50, 2.75, 3.87, 6.97, 8.36, 12.0, 15.0, 20.0)
 TAX_BRACKET_OFFSET = (
     0.0,
@@ -150,8 +152,11 @@ def piecewise_capital_income_tax(assets: ContinuousState) -> FloatND:
 
     Selects the bracket `[a0, a1)` containing `assets` (left-closed, so a value on
     a boundary uses the upper bracket) and returns `B + tau_a * (a - a0)`. The
-    bracket offsets `B` carry the level jumps, so `T` is discontinuous at the jump
-    boundaries — the non-monotone budget the FUES upper envelope is built for.
+    bracket offsets `B` carry the level discontinuities, so `T` is discontinuous
+    at the bracket boundaries — the non-monotone budget the FUES upper envelope is
+    built for. There are three: `T` jumps up at a=3.87 (+0.10) and a=15 (+0.15),
+    and drops down by about 0.14 at a=6.97, where the subsidy bracket `[6.97,
+    8.36)` resets the offset to 0.05 below the preceding bracket's level.
     """
     lower = jnp.asarray(TAX_BRACKET_LOWER)
     offset = jnp.asarray(TAX_BRACKET_OFFSET)
