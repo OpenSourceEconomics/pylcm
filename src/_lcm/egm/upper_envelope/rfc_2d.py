@@ -22,15 +22,24 @@ faithful to Box 1.
 The reference tuning constants are $\\bar J = 1 + 10^{-10}$, $\\rho = 0.5$, $k = 5$.
 """
 
+import itertools
+
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D, Float2D
+from lcm.typing import BoolND, Float1D, Float2D, ScalarFloat
 
 # Reference tuning constants, verbatim from RFCSimple.py / RFC.py.
 J_BAR_DEFAULT = 1.0 + 1e-10
 RADIUS_DEFAULT = 0.5
 K_DEFAULT = 5
+
+# Publisher defaults: enough nearest survivors to bracket a target in a non-degenerate
+# triangle, a small negative barycentric tolerance, and a squared-area floor that
+# rejects near-collinear (degenerate) triangles.
+K_PUBLISH_DEFAULT = 12
+EXTRAPOLATION_THRESHOLD_DEFAULT = 1e-9
+DEGENERATE_AREA_FLOOR = 1e-12
 
 
 def rfc_delete_mask_2d(
@@ -93,3 +102,93 @@ def rfc_delete_mask_2d(
     deletes = in_knn & below_tangent & policy_jump & within_radius
     deleted = jnp.any(deletes, axis=0)
     return ~deleted
+
+
+def rfc_publish_2d(
+    *,
+    survivor_states: Float2D,
+    survivor_values: Float1D,
+    survivor_policies: Float2D,
+    target_states: Float2D,
+    k: int = K_PUBLISH_DEFAULT,
+    extrapolation_threshold: float = EXTRAPOLATION_THRESHOLD_DEFAULT,
+) -> tuple[Float1D, Float2D]:
+    """Publish value and policy at target states by local-simplex barycentric weights.
+
+    The on-device stand-in for the host Delaunay publisher (D1): for each target, take
+    its `k` nearest survivors, enumerate every triangle among them, and select the
+    largest-area (best-conditioned) non-degenerate triangle that contains the target
+    (all barycentric weights at or above `-extrapolation_threshold`). Value and policy
+    are then the barycentric combination of that triangle's vertices, which reproduces
+    survivor values exactly and is affine-exact in the hull. A target with no containing
+    triangle (outside the survivor support) falls back to its nearest survivor.
+
+    Args:
+        survivor_states: Surviving candidate states, shape `(s, d)` with `d == 2`.
+        survivor_values: Surviving candidate values, shape `(s,)`.
+        survivor_policies: Surviving candidate policy vectors, shape `(s, dp)`.
+        target_states: Query states, shape `(t, 2)`.
+        k: Number of nearest survivors that form the local simplex search set.
+        extrapolation_threshold: Non-negative barycentric tolerance; a triangle counts
+            as containing the target when every weight is at least its negation.
+
+    Returns:
+        Tuple of `(values, policies)`: published value `(t,)` and policy `(t, dp)`.
+    """
+    n_survivors = survivor_states.shape[0]
+    k_eff = min(k, n_survivors)
+    triangles = jnp.asarray(
+        list(itertools.combinations(range(k_eff), 3)), dtype=jnp.int32
+    )
+
+    def publish_one(query: Float1D) -> tuple[ScalarFloat, Float1D]:
+        distance = jnp.linalg.norm(survivor_states - query, axis=1)
+        _, nearest_idx = jax.lax.top_k(-distance, k_eff)
+        verts = survivor_states[nearest_idx]
+        local_values = survivor_values[nearest_idx]
+        local_policies = survivor_policies[nearest_idx]
+
+        a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+        p0, p1, p2 = verts[a], verts[b], verts[c]
+        edge1 = p1 - p0
+        edge2 = p2 - p0
+        to_query = query - p0
+        d00 = jnp.sum(edge1 * edge1, axis=1)
+        d01 = jnp.sum(edge1 * edge2, axis=1)
+        d11 = jnp.sum(edge2 * edge2, axis=1)
+        d20 = jnp.sum(to_query * edge1, axis=1)
+        d21 = jnp.sum(to_query * edge2, axis=1)
+        # `denom` is the squared area (times 4): zero for collinear vertices.
+        denom = d00 * d11 - d01 * d01
+        safe_denom = jnp.where(denom > 0.0, denom, 1.0)
+        w1 = (d11 * d20 - d01 * d21) / safe_denom
+        w2 = (d00 * d21 - d01 * d20) / safe_denom
+        w0 = 1.0 - w1 - w2
+
+        nondegenerate = denom > DEGENERATE_AREA_FLOOR
+        contains = (
+            (w0 >= -extrapolation_threshold)
+            & (w1 >= -extrapolation_threshold)
+            & (w2 >= -extrapolation_threshold)
+            & nondegenerate
+        )
+        # Among containing triangles prefer the largest area (most robust weights).
+        score = jnp.where(contains, denom, -jnp.inf)
+        best = jnp.argmax(score)
+        found = score[best] > -jnp.inf
+
+        weights = jnp.array([w0[best], w1[best], w2[best]])
+        vertex_values = jnp.array(
+            [local_values[a[best]], local_values[b[best]], local_values[c[best]]]
+        )
+        vertex_policies = jnp.stack(
+            [local_policies[a[best]], local_policies[b[best]], local_policies[c[best]]]
+        )
+        value_interp = weights @ vertex_values
+        policy_interp = weights @ vertex_policies
+
+        value = jnp.where(found, value_interp, local_values[0])
+        policy = jnp.where(found, policy_interp, local_policies[0])
+        return value, policy
+
+    return jax.vmap(publish_one)(target_states)
