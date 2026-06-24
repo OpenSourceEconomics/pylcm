@@ -147,7 +147,7 @@ def next_regime(age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
-WEALTH_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_X)
+WEALTH_GRID = LinSpacedGrid(start=-6.0, stop=30.0, n_points=N_X)
 ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_Z)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=N_C)
 ILLIQUID_INVESTMENT_GRID = LinSpacedGrid(start=-8.0, stop=8.0, n_points=N_AZ)
