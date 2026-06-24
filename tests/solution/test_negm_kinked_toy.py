@@ -82,3 +82,28 @@ def test_negm_value_is_monotone_increasing_in_both_assets():
     col_diffs = jnp.diff(v0, axis=1)
     assert bool(jnp.all(row_diffs >= -1e-6))
     assert bool(jnp.all(col_diffs >= -1e-6))
+
+
+@pytest.mark.parametrize(
+    ("marginal_continuation", "illiquid", "expected_consumption"),
+    [
+        (0.25, 0.0, 2.0),  # z = 0: no offset, c = m^{-1/2}
+        (0.25, 6.0, 1.7),  # z = 6: c = 2.0 - iota * 6 = 2.0 - 0.3
+        (1.0, 6.0, 0.7),  # m = 1: c = 1.0 - 0.3
+    ],
+)
+def test_inverse_marginal_utility_subtracts_the_durable_flow_offset(
+    marginal_continuation: float, illiquid: float, expected_consumption: float
+):
+    """`(u')^{-1}(m) = m^{-1/gamma} - iota*Z` at the durable node `Z`.
+
+    Utility is `(c + iota*Z)^{1-gamma}/(1-gamma)`, so `u'(c) = (c + iota*Z)^{-gamma}`
+    and inverting for the consumption action carries the `- iota*Z` offset the
+    durable state contributes to the flow.
+    """
+    consumption = float(
+        negm_kinked_toy.inverse_marginal_utility(
+            marginal_continuation=marginal_continuation, illiquid=illiquid
+        )
+    )
+    np.testing.assert_allclose(consumption, expected_consumption, atol=1e-12)

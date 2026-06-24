@@ -123,14 +123,24 @@ def utility(consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND
     return flow ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
 
 
-def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+def inverse_marginal_utility(
+    marginal_continuation: FloatND, illiquid: ContinuousState
+) -> FloatND:
     """Inverse of `u'(c) = (c + iota*Z)^{-gamma}` in the inner consumption slot.
 
-    The `iota * Z` shift is a constant given the durable state, so the scalar
-    inversion is unchanged up to the offset the kernel re-adds when recovering
-    `c`.
+    Inverting $u'(c) = (c + \\iota Z)^{-\\gamma} = m$ for the consumption action
+    gives $c = m^{-1/\\gamma} - \\iota Z$: the `iota * Z` shift the durable state
+    contributes to the utility flow is a constant offset that must be subtracted
+    when recovering `c` from the marginal continuation. The kernel binds the
+    durable state `illiquid` (`Z`) from the combo pool, so the offset is exact at
+    every durable node rather than a quantity the kernel re-adds downstream.
+
+    The unconstrained inverse can fall below zero where the marginal continuation
+    is large (low savings): that is the borrowing-constrained region the kernel's
+    constrained-candidate segment and upper envelope represent, so the raw
+    inverse is returned without a positivity clamp.
     """
-    return marginal_continuation ** (-1.0 / RISK_AVERSION)
+    return marginal_continuation ** (-1.0 / RISK_AVERSION) - ILLIQUID_FLOW * illiquid
 
 
 def next_regime(age: int, final_age_alive: float) -> ScalarInt:
