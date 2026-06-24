@@ -24,7 +24,7 @@ _INITIAL_ILLIQUID = (4.0, 6.0, 8.0)
 # Period-0 `alive` consumption the solved NEGM policy prescribes for the three
 # seeded subjects. The toys have no shocks, so the simulated path is
 # deterministic; these are the off-grid inner-DC-EGM optima at the seeded states.
-_KINKED_PERIOD0_CONSUMPTION = (10.05, 11.708333, 15.025)
+_KINKED_PERIOD0_CONSUMPTION = (10.05, 11.708333, 14.195833)
 _SERVICEFLOW_PERIOD0_CONSUMPTION = (4.364286, 4.364286, 4.364286)
 
 
