@@ -40,6 +40,7 @@ def refine_envelope(
     policy: Float1D,
     value: Float1D,
     n_refined: int,
+    segment_id: Float1D | None = None,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its upper envelope.
 
@@ -60,6 +61,12 @@ def refine_envelope(
         policy: Candidate policy values at `endog_grid`.
         value: Candidate value-correspondence points at `endog_grid`.
         n_refined: Static length of the refined output arrays.
+        segment_id: Optional per-candidate branch label, aligned with
+            `endog_grid`. When supplied, a consecutive-pair link is a real value
+            segment iff both endpoints carry the same label, so unrelated
+            branches are never bridged — the explicit-topology path that replaces
+            the `decreases` heuristic. `None` (the default) infers segments from a
+            grid or value decrease, HARK's monotone split.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each
@@ -95,15 +102,21 @@ def refine_envelope(
     left_value = value[:-1]
     right_value = value[1:]
 
-    # HARK's monotone-segment split: a new segment starts wherever the input
-    # grid or value *decreases* between consecutive candidates. A link spanning
-    # such a decrease is a non-monotone "bridge" connecting two branches, not a
-    # real value segment, so it is excluded from the scan; within one monotone
-    # branch every link carries the same `segment_id`, so the winner stays
-    # constant across the branch and only a genuine branch switch is a kink.
-    decreases = (right_grid < left_grid) | (right_value < left_value)
-    segment_id = jnp.cumsum(decreases.astype(jnp.int32))
-    segment_live = ~dead[:-1] & ~dead[1:] & ~decreases
+    # Per-link branch id and live mask. With explicit topology a link is a real
+    # value segment iff both endpoints carry the same branch label, so unrelated
+    # branches are never bridged. Without it, fall back to HARK's monotone split:
+    # a new segment starts wherever the grid or value *decreases* between
+    # consecutive candidates, and a link spanning such a decrease is a
+    # non-monotone bridge excluded from the scan. Either way the winner stays
+    # constant across one branch, so only a genuine branch switch is a kink.
+    if segment_id is None:
+        decreases = (right_grid < left_grid) | (right_value < left_value)
+        link_segment = jnp.cumsum(decreases.astype(jnp.int32))
+        segment_live = ~dead[:-1] & ~dead[1:] & ~decreases
+    else:
+        same_segment = segment_id[:-1] == segment_id[1:]
+        link_segment = segment_id[:-1].astype(jnp.int32)
+        segment_live = ~dead[:-1] & ~dead[1:] & same_segment
 
     envelope_value, envelope_policy, winner_link, winner_segment = _evaluate_envelope(
         query_grid=query_grid,
@@ -113,7 +126,7 @@ def refine_envelope(
         right_policy=right_policy,
         left_value=left_value,
         right_value=right_value,
-        segment_id=segment_id,
+        segment_id=link_segment,
         segment_live=segment_live,
     )
 
@@ -157,7 +170,7 @@ def refine_envelope(
         right_policy=right_policy,
         left_value=left_value,
         right_value=right_value,
-        segment_id=segment_id,
+        segment_id=link_segment,
         segment_live=segment_live,
     )
     on_envelope = jnp.isfinite(crossing_envelope) & jnp.isclose(

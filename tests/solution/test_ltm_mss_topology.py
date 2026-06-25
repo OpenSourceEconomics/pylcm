@@ -31,7 +31,11 @@ _SEGMENT = jnp.array([0.0, 0.0, 1.0, 1.0, 2.0, 2.0])
 
 def _published_value_at(backend, x_query):
     grid, _policy, value, _n = backend.refine_envelope(
-        endog_grid=_ENDOG, policy=_POLICY, value=_VALUE, n_refined=24
+        endog_grid=_ENDOG,
+        policy=_POLICY,
+        value=_VALUE,
+        n_refined=24,
+        segment_id=_SEGMENT,
     )
     return float(
         interp_on_padded_grid(x_query=jnp.array([x_query]), xp=grid, fp=value)[0]
@@ -39,15 +43,12 @@ def _published_value_at(backend, x_query):
 
 
 @pytest.mark.parametrize("backend", [ltm, mss])
-@pytest.mark.xfail(
-    reason="LTM/MSS infer topology from ordering and bridge unrelated branches",
-    strict=True,
-)
 def test_backend_matches_oracle_on_a_non_bridging_branch(backend):
-    """The backend reports branch C's value at x=1.5, not the A-to-B bridge.
+    """Given explicit topology the backend reports branch C, not the A-to-B bridge.
 
-    The exact envelope at x=1.5 is branch C's 0.5; a backend that bridges A's
-    endpoint to B's reports 2.5 instead.
+    The exact envelope at x=1.5 is branch C's 0.5. Inferring topology from the
+    candidate ordering instead bridges A's endpoint to B's and reports 2.5;
+    consuming the explicit `segment_id` labels keeps the branches separate.
     """
     oracle_value, _policy, _winner = exact_envelope(
         endog_grid=np.asarray(_ENDOG),

@@ -35,6 +35,7 @@ def refine_envelope(
     policy: Float1D,
     value: Float1D,
     n_refined: int,
+    segment_id: Float1D | None = None,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its upper envelope.
 
@@ -53,6 +54,10 @@ def refine_envelope(
         policy: Candidate policy values at `endog_grid`.
         value: Candidate value-correspondence points at `endog_grid`.
         n_refined: Static length of the refined output arrays.
+        segment_id: Optional per-candidate branch label, aligned with
+            `endog_grid`. When supplied, a consecutive-pair segment is real iff
+            both endpoints carry the same label, so unrelated branches are never
+            bridged. `None` (the default) links every consecutive pair.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each
@@ -83,6 +88,7 @@ def refine_envelope(
         policy=policy,
         value=value,
         dead=dead,
+        segment_id=segment_id,
     )
 
     # A query point no segment brackets (e.g. the lone dead-padded tail) yields
@@ -117,6 +123,7 @@ def _evaluate_envelope(
     policy: Float1D,
     value: Float1D,
     dead: BoolND,
+    segment_id: Float1D | None = None,
 ) -> tuple[Float1D, Float1D]:
     """Evaluate the upper envelope at every query abscissa over all segments.
 
@@ -150,6 +157,11 @@ def _evaluate_envelope(
     left_value = value[:-1]
     right_value = value[1:]
     segment_live = ~dead[:-1] & ~dead[1:]
+    # With explicit topology, a consecutive-pair link is a real segment only
+    # within one branch: drop links whose endpoints carry different labels so
+    # unrelated branches are never bridged.
+    if segment_id is not None:
+        segment_live = segment_live & (segment_id[:-1] == segment_id[1:])
 
     query = query_grid[:, None]
     lower = jnp.minimum(left_grid, right_grid)[None, :]
