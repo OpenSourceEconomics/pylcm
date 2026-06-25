@@ -213,6 +213,16 @@ def _get_solve_one_combo(
             dead=candidate_dead,
             utility_of_action=utility_of_action,
         )
+        # No explicit `segment_id` is passed: the candidate chain is a single
+        # connected branch (the constrained segment joins the unconstrained Euler
+        # branch continuously at the borrowing limit). Within-period discrete
+        # choices are maximized across combos in the V array, not stacked here, so
+        # `refine` never sees two unrelated branches that could be bridged. A
+        # future-kink-induced fold is data-emergent (the inverted endogenous grid
+        # decreases) rather than known a priori, so it is the backend's geometry —
+        # not an explicit label — that resolves it. Explicit topology is the
+        # oracle/test path (LTM/MSS/query accept `segment_id`); production has none
+        # to emit.
         refined_grid, refined_policy, refined_value, n_kept = pieces.refine(
             endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
             policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
