@@ -1,26 +1,22 @@
-"""NEGM outer envelope must keep an adjuster that wins between keeper nodes.
+"""NEGM outer envelope keeps an adjuster that wins between keeper nodes.
 
-The nested-EGM outer fold builds the durable-choice envelope by reading every
-adjuster candidate onto the keeper's shared cash-on-hand grid and taking the
-running maximum at those nodes. That is a *sampled* maximum: an adjuster branch
-whose value exceeds the keeper only on an interval strictly between two shared
-nodes — a thin (S, s) adjustment island — is never sampled at its peak and is
-silently discarded. The true outer envelope is the continuous pointwise maximum
-over the branches, so it must retain that island.
+The nested-EGM outer fold reads every adjuster candidate onto the keeper's shared
+cash-on-hand grid and takes the running maximum at those nodes. A shared-node
+maximum alone is a *sampled* maximum: an adjuster branch whose value exceeds the
+keeper only on an interval strictly between two shared nodes — a thin (S, s)
+adjustment island — is never sampled at its peak. To recover it the fold also
+reads each adjuster at its own nodes and splices that adjuster's best win into
+the published carry, so the envelope retains the island the sampled maximum
+would miss.
 """
 
 import jax.numpy as jnp
-import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.outer_envelope import build_outer_envelope_carry
 
 
-@pytest.mark.xfail(
-    reason="NEGM fold samples adjusters on the shared grid; sub-grid island lost",
-    strict=True,
-)
 def test_outer_envelope_keeps_adjuster_island_between_shared_nodes():
     """An adjuster winning only between keeper nodes survives the outer envelope.
 

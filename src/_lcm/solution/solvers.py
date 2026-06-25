@@ -476,7 +476,10 @@ class NEGM(Solver):
         )
         return SolutionKernels(
             period_kernels=period_kernels,
-            continuation_template=keeper_kernels.continuation_template,
+            continuation_template=_widen_carry_template(
+                template=keeper_kernels.continuation_template,
+                n_extra=outer_grid_values.shape[0],
+            ),
         )
 
 
@@ -880,8 +883,8 @@ class _NEGMPeriodKernel:
         # DC-EGM kernels, so each always publishes a continuation carry.
         keeper_carry = cast("EGMCarry", keeper_result.carry)
         V_arr = keeper_result.V_arr
-        envelope = init_outer_envelope(keeper_carry)
         nodes = self._outer_nodes()
+        envelope = init_outer_envelope(keeper_carry, len(nodes))
         chunk_size = self.outer_batch_size or len(nodes)
         for chunk_start in range(0, len(nodes), chunk_size):
             chunk_results = [
@@ -907,6 +910,7 @@ class _NEGMPeriodKernel:
                     envelope,
                     cast("EGMCarry", adjuster_result.carry),
                     coh_shifts[:, chunk_start + offset],
+                    chunk_start + offset,
                 )
             # Force the running maximum to device before the next chunk. Without
             # this the lazy fold accumulates a dependency on every chunk's solves
@@ -934,6 +938,30 @@ class _NEGMPeriodKernel:
             self.outer_grid_values[index]
             for index in range(self.outer_grid_values.shape[0])
         ]
+
+
+def _widen_carry_template(
+    *, template: EGMCarry | None, n_extra: int
+) -> EGMCarry | None:
+    """Widen a keeper carry template by `n_extra` trailing island-peak slots.
+
+    The NEGM outer envelope publishes the keeper's shared-grid envelope plus one
+    spliced island-peak slot per adjuster, so the published carry is `n_extra`
+    nodes wider than the keeper's. The parent period's kernel is AOT-compiled
+    against this template, so the template's last axis must match the published
+    width. The padding is `NaN` (trailing dead nodes), consistent with the
+    interpolator's first-finite-node search.
+    """
+    if template is None:
+        return None
+    pad = [(0, 0)] * (template.endog_grid.ndim - 1) + [(0, n_extra)]
+    widen = lambda arr: jnp.pad(arr, pad, constant_values=jnp.nan)  # noqa: E731
+    return EGMCarry(
+        endog_grid=widen(template.endog_grid),
+        value=widen(template.value),
+        marginal_utility=widen(template.marginal_utility),
+        taste_shock_scale=template.taste_shock_scale,
+    )
 
 
 def _build_coh_shift_function(

@@ -39,6 +39,14 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import interp_on_padded_grid
 from lcm.typing import Float1D, FloatND, ScalarFloat
 
+# Smallest sub-grid island win, as a fraction of the row's value scale. The
+# shared-grid read is a cubic-Hermite interpolant, so a smooth branch's apparent
+# excess over the running envelope is O(h^2) representation noise. A genuine
+# (S, s) island beats the envelope by an economically meaningful margin far above
+# that floor, so this threshold separates the two without depending on the
+# absolute value scale (which grows through backward induction).
+_ISLAND_RELATIVE_FLOOR = 1e-2
+
 
 class OuterEnvelopeState(NamedTuple):
     """Running coh-space upper envelope over the outer durable candidates.
@@ -54,6 +62,21 @@ class OuterEnvelopeState(NamedTuple):
     """Running envelope value at `shared_coh`, `(n_leading_cells, n_pad)`."""
     marginal: FloatND
     """Running winner's marginal at `shared_coh`, `(n_leading_cells, n_pad)`."""
+    extra_coh: FloatND
+    """Coh of each adjuster's island peak, `(n_leading_cells, n_adjusters)`.
+
+    The shared-grid maximum samples each adjuster only at the keeper's nodes, so
+    an adjuster that wins only on a coh sub-interval narrower than the grid
+    spacing is lost. Each fold records that adjuster's best win — its largest
+    value over the running envelope, read at the adjuster's own nodes — in its
+    own pre-allocated column, so the bound is the adjuster count (additive), not
+    the grid product. A fold with no interior win records `NaN` (dropped on
+    merge). `finalize` merges these peaks into the published row.
+    """
+    extra_value: FloatND
+    """Value at each adjuster's island peak, `(n_leading_cells, n_adjusters)`."""
+    extra_marginal: FloatND
+    """Marginal at each adjuster's island peak, `(n_leading_cells, n_adjusters)`."""
     leading_shape: tuple[int, ...]
     """The carry's leading shape `(discrete..., durable)` for `finalize`."""
     n_durable: int
@@ -62,7 +85,7 @@ class OuterEnvelopeState(NamedTuple):
     """The keeper carry's taste-shock scale, carried through to the result."""
 
 
-def init_outer_envelope(keeper_carry: EGMCarry) -> OuterEnvelopeState:
+def init_outer_envelope(keeper_carry: EGMCarry, n_adjusters: int) -> OuterEnvelopeState:
     """Start the running envelope from the keeper's own coh grid.
 
     The keeper is already in coh space (`credited(z, z) = 0`), so its endogenous
@@ -71,6 +94,9 @@ def init_outer_envelope(keeper_carry: EGMCarry) -> OuterEnvelopeState:
     path every adjuster uses (its own grid, zero shift), so the keeper is the
     baseline an adjuster must strictly beat — matching a stacked `argmax` that
     returns the first maximiser (the keeper) on a tie.
+
+    `n_adjusters` pre-allocates one island-peak slot per adjuster so the fold
+    writes a fixed-shape (jit-safe) column rather than growing the carry.
     """
     n_pad = keeper_carry.endog_grid.shape[-1]
     leading_shape = keeper_carry.endog_grid.shape[:-1]
@@ -81,10 +107,15 @@ def init_outer_envelope(keeper_carry: EGMCarry) -> OuterEnvelopeState:
     value, marginal = jax.vmap(_read_candidate_row)(
         shared_coh, shared_coh, keeper_value, keeper_marginal
     )
+    n_cells = shared_coh.shape[0]
+    extra = jnp.full((n_cells, n_adjusters), jnp.nan, dtype=shared_coh.dtype)
     return OuterEnvelopeState(
         shared_coh=shared_coh,
         value=value,
         marginal=marginal,
+        extra_coh=extra,
+        extra_value=extra,
+        extra_marginal=extra,
         leading_shape=leading_shape,
         n_durable=n_durable,
         taste_shock_scale=keeper_carry.taste_shock_scale,
@@ -95,6 +126,7 @@ def fold_outer_envelope(
     state: OuterEnvelopeState,
     candidate_carry: EGMCarry,
     coh_shift: Float1D,
+    adjuster_index: int,
 ) -> OuterEnvelopeState:
     """Fold one outer candidate into the running coh-space maximum.
 
@@ -104,6 +136,14 @@ def fold_outer_envelope(
     strict `value > running` update keeps the candidate where it wins (so the
     earliest candidate survives a tie, matching a stacked `argmax`).
 
+    The shared-grid maximum samples the candidate only at the keeper's nodes, so an
+    adjuster that wins only on a coh sub-interval narrower than the grid spacing is
+    invisible to it. To recover that sub-grid island, the candidate is *also* read
+    at its own coh nodes against the running envelope; its single best win (largest
+    value over the envelope) is recorded in the adjuster's own pre-allocated column,
+    so the carry grows by a bounded `n_adjusters`, never the grid product. `finalize`
+    merges these island peaks into the published row.
+
     Args:
         state: The running envelope.
         candidate_carry: The candidate's carry — one row per leading cell, in its
@@ -111,6 +151,7 @@ def fold_outer_envelope(
         coh_shift: The credited cost `credited(z, z'_j)` added to the candidate's
             endogenous grid per durable state, shape `(n_durable,)`. Zero for the
             keeper.
+        adjuster_index: This candidate's static column in the island-peak slots.
 
     Returns:
         The updated running envelope.
@@ -131,20 +172,89 @@ def fold_outer_envelope(
         state.shared_coh, cand_endog, cand_value, cand_marginal
     )
     takes = value_on > state.value
+
+    # Sub-grid island: read the running envelope at the candidate's own coh nodes
+    # and keep the candidate's single largest win there. A node where the candidate
+    # does not strictly beat the envelope (or is dead/padding) contributes nothing.
+    # The win must lie strictly inside the shared grid's finite support: below its
+    # first node the envelope read is masked to `-inf` (an artificial `+inf`
+    # excess), and beyond its last node any candidate that wins also wins at the
+    # top shared node, so the shared-grid maximum already captures it — only an
+    # interior peak between two shared nodes can be missed.
+    env_at_cand, _ = jax.vmap(_read_candidate_row)(
+        cand_endog, state.shared_coh, state.value, state.marginal
+    )
+    finite_shared = jnp.isfinite(state.shared_coh)
+    shared_lower = jnp.min(
+        jnp.where(finite_shared, state.shared_coh, jnp.inf), axis=1, keepdims=True
+    )
+    shared_upper = jnp.max(
+        jnp.where(finite_shared, state.shared_coh, -jnp.inf), axis=1, keepdims=True
+    )
+    interior = (
+        jnp.isfinite(cand_endog)
+        & jnp.isfinite(env_at_cand)
+        & (cand_endog >= shared_lower)
+        & (cand_endog <= shared_upper)
+    )
+    excess = jnp.where(interior, cand_value - env_at_cand, -jnp.inf)
+    peak = jnp.argmax(jnp.where(jnp.isnan(excess), -jnp.inf, excess), axis=1)
+    # A genuine sub-grid island clears the carry's interpolation-residual floor:
+    # the shared-grid read is a slope-aware (cubic-Hermite) interpolant, so on a
+    # smooth branch the adjuster's node sits within `O(h^2)` of the running
+    # envelope and the apparent excess is representation noise, not a real win. A
+    # true (S, s) island beats the envelope by an economically meaningful margin —
+    # orders of magnitude above that noise — so only an excess exceeding a small
+    # fraction of the row's value scale is spliced.
+    value_scale = jnp.max(
+        jnp.where(jnp.isfinite(state.value), jnp.abs(state.value), 0.0),
+        axis=1,
+        keepdims=True,
+    )
+    peak_excess = jnp.take_along_axis(excess, peak[:, None], axis=1)
+    has_win = (peak_excess > _ISLAND_RELATIVE_FLOOR * value_scale)[:, 0]
+    pick = lambda src: jnp.where(  # noqa: E731
+        has_win, jnp.take_along_axis(src, peak[:, None], axis=1)[:, 0], jnp.nan
+    )
+    peak_coh = pick(cand_endog)
+    peak_value = pick(cand_value)
+    peak_marginal = pick(cand_marginal)
+
     return state._replace(
         value=jnp.where(takes, value_on, state.value),
         marginal=jnp.where(takes, marginal_on, state.marginal),
+        extra_coh=state.extra_coh.at[:, adjuster_index].set(peak_coh),
+        extra_value=state.extra_value.at[:, adjuster_index].set(peak_value),
+        extra_marginal=state.extra_marginal.at[:, adjuster_index].set(peak_marginal),
     )
 
 
 def finalize_outer_envelope(state: OuterEnvelopeState) -> EGMCarry:
-    """Restore the leading shape and emit the published continuation carry."""
-    n_pad = state.shared_coh.shape[-1]
-    shape = (*state.leading_shape, n_pad)
+    """Restore the leading shape and emit the published continuation carry.
+
+    The published row is the shared-grid envelope with each adjuster's recorded
+    island peak spliced in, sorted into ascending coh order. The slots that no
+    adjuster filled carry `NaN` coh; sorting them to the high end keeps them as
+    trailing padding the interpolator's first-finite-node search ignores. The
+    published width is `n_pad + n_adjusters`, fixed at build time.
+    """
+    merged_coh = jnp.concatenate([state.shared_coh, state.extra_coh], axis=1)
+    merged_value = jnp.concatenate([state.value, state.extra_value], axis=1)
+    merged_marginal = jnp.concatenate([state.marginal, state.extra_marginal], axis=1)
+
+    # NaN coh sorts to the high end so empty island slots become trailing padding.
+    sort_key = jnp.where(jnp.isnan(merged_coh), jnp.inf, merged_coh)
+    order = jnp.argsort(sort_key, axis=1)
+    sorted_coh = jnp.take_along_axis(merged_coh, order, axis=1)
+    sorted_value = jnp.take_along_axis(merged_value, order, axis=1)
+    sorted_marginal = jnp.take_along_axis(merged_marginal, order, axis=1)
+
+    n_pad_out = merged_coh.shape[-1]
+    shape = (*state.leading_shape, n_pad_out)
     return EGMCarry(
-        endog_grid=state.shared_coh.reshape(shape),
-        value=state.value.reshape(shape),
-        marginal_utility=state.marginal.reshape(shape),
+        endog_grid=sorted_coh.reshape(shape),
+        value=sorted_value.reshape(shape),
+        marginal_utility=sorted_marginal.reshape(shape),
         taste_shock_scale=state.taste_shock_scale,
     )
 
@@ -185,10 +295,10 @@ def build_outer_envelope_carry(
         keeper and all adjuster candidates, one row per leading cell.
 
     """
-    state = init_outer_envelope(keeper_carry)
+    state = init_outer_envelope(keeper_carry, len(adjuster_carries))
     for adjuster_index, adjuster_carry in enumerate(adjuster_carries):
         state = fold_outer_envelope(
-            state, adjuster_carry, coh_shifts[:, adjuster_index]
+            state, adjuster_carry, coh_shifts[:, adjuster_index], adjuster_index
         )
     return finalize_outer_envelope(state)
 

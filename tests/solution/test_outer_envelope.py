@@ -133,7 +133,8 @@ def test_adjuster_winning_by_delta_lifts_the_envelope_by_delta() -> None:
         coh_shifts=jnp.asarray([[shift]]),  # one durable state, one adjuster
     )
 
-    assert carry.value.shape == (1, n_pad)
+    # The carry width grows by one island-peak slot per adjuster (here one).
+    assert carry.value.shape == (1, n_pad + 1)
     query = jnp.asarray([3.0, 5.0, 7.0])
     enveloped = interp_on_padded_grid(
         x_query=query,
@@ -255,7 +256,7 @@ def test_envelope_broadcasts_over_a_discrete_leading_axis() -> None:
         coh_shifts=jnp.asarray([[shift]]),  # one durable state, one adjuster
     )
 
-    assert carry.value.shape == (n_discrete, 1, n_pad)
+    assert carry.value.shape == (n_discrete, 1, n_pad + 1)
     query = jnp.asarray([3.0, 5.0, 7.0])
     for node in range(n_discrete):
         enveloped = interp_on_padded_grid(
