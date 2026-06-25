@@ -25,15 +25,15 @@ _N_SUBJECTS = 100_000
 
 _SOLVE_WEALTH_N_POINTS = 1_000
 _SOLVE_CONSUMPTION_N_POINTS = 5_000
-# Matched-precision calibration for the head-to-head: 200 cubically clustered
-# savings nodes solve this model at least as accurately as the dense
-# consumption grid does wherever the consumption grid's truncation at its
-# start point does not bind, so the timing comparison is apples-to-apples
-# (against the retirement leg's closed form, DC-EGM at this grid is at
-# max error ~1e-3 while the brute leg floors at ~2e-2 from grid bias and
-# is unboundedly wrong below its consumption-grid start). More savings
-# nodes buy further accuracy only DC-EGM can reach — and lengthen the
-# sequential envelope scan — so they would unbalance the comparison.
+# 200 cubically clustered savings nodes resolve the DC-EGM solve, clustering
+# toward the borrowing limit where the value function curves hardest. At
+# matched value-function accuracy the brute consumption grid this model needs
+# still runs faster than the DC-EGM envelope: the sequential upper-envelope
+# `lax.scan` carries a fixed per-solve cost that brute's single parallel
+# reduction does not, so brute is the faster solver here on both CPU and — more
+# so — the GPU benchmark runner. A genuine DC-EGM speed win waits on the
+# envelope GPU-performance work; the value of this pair is the head-to-head
+# itself, not a DC-EGM win.
 _SOLVE_SAVINGS_N_POINTS = 200
 
 _SIMULATE_WEALTH_N_POINTS = 500
@@ -292,13 +292,13 @@ class IskhakovEtAl2017SolveGpuPeakMem(_gpu_mem.GpuPeakMem):
 class IskhakovEtAl2017DCEGMSolve:
     """DC-EGM solve of the same model: Euler inversion replaces the grid search.
 
-    Calibrated to the brute-force benchmark's precision (see the savings-grid
-    constant). Reading the head-to-head: the upper-envelope refinement is a
-    sequential `lax.scan` over the savings nodes, so on a GPU — which thrives
-    on the brute solver's one huge parallel reduction — DC-EGM trades parallel
-    width for a shorter critical path and can lose on wall clock while using a
-    fraction of the memory. On CPU the same configuration beats brute force
-    outright.
+    Reading the head-to-head: the upper-envelope refinement is a sequential
+    `lax.scan` over the savings nodes with a fixed per-solve cost, whereas brute
+    force is one vectorized parallel reduction. At matched value-function
+    accuracy brute is therefore the faster solver on both CPU and the GPU
+    benchmark runner — the GPU's parallelism widens the gap. DC-EGM's advantage
+    here is memory and asymptotic scaling, not wall clock at these grid sizes; a
+    speed win waits on the envelope GPU-performance work.
     """
 
     version = "2"
