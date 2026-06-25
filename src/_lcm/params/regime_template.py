@@ -71,15 +71,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         # user-facing params in the template.
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
 
-        # In a DC-EGM regime -- or a NEGM regime, which nests the same 1-D
-        # DC-EGM kernel -- `inverse_marginal_utility` (the inversion function)
-        # receives `marginal_continuation` from the EGM kernel at solve time, so
-        # it must not surface as a user-facing param there. In any other regime,
-        # a function of that name is ordinary.
-        if name == "inverse_marginal_utility" and isinstance(
-            user_regime.solver, (DCEGM, NEGM)
-        ):
-            params.pop("marginal_continuation", None)
+        _drop_engine_provided_args(name=name, params=params, user_regime=user_regime)
 
         path = tree_path_from_qname(name)
         if len(path) > 1:
@@ -222,6 +214,30 @@ def _collect_all_functions_for_template(
         )
         result |= _regime_transition_entries(user_regime.transition)
     return result
+
+
+def _drop_engine_provided_args(
+    *, name: FunctionName, params: dict[str, str], user_regime: UserRegime
+) -> None:
+    """Remove a function's engine-supplied arguments from its discovered params.
+
+    Some regime functions take arguments the engine provides at solve time, not
+    the user:
+
+    - In a DC-EGM / NEGM regime the inversion function `inverse_marginal_utility`
+      receives `marginal_continuation` from the EGM kernel (in any other regime a
+      function of that name is ordinary).
+    - The continuation operator's `value_transform` / `inverse_value_transform`
+      receive `continuation_value` (the next value array).
+
+    These must not surface as user-facing params, so they are popped in place.
+    """
+    if name == "inverse_marginal_utility" and isinstance(
+        user_regime.solver, (DCEGM, NEGM)
+    ):
+        params.pop("marginal_continuation", None)
+    if name in ("value_transform", "inverse_value_transform"):
+        params.pop("continuation_value", None)
 
 
 def _regime_transition_entries(

@@ -25,6 +25,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, Float1D, FloatND, IntND
 
 
@@ -138,20 +139,35 @@ def get_Q_and_F(
 
     _build_H_kwargs = _get_build_H_kwargs(functions)
 
+    # The continuation operator generalizes the linear expectation E[V'] over the
+    # one-step stochastic lottery to `g_inv(E[g(V')])` — a value-transform pair
+    # (the Epstein-Zin / power-mean and entropic-risk certainty equivalents are
+    # this form). Default (no transform supplied) is the identity, so the
+    # expectation stays the plain weighted average, byte-identical.
+    value_transform, inverse_value_transform = _build_continuation_operator(
+        functions=functions
+    )
+
     # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
     # induction co-map, so their `next_`-prefixed coordinates are not passed to
     # the interpolator (which no longer indexes those axes).
     _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
+    operator_deps = [
+        f for f in (value_transform, inverse_value_transform) if f is not None
+    ]
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[
             U_and_F,
             compute_regime_transition_probs,
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
+            *operator_deps,
         ],
         include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
-        exclude=frozenset(),
+        # `continuation_value` is the operator's internal value argument (the next
+        # value array), not a state/action/param, so it is not a Q_and_F input.
+        exclude=frozenset({"continuation_value"}),
     )
 
     @with_signature(
@@ -209,11 +225,16 @@ def get_Q_and_F(
                 **extra_kw,
             )
 
-            # We then take the weighted average of the next value function at the
-            # stochastic states to get the expected next value function.
-            next_V_expected_arr = jnp.average(
-                next_V_at_stochastic_states_arr,
+            # The continuation operator reduces the stochastic lottery to its
+            # expected (or certainty-equivalent) continuation: the plain weighted
+            # average by default, or `g_inv(E[g(V')])` when a value-transform pair
+            # is supplied.
+            next_V_expected_arr = _apply_continuation_operator(
+                values=next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
+                value_transform=value_transform,
+                inverse_value_transform=inverse_value_transform,
+                params=states_actions_params,
             )
             E_next_V = (
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
@@ -230,6 +251,72 @@ def get_Q_and_F(
         return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
     return Q_and_F
+
+
+def _build_continuation_operator(
+    *, functions: EconFunctionsMapping
+) -> tuple[Callable[..., FloatND] | None, Callable[..., FloatND] | None]:
+    """Build the value-transform pair `(g, g_inv)` of the continuation operator.
+
+    A regime opts into a non-linear certainty-equivalent / risk operator by
+    supplying both `value_transform` (`g`) and `inverse_value_transform` (`g_inv`)
+    in its `functions`; each is a function of `continuation_value` (the next value)
+    plus any params. With neither supplied the operator is the identity (the linear
+    expectation), and both are `None`. Supplying exactly one is a contradiction.
+    """
+    has_g = "value_transform" in functions
+    has_g_inv = "inverse_value_transform" in functions
+    if not has_g and not has_g_inv:
+        return None, None
+    if has_g != has_g_inv:
+        missing = "inverse_value_transform" if has_g else "value_transform"
+        msg = (
+            "A continuation operator needs both `value_transform` and "
+            f"`inverse_value_transform`; `{missing}` is missing."
+        )
+        raise ModelInitializationError(msg)
+    functions_without_H = {n: f for n, f in functions.items() if n != "H"}
+    g = concatenate_functions(
+        functions_without_H, targets="value_transform", enforce_signature=False
+    )
+    g_inv = concatenate_functions(
+        functions_without_H,
+        targets="inverse_value_transform",
+        enforce_signature=False,
+    )
+    return g, g_inv
+
+
+def _apply_continuation_operator(
+    *,
+    values: FloatND,
+    weights: FloatND,
+    value_transform: Callable[..., FloatND] | None,
+    inverse_value_transform: Callable[..., FloatND] | None,
+    params: Mapping[str, FloatND | IntND | BoolND],
+) -> FloatND:
+    """Reduce the stochastic lottery to its (certainty-equivalent) continuation.
+
+    Returns the plain weighted average `E[V']` when no operator is supplied, and
+    `g_inv(E[g(V')])` otherwise — the transform applied elementwise to the value
+    array, averaged over the stochastic outcomes, then inverted. The transforms
+    read their params from `params` (the Q_and_F call's states/actions/params).
+    """
+    if value_transform is None or inverse_value_transform is None:
+        return jnp.average(values, weights=weights)
+    g_params = {
+        name: params[name]
+        for name in get_union_of_args([value_transform])
+        if name != "continuation_value"
+    }
+    g_inv_params = {
+        name: params[name]
+        for name in get_union_of_args([inverse_value_transform])
+        if name != "continuation_value"
+    }
+    transformed = value_transform(continuation_value=values, **g_params)
+    averaged = jnp.average(transformed, weights=weights)
+    return inverse_value_transform(continuation_value=averaged, **g_inv_params)
 
 
 def get_compute_intermediates(
