@@ -906,6 +906,11 @@ class _NEGMPeriodKernel:
                     cast("EGMCarry", adjuster_result.carry),
                     coh_shifts[:, chunk_start + offset],
                 )
+            # Force the running maximum to device before the next chunk. Without
+            # this the lazy fold accumulates a dependency on every chunk's solves
+            # at once — the peak would grow with the whole outer grid rather than
+            # one chunk — and the chunk's independent solves could not overlap.
+            V_arr, envelope = jax.block_until_ready((V_arr, envelope))
         carry = finalize_outer_envelope(envelope)
         # The simulate phase re-optimizes the outer durable action by grid argmax
         # over the next-period value array, so the published `sim_policy` (the
