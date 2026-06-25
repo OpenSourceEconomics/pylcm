@@ -293,15 +293,17 @@ def _fail_if_required_functions_missing(
     user_regime: UserRegime,
     solver: DCEGM,
 ) -> None:
-    """Require the post-decision, resources, and inverse-marginal-utility functions."""
+    """Require the post-decision and resources functions.
+
+    `inverse_marginal_utility` is *optional*: when a regime omits it, EGM derives
+    a numerical inverse from `utility` (the iEGM path), so it is not required here.
+    When supplied, it is validated against `jax.grad(utility)` separately.
+    """
     required: dict[FunctionName, str] = {
         solver.post_decision_function: (
             "the post-decision function (`DCEGM.post_decision_function`)"
         ),
         solver.resources: "the resources function (`DCEGM.resources`)",
-        "inverse_marginal_utility": (
-            "the inverse marginal utility of the continuous action"
-        ),
     }
     missing = [
         f"'{name}' — {role}"
@@ -1015,7 +1017,13 @@ def _fail_if_inverse_marginal_utility_inconsistent(
     rtol: float,
     atol: float,
 ) -> None:
-    """Check `(u')⁻¹(u'(c)) ≈ c` and strict monotonicity of `u'` on a sample."""
+    """Check `(u')⁻¹(u'(c)) ≈ c` and strict monotonicity of `u'` on a sample.
+
+    Skipped when the regime supplies no `inverse_marginal_utility`: the iEGM path
+    inverts `u'` numerically, so there is no analytic inverse to check against.
+    """
+    if "inverse_marginal_utility" not in functions:
+        return
     inverse_func = concatenate_functions(functions, targets="inverse_marginal_utility")
     inverse_arg_names = list(inspect.signature(inverse_func).parameters)
     if "marginal_continuation" not in inverse_arg_names:

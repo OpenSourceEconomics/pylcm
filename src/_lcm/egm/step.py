@@ -764,8 +764,12 @@ def _build_kernel_pieces(
         utility_func=_concatenate_regime_function(
             functions=functions, target="utility"
         ),
-        inverse_marginal_utility_func=_concatenate_regime_function(
-            functions=functions, target="inverse_marginal_utility"
+        inverse_marginal_utility_func=(
+            _concatenate_regime_function(
+                functions=functions, target="inverse_marginal_utility"
+            )
+            if "inverse_marginal_utility" in functions
+            else None
         ),
         own_resources_func=_concatenate_regime_function(
             functions=functions, target=solver.resources

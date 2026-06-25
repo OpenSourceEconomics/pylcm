@@ -27,6 +27,7 @@ from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import (
     interp_on_padded_grid,
 )
+from _lcm.egm.numeric_inverse import numeric_inverse_marginal_utility
 from _lcm.egm.upper_envelope.fues import QueryBracket
 from _lcm.typing import (
     ActionName,
@@ -90,8 +91,13 @@ class _EgmKernelPieces:
     utility_func: UserFunction
     """The regime's concatenated utility function."""
 
-    inverse_marginal_utility_func: UserFunction
-    """The regime's concatenated inverse-marginal-utility function."""
+    inverse_marginal_utility_func: UserFunction | None
+    """The regime's concatenated inverse-marginal-utility function.
+
+    `None` when the regime supplies no analytic inverse: EGM then inverts `u'`
+    numerically (the iEGM path), deriving the marginal utility from `utility_func`
+    at the call site.
+    """
 
     own_resources_func: UserFunction
     """The regime's concatenated resources function."""
@@ -311,12 +317,36 @@ def _get_compute_node(
         resolved_process_grids=resolved_process_grids,
     )
 
-    def inverse_marginal_utility(
-        marginal_continuation: ScalarFloat,
-    ) -> ScalarFloat:
-        return pieces.inverse_marginal_utility_func(
-            marginal_continuation=marginal_continuation, **combo_pool
-        )
+    analytic_inverse = pieces.inverse_marginal_utility_func
+    if analytic_inverse is not None:
+
+        def inverse_marginal_utility(
+            marginal_continuation: ScalarFloat,
+        ) -> ScalarFloat:
+            return analytic_inverse(
+                marginal_continuation=marginal_continuation, **combo_pool
+            )
+    else:
+        # iEGM: no analytic inverse supplied, so invert `u'` numerically. The
+        # marginal utility is the action-derivative of the combo-bound utility;
+        # the bracket spans a small floor to a generous multiple of the savings
+        # grid's top node (interior optima lie within resources, the savings
+        # scale; a clamped near-zero-marginal corner whose root exceeds the
+        # bracket lands far to the right and is discarded by the envelope, exactly
+        # as the analytic path's large value is).
+        marginal_utility_of_action = jax.grad(utility_of_action)
+        action_upper = pieces.savings_nodes[-1] * 1000.0 + 1000.0
+        action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+
+        def inverse_marginal_utility(
+            marginal_continuation: ScalarFloat,
+        ) -> ScalarFloat:
+            return numeric_inverse_marginal_utility(
+                marginal_continuation=marginal_continuation,
+                marginal_utility=marginal_utility_of_action,
+                c_lower=action_lower,
+                c_upper=action_upper,
+            )
 
     def compute_node(
         savings_value: ScalarFloat,
