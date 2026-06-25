@@ -25,7 +25,13 @@ from dataclasses import dataclass
 import jax
 import numpy as np
 
-from tests.test_models import ds2024_housing, ds2024_housing_fues
+try:
+    from tests.test_models import ds2024_housing, ds2024_housing_fues
+except ModuleNotFoundError:
+    # asv discovers every module under the benchmark dir but installs only the
+    # package, not `tests`. This driver is run directly (repo root on the path)
+    # and defines no asv benchmark classes, so a discovery-time miss is harmless.
+    ds2024_housing = ds2024_housing_fues = None
 
 
 @dataclass(frozen=True)
