@@ -38,7 +38,12 @@ def build_segment_mesh(*, cloud: RegionCloud, region_label: int) -> SegmentMesh:
     m_endog = cloud.m_endog.reshape(-1)
     n_endog = cloud.n_endog.reshape(-1)
     consumption = cloud.consumption.reshape(-1)
-    valid_node = jnp.isfinite(m_endog) & jnp.isfinite(n_endog) & (consumption > 0.0)
+    valid_node = (
+        jnp.isfinite(m_endog)
+        & jnp.isfinite(n_endog)
+        & (consumption > 0.0)
+        & cloud.valid_region.reshape(-1)
+    )
     return SegmentMesh(
         region_label=region_label,
         node_state=jnp.stack([m_endog, n_endog], axis=1),
