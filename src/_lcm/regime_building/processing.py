@@ -379,6 +379,12 @@ def _build_solution_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
+    # Fixed, distributed states are co-mapped with the continuation V so the solve
+    # kernel reads only its device-local slice (no all-gather). Terminal regimes have
+    # no continuation, so the set is empty there.
+    co_map_state_names: tuple[StateName, ...] = ()
+    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
+
     if spec.terminal:
         compute_regime_transition_probs = None
         terminal_func = get_Q_and_F_terminal(
@@ -402,6 +408,24 @@ def _build_solution_phase(
             phase="solve",
             next_regime_cells=core.next_regime_cells,
         )
+        co_map_state_names = _co_map_state_names(
+            state_names=state_action_space.state_names,
+            grids=all_grids[regime_name],
+            transitions=core.transitions,
+        )
+        # A co-mapped state's axis is sliced only off the leaves that carry it; a
+        # target regime where the state is pruned keeps its full leaf (`None`).
+        co_map_v_arr_in_axes = tuple(
+            MappingProxyType(
+                {
+                    target: 0
+                    if state in regime_to_v_interpolation_info[target].state_names
+                    else None
+                    for target in regime_to_v_interpolation_info
+                }
+            )
+            for state in co_map_state_names
+        )
         Q_and_F_functions = _build_Q_and_F_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
             functions=core.functions,
@@ -412,6 +436,7 @@ def _build_solution_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             ages=ages,
             flat_param_names=flat_param_names,
+            co_map_state_names=co_map_state_names,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             flat_param_names=flat_param_names,
@@ -450,6 +475,8 @@ def _build_solution_phase(
         regime_to_flat_param_names=regime_to_flat_param_names,
         enable_jit=enable_jit,
         has_taste_shocks=has_taste_shocks,
+        co_map_state_names=co_map_state_names,
+        co_map_v_arr_in_axes=co_map_v_arr_in_axes,
     )
     solver.validate(context=context)
     solver_kernels = solver.build_period_kernels(context=context)
@@ -1957,6 +1984,36 @@ def _get_vmap_params(
     return tuple(arg for arg in all_args if arg not in non_vmap)
 
 
+def _co_map_state_names(
+    *,
+    state_names: tuple[StateName, ...],
+    grids: MappingProxyType[StateOrActionName, Grid],
+    transitions: TransitionFunctionsMapping,
+) -> tuple[StateName, ...]:
+    """Return the distributed, never-transitioning states, in state-axis order.
+
+    A state qualifies when its grid is distributed and its law of motion is the
+    identity in every target bundle that carries it — so its next value equals its
+    current value, and the continuation V can be read from the device-local slice
+    rather than all-gathered. Distributed states sort first in `state_names`, so the
+    result is a leading prefix of it (what the co-map requires).
+    """
+    co_map: list[StateName] = []
+    for name in state_names:
+        grid = grids.get(name)
+        if grid is None or not grid.distributed:
+            continue
+        next_key = f"next_{name}"
+        carrying = [
+            bundle[next_key] for bundle in transitions.values() if next_key in bundle
+        ]
+        if carrying and all(
+            getattr(law, "_is_auto_identity", False) for law in carrying
+        ):
+            co_map.append(name)
+    return tuple(co_map)
+
+
 def _build_Q_and_F_per_period(
     *,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
@@ -1968,6 +2025,7 @@ def _build_Q_and_F_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
     flat_param_names: frozenset[str],
+    co_map_state_names: tuple[StateName, ...] = (),
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
@@ -2017,6 +2075,7 @@ def _build_Q_and_F_per_period(
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            co_map_state_names=co_map_state_names,
         )
 
     # Map each period to its group's function

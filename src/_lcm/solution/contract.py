@@ -43,6 +43,7 @@ from _lcm.typing import (
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
+    StateName,
     StateOrActionName,
     TransitionFunctionName,
     TransitionFunctionsMapping,
@@ -132,6 +133,22 @@ class SolverBuildContext:
 
     has_taste_shocks: bool
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
+
+    co_map_state_names: tuple[StateName, ...] = ()
+    """Fixed, distributed state names co-mapped with the continuation V.
+
+    Their axes are the leading axes of the value-function array; a solver that reads
+    the continuation V slices each off and reads only the device-local slice, so no
+    all-gather is inserted. Empty when no state qualifies.
+    """
+
+    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
+    """Per-co-map-state `in_axes` for the continuation-V mapping, aligned with
+    `co_map_state_names`.
+
+    Each entry maps a regime name to `0` (its value-function leaf carries that state —
+    slice it) or `None` (the state is pruned from that regime — pass the leaf through).
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
