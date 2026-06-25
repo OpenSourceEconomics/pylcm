@@ -213,6 +213,13 @@ def _liquid_housing_grids(model) -> tuple[np.ndarray, np.ndarray]:
 # the consumption policy for linear interpolation.
 _MAX_POLICY_SEED_POINTS = 16
 
+# Chunk the forward-simulation subject axis so the grid-restricted argmax over the
+# `(consumption x housing_investment)` action space — `n_consumption x NG` combos
+# per subject — stays within device memory at paper-scale NG. Subject batching is
+# value-invariant (the per-subject RNG is independent of the chunk shape), so the
+# scored Euler error is unchanged; it only bounds the simulate's peak memory.
+_SIMULATE_SUBJECT_BATCH_SIZE = 256
+
 
 def _subsample(grid: np.ndarray, max_points: int) -> np.ndarray:
     """Return at most `max_points` evenly-spaced nodes of `grid`, ends included."""
@@ -270,6 +277,7 @@ def _policy_interpolators(
                 period_to_regime_to_V_arr=solution,
                 log_level="off",
                 seed=seed,
+                subject_batch_size=_SIMULATE_SUBJECT_BATCH_SIZE,
             )
             .to_dataframe()
             .query(f"period == {period} and regime_name == 'working'")
@@ -543,6 +551,7 @@ def _simulate_sample_path(
         period_to_regime_to_V_arr=solution,
         log_level="off",
         seed=seed,
+        subject_batch_size=_SIMULATE_SUBJECT_BATCH_SIZE,
     )
     return result.to_dataframe()
 
