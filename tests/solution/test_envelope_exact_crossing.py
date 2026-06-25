@@ -14,21 +14,9 @@ piecewise-linear correspondence.
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from _lcm.egm.upper_envelope import fues, rfc
 from tests.solution._envelope_oracle import exact_envelope
-
-# FUES drops one copy of an equal-value coincident-abscissa crossing: the
-# pre-scan dedup NaN-collapses every coincident point after the first
-# regardless of value, so a node-aligned kink loses its second policy record.
-# The fix is scan/kink-insertion-level (the on-node crossing path uses strict
-# `<`/`>`), not a dedup tweak — retaining the duplicate alone breaks the scan's
-# zero-width-interval handling. Tracked as P0.1 (#136).
-_FUES_DROPS_NODE_CROSSING = pytest.mark.xfail(
-    reason="FUES drops equal-value on-grid crossing copy; scan fix pending",
-    strict=True,
-)
 
 # Two branches sampled on the shared grid R = (10, 11, 12):
 # - branch A: policy 3, value (5/3, 2, 7/3), slope 1/3;
@@ -51,7 +39,6 @@ def _kept(refine_output):
     return grid[keep], np.asarray(policy)[keep], np.asarray(value)[keep]
 
 
-@_FUES_DROPS_NODE_CROSSING
 def test_fues_retains_equal_value_crossing_on_grid_node():
     """FUES keeps both branch copies at an on-grid crossing, like RFC does.
 
@@ -73,7 +60,6 @@ def test_fues_retains_equal_value_crossing_on_grid_node():
     np.testing.assert_allclose(policy, [3.0, 3.0, 0.5, 0.5])
 
 
-@_FUES_DROPS_NODE_CROSSING
 def test_fues_matches_rfc_at_on_grid_crossing():
     """FUES and RFC publish the same refined envelope at the on-grid crossing."""
     fues_grid, fues_policy, fues_value = _kept(

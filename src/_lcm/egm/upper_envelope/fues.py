@@ -146,6 +146,22 @@ def refine_envelope(
     value_sorted = value[order]
     n_input = grid_sorted.shape[0]
 
+    # All-zero labels reduce the segment test to a no-op (`seg != seg` is always
+    # false, `seg == seg` always true), so the `segment_id is None` path is
+    # bit-identical to the policy-jump-only scan.
+    segment_sorted = (
+        jnp.zeros_like(grid_sorted)
+        if segment_id is None
+        else segment_id[order].astype(grid_sorted.dtype)
+    )
+
+    # Pre-dedup copies: the dedup below collapses a coincident crossing to one
+    # branch, so the post-pass recovers the dropped branch's policy/slope here to
+    # re-insert the on-node dual-policy kink.
+    presort_grid = grid_sorted
+    presort_policy = policy_sorted
+    presort_value = value_sorted
+
     duplicate = jnp.concatenate(
         [
             jnp.zeros((1,), dtype=bool),
@@ -155,15 +171,6 @@ def refine_envelope(
     grid_sorted = jnp.where(duplicate, jnp.nan, grid_sorted)
     policy_sorted = jnp.where(duplicate, jnp.nan, policy_sorted)
     value_sorted = jnp.where(duplicate, jnp.nan, value_sorted)
-
-    # All-zero labels reduce the segment test to a no-op (`seg != seg` is always
-    # false, `seg == seg` always true), so the `segment_id is None` path is
-    # bit-identical to the policy-jump-only scan.
-    segment_sorted = (
-        jnp.zeros_like(grid_sorted)
-        if segment_id is None
-        else segment_id[order].astype(grid_sorted.dtype)
-    )
 
     first_point = jnp.stack([grid_sorted[0], policy_sorted[0], value_sorted[0]])
     first_segment = segment_sorted[0]
@@ -225,7 +232,144 @@ def refine_envelope(
     refined_value = refined_value.at[final_pos].set(final_value, mode="drop")
 
     n_kept = (total + final_valid).astype(jnp.int32)
-    return refined_grid, refined_policy, refined_value, n_kept
+
+    # The dedup keeps one branch per coincident node, so the scan's value row is
+    # exact but a node-aligned crossing carries only one branch's policy. Re-insert
+    # the dropped branch as the on-node dual-policy kink (left then right) so an
+    # off-node read recovers the right branch rather than interpolating across the
+    # policy discontinuity.
+    return _insert_node_crossings(
+        refined_grid=refined_grid,
+        refined_policy=refined_policy,
+        refined_value=refined_value,
+        n_kept=n_kept,
+        presort_grid=presort_grid,
+        presort_policy=presort_policy,
+        presort_value=presort_value,
+        segment_sorted=segment_sorted,
+        n_refined=n_refined,
+        n_points_to_scan=n_points_to_scan,
+        jump_thresh=jump_thresh,
+    )
+
+
+def _branch_value_slopes(
+    *,
+    grid: Float1D,
+    value: Float1D,
+    segment: Float1D,
+    n_points_to_scan: int,
+) -> Float1D:
+    """Value slope of each candidate's branch from its nearest same-segment node.
+
+    Inspects up to `n_points_to_scan` candidates either side (nearest first) and
+    takes the first finite, same-segment, non-coincident neighbour. A branch is
+    linear, so any such neighbour gives the exact segment slope; candidates with
+    no neighbour report `NaN`.
+    """
+    n = grid.shape[0]
+    mags = 1 + jnp.arange(n_points_to_scan, dtype=jnp.int32)
+    offsets = jnp.stack([mags, -mags], axis=1).reshape(-1)
+    nbr_idx = jnp.arange(n, dtype=jnp.int32)[:, None] + offsets[None, :]
+    in_bounds = (nbr_idx >= 0) & (nbr_idx < n)
+    clipped = jnp.clip(nbr_idx, 0, n - 1)
+    nbr_grid = grid[clipped]
+    nbr_value = value[clipped]
+    nbr_segment = segment[clipped]
+    same = (
+        in_bounds
+        & ~jnp.isnan(nbr_grid)
+        & (nbr_segment == segment[:, None])
+        & (nbr_grid != grid[:, None])
+    )
+    found = jnp.any(same, axis=1)
+    first = jnp.argmax(same, axis=1)
+    neighbour_grid = jnp.take_along_axis(nbr_grid, first[:, None], axis=1)[:, 0]
+    neighbour_value = jnp.take_along_axis(nbr_value, first[:, None], axis=1)[:, 0]
+    delta = neighbour_grid - grid
+    safe_delta = jnp.where(delta == 0.0, 1.0, delta)
+    return jnp.where(
+        found & (delta != 0.0), (neighbour_value - value) / safe_delta, jnp.nan
+    )
+
+
+def _insert_node_crossings(
+    *,
+    refined_grid: Float1D,
+    refined_policy: Float1D,
+    refined_value: Float1D,
+    n_kept: ScalarInt,
+    presort_grid: Float1D,
+    presort_policy: Float1D,
+    presort_value: Float1D,
+    segment_sorted: Float1D,
+    n_refined: int,
+    n_points_to_scan: int,
+    jump_thresh: float,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    """Re-insert on-node crossing kinks dropped by the coincident-node dedup.
+
+    A coincident pair of candidates with equal value but a branch switch is a
+    node-aligned crossing the dedup collapses to one branch. Recover both branch
+    policies (left then right, ordered by branch slope: the steeper branch wins
+    to the right), set the kept node to the left policy, and insert the right
+    copy at the same abscissa so the refined row carries the kink.
+    """
+    slope = _branch_value_slopes(
+        grid=presort_grid,
+        value=presort_value,
+        segment=segment_sorted,
+        n_points_to_scan=n_points_to_scan,
+    )
+    grid_left, grid_right = presort_grid[:-1], presort_grid[1:]
+    value_left, value_right = presort_value[:-1], presort_value[1:]
+    policy_left, policy_right = presort_policy[:-1], presort_policy[1:]
+    segment_left, segment_right = segment_sorted[:-1], segment_sorted[1:]
+    slope_left, slope_right = slope[:-1], slope[1:]
+
+    coincident = (grid_left == grid_right) & ~jnp.isnan(grid_left)
+    value_equal = jnp.isclose(value_left, value_right, atol=1e-9, rtol=1e-7)
+    switches = (segment_left != segment_right) | _has_policy_jump(
+        grid_a=grid_left,
+        policy_a=policy_left,
+        grid_b=grid_right,
+        policy_b=policy_right,
+        jump_thresh=jump_thresh,
+    )
+    is_crossing = coincident & value_equal & switches
+
+    # Steeper branch wins to the right; the other is the left copy.
+    right_is_upper = slope_right >= slope_left
+    left_policy = jnp.where(right_is_upper, policy_left, policy_right)
+    right_policy = jnp.where(right_is_upper, policy_right, policy_left)
+    crossing_grid = jnp.where(is_crossing, grid_left, jnp.nan)
+
+    # Set each kept crossing node's policy to the left branch's policy.
+    match = (refined_grid[:, None] == crossing_grid[None, :]) & is_crossing[None, :]
+    matched = jnp.any(match, axis=1)
+    matched_left_policy = jnp.sum(jnp.where(match, left_policy[None, :], 0.0), axis=1)
+    refined_policy = jnp.where(matched, matched_left_policy, refined_policy)
+
+    # Append the right copies and stable-sort so each lands just after its node.
+    insert_grid = jnp.where(is_crossing, grid_left, jnp.nan)
+    insert_policy = jnp.where(is_crossing, right_policy, jnp.nan)
+    insert_value = jnp.where(is_crossing, value_left, jnp.nan)
+    all_grid = jnp.concatenate([refined_grid, insert_grid])
+    all_policy = jnp.concatenate([refined_policy, insert_policy])
+    all_value = jnp.concatenate([refined_value, insert_value])
+    copy_order = jnp.concatenate(
+        [
+            jnp.zeros(n_refined, dtype=jnp.int32),
+            jnp.ones_like(insert_grid, dtype=jnp.int32),
+        ]
+    )
+    grid_key = jnp.where(jnp.isnan(all_grid), jnp.inf, all_grid)
+    order = jnp.lexsort(jnp.stack([copy_order, grid_key]))
+    out_grid = all_grid[order][:n_refined]
+    out_policy = all_policy[order][:n_refined]
+    out_value = all_value[order][:n_refined]
+    new_n_kept = (n_kept + jnp.sum(is_crossing, dtype=jnp.int32)).astype(jnp.int32)
+    return out_grid, out_policy, out_value, new_n_kept
 
 
 def refine_to_bracket(
