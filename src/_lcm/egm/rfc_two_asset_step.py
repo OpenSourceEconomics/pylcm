@@ -115,19 +115,20 @@ def rfc_two_asset_step(
         ]
     )
 
-    # Each region cloud now carries a `valid_region` KKT mask (the complementary-
-    # slackness test its inverse assumes). Applying it here — dropping finite but
-    # KKT-inconsistent candidates — is correct in principle, but at the coarse
-    # post-decision grids the solver runs it removes candidates that were
-    # providing envelope coverage, and the delete-only rooftop cut plus the
-    # nearest-survivor publisher are not hole-safe, so accuracy regresses. Wiring
-    # `valid_region` into the cut is therefore deferred to the hole-safe publisher
-    # redesign; for now the mask is computed and exposed on the clouds.
+    # Each region cloud carries a `valid_region` KKT mask: the complementary-
+    # slackness test its inverse assumes, false at finite-but-KKT-inconsistent
+    # candidates (a region's FOCs solved where its inequalities do not hold). These
+    # are dropped here so only genuine KKT candidates enter the cut and publish.
+    # Dropping them thins the valid survivors at coarse grids, so the publisher
+    # selects the *smallest* containing simplex (`rfc_publish_2d`) to keep the
+    # affine fit local across the holes the mask opens.
+    region_valid = jnp.concatenate([c.valid_region.reshape(-1) for c in clouds])
     valid = (
         jnp.isfinite(values)
         & jnp.all(jnp.isfinite(states), axis=1)
         & jnp.all(jnp.isfinite(supgradients), axis=1)
         & jnp.all(jnp.isfinite(policies), axis=1)
+        & region_valid
     )
     # Sanitize invalid candidates so they neither dominate (value -inf, gradient 0) nor
     # sit near any target (state at a far sentinel); the validity mask keeps them out of

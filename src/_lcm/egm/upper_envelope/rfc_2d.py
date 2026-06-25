@@ -186,8 +186,12 @@ def rfc_publish_2d(
             & nondegenerate
             & triangle_valid
         )
-        # Among containing triangles prefer the largest area (most robust weights).
-        score = jnp.where(contains, denom, -jnp.inf)
+        # Among containing triangles prefer the smallest area (tightest local
+        # simplex): when the KKT mask thins the valid survivors, the largest
+        # containing triangle can span a wide arc of the curved value surface and
+        # its linear interpolant errs; the smallest containing triangle keeps the
+        # vertices close to the target, so the affine fit stays local and accurate.
+        score = jnp.where(contains, -denom, -jnp.inf)
         best = jnp.argmax(score)
         found = score[best] > -jnp.inf
 
