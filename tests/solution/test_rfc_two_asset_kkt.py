@@ -47,4 +47,6 @@ def test_dcon_cloud_flags_kkt_inconsistent_candidate_invalid():
     deposit_foc_slack = 1.0 * 1.0 * (1.0 + 1.0) - marginal_utility
     assert deposit_foc_slack > 0.0  # the candidate genuinely violates the FOC
 
-    assert bool(np.asarray(cloud.valid_region)[0]) is False
+    # `valid_region` is the KKT mask this defect requires; it does not exist yet,
+    # so the strict-xfail asserts the contract the fix must add.
+    assert bool(np.asarray(cloud.valid_region)[0]) is False  # ty: ignore[unresolved-attribute]
