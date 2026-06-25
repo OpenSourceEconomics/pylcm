@@ -83,9 +83,19 @@ def numeric_inverse_marginal_utility(
         high = jnp.where(too_small, high, mid)
     c_star = jax.lax.stop_gradient(0.5 * (low + high))
 
+    # The implicit-derivative corrector below is valid only at an *interior,
+    # bracketed* root. `u'` is decreasing, so the target is bracketed iff
+    # `u'(c_upper) <= m <= u'(c_lower)`; outside that the bisection clamps to a
+    # bound and the interior `1/u''` Jacobian would silently extrapolate a wrong
+    # gradient. At a binding bound the active-set derivative is zero, so the
+    # unbracketed branch returns the clamped root detached (value at the bound,
+    # `dc/dm = 0`) rather than the bogus interior slope.
+    bracketed = (marginal_utility(c_upper) <= m) & (marginal_utility(c_lower) >= m)
+
     # Implicit-derivative corrector: detached root + one Newton-style step whose
     # value is ~`c_star` (residual ≈ 0 at convergence) but whose gradient is the
     # exact implicit derivative. `u''` is detached so it enters only as the
     # constant `1/u''` Jacobian, never differentiated itself.
     second_derivative = jax.lax.stop_gradient(jax.grad(marginal_utility)(c_star))
-    return c_star - (marginal_utility(c_star) - m) / second_derivative
+    interior = c_star - (marginal_utility(c_star) - m) / second_derivative
+    return jnp.where(bracketed, interior, c_star)

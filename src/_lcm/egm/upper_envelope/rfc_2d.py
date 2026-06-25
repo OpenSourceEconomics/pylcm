@@ -118,11 +118,20 @@ def rfc_publish_2d(
 
     The on-device stand-in for the host Delaunay publisher (D1): for each target, take
     its `k` nearest survivors, enumerate every triangle among them, and select the
-    largest-area (best-conditioned) non-degenerate triangle that contains the target
-    (all barycentric weights at or above `-extrapolation_threshold`). Value and policy
-    are then the barycentric combination of that triangle's vertices, which reproduces
-    survivor values exactly and is affine-exact in the hull. A target with no containing
-    triangle (outside the survivor support) falls back to its nearest survivor.
+    *smallest*-area non-degenerate triangle that contains the target (all barycentric
+    weights at or above `-extrapolation_threshold`). The smallest containing simplex
+    keeps the vertices local, so its affine interpolant tracks the curved value surface
+    instead of spanning a wide arc — the accuracy the KKT-masked clouds need. Value and
+    policy are then the barycentric combination of that triangle's vertices, which
+    reproduces survivor values exactly and is affine-exact in the hull. A target with
+    no containing triangle (outside the survivor support) falls back to its nearest
+    survivor.
+
+    The `DEGENERATE_AREA_FLOOR` rejects collinear triangles by *area* only, not shape;
+    a small-but-skinny (sliver) triangle can pass it yet be ill-conditioned. Preferring
+    the *most-local well-conditioned* simplex (gating on a shape metric — min angle /
+    radius ratio / area-over-longest-edge² — before minimizing locality) is the robust
+    refinement; on the models exercised here the area gate suffices, so it is deferred.
 
     The `valid` mask lets a caller pass the *full* candidate cloud plus the cut's
     keep-mask rather than a pre-filtered survivor array — the jit-friendly form, since

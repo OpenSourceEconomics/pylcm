@@ -301,6 +301,19 @@ def _apply_continuation_operator(
     `g_inv(E[g(V')])` otherwise — the transform applied elementwise to the value
     array, averaged over the stochastic outcomes, then inverted. The transforms
     read their params from `params` (the Q_and_F call's states/actions/params).
+
+    **Soundness boundary (load-bearing for non-linear operators).** This wraps only
+    the per-target stochastic average; the caller then mixes targets *linearly*
+    (`sum_r p_r * g_inv(E_z[g(V_rz)])`). That equals the joint certainty equivalent
+    `g_inv(sum_rz p_r p_z g(V_rz))` only when the operator commutes with regime
+    mixing — an *affine* `g` (identity, level shift), a single reachable target, or
+    a modeling assumption that the target regime is resolved before the non-linear
+    risk aggregation. For a genuinely non-linear operator (Epstein-Zin / entropic)
+    over *multiple* reachable targets the two differ and this form is **unsound**;
+    the joint-lottery operator (with capability metadata declaring `is_linear=False`
+    and consuming the full regime-and-shock outcome set) is the required next step
+    and is not yet implemented. The shipped form is the value-transform-pair first
+    milestone, correct for single-target risk and affine operators.
     """
     if value_transform is None or inverse_value_transform is None:
         return jnp.average(values, weights=weights)

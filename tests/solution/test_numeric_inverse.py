@@ -88,6 +88,28 @@ def test_numeric_inverse_converges_for_non_closed_form_utility():
     assert float(jnp.max(jnp.abs(residual))) < 1e-7
 
 
+def test_numeric_inverse_clamps_unbracketed_target_with_zero_gradient():
+    """A target outside the bracket clamps to the bound with an active-set gradient.
+
+    With `u'(c) = c^{-2}` on `[0.5, 2.0]` the marginal spans `[0.25, 4.0]`; a target
+    `m = 100` lies above that, so the root `c = 0.1` is below the bracket. The
+    inverter returns the clamped lower bound, and — because the binding-bound
+    active-set derivative is zero, not the bogus interior `1/u''` slope — its
+    gradient w.r.t. `m` is exactly `0`.
+    """
+
+    def invert(m_value):
+        return numeric_inverse_marginal_utility(
+            marginal_continuation=m_value,
+            marginal_utility=_crra_marginal(2.0),
+            c_lower=jnp.asarray(0.5),
+            c_upper=jnp.asarray(2.0),
+        )
+
+    np.testing.assert_allclose(float(invert(jnp.asarray(100.0))), 0.5, atol=1e-6)
+    assert float(jax.grad(invert)(jnp.asarray(100.0))) == 0.0
+
+
 def test_numeric_inverse_is_vmappable_and_jittable():
     """The inverter vmaps over targets and jit-compiles (kernel requirements)."""
     targets = jnp.linspace(0.1, 4.0, 16)
