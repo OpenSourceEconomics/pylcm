@@ -25,6 +25,7 @@ def _synthetic_cloud(*, consumption=None):
         value=jnp.zeros((3, 3)),
         value_grad_m=jnp.zeros((3, 3)),
         value_grad_n=jnp.zeros((3, 3)),
+        valid_region=jnp.ones((3, 3), dtype=bool),
     )
 
 

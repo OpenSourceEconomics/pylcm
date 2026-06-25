@@ -12,15 +12,10 @@ enforcing its own inequalities.
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from _lcm.egm.two_asset_inverse import invert_dcon_cloud
 
 
-@pytest.mark.xfail(
-    reason="RegionCloud has no valid_region KKT mask; finite-only filtering",
-    strict=True,
-)
 def test_dcon_cloud_flags_kkt_inconsistent_candidate_invalid():
     """The `dcon` cloud marks a deposit-FOC-violating candidate invalid.
 
@@ -40,6 +35,7 @@ def test_dcon_cloud_flags_kkt_inconsistent_candidate_invalid():
         post_decision_value=one * 0.0,
         discount_factor=1.0,
         crra=2.0,
+        match_rate=1.0,
     )
 
     consumption = float(np.asarray(cloud.consumption)[0])
@@ -47,6 +43,4 @@ def test_dcon_cloud_flags_kkt_inconsistent_candidate_invalid():
     deposit_foc_slack = 1.0 * 1.0 * (1.0 + 1.0) - marginal_utility
     assert deposit_foc_slack > 0.0  # the candidate genuinely violates the FOC
 
-    # `valid_region` is the KKT mask this defect requires; it does not exist yet,
-    # so the strict-xfail asserts the contract the fix must add.
-    assert bool(np.asarray(cloud.valid_region)[0]) is False  # ty: ignore[unresolved-attribute]
+    assert bool(np.asarray(cloud.valid_region)[0]) is False

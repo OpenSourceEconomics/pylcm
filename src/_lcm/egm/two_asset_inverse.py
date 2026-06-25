@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
-from lcm.typing import FloatND, ScalarFloat
+from lcm.typing import BoolND, FloatND, ScalarFloat
 
 
 class RegionCloud(NamedTuple):
@@ -50,6 +50,15 @@ class RegionCloud(NamedTuple):
     """
     value_grad_n: FloatND
     """Marginal value of pension wealth `dV/dn`, equal to `discount_factor * w_b`."""
+    valid_region: BoolND
+    """Whether the node satisfies this region's complementary-slackness conditions.
+
+    Each region inverts its first-order conditions *assuming* its own constraints
+    bind; the solution is a genuine KKT candidate only where the region's
+    inequalities also hold. A node failing them is a finite but spurious point
+    that must be excluded before the upper-envelope selection, not merely a
+    non-finite one.
+    """
 
 
 def invert_ucon_cloud(
@@ -85,6 +94,10 @@ def invert_ucon_cloud(
     m_endog = a + consumption + deposit
     n_endog = b - deposit - match_rate * jnp.log1p(deposit)
     value = _crra_utility(consumption, crra) + discount_factor * post_decision_value
+    # KKT: liquid slack (a > 0, so the consumption Euler holds) and an interior
+    # deposit (d > 0). `deposit > 0` already implies `w_a > w_b`, since a
+    # non-positive denominator drives the deposit below zero.
+    valid_region = (a > 0.0) & (deposit > 0.0) & (w_a > w_b)
     return RegionCloud(
         m_endog=m_endog,
         n_endog=n_endog,
@@ -93,6 +106,7 @@ def invert_ucon_cloud(
         value=value,
         value_grad_m=discount_factor * w_a,
         value_grad_n=discount_factor * w_b,
+        valid_region=valid_region,
     )
 
 
@@ -105,6 +119,7 @@ def invert_dcon_cloud(
     post_decision_value: FloatND,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
+    match_rate: ScalarFloat | float,
 ) -> RegionCloud:
     """Invert the consumption FOC on the deposit-constrained region (`dcon`, `d = 0`).
 
@@ -121,6 +136,8 @@ def invert_dcon_cloud(
         post_decision_value: Post-decision value `w(a, b)` at each node.
         discount_factor: Discount factor.
         crra: Coefficient of relative risk aversion.
+        match_rate: Pension employer-match coefficient `chi`; enters only the
+            complementary-slackness test for `d = 0` being optimal.
 
     Returns:
         The deposit-constrained endogenous cloud.
@@ -128,6 +145,10 @@ def invert_dcon_cloud(
     """
     consumption = (discount_factor * w_a) ** (-1.0 / crra)
     value = _crra_utility(consumption, crra) + discount_factor * post_decision_value
+    # KKT: liquid slack (a > 0) and `d = 0` optimal — the marginal gain from the
+    # first deposited dollar, `beta*w_b*(1 + chi)`, must not exceed the marginal
+    # value of the liquid dollar it costs, `u'(c) = beta*w_a`.
+    valid_region = (a > 0.0) & (w_b * (1.0 + match_rate) <= w_a)
     return RegionCloud(
         m_endog=a + consumption,
         n_endog=b,
@@ -136,6 +157,7 @@ def invert_dcon_cloud(
         value=value,
         value_grad_m=discount_factor * w_a,
         value_grad_n=discount_factor * w_b,
+        valid_region=valid_region,
     )
 
 
@@ -145,6 +167,7 @@ def invert_acon_cloud(
     b: FloatND,
     post_decision_value_at_zero_a: FloatND,
     w_b_at_zero_a: FloatND,
+    w_a_at_zero_a: FloatND,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
     match_rate: ScalarFloat | float,
@@ -165,6 +188,8 @@ def invert_acon_cloud(
         b: Pension post-decision balance at each node (evaluated at `a = 0`).
         post_decision_value_at_zero_a: Post-decision value `w(0, b)` at each node.
         w_b_at_zero_a: Post-decision value gradient w.r.t. `b`, at `a = 0`.
+        w_a_at_zero_a: Post-decision value gradient w.r.t. `a`, at `a = 0`; enters
+            only the complementary-slackness test for the binding borrowing limit.
         discount_factor: Discount factor.
         crra: Coefficient of relative risk aversion.
         match_rate: Pension employer-match coefficient `chi`.
@@ -181,6 +206,12 @@ def invert_acon_cloud(
         _crra_utility(consumption, crra)
         + discount_factor * post_decision_value_at_zero_a
     )
+    # KKT: the borrowing limit binds with a non-negative multiplier, i.e. the agent
+    # would consume more liquid if it could (`u'(c) >= beta*w_a` at a = 0), and the
+    # deposit stays interior (`d > 0`).
+    valid_region = (marginal_utility >= discount_factor * w_a_at_zero_a) & (
+        deposit > 0.0
+    )
     return RegionCloud(
         # a = 0 -> m = c + d; pension budget inverts as in the unconstrained region.
         m_endog=consumption + deposit,
@@ -192,6 +223,7 @@ def invert_acon_cloud(
         # marginal value u'(c) (equal to the deposit FOC's right-hand side).
         value_grad_m=marginal_utility,
         value_grad_n=discount_factor * w_b_at_zero_a,
+        valid_region=valid_region,
     )
 
 
@@ -201,8 +233,10 @@ def invert_con_cloud(
     b: FloatND,
     post_decision_value_at_zero_a: FloatND,
     w_b_at_zero_a: FloatND,
+    w_a_at_zero_a: FloatND,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
+    match_rate: ScalarFloat | float,
 ) -> RegionCloud:
     """Build the fully-constrained corner cloud (`con`, `a = 0` and `d = 0`).
 
@@ -217,16 +251,27 @@ def invert_con_cloud(
         b: Pension post-decision balance at each node (`n = b`, no deposit).
         post_decision_value_at_zero_a: Post-decision value `w(0, b)` at each node.
         w_b_at_zero_a: Post-decision value gradient w.r.t. `b`, at `a = 0`.
+        w_a_at_zero_a: Post-decision value gradient w.r.t. `a`, at `a = 0`; enters
+            only the complementary-slackness test for the binding borrowing limit.
         discount_factor: Discount factor.
         crra: Coefficient of relative risk aversion.
+        match_rate: Pension employer-match coefficient `chi`; enters only the
+            complementary-slackness test for `d = 0` being optimal.
 
     Returns:
         The fully-constrained endogenous cloud.
 
     """
+    marginal_utility = consumption ** (-crra)
     value = (
         _crra_utility(consumption, crra)
         + discount_factor * post_decision_value_at_zero_a
+    )
+    # KKT: both corners bind with non-negative multipliers — the borrowing limit
+    # (`u'(c) >= beta*w_a` at a = 0) and the deposit lower bound (`d = 0` optimal,
+    # `u'(c) >= beta*w_b*(1 + chi)` at a = 0).
+    valid_region = (marginal_utility >= discount_factor * w_a_at_zero_a) & (
+        marginal_utility >= discount_factor * w_b_at_zero_a * (1.0 + match_rate)
     )
     return RegionCloud(
         m_endog=consumption,
@@ -235,8 +280,9 @@ def invert_con_cloud(
         deposit=jnp.zeros_like(consumption),
         value=value,
         # All extra liquid is consumed at the corner, so dV/dm = u'(c).
-        value_grad_m=consumption ** (-crra),
+        value_grad_m=marginal_utility,
         value_grad_n=discount_factor * w_b_at_zero_a,
+        valid_region=valid_region,
     )
 
 

@@ -138,6 +138,7 @@ def test_first_envelope_matches_exhaustive_with_a_two_asset_objective():
         value=jnp.zeros((3, 3)),
         value_grad_m=jnp.zeros((3, 3)),
         value_grad_n=jnp.zeros((3, 3)),
+        valid_region=jnp.ones((3, 3), dtype=bool),
     )
     mesh = build_segment_mesh(cloud=cloud, region_label=0)
     objective = _affine_two_asset_objective(

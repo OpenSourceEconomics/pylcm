@@ -115,6 +115,14 @@ def rfc_two_asset_step(
         ]
     )
 
+    # Each region cloud now carries a `valid_region` KKT mask (the complementary-
+    # slackness test its inverse assumes). Applying it here — dropping finite but
+    # KKT-inconsistent candidates — is correct in principle, but at the coarse
+    # post-decision grids the solver runs it removes candidates that were
+    # providing envelope coverage, and the delete-only rooftop cut plus the
+    # nearest-survivor publisher are not hole-safe, so accuracy regresses. Wiring
+    # `valid_region` into the cut is therefore deferred to the hole-safe publisher
+    # redesign; for now the mask is computed and exposed on the clouds.
     valid = (
         jnp.isfinite(values)
         & jnp.all(jnp.isfinite(states), axis=1)
@@ -211,6 +219,7 @@ def _build_region_clouds(
         post_decision_value=post.value,
         discount_factor=discount_factor,
         crra=crra,
+        match_rate=match_rate,
     )
     a_zero = jnp.zeros_like(b_grid)
     post_zero = post_decision_value_and_grad(
@@ -226,11 +235,13 @@ def _build_region_clouds(
     c_mesh, cb_mesh = jnp.meshgrid(consumption_grid, b_grid, indexing="ij")
     value_at_zero = jnp.broadcast_to(post_zero.value[None, :], c_mesh.shape)
     grad_b_at_zero = jnp.broadcast_to(post_zero.grad_b[None, :], c_mesh.shape)
+    grad_a_at_zero = jnp.broadcast_to(post_zero.grad_a[None, :], c_mesh.shape)
     acon = invert_acon_cloud(
         consumption=c_mesh,
         b=cb_mesh,
         post_decision_value_at_zero_a=value_at_zero,
         w_b_at_zero_a=grad_b_at_zero,
+        w_a_at_zero_a=grad_a_at_zero,
         discount_factor=discount_factor,
         crra=crra,
         match_rate=match_rate,
@@ -240,7 +251,9 @@ def _build_region_clouds(
         b=cb_mesh,
         post_decision_value_at_zero_a=value_at_zero,
         w_b_at_zero_a=grad_b_at_zero,
+        w_a_at_zero_a=grad_a_at_zero,
         discount_factor=discount_factor,
         crra=crra,
+        match_rate=match_rate,
     )
     return ucon, dcon, acon, con

@@ -236,6 +236,7 @@ def _g2egm_envelope_step(
         post_decision_value=post.value,
         discount_factor=discount_factor,
         crra=crra,
+        match_rate=match_rate,
     )
 
     # acon / con: candidate clouds on the (consumption, b) grid at a = 0.
@@ -244,11 +245,13 @@ def _g2egm_envelope_step(
     c_mesh, cb_mesh = jnp.meshgrid(consumption_grid, b_grid, indexing="ij")
     value_at_zero = jnp.broadcast_to(post_zero.value[None, :], c_mesh.shape)
     grad_b_at_zero = jnp.broadcast_to(post_zero.grad_b[None, :], c_mesh.shape)
+    grad_a_at_zero = jnp.broadcast_to(post_zero.grad_a[None, :], c_mesh.shape)
     acon = invert_acon_cloud(
         consumption=c_mesh,
         b=cb_mesh,
         post_decision_value_at_zero_a=value_at_zero,
         w_b_at_zero_a=grad_b_at_zero,
+        w_a_at_zero_a=grad_a_at_zero,
         discount_factor=discount_factor,
         crra=crra,
         match_rate=match_rate,
@@ -258,8 +261,10 @@ def _g2egm_envelope_step(
         b=cb_mesh,
         post_decision_value_at_zero_a=value_at_zero,
         w_b_at_zero_a=grad_b_at_zero,
+        w_a_at_zero_a=grad_a_at_zero,
         discount_factor=discount_factor,
         crra=crra,
+        match_rate=match_rate,
     )
 
     meshes = [

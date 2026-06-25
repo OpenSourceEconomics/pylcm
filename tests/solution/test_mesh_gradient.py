@@ -59,6 +59,7 @@ def test_value_grad_m_matches_the_constrained_region_inverse():
         b=b,
         post_decision_value_at_zero_a=jnp.zeros((2, 2)),
         w_b_at_zero_a=w_b,
+        w_a_at_zero_a=consumption ** (-_CRRA) / _DISCOUNT,
         discount_factor=_DISCOUNT,
         crra=_CRRA,
         match_rate=_MATCH,
