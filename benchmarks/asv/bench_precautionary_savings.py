@@ -3,7 +3,7 @@
 import gc
 import time
 
-from benchmarks import _gpu_mem
+from . import _gpu_mem
 
 _N_SUBJECTS = 1_000
 
@@ -81,7 +81,7 @@ class PrecautionarySavingsSolve:
 
 
 class PrecautionarySavingsSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_precautionary_savings"
+    bench_module = "benchmarks.asv.bench_precautionary_savings"
     bench_class = "PrecautionarySavingsSolve"
 
 
@@ -136,7 +136,7 @@ class PrecautionarySavingsSimulate:
 
 
 class PrecautionarySavingsSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_precautionary_savings"
+    bench_module = "benchmarks.asv.bench_precautionary_savings"
     bench_class = "PrecautionarySavingsSimulate"
 
 
@@ -191,7 +191,7 @@ class PrecautionarySavingsSimulateWithSolve:
 
 
 class PrecautionarySavingsSimulateWithSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_precautionary_savings"
+    bench_module = "benchmarks.asv.bench_precautionary_savings"
     bench_class = "PrecautionarySavingsSimulateWithSolve"
 
 
@@ -247,5 +247,5 @@ class PrecautionarySavingsSimulateWithSolveIrreg:
 
 
 class PrecautionarySavingsSimulateWithSolveIrregGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_precautionary_savings"
+    bench_module = "benchmarks.asv.bench_precautionary_savings"
     bench_class = "PrecautionarySavingsSimulateWithSolveIrreg"

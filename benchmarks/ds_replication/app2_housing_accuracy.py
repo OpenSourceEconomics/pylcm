@@ -76,16 +76,8 @@ import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
 
 from lcm import TauchenAR1Process
-
-try:
-    from tests.test_models import ds_app2_housing as app2
-    from tests.test_models.ds_app2_housing import HousingRegimeId
-except ModuleNotFoundError:
-    # asv discovers every module under the benchmark dir but installs only the
-    # package, not `tests`. These replication drivers are run directly (repo root
-    # on the path) and define no asv benchmark classes, so a discovery-time miss
-    # is harmless — the module imports cleanly and is skipped.
-    app2 = HousingRegimeId = None
+from tests.test_models import ds_app2_housing as app2
+from tests.test_models.ds_app2_housing import HousingRegimeId
 
 _logger = logging.getLogger("lcm")
 

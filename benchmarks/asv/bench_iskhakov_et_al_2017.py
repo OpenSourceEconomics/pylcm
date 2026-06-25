@@ -17,7 +17,7 @@ chosen, death occurs at a fixed age) as in the original paper.
 import gc
 import time
 
-from benchmarks import _gpu_mem
+from . import _gpu_mem
 
 _N_PERIODS = 10
 _TASTE_SHOCK_SCALE = 0.1
@@ -285,7 +285,7 @@ class IskhakovEtAl2017Solve:
 
 
 class IskhakovEtAl2017SolveGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_iskhakov_et_al_2017"
+    bench_module = "benchmarks.asv.bench_iskhakov_et_al_2017"
     bench_class = "IskhakovEtAl2017Solve"
 
 
@@ -336,7 +336,7 @@ class IskhakovEtAl2017DCEGMSolve:
 
 
 class IskhakovEtAl2017DCEGMSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_iskhakov_et_al_2017"
+    bench_module = "benchmarks.asv.bench_iskhakov_et_al_2017"
     bench_class = "IskhakovEtAl2017DCEGMSolve"
 
 
@@ -396,7 +396,7 @@ class IskhakovEtAl2017Simulate:
 
 
 class IskhakovEtAl2017SimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_iskhakov_et_al_2017"
+    bench_module = "benchmarks.asv.bench_iskhakov_et_al_2017"
     bench_class = "IskhakovEtAl2017Simulate"
 
 
@@ -463,5 +463,5 @@ class IskhakovEtAl2017DCEGMSimulate:
 
 
 class IskhakovEtAl2017DCEGMSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_iskhakov_et_al_2017"
+    bench_module = "benchmarks.asv.bench_iskhakov_et_al_2017"
     bench_class = "IskhakovEtAl2017DCEGMSimulate"

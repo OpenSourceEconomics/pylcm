@@ -52,16 +52,8 @@ import numpy as np
 import pandas as pd
 
 from lcm import TauchenAR1Process
-
-try:
-    from tests.test_models import ds_app2_housing_fues as fues
-    from tests.test_models.ds_app2_housing_fues import HousingFuesRegimeId
-except ModuleNotFoundError:
-    # asv discovers every module under the benchmark dir but installs only the
-    # package, not `tests`. These replication drivers are run directly (repo root
-    # on the path) and define no asv benchmark classes, so a discovery-time miss
-    # is harmless — the module imports cleanly and is skipped.
-    fues = HousingFuesRegimeId = None
+from tests.test_models import ds_app2_housing_fues as fues
+from tests.test_models.ds_app2_housing_fues import HousingFuesRegimeId
 
 _logger = logging.getLogger("lcm")
 

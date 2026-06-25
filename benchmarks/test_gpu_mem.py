@@ -1,6 +1,6 @@
 """Tests for the GPU peak-memory measurement harness."""
 
-from benchmarks._gpu_mem import _subprocess_env
+from benchmarks.asv._gpu_mem import _subprocess_env
 
 
 def test_subprocess_env_disables_autotuning():

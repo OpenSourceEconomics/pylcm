@@ -72,7 +72,7 @@ def measure_gpu_peak(bench_module: str, bench_class: str) -> int:
 
     """
     result = subprocess.run(
-        [sys.executable, "-m", "benchmarks._gpu_mem", bench_module, bench_class],
+        [sys.executable, "-m", "benchmarks.asv._gpu_mem", bench_module, bench_class],
         capture_output=True,
         text=True,
         check=False,

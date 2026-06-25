@@ -76,19 +76,11 @@ import numpy as np
 import pandas as pd
 
 from lcm import RouwenhorstAR1Process
-
-try:
-    from tests.test_models import ds_app3_discrete_housing as app3
-    from tests.test_models.ds_app3_discrete_housing import (
-        DiscreteHousingRegimeId,
-        Housing,
-    )
-except ModuleNotFoundError:
-    # asv discovers every module under the benchmark dir but installs only the
-    # package, not `tests`. These replication drivers are run directly (repo root
-    # on the path) and define no asv benchmark classes, so a discovery-time miss
-    # is harmless — the module imports cleanly and is skipped.
-    app3 = DiscreteHousingRegimeId = Housing = None
+from tests.test_models import ds_app3_discrete_housing as app3
+from tests.test_models.ds_app3_discrete_housing import (
+    DiscreteHousingRegimeId,
+    Housing,
+)
 
 _logger = logging.getLogger("lcm")
 

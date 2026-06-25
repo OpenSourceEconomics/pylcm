@@ -56,7 +56,7 @@ import time
 
 import cloudpickle
 
-from benchmarks import _gpu_mem
+from . import _gpu_mem
 
 _N_SUBJECTS = 1000
 
@@ -193,12 +193,12 @@ class AcaBaselineDebugLog(AcaBaseline):
 
 
 class AcaBaselineGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_aca_baseline"
+    bench_module = "benchmarks.asv.bench_aca_baseline"
     bench_class = "AcaBaseline"
     timeout = 3600
 
 
 class AcaBaselineDebugLogGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_aca_baseline"
+    bench_module = "benchmarks.asv.bench_aca_baseline"
     bench_class = "AcaBaselineDebugLog"
     timeout = 3600

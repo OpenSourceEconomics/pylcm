@@ -3,7 +3,7 @@
 import gc
 import time
 
-from benchmarks import _gpu_mem
+from . import _gpu_mem
 
 _N_SUBJECTS = 100
 
@@ -72,5 +72,5 @@ class MahlerYum:
 
 
 class MahlerYumGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.bench_mahler_yum"
+    bench_module = "benchmarks.asv.bench_mahler_yum"
     bench_class = "MahlerYum"
