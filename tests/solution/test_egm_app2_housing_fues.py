@@ -9,15 +9,14 @@ the-housing-grid solve (its Box 2).
 
 The oracle is the grid-search (VFI) twin of the same discrete-housing model
 (same liquid, wage, and housing grids), which solves the identical Bellman
-problem by brute force. On the liquid-wealth interior the two value functions
-agree up to grid resolution: VFI undershoots from the consumption grid (it
-converges up to the DC-EGM value as that grid refines), the DC-EGM has a small
-savings-grid interpolation error, and a handful of cells at the discrete
-housing-choice switching kinks disagree by a bounded amount — the standard
-DC-EGM unstable-node pattern (the discrete-choice analog of the consumption-kink
-nodes the continuous models exclude). So the test asserts *bulk* agreement (the
-mean is tight and the overwhelming majority of interior cells fall within a
-small tolerance), not exact equality at every cell.
+problem by brute force. On most of the liquid-wealth interior the two value
+functions agree up to grid resolution. They diverge on a minority of cells in the
+durable-rich corner (high held housing, high liquid), where DC-EGM sits slightly
+below the VFI twin: the DC-EGM savings-grid interpolation of a kinked value
+function plus the liquid top-edge extrapolation, a discretization gap that shrinks
+only partially as the savings and liquid grids refine. So the test asserts *bulk*
+agreement (the mean is tight and the overwhelming majority of interior cells fall
+within a small tolerance), not exact equality at every cell.
 
 The borrowing-constrained low-wealth region (where VFI is forced to the
 consumption floor and the steep CES utility diverges) and the top edge-clamp
@@ -43,24 +42,19 @@ N_LOW_NODES = 12
 N_HIGH_NODES = 8
 
 # Bulk-agreement thresholds. The value function is O(35) on the interior, so a
-# 0.3 cell tolerance is sub-percent. The DS eq. 12 round-trip cost opens an
-# (S, s) inaction band, so the optimal housing choice switches across some
-# liquid-interior cells. The two solvers form the continuation differently
-# there:
-# - DC-EGM keeps the per-housing-choice value rows, interpolates each in liquid,
-#   and takes the hard max *after* interpolating (`max_d I[V_d]` — branch-aware);
-# - the grid-search VFI twin linearly interpolates the *already-maximized*
-#   next-period value array (`I[max_d V_d]`).
-# Since `max_d I[V_d] <= I[max_d V_d]` for linear interpolation, EGM sits at or
-# below VFI wherever the winning housing choice switches inside a bracket — the
-# VFI comparator bridges the choice kink and is biased upward there, not EGM
-# biased downward (EGM is the branch-aware, more accurate side). The gap is
-# identical for every upper-envelope backend (they share the same continuation
-# reader). It is a comparator-ordering gap, not a solver error; the tolerance
-# accommodates it on the switch cells while the smooth-region mean stays
-# sub-percent. A branch-aware VFI oracle would close it (see the DS App.2
-# follow-up); the paper-comparable metric is the simulated consumption Euler
-# error, which is unaffected.
+# 0.3 cell tolerance is sub-percent. The two solvers disagree on a minority of
+# interior cells, concentrated in the durable-rich corner (high held housing,
+# high liquid). There DC-EGM sits slightly *below* the grid-search VFI: it is the
+# DC-EGM savings-grid interpolation of a kinked value function plus the liquid
+# top-edge extrapolation, a discretization gap that shrinks only partially as the
+# savings and liquid grids refine. The branch-aware VFI oracle confirms this is
+# not a comparator-ordering artifact — the `I[max_d V_d]` vs `max_d I[V_d]`
+# ordering term is identically zero on this interior (the next-housing choice only
+# switches in the excluded low-wealth (S, s) band; see
+# `test_app2_branch_aware_vfi.py`). The tolerance accommodates the durable-corner
+# discretization while the smooth-region mean stays sub-percent; the
+# paper-comparable metric is the simulated consumption Euler error, which is
+# unaffected.
 MEAN_TOL = 0.18
 CELL_TOL = 0.30
 MIN_FRACTION_WITHIN = 0.82
@@ -76,14 +70,13 @@ def test_app2_fues_matches_vfi_on_liquid_interior(
     upper envelope over the housing grid; the VFI twin does the same by brute
     grid search. The mean interior value difference is sub-percent and the large
     majority of interior cells fall within the cell tolerance — the EGM-FUES
-    solve is correct. The remaining cells sit at the (S, s) adjust/keep
-    boundaries, where the two continuation operators differ: DC-EGM takes the
-    hard max over per-housing-choice value rows *after* interpolating each in
-    liquid (`max_d I[V_d]`), while the VFI twin linearly interpolates the
-    already-maximized value array (`I[max_d V_d]`). Because `max_d I[V_d] <=
-    I[max_d V_d]`, EGM sits at or below VFI on the switch cells — the VFI
-    comparator bridges the choice kink (upward-biased there), EGM does not. The
-    gap is identical for every upper-envelope backend.
+    solve is correct. The remaining cells sit in the durable-rich corner (high
+    held housing, high liquid), where DC-EGM sits slightly below the VFI twin
+    through its savings-grid interpolation of a kinked value function and the
+    liquid top-edge extrapolation. This is a discretization gap, not a
+    comparator-ordering artifact: the branch-aware VFI oracle confirms the
+    `I[max_d V_d]` vs `max_d I[V_d]` ordering term is identically zero on this
+    interior (`test_app2_branch_aware_vfi.py`).
     """
     dcegm_model = build_model(
         variant="dcegm",
