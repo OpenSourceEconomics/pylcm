@@ -443,22 +443,32 @@ class NEGM(Solver):
         )
         adjuster_kernels = self.inner.build_period_kernels(context=adjuster_context)
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
-        # at the current durable stock (`next_<durable> = <durable>`), so the
+        # at its no-adjustment level (`next_<durable> = keep(<durable>)`), so the
         # durable becomes a genuine decision-independent passive state and
-        # `credited(s, s) = 0` makes keeping free. The identity is injected in two
-        # places that both read the outer post-decision: the transitions (so the
-        # child read indexes the unchanged durable) and the econ functions (so the
-        # inner resources DAG computes it from the durable leaf rather than
-        # demanding it as a bound param, as the adjuster does).
+        # `credited(<durable>, keep(<durable>)) = 0` makes keeping free. The keeper
+        # map is injected in two places that both read the outer post-decision: the
+        # transitions (so the child read indexes the kept durable) and the econ
+        # functions (so the inner resources DAG computes it from the durable leaf
+        # rather than demanding it as a bound param, as the adjuster does). With no
+        # `outer_no_adjustment_candidate`, `keep` is the identity (hold the stock);
+        # a depreciating `keep(d) = d (1 - delta)` lands the kept stock off the
+        # durable grid and the inner passive read blends it over the grid.
+        no_adjustment_func = (
+            context.functions[self.outer_no_adjustment_candidate]
+            if self.outer_no_adjustment_candidate is not None
+            else None
+        )
         keeper_context = replace(
             context,
-            transitions=_identity_outer_transition(
+            transitions=_no_adjustment_outer_transition(
                 transitions=context.transitions,
                 outer_post_decision=self.outer_post_decision,
+                no_adjustment_func=no_adjustment_func,
             ),
-            functions=_with_identity_outer_function(
+            functions=_with_no_adjustment_outer_function(
                 functions=context.functions,
                 outer_post_decision=self.outer_post_decision,
+                no_adjustment_func=no_adjustment_func,
             ),
         )
         keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
@@ -1076,31 +1086,44 @@ def _strip_outer_transition(
     )
 
 
-def _identity_outer_transition(
+def _no_adjustment_outer_transition(
     *,
     transitions: TransitionFunctionsMapping,
     outer_post_decision: FunctionName,
+    no_adjustment_func: EconFunction | None,
 ) -> TransitionFunctionsMapping:
-    """Replace the outer post-decision transition with the durable identity.
+    """Replace the outer post-decision transition with the keeper's durable map.
 
-    The keeper holds the durable stock fixed (`next_<durable> = <durable>`), so
-    each target's outer transition becomes the identity law on the durable state.
-    The durable state name is the transition name with the `next_` prefix
-    removed, mirroring the engine's `next_<state>` auto-naming. The durable then
-    reads as a genuine decision-independent passive state in the inner DC-EGM,
-    and `read_child` sources `next_<durable> = <durable>` without demanding the
-    outer action.
+    The keeper holds the durable at its no-adjustment level
+    (`next_<durable> = keep(<durable>)`), so each target's outer transition
+    becomes that law on the durable state. The durable state name is the
+    transition name with the `next_` prefix removed, mirroring the engine's
+    `next_<state>` auto-naming. The durable then reads as a genuine
+    decision-independent passive state in the inner DC-EGM.
+
+    With no `no_adjustment_func` the keeper holds the stock unchanged via the
+    auto-identity transition (`next_<durable> = <durable>`), and `read_child`
+    indexes the unchanged durable on its grid. A depreciating
+    `keep(d) = d (1 - delta)` lands the kept stock off the durable grid; the
+    inner passive read blends the child value over the grid's neighbouring nodes.
     """
     durable_state = outer_post_decision.removeprefix("next_")
-    identity = cast(
-        "TransitionFunction",
-        _IdentityTransition(durable_state, annotation=ContinuousState),
-    )
+    if no_adjustment_func is None:
+        keeper_transition = cast(
+            "TransitionFunction",
+            _IdentityTransition(durable_state, annotation=ContinuousState),
+        )
+    else:
+        keeper_transition = _durable_keeper_transition(
+            no_adjustment_func=no_adjustment_func,
+            durable_state=durable_state,
+            outer_post_decision=outer_post_decision,
+        )
     return MappingProxyType(
         {
             target: MappingProxyType(
                 {
-                    name: (identity if name == outer_post_decision else func)
+                    name: (keeper_transition if name == outer_post_decision else func)
                     for name, func in target_transitions.items()
                 }
             )
@@ -1109,19 +1132,21 @@ def _identity_outer_transition(
     )
 
 
-def _with_identity_outer_function(
+def _with_no_adjustment_outer_function(
     *,
     functions: EconFunctionsMapping,
     outer_post_decision: FunctionName,
+    no_adjustment_func: EconFunction | None,
 ) -> EconFunctionsMapping:
-    """Add the durable-identity outer post-decision to the econ-function DAG.
+    """Add the keeper's outer post-decision to the econ-function DAG.
 
     The inner resources function reads the outer post-decision (`next_<durable>`)
     by name. The adjuster binds it as a per-node param; the keeper instead holds
-    it at the current durable stock, so the resources DAG computes
-    `next_<durable> = <durable>` from the durable leaf state. The injected
+    it at its no-adjustment level, so the resources DAG computes
+    `next_<durable> = keep(<durable>)` from the durable leaf state. The injected
     function declares the durable state as its single parameter, so DAG
-    concatenation wires the durable combo value into resources.
+    concatenation wires the durable combo value into resources. With no
+    `no_adjustment_func`, `keep` is the identity (hold the stock).
     """
     durable_state = outer_post_decision.removeprefix("next_")
     # Copy the durable's annotation (and the outer post-decision's consumer
@@ -1137,7 +1162,9 @@ def _with_identity_outer_function(
         return_annotation=outer_annotation,
     )
     def keep_outer_post_decision(**kwargs: FloatND) -> FloatND:
-        return kwargs[durable_state]
+        if no_adjustment_func is None:
+            return kwargs[durable_state]
+        return no_adjustment_func(**{durable_state: kwargs[durable_state]})
 
     keep_outer_post_decision.__name__ = outer_post_decision
     return MappingProxyType(
@@ -1146,6 +1173,31 @@ def _with_identity_outer_function(
             outer_post_decision: cast("EconFunction", keep_outer_post_decision),
         }
     )
+
+
+def _durable_keeper_transition(
+    *,
+    no_adjustment_func: EconFunction,
+    durable_state: StateName,
+    outer_post_decision: FunctionName,
+) -> TransitionFunction:
+    """Wrap the no-adjustment map as the keeper's durable transition.
+
+    The map reads the durable state alone and returns the kept next stock, so it
+    is a decision-independent passive law `next_<durable> = keep(<durable>)`. The
+    wrapper carries the `next_<durable>` name and a `ContinuousState` signature so
+    the engine's transition collector classifies it like any passive durable law.
+    """
+
+    @with_signature(
+        args={durable_state: "ContinuousState"},
+        return_annotation="ContinuousState",
+    )
+    def keeper_transition(**kwargs: ContinuousState) -> ContinuousState:
+        return no_adjustment_func(**{durable_state: kwargs[durable_state]})
+
+    keeper_transition.__name__ = outer_post_decision
+    return cast("TransitionFunction", keeper_transition)
 
 
 def _annotation_of_arg(
