@@ -78,6 +78,55 @@ def test_query_envelope_matches_oracle(endog_grid, policy, value, segment_id, x_
     np.testing.assert_allclose(np.asarray(got_policy), oracle_policy, atol=1e-9)
 
 
+@pytest.mark.parametrize("block_size", [1, 2, 3, 4])
+def test_blocked_segment_scan_matches_the_dense_reduction(block_size):
+    """`segment_block_size` is a memory knob: same value, policy, marginal.
+
+    The two-pass blocked scan reproduces the dense `(n_query, n_segment)`
+    reduction — same envelope value, same right-continuous tie-break winner — for
+    any block size (divisor or not) below the segment count, up to floating-point
+    reassociation between the two XLA lowerings.
+    """
+    rng = np.random.default_rng(20260626)
+    # Three interleaved branches over a shared resource range, so several
+    # segments bracket each query and the envelope max is contested.
+    grids, values, policies, segments = [], [], [], []
+    for seg, (intercept, slope_v) in enumerate([(1.0, 0.4), (0.1, 0.8), (0.6, 0.2)]):
+        r = np.sort(rng.uniform(0.5, 3.5, size=6))
+        grids.append(r)
+        values.append(intercept + slope_v * r)
+        policies.append(0.25 * (seg + 1) * r)
+        segments.append(np.full_like(r, float(seg)))
+    endog_grid = jnp.asarray(np.concatenate(grids))
+    value = jnp.asarray(np.concatenate(values))
+    policy = jnp.asarray(np.concatenate(policies))
+    segment_id = jnp.asarray(np.concatenate(segments))
+    marginal = _marginal(endog_grid, value, segment_id)
+    x_query = jnp.asarray(np.linspace(0.7, 3.3, 41))
+
+    dense = envelope_at_query(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal=marginal,
+        segment_id=segment_id,
+        x_query=x_query,
+    )
+    blocked = envelope_at_query(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal=marginal,
+        segment_id=segment_id,
+        x_query=x_query,
+        segment_block_size=block_size,
+    )
+    for dense_arr, blocked_arr in zip(dense, blocked, strict=True):
+        np.testing.assert_allclose(
+            np.asarray(blocked_arr), np.asarray(dense_arr), rtol=1e-12, atol=1e-12
+        )
+
+
 def test_query_outside_all_branches_is_nan():
     """A query beyond every branch's support yields NaN value/policy/marginal."""
     got_value, got_policy, got_marginal = envelope_at_query(
