@@ -13,7 +13,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.Q_and_F import _apply_continuation_operator
+from _lcm.regime_building.Q_and_F import (
+    _apply_continuation_operator,
+    _invert_joint,
+    _transform_and_average,
+)
 from lcm import AgeGrid, Model
 from lcm.exceptions import ModelInitializationError
 from tests.test_models import stochastic
@@ -112,6 +116,69 @@ def test_entropic_certainty_equivalent_penalizes_a_risky_lottery():
     expected = np.log(0.5 * (np.exp(-1.0) + np.exp(-3.0))) / (-1.0)
     np.testing.assert_allclose(float(entropic), expected, rtol=1e-6)
     assert float(entropic) < 2.0
+
+
+def test_joint_certainty_equivalent_mixes_regimes_inside_the_transform():
+    """Over multiple target regimes the operator is the joint CE, not per-target.
+
+    The seam accumulates `sum_r p_r E_z[g(V_rz)]` across targets and applies `g_inv`
+    once, giving the joint certainty equivalent `g_inv(sum_rz p_r p_z g(V_rz))` — the
+    sound form for a non-linear operator over both regime and shock uncertainty.
+    With the entropic pair `g(v)=exp(theta v)`, `g_inv(x)=log(x)/theta`, this equals
+    the hand-computed joint value and is strictly below the (unsound) per-target form
+    `sum_r p_r g_inv(E_z[g(V_rz)])` when the two regimes' continuations differ.
+    """
+    theta = -1.0
+    p_regime = (0.6, 0.4)  # regime mixing weights
+    # Two targets, each a two-outcome shock lottery (equal shock weights).
+    target_values = (jnp.array([0.0, 2.0]), jnp.array([3.0, 5.0]))
+    shock_weights = jnp.array([0.5, 0.5])
+    params = {"risk_sensitivity": jnp.asarray(theta)}
+
+    transformed_mix = sum(
+        p
+        * _transform_and_average(
+            values=vals,
+            weights=shock_weights,
+            value_transform=_entropic_transform,
+            params=params,
+        )
+        for p, vals in zip(p_regime, target_values, strict=True)
+    )
+    joint = float(
+        _invert_joint(
+            transformed_mix,
+            inverse_value_transform=_entropic_inverse,
+            params=params,
+        )
+    )
+
+    # Hand value: g_inv( sum_rz p_r p_z exp(theta V_rz) ).
+    g_sum = sum(
+        p * 0.5 * (np.exp(theta * float(vals[0])) + np.exp(theta * float(vals[1])))
+        for p, vals in zip(p_regime, target_values, strict=True)
+    )
+    expected = np.log(g_sum) / theta
+    np.testing.assert_allclose(joint, expected, rtol=1e-6)
+
+    # The unsound per-target-then-mix form differs (g_inv inside the regime mix).
+    per_target = sum(
+        p
+        * float(
+            _invert_joint(
+                _transform_and_average(
+                    values=vals,
+                    weights=shock_weights,
+                    value_transform=_entropic_transform,
+                    params=params,
+                ),
+                inverse_value_transform=_entropic_inverse,
+                params=params,
+            )
+        )
+        for p, vals in zip(p_regime, target_values, strict=True)
+    )
+    assert abs(joint - per_target) > 1e-3
 
 
 def test_non_identity_operator_changes_the_solved_value_function():
