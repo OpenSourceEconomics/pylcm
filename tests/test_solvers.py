@@ -161,6 +161,12 @@ def test_dcegm_zero_points_to_scan_is_rejected():
         _dcegm(fues_n_points_to_scan=0)
 
 
+def test_dcegm_zero_scan_unroll_is_rejected():
+    """The FUES `lax.scan` unroll factor must be at least 1 (no unrolling)."""
+    with pytest.raises(RegimeInitializationError, match="fues_scan_unroll"):
+        _dcegm(fues_scan_unroll=0)
+
+
 def test_period_kernels_sharing_a_config_reuse_one_compiled_core():
     """Periods of a grid-search regime that share a Q-and-F configuration wrap
     the same jitted core, so AOT compilation lowers it once.

@@ -202,6 +202,31 @@ def test_vmap_over_rows_matches_per_row_calls():
         )
 
 
+@pytest.mark.parametrize("scan_unroll", [2, 4, 8])
+def test_scan_unroll_leaves_the_refined_envelope_unchanged(scan_unroll):
+    """`scan_unroll` is a pure performance knob: the output is bit-identical.
+
+    Unrolling the candidate `lax.scan` only changes how the loop is lowered, not
+    what it computes, so the refined `(grid, policy, value)` and the kept count
+    must match the default `scan_unroll=1` run exactly.
+    """
+    grid, policy, value = _crossing_segments_candidates()
+    baseline = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=12
+    )
+    unrolled = fues.refine_envelope(
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        n_refined=12,
+        scan_unroll=scan_unroll,
+    )
+    for baseline_arr, unrolled_arr in zip(baseline, unrolled, strict=True):
+        np.testing.assert_array_equal(
+            np.asarray(unrolled_arr), np.asarray(baseline_arr)
+        )
+
+
 def test_overflow_is_reported_via_n_kept():
     """When the envelope needs more slots than `n_refined`, `n_kept` says so."""
     grid, policy, value = _crossing_segments_candidates()

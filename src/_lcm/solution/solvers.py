@@ -207,6 +207,18 @@ class DCEGM(Solver):
     fues_n_points_to_scan: int = 10
     """Number of points the FUES forward scan inspects after a candidate."""
 
+    fues_scan_unroll: int = 1
+    """Loop-unroll factor for the FUES candidate `lax.scan`.
+
+    Passed to `jax.lax.scan(..., unroll=fues_scan_unroll)` in both the
+    full-envelope and streaming-bracket scans. The scan is sequential and
+    latency-bound on accelerators; unrolling `k` iterations into one loop body
+    trades compile time and code size for fewer loop-carry round trips, which can
+    cut the per-row exec wall on GPU. `1` (no unroll) is the default; the refined
+    envelope is numerically identical across values, so this is a pure
+    performance knob.
+    """
+
     rfc_jump_thresh: float = 2.0
     """Segment-switch threshold on `|Δc / ΔR|` in the rooftop cut."""
 
@@ -238,6 +250,7 @@ class DCEGM(Solver):
         _fail_if_fues_jump_thresh_non_positive(self.fues_jump_thresh)
         _fail_if_n_constrained_points_too_few(self.n_constrained_points)
         _fail_if_fues_n_points_to_scan_too_few(self.fues_n_points_to_scan)
+        _fail_if_fues_scan_unroll_too_few(self.fues_scan_unroll)
         _fail_if_rfc_jump_thresh_non_positive(self.rfc_jump_thresh)
         _fail_if_rfc_search_radius_too_few(self.rfc_search_radius)
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
@@ -1277,6 +1290,16 @@ def _fail_if_fues_n_points_to_scan_too_few(fues_n_points_to_scan: int) -> None:
             f"DCEGM.fues_n_points_to_scan must be at least 1, got "
             f"{fues_n_points_to_scan}. The FUES forward scan must inspect at "
             "least one point after each candidate."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_fues_scan_unroll_too_few(fues_scan_unroll: int) -> None:
+    if fues_scan_unroll < 1:
+        msg = (
+            f"DCEGM.fues_scan_unroll must be at least 1, got "
+            f"{fues_scan_unroll}. It is the `lax.scan` unroll factor for the "
+            "FUES candidate scan; 1 means no unrolling."
         )
         raise RegimeInitializationError(msg)
 
