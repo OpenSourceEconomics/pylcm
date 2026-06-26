@@ -110,6 +110,28 @@ def test_numeric_inverse_clamps_unbracketed_target_with_zero_gradient():
     assert float(jax.grad(invert)(jnp.asarray(100.0))) == 0.0
 
 
+@pytest.mark.parametrize("crra", [1.5, 2.0, 3.0])
+def test_numeric_inverse_converges_in_few_iterations_on_a_wide_bracket(crra):
+    """A handful of safeguarded-Newton steps suffice where bisection cannot.
+
+    On the wide bracket `[1e-8, 1e6]`, `15` bisection steps shrink it by only
+    `2**15` — nowhere near the root — yet the safeguarded Newton iterate hits the
+    analytic CRRA inverse to machine precision in that count, because the Newton
+    step converges quadratically once it is near the root. This pins the forward
+    solve as Newton-driven, not bisection-driven.
+    """
+    m = 0.5
+    c = numeric_inverse_marginal_utility(
+        marginal_continuation=jnp.asarray(m),
+        marginal_utility=_crra_marginal(crra),
+        c_lower=jnp.asarray(1e-8),
+        c_upper=jnp.asarray(1e6),
+        n_iter=15,
+    )
+    analytic = m ** (-1.0 / crra)
+    np.testing.assert_allclose(float(c), analytic, rtol=1e-9)
+
+
 def test_numeric_inverse_is_vmappable_and_jittable():
     """The inverter vmaps over targets and jit-compiles (kernel requirements)."""
     targets = jnp.linspace(0.1, 4.0, 16)
