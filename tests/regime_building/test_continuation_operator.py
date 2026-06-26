@@ -135,15 +135,17 @@ def test_joint_certainty_equivalent_mixes_regimes_inside_the_transform():
     shock_weights = jnp.array([0.5, 0.5])
     params = {"risk_sensitivity": jnp.asarray(theta)}
 
-    transformed_mix = sum(
-        p
-        * _transform_and_average(
-            values=vals,
-            weights=shock_weights,
-            value_transform=_entropic_transform,
-            params=params,
+    transformed_mix = jnp.asarray(
+        sum(
+            p
+            * _transform_and_average(
+                values=vals,
+                weights=shock_weights,
+                value_transform=_entropic_transform,
+                params=params,
+            )
+            for p, vals in zip(p_regime, target_values, strict=True)
         )
-        for p, vals in zip(p_regime, target_values, strict=True)
     )
     joint = float(
         _invert_joint(

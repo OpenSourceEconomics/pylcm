@@ -40,6 +40,11 @@ K_DEFAULT = 5
 K_PUBLISH_DEFAULT = 12
 EXTRAPOLATION_THRESHOLD_DEFAULT = 1e-9
 DEGENERATE_AREA_FLOOR = 1e-12
+# Minimum normalized mean-ratio shape quality `Q in (0, 1]` (1 = equilateral) a
+# publish simplex must clear to count as well-conditioned; below it a sliver's
+# affine interpolant is unstable. Generous enough not to reject ordinary
+# acute/obtuse triangles (only ~20:1-and-worse slivers fall below it).
+SHAPE_QUALITY_FLOOR = 0.05
 
 
 def rfc_delete_mask_2d(
@@ -118,20 +123,16 @@ def rfc_publish_2d(
 
     The on-device stand-in for the host Delaunay publisher (D1): for each target, take
     its `k` nearest survivors, enumerate every triangle among them, and select the
-    *smallest*-area non-degenerate triangle that contains the target (all barycentric
-    weights at or above `-extrapolation_threshold`). The smallest containing simplex
-    keeps the vertices local, so its affine interpolant tracks the curved value surface
-    instead of spanning a wide arc — the accuracy the KKT-masked clouds need. Value and
-    policy are then the barycentric combination of that triangle's vertices, which
-    reproduces survivor values exactly and is affine-exact in the hull. A target with
-    no containing triangle (outside the survivor support) falls back to its nearest
-    survivor.
-
-    The `DEGENERATE_AREA_FLOOR` rejects collinear triangles by *area* only, not shape;
-    a small-but-skinny (sliver) triangle can pass it yet be ill-conditioned. Preferring
-    the *most-local well-conditioned* simplex (gating on a shape metric — min angle /
-    radius ratio / area-over-longest-edge² — before minimizing locality) is the robust
-    refinement; on the models exercised here the area gate suffices, so it is deferred.
+    *most-local well-conditioned* containing triangle — the smallest-area simplex
+    (weights at or above `-extrapolation_threshold`) whose normalized shape quality
+    clears `SHAPE_QUALITY_FLOOR`. Locality keeps the affine fit tight (it tracks the
+    curved value surface instead of spanning a wide arc, the accuracy the KKT-masked
+    clouds need); the shape gate rejects ill-conditioned slivers that pass the area
+    floor. If every containing triangle is a sliver, the smallest containing one is
+    used (coverage over conditioning); a target with no containing triangle (outside
+    the survivor support) falls back to its nearest survivor. Value and policy are the
+    barycentric combination of the chosen triangle's vertices, which reproduces
+    survivor values exactly and is affine-exact in the hull.
 
     The `valid` mask lets a caller pass the *full* candidate cloud plus the cut's
     keep-mask rather than a pre-filtered survivor array — the jit-friendly form, since
@@ -195,14 +196,28 @@ def rfc_publish_2d(
             & nondegenerate
             & triangle_valid
         )
-        # Among containing triangles prefer the smallest area (tightest local
-        # simplex): when the KKT mask thins the valid survivors, the largest
-        # containing triangle can span a wide arc of the curved value surface and
-        # its linear interpolant errs; the smallest containing triangle keeps the
-        # vertices close to the target, so the affine fit stays local and accurate.
-        score = jnp.where(contains, -denom, -jnp.inf)
-        best = jnp.argmax(score)
-        found = score[best] > -jnp.inf
+        # Shape quality `Q = sqrt(3) * 2A / (l0^2 + l1^2 + l2^2)` (the normalized
+        # mean-ratio; `Q = 1` equilateral, `Q -> 0` sliver), from the squared edge
+        # lengths `d00`, `d11`, and `|edge2 - edge1|^2 = d00 + d11 - 2 d01`, with
+        # `2A = sqrt(denom)`. The area floor alone passes ill-conditioned slivers;
+        # gating on `Q` rejects them so the affine interpolant stays stable.
+        edge_sq_sum = 2.0 * (d00 + d11 - d01)
+        safe_edge_sq_sum = jnp.where(edge_sq_sum > 0.0, edge_sq_sum, 1.0)
+        quality = jnp.sqrt(3.0) * jnp.sqrt(jnp.maximum(denom, 0.0)) / safe_edge_sq_sum
+        well_conditioned = quality > SHAPE_QUALITY_FLOOR
+
+        # Prefer the *most local* (smallest-area) *well-conditioned* containing
+        # simplex: locality keeps the affine fit tight, the quality gate keeps it
+        # stable. If every containing simplex is a sliver, fall back to the smallest
+        # containing one (coverage over conditioning) before the nearest survivor.
+        score_good = jnp.where(contains & well_conditioned, -denom, -jnp.inf)
+        best_good = jnp.argmax(score_good)
+        found_good = score_good[best_good] > -jnp.inf
+        score_any = jnp.where(contains, -denom, -jnp.inf)
+        best_any = jnp.argmax(score_any)
+        found_any = score_any[best_any] > -jnp.inf
+        best = jnp.where(found_good, best_good, best_any)
+        found = found_good | found_any
 
         weights = jnp.array([w0[best], w1[best], w2[best]])
         vertex_values = jnp.array(
