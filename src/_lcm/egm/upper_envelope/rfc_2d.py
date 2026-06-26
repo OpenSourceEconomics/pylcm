@@ -44,7 +44,7 @@ DEGENERATE_AREA_FLOOR = 1e-12
 # publish simplex must clear to count as well-conditioned; below it a sliver's
 # affine interpolant is unstable. Generous enough not to reject ordinary
 # acute/obtuse triangles (only ~20:1-and-worse slivers fall below it).
-SHAPE_QUALITY_FLOOR = 0.05
+SHAPE_QUALITY_FLOOR = 0.1
 
 
 def rfc_delete_mask_2d(
@@ -196,14 +196,17 @@ def rfc_publish_2d(
             & nondegenerate
             & triangle_valid
         )
-        # Shape quality `Q = sqrt(3) * 2A / (l0^2 + l1^2 + l2^2)` (the normalized
-        # mean-ratio; `Q = 1` equilateral, `Q -> 0` sliver), from the squared edge
-        # lengths `d00`, `d11`, and `|edge2 - edge1|^2 = d00 + d11 - 2 d01`, with
-        # `2A = sqrt(denom)`. The area floor alone passes ill-conditioned slivers;
-        # gating on `Q` rejects them so the affine interpolant stays stable.
+        # Shape quality `Q = 4 sqrt(3) A / (l0^2 + l1^2 + l2^2)` (the standard
+        # normalized mean-ratio; `Q = 1` equilateral, `Q -> 0` sliver), from the
+        # squared edge lengths `d00`, `d11`, and `|edge2 - edge1|^2 = d00 + d11 -
+        # 2 d01`, with `4A = 2 sqrt(denom)`. The area floor alone passes
+        # ill-conditioned slivers; gating on `Q` rejects them so the affine
+        # interpolant stays stable.
         edge_sq_sum = 2.0 * (d00 + d11 - d01)
         safe_edge_sq_sum = jnp.where(edge_sq_sum > 0.0, edge_sq_sum, 1.0)
-        quality = jnp.sqrt(3.0) * jnp.sqrt(jnp.maximum(denom, 0.0)) / safe_edge_sq_sum
+        quality = (
+            2.0 * jnp.sqrt(3.0) * jnp.sqrt(jnp.maximum(denom, 0.0)) / safe_edge_sq_sum
+        )
         well_conditioned = quality > SHAPE_QUALITY_FLOOR
 
         # Prefer the *most local* (smallest-area) *well-conditioned* containing

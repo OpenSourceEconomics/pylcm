@@ -270,6 +270,17 @@ def _build_continuation_operator(
     in its `functions`; each is a function of `continuation_value` (the next value)
     plus any params. With neither supplied the operator is the identity (the linear
     expectation), and both are `None`. Supplying exactly one is a contradiction.
+
+    Timing assumption (the joint-unresolved-lottery semantics): `g_inv` is applied
+    once over the *full* next-period lottery — jointly over the reachable target
+    regimes and the stochastic nodes — so the operator is the joint certainty
+    equivalent `g_inv(sum_rz p_r p_z g(V_rz))`. This is the right form when, at the
+    current decision, neither the regime draw nor the shock draw is yet resolved.
+    It deliberately does *not* model staged resolution — a regime revealed *before*
+    the non-linear continuation risk (`sum_r p_r g_inv(E_z[g(V_rz)])`), or regime
+    probabilities that depend on the realized next shock. Supporting those would
+    need an explicit operator-scope option (`"joint"` vs `"per_target"`); the
+    joint form needs no `is_linear` capability flag for its own correctness.
     """
     has_g = "value_transform" in functions
     has_g_inv = "inverse_value_transform" in functions

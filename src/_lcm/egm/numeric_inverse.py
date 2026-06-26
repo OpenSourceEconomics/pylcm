@@ -82,10 +82,20 @@ def numeric_inverse_marginal_utility(
     # `r(log_c) = log u'(e^{log_c}) - log m` is exactly linear for the CRRA family
     # (`log u' = -crra log_c`), so Newton converges in a single step there and
     # stays well-conditioned for any power-law-like `u'` — the steep-near-zero,
-    # flat-at-large-`c` curvature that makes a plain-`c` Newton overshoot. Both
-    # `u'` and `m` are positive (marginal utility of an increasing utility, a
-    # discounted positive continuation), so the log is well-defined.
+    # flat-at-large-`c` curvature that makes a plain-`c` Newton overshoot. The log
+    # is defined only where `u' > 0` and `m > 0` (marginal utility of an increasing
+    # utility, a discounted positive continuation) — the iEGM precondition. A
+    # utility violating it (a bliss point, a marginal touching zero inside the
+    # bracket, a non-finite inactive `where` branch) would make `log u'`/`log m`
+    # non-finite; the `log_well_defined` gate below fails such a call *loud* (NaN),
+    # so the solve's NaN diagnostics name the offending (regime, period) rather
+    # than the log path silently returning a clamped bound.
+    mu_lower = marginal_utility(c_lower)
+    mu_upper = marginal_utility(c_upper)
     log_m = jnp.log(m)
+    log_well_defined = (
+        (m > 0.0) & (mu_lower > 0.0) & (mu_upper > 0.0) & jnp.isfinite(log_m)
+    )
 
     def log_marginal_utility(log_c: ScalarFloat) -> ScalarFloat:
         return jnp.log(marginal_utility(jnp.exp(log_c)))
@@ -123,7 +133,7 @@ def numeric_inverse_marginal_utility(
     # gradient. At a binding bound the active-set derivative is zero, so the
     # unbracketed branch returns the clamped root detached (value at the bound,
     # `dc/dm = 0`) rather than the bogus interior slope.
-    bracketed = (marginal_utility(c_upper) <= m) & (marginal_utility(c_lower) >= m)
+    bracketed = (mu_upper <= m) & (mu_lower >= m)
 
     # Implicit-derivative corrector: detached root + one Newton-style step whose
     # value is ~`c_star` (residual ≈ 0 at convergence) but whose gradient is the
@@ -131,4 +141,7 @@ def numeric_inverse_marginal_utility(
     # constant `1/u''` Jacobian, never differentiated itself.
     second_derivative = jax.lax.stop_gradient(marginal_curvature(c_star))
     interior = c_star - (marginal_utility(c_star) - m) / second_derivative
-    return jnp.where(bracketed, interior, c_star)
+    root = jnp.where(bracketed, interior, c_star)
+    # Fail loud where the log-space preconditions do not hold: NaN surfaces in the
+    # kernel's NaN diagnostics instead of a silently-wrong clamped bound.
+    return jnp.where(log_well_defined, root, jnp.nan)

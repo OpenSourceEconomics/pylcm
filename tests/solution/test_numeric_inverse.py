@@ -132,6 +132,38 @@ def test_numeric_inverse_converges_in_few_iterations_on_a_wide_bracket(crra):
     np.testing.assert_allclose(float(c), analytic, rtol=1e-9)
 
 
+def test_numeric_inverse_fails_loud_on_nonpositive_target():
+    """A non-positive Euler target violates the log-space precondition → NaN.
+
+    The log-consumption solve needs `m > 0`. A target `m <= 0` (which a valid
+    increasing-utility model never produces) must surface as NaN — caught by the
+    kernel's NaN diagnostics — not a silently clamped bound.
+    """
+    c = numeric_inverse_marginal_utility(
+        marginal_continuation=jnp.asarray(-1.0),
+        marginal_utility=_crra_marginal(2.0),
+        c_lower=jnp.asarray(1e-8),
+        c_upper=jnp.asarray(1e6),
+    )
+    assert bool(jnp.isnan(c))
+
+
+def test_numeric_inverse_fails_loud_when_marginal_turns_nonpositive():
+    """A marginal that goes non-positive on the bracket → NaN, not a wrong root.
+
+    For `u'(c) = 1 - c` on `[0.5, 2.0]` the marginal is negative at the upper
+    bound, so `log u'` is undefined there; the solver must fail loud rather than
+    return a spurious interior value.
+    """
+    c = numeric_inverse_marginal_utility(
+        marginal_continuation=jnp.asarray(0.25),
+        marginal_utility=lambda c: 1.0 - c,
+        c_lower=jnp.asarray(0.5),
+        c_upper=jnp.asarray(2.0),
+    )
+    assert bool(jnp.isnan(c))
+
+
 def test_numeric_inverse_is_vmappable_and_jittable():
     """The inverter vmaps over targets and jit-compiles (kernel requirements)."""
     targets = jnp.linspace(0.1, 4.0, 16)
