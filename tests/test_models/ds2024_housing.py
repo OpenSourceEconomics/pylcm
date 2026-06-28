@@ -25,16 +25,21 @@ contract).
 ## Depreciation and the keeper
 
 In the source model the keeper's next house is the depreciated stock
-`h(1 - delta)` and only the adjuster liquidates. pylcm's NEGM keeper currently
-*holds* the durable (`H' = H`, `credited(H, H) = 0`), so the faithful
-`delta > 0` keeper — whose continuation reads the value function off the housing
-grid at `h(1 - delta)` — needs an NEGM keeper extension (tracked in the build
-plan). This module is **faithful at `delta = 0`** (keep is `H' = H`, fitting the
-current keeper) and is the pipeline/oracle foundation; the `delta > 0` budget is
-encoded throughout and validated by the brute/VFI twin, ready for the keeper
-extension.
+`h(1 - delta)` and only the adjuster liquidates. The NEGM keeper realises this by
+injecting the regime's `outer_no_adjustment_candidate` (`keep_housing`, which maps
+`h -> h(1 - delta)`) as the keeper's durable transition: the kept stock lands off
+the outer housing grid and the inner DC-EGM's passive read blends the continuation
+value over the grid's neighbouring nodes, `credited(h, h(1 - delta)) = 0` making
+the hold free. The model is therefore faithful at any `delta`.
+
+The brute grid-search twin is a valid oracle only at `delta = 0`: it searches
+`next_housing` on the housing grid, so the free-keep level `h(1 - delta)` is on the
+grid only when `delta = 0`. At `delta > 0` the brute cannot represent the off-grid
+free keep, so the `delta > 0` keeper is validated against a dense host VFI oracle
+that includes the free-keep candidate explicitly.
 """
 
+from collections.abc import Callable
 from typing import Literal
 
 import jax.numpy as jnp
@@ -123,17 +128,23 @@ def income_transition(income: DiscreteState) -> FloatND:
     return pi[income]
 
 
-def keep_housing(housing: ContinuousState) -> FloatND:
-    """The no-adjustment candidate `H' = H` (free; the adjustment-cost kink).
+def _make_keep_housing(delta: float) -> Callable[[ContinuousState], FloatND]:
+    """Build the keeper's no-adjustment durable map `H' = h(1 - delta)`.
 
-    At `delta = 0` keeping holds the stock, matching the NEGM keeper kernel's
-    injected identity. The paper's `delta > 0` keeper depreciates to
-    `h(1 - delta)`; that durable shrinkage awaits the NEGM keeper depreciation
-    extension (it cannot ride a param on the durable transition, which is read
-    within-period and would bind per target), so this module is faithful at
-    `delta = 0` and the depreciation enters only the adjust cost and bequest.
+    The NEGM keeper holds the house at this level for free (the adjustment-cost
+    kink). It is the regime's `outer_no_adjustment_candidate`, injected as the
+    keeper's durable transition, so it must be **param-free** (a param on the
+    durable law binds per target and is read within-period) — `delta` is baked in
+    at build time via this closure. At `delta = 0` it returns the stock unchanged
+    (`housing * 1.0 == housing`), matching the auto-identity keeper exactly; a
+    `delta > 0` keeper depreciates to `h(1 - delta)`, which lands off the housing
+    grid and is blended by the inner DC-EGM's passive read.
     """
-    return housing
+
+    def keep_housing(housing: ContinuousState) -> FloatND:
+        return housing * (1.0 - delta)
+
+    return keep_housing
 
 
 def housing_cost(
@@ -192,11 +203,13 @@ def next_housing(
 ) -> ContinuousState:
     """Durable law `H' = H + housing_investment`.
 
-    The outer search ranges `next_housing` over the outer house-level grid; the
-    no-adjustment candidate is `housing_investment = 0` (`H' = H`). The durable
-    transition carries no params (it is read within-period by the service flow, so
-    a param would bind per target); the paper's `delta > 0` shrinkage awaits the
-    NEGM keeper depreciation extension.
+    The adjuster's outer search ranges `next_housing` over the outer house-level
+    grid (and the brute twin searches it directly via `housing_investment`). The
+    keeper's no-adjustment map is the separate `keep_housing` (`H' = h(1 - delta)`),
+    injected by the NEGM solver as the keeper's durable transition, so this law is
+    the adjuster branch only. The durable transition carries no params (it is read
+    within-period by the service flow, so a param would bind per target); the
+    depreciation enters through `keep_housing`, the adjust cost, and the bequest.
     """
     return housing + housing_investment
 
@@ -284,6 +297,7 @@ def build_model(
     consumption_max: float = 50.0,
     n_consumption: int = 60,
     n_savings: int = 60,
+    delta: float = 0.0,
 ) -> Model:
     """Build the DS-2024 housing model.
 
@@ -299,12 +313,17 @@ def build_model(
         consumption_max: Upper bound of the inner consumption grid.
         n_consumption: Number of inner consumption-grid points.
         n_savings: Number of inner savings-grid points.
+        delta: House depreciation rate baked into the keeper's no-adjustment map
+            `H' = h(1 - delta)` (param-free, so set at build time). Pass the same
+            value to `build_params` (where it enters the adjust cost and bequest
+            as a param); `0.0` is the keeper-holds-the-stock case.
 
     Returns:
         The alive housing regime plus the terminal bequest regime.
     """
     ages = AgeGrid(start=STATIONARY_AGE, stop=STATIONARY_AGE + n_periods - 1, step="Y")
     final_age = int(ages.exact_values[-1])
+    keep_housing = _make_keep_housing(delta)
 
     liquid_grid = LinSpacedGrid(start=housing_min, stop=liquid_max, n_points=n_grid)
     housing_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
