@@ -463,8 +463,9 @@ def build_params(
 
     Defaults mirror `InverseDCDP` `housing.py` (`r=0.024`, `r_H=0.10`,
     `beta=0.945`, `alpha=0.66`, `gamma_c=1.458`, `tau=0.20`, `theta=2`, `K=200`),
-    except `delta` defaults to `0.0` (the NEGM-faithful path); pass `delta=0.10`
-    for the paper value (brute-validated until the keeper extension lands).
+    except `delta` defaults to `0.0`; pass `delta=0.10` for the paper value (the
+    keeper depreciates the held stock to `h(1 - delta)`). Pass the same `delta` to
+    `build_model`.
 
     Args:
         variant: Must match `build_model`.
