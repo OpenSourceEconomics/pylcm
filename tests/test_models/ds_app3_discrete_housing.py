@@ -113,13 +113,18 @@ RESOURCES_FUNCTION_NAME = "resources"
 
 # Piecewise-linear capital-income (asset-return) tax schedule for the with-tax
 # variant (Table 5). The paper prints the bracket numbers only in Figure 9; these
-# are the authors' replication values (`akshayshanker/FUES`,
-# `config_HR/STD_RES_SETTINGS_4_TAXES/master.yml`), an Australia-2015-16 schedule
+# are the authors' replication values, transcribed from the `tax_table.brackets`
+# of GitHub `akshayshanker/FUES`, path
+# `examples/housing_renting/config_HR/STD_RES_SETTINGS_4_TAXES/master.yml`, pinned
+# at commit `00961e0b588fdaa3ea3d740ebc13a8e6d230b26d` (blob
+# `41661779df89167c91892bcfe6c7ffe16f259f8d`). It is an Australia-2015-16 schedule
 # written directly as a function of assets, `T(a) = B + tau_a * (a - a0)` on each
-# bracket `[a0, a1)`. Three level discontinuities (up +0.10 at a=3.87, down ~0.14
-# at a=6.97 where the subsidy bracket resets the offset to 0.05, up +0.15 at
-# a=15) plus rate kinks make the budget non-monotone — why Table 5 compares only
-# FUES vs VFI.
+# bracket `[a0, a1)` (the `B`/`tau_a` of each bracket). Three level discontinuities
+# (up +0.10 at a=3.87, down ~0.14 at a=6.97 where the subsidy bracket resets the
+# offset to 0.05, up +0.15 at a=15) plus rate kinks make the budget non-monotone —
+# why Table 5 compares only FUES vs VFI. The resolved `(LOWER, OFFSET, RATE)` arrays
+# below hash to sha256[:16] `4e8d1bf0748f6933`; re-derive from the pinned commit to
+# detect upstream drift.
 TAX_BRACKET_LOWER = (0.0, 2.20, 2.50, 2.75, 3.87, 6.97, 8.36, 12.0, 15.0, 20.0)
 TAX_BRACKET_OFFSET = (
     0.0,
