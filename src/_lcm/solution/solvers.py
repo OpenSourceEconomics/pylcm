@@ -1032,6 +1032,18 @@ def _build_coh_shift_function(
         separable_references = dict.fromkeys(separable_arg_names, zero_reference)
 
         def shift_one(durable: FloatND, outer: FloatND) -> FloatND:
+            # The keeper reference holds the outer post-decision at the durable
+            # itself (`next = durable`), not at the keeper core's no-adjustment
+            # level `keep(durable)`. For an identity keeper (`keep(d) = d`) the two
+            # coincide and this is the exact credited-cost lift. Under a
+            # depreciating keeper (`keep(d) = d(1 - delta)`) the design-exact
+            # reference would be `keep(durable)`, but using it in isolation lifts
+            # each adjuster to a coh that the fixed keeper-grid envelope reads by
+            # extrapolation and the one-island-per-adjuster splice then over-counts
+            # — empirically regressing the DS-2024 delta=0.10 oracle agreement from
+            # a converging ~0.08 to a plateaued ~0.18. The identity reference and
+            # the island splice are tuned together; correcting both belongs with
+            # the segment-topology outer-envelope redesign, not here.
             keeper_resources = resources_func(
                 **{
                     euler_state_name: zero_reference,
