@@ -1,7 +1,7 @@
 
 # A Conditional Theory of Solver Choice for Finite-Horizon Discrete-Continuous Dynamic Programs
 
-**Expanded Version 2: includes the pylcm PR #390 algorithm inventory, implementation-vs-paper differences, and a detailed mathematical specification of BQSEGM.**
+**Expanded Version 3: revised after adversarial math/code audit; clarifies the interpolation target, topology-preserving publication, endpoint ownership, NaN-dead masks, validator scope, and the full BQSEGM cost inequality.**
 
 **Date:** 2026-06-28
 **Project context:** `pylcm` branch / PR adding DC-EGM, NEGM, 1-D and 2-D envelope backends, DS benchmark replications, query-side envelope machinery, numerical inverse EGM, and continuation-operator extensions.
@@ -70,8 +70,8 @@ All algorithms compared here solve a **discretized numerical problem**. Let:
 - \(N_S\): number of EGM post-decision / savings-grid nodes;
 - \(N_Q\): number of query nodes at which the solution is published;
 - \(N_D\): number of discrete action alternatives;
-- \(N_C\): number of BQSEGM cases or case combinations;
-- \(N_{\mathrm{seg}}\): number of explicit one-dimensional envelope segments;
+- \(N_C\): number of BQSEGM case assignments or case combinations that are actually solved after any static pruning;
+- \(N_{\mathrm{seg}}\): number of explicit one-dimensional monotone envelope segments after masks, folds, boundary splits, and case splitting;
 - \(N_{\triangle}\): number of two-dimensional envelope triangles;
 - \(N_{\mathrm{pad}}\): padded refined-envelope row length;
 - \(N_Z\): number of stochastic quadrature nodes;
@@ -86,9 +86,10 @@ A solver is **consistent for the continuous target** if, under stated regularity
 | Term | Meaning |
 |---|---|
 | **Regime** | pylcm dynamic-programming mode with its own value function, target transitions, and solver. |
-| **Case boundary** | A Boolean DAG node defining a threshold surface, such as `assets < medicaid_asset_limit`. |
+| **Case boundary** | A Boolean DAG node defining a threshold surface, such as `assets < medicaid_asset_limit`, together with boundary/equality ownership metadata. |
 | **Piece** | Alternative formula for a DAG output under a case-boundary predicate. |
-| **Segment** | Solver-internal smooth one-dimensional EGM object or explicit envelope piece. |
+| **Segment** | Solver-internal smooth one-dimensional EGM object or explicit envelope piece; in BQSEGM, segment identifiers are assigned per monotone feasible subsegment, not merely per case. |
+| **Endpoint ownership** | Metadata saying whether a segment includes its left and right endpoints. This is needed at discontinuities and predicate equality surfaces. |
 | **Branch** | Mathematical synonym for a smooth candidate function; avoid as a user-facing pylcm term because it can be confused with regime. |
 | **Envelope** | Pointwise maximum over candidate branches, segments, or triangles. |
 | **Asset-row mode** | A DC-EGM mode in which one EGM correspondence is solved per current Euler-state node because the Euler RHS depends on current state. |
@@ -526,21 +527,29 @@ This section lists the main differences between the pylcm implementation and ori
 
 ## 5. Formal BQSEGM specification
 
-BQSEGM stands for **Branchwise Query-Side Endogenous Grid Method**, but user-facing docs should avoid the word “branch.” The model-facing concepts are **case boundaries** and **pieces**. The solver-facing objects are **segments**.
+BQSEGM is best read as **case-piece query-side EGM**. The model-facing concepts are
+**case boundaries** and **pieces**. The solver-facing objects are **segments** with
+explicit topology.
 
-BQSEGM is not implemented in PR #390 as a named solver. It is the natural next algorithmic family implied by the PR’s explicit-topology and query-side envelope work.
+BQSEGM is not implemented in PR #390 as a named solver. PR #390 supplies useful
+building blocks, especially query-side envelope evaluation with `segment_id`, but a full
+BQSEGM solver also needs endpoint ownership metadata, NaN-dead masking, and a
+continuation object that preserves segment topology or an equivalent switch-refined grid.
 
 ### 5.1 DAG model
 
-Let a model be represented by a directed acyclic graph \(G=(\mathcal N,\mathcal E)\). Each node \(n\in\mathcal N\) is a named function:
+Let a model be represented by a directed acyclic graph \(G=(\mathcal N,\mathcal E)\).
+Each node \(n\in\mathcal N\) is a named function:
 
 \[
 f_n:\prod_{p\in\mathrm{pa}(n)} \mathcal X_p\to \mathcal X_n.
 \]
 
-A subset of nodes are primitive state/action/parameter inputs. Other nodes compute derived quantities such as income, resources, taxes, subsidies, premiums, utility, and transition components.
+A subset of nodes are primitive state/action/parameter inputs. Other nodes compute derived
+quantities such as income, resources, taxes, subsidies, premiums, utility, and transition
+components.
 
-### 5.2 Case-boundary predicates
+### 5.2 Case-boundary predicates and endpoint ownership
 
 A **case boundary** is a Boolean DAG node \(p\) with function
 
@@ -548,65 +557,95 @@ A **case boundary** is a Boolean DAG node \(p\) with function
 p(x)=\mathbf 1\{g_p(x)\le0\}
 \]
 
-or a vectorized Boolean expression. It is decorated with boundary metadata:
+or a vectorized Boolean expression. It is decorated with boundary metadata
 
 \[
-\mathcal B_p=\{h_{p,\ell}(x)=0:\ell=1,\ldots,L_p\}.
+\mathcal B_p=\{(h_{p,\ell}(x)=0,\; e_{p,\ell},\; k_{p,\ell}):\ell=1,\ldots,L_p\},
 \]
 
-Examples:
+where \(e_{p,\ell}\in\{\texttt{when},\texttt{otherwise}\}\) says which predicate side owns
+equality at that surface, and \(k_{p,\ell}\) records the economic boundary type
+(`continuous_kink`, `jump`, or `hard_constraint`).
+
+For example,
 
 \[
 p_{\mathrm{medicaid}}(a,y)
 =
-\mathbf 1\{a<\bar a,\ y<\bar y\}.
+\mathbf 1\{a<\bar a,\ y<\bar y\}
 \]
 
-The metadata records:
+has equality owned by the `otherwise` side at both surfaces:
 
 \[
 a=\bar a,\qquad y=\bar y.
 \]
 
+The equality owner is not a tie-breaking detail. It is part of the feasible-set definition.
+If the left limit has higher value at \(a=\bar a\) but the model predicate excludes that
+side at equality, the envelope must not select the left-limit policy at the exact boundary.
+
 ### 5.3 Pieces
 
-A **piece** for output node \(o\) under predicate \(p\) is an alternative producer function \(f_{o,p}^{+}\) valid when \(p=1\), or \(f_{o,p}^{-}\) valid when \(p=0\).
+A **piece** for output node \(o\) under predicate \(p\) is an alternative producer function
+\(f_{o,p}^{+}\) valid when \(p=1\), or \(f_{o,p}^{-}\) valid when \(p=0\).
 
-For each pair \((o,p)\), the minimal binary API requires exactly:
+For each pair \((o,p)\), the minimal binary API requires exactly
 
 \[
 f_{o,p}^{+},\qquad f_{o,p}^{-}.
 \]
 
-This ensures coverage of both predicate sides.
+This ensures coverage of both predicate sides. A later multiway-table API can lower a table
+into many binary or multiway pieces, but the v1 correctness statements below assume finite,
+explicit coverage.
 
 ### 5.4 Piece combinations
 
-Let \(\mathcal P=\{p_1,\ldots,p_K\}\) be case-boundary predicates used by the solver. A **case assignment** is
+Let \(\mathcal P=\{p_1,\ldots,p_K\}\) be case-boundary predicates used by the solver. A
+**case assignment** is
 
 \[
 \sigma\in\{0,1\}^K.
 \]
 
-Given \(\sigma\), BQSEGM constructs a specialized DAG \(G_\sigma\) by replacing each piecewise output \(o\) with the producer corresponding to \(\sigma_p\).
+Given \(\sigma\), BQSEGM constructs a specialized DAG \(G_\sigma\) by replacing each
+piecewise output \(o\) with the producer corresponding to \(\sigma_p\).
 
-A case assignment may be impossible; for v1 it is acceptable to enumerate and mask, but a future version should statically prune contradictions.
+A case assignment may be impossible. It is mathematically acceptable to enumerate and mask
+impossible assignments, but implementation benchmarks and compile budgets must count the full
+static shape that enumeration creates. Static pruning is a performance improvement, not an
+assumption in the exactness theorem.
 
 ### 5.5 Smoothness condition for a specialized DAG
 
-For each specialized DAG \(G_\sigma\), all functions reachable from the EGM equation must be smooth on the interior of their domain. Formally, if \(H_\sigma\) is the Euler residual function,
+For each specialized DAG \(G_\sigma\), every **user-authored economic function** reachable
+from the current-period resources, utility, feasibility, transition, or Euler residual in that
+variant must be smooth on the interior of its declared domain. Formally, if \(H_\sigma\) is
+the Euler residual function,
 
 \[
 H_\sigma(c,a';\theta)=u'_c(c;\theta)-\Phi_\sigma(a';\theta),
 \]
 
-then \(H_\sigma\) must be continuously differentiable in \(c\) on the interior, and \(u'_c\) must be strictly monotone in \(c\).
+then \(H_\sigma\) must be continuously differentiable in \(c\) on the interior, and
+\(u'_c\) must be strictly monotone in \(c\).
 
-Any hidden `where`, `if`, `clip`, `maximum`, `searchsorted`, or lookup-table discontinuity inside \(G_\sigma\) violates this condition unless it is separately exposed as another case boundary.
+This smoothness check is deliberately scoped. Solver-provided continuation reads, grid
+location, envelope evaluation, and interpolation are trusted numerical infrastructure and
+may lower to comparisons, `select`, `clamp`, or search primitives. Those primitives are not,
+by themselves, evidence of hidden economic case logic. The forbidden-primitive validator
+applies only to user-authored economic nodes inside a declared smooth piece, plus user helpers
+reachable from those nodes unless explicitly reviewed as trusted smooth helpers.
+
+Any hidden `where`, `if`, `clip`, `maximum`, `searchsorted`, lookup table, or other piecewise
+logic in a user-authored smooth node violates the condition unless it is exposed as another
+case boundary or admitted through a narrow trusted-helper mechanism with a stated domain proof.
 
 ### 5.6 BQSEGM candidate generation
 
-For each assignment \(\sigma\), choose a post-decision grid \(A_\sigma=\{a'_j\}_{j=1}^{N_S}\). Solve:
+For each assignment \(\sigma\), choose a post-decision grid
+\(A_\sigma=\{a'_j\}_{j=1}^{N_S}\). Solve
 
 \[
 u'_c(c_{\sigma,j})
@@ -614,7 +653,8 @@ u'_c(c_{\sigma,j})
 \Phi_\sigma(a'_j),
 \]
 
-where \(\Phi_\sigma\) is the branch-specific continuation marginal.
+where \(\Phi_\sigma\) is the case-specific continuation marginal evaluated through the
+trusted continuation machinery.
 
 Then recover current resources or current state:
 
@@ -632,15 +672,21 @@ u_\sigma(c_{\sigma,j})
 \beta \mathcal C_\sigma[V_{t+1}](a'_j).
 \]
 
-### 5.7 Consistency masks
+Candidate generation must record provenance: case assignment, post-decision node, boundary
+source if any, and enough local ordering information to split folds and masked holes into
+monotone feasible subsegments.
 
-The candidate \((m_{\sigma,j},c_{\sigma,j},a'_j)\) is valid only if all predicate choices are consistent:
+### 5.7 Consistency masks and the absent-candidate convention
+
+The candidate \((m_{\sigma,j},c_{\sigma,j},a'_j)\) is valid only if all predicate choices are
+consistent with the equality-owner convention:
 
 \[
-p_k(m_{\sigma,j},\ldots)=\sigma_k,\qquad k=1,\ldots,K.
+p_k(m_{\sigma,j},\ldots)=\sigma_k,
+\qquad k=1,\ldots,K.
 \]
 
-Thus define:
+Thus define
 
 \[
 \mathrm{valid}_{\sigma,j}
@@ -649,46 +695,79 @@ Thus define:
 \mathbf 1\{p_k(m_{\sigma,j},\ldots)=\sigma_k\}.
 \]
 
-Invalid candidates are masked before segment formation.
+Invalid candidates are removed before segment formation using the **NaN-dead convention**:
+
+\[
+(m,V,c,\mu)_{\sigma,j}=(\mathrm{NaN},\mathrm{NaN},\mathrm{NaN},\mathrm{NaN})
+\quad\text{when }\mathrm{valid}_{\sigma,j}=0.
+\]
+
+The important point is that a finite abscissa with \(V=-\infty\) is not absent for the current
+query-envelope primitive: it can still form a live link and can produce `NaN` through linear
+interpolation at an endpoint. The pre-envelope absent form is therefore NaN-dead. A published
+post-envelope value object may still use \(-\infty\) value and zero marginal for infeasible
+choice rows if downstream aggregation requires that finite-probability convention.
 
 ### 5.8 Boundary candidates
 
 For every declared boundary \(h_{p,\ell}(x)=0\), BQSEGM must either:
 
-1. generate one-sided candidates adjacent to the boundary;
-2. insert the boundary into the segment/query set;
-3. or prove that the boundary cannot be optimal for the continuous choice.
+1. generate one-sided candidates adjacent to the boundary with explicit side labels;
+2. insert the boundary into the query/published representation with endpoint ownership; or
+3. prove that the boundary cannot be optimal for the continuous choice under the declared
+   discretized target.
 
-At discontinuous jumps, a single continuous node is insufficient. One-sided values must be represented separately:
+At discontinuous jumps, a single continuous node is insufficient. One-sided values must be
+represented separately:
 
 \[
 V(x_0^-),\qquad V(x_0^+).
 \]
 
+Only the side that owns equality is eligible at the exact boundary query. The other one-sided
+limit may be eligible for nearby off-boundary queries, but it must be open at \(x_0\). This is
+why boundary handling and consistency masking are a coupled requirement: masking creates holes
+at exactly the locations where boundary candidates and endpoint ownership are needed.
+
 ### 5.9 Segment construction
 
-After masking, each assignment \(\sigma\) produces monotone subsegments:
+After masking and boundary insertion, each assignment \(\sigma\) produces monotone feasible
+subsegments
 
 \[
-s=(\sigma, j_L,j_R)
+s=(\sigma,\kappa,j_L,j_R,e_L,e_R),
 \]
 
-with interval:
+where \(\kappa\) is a segment counter within the case, \((j_L,j_R)\) are adjacent live
+candidate indices in that subsegment, and \(e_L,e_R\in\{\text{open},\text{closed}\}\) encode
+endpoint ownership. The segment has interval
 
 \[
-[l_s,r_s]=[m_{\sigma,j_L},m_{\sigma,j_R}]
+[l_s,r_s]
+=
+[\min(m_{\sigma,j_L},m_{\sigma,j_R}),\max(m_{\sigma,j_L},m_{\sigma,j_R})]
 \]
 
-and interpolation rule \(I_s[V](q)\), \(I_s[c](q)\), \(I_s[\mu](q)\).
+with interpolation rules \(I_s[V](q)\), \(I_s[c](q)\), and \(I_s[\mu](q)\).
 
-If the endogenous grid folds, the path must be split into monotone subsegments. Segment topology cannot be inferred solely from numeric decreases; it must be constructed from candidate provenance and validated by a host oracle.
+If the endogenous grid folds, or if a consistency mask creates an interior hole, the path must
+be split into multiple subsegments. A `segment_id` is therefore an identifier for one monotone
+contiguous feasible subsegment, not merely for a case assignment. Assigning one id per case is
+correct only after proving that each case creates exactly one monotone, hole-free segment.
 
 ### 5.10 Query-side envelope
 
-For each query \(q\),
+For each query \(q\), define eligibility using both the interval and the endpoint flags:
 
 \[
-V(q)=\max_{s:q\in[l_s,r_s]} I_s[V](q).
+q\in_e [l_s,r_s]
+\]
+
+means \(l_s<q<r_s\), with equality at \(l_s\) allowed only if the left endpoint is closed and
+equality at \(r_s\) allowed only if the right endpoint is closed. The envelope is
+
+\[
+V(q)=\max_{s:q\in_e[l_s,r_s]} I_s[V](q).
 \]
 
 The winning policy and marginal are selected from the same segment:
@@ -698,105 +777,147 @@ c(q)=I_{s^\star}[c](q),\qquad
 \mu(q)=I_{s^\star}[\mu](q).
 \]
 
-Ties are handled by an explicit convention, such as right-continuity or highest slope. The convention must be consistent across full-row, query-side, simulation, and oracle paths.
+Ties are handled by one explicit convention, such as right-continuity or highest slope. The
+convention must be consistent across full-row, query-side, simulation, and oracle paths.
 
-### 5.11 Published carry
+The existing `upper_envelope/query.py:envelope_at_query` is a useful primitive for closed
+segments with `segment_id` topology. A complete BQSEGM implementation must either extend that
+primitive with endpoint flags or pre-process boundary queries so that open endpoints cannot win
+at excluded equality points.
 
-BQSEGM may publish:
+### 5.11 Published continuation object
 
-1. value on a regular grid;
-2. policy on a regular grid;
-3. marginal on a regular grid;
-4. branch / segment identifier;
-5. switch or tie flags;
-6. optional top-two branch records near switches.
+BQSEGM may publish value, policy, and marginal on a regular query grid, but exact backward
+induction additionally requires one of the following two representation guarantees.
 
-If previous-period Euler reads depend on one-sided derivatives at switches, a single averaged marginal is insufficient.
+**Topology-preserving payload.** Publish a continuation payload carrying segment ids, endpoint
+ownership, boundary/switch flags, and any top-two records needed for one-sided reads. A parent
+then evaluates continuation by applying the same segment-aware query convention.
+
+**Switch-refined aggregate grid.** Publish an ordinary aggregate grid only after inserting every
+switch, cliff, and boundary node needed to make interpolation of the aggregate value equivalent
+to segment-aware interpolation under the declared convention.
+
+A plain aggregate `EGMCarry` containing only maxed values, policies, and marginals on a coarse
+query grid is not sufficient in general. It can bridge across discrete-choice or case switches
+and overstate continuation values.
+
+If previous-period Euler equations depend on one-sided derivatives at switches, a single
+averaged marginal is also insufficient; the representation must preserve the relevant side.
 
 ### 5.12 BQSEGM algorithm
 
 For each period \(t\) and regime \(r\):
 
-1. collect case-boundary predicates and piece outputs relevant to the Euler equation and resources;
-2. enumerate feasible case assignments \(\sigma\);
+1. collect case-boundary predicates, endpoint/equality metadata, and piece outputs relevant to
+   resources, utility, transitions, feasibility, and the Euler equation;
+2. enumerate or statically prune feasible case assignments \(\sigma\);
 3. build specialized smooth DAG \(G_\sigma\);
-4. solve EGM on \(A_\sigma\);
-5. apply consistency masks;
-6. add boundary candidates;
-7. build explicit monotone segments;
-8. evaluate the query-side upper envelope in blocks;
-9. publish value, policy, marginal, and branch diagnostics.
+4. validate only the user-authored smooth economic sub-DAG, leaving trusted solver
+   interpolation and continuation outside the forbidden-primitive scope;
+5. solve EGM on \(A_\sigma\);
+6. apply NaN-dead consistency masks;
+7. add one-sided boundary candidates with endpoint ownership;
+8. split each case into monotone feasible subsegments and assign `segment_id` per subsegment;
+9. evaluate the query-side upper envelope in blocks using the endpoint-aware segment convention;
+10. publish value, policy, marginal, and either topology-preserving continuation metadata or a
+    switch-refined aggregate grid with a proof that ordinary interpolation is convention-exact.
 
 ---
 
 ## 6. BQSEGM correctness theorems
 
-### Theorem 1: Correctness of case enumeration for a finite discretized problem
+### Theorem 1: Correctness of case enumeration for the declared finite interpolation target
 
-**Statement.** Suppose the feasible set \(F_h\) of a discretized Bellman problem is covered by finitely many case assignments \(\sigma\in\Sigma\):
+**Statement.** Fix a finite discretized Bellman target together with its interpolation,
+endpoint-ownership, and envelope convention \(\mathcal K_h\). Let \(\mathcal S_h\) be the
+finite set of convention-level candidates: one-sided boundary records and monotone segments
+eligible under \(\mathcal K_h\). Suppose the feasible candidate set is covered by case
+assignments
 
 \[
-F_h=\bigcup_{\sigma\in\Sigma}F_{\sigma,h}.
+\mathcal S_h=\bigcup_{\sigma\in\Sigma}\mathcal S_{\sigma,h}.
 \]
 
-Suppose further that for each \(\sigma\), the BQSEGM candidate generator produces every candidate in \(F_{\sigma,h}\), including declared boundary candidates, and masks every candidate outside \(F_{\sigma,h}\). If the final envelope takes the maximum over the union of all generated candidates, then BQSEGM returns the exact value over \(F_h\):
+Suppose further that for each \(\sigma\), the BQSEGM generator produces exactly the segments
+and boundary records in \(\mathcal S_{\sigma,h}\), uses NaN-dead masks for all invalid
+pre-segment candidates, assigns endpoint ownership correctly, and the final envelope takes the
+maximum over the union of all eligible generated records. Then BQSEGM returns the exact value
+and selected policy for the declared discretized interpolation target:
 
 \[
-V_h(x)=\max_{y\in F_h}Q_h(x,y).
+V_h(q)=\max_{s\in\mathcal S_h(q)} I_s[Q_h](q),
 \]
 
-**Proof.**
+where \(\mathcal S_h(q)\) includes exactly the segments whose intervals contain \(q\) under the
+open/closed endpoint convention.
 
-By cover,
+This theorem is not a claim of equality to an independent brute-force action-grid solve using
+a different candidate grid or interpolation rule. A brute-force comparison is exact only when
+it is defined over the same finite candidate records and the same convention \(\mathcal K_h\),
+or asymptotic/approximate under a separate refinement theorem.
+
+**Proof.** By the cover,
 
 \[
-\max_{y\in F_h}Q_h(x,y)
+\max_{s\in\mathcal S_h(q)} I_s[Q_h](q)
 =
 \max_{\sigma\in\Sigma}
-\max_{y\in F_{\sigma,h}}Q_h(x,y).
+\max_{s\in\mathcal S_{\sigma,h}(q)} I_s[Q_h](q).
 \]
 
-By candidate completeness and consistency masking, the generated candidate set for \(\sigma\) is exactly \(F_{\sigma,h}\). Taking the maximum over all generated candidates is therefore equal to the right-hand side. \(\square\)
+By candidate completeness, NaN-dead masking, and endpoint-correct boundary generation, the
+generated candidate records for \(\sigma\) are exactly \(\mathcal S_{\sigma,h}\) under
+\(\mathcal K_h\). Taking the maximum over all eligible generated records is therefore equal to
+the right-hand side. The policy and marginal are selected from the same winning record by the
+same convention. \(\square\)
 
 ---
 
 ### Theorem 2: BQSEGM restores standard-EGM amortization when case conditioning removes current-state dependence
 
-**Statement.** Suppose that after fixing a case assignment \(\sigma\), the Euler equation has the form
+**Statement.** Suppose that after fixing a case assignment \(\sigma\), the Euler equation has
+the form
 
 \[
 u'_c(c)=\Phi_\sigma(a')
 \]
 
-and does not depend separately on current resources \(m\). Then one EGM correspondence per \(\sigma\) serves all current-resource queries. If no such finite \(\Sigma\) exists and the RHS is \(\Phi(a';m)\) with distinct values across current grid nodes, then exact shared-curve EGM is impossible without asset-row replication.
+and does not depend separately on current resources \(m\). Then one EGM correspondence per
+\(\sigma\) serves all current-resource queries under the declared segment/envelope convention.
+If no finite case assignment removes the dependence and the RHS is \(\Phi(a';m)\) with distinct
+values across current grid nodes on a set of savings nodes, then an exact shared-curve EGM
+correspondence cannot satisfy the Euler equation at all those current nodes; asset-row
+replication or a different exact representation is required.
 
-**Proof.**
-
-For fixed \(\sigma\), invert:
+**Proof.** For fixed \(\sigma\), invert
 
 \[
 c_\sigma(a')=(u'_c)^{-1}(\Phi_\sigma(a')).
 \]
 
-This is independent of \(m\), so a single correspondence \(a'\mapsto(m_\sigma(a'),c_\sigma(a'))\) can be queried at all \(m\). This proves the first claim.
+This is independent of \(m\), so a single correspondence
+\(a'\mapsto(m_\sigma(a'),c_\sigma(a'))\), split into eligible segments if needed, can be
+queried at all \(m\). This proves the first claim.
 
-For the converse, suppose a single correspondence \(c(a')\) serves two current states \(m_1,m_2\). Then:
+For the converse, suppose a single exact correspondence \(c(a')\) served two current states
+\(m_1,m_2\) at a savings node where the right-hand sides differ. Then
 
 \[
 u'_c(c(a'))=\Phi(a';m_1)=\Phi(a';m_2),
 \]
 
-contradicting distinct RHS values when \(u'\) is single-valued. \(\square\)
+contradicting the distinct RHS values when \(u'_c\) is single-valued. \(\square\)
 
 ---
 
 ### Theorem 3: Hidden piecewise logic makes exact BQSEGM treatment impossible from finite black-box samples
 
-**Statement.** No solver that only receives black-box evaluations of a piecewise function can infer all threshold locations exactly from finitely many evaluations.
+**Statement.** No solver that only receives black-box evaluations of a piecewise function can
+infer all threshold locations exactly from finitely many evaluations.
 
-**Proof.**
-
-Let \(S=\{x_1,\ldots,x_n\}\) be any finite sample set in \([0,1]\). Choose \(\delta>0\) such that no sample lies in \((1/2,1/2+\delta)\). Define:
+**Proof.** Let \(S=\{x_1,\ldots,x_n\}\) be any finite sample set in \([0,1]\). Choose
+\(\delta>0\) such that no sample lies in \((1/2,1/2+\delta)\). Define
 
 \[
 f_1(x)=\mathbf 1\{x\ge1/2\},
@@ -804,7 +925,9 @@ f_1(x)=\mathbf 1\{x\ge1/2\},
 f_2(x)=\mathbf 1\{x\ge1/2+\delta\}.
 \]
 
-Then \(f_1(x_i)=f_2(x_i)\) for all samples, but the boundary locations differ. Any solver using only the samples cannot distinguish the two functions and cannot know which boundary candidates to insert. \(\square\)
+Then \(f_1(x_i)=f_2(x_i)\) for all samples, but the boundary locations differ. Any solver using
+only the samples cannot distinguish the two functions and cannot know which boundary
+candidates to insert. \(\square\)
 
 **Corollary.** BQSEGM requires exposed `case_boundary` metadata for exact threshold handling.
 
@@ -812,7 +935,8 @@ Then \(f_1(x_i)=f_2(x_i)\) for all samples, but the boundary locations differ. A
 
 ### Theorem 4: Query-side envelope evaluation is exactly chunkable
 
-**Statement.** Let \(\mathcal S=\cup_{b=1}^B\mathcal S_b\) be a partition of explicit segments. For fixed query \(q\),
+**Statement.** Let \(\mathcal S=\cup_{b=1}^B\mathcal S_b\) be a partition of explicit segments.
+For fixed query \(q\),
 
 \[
 V(q)=\max_{s\in\mathcal S(q)}I_s[V](q)
@@ -823,23 +947,29 @@ V(q)=\max_{s\in\mathcal S(q)}I_s[V](q)
 
 Thus segment blocks can be scanned with a running maximum without changing the result.
 
-**Proof.** The maximum over a finite set is associative and commutative. \(\square\)
+**Proof.** The maximum over a finite set is associative and commutative. Endpoint eligibility
+is evaluated segment by segment before the maximum, so blocking does not alter the feasible
+set. \(\square\)
 
 ---
 
 ### Theorem 5: A continuous interpolant cannot uniformly approximate a jump discontinuity on a cell containing the jump
 
-**Statement.** Let \(V\) have a jump discontinuity at \(x_0\). No sequence of continuous interpolants on a fixed interval containing \(x_0\) can converge uniformly to \(V\).
+**Statement.** Let \(V\) have a jump discontinuity at \(x_0\). No sequence of continuous
+interpolants on a fixed interval containing \(x_0\) can converge uniformly to \(V\).
 
-**Proof.** Uniform limits of continuous functions are continuous. A jump-discontinuous \(V\) is not continuous. Contradiction. \(\square\)
+**Proof.** Uniform limits of continuous functions are continuous. A jump-discontinuous \(V\)
+is not continuous. Contradiction. \(\square\)
 
-**Implication.** Discontinuous tax, subsidy, or benefit notches require one-sided representation. Ordinary node insertion is insufficient.
+**Implication.** Discontinuous tax, subsidy, or benefit notches require one-sided
+representation. Ordinary node insertion without side ownership is insufficient.
 
 ---
 
-### Theorem 6: Branch-aware interpolation is less than or equal to aggregate-max interpolation
+### Theorem 6: Segment-aware interpolation is less than or equal to aggregate-max interpolation
 
-**Statement.** Let \(I\) be a positive linear interpolation operator and \(V_b\) branch-specific values. Then
+**Statement.** Let \(I\) be a positive linear interpolation operator and \(V_b\) branch- or
+segment-specific values sampled at the same interpolation nodes. Then
 
 \[
 \max_b I[V_b](q)
@@ -847,7 +977,8 @@ Thus segment blocks can be scanned with a running maximum without changing the r
 I[\max_b V_b](q).
 \]
 
-**Proof.** Since \(V_b(x_i)\le \max_j V_j(x_i)\) at every interpolation node \(x_i\), positive linearity gives
+**Proof.** Since \(V_b(x_i)\le \max_j V_j(x_i)\) at every interpolation node \(x_i\), positive
+linearity gives
 
 \[
 I[V_b](q)\le I[\max_j V_j](q)
@@ -855,29 +986,65 @@ I[V_b](q)\le I[\max_j V_j](q)
 
 for every \(b\). Taking the maximum over \(b\) proves the claim. \(\square\)
 
-**Implication.** Interpolating already-maximized values can bridge over discrete-choice kinks. Choice-specific or segment-specific continuation carries are necessary near switches.
+**Implication.** Interpolating already-maximized aggregate values can bridge over discrete
+choice, case, or segment switches. Choice-specific or segment-specific continuation carries are
+necessary near switches unless the published grid is refined so that aggregate interpolation is
+identical to the segment-aware convention.
 
 ---
 
-### Theorem 7: BQSEGM dominates asset-row EGM when the case count is smaller than the current-state row count
+### Theorem 7: BQSEGM dominates asset-row EGM only under an explicit cost inequality
 
-**Statement.** Let asset-row EGM require \(N_X\) correspondences and BQSEGM require \(N_C\) case correspondences. Suppose per-correspondence costs are comparable and query-side envelope cost is lower order. Then BQSEGM is faster if:
-
-\[
-N_C < N_X
-\]
-
-after accounting for constants, i.e.
+**Statement.** Let asset-row EGM have total cost
 
 \[
-N_C C_E + N_QN_{\mathrm{seg}}C_I
-<
-N_X C_E^{\mathrm{row}}.
+T_{\mathrm{row}}
+=
+N_X C_E^{\mathrm{row}}
++N_Q^{\mathrm{row}}N_{\mathrm{seg}}^{\mathrm{row}}C_I^{\mathrm{row}}
++C_{\mathrm{pub}}^{\mathrm{row}}
++C_{\mathrm{compile}}^{\mathrm{row}}(S_{\mathrm{row}})
++C_{\mathrm{mem}}^{\mathrm{row}}(S_{\mathrm{row}}),
 \]
 
-**Proof.** Direct comparison of the work expressions. \(\square\)
+and let BQSEGM have total cost
 
-**Implication.** ACA-like models benefit from BQSEGM only if institutional cases remain far fewer than current-state nodes.
+\[
+T_{\mathrm{BQ}}
+=
+N_C C_E^{\mathrm{case}}
++N_{\mathrm{bd}}C_{\mathrm{bd}}
++N_QN_{\mathrm{seg}}C_I
++C_{\mathrm{pub}}^{\mathrm{topo}}
++C_{\mathrm{compile}}^{\mathrm{BQ}}(S_{\mathrm{BQ}})
++C_{\mathrm{mem}}^{\mathrm{BQ}}(S_{\mathrm{BQ}}).
+\]
+
+Here \(N_{\mathrm{seg}}\) is the number of monotone feasible subsegments after case splitting,
+fold splitting, masks, boundary candidates, and endpoint splits; \(S_{\mathrm{BQ}}\) denotes the
+static shapes compiled by JAX; and \(C_{\mathrm{pub}}^{\mathrm{topo}}\) is the cost of publishing a
+topology-preserving payload or a switch-refined aggregate grid.
+
+BQSEGM is faster than asset-row EGM if and only if
+
+\[
+T_{\mathrm{BQ}} < T_{\mathrm{row}}.
+\]
+
+The simple condition \(N_C<N_X\) is only a heuristic corollary under additional assumptions:
+per-correspondence costs are comparable, \(N_{\mathrm{seg}}\) is uniformly bounded or small enough
+that \(N_QN_{\mathrm{seg}}C_I\) is lower order, boundary and publication costs are small, and
+static compile/memory shapes do not dominate.
+
+**Proof.** Direct comparison of the complete work, memory, and compile-shape cost expressions.
+The stated heuristic follows only after imposing the listed bounds, because generally
+\(N_{\mathrm{seg}}\) scales with the number of case assignments times the number of monotone
+subsegments and boundary splits per case. When \(N_Q\) is comparable to \(N_X\), the
+query-envelope term can be \(O(N_QN_C)\), so \(N_C<N_X\) is not by itself sufficient. \(\square\)
+
+**Implication.** ACA-like models benefit from BQSEGM only if the full inequality is favorable:
+institutional cases must remain few, segment counts and boundary splits must be bounded, and
+topology-preserving publication must not create a compile or memory wall.
 
 ---
 
@@ -1058,7 +1225,7 @@ GPU strengths:
 Weakness:
 
 - if the outer fold stores only sampled maxima, subgrid islands can be missed;
-- correct branchwise carry representation is needed.
+- correct segment-aware carry representation is needed.
 
 ---
 
@@ -1090,7 +1257,9 @@ Then exact shared-curve EGM is impossible by Theorem 2.
 Expose rules as case pieces:
 
 ```python
-@lcm.case_boundary(("assets", "asset_limit"))
+@lcm.case_boundary(
+    lcm.boundary("assets", "asset_limit", equality="otherwise", kind="jump")
+)
 def medicaid_eligible(assets, asset_limit):
     return assets < asset_limit
 
@@ -1101,7 +1270,7 @@ def oop_medicaid(...): ...
 def oop_private(...): ...
 ```
 
-Within each piece, run EGM; after inversion, mask inconsistent points; upper-envelope across all segments.
+Within each piece, run EGM; after inversion, mask inconsistent points with the NaN-dead convention; add side-aware boundary candidates; split into monotone feasible subsegments; upper-envelope across all eligible segments.
 
 ### 9.3 When BQSEGM fails for ACA
 
@@ -1119,18 +1288,26 @@ It also becomes unattractive if case combinations explode:
 N_C \approx \prod_{\ell}K_\ell
 \]
 
-and this product approaches or exceeds \(N_X\).
+or when the resulting segment, boundary, publication, compile, and memory terms make the full Theorem 7 inequality fail. The relevant comparison is not only the case product versus \(N_X\), because \(N_QN_{\mathrm{seg}}\) and static-shape memory can dominate.
 
 ### 9.4 Critical validator for ACA-style BQSEGM
 
-A BQSEGM implementation must reject hidden case logic inside smooth pieces. AST plus JAXPR validation is required:
+A BQSEGM implementation must reject hidden economic case logic inside user-authored smooth
+pieces. AST plus JAXPR validation is required, but the scope is essential:
 
-- reject Python `if`;
-- reject `jnp.where`;
-- reject `clip`, `maximum`, `minimum`, `searchsorted`;
-- reject hidden lookup tables unless declared as piecewise tables.
+- reject Python `if`, `match`, and conditional expressions in smooth user economic nodes;
+- reject undeclared comparisons, Boolean case logic, `jnp.where`, `clip`, `maximum`, `minimum`,
+  `searchsorted`, and lookup-table primitives inside smooth user economic nodes;
+- inspect user helpers reachable from those nodes, including nested JAXPRs;
+- allow case-boundary functions to contain vectorized comparisons and Boolean logic;
+- exclude trusted solver infrastructure: continuation interpolation, grid location, envelope
+  evaluation, and the EGM kernel itself;
+- treat the existing numerical cliff checker as a savings-stage/node-resolution diagnostic, not
+  as a complete substitute for BQSEGM case-piece validation.
 
-Otherwise the solver cannot know where to insert boundary candidates.
+Otherwise the solver cannot know where to insert boundary candidates, and a global primitive
+ban would reject every realistic EGM model because continuation reads necessarily use grid
+interpolation.
 
 ---
 
@@ -1180,16 +1357,17 @@ Otherwise the solver cannot know where to insert boundary candidates.
 
 ### 11.2 For BQSEGM specifically
 
-1. Decorated `case_boundary` predicates.
+1. Decorated `case_boundary` predicates with equality-owner and boundary-type metadata.
 2. Decorated `piece` formula alternatives.
 3. Complete true/false coverage for every binary predicate/output pair.
-4. AST and JAXPR validators.
+4. Scoped AST and JAXPR validators for user-authored smooth economic nodes only.
 5. DAG lowering into smooth variants.
-6. Post-EGM consistency masks.
-7. Boundary candidate logic.
-8. Query-side segmented envelope.
-9. Case-combination pruning or diagnostics.
-10. Brute-force toy oracle.
+6. Post-EGM consistency masks using the NaN-dead pre-envelope convention.
+7. One-sided boundary candidate logic with open/closed endpoint ownership.
+8. Query-side segmented envelope with segment ids per monotone feasible subsegment.
+9. Topology-preserving continuation payload or a switch-refined aggregate grid with an exactness proof.
+10. Case-combination pruning or compile/memory diagnostics.
+11. Brute-force toy oracle under the same interpolation/envelope convention.
 
 ### 11.3 For query-side envelopes
 
@@ -1232,9 +1410,13 @@ Otherwise the solver cannot know where to insert boundary candidates.
 - One-predicate Medicaid toy.
 - Two-predicate Medicaid plus premium-default toy.
 - ACA-like subsidy table toy.
-- Compare to brute on dense grids.
-- Compare memory to asset-row EGM.
-- Test hidden `where` rejection.
+- Compare to brute on dense grids using the same finite interpolation/envelope convention.
+- Compare memory and compile time to asset-row EGM.
+- Test hidden `where` rejection in a user piece without rejecting trusted continuation interpolation.
+- Test NaN-dead invalid masks; a finite `x` with `value=-inf` must not be used as a pre-envelope absent candidate.
+- Test open/closed boundary ownership at exact threshold queries.
+- Test segment ids per monotone subsegment, including a folded or hole-split case.
+- Test topology-preserving continuation against an aggregate-grid bridge counterexample.
 
 ### 12.2 For brute versus EGM
 
@@ -1269,14 +1451,16 @@ For each model:
 
 ## 13. Limitations and open problems
 
-1. **Case explosion.** BQSEGM can become as bad as asset-row mode if the case product is large.
+1. **Case and segment explosion.** BQSEGM can become as bad as asset-row mode if the case product or the monotone-subsegment count is large.
 2. **Automatic branch discovery.** Exact discovery from black-box code is impossible.
-3. **Switch-cell derivatives.** One regular-grid gradient per node is insufficient near branch switches.
-4. **High-dimensional continuous states.** G2EGM and RFC do not scale simply beyond two dimensions.
-5. **Nonlinear continuation operators.** Epstein--Zin and other risk transforms require explicit timing assumptions.
-6. **Simulation moments.** A small value error near a switch can cause large policy/moment changes.
-7. **GPU geometry.** Dynamic Delaunay and KD-tree methods are not natural inside JIT.
-8. **Papers versus implementations.** CPU reference algorithms often use dynamic memory and scalar loops; JAX implementations may need different but mathematically equivalent representations.
+3. **Switch-cell derivatives.** One regular-grid gradient per node is insufficient near branch switches unless side information is preserved.
+4. **Topology publication.** A plain aggregate carry can bridge across switches; BQSEGM needs a topology-preserving payload or a switch-refined aggregate grid.
+5. **Endpoint ownership.** Closed-interval envelope primitives are insufficient at discontinuous predicate boundaries unless open/closed endpoint metadata is enforced.
+6. **High-dimensional continuous states.** G2EGM and RFC do not scale simply beyond two dimensions.
+7. **Nonlinear continuation operators.** Epstein--Zin and other risk transforms require explicit timing assumptions.
+8. **Simulation moments.** A small value error near a switch can cause large policy/moment changes.
+9. **GPU geometry.** Dynamic Delaunay and KD-tree methods are not natural inside JIT.
+10. **Papers versus implementations.** CPU reference algorithms often use dynamic memory and scalar loops; JAX implementations may need different but mathematically equivalent representations.
 
 ---
 
@@ -1306,7 +1490,7 @@ The best default is still brute force until a structure-specific solver proves a
 \[
 \textbf{explicit topology}
 +
-\textbf{branchwise/casewise EGM}
+\textbf{case-piece EGM}
 +
 \textbf{query-side blocked envelopes}.
 \]
