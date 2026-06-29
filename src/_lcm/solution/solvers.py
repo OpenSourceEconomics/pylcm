@@ -2246,6 +2246,8 @@ class _BQSEGMScheduleSpec:
     """Name of the liquid state the schedule and budget vary in."""
     threshold_param_names: tuple[str, ...]
     """Qualified parameter names of the schedule's thresholds."""
+    breakpoint_kinds: tuple[str, ...]
+    """Discontinuity kind per threshold, in the schedule's declared order."""
 
 
 def _collect_bqsegm_schedule_spec(
@@ -2289,11 +2291,22 @@ def _collect_bqsegm_schedule_spec(
     threshold_param_names = tuple(
         f"{schedule.output}__{bp.threshold}" for bp in schedule.breakpoints
     )
+    breakpoint_kinds = tuple(bp.kind for bp in schedule.breakpoints)
+    mixed_jump = "jump" in breakpoint_kinds and breakpoint_kinds != ("jump",)
+    if mixed_jump:
+        msg = (
+            "BQSEGM schedule path supports either a single jump breakpoint or "
+            f"all continuous-kink breakpoints; the schedule declares "
+            f"{breakpoint_kinds!r}. Mixed jump-and-kink and multi-jump schedules "
+            "need the recurring jumped-continuation step, not yet wired."
+        )
+        raise RegimeInitializationError(msg)
     return _BQSEGMScheduleSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
         liquid_state_name=liquid_state_name,
         threshold_param_names=threshold_param_names,
+        breakpoint_kinds=breakpoint_kinds,
     )
 
 
@@ -2310,7 +2323,12 @@ def _build_bqsegm_continuous_core(
         interval_midpoints,
         interval_segment_coefficients,
     )
-    from _lcm.egm.bqsegm_step import bqsegm_multi_interval_step  # noqa: PLC0415
+    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
+        bqsegm_multi_interval_step,
+        bqsegm_one_asset_step,
+    )
+
+    is_single_jump = schedule_spec.breakpoint_kinds == ("jump",)
 
     def core(
         *,
@@ -2333,19 +2351,39 @@ def _build_bqsegm_continuous_core(
         coh_slopes, coh_intercepts = interval_segment_coefficients(
             schedule=coh_of_liquid, interval_midpoints=midpoints
         )
-        value, marginal, _policy = bqsegm_multi_interval_step(
-            next_value=next_value,
-            next_marginal=next_marginal,
-            liquid_grid=liquid,
-            savings_grid=savings_grid,
-            discount_factor=params["H__discount_factor"],
-            crra=params["utility__crra"],
-            gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
-            income=params[f"{target}__next_liquid__income"],
-            coh_slopes=coh_slopes,
-            coh_intercepts=coh_intercepts,
-            breakpoints=breakpoints,
-        )
+        if is_single_jump:
+            # A single jump in cash-on-hand is the binary case the v1 step solves
+            # exactly, including its recurring jumped continuation: each interval's
+            # affine segment has slope 1, so its intercept is the additive
+            # cash-on-hand level on that side of the cliff.
+            value, marginal, _policy = bqsegm_one_asset_step(
+                next_value=next_value,
+                next_marginal=next_marginal,
+                liquid_grid=liquid,
+                savings_grid=savings_grid,
+                discount_factor=params["H__discount_factor"],
+                crra=params["utility__crra"],
+                return_liquid=params[f"{target}__next_liquid__return_liquid"],
+                income=params[f"{target}__next_liquid__income"],
+                subsidy_when=coh_intercepts[0],
+                subsidy_otherwise=coh_intercepts[1],
+                asset_limit=breakpoints[0],
+                equality_owner="otherwise",
+            )
+        else:
+            value, marginal, _policy = bqsegm_multi_interval_step(
+                next_value=next_value,
+                next_marginal=next_marginal,
+                liquid_grid=liquid,
+                savings_grid=savings_grid,
+                discount_factor=params["H__discount_factor"],
+                crra=params["utility__crra"],
+                gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
+                income=params[f"{target}__next_liquid__income"],
+                coh_slopes=coh_slopes,
+                coh_intercepts=coh_intercepts,
+                breakpoints=breakpoints,
+            )
         carry = EGMCarry(
             endog_grid=liquid,
             value=value,
