@@ -71,3 +71,13 @@ class CategoricalDefinitionError(PyLCMError):
 
 class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
+
+
+class BQSEGMCaseError(PyLCMError):
+    """Raised when a BQSEGM case-boundary or formula-piece declaration is invalid.
+
+    Covers an un-inferable boundary specification (a bare `(variable, threshold)`
+    tuple that does not declare equality ownership), incomplete piece coverage
+    (a missing `when` or `otherwise` side for an output), and a case boundary
+    that does not return a Boolean.
+    """
