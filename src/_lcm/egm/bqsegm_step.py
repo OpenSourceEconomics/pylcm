@@ -109,6 +109,10 @@ def bqsegm_multi_interval_step(
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     coh_endog = consumption + savings_grid
+    # An endogenous cash-on-hand outside the grid's monotone coh range inverts to a
+    # liquid outside the grid; `jnp.interp` would clip it onto the boundary node,
+    # admitting an infeasible candidate. Such points are dropped below.
+    off_grid = (coh_endog < coh_grid[0]) | (coh_endog > coh_grid[-1])
     liquid_endog = jnp.interp(coh_endog, coh_grid, liquid_grid)
     # Marginal value of liquid = u'(c) * d coh / d liquid; the slope is the active
     # interval's at the recovered liquid (envelope theorem through the budget).
@@ -157,7 +161,9 @@ def bqsegm_multi_interval_step(
     # pulled onto a floor crossing; the floor corner and the s=0 corner cover them.
     degenerate = marginal_next <= _DEGENERATE_MARGINAL_TOL
     in_any_flat = jnp.isin(endog_interval, jnp.asarray(flat_indices, dtype=jnp.int32))
-    liquid_endog = jnp.where(degenerate & ~in_any_flat, jnp.nan, liquid_endog)
+    liquid_endog = jnp.where(
+        (degenerate | off_grid) & ~in_any_flat, jnp.nan, liquid_endog
+    )
     # A non-concave (convex-kinked) budget can fold the interior path back, so keep
     # its monotone runs apart for the upper envelope.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
@@ -422,7 +428,10 @@ def bqsegm_unified_step(  # noqa: PLR0915
         marginal_endog = coh_slopes[endog_interval] * consumption ** (-crra)
         lower = -jnp.inf if start == 0 else breakpoints[start - 1]
         upper = jnp.inf if end == last_interval else breakpoints[end]
-        in_case = (liquid_endog >= lower) & (liquid_endog < upper)
+        # An endogenous coh outside the case's monotone coh range inverts off-grid;
+        # `jnp.interp` clips it onto a boundary node, so exclude it from the case.
+        in_grid = (coh_endog >= coh_case_grid[0]) & (coh_endog <= coh_case_grid[-1])
+        in_case = (liquid_endog >= lower) & (liquid_endog < upper) & in_grid
         interior = mask_dead_candidates(
             endog_grid=liquid_endog,
             value=interp_value,
