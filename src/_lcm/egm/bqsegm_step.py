@@ -28,6 +28,8 @@ fixes which side owns the exact boundary point: `equality_owner="otherwise"` giv
 the otherwise side ownership through the strict `<` / non-strict `>=` split.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 
 from _lcm.egm.bqsegm_segments import mask_dead_candidates, segment_ids_from_folds
@@ -183,6 +185,76 @@ def _flat_interval_indices(
     if flat_interval_mask is None:
         return ()
     return tuple(i for i in range(n_intervals) if flat_interval_mask[i])
+
+
+def bqsegm_discrete_envelope_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    gross_return: ScalarFloat | float,
+    income: ScalarFloat | float,
+    choices: tuple[Mapping[str, Float1D], ...],
+) -> tuple[Float1D, Float1D, Float1D, IntND]:
+    """Compose per-discrete-choice BQSEGM solves into a discrete upper envelope.
+
+    Each discrete choice (e.g. buy private insurance or not) shifts cash-on-hand
+    differently. BQSEGM solves the continuous consumption/savings subproblem inside
+    each branch; the discrete choice is then taken by the upper envelope over the
+    branch values — the `BQSEGM ∘ DC-EGM` composition with the discrete envelope
+    outside. With no taste shocks the envelope is the hard maximum, so by Danskin's
+    theorem the winning branch's marginal value and policy carry through.
+
+    Args:
+        next_value: Next period's value on `liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        crra: Coefficient of relative risk aversion.
+        gross_return: Gross liquid return `1 + r`.
+        income: Deterministic income added to next-period liquid.
+        choices: Per-discrete-choice budgets, each a mapping with `coh_slopes`,
+            `coh_intercepts`, and `breakpoints` for `bqsegm_multi_interval_step`.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, consumption policy,
+        and the winning discrete-choice index, each on `liquid_grid`.
+
+    """
+    values: list[Float1D] = []
+    marginals: list[Float1D] = []
+    policies: list[Float1D] = []
+    for choice in choices:
+        value, marginal, policy = bqsegm_multi_interval_step(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=discount_factor,
+            crra=crra,
+            gross_return=gross_return,
+            income=income,
+            coh_slopes=choice["coh_slopes"],
+            coh_intercepts=choice["coh_intercepts"],
+            breakpoints=choice["breakpoints"],
+        )
+        values.append(value)
+        marginals.append(marginal)
+        policies.append(policy)
+
+    value_stack = jnp.stack(values)
+    winning = jnp.argmax(value_stack, axis=0).astype(jnp.int32)
+    index = jnp.arange(liquid_grid.shape[0])
+    return (
+        value_stack[winning, index],
+        jnp.stack(marginals)[winning, index],
+        jnp.stack(policies)[winning, index],
+        winning,
+    )
 
 
 def bqsegm_unified_step(  # noqa: PLR0915

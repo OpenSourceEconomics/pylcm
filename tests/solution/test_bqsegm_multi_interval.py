@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.bqsegm_step import (
+    bqsegm_discrete_envelope_step,
     bqsegm_jump_step,
     bqsegm_multi_interval_step,
     bqsegm_unified_step,
@@ -438,3 +439,79 @@ def test_unified_step_matches_brute_through_a_jump_then_a_kink():
     np.testing.assert_allclose(
         np.asarray(value)[interior], np.asarray(brute)[interior], atol=3e-2, rtol=8e-3
     )
+
+
+def test_discrete_envelope_step_matches_brute_over_a_binary_choice():
+    """A binary discrete choice over two budgets reproduces the dense oracle.
+
+    Two discrete options (e.g. buy private insurance or not) each shift cash-on-hand
+    differently; the value is the upper envelope over the two BQSEGM solves. The
+    discrete-envelope step must equal a dense brute that maximises over both the
+    discrete choice and consumption.
+    """
+    crra = 2.0
+    discount_factor = 0.95
+    gross_return = 1.03
+    income = 1.0
+    base_yes = 4.0  # higher cash-on-hand level when buying
+    base_no = 1.0
+
+    liquid_grid = jnp.linspace(0.1, 30.0, 160)
+    savings_grid = jnp.linspace(0.0, 28.0, 200)
+
+    def coh_yes(liquid):
+        return liquid + base_yes
+
+    def coh_no(liquid):
+        return liquid + base_no
+
+    def next_value_of_liquid(liquid):
+        return _crra(liquid, crra)
+
+    def next_marginal_of_liquid(liquid):
+        return liquid ** (-crra)
+
+    choices = (
+        {
+            "coh_slopes": jnp.asarray([1.0]),
+            "coh_intercepts": jnp.asarray([base_yes]),
+            "breakpoints": jnp.zeros((0,)),
+        },
+        {
+            "coh_slopes": jnp.asarray([1.0]),
+            "coh_intercepts": jnp.asarray([base_no]),
+            "breakpoints": jnp.zeros((0,)),
+        },
+    )
+
+    value, _marginal, _policy, choice = bqsegm_discrete_envelope_step(
+        next_value=next_value_of_liquid(liquid_grid),
+        next_marginal=next_marginal_of_liquid(liquid_grid),
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        crra=crra,
+        gross_return=gross_return,
+        income=income,
+        choices=choices,
+    )
+
+    # Dense brute over both the discrete choice and consumption.
+    def brute_choice(coh_of_liquid):
+        coh = coh_of_liquid(liquid_grid)
+        fractions = jnp.linspace(1e-4, 1.0, 4000)
+        consumption = fractions[:, None] * coh[None, :]
+        savings = coh[None, :] - consumption
+        next_liquid = gross_return * savings + income
+        val = _crra(consumption, crra) + discount_factor * next_value_of_liquid(
+            next_liquid
+        )
+        return jnp.max(val, axis=0)
+
+    brute = jnp.maximum(brute_choice(coh_yes), brute_choice(coh_no))
+    interior = (np.asarray(liquid_grid) > 1.0) & (np.asarray(liquid_grid) < 28.0)
+    np.testing.assert_allclose(
+        np.asarray(value)[interior], np.asarray(brute)[interior], atol=2e-2, rtol=5e-3
+    )
+    # The higher-cash-on-hand option is always at least as good here.
+    assert np.all(np.asarray(choice)[interior] == 0)
