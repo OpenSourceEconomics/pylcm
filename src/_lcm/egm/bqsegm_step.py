@@ -185,6 +185,115 @@ def _flat_interval_indices(
     return tuple(i for i in range(n_intervals) if flat_interval_mask[i])
 
 
+def bqsegm_jump_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    gross_return: ScalarFloat | float,
+    income: ScalarFloat | float,
+    subsidy_levels: Float1D,
+    jump_breakpoints: Float1D,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one period of a budget with N additive subsidy cliffs by EGM.
+
+    Each cliff drops the additive subsidy into cash-on-hand, so `coh(liquid)` jumps
+    down as liquid crosses it and the value function jumps there too. The continuous
+    coh inversion cannot cross a discontinuity, so each of the N+1 subsidy levels is
+    a separate case: `coh = liquid + subsidy_k` is smooth within case `k`, solved by
+    ordinary 1-D EGM whose endogenous liquid is `consumption + savings - subsidy_k`.
+    Each case is masked to its own liquid range `[cliff_{k-1}, cliff_k)`, the hard
+    borrowing corner competes over the whole grid, and all candidates merge by the
+    branch-aware upper envelope — the N-cliff generalization of the binary case
+    merge.
+
+    The continuation is read by plain interpolation, which is exact when it is
+    smooth (a terminal-adjacent period). A recurring jumped continuation additionally
+    needs the boundary-targeting candidate and jump-aware continuation read of the
+    binary `bqsegm_one_asset_step`, generalized per cliff.
+
+    Args:
+        next_value: Next period's value on `liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        crra: Coefficient of relative risk aversion.
+        gross_return: Gross liquid return `1 + r`.
+        income: Deterministic income added to next-period liquid.
+        subsidy_levels: Additive subsidy per case, length N+1, in liquid order.
+        jump_breakpoints: Sorted ascending liquid cliffs, length N.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    next_liquid = gross_return * savings_grid + income
+    value_next = jnp.interp(next_liquid, liquid_grid, next_value)
+    marginal_next = jnp.interp(next_liquid, liquid_grid, next_marginal)
+
+    consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    marginal_endog = consumption ** (-crra)
+
+    lower_edges = jnp.concatenate(
+        [jnp.asarray([-jnp.inf], dtype=liquid_grid.dtype), jump_breakpoints]
+    )
+    upper_edges = jnp.concatenate(
+        [jump_breakpoints, jnp.asarray([jnp.inf], dtype=liquid_grid.dtype)]
+    )
+    n_cases = subsidy_levels.shape[0]
+    stride = savings_grid.shape[0] + 1
+
+    endog_parts: list[Float1D] = []
+    value_parts: list[Float1D] = []
+    policy_parts: list[Float1D] = []
+    marginal_parts: list[Float1D] = []
+    segment_parts: list[Float1D] = []
+    for k in range(n_cases):
+        liquid_endog = consumption + savings_grid - subsidy_levels[k]
+        in_case = (liquid_endog >= lower_edges[k]) & (liquid_endog < upper_edges[k])
+        segment = segment_ids_from_folds(endog_grid=liquid_endog) + float(k) * stride
+        masked = mask_dead_candidates(
+            endog_grid=liquid_endog,
+            value=value_endog,
+            policy=consumption,
+            marginal=marginal_endog,
+            valid=in_case,
+        )
+        endog_parts.append(masked[0])
+        value_parts.append(masked[1])
+        policy_parts.append(masked[2])
+        marginal_parts.append(masked[3])
+        segment_parts.append(segment)
+
+    # Hard borrowing corner: save nothing, consume all of this point's cash-on-hand.
+    interval_of_grid = jnp.searchsorted(jump_breakpoints, liquid_grid, side="right")
+    coh_grid = liquid_grid + subsidy_levels[interval_of_grid]
+    value_at_income = jnp.interp(jnp.asarray(income), liquid_grid, next_value)
+    endog_parts.append(liquid_grid)
+    value_parts.append(
+        _crra_utility(coh_grid, crra) + discount_factor * value_at_income
+    )
+    policy_parts.append(coh_grid)
+    marginal_parts.append(coh_grid ** (-crra))
+    segment_parts.append(jnp.full_like(liquid_grid, float(n_cases) * stride))
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+    )
+    return value, marginal, policy
+
+
 def bqsegm_one_asset_step(
     *,
     next_value: Float1D,

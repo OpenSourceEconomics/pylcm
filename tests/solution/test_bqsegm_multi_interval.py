@@ -11,7 +11,7 @@ Bellman max where both are exact.
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm.bqsegm_step import bqsegm_multi_interval_step
+from _lcm.egm.bqsegm_step import bqsegm_jump_step, bqsegm_multi_interval_step
 
 
 def _crra(consumption, crra):
@@ -305,4 +305,62 @@ def test_multi_interval_step_matches_brute_through_a_hard_constraint_floor():
     interior = (np.asarray(liquid_grid) > 0.5) & (np.asarray(liquid_grid) < 28.0)
     np.testing.assert_allclose(
         np.asarray(value)[interior], np.asarray(brute)[interior], atol=2e-2, rtol=5e-3
+    )
+
+
+def test_jump_step_matches_brute_through_two_additive_cliffs():
+    """Two downward subsidy cliffs (three levels) reproduce the dense oracle.
+
+    Cash-on-hand jumps down as liquid crosses each asset cliff (the subsidy drops),
+    so the budget is discontinuous and the value function jumps there. The masked
+    three-case merge must track the dense Bellman max on each side of both cliffs.
+    """
+    crra = 2.0
+    discount_factor = 0.95
+    gross_return = 1.03
+    income = 1.0
+    subsidy_levels = jnp.asarray([3.0, 1.5, 0.5])
+    jump_breakpoints = jnp.asarray([5.0, 12.0])
+
+    liquid_grid = jnp.linspace(0.1, 30.0, 200)
+    savings_grid = jnp.linspace(0.0, 28.0, 220)
+
+    def coh_of_liquid(liquid):
+        interval = jnp.searchsorted(jump_breakpoints, liquid, side="right")
+        return liquid + subsidy_levels[interval]
+
+    def next_value_of_liquid(liquid):
+        return _crra(liquid, crra)
+
+    def next_marginal_of_liquid(liquid):
+        return liquid ** (-crra)
+
+    value, _marginal, _policy = bqsegm_jump_step(
+        next_value=next_value_of_liquid(liquid_grid),
+        next_marginal=next_marginal_of_liquid(liquid_grid),
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        crra=crra,
+        gross_return=gross_return,
+        income=income,
+        subsidy_levels=subsidy_levels,
+        jump_breakpoints=jump_breakpoints,
+    )
+    brute = _dense_brute_value(
+        liquid_grid=liquid_grid,
+        coh_of_liquid=coh_of_liquid,
+        next_value_of_liquid=next_value_of_liquid,
+        crra=crra,
+        discount_factor=discount_factor,
+        gross_return=gross_return,
+        income=income,
+    )
+    # Exclude a one-cell neighbourhood of each cliff, where the grid straddles the
+    # discontinuity, as the recurring-jump agreement test does.
+    liquid = np.asarray(liquid_grid)
+    near_cliff = (np.abs(liquid - 5.0) < 0.3) | (np.abs(liquid - 12.0) < 0.3)
+    interior = (liquid > 1.0) & (liquid < 27.0) & ~near_cliff
+    np.testing.assert_allclose(
+        np.asarray(value)[interior], np.asarray(brute)[interior], atol=3e-2, rtol=8e-3
     )
