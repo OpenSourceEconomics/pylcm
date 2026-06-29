@@ -182,3 +182,57 @@ def interval_index(*, liquid_grid: Float1D, breakpoints: Float1D) -> Int1D:
     return jnp.searchsorted(sorted_breakpoints, liquid_grid, side="right").astype(
         jnp.int32
     )
+
+
+def interval_midpoints(*, liquid_grid: Float1D, breakpoints: Float1D) -> Float1D:
+    """Return one interior representative liquid point per interval.
+
+    The outer intervals are unbounded, so the liquid grid's endpoints close them:
+    interval 0 spans `[grid_min, b_0)`, interval N spans `[b_{N-1}, grid_max]`, and
+    each interior interval the gap between consecutive sorted breakpoints. The
+    representative is the midpoint of each closed interval — a point strictly
+    inside it (away from the kinks) where the active affine segment is read.
+
+    Args:
+        liquid_grid: Liquid-state grid; its endpoints bound the outer intervals.
+        breakpoints: Asset breakpoints on the liquid axis, in any order.
+
+    Returns:
+        One representative liquid point per interval, length
+        `len(breakpoints) + 1`.
+
+    """
+    sorted_breakpoints = jnp.sort(breakpoints)
+    grid_min = liquid_grid[0]
+    grid_max = liquid_grid[-1]
+    lower_edges = jnp.concatenate([grid_min[None], sorted_breakpoints])
+    upper_edges = jnp.concatenate([sorted_breakpoints, grid_max[None]])
+    return 0.5 * (lower_edges + upper_edges)
+
+
+def interval_segment_coefficients(
+    *,
+    schedule: Callable[[ScalarFloat], ScalarFloat],
+    interval_midpoints: Float1D,
+) -> tuple[Float1D, Float1D]:
+    """Recover a schedule's active affine segment per interval.
+
+    A piecewise-affine schedule of the liquid state is affine inside each interval.
+    Reading its slope (by differentiation) and value at the interval's interior
+    representative recovers the active segment `value = slope * liquid + intercept`
+    that holds throughout that interval. Sampling away from the kinks gives the
+    correct one-sided segment at each interval.
+
+    Args:
+        schedule: The schedule as a function of the scalar liquid state, with every
+            other argument bound.
+        interval_midpoints: One interior representative liquid point per interval.
+
+    Returns:
+        Tuple `(slopes, intercepts)` of the active affine segment per interval.
+
+    """
+    slopes = jax.vmap(jax.grad(schedule))(interval_midpoints)
+    values = jax.vmap(schedule)(interval_midpoints)
+    intercepts = values - slopes * interval_midpoints
+    return slopes, intercepts

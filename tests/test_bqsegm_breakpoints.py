@@ -18,6 +18,8 @@ from _lcm.egm.bqsegm_breakpoints import (
     affine_coefficients,
     breakpoint_sources_from_registry,
     interval_index,
+    interval_midpoints,
+    interval_segment_coefficients,
     linear_asset_preimage,
     n_intervals,
 )
@@ -184,3 +186,32 @@ def test_interval_index_with_no_breakpoints_is_a_single_interval():
         np.asarray(interval_index(liquid_grid=grid, breakpoints=jnp.zeros((0,)))),
         np.asarray([0, 0, 0]),
     )
+
+
+def test_interval_midpoints_pick_a_representative_point_per_interval():
+    """Each interval gets an interior point between its bounding breakpoints."""
+    grid = jnp.asarray([0.0, 30.0])
+    breakpoints = jnp.asarray([8.0, 20.0])
+    np.testing.assert_allclose(
+        np.asarray(interval_midpoints(liquid_grid=grid, breakpoints=breakpoints)),
+        np.asarray([4.0, 14.0, 25.0]),
+        atol=1e-6,
+    )
+
+
+def test_interval_segment_coefficients_recover_the_active_affine_segment():
+    """Per interval, a piecewise-affine schedule's active slope and intercept hold."""
+
+    def tax(liquid):
+        return (
+            0.1 * jnp.minimum(liquid, 8.0)
+            + 0.2 * jnp.clip(liquid - 8.0, 0.0, 12.0)
+            + 0.3 * jnp.maximum(liquid - 20.0, 0.0)
+        )
+
+    midpoints = jnp.asarray([4.0, 14.0, 25.0])
+    slopes, intercepts = interval_segment_coefficients(
+        schedule=tax, interval_midpoints=midpoints
+    )
+    np.testing.assert_allclose(np.asarray(slopes), [0.1, 0.2, 0.3], atol=1e-6)
+    np.testing.assert_allclose(np.asarray(intercepts), [0.0, -0.8, -2.8], atol=1e-5)
