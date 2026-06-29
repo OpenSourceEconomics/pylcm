@@ -14,6 +14,7 @@ import pytest
 
 import lcm
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
+from lcm.case_piece import BoundaryKind, EqualityOwner
 from lcm.exceptions import BQSEGMCaseError
 from lcm.regime import Regime
 from lcm.solvers import BQSEGM, GridSearch
@@ -187,7 +188,7 @@ def test_bqsegm_rejects_a_piece_with_a_hidden_where():
 
 
 def _build_bqsegm_with_boundary(
-    *, equality: str, kind: str, variable: str = "liquid"
+    *, equality: EqualityOwner, kind: BoundaryKind, variable: str = "liquid"
 ) -> Model:
     """Assemble a one-period BQSEGM toy whose boundary carries given metadata."""
 
