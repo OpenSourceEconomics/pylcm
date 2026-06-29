@@ -83,7 +83,7 @@ cloudpickle = ">=3.1.2,<4"
 h5py = ">=3.12"
 jupyterlab = "*"
 memory_profiler = "*"
-numpy = ">=2.4"
+numpy = ">=2.4,<2.5"
 plotly = ">=6.5"
 prek = "*"
 pyarrow = "*"
@@ -95,11 +95,9 @@ benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "cuda
 cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
 cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
 docs = { features = [ "docs" ], solve-group = "default" }
-metal = { features = [ "metal" ], solve-group = "metal" }
 tests-cpu = { features = [ "tests" ], solve-group = "default" }
 tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
-tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
 # Pinned to the aca-model version this solver-seam work is developed against
@@ -107,15 +105,13 @@ type-checking = { features = [ "type-checking", "tests" ], solve-group = "defaul
 # eligibility); flip back to branch = "main" once both sides have merged.
 aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "54fb8df1f83865eee421a4b656676ce4e6787928" }
 [tool.pixi.feature.cuda12]
-platforms = [ "linux-64" ]
-system-requirements = { cuda = "12" }
+platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
 cuda-nvcc = "~=12.0"
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
 jax = { version = ">=0.9", extras = [ "cuda12" ] }
 [tool.pixi.feature.cuda13]
-platforms = [ "linux-64" ]
-system-requirements = { cuda = "13" }
+platforms = [ "linux-64-cuda13" ]
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
@@ -129,11 +125,6 @@ quantecon = "*"
 build-docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
 explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
 view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
-[tool.pixi.feature.metal]
-platforms = [ "osx-arm64" ]
-[tool.pixi.feature.metal.target.osx-arm64.pypi-dependencies]
-jax = ">=0.9"
-jax-metal = ">=0.1.1"
 [tool.pixi.feature.tests.dependencies]
 pytest = "*"
 pytest-cov = "*"
@@ -173,7 +164,13 @@ asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
 asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
 [tool.pixi.workspace]
 channels = [ "conda-forge" ]
-platforms = [ "linux-64", "osx-arm64", "win-64" ]
+platforms = [
+  "linux-64",
+  "osx-arm64",
+  "win-64",
+  { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
+  { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
+]
 
 [tool.ruff]
 target-version = "py314"
@@ -327,6 +324,7 @@ ini_options.addopts = [
 ini_options.markers = [
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
+  "slow: heavy DC-EGM solve/oracle tests (deselected on small runners)",
 ]
 ini_options.filterwarnings = [
   # JAX emits this UserWarning when user code asks for a dtype wider

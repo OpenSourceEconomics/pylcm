@@ -29,6 +29,12 @@ jobs:
           - windows-latest
         python-version:
           - '3.14'
+        # The small macOS runner can't host four parallel JAX AOT compiles of the
+        # DC-EGM solve/oracle battery (it swap-thrashes for hours). Drop the `slow`
+        # set there; the platform-independent kernel stays covered on Linux + GPU.
+        include:
+          - os: macos-latest
+            pytest_extra: -m "not slow"
     steps:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.6
@@ -41,7 +47,7 @@ jobs:
           frozen: true
       - name: Run pytest
         shell: bash {0}
-        run: pixi run -e tests-cpu tests
+        run: pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}

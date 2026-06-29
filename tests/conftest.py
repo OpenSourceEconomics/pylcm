@@ -36,6 +36,38 @@ def pytest_configure(config):
     jax_config.update("jax_enable_x64", val=X64_ENABLED)
 
 
+# DC-EGM-family module-name tokens outside `tests/solution/`. The whole
+# `tests/solution/` tree is the solve/oracle battery and is matched by directory.
+_SLOW_MODULE_TOKENS = (
+    "dcegm",
+    "negm",
+    "ds_app",
+    "ds2024",
+    "ds_pension",
+    "ds_housing",
+    "taste_shock",
+    "mahler_yum",
+    "solvers",
+)
+
+
+def pytest_collection_modifyitems(items):
+    """Mark the DC-EGM solve/simulate/oracle battery `slow`.
+
+    These tests AOT-compile heavy JAX models; four in parallel exhaust a small
+    CI runner's RAM (the macOS and GPU runners). They carry the `slow` marker so
+    a memory-constrained runner can deselect them with `-m "not slow"` — the
+    platform-independent kernel stays covered on the larger Linux/GPU runners.
+    """
+    slow = pytest.mark.slow
+    for item in items:
+        name = item.path.name
+        if "solution" in item.path.parts or any(
+            token in name for token in _SLOW_MODULE_TOKENS
+        ):
+            item.add_marker(slow)
+
+
 @pytest.fixture(scope="session")
 def binary_category_class():
     cls = make_dataclass(
