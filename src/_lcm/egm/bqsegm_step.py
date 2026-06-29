@@ -691,13 +691,10 @@ def _recurring_jump_case(
     marginal_parts: list[Float1D] = [marginal_endog]
     segment_parts: list[Float1D] = [interior_segment]
 
-    n = liquid_grid.shape[0]
     n_cliffs = jump_breakpoints.shape[0]
     for j in range(n_cliffs):
         cliff = jump_breakpoints[j]
-        last_below = jnp.clip(jnp.sum(liquid_grid < cliff) - 1, 1, n - 3).astype(
-            jnp.int32
-        )
+        prev_cliff = jump_breakpoints[j - 1] if j > 0 else liquid_grid[0] - 1.0
         kink = _boundary_targeting_branch(
             liquid_grid=liquid_grid,
             next_value=next_value,
@@ -707,7 +704,7 @@ def _recurring_jump_case(
             income=income,
             subsidy=subsidy,
             asset_limit=cliff,
-            last_below=last_below,
+            prev_limit=prev_cliff,
         )
         endog_parts.append(kink[0])
         value_parts.append(kink[1])
@@ -761,10 +758,17 @@ def _jump_aware_interp(
     above_values: list[Float1D] = []
     for j in range(n_bp):
         limit = breakpoints[j]
-        last_below = jnp.clip(jnp.sum(grid < limit) - 1, 1, n - 3).astype(jnp.int32)
-        left_at = _extrapolate(grid, values, last_below - 1, last_below, limit)
-        right_at = _extrapolate(grid, values, last_below + 1, last_below + 2, limit)
         limit_at = jnp.asarray(limit, dtype=grid.dtype)
+        # Bound each side's stencil to the interval between adjacent cliffs, so a
+        # one-sided limit never extrapolates across a neighbouring jump.
+        prev_limit = breakpoints[j - 1] if j > 0 else grid[0] - 1.0
+        next_limit = breakpoints[j + 1] if j < n_bp - 1 else grid[-1] + 1.0
+        left_at = _bounded_limit_below(
+            grid, values, limit=limit_at, prev_limit=prev_limit, n=n
+        )
+        right_at = _bounded_limit_above(
+            grid, values, limit=limit_at, next_limit=next_limit, n=n
+        )
         below = jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=grid.dtype))
         above = jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=grid.dtype))
         if equality_owner == "otherwise":
@@ -1048,10 +1052,8 @@ def _case_step(
     # so the interior path may carry several monotone segments.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
 
-    n = liquid_grid.shape[0]
-    last_below = jnp.clip(jnp.sum(liquid_grid < asset_limit) - 1, 1, n - 3).astype(
-        jnp.int32
-    )
+    # A single jump has no neighbouring cliff below; the sentinel leaves the
+    # below-side continuation stencil unbounded on the left.
     kink_grid, kink_value, kink_consumption, kink_marginal = _boundary_targeting_branch(
         liquid_grid=liquid_grid,
         next_value=next_value,
@@ -1061,7 +1063,7 @@ def _case_step(
         income=income,
         subsidy=subsidy,
         asset_limit=asset_limit,
-        last_below=last_below,
+        prev_limit=liquid_grid[0] - 1.0,
     )
     kink_segment = jnp.where(
         jnp.isnan(kink_grid), jnp.nan, jnp.nanmax(interior_segment) + 1.0
@@ -1101,7 +1103,7 @@ def _boundary_targeting_branch(
     income: ScalarFloat | float,
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
-    last_below: IntND,
+    prev_limit: ScalarFloat | float,
 ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
     """Build the save-to-the-boundary candidate as a masked grid-aligned branch.
 
@@ -1111,15 +1113,21 @@ def _boundary_targeting_branch(
     (one ulp below), so the reported policy and the eligible-side value it is
     paired with are mutually consistent rather than a supremum dressed as a
     maximum. Saving the fixed amount maps current liquid to itself
-    (`endog == liquid`), so the branch is the curve `c = coh - s_kink`.
+    (`endog == liquid`), so the branch is the curve `c = coh - s_kink`. The
+    below-side continuation limit reads only nodes in `(prev_limit, asset_limit)`,
+    so with cliffs close together it does not bridge the neighbouring jump.
     """
     limit_minus = jnp.nextafter(
         jnp.asarray(asset_limit, dtype=liquid_grid.dtype),
         jnp.asarray(-jnp.inf, dtype=liquid_grid.dtype),
     )
     s_kink = (limit_minus - income) / gross_return
-    value_limit_minus = _extrapolate(
-        liquid_grid, next_value, last_below - 1, last_below, asset_limit
+    value_limit_minus = _bounded_limit_below(
+        liquid_grid,
+        next_value,
+        limit=asset_limit,
+        prev_limit=prev_limit,
+        n=liquid_grid.shape[0],
     )
     kink_consumption = liquid_grid + subsidy - s_kink
     kink_value = (
@@ -1192,6 +1200,48 @@ def _extrapolate(
     v0, v1 = values[lower], values[upper]
     slope = (v1 - v0) / (g1 - g0)
     return v1 + slope * (target - g1)
+
+
+def _bounded_limit_below(
+    grid: Float1D,
+    values: Float1D,
+    *,
+    limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    n: int,
+) -> ScalarFloat:
+    """One-sided limit approaching `limit` from below, using only nodes strictly
+    inside `(prev_limit, limit)` so the stencil never crosses the previous cliff.
+
+    Falls back to the nearest in-interval node's value when fewer than two such
+    nodes exist, rather than extrapolating across the neighbouring discontinuity.
+    """
+    hi = jnp.sum(grid < limit) - 1
+    floor = jnp.sum(grid <= prev_limit)
+    lo = jnp.clip(jnp.maximum(hi - 1, floor), 0, n - 1).astype(jnp.int32)
+    hi = jnp.clip(jnp.maximum(hi, floor), 0, n - 1).astype(jnp.int32)
+    return jnp.where(lo == hi, values[hi], _extrapolate(grid, values, lo, hi, limit))
+
+
+def _bounded_limit_above(
+    grid: Float1D,
+    values: Float1D,
+    *,
+    limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    n: int,
+) -> ScalarFloat:
+    """One-sided limit approaching `limit` from above, using only nodes strictly
+    inside `(limit, next_limit)` so the stencil never crosses the next cliff.
+
+    Falls back to the nearest in-interval node's value when fewer than two such
+    nodes exist, rather than extrapolating across the neighbouring discontinuity.
+    """
+    lo = jnp.sum(grid <= limit)
+    ceil = jnp.sum(grid < next_limit) - 1
+    hi = jnp.clip(jnp.minimum(lo + 1, ceil), 0, n - 1).astype(jnp.int32)
+    lo = jnp.clip(jnp.minimum(lo, ceil), 0, n - 1).astype(jnp.int32)
+    return jnp.where(lo == hi, values[lo], _extrapolate(grid, values, lo, hi, limit))
 
 
 def _crra_utility(consumption: Float1D, crra: ScalarFloat | float) -> Float1D:
