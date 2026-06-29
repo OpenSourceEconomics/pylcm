@@ -1,10 +1,20 @@
-"""One-period BQSEGM step for a 1-D consumption--saving regime with a case split.
+"""One-period BQSEGM steps for a 1-D consumption--saving regime.
 
-A binary case boundary on the liquid state (`liquid < asset_limit`) shifts an
-additive subsidy into cash-on-hand. Within each case the budget is smooth, so the
-period solves by ordinary 1-D EGM on `coh = liquid + subsidy`; the recovered
-endogenous state is `liquid = coh - subsidy`. Each case's value is the upper
-envelope over three candidate branches on the liquid grid:
+Two regime shapes are covered:
+
+- A *continuous* piecewise-affine budget (`bqsegm_multi_interval_step`) — every
+  breakpoint a kink, no jump — where `coh(liquid)` stays continuous and monotone,
+  so one EGM pass in `coh` space and an inversion of `coh(liquid)` recover the
+  whole liquid grid with no interval seam.
+- A binary *jump* case boundary (`bqsegm_one_asset_step`) where cash-on-hand jumps
+  across the boundary, requiring two masked cases merged through the value
+  discontinuity.
+
+The binary jump case: a case boundary on the liquid state (`liquid < asset_limit`)
+shifts an additive subsidy into cash-on-hand. Within each case the budget is
+smooth, so the period solves by ordinary 1-D EGM on `coh = liquid + subsidy`; the
+recovered endogenous state is `liquid = coh - subsidy`. Each case's value is the
+upper envelope over three candidate branches on the liquid grid:
 
 - the Euler interior path from the EGM inversion;
 - the boundary-targeting branch that saves just enough to land on the eligible
@@ -24,6 +34,94 @@ from _lcm.egm.bqsegm_segments import mask_dead_candidates, segment_ids_from_fold
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
+
+
+def bqsegm_multi_interval_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    gross_return: ScalarFloat | float,
+    income: ScalarFloat | float,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one period of a piecewise-affine, continuous-budget regime by EGM.
+
+    The breakpoints partition the liquid axis into intervals on which cash-on-hand
+    is affine, `coh = slope_i * liquid + intercept_i`. With a continuous budget
+    (every breakpoint a kink, no jump), `coh(liquid)` is continuous and monotone, so
+    its inverse is a single continuous map. EGM therefore runs once in `coh` space —
+    `coh = consumption + savings` — and the endogenous liquid is recovered by
+    inverting `coh(liquid)` on the grid, leaving no interval seam to under-cover. The
+    marginal value of liquid scales by the active interval's slope (the envelope
+    theorem through the affine budget). The hard borrowing corner competes over the
+    whole grid, and the interior path and corner merge by the branch-aware upper
+    envelope.
+
+    Args:
+        next_value: Next period's value on `liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        crra: Coefficient of relative risk aversion.
+        gross_return: Gross liquid return `1 + r`.
+        income: Deterministic income added to next-period liquid.
+        coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
+        coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
+        breakpoints: Sorted ascending liquid breakpoints, length N.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    # Cash-on-hand is continuous and monotone in liquid, so its inverse is a single
+    # continuous map: EGM runs once in coh space and the endogenous liquid is read
+    # by inverting `coh(liquid)` on the grid, with no interval seams to leave gaps.
+    interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+    coh_grid = (
+        coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
+    )
+
+    next_liquid = gross_return * savings_grid + income
+    value_next = jnp.interp(next_liquid, liquid_grid, next_value)
+    marginal_next = jnp.interp(next_liquid, liquid_grid, next_marginal)
+
+    consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    coh_endog = consumption + savings_grid
+    liquid_endog = jnp.interp(coh_endog, coh_grid, liquid_grid)
+    # Marginal value of liquid = u'(c) * d coh / d liquid; the slope is the active
+    # interval's at the recovered liquid (envelope theorem through the budget).
+    slope_endog = coh_slopes[jnp.searchsorted(breakpoints, liquid_endog, side="right")]
+    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    marginal_endog = slope_endog * consumption ** (-crra)
+    # A non-concave (convex-kinked) budget can fold the interior path back, so keep
+    # its monotone runs apart for the upper envelope.
+    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
+
+    # Hard borrowing corner: save nothing, consume all of this point's cash-on-hand,
+    # land next-period liquid at `income`. A candidate over the whole grid, since the
+    # constraint binds wherever the no-save corner beats the Euler path.
+    value_at_income = jnp.interp(jnp.asarray(income), liquid_grid, next_value)
+    s0_value = _crra_utility(coh_grid, crra) + discount_factor * value_at_income
+    s0_marginal = coh_slopes[interval_of_grid] * coh_grid ** (-crra)
+    s0_segment = jnp.full_like(liquid_grid, jnp.nanmax(interior_segment) + 1.0)
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate([liquid_endog, liquid_grid]),
+        policy=jnp.concatenate([consumption, coh_grid]),
+        value=jnp.concatenate([value_endog, s0_value]),
+        marginal=jnp.concatenate([marginal_endog, s0_marginal]),
+        segment_id=jnp.concatenate([interior_segment, s0_segment]),
+        x_query=liquid_grid,
+    )
+    return value, marginal, policy
 
 
 def bqsegm_one_asset_step(
