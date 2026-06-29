@@ -2292,13 +2292,13 @@ def _collect_bqsegm_schedule_spec(
         f"{schedule.output}__{bp.threshold}" for bp in schedule.breakpoints
     )
     breakpoint_kinds = tuple(bp.kind for bp in schedule.breakpoints)
-    mixed_jump = "jump" in breakpoint_kinds and breakpoint_kinds != ("jump",)
-    if mixed_jump:
+    has_jump = "jump" in breakpoint_kinds
+    all_jump = all(kind == "jump" for kind in breakpoint_kinds)
+    if has_jump and not all_jump:
         msg = (
-            "BQSEGM schedule path supports either a single jump breakpoint or "
-            f"all continuous-kink breakpoints; the schedule declares "
-            f"{breakpoint_kinds!r}. Mixed jump-and-kink and multi-jump schedules "
-            "need the recurring jumped-continuation step, not yet wired."
+            "BQSEGM schedule path supports either all-jump or all-continuous-kink "
+            f"breakpoints; the schedule mixes them: {breakpoint_kinds!r}. A mixed "
+            "jump-and-kink schedule needs the unified recurring step, not yet wired."
         )
         raise RegimeInitializationError(msg)
     return _BQSEGMScheduleSpec(
@@ -2326,9 +2326,13 @@ def _build_bqsegm_continuous_core(
     from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
         bqsegm_multi_interval_step,
         bqsegm_one_asset_step,
+        bqsegm_recurring_jump_step,
     )
 
     is_single_jump = schedule_spec.breakpoint_kinds == ("jump",)
+    is_multi_jump = len(schedule_spec.breakpoint_kinds) > 1 and all(
+        kind == "jump" for kind in schedule_spec.breakpoint_kinds
+    )
 
     def core(
         *,
@@ -2368,6 +2372,23 @@ def _build_bqsegm_continuous_core(
                 subsidy_when=coh_intercepts[0],
                 subsidy_otherwise=coh_intercepts[1],
                 asset_limit=breakpoints[0],
+                equality_owner="otherwise",
+            )
+        elif is_multi_jump:
+            # N cliffs: each affine segment has slope 1, so its intercept is the
+            # additive cash-on-hand level on that side, and the recurring step
+            # resolves every jump (boundary-targeting + jump-aware continuation).
+            value, marginal, _policy = bqsegm_recurring_jump_step(
+                next_value=next_value,
+                next_marginal=next_marginal,
+                liquid_grid=liquid,
+                savings_grid=savings_grid,
+                discount_factor=params["H__discount_factor"],
+                crra=params["utility__crra"],
+                gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
+                income=params[f"{target}__next_liquid__income"],
+                subsidy_levels=coh_intercepts,
+                jump_breakpoints=breakpoints,
                 equality_owner="otherwise",
             )
         else:

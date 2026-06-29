@@ -185,6 +185,239 @@ def _flat_interval_indices(
     return tuple(i for i in range(n_intervals) if flat_interval_mask[i])
 
 
+def bqsegm_recurring_jump_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    gross_return: ScalarFloat | float,
+    income: ScalarFloat | float,
+    subsidy_levels: Float1D,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner = "otherwise",
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one period of an N-cliff budget with a recurring jumped continuation.
+
+    The N-cliff generalization of the binary `bqsegm_one_asset_step`. Each of the
+    N+1 subsidy levels is a case whose budget is smooth; its 1-D EGM reads the
+    continuation jump-aware at every cliff (no bridging across a value jump) and
+    competes, per cliff, a boundary-targeting candidate that saves to land
+    next-period liquid just inside the cliff's eligible side for its higher
+    continuation. Each case is masked to its liquid range and all cases merge by the
+    branch-aware upper envelope, so the solve is exact through every recurring jump,
+    not only at a terminal-adjacent period.
+
+    Args:
+        next_value: Next period's value on `liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        crra: Coefficient of relative risk aversion.
+        gross_return: Gross liquid return `1 + r`.
+        income: Deterministic income added to next-period liquid.
+        subsidy_levels: Additive subsidy per case, length N+1, in liquid order.
+        jump_breakpoints: Sorted ascending liquid cliffs, length N.
+        equality_owner: Side owning each exact cliff point (`when` or `otherwise`).
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    lower_edges = jnp.concatenate(
+        [jnp.asarray([-jnp.inf], dtype=liquid_grid.dtype), jump_breakpoints]
+    )
+    upper_edges = jnp.concatenate(
+        [jump_breakpoints, jnp.asarray([jnp.inf], dtype=liquid_grid.dtype)]
+    )
+    n_cases = subsidy_levels.shape[0]
+    case_stride = 4 * savings_grid.shape[0]
+
+    endog_parts: list[Float1D] = []
+    value_parts: list[Float1D] = []
+    policy_parts: list[Float1D] = []
+    marginal_parts: list[Float1D] = []
+    segment_parts: list[Float1D] = []
+    for k in range(n_cases):
+        case_value, case_policy, case_marginal, case_endog, case_segment = (
+            _recurring_jump_case(
+                next_value=next_value,
+                next_marginal=next_marginal,
+                liquid_grid=liquid_grid,
+                savings_grid=savings_grid,
+                discount_factor=discount_factor,
+                crra=crra,
+                gross_return=gross_return,
+                income=income,
+                subsidy=subsidy_levels[k],
+                jump_breakpoints=jump_breakpoints,
+                equality_owner=equality_owner,
+            )
+        )
+        in_case = (case_endog >= lower_edges[k]) & (case_endog < upper_edges[k])
+        masked = mask_dead_candidates(
+            endog_grid=case_endog,
+            value=case_value,
+            policy=case_policy,
+            marginal=case_marginal,
+            valid=in_case,
+        )
+        endog_parts.append(masked[0])
+        value_parts.append(masked[1])
+        policy_parts.append(masked[2])
+        marginal_parts.append(masked[3])
+        segment_parts.append(case_segment + float(k) * case_stride)
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+    )
+    return value, marginal, policy
+
+
+def _recurring_jump_case(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    gross_return: ScalarFloat | float,
+    income: ScalarFloat | float,
+    subsidy: ScalarFloat | float,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner,
+) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+    """Build one subsidy case's candidate path: Euler, per-cliff target, s=0 corner.
+
+    `coh = liquid + subsidy`, so the endogenous liquid recovered from the Euler
+    inversion is `consumption + savings - subsidy`. The continuation is read
+    jump-aware at every cliff. A jumped continuation is nonconcave, so the case
+    contributes, beyond the Euler path, a boundary-targeting candidate per cliff
+    (save to land just inside its eligible side) and the hard borrowing corner, all
+    over the liquid grid.
+    """
+    next_liquid = gross_return * savings_grid + income
+    value_next = _jump_aware_interp(
+        next_liquid, liquid_grid, next_value, jump_breakpoints, equality_owner
+    )
+    marginal_next = _jump_aware_interp(
+        next_liquid, liquid_grid, next_marginal, jump_breakpoints, equality_owner
+    )
+    consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    liquid_endog = consumption + savings_grid - subsidy
+    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    marginal_endog = consumption ** (-crra)
+    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
+    next_segment = jnp.nanmax(interior_segment) + 1.0
+
+    endog_parts: list[Float1D] = [liquid_endog]
+    value_parts: list[Float1D] = [value_endog]
+    policy_parts: list[Float1D] = [consumption]
+    marginal_parts: list[Float1D] = [marginal_endog]
+    segment_parts: list[Float1D] = [interior_segment]
+
+    n = liquid_grid.shape[0]
+    n_cliffs = jump_breakpoints.shape[0]
+    for j in range(n_cliffs):
+        cliff = jump_breakpoints[j]
+        last_below = jnp.clip(jnp.sum(liquid_grid < cliff) - 1, 1, n - 3).astype(
+            jnp.int32
+        )
+        kink = _boundary_targeting_branch(
+            liquid_grid=liquid_grid,
+            next_value=next_value,
+            discount_factor=discount_factor,
+            crra=crra,
+            gross_return=gross_return,
+            income=income,
+            subsidy=subsidy,
+            asset_limit=cliff,
+            last_below=last_below,
+        )
+        endog_parts.append(kink[0])
+        value_parts.append(kink[1])
+        policy_parts.append(kink[2])
+        marginal_parts.append(kink[3])
+        segment_parts.append(
+            jnp.where(jnp.isnan(kink[0]), jnp.nan, next_segment + float(j))
+        )
+
+    value_at_income = _jump_aware_interp(
+        jnp.asarray(income), liquid_grid, next_value, jump_breakpoints, equality_owner
+    )
+    s0_consumption = liquid_grid + subsidy
+    endog_parts.append(liquid_grid)
+    value_parts.append(
+        _crra_utility(s0_consumption, crra) + discount_factor * value_at_income
+    )
+    policy_parts.append(s0_consumption)
+    marginal_parts.append(s0_consumption ** (-crra))
+    segment_parts.append(jnp.full_like(liquid_grid, next_segment + float(n_cliffs)))
+
+    return (
+        jnp.concatenate(value_parts),
+        jnp.concatenate(policy_parts),
+        jnp.concatenate(marginal_parts),
+        jnp.concatenate(endog_parts),
+        jnp.concatenate(segment_parts),
+    )
+
+
+def _jump_aware_interp(
+    query: FloatND,
+    grid: Float1D,
+    values: Float1D,
+    breakpoints: Float1D,
+    equality_owner: EqualityOwner,
+) -> FloatND:
+    """Interpolate `values` on `grid` without bridging the jumps at `breakpoints`.
+
+    The continuation carries a value jump at every cliff. Two split abscissae per
+    cliff carry the below-side and above-side values, each linearly extrapolated
+    from the two nearest same-side nodes; the owning side's node sits exactly on the
+    cliff. A query then interpolates within one side of every cliff and never bridges
+    a discontinuity — the N-cliff generalization of `_kink_aware_interp`.
+    """
+    n = grid.shape[0]
+    n_bp = breakpoints.shape[0]
+    below_nodes: list[Float1D] = []
+    below_values: list[Float1D] = []
+    above_nodes: list[Float1D] = []
+    above_values: list[Float1D] = []
+    for j in range(n_bp):
+        limit = breakpoints[j]
+        last_below = jnp.clip(jnp.sum(grid < limit) - 1, 1, n - 3).astype(jnp.int32)
+        left_at = _extrapolate(grid, values, last_below - 1, last_below, limit)
+        right_at = _extrapolate(grid, values, last_below + 1, last_below + 2, limit)
+        limit_at = jnp.asarray(limit, dtype=grid.dtype)
+        below = jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=grid.dtype))
+        above = jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=grid.dtype))
+        if equality_owner == "otherwise":
+            left_node, right_node = below, limit_at
+        else:
+            left_node, right_node = limit_at, above
+        below_nodes.append(left_node)
+        below_values.append(left_at)
+        above_nodes.append(right_node)
+        above_values.append(right_at)
+    aug_grid = jnp.concatenate([grid, jnp.stack(below_nodes), jnp.stack(above_nodes)])
+    aug_values = jnp.concatenate(
+        [values, jnp.stack(below_values), jnp.stack(above_values)]
+    )
+    order = jnp.argsort(aug_grid)
+    return jnp.interp(query, aug_grid[order], aug_values[order])
+
+
 def bqsegm_jump_step(
     *,
     next_value: Float1D,
