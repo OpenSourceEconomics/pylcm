@@ -10,6 +10,7 @@ schedule and solves each affine segment by EGM.
 """
 
 import jax.numpy as jnp
+from dags import rename_arguments
 
 import lcm
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
@@ -91,6 +92,7 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
+    budget_name: str = "coh",
 ) -> Model:
     """Create the two-regime (alive, dead) tax-bracket one-asset toy.
 
@@ -103,6 +105,10 @@ def build_model(
         liquid_max: Upper bound of the liquid grid.
         n_savings: Post-decision savings grid size (BQSEGM only).
         savings_max: Upper bound of the savings grid (BQSEGM only).
+        budget_name: DAG node name carrying cash-on-hand. The default `"coh"`
+            matches the solver convention; any other name exercises the solver's
+            `budget_target` selection, with the budget's consumers rewired to read
+            it.
 
     Returns:
         The assembled `Model`.
@@ -112,10 +118,14 @@ def build_model(
     final_age = ages.exact_values[-1]
     liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
 
+    next_liquid_func, feasible_func = next_liquid, feasible
+    if budget_name != "coh":
+        next_liquid_func = rename_arguments(next_liquid, mapper={"coh": budget_name})
+        feasible_func = rename_arguments(feasible, mapper={"coh": budget_name})
     alive_functions = {
         "utility": utility,
         "tax": tax,
-        "coh": coh,
+        budget_name: coh,
     }
     if variant == "brute":
         alive_solver = GridSearch()
@@ -123,7 +133,8 @@ def build_model(
         from lcm.solvers import BQSEGM  # noqa: PLC0415
 
         alive_solver = BQSEGM(
-            savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings)
+            savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
+            budget_target=budget_name,
         )
     else:
         msg = f"unknown variant {variant!r}; use 'brute' or 'bqsegm'."
@@ -136,8 +147,10 @@ def build_model(
             )
         },
         states={"liquid": liquid_grid},
-        state_transitions={"liquid": {"alive": next_liquid, "dead": next_liquid}},
-        constraints={"feasible": feasible},
+        state_transitions={
+            "liquid": {"alive": next_liquid_func, "dead": next_liquid_func}
+        },
+        constraints={"feasible": feasible_func},
         transition={
             "alive": MarkovTransition(prob_stay_alive),
             "dead": MarkovTransition(prob_die),
@@ -170,6 +183,7 @@ def build_params(
     tax_rate: float = 0.3,
     tax_exemption: float = 12.0,
     final_age_alive: float = 3.0,
+    budget_name: str = "coh",
 ) -> dict:
     """Get parameters for the tax-bracket one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
@@ -178,7 +192,7 @@ def build_params(
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
-            "coh": {"base_income": base_income},
+            budget_name: {"base_income": base_income},
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

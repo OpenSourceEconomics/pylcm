@@ -1461,6 +1461,14 @@ class BQSEGM(Solver):
 
     savings_grid: ContinuousGrid
     """Exogenous post-decision savings grid `s = coh - consumption` (>= 0)."""
+    budget_target: str = "coh"
+    """DAG node carrying the consumption budget (cash-on-hand).
+
+    Names the model node the continuous EGM inverts against, mirroring `DCEGM`'s
+    `resources=`. The default `"coh"` matches the solver's convention; a model
+    that names its budget node differently (`resources`, `cash_on_hand`) selects
+    it here.
+    """
 
     @property
     def requires_continuation_carries(self) -> bool:
@@ -1549,10 +1557,18 @@ class BQSEGM(Solver):
             and bool(context.state_action_space.discrete_actions)
         )
         schedule_spec = (
-            _collect_bqsegm_schedule_spec(context=context) if is_schedule else None
+            _collect_bqsegm_schedule_spec(
+                context=context, budget_target=self.budget_target
+            )
+            if is_schedule
+            else None
         )
         discrete_spec = (
-            _collect_bqsegm_discrete_spec(context=context) if is_discrete else None
+            _collect_bqsegm_discrete_spec(
+                context=context, budget_target=self.budget_target
+            )
+            if is_discrete
+            else None
         )
         case_spec = (
             _collect_bqsegm_case_spec(context=context)
@@ -2270,14 +2286,14 @@ class _BQSEGMScheduleSpec:
 
 
 def _collect_bqsegm_schedule_spec(
-    *, context: SolverBuildContext
+    *, context: SolverBuildContext, budget_target: str = "coh"
 ) -> _BQSEGMScheduleSpec:
     """Collect the single continuous piecewise-affine schedule of a regime.
 
     The schedule's thresholds are breakpoints on the liquid axis (the continuous
-    path supports a schedule on the liquid state directly); `coh` is composed from
-    the regime's functions as a smooth function of the liquid state, read per
-    interval to recover the active affine segment.
+    path supports a schedule on the liquid state directly); the budget node
+    (`budget_target`) is composed from the regime's functions as a smooth function
+    of the liquid state, read per interval to recover the active affine segment.
     """
     import inspect  # noqa: PLC0415
 
@@ -2304,7 +2320,7 @@ def _collect_bqsegm_schedule_spec(
             "map, which is not yet wired into the solver."
         )
         raise RegimeInitializationError(msg)
-    coh_dag = concatenate_functions(dict(context.functions), targets="coh")
+    coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
     coh_param_names = tuple(name for name in coh_args if name != liquid_state_name)
     threshold_param_names = tuple(
@@ -2483,7 +2499,7 @@ class _BQSEGMDiscreteSpec:
 
 
 def _collect_bqsegm_discrete_spec(
-    *, context: SolverBuildContext
+    *, context: SolverBuildContext, budget_target: str = "coh"
 ) -> _BQSEGMDiscreteSpec:
     """Collect the single binary/multi-valued discrete action of a smooth regime."""
     import inspect  # noqa: PLC0415
@@ -2498,7 +2514,7 @@ def _collect_bqsegm_discrete_spec(
     discrete_action_name = next(iter(space.discrete_actions))
     codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
     liquid_state_name = space.state_names[0]
-    coh_dag = concatenate_functions(dict(context.functions), targets="coh")
+    coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
     coh_param_names = tuple(
         name
