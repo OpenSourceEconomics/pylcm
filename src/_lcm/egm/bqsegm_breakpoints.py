@@ -23,7 +23,7 @@ import jax.numpy as jnp
 from _lcm.egm.bqsegm import BQSEGMRegistry
 from _lcm.typing import FunctionName
 from lcm.case_piece import EqualityOwner
-from lcm.typing import ScalarFloat
+from lcm.typing import Float1D, Int1D, ScalarFloat
 
 type BreakpointKind = Literal[
     "jump", "continuous_kink", "hard_constraint", "open_boundary"
@@ -123,3 +123,45 @@ def linear_asset_preimage(
     """
     slope, intercept = affine_coefficients(z_of_liquid)
     return (threshold - intercept) / slope
+
+
+def n_intervals(*, n_breakpoints: int) -> int:
+    """Return the interval count for a partition of N breakpoints on one axis.
+
+    N breakpoints merged on the liquid axis split it into N+1 ordered intervals.
+    This is a build-time static count — the number of per-cell EGM solves the
+    partition fans out into.
+
+    Args:
+        n_breakpoints: Number of asset breakpoints on the liquid axis.
+
+    Returns:
+        The number of intervals, `n_breakpoints + 1`.
+
+    """
+    return n_breakpoints + 1
+
+
+def interval_index(*, liquid_grid: Float1D, breakpoints: Float1D) -> Int1D:
+    """Assign each liquid grid point the index of the interval it falls in.
+
+    The breakpoints are sorted ascending and merged into one partition; interval
+    `i` spans `[b_{i-1}, b_i)` with the open ends `[-inf, b_0)` and
+    `[b_{N-1}, +inf)`. A liquid point exactly on a breakpoint joins the interval
+    above it (lower-closed, upper-open cells); which case's candidate ultimately
+    owns that exact point is resolved later by the branch-aware envelope using the
+    per-breakpoint equality owner. Coincident breakpoints leave an empty interval,
+    which is harmless.
+
+    Args:
+        liquid_grid: Liquid-state grid points to classify.
+        breakpoints: Asset breakpoints on the liquid axis, in any order.
+
+    Returns:
+        Per-grid-point interval index in `0 .. len(breakpoints)`.
+
+    """
+    sorted_breakpoints = jnp.sort(breakpoints)
+    return jnp.searchsorted(sorted_breakpoints, liquid_grid, side="right").astype(
+        jnp.int32
+    )

@@ -17,7 +17,9 @@ from _lcm.egm.bqsegm_breakpoints import (
     BreakpointSource,
     affine_coefficients,
     breakpoint_sources_from_registry,
+    interval_index,
     linear_asset_preimage,
+    n_intervals,
 )
 
 
@@ -124,4 +126,39 @@ def test_linear_asset_preimage_traces_a_runtime_threshold_and_slope():
     # z = 0.05 a + 12000, threshold 17000 -> a = 5000 / 0.05 = 100000.
     np.testing.assert_allclose(
         jitted(jnp.asarray(0.05), jnp.asarray(17_000.0)), 100_000.0, atol=1e-3
+    )
+
+
+def test_n_intervals_is_one_more_than_the_breakpoint_count():
+    """Merging N breakpoints on the asset axis yields N+1 ordered intervals."""
+    assert n_intervals(n_breakpoints=3) == 4
+    assert n_intervals(n_breakpoints=0) == 1
+
+
+def test_interval_index_sorts_unordered_breakpoints():
+    """Each liquid grid point lands in the interval bounded by sorted breakpoints."""
+    breakpoints = jnp.asarray([200_000.0, 50_000.0])
+    grid = jnp.asarray([0.0, 60_000.0, 250_000.0])
+    np.testing.assert_array_equal(
+        np.asarray(interval_index(liquid_grid=grid, breakpoints=breakpoints)),
+        np.asarray([0, 1, 2]),
+    )
+
+
+def test_interval_index_assigns_a_point_on_a_breakpoint_to_the_upper_interval():
+    """A liquid point exactly on a breakpoint joins the interval above it."""
+    breakpoints = jnp.asarray([50_000.0, 200_000.0])
+    grid = jnp.asarray([50_000.0, 200_000.0])
+    np.testing.assert_array_equal(
+        np.asarray(interval_index(liquid_grid=grid, breakpoints=breakpoints)),
+        np.asarray([1, 2]),
+    )
+
+
+def test_interval_index_with_no_breakpoints_is_a_single_interval():
+    """With no breakpoints every liquid point shares interval zero."""
+    grid = jnp.asarray([0.0, 1_000.0, 500_000.0])
+    np.testing.assert_array_equal(
+        np.asarray(interval_index(liquid_grid=grid, breakpoints=jnp.zeros((0,)))),
+        np.asarray([0, 0, 0]),
     )
