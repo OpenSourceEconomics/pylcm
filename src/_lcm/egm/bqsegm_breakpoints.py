@@ -13,12 +13,17 @@ the breakpoints into intervals, specializing per-interval formulas, and emitting
 per-kind candidates are downstream solver steps.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
+
+import jax
+import jax.numpy as jnp
 
 from _lcm.egm.bqsegm import BQSEGMRegistry
 from _lcm.typing import FunctionName
 from lcm.case_piece import EqualityOwner
+from lcm.typing import ScalarFloat
 
 type BreakpointKind = Literal[
     "jump", "continuous_kink", "hard_constraint", "open_boundary"
@@ -67,3 +72,54 @@ def breakpoint_sources_from_registry(
         for meta in registry.boundaries.values()
         for surface in meta.boundaries
     )
+
+
+def affine_coefficients(
+    z_of_liquid: Callable[[ScalarFloat], ScalarFloat],
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Recover the slope and intercept of an affine boundary variable.
+
+    For a boundary variable `z(assets) = slope * assets + intercept` the slope is
+    its derivative (constant for an affine map) and the intercept is its value at
+    zero assets. Both are read at zero, so the result is a traced quantity in any
+    runtime parameter the function closes over.
+
+    Args:
+        z_of_liquid: The boundary variable as a function of the scalar liquid
+            state, with every other argument bound.
+
+    Returns:
+        Tuple `(slope, intercept)` of the affine map in the liquid state.
+
+    """
+    zero = jnp.zeros(())
+    slope = jax.grad(z_of_liquid)(zero)
+    intercept = z_of_liquid(zero)
+    return slope, intercept
+
+
+def linear_asset_preimage(
+    z_of_liquid: Callable[[ScalarFloat], ScalarFloat],
+    *,
+    threshold: ScalarFloat,
+) -> ScalarFloat:
+    """Map a threshold in a monotone-affine boundary variable to its asset value.
+
+    A boundary `z(assets) == threshold` on a derived quantity becomes a breakpoint
+    on the liquid axis at `assets = (threshold - intercept) / slope`, the exact
+    inverse for an affine `z`. The monotonicity gate guarantees a nonzero,
+    single-signed slope, so the preimage is unique. The piecewise-affine inversion
+    needed once `z` bends (post-claiming SS-taxation tiers) is a later step.
+
+    Args:
+        z_of_liquid: The boundary variable as a function of the scalar liquid
+            state, with every other argument bound.
+        threshold: Threshold value in the boundary variable's units.
+
+    Returns:
+        The asset breakpoint — the liquid-state value where `z` equals the
+        threshold.
+
+    """
+    slope, intercept = affine_coefficients(z_of_liquid)
+    return (threshold - intercept) / slope

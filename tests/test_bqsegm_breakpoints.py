@@ -8,11 +8,16 @@ discontinuity kind, and the side that owns the exact boundary point — regardle
 of which `@lcm.case`/`@lcm.piece` form the author used.
 """
 
+import jax.numpy as jnp
+import numpy as np
+
 import lcm
 from _lcm.egm.bqsegm import collect_bqsegm_metadata
 from _lcm.egm.bqsegm_breakpoints import (
     BreakpointSource,
+    affine_coefficients,
     breakpoint_sources_from_registry,
+    linear_asset_preimage,
 )
 
 
@@ -68,3 +73,55 @@ def test_breakpoint_source_admits_an_open_boundary_kind():
         equality_owner="when",
     )
     assert source.kind == "open_boundary"
+
+
+def test_affine_coefficients_recover_slope_and_intercept():
+    """An affine boundary variable's slope and intercept are recovered exactly."""
+
+    def gross_income(assets):
+        return 0.04 * assets + 12_000.0
+
+    slope, intercept = affine_coefficients(gross_income)
+    np.testing.assert_allclose(slope, 0.04, atol=1e-9)
+    np.testing.assert_allclose(intercept, 12_000.0, atol=1e-6)
+
+
+def test_linear_asset_preimage_inverts_an_increasing_boundary_variable():
+    """A threshold in an increasing affine variable maps to its asset value."""
+
+    def gross_income(assets):
+        return 0.04 * assets + 12_000.0
+
+    asset_value = linear_asset_preimage(gross_income, threshold=jnp.asarray(20_000.0))
+    np.testing.assert_allclose(asset_value, 200_000.0, atol=1e-3)
+
+
+def test_linear_asset_preimage_inverts_a_decreasing_boundary_variable():
+    """A threshold in a decreasing affine variable maps to its asset value."""
+
+    def countable(assets):
+        return -0.5 * assets + 3_000.0
+
+    asset_value = linear_asset_preimage(countable, threshold=jnp.asarray(1_000.0))
+    np.testing.assert_allclose(asset_value, 4_000.0, atol=1e-6)
+
+
+def test_linear_asset_preimage_traces_a_runtime_threshold_and_slope():
+    """The preimage is a traced quantity in the runtime threshold and slope."""
+
+    def make_gross_income(rate_of_return):
+        def gross_income(assets):
+            return rate_of_return * assets + 12_000.0
+
+        return gross_income
+
+    def preimage(rate_of_return, threshold):
+        return linear_asset_preimage(
+            make_gross_income(rate_of_return), threshold=threshold
+        )
+
+    jitted = jnp.vectorize(preimage)
+    # z = 0.05 a + 12000, threshold 17000 -> a = 5000 / 0.05 = 100000.
+    np.testing.assert_allclose(
+        jitted(jnp.asarray(0.05), jnp.asarray(17_000.0)), 100_000.0, atol=1e-3
+    )
