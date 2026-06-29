@@ -17,10 +17,11 @@ from _lcm.typing import (
     MaxQOverAFunction,
     RegimeName,
     StateName,
+    _ParamsLeaf,
 )
 from _lcm.utils.dispatchers import productmap, vmap_1d
 from _lcm.utils.functools import allow_args, allow_only_kwargs
-from lcm.typing import BoolND, FloatND, IntND
+from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
 
 # Flat param name of the EV1 taste-shock scale (template pseudo-function entry).
 TASTE_SHOCK_SCALE_PARAM = "taste_shocks__scale"
@@ -118,7 +119,7 @@ def get_max_Q_over_a(
         )
         def max_Q_over_a(
             next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-            **states_actions_params: FloatND | IntND | BoolND,
+            **states_actions_params: _ParamsLeaf,
         ) -> FloatND:
             Q_arr, F_arr = Q_and_F(
                 next_regime_to_V_arr=next_regime_to_V_arr,
@@ -129,7 +130,9 @@ def get_max_Q_over_a(
             Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked
             smoothed, _ = logsum_and_softmax(
                 values=Qc,
-                scale=states_actions_params[TASTE_SHOCK_SCALE_PARAM],
+                scale=cast(
+                    "ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]
+                ),
                 axes=tuple(range(Qc.ndim)),
             )
             return smoothed
@@ -148,7 +151,7 @@ def get_max_Q_over_a(
         )
         def max_Q_over_a(
             next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-            **states_actions_params: FloatND | IntND | BoolND,
+            **states_actions_params: _ParamsLeaf,
         ) -> FloatND:
             Q_arr, F_arr = Q_and_F(
                 next_regime_to_V_arr=next_regime_to_V_arr,
@@ -264,9 +267,11 @@ def get_argmax_and_max_Q_over_a(
         )
         def argmax_and_max_Q_over_a(
             next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-            **states_actions_params: FloatND | IntND | BoolND,
+            **states_actions_params: _ParamsLeaf,
         ) -> tuple[IntND, FloatND]:
-            taste_shock_key = states_actions_params.pop("taste_shock_key")
+            taste_shock_key = cast(
+                "Array", states_actions_params.pop("taste_shock_key")
+            )
             Q_arr, F_arr = Q_and_F(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **states_actions_params,
@@ -277,7 +282,7 @@ def get_argmax_and_max_Q_over_a(
             Q_flat = Q_masked.reshape(n_discrete_cells, n_continuous_cells)
             continuous_argmax = jnp.argmax(Q_flat, axis=1)
             Qc = Q_flat.max(axis=1)
-            scale = states_actions_params[TASTE_SHOCK_SCALE_PARAM]
+            scale = cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM])
             noise = draw_taste_shock_noise(
                 key=taste_shock_key, shape=Qc.shape, scale=scale
             )
@@ -305,7 +310,7 @@ def get_argmax_and_max_Q_over_a(
         )
         def argmax_and_max_Q_over_a(
             next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-            **states_actions_params: FloatND | IntND | BoolND,
+            **states_actions_params: _ParamsLeaf,
         ) -> tuple[IntND, FloatND]:
             Q_arr, F_arr = Q_and_F(
                 next_regime_to_V_arr=next_regime_to_V_arr,

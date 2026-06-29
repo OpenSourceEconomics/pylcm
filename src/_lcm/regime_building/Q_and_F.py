@@ -22,11 +22,12 @@ from _lcm.typing import (
     TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
+    _ParamsLeaf,
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, Float1D, FloatND, IntND
+from lcm.typing import BoolND, Float1D, FloatND
 
 
 def get_Q_and_F(
@@ -175,7 +176,7 @@ def get_Q_and_F(
     )
     def Q_and_F(
         next_regime_to_V_arr: FloatND,
-        **states_actions_params: FloatND | IntND | BoolND,
+        **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
@@ -310,7 +311,7 @@ def _transform_and_average(
     values: FloatND,
     weights: FloatND,
     value_transform: Callable[..., FloatND] | None,
-    params: Mapping[str, FloatND | IntND | BoolND],
+    params: Mapping[str, _ParamsLeaf],
 ) -> FloatND:
     """Average the (optionally transformed) value over one target's stochastic lottery.
 
@@ -337,7 +338,7 @@ def _invert_joint(
     transformed: FloatND,
     *,
     inverse_value_transform: Callable[..., FloatND] | None,
-    params: Mapping[str, FloatND | IntND | BoolND],
+    params: Mapping[str, _ParamsLeaf],
 ) -> FloatND:
     """Apply `g_inv` once to the regime-mixed transformed continuation, or identity.
 
@@ -361,7 +362,7 @@ def _apply_continuation_operator(
     weights: FloatND,
     value_transform: Callable[..., FloatND] | None,
     inverse_value_transform: Callable[..., FloatND] | None,
-    params: Mapping[str, FloatND | IntND | BoolND],
+    params: Mapping[str, _ParamsLeaf],
 ) -> FloatND:
     """The single-lottery certainty equivalent `g_inv(E[g(V)])` (or the mean).
 
@@ -507,7 +508,7 @@ def get_compute_intermediates(
     )
     def compute_intermediates(
         next_regime_to_V_arr: FloatND,
-        **states_actions_params: FloatND | IntND | BoolND,
+        **states_actions_params: _ParamsLeaf,
     ) -> tuple[
         FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
     ]:
@@ -602,7 +603,7 @@ def get_Q_and_F_terminal(
     )
     def Q_and_F(
         next_regime_to_V_arr: FloatND,  # noqa: ARG001
-        **states_actions_params: FloatND | IntND | BoolND,
+        **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
 
