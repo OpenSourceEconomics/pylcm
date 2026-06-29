@@ -1,5 +1,36 @@
 # PLAN: Implement BQSEGM (case-piece EGM) off `feat/dcegm`
 
+## Implementation status (branch `feat/bqsegm`)
+
+Implemented and green (ty + prek + tests):
+
+- **B1** — `lcm.case_boundary` / `piece` / `boundary` / `smooth_helper` decorators
+  (metadata-only, claw-safe) + `BQSEGMCaseError`.
+- **B2** — `_lcm.egm.bqsegm` lowering: metadata collection, strict coverage / boundary
+  checks, per-case variant producer-maps.
+- **B3** — `_lcm.egm.bqsegm_validation` AST + JAXPR smoothness gate scoped to
+  user-economic nodes.
+- **B4a** — `_lcm.egm.bqsegm_segments`: NaN-dead masking + fold/hole `segment_id`.
+- **B4b** — endpoint-aware `envelope_at_query` (in-place, default-closed; RT1 green;
+  existing envelope suite unchanged).
+- **B4-core** — `BQSEGM` solver (`lcm.solvers.BQSEGM`) + `_lcm.egm.bqsegm_step` for the
+  1-D Medicaid toy: per-case EGM → mask → segment → envelope merge, reusing the 1-D EGM
+  period kernel and terminal carry machinery; `validate` runs the B3 AST gate.
+- **B4c (partial)** — topology-preserving continuation *read* (`_kink_aware_interp`):
+  reads each side of the boundary jump without bridging.
+- **B5** — brute-agreement tests on the toy.
+
+Validated against a dense brute/VFI oracle: the full case-piece pipeline agrees to
+<5e-4 on a jump boundary with a smooth (terminal) continuation, and to ~3e-3
+multi-period without a value jump.
+
+**Remaining (the hard EGM core):** multi-period propagation through a *recurring* value
+jump. A kinked continuation makes each case's endogenous grid non-monotone (the DC-EGM
+secondary kink); the per-case step still uses plain `jnp.interp`, so it does not yet
+resolve that fold. The fix is to run each case's candidates through the `envelope_at_query`
+upper envelope (B4b machinery is in place) instead of plain interpolation, and/or publish
+the switch-refined continuation carry (B4c full). Tracked as the next step.
+
 ## Status / provenance
 
 - Design docs (v2, in this dir) — `solver_choice_theory_bqsegm_egm_bruteforce.md` and
