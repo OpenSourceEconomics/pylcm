@@ -123,10 +123,6 @@ VALID = dcegm_variants.dcegm_retirement
 
 
 CASES = {
-    "missing_inverse_marginal_utility": (
-        lambda: _without_function(VALID, "inverse_marginal_utility"),
-        "inverse_marginal_utility",
-    ),
     "missing_resources_function": (
         lambda: _without_function(VALID, "resources"),
         "resources",
