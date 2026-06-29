@@ -8,6 +8,7 @@ kinked-but-monotone cash-on-hand; the step must reproduce the dense-consumption
 Bellman max where both are exact.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -515,3 +516,72 @@ def test_discrete_envelope_step_matches_brute_over_a_binary_choice():
     )
     # The higher-cash-on-hand option is always at least as good here.
     assert np.all(np.asarray(choice)[interior] == 0)
+
+
+def test_discrete_envelope_step_smooths_with_an_ev1_taste_shock():
+    """With a taste-shock scale the value is the scaled logsum over the choices.
+
+    EV1 taste shocks smooth the discrete choice: the value is `scale * logsumexp`
+    over the per-choice BQSEGM values, matching a dense brute that takes the same
+    logsum over each choice's Bellman max.
+    """
+    crra = 2.0
+    discount_factor = 0.95
+    gross_return = 1.03
+    income = 1.0
+    base_yes = 2.5
+    base_no = 2.0
+    scale = 0.5
+
+    liquid_grid = jnp.linspace(0.1, 30.0, 160)
+    savings_grid = jnp.linspace(0.0, 28.0, 200)
+
+    def next_value_of_liquid(liquid):
+        return _crra(liquid, crra)
+
+    def next_marginal_of_liquid(liquid):
+        return liquid ** (-crra)
+
+    choices = (
+        {
+            "coh_slopes": jnp.asarray([1.0]),
+            "coh_intercepts": jnp.asarray([base_yes]),
+            "breakpoints": jnp.zeros((0,)),
+        },
+        {
+            "coh_slopes": jnp.asarray([1.0]),
+            "coh_intercepts": jnp.asarray([base_no]),
+            "breakpoints": jnp.zeros((0,)),
+        },
+    )
+
+    value, _marginal, _policy, _choice = bqsegm_discrete_envelope_step(
+        next_value=next_value_of_liquid(liquid_grid),
+        next_marginal=next_marginal_of_liquid(liquid_grid),
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        crra=crra,
+        gross_return=gross_return,
+        income=income,
+        choices=choices,
+        taste_shock_scale=scale,
+    )
+
+    def brute_choice(base):
+        coh = liquid_grid + base
+        fractions = jnp.linspace(1e-4, 1.0, 4000)
+        consumption = fractions[:, None] * coh[None, :]
+        savings = coh[None, :] - consumption
+        next_liquid = gross_return * savings + income
+        val = _crra(consumption, crra) + discount_factor * next_value_of_liquid(
+            next_liquid
+        )
+        return jnp.max(val, axis=0)
+
+    stacked = jnp.stack([brute_choice(base_yes), brute_choice(base_no)])
+    brute = scale * jax.scipy.special.logsumexp(stacked / scale, axis=0)
+    interior = (np.asarray(liquid_grid) > 1.0) & (np.asarray(liquid_grid) < 28.0)
+    np.testing.assert_allclose(
+        np.asarray(value)[interior], np.asarray(brute)[interior], atol=2e-2, rtol=5e-3
+    )

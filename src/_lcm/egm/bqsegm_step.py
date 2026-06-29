@@ -30,6 +30,7 @@ the otherwise side ownership through the strict `<` / non-strict `>=` split.
 
 from collections.abc import Mapping
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.egm.bqsegm_segments import mask_dead_candidates, segment_ids_from_folds
@@ -198,6 +199,7 @@ def bqsegm_discrete_envelope_step(
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     choices: tuple[Mapping[str, Float1D], ...],
+    taste_shock_scale: float = 0.0,
 ) -> tuple[Float1D, Float1D, Float1D, IntND]:
     """Compose per-discrete-choice BQSEGM solves into a discrete upper envelope.
 
@@ -205,8 +207,14 @@ def bqsegm_discrete_envelope_step(
     differently. BQSEGM solves the continuous consumption/savings subproblem inside
     each branch; the discrete choice is then taken by the upper envelope over the
     branch values — the `BQSEGM ∘ DC-EGM` composition with the discrete envelope
-    outside. With no taste shocks the envelope is the hard maximum, so by Danskin's
-    theorem the winning branch's marginal value and policy carry through.
+    outside.
+
+    - With no taste shocks (`taste_shock_scale == 0`) the envelope is the hard
+      maximum, so by Danskin's theorem the winning branch's marginal value and
+      policy carry through.
+    - With an EV1 taste-shock scale the smoothed value is the scaled logsum and the
+      smoothed marginal is the choice-probability-weighted branch marginal; the
+      reported policy and choice are the modal branch's.
 
     Args:
         next_value: Next period's value on `liquid_grid`.
@@ -219,10 +227,11 @@ def bqsegm_discrete_envelope_step(
         income: Deterministic income added to next-period liquid.
         choices: Per-discrete-choice budgets, each a mapping with `coh_slopes`,
             `coh_intercepts`, and `breakpoints` for `bqsegm_multi_interval_step`.
+        taste_shock_scale: EV1 taste-shock scale; `0` is the hard maximum.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, consumption policy,
-        and the winning discrete-choice index, each on `liquid_grid`.
+        and the modal discrete-choice index, each on `liquid_grid`.
 
     """
     values: list[Float1D] = []
@@ -247,13 +256,26 @@ def bqsegm_discrete_envelope_step(
         policies.append(policy)
 
     value_stack = jnp.stack(values)
-    winning = jnp.argmax(value_stack, axis=0).astype(jnp.int32)
+    marginal_stack = jnp.stack(marginals)
+    policy_stack = jnp.stack(policies)
+    modal = jnp.argmax(value_stack, axis=0).astype(jnp.int32)
     index = jnp.arange(liquid_grid.shape[0])
+    if taste_shock_scale == 0.0:
+        return (
+            value_stack[modal, index],
+            marginal_stack[modal, index],
+            policy_stack[modal, index],
+            modal,
+        )
+    scaled = value_stack / taste_shock_scale
+    probabilities = jax.nn.softmax(scaled, axis=0)
+    smoothed_value = taste_shock_scale * jax.scipy.special.logsumexp(scaled, axis=0)
+    smoothed_marginal = jnp.sum(probabilities * marginal_stack, axis=0)
     return (
-        value_stack[winning, index],
-        jnp.stack(marginals)[winning, index],
-        jnp.stack(policies)[winning, index],
-        winning,
+        smoothed_value,
+        smoothed_marginal,
+        policy_stack[modal, index],
+        modal,
     )
 
 
