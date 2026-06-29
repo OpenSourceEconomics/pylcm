@@ -49,6 +49,7 @@ def bqsegm_multi_interval_step(
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
+    flat_interval_mask: tuple[bool, ...] | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of a piecewise-affine, continuous-budget regime by EGM.
 
@@ -59,9 +60,16 @@ def bqsegm_multi_interval_step(
     `coh = consumption + savings` — and the endogenous liquid is recovered by
     inverting `coh(liquid)` on the grid, leaving no interval seam to under-cover. The
     marginal value of liquid scales by the active interval's slope (the envelope
-    theorem through the affine budget). The hard borrowing corner competes over the
-    whole grid, and the interior path and corner merge by the branch-aware upper
-    envelope.
+    theorem through the affine budget).
+
+    A slope-0 interval is a hard-constraint floor: cash-on-hand is pinned at the
+    floor for every liquid in it, so the value is constant — the floor's own
+    optimum. The coh inversion is degenerate there, so a flat interval's interior
+    candidates are pulled onto its crossing breakpoint (where they link to the
+    rising interior just above) and a flat corner segment carries the constant value
+    across the interval below. The hard borrowing corner competes over the whole
+    grid, and the interior path, flat corners, and borrowing corner merge by the
+    branch-aware upper envelope.
 
     Args:
         next_value: Next period's value on `liquid_grid`.
@@ -75,15 +83,14 @@ def bqsegm_multi_interval_step(
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
+        flat_interval_mask: Static per-interval flag, length N+1, marking the
+            hard-constraint (slope-0) floor intervals. `None` means no floor.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
         policy, each on `liquid_grid`.
 
     """
-    # Cash-on-hand is continuous and monotone in liquid, so its inverse is a single
-    # continuous map: EGM runs once in coh space and the endogenous liquid is read
-    # by inverting `coh(liquid)` on the grid, with no interval seams to leave gaps.
     interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
     coh_grid = (
         coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
@@ -98,30 +105,84 @@ def bqsegm_multi_interval_step(
     liquid_endog = jnp.interp(coh_endog, coh_grid, liquid_grid)
     # Marginal value of liquid = u'(c) * d coh / d liquid; the slope is the active
     # interval's at the recovered liquid (envelope theorem through the budget).
-    slope_endog = coh_slopes[jnp.searchsorted(breakpoints, liquid_endog, side="right")]
+    endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
+    slope_endog = coh_slopes[endog_interval]
     value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = slope_endog * consumption ** (-crra)
+
+    upper_edges = jnp.concatenate([breakpoints, liquid_grid[-1:]])
+    lower_edges = jnp.concatenate([liquid_grid[:1], breakpoints])
+    flat_indices = _flat_interval_indices(
+        flat_interval_mask, n_intervals=coh_slopes.shape[0]
+    )
+    # Pull each flat interval's degenerate interior candidates onto its crossing
+    # breakpoint at the floor's own optimum, where they link to the rising interior
+    # just above; a flat corner below carries the constant value across the interval.
+    flat_corners: list[tuple[Float1D, Float1D, Float1D, Float1D]] = []
+    for i in flat_indices:
+        floor_value = jnp.interp(coh_intercepts[i], coh_endog, value_endog)
+        floor_policy = jnp.interp(coh_intercepts[i], coh_endog, consumption)
+        in_flat = endog_interval == i
+        liquid_endog = jnp.where(in_flat, upper_edges[i], liquid_endog)
+        value_endog = jnp.where(in_flat, floor_value, value_endog)
+        consumption = jnp.where(in_flat, floor_policy, consumption)
+        marginal_endog = jnp.where(in_flat, 0.0, marginal_endog)
+        flat_corners.append(
+            (
+                jnp.stack([lower_edges[i], upper_edges[i]]),
+                jnp.full((2,), floor_value),
+                jnp.full((2,), floor_policy),
+                jnp.zeros((2,)),
+            )
+        )
     # A non-concave (convex-kinked) budget can fold the interior path back, so keep
     # its monotone runs apart for the upper envelope.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
+    next_segment = jnp.nanmax(interior_segment) + 1.0
+
+    endog_parts: list[Float1D] = [liquid_endog]
+    value_parts: list[Float1D] = [value_endog]
+    policy_parts: list[Float1D] = [consumption]
+    marginal_parts: list[Float1D] = [marginal_endog]
+    segment_parts: list[Float1D] = [interior_segment]
 
     # Hard borrowing corner: save nothing, consume all of this point's cash-on-hand,
     # land next-period liquid at `income`. A candidate over the whole grid, since the
     # constraint binds wherever the no-save corner beats the Euler path.
     value_at_income = jnp.interp(jnp.asarray(income), liquid_grid, next_value)
-    s0_value = _crra_utility(coh_grid, crra) + discount_factor * value_at_income
-    s0_marginal = coh_slopes[interval_of_grid] * coh_grid ** (-crra)
-    s0_segment = jnp.full_like(liquid_grid, jnp.nanmax(interior_segment) + 1.0)
+    endog_parts.append(liquid_grid)
+    value_parts.append(
+        _crra_utility(coh_grid, crra) + discount_factor * value_at_income
+    )
+    policy_parts.append(coh_grid)
+    marginal_parts.append(coh_slopes[interval_of_grid] * coh_grid ** (-crra))
+    segment_parts.append(jnp.full_like(liquid_grid, next_segment))
+
+    for offset, (edges, values, policies, marginals) in enumerate(flat_corners):
+        endog_parts.append(edges)
+        value_parts.append(values)
+        policy_parts.append(policies)
+        marginal_parts.append(marginals)
+        segment_parts.append(jnp.full((2,), next_segment + 1.0 + float(offset)))
 
     value, policy, marginal = envelope_at_query(
-        endog_grid=jnp.concatenate([liquid_endog, liquid_grid]),
-        policy=jnp.concatenate([consumption, coh_grid]),
-        value=jnp.concatenate([value_endog, s0_value]),
-        marginal=jnp.concatenate([marginal_endog, s0_marginal]),
-        segment_id=jnp.concatenate([interior_segment, s0_segment]),
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
         x_query=liquid_grid,
     )
     return value, marginal, policy
+
+
+def _flat_interval_indices(
+    flat_interval_mask: tuple[bool, ...] | None, *, n_intervals: int
+) -> tuple[int, ...]:
+    """Return the indices of the hard-constraint (slope-0) floor intervals."""
+    if flat_interval_mask is None:
+        return ()
+    return tuple(i for i in range(n_intervals) if flat_interval_mask[i])
 
 
 def bqsegm_one_asset_step(

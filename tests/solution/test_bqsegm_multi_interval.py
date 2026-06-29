@@ -245,3 +245,64 @@ def test_multi_interval_step_matches_brute_through_two_continuous_kinks():
     np.testing.assert_allclose(
         np.asarray(value)[interior], np.asarray(brute)[interior], atol=2e-2, rtol=5e-3
     )
+
+
+def test_multi_interval_step_matches_brute_through_a_hard_constraint_floor():
+    """A cash-on-hand floor (a slope-0 segment) yields a flat value where it binds.
+
+    Cash-on-hand is topped up to a floor below a threshold liquid level, so its
+    slope is zero there and the value is constant across the floored region. The
+    step's flat-corner handling reproduces the dense Bellman max both where the
+    floor binds and on the unconstrained segment above it.
+    """
+    crra = 2.0
+    discount_factor = 0.95
+    gross_return = 1.03
+    income = 1.0
+    base = 2.0
+    floor = 5.0
+    knot = floor - base
+
+    liquid_grid = jnp.linspace(0.1, 30.0, 160)
+    savings_grid = jnp.linspace(0.0, 28.0, 200)
+
+    def coh_of_liquid(liquid):
+        return jnp.maximum(liquid + base, floor)
+
+    def next_value_of_liquid(liquid):
+        return _crra(liquid, crra)
+
+    def next_marginal_of_liquid(liquid):
+        return liquid ** (-crra)
+
+    coh_slopes = jnp.asarray([0.0, 1.0])
+    coh_intercepts = jnp.asarray([floor, base])
+    breakpoints = jnp.asarray([knot])
+
+    value, _marginal, _policy = bqsegm_multi_interval_step(
+        next_value=next_value_of_liquid(liquid_grid),
+        next_marginal=next_marginal_of_liquid(liquid_grid),
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        crra=crra,
+        gross_return=gross_return,
+        income=income,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        flat_interval_mask=(True, False),
+    )
+    brute = _dense_brute_value(
+        liquid_grid=liquid_grid,
+        coh_of_liquid=coh_of_liquid,
+        next_value_of_liquid=next_value_of_liquid,
+        crra=crra,
+        discount_factor=discount_factor,
+        gross_return=gross_return,
+        income=income,
+    )
+    interior = (np.asarray(liquid_grid) > 0.5) & (np.asarray(liquid_grid) < 28.0)
+    np.testing.assert_allclose(
+        np.asarray(value)[interior], np.asarray(brute)[interior], atol=2e-2, rtol=5e-3
+    )
