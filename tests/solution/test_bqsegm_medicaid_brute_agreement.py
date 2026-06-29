@@ -42,23 +42,28 @@ def _last_alive_period(solution: Mapping[int, Mapping[str, object]]) -> int:
     return max(period for period in solution if "alive" in solution[period])
 
 
-def test_bqsegm_matches_brute_through_a_jump_with_smooth_continuation():
-    """At the last working age the case-piece solve equals brute across assets.
+def test_bqsegm_matches_brute_through_a_recurring_jump_every_age():
+    """The case-piece solve equals brute at every working age, jump and all.
 
-    The continuation is the smooth terminal bequest, so the only non-smoothness is
-    the within-period Medicaid jump — which BQSEGM resolves exactly. Agreement holds
-    on the asset interior including a neighbourhood of the limit.
+    The Medicaid jump recurs in every period's continuation, so each period both
+    carries a within-period jump and reads a jumped continuation. BQSEGM resolves
+    the within-period jump and the boundary-targeting corner (save exactly to the
+    limit for the higher eligible continuation), so agreement holds across the
+    whole asset interior, every period.
     """
     params = toy.build_params()
     bqsegm = _solve("bqsegm", params)
     brute = _solve("brute", params, n_consumption=1500)
-    period = _last_alive_period(brute)
-    np.testing.assert_allclose(
-        np.asarray(bqsegm[period]["alive"])[_INTERIOR],
-        np.asarray(brute[period]["alive"])[_INTERIOR],
-        atol=2e-2,
-        rtol=5e-3,
-    )
+    for period in brute:
+        if "alive" not in brute[period] or "alive" not in bqsegm[period]:
+            continue
+        np.testing.assert_allclose(
+            np.asarray(bqsegm[period]["alive"])[_INTERIOR],
+            np.asarray(brute[period]["alive"])[_INTERIOR],
+            atol=2e-2,
+            rtol=5e-3,
+            err_msg=f"period={period}",
+        )
 
 
 def test_bqsegm_matches_brute_multiperiod_without_a_value_jump():

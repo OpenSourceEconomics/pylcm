@@ -150,16 +150,47 @@ def _case_step(
     value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
 
-    # A kinked continuation makes `liquid_endog` fold back (the DC-EGM secondary
-    # kink), so the interior solution is the upper envelope over the candidate
-    # path, not a plain monotone interpolation.
-    segment_id = segment_ids_from_folds(endog_grid=liquid_endog)
+    # The continuation jumps down at `asset_limit`, so saving exactly to the
+    # boundary (`next_liquid -> asset_limit` from below) earns the higher
+    # `when`-side continuation. This boundary-targeting choice is a corner w.r.t.
+    # the continuation kink that the Euler equation never produces, so it is added
+    # as its own candidate branch. Saving the fixed `s_kink` maps current liquid to
+    # itself (`endog == liquid`), so the branch is the curve `c = coh - s_kink`.
+    s_kink = (asset_limit - income) / gross_return
+    n = liquid_grid.shape[0]
+    last_below = jnp.clip(jnp.sum(liquid_grid < asset_limit) - 1, 1, n - 3).astype(
+        jnp.int32
+    )
+    value_limit_minus = _extrapolate(
+        liquid_grid, next_value, last_below - 1, last_below, asset_limit
+    )
+    kink_consumption = liquid_grid + subsidy - s_kink
+    kink_value = (
+        _crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
+    )
+    kink_marginal = kink_consumption ** (-crra)
+    kink_valid = (kink_consumption > 0.0) & (s_kink >= 0.0)
+    kink_grid, kink_value, kink_consumption, kink_marginal = mask_dead_candidates(
+        endog_grid=liquid_grid,
+        value=kink_value,
+        policy=kink_consumption,
+        marginal=kink_marginal,
+        valid=kink_valid,
+    )
+
+    # A kinked continuation also folds `liquid_endog` back (the DC-EGM secondary
+    # kink), so the interior solution is the upper envelope over both the Euler
+    # candidate path and the boundary-targeting branch, not a monotone interp.
+    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
+    kink_segment = jnp.where(
+        jnp.isnan(kink_grid), jnp.nan, jnp.nanmax(interior_segment) + 1.0
+    )
     interior_value, interior_consumption, interior_marginal = envelope_at_query(
-        endog_grid=liquid_endog,
-        policy=consumption,
-        value=value_endog,
-        marginal=marginal_endog,
-        segment_id=segment_id,
+        endog_grid=jnp.concatenate([liquid_endog, kink_grid]),
+        policy=jnp.concatenate([consumption, kink_consumption]),
+        value=jnp.concatenate([value_endog, kink_value]),
+        marginal=jnp.concatenate([marginal_endog, kink_marginal]),
+        segment_id=jnp.concatenate([interior_segment, kink_segment]),
         x_query=liquid_grid,
     )
 
