@@ -12,7 +12,7 @@ side ownership of the exact boundary, matching `equality="otherwise"`.
 
 import jax.numpy as jnp
 
-from _lcm.egm.bqsegm_segments import mask_dead_candidates
+from _lcm.egm.bqsegm_segments import mask_dead_candidates, segment_ids_from_folds
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
 
@@ -148,11 +148,22 @@ def _case_step(
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     liquid_endog = consumption + savings_grid - subsidy
     value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    marginal_endog = consumption ** (-crra)
 
-    interior_value = jnp.interp(liquid_grid, liquid_endog, value_endog)
-    interior_consumption = jnp.interp(liquid_grid, liquid_endog, consumption)
+    # A kinked continuation makes `liquid_endog` fold back (the DC-EGM secondary
+    # kink), so the interior solution is the upper envelope over the candidate
+    # path, not a plain monotone interpolation.
+    segment_id = segment_ids_from_folds(endog_grid=liquid_endog)
+    interior_value, interior_consumption, interior_marginal = envelope_at_query(
+        endog_grid=liquid_endog,
+        policy=consumption,
+        value=value_endog,
+        marginal=marginal_endog,
+        segment_id=segment_id,
+        x_query=liquid_grid,
+    )
 
-    constrained = liquid_grid < liquid_endog[0]
+    constrained = liquid_grid < jnp.min(liquid_endog)
     value_at_zero_savings = _kink_aware_interp(
         jnp.asarray(income), liquid_grid, next_value, asset_limit
     )
@@ -165,7 +176,9 @@ def _case_step(
         constrained, constrained_consumption, interior_consumption
     )
     value = jnp.where(constrained, constrained_value, interior_value)
-    marginal = consumption_on_grid ** (-crra)
+    marginal = jnp.where(
+        constrained, constrained_consumption ** (-crra), interior_marginal
+    )
     return value, marginal, consumption_on_grid
 
 
