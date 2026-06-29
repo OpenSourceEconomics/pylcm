@@ -3,17 +3,26 @@
 A binary case boundary on the liquid state (`liquid < asset_limit`) shifts an
 additive subsidy into cash-on-hand. Within each case the budget is smooth, so the
 period solves by ordinary 1-D EGM on `coh = liquid + subsidy`; the recovered
-endogenous state is `liquid = coh - subsidy`. The two cases are then merged on the
-liquid grid by the branch-aware upper envelope after NaN-dead masking each case to
-its consistent region — the `when` case where the predicate holds, the `otherwise`
-case where it fails. The strict `<` / non-strict `>=` split gives the `otherwise`
-side ownership of the exact boundary, matching `equality="otherwise"`.
+endogenous state is `liquid = coh - subsidy`. Each case's value is the upper
+envelope over three candidate branches on the liquid grid:
+
+- the Euler interior path from the EGM inversion;
+- the boundary-targeting branch that saves just enough to land on the eligible
+  side of the boundary and earn its higher continuation;
+- the hard borrowing corner that saves nothing and consumes all cash-on-hand.
+
+The two cases are then merged by the branch-aware upper envelope after NaN-dead
+masking each case to its consistent region — the `when` case where the predicate
+holds, the `otherwise` case where it fails. The `equality_owner` of the boundary
+fixes which side owns the exact boundary point: `equality_owner="otherwise"` gives
+the otherwise side ownership through the strict `<` / non-strict `>=` split.
 """
 
 import jax.numpy as jnp
 
 from _lcm.egm.bqsegm_segments import mask_dead_candidates, segment_ids_from_folds
 from _lcm.egm.upper_envelope.query import envelope_at_query
+from lcm.case_piece import EqualityOwner
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
 
 
@@ -30,6 +39,7 @@ def bqsegm_one_asset_step(
     subsidy_when: ScalarFloat | float,
     subsidy_otherwise: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of the Medicaid one-asset toy by case-piece EGM.
 
@@ -45,6 +55,7 @@ def bqsegm_one_asset_step(
         subsidy_when: Subsidy into cash-on-hand where the predicate holds.
         subsidy_otherwise: Subsidy where the predicate fails.
         asset_limit: Medicaid asset limit; the predicate is `liquid < asset_limit`.
+        equality_owner: Predicate side owning the exact boundary point.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -62,6 +73,7 @@ def bqsegm_one_asset_step(
         income=income,
         subsidy=subsidy_when,
         asset_limit=asset_limit,
+        equality_owner=equality_owner,
     )
     otherwise_value, otherwise_marginal, otherwise_policy = _case_step(
         next_value=next_value,
@@ -74,10 +86,18 @@ def bqsegm_one_asset_step(
         income=income,
         subsidy=subsidy_otherwise,
         asset_limit=asset_limit,
+        equality_owner=equality_owner,
     )
 
-    when_valid = liquid_grid < asset_limit
-    otherwise_valid = liquid_grid >= asset_limit
+    # The owning side keeps the exact boundary point: `equality_owner="otherwise"`
+    # gives it to the otherwise case through the strict `<` / non-strict `>=`
+    # split; `equality_owner="when"` mirrors the split the other way.
+    if equality_owner == "otherwise":
+        when_valid = liquid_grid < asset_limit
+        otherwise_valid = liquid_grid >= asset_limit
+    else:
+        when_valid = liquid_grid <= asset_limit
+        otherwise_valid = liquid_grid > asset_limit
     when = mask_dead_candidates(
         endog_grid=liquid_grid,
         value=when_value,
@@ -127,40 +147,111 @@ def _case_step(
     income: ScalarFloat | float,
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
 ) -> tuple[Float1D, Float1D, Float1D]:
-    """Solve one case's smooth 1-D consumption--saving sub-problem by EGM.
+    """Solve one case's 1-D consumption--saving sub-problem as an upper envelope.
 
     `coh = liquid + subsidy`, so the endogenous state recovered from the Euler
-    inversion is `liquid = consumption + savings - subsidy`. Below the smallest
-    endogenous liquid the borrowing constraint binds: the agent consumes all
-    cash-on-hand and saves nothing. The continuation is read kink-aware at
-    `asset_limit`: the next-period value and marginal jump there, so a query
-    landing in the boundary cell reads the correct one-sided branch rather than a
-    bridged average (the topology-preserving continuation read).
+    inversion is `liquid = consumption + savings - subsidy`. A jumped continuation
+    is nonconcave, so the case value is the upper envelope over three candidate
+    branches rather than the bare Euler path:
+
+    - the Euler interior path;
+    - the boundary-targeting branch that saves to land just inside the eligible
+      side of the boundary (`next_liquid -> asset_limit` from below) for the higher
+      eligible continuation — a corner the Euler equation never produces;
+    - the hard borrowing corner `s = 0`, consuming all cash-on-hand.
+
+    The continuation is read kink-aware at `asset_limit`: a query landing in the
+    boundary cell reads the equality-owning side rather than a bridged average.
     """
     gross_return = 1.0 + return_liquid
     next_liquid = gross_return * savings_grid + income
-    value_next = _kink_aware_interp(next_liquid, liquid_grid, next_value, asset_limit)
+    value_next = _kink_aware_interp(
+        next_liquid, liquid_grid, next_value, asset_limit, equality_owner
+    )
     marginal_next = _kink_aware_interp(
-        next_liquid, liquid_grid, next_marginal, asset_limit
+        next_liquid, liquid_grid, next_marginal, asset_limit, equality_owner
     )
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     liquid_endog = consumption + savings_grid - subsidy
     value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
+    # A kinked continuation folds `liquid_endog` back (the DC-EGM secondary kink),
+    # so the interior path may carry several monotone segments.
+    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
 
-    # The continuation jumps down at `asset_limit`, so saving exactly to the
-    # boundary (`next_liquid -> asset_limit` from below) earns the higher
-    # `when`-side continuation. This boundary-targeting choice is a corner w.r.t.
-    # the continuation kink that the Euler equation never produces, so it is added
-    # as its own candidate branch. Saving the fixed `s_kink` maps current liquid to
-    # itself (`endog == liquid`), so the branch is the curve `c = coh - s_kink`.
-    s_kink = (asset_limit - income) / gross_return
     n = liquid_grid.shape[0]
     last_below = jnp.clip(jnp.sum(liquid_grid < asset_limit) - 1, 1, n - 3).astype(
         jnp.int32
     )
+    kink_grid, kink_value, kink_consumption, kink_marginal = _boundary_targeting_branch(
+        liquid_grid=liquid_grid,
+        next_value=next_value,
+        discount_factor=discount_factor,
+        crra=crra,
+        gross_return=gross_return,
+        income=income,
+        subsidy=subsidy,
+        asset_limit=asset_limit,
+        last_below=last_below,
+    )
+    kink_segment = jnp.where(
+        jnp.isnan(kink_grid), jnp.nan, jnp.nanmax(interior_segment) + 1.0
+    )
+
+    # Hard borrowing corner: saving nothing consumes all cash-on-hand and lands
+    # next-period liquid at `income`. Because a jumped continuation is nonconcave,
+    # this corner can dominate the Euler path even where an Euler segment brackets
+    # the query, so it is an envelope candidate over the whole grid — not only the
+    # below-grid constrained tail a concave EGM shortcut would assume.
+    value_at_income = _kink_aware_interp(
+        jnp.asarray(income), liquid_grid, next_value, asset_limit, equality_owner
+    )
+    s0_consumption = liquid_grid + subsidy
+    s0_value = _crra_utility(s0_consumption, crra) + discount_factor * value_at_income
+    s0_marginal = s0_consumption ** (-crra)
+    s0_segment = jnp.full_like(liquid_grid, jnp.nanmax(interior_segment) + 2.0)
+
+    value, consumption_on_grid, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate([liquid_endog, kink_grid, liquid_grid]),
+        policy=jnp.concatenate([consumption, kink_consumption, s0_consumption]),
+        value=jnp.concatenate([value_endog, kink_value, s0_value]),
+        marginal=jnp.concatenate([marginal_endog, kink_marginal, s0_marginal]),
+        segment_id=jnp.concatenate([interior_segment, kink_segment, s0_segment]),
+        x_query=liquid_grid,
+    )
+    return value, marginal, consumption_on_grid
+
+
+def _boundary_targeting_branch(
+    *,
+    liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    gross_return: ScalarFloat | float,
+    income: ScalarFloat | float,
+    subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    last_below: IntND,
+) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    """Build the save-to-the-boundary candidate as a masked grid-aligned branch.
+
+    Saving exactly to the limit lands `next_liquid == asset_limit`, which the
+    otherwise side owns, so it earns the lower continuation. To earn the higher
+    eligible continuation the branch targets the open left limit `asset_limit⁻`
+    (one ulp below), so the reported policy and the eligible-side value it is
+    paired with are mutually consistent rather than a supremum dressed as a
+    maximum. Saving the fixed amount maps current liquid to itself
+    (`endog == liquid`), so the branch is the curve `c = coh - s_kink`.
+    """
+    limit_minus = jnp.nextafter(
+        jnp.asarray(asset_limit, dtype=liquid_grid.dtype),
+        jnp.asarray(-jnp.inf, dtype=liquid_grid.dtype),
+    )
+    s_kink = (limit_minus - income) / gross_return
     value_limit_minus = _extrapolate(
         liquid_grid, next_value, last_below - 1, last_below, asset_limit
     )
@@ -170,7 +261,7 @@ def _case_step(
     )
     kink_marginal = kink_consumption ** (-crra)
     kink_valid = (kink_consumption > 0.0) & (s_kink >= 0.0)
-    kink_grid, kink_value, kink_consumption, kink_marginal = mask_dead_candidates(
+    return mask_dead_candidates(
         endog_grid=liquid_grid,
         value=kink_value,
         policy=kink_consumption,
@@ -178,65 +269,46 @@ def _case_step(
         valid=kink_valid,
     )
 
-    # A kinked continuation also folds `liquid_endog` back (the DC-EGM secondary
-    # kink), so the interior solution is the upper envelope over both the Euler
-    # candidate path and the boundary-targeting branch, not a monotone interp.
-    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    kink_segment = jnp.where(
-        jnp.isnan(kink_grid), jnp.nan, jnp.nanmax(interior_segment) + 1.0
-    )
-    interior_value, interior_consumption, interior_marginal = envelope_at_query(
-        endog_grid=jnp.concatenate([liquid_endog, kink_grid]),
-        policy=jnp.concatenate([consumption, kink_consumption]),
-        value=jnp.concatenate([value_endog, kink_value]),
-        marginal=jnp.concatenate([marginal_endog, kink_marginal]),
-        segment_id=jnp.concatenate([interior_segment, kink_segment]),
-        x_query=liquid_grid,
-    )
-
-    constrained = liquid_grid < jnp.min(liquid_endog)
-    value_at_zero_savings = _kink_aware_interp(
-        jnp.asarray(income), liquid_grid, next_value, asset_limit
-    )
-    constrained_consumption = liquid_grid + subsidy
-    constrained_value = (
-        _crra_utility(constrained_consumption, crra)
-        + discount_factor * value_at_zero_savings
-    )
-    consumption_on_grid = jnp.where(
-        constrained, constrained_consumption, interior_consumption
-    )
-    value = jnp.where(constrained, constrained_value, interior_value)
-    marginal = jnp.where(
-        constrained, constrained_consumption ** (-crra), interior_marginal
-    )
-    return value, marginal, consumption_on_grid
-
 
 def _kink_aware_interp(
     query: FloatND,
     grid: Float1D,
     values: Float1D,
     limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
 ) -> FloatND:
     """Interpolate `values` on `grid` without bridging the jump at `limit`.
 
     The continuation carries a value jump at the case boundary: the grid node
     just below `limit` holds the `when`-side value and the node just above holds
     the `otherwise`-side value, so a plain linear interpolation across that cell
-    returns a meaningless average. Two extra abscissae are inserted at `limit`
-    (split by a negligible epsilon) carrying each side's value, linearly
-    extrapolated from the two nearest same-side nodes. A query below `limit` then
-    interpolates within the `when` branch, a query above within the `otherwise`
-    branch, and neither bridges the discontinuity.
+    returns a meaningless average. Two extra abscissae split the jump at `limit`,
+    each carrying its side's value linearly extrapolated from the two nearest
+    same-side nodes. The owning side's node sits exactly on `limit`, so a query at
+    exactly the boundary reads the owning side:
+
+    - `equality_owner="otherwise"`: the otherwise (upper) value sits on `limit`
+      and the `when` value one ulp below;
+    - `equality_owner="when"`: the `when` (lower) value sits on `limit` and the
+      otherwise value one ulp above.
+
+    A query strictly below `limit` then interpolates within the `when` branch, a
+    query strictly above within the `otherwise` branch, and neither bridges the
+    discontinuity.
     """
     n = grid.shape[0]
     last_below = jnp.clip(jnp.sum(grid < limit) - 1, 1, n - 3).astype(jnp.int32)
     left_at_limit = _extrapolate(grid, values, last_below - 1, last_below, limit)
     right_at_limit = _extrapolate(grid, values, last_below + 1, last_below + 2, limit)
 
-    eps = jnp.asarray(1e-9, dtype=grid.dtype)
-    aug_grid = jnp.concatenate([grid, jnp.stack([limit - eps, limit + eps])])
+    limit_at = jnp.asarray(limit, dtype=grid.dtype)
+    below = jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=grid.dtype))
+    above = jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=grid.dtype))
+    if equality_owner == "otherwise":
+        left_node, right_node = below, limit_at
+    else:
+        left_node, right_node = limit_at, above
+    aug_grid = jnp.concatenate([grid, jnp.stack([left_node, right_node])])
     aug_values = jnp.concatenate([values, jnp.stack([left_at_limit, right_at_limit])])
     order = jnp.argsort(aug_grid)
     return jnp.interp(query, aug_grid[order], aug_values[order])

@@ -32,6 +32,7 @@ from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.egm.bqsegm import BQSEGMRegistry
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.outer_envelope import (
     finalize_outer_envelope,
@@ -61,6 +62,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
+from lcm.case_piece import EqualityOwner
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
     ActionName,
@@ -1469,18 +1471,41 @@ class BQSEGM(Solver):
         """Check case coverage and reject hidden branching in user pieces.
 
         Collecting the metadata enforces strict coverage (each split output has a
-        `when` and an `otherwise` piece, every boundary declares a surface). The
-        AST gate then rejects Python branching / hidden comparisons in the user
-        pieces and any non-comparison branching in the boundary predicate.
+        `when` and an `otherwise` piece, every boundary declares a surface). Two
+        complementary gates then run on the user pieces:
+
+        - AST: rejects Python branching / hidden comparisons in a smooth piece and
+          any non-comparison branching in the boundary predicate.
+        - JAXPR: traces each smooth piece and rejects piecewise primitives
+          (`select_n`, `lt`, …) hidden inside a called helper that the AST cannot
+          see. A piece attested with `lcm.smooth_helper` is exempt.
+
+        The boundary predicate is meant to compare, so only the AST gate runs on
+        it; the JAXPR gate runs on the smooth pieces alone.
         """
+        import inspect  # noqa: PLC0415
+
+        import jax.numpy as jnp  # noqa: PLC0415
+
         from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
-        from _lcm.egm.bqsegm_validation import find_ast_violations  # noqa: PLC0415
+        from _lcm.egm.bqsegm_validation import (  # noqa: PLC0415
+            find_ast_violations,
+            find_jaxpr_violations,
+            is_smooth_helper,
+        )
 
         functions = cast(
             "Mapping[FunctionName, Callable[..., object]]",
             context.user_regimes[context.regime_name].functions,
         )
         registry = collect_bqsegm_metadata(functions=functions)
+        space = context.state_action_space
+        _validate_bqsegm_boundary_scope(
+            registry=registry,
+            functions=functions,
+            liquid_state_name=space.state_names[0],
+            reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
+        )
         violations: list[str] = []
         for predicate_name in registry.boundaries:
             violations += find_ast_violations(
@@ -1488,8 +1513,14 @@ class BQSEGM(Solver):
             )
         for piece_set in registry.piece_sets:
             for piece_name in (piece_set.when_func, piece_set.otherwise_func):
-                violations += find_ast_violations(
-                    functions[piece_name], mode="smooth_user"
+                piece = functions[piece_name]
+                if is_smooth_helper(piece):
+                    continue
+                violations += find_ast_violations(piece, mode="smooth_user")
+                n_params = len(inspect.signature(piece).parameters)
+                abstract_args = tuple(jnp.asarray(1.0) for _ in range(n_params))
+                violations += find_jaxpr_violations(
+                    piece, abstract_args=abstract_args, mode="smooth_user"
                 )
         if violations:
             from lcm.exceptions import BQSEGMCaseError  # noqa: PLC0415
@@ -2008,6 +2039,74 @@ class _BQSEGMCaseSpec:
     """Qualified-name prefix of the boundary predicate's params."""
     threshold_name: str
     """Name of the predicate's threshold parameter."""
+    equality_owner: EqualityOwner
+    """Predicate side owning the exact-boundary point (`when` or `otherwise`)."""
+
+
+# The only split output v1 knows how to route — an additive cash-on-hand shift.
+_BQSEGM_V1_OUTPUT = "subsidy"
+
+
+def _validate_bqsegm_boundary_scope(
+    *,
+    registry: BQSEGMRegistry,
+    functions: Mapping[FunctionName, Callable[..., object]],
+    liquid_state_name: str,
+    reserved_names: frozenset[str],
+) -> None:
+    """Reject case-piece declarations outside the v1 BQSEGM scope.
+
+    v1 implements exactly one binary split of an additive cash-on-hand `subsidy`
+    across one jump boundary on the liquid state, owned by the `otherwise` side,
+    with pieces that read only the flat params (not states or actions). Anything
+    else (a `when`-owned boundary, a continuous kink or hard constraint, a
+    boundary on another variable, a non-`subsidy` output, a state-dependent piece)
+    is rejected here rather than silently solved under the wrong convention.
+    """
+    import inspect  # noqa: PLC0415
+
+    from lcm.exceptions import BQSEGMCaseError  # noqa: PLC0415
+
+    for piece_set in registry.piece_sets:
+        if piece_set.output != _BQSEGM_V1_OUTPUT:
+            msg = (
+                f"BQSEGM v1 only splits an additive cash-on-hand "
+                f"{_BQSEGM_V1_OUTPUT!r} output; the regime splits "
+                f"{piece_set.output!r}. Richer split outputs are deferred."
+            )
+            raise BQSEGMCaseError(msg)
+        for piece_name in (piece_set.when_func, piece_set.otherwise_func):
+            params = inspect.signature(functions[piece_name]).parameters
+            state_action_deps = sorted(set(params) & reserved_names)
+            if state_action_deps:
+                msg = (
+                    f"BQSEGM v1 pieces read only the flat params; piece "
+                    f"{piece_name!r} depends on the state/action "
+                    f"{state_action_deps!r}. State-dependent pieces are deferred."
+                )
+                raise BQSEGMCaseError(msg)
+    for predicate_name, meta in registry.boundaries.items():
+        for surface in meta.boundaries:
+            if surface.equality_owner != "otherwise":
+                msg = (
+                    f"BQSEGM v1 only supports `equality='otherwise'` boundaries; "
+                    f"{predicate_name!r} owns equality on the "
+                    f"{surface.equality_owner!r} side."
+                )
+                raise BQSEGMCaseError(msg)
+            if surface.kind != "jump":
+                msg = (
+                    f"BQSEGM v1 only supports `kind='jump'` boundaries; "
+                    f"{predicate_name!r} declares {surface.kind!r}."
+                )
+                raise BQSEGMCaseError(msg)
+            if surface.variable != liquid_state_name:
+                msg = (
+                    f"BQSEGM v1 only supports a boundary on the liquid state "
+                    f"{liquid_state_name!r}; {predicate_name!r} compares "
+                    f"{surface.variable!r}."
+                )
+                raise BQSEGMCaseError(msg)
 
 
 def _collect_bqsegm_case_spec(*, context: SolverBuildContext) -> _BQSEGMCaseSpec:
@@ -2035,6 +2134,13 @@ def _collect_bqsegm_case_spec(*, context: SolverBuildContext) -> _BQSEGMCaseSpec
             f"{piece_set.predicate_name!r} declares {len(surfaces)}."
         )
         raise RegimeInitializationError(msg)
+    space = context.state_action_space
+    _validate_bqsegm_boundary_scope(
+        registry=registry,
+        functions=functions,
+        liquid_state_name=space.state_names[0],
+        reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
+    )
     when_callable = functions[piece_set.when_func]
     otherwise_callable = functions[piece_set.otherwise_func]
     return _BQSEGMCaseSpec(
@@ -2046,6 +2152,7 @@ def _collect_bqsegm_case_spec(*, context: SolverBuildContext) -> _BQSEGMCaseSpec
         otherwise_param_names=tuple(inspect.signature(otherwise_callable).parameters),
         predicate_name=piece_set.predicate_name,
         threshold_name=surfaces[0].threshold,
+        equality_owner=surfaces[0].equality_owner,
     )
 
 
@@ -2092,6 +2199,7 @@ def _build_bqsegm_core(
             subsidy_when=subsidy_when,
             subsidy_otherwise=subsidy_otherwise,
             asset_limit=asset_limit,
+            equality_owner=case_spec.equality_owner,
         )
         carry = EGMCarry(
             endog_grid=liquid,
