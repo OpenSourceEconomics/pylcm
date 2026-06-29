@@ -1543,10 +1543,22 @@ class BQSEGM(Solver):
         is_schedule = bool(registry.piecewise_affine_schedules) and not (
             registry.piece_sets
         )
+        is_discrete = (
+            not is_schedule
+            and not registry.piece_sets
+            and bool(context.state_action_space.discrete_actions)
+        )
         schedule_spec = (
             _collect_bqsegm_schedule_spec(context=context) if is_schedule else None
         )
-        case_spec = None if is_schedule else _collect_bqsegm_case_spec(context=context)
+        discrete_spec = (
+            _collect_bqsegm_discrete_spec(context=context) if is_discrete else None
+        )
+        case_spec = (
+            _collect_bqsegm_case_spec(context=context)
+            if not is_schedule and not is_discrete
+            else None
+        )
 
         period_to_target = _period_to_continuation_target(context=context)
         cores: dict[RegimeName, Callable] = {}
@@ -1558,6 +1570,13 @@ class BQSEGM(Solver):
                         savings_grid=savings_grid,
                         target=target,
                         schedule_spec=schedule_spec,
+                    )
+                elif discrete_spec is not None:
+                    core = _build_bqsegm_discrete_core(
+                        savings_grid=savings_grid,
+                        target=target,
+                        discrete_spec=discrete_spec,
+                        taste_shock_scale=0.0,
                     )
                 else:
                     assert case_spec is not None  # noqa: S101
@@ -2429,6 +2448,131 @@ def _build_bqsegm_continuous_core(
                 breakpoints=breakpoints,
                 flat_interval_mask=flat_mask,
             )
+        carry = EGMCarry(
+            endog_grid=liquid,
+            value=value,
+            marginal_utility=marginal,
+            taste_shock_scale=jnp.asarray(0.0, dtype=value.dtype),
+        )
+        return value, carry
+
+    return core
+
+
+@dataclass(frozen=True)
+class _BQSEGMDiscreteSpec:
+    """Build-time statics for a discrete-action regime with a smooth budget.
+
+    The discrete action shifts cash-on-hand; the continuous consumption/savings
+    subproblem is solved per discrete-action value by BQSEGM and the discrete choice
+    is taken by the upper envelope over the branch values.
+    """
+
+    coh_of_liquid_dag: Callable
+    """Composed `coh` as a function of the liquid state, the discrete action, and
+    qualified params."""
+    coh_param_names: tuple[str, ...]
+    """Qualified parameter names `coh` reads (excluding the liquid state and the
+    discrete action)."""
+    liquid_state_name: str
+    """Name of the liquid state the budget varies in."""
+    discrete_action_name: str
+    """Name of the discrete action enveloped over."""
+    discrete_action_codes: tuple[int, ...]
+    """Integer codes of the discrete action's grid values."""
+
+
+def _collect_bqsegm_discrete_spec(
+    *, context: SolverBuildContext
+) -> _BQSEGMDiscreteSpec:
+    """Collect the single binary/multi-valued discrete action of a smooth regime."""
+    import inspect  # noqa: PLC0415
+
+    space = context.state_action_space
+    if len(space.discrete_actions) != 1:
+        msg = (
+            "BQSEGM discrete-envelope path supports exactly one discrete action; "
+            f"the regime declares {len(space.discrete_actions)}."
+        )
+        raise RegimeInitializationError(msg)
+    discrete_action_name = next(iter(space.discrete_actions))
+    codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
+    liquid_state_name = space.state_names[0]
+    coh_dag = concatenate_functions(dict(context.functions), targets="coh")
+    coh_args = tuple(inspect.signature(coh_dag).parameters)
+    coh_param_names = tuple(
+        name
+        for name in coh_args
+        if name not in (liquid_state_name, discrete_action_name)
+    )
+    return _BQSEGMDiscreteSpec(
+        coh_of_liquid_dag=coh_dag,
+        coh_param_names=coh_param_names,
+        liquid_state_name=liquid_state_name,
+        discrete_action_name=discrete_action_name,
+        discrete_action_codes=codes,
+    )
+
+
+def _build_bqsegm_discrete_core(
+    *,
+    savings_grid: Float1D,
+    target: RegimeName,
+    discrete_spec: _BQSEGMDiscreteSpec,
+    taste_shock_scale: float,
+) -> Callable:
+    """Build the jittable discrete-envelope core for one continuation target.
+
+    Per discrete-action value the core recovers the smooth budget's affine cash-on-
+    hand and solves the continuous subproblem with the multi-interval step, then
+    takes the discrete choice by the upper envelope (`bqsegm_discrete_envelope_step`).
+    """
+    from _lcm.egm.bqsegm_breakpoints import affine_coefficients  # noqa: PLC0415
+    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
+        bqsegm_discrete_envelope_step,
+    )
+
+    def core(
+        *,
+        liquid: Float1D,
+        next_value: Float1D,
+        next_marginal: Float1D,
+        **params: FloatND,
+    ) -> tuple[Float1D, EGMCarry]:
+        coh_params = {name: params[name] for name in discrete_spec.coh_param_names}
+        empty_breakpoints = jnp.zeros((0,), dtype=liquid.dtype)
+        choices: list[dict[str, Float1D]] = []
+        for code in discrete_spec.discrete_action_codes:
+
+            def coh_of_liquid(scalar_liquid: FloatND, code: int = code) -> FloatND:
+                return discrete_spec.coh_of_liquid_dag(
+                    **{
+                        discrete_spec.liquid_state_name: scalar_liquid,
+                        discrete_spec.discrete_action_name: jnp.asarray(code),
+                    },
+                    **coh_params,
+                )
+
+            slope, intercept = affine_coefficients(coh_of_liquid)
+            choices.append(
+                {
+                    "coh_slopes": jnp.reshape(slope, (1,)),
+                    "coh_intercepts": jnp.reshape(intercept, (1,)),
+                    "breakpoints": empty_breakpoints,
+                }
+            )
+        value, marginal, _policy, _choice = bqsegm_discrete_envelope_step(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid,
+            savings_grid=savings_grid,
+            discount_factor=params["H__discount_factor"],
+            crra=params["utility__crra"],
+            gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
+            income=params[f"{target}__next_liquid__income"],
+            choices=tuple(choices),
+            taste_shock_scale=taste_shock_scale,
+        )
         carry = EGMCarry(
             endog_grid=liquid,
             value=value,
