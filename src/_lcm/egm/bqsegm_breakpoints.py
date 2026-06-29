@@ -52,17 +52,23 @@ class BreakpointSource:
 def breakpoint_sources_from_registry(
     registry: BQSEGMRegistry,
 ) -> tuple[BreakpointSource, ...]:
-    """Lift every declared boundary surface to a breakpoint source.
+    """Lift every declared boundary and schedule threshold to a breakpoint source.
+
+    A case boundary (a jump on the liquid state) and each threshold of a
+    piecewise-affine schedule contribute uniformly to the same partition. A
+    continuous-kink schedule threshold has no jump, so its exact point is owned by
+    neither side meaningfully; it is recorded with `otherwise` ownership as a
+    neutral default.
 
     Args:
         registry: Collected case-piece metadata of one regime's function pool.
 
     Returns:
-        Tuple of breakpoint sources, one per declared equality surface, in
-        predicate-then-surface declaration order.
+        Tuple of breakpoint sources — boundary surfaces first (predicate-then-
+        surface order), then schedule thresholds (schedule-then-threshold order).
 
     """
-    return tuple(
+    boundary_sources = tuple(
         BreakpointSource(
             variable=surface.variable,
             threshold=surface.threshold,
@@ -72,6 +78,17 @@ def breakpoint_sources_from_registry(
         for meta in registry.boundaries.values()
         for surface in meta.boundaries
     )
+    schedule_sources = tuple(
+        BreakpointSource(
+            variable=schedule.variable,
+            threshold=bracket.threshold,
+            kind=bracket.kind,
+            equality_owner="otherwise",
+        )
+        for schedule in registry.piecewise_affine_schedules
+        for bracket in schedule.breakpoints
+    )
+    return boundary_sources + schedule_sources
 
 
 def affine_coefficients(

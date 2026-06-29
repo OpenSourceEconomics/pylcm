@@ -53,6 +53,34 @@ class PieceMeta:
     """Predicate side this piece applies to."""
 
 
+@dataclass(frozen=True)
+class AffineBreakpoint:
+    """One threshold of a piecewise-affine schedule on a monotone variable."""
+
+    threshold: str
+    """Name of the DAG variable or parameter holding the threshold value."""
+    kind: BoundaryKind
+    """Discontinuity kind at the threshold (a bracket edge is a continuous kink)."""
+
+
+@dataclass(frozen=True)
+class PiecewiseAffineMeta:
+    """Metadata attached to a single piecewise-affine schedule.
+
+    A schedule (a tax with brackets, a cost-sharing step, a phase-out) is affine
+    between thresholds of one monotone variable. Each threshold contributes a
+    breakpoint to the same liquid-axis partition the case boundaries feed, so the
+    solver treats a jump and a bracket edge uniformly.
+    """
+
+    output: str
+    """Name of the DAG output this schedule produces."""
+    variable: str
+    """Name of the monotone variable the schedule's thresholds compare against."""
+    breakpoints: tuple[AffineBreakpoint, ...]
+    """Ordered thresholds splitting the schedule into affine segments."""
+
+
 def boundary(
     variable: str,
     threshold: str,
@@ -143,6 +171,60 @@ def piece(
             output=output,
             predicate_name=predicate.__name__,  # ty: ignore[unresolved-attribute]
             side=side,
+        )
+        return func
+
+    return deco
+
+
+def affine_breakpoint(
+    threshold: str,
+    *,
+    kind: BoundaryKind = "continuous_kink",
+) -> AffineBreakpoint:
+    """Declare one threshold of a piecewise-affine schedule.
+
+    Args:
+        threshold: Name of the DAG variable or parameter holding the threshold.
+        kind: Discontinuity kind at the threshold; a bracket edge is a continuous
+            kink (the schedule is continuous, only its slope changes).
+
+    Returns:
+        The threshold as an `AffineBreakpoint`.
+
+    """
+    return AffineBreakpoint(threshold=threshold, kind=kind)
+
+
+def piecewise_affine(
+    output: str,
+    *,
+    variable: str,
+    breakpoints: tuple[AffineBreakpoint, ...],
+) -> Callable[[Callable[..., object]], Callable[..., object]]:
+    """Mark a DAG function as a piecewise-affine schedule on a monotone variable.
+
+    The decorated function stays an ordinary DAG node; the decorator only records
+    its schedule metadata in `__lcm_piecewise_affine__`, so the model still solves
+    identically under `GridSearch`. BQSEGM reads the metadata to merge each
+    threshold into the liquid-axis interval partition and to recover the active
+    affine segment per interval.
+
+    Args:
+        output: Name of the DAG output this schedule produces.
+        variable: Name of the monotone variable the thresholds compare against.
+        breakpoints: Ordered thresholds splitting the schedule into segments.
+
+    Returns:
+        A decorator that attaches the metadata and returns the function unchanged.
+
+    """
+
+    def deco(func: Callable[..., object]) -> Callable[..., object]:
+        func.__lcm_piecewise_affine__ = PiecewiseAffineMeta(  # ty: ignore[unresolved-attribute]
+            output=output,
+            variable=variable,
+            breakpoints=breakpoints,
         )
         return func
 

@@ -58,6 +58,28 @@ def test_breakpoint_source_records_the_boundary_variable_and_threshold():
     assert sources[0].threshold == "medicaid_asset_limit"
 
 
+def test_breakpoint_sources_lift_a_piecewise_affine_schedule():
+    """A declared multi-bracket schedule contributes one breakpoint per threshold."""
+
+    @lcm.piecewise_affine(
+        "tax",
+        variable="capital_income",
+        breakpoints=(
+            lcm.affine_breakpoint("bracket_low", kind="continuous_kink"),
+            lcm.affine_breakpoint("bracket_high", kind="continuous_kink"),
+        ),
+    )
+    def tax_schedule(capital_income, rate):
+        return rate * capital_income
+
+    registry = collect_bqsegm_metadata(functions={"tax": tax_schedule})
+    sources = breakpoint_sources_from_registry(registry)
+    assert [(s.variable, s.threshold, s.kind) for s in sources] == [
+        ("capital_income", "bracket_low", "continuous_kink"),
+        ("capital_income", "bracket_high", "continuous_kink"),
+    ]
+
+
 def test_breakpoint_source_records_the_kind_and_equality_owner():
     """A breakpoint source carries the discontinuity kind and equality owner."""
     registry = collect_bqsegm_metadata(functions=_medicaid_pool())

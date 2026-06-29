@@ -8,12 +8,16 @@ import pytest
 
 import lcm
 from lcm.case_piece import (
+    AffineBreakpoint,
     BoundarySurface,
     CaseBoundaryMeta,
     PieceMeta,
+    PiecewiseAffineMeta,
+    affine_breakpoint,
     boundary,
     case_boundary,
     piece,
+    piecewise_affine,
 )
 from lcm.exceptions import BQSEGMCaseError
 
@@ -121,8 +125,54 @@ def test_piece_requires_exactly_one_side(kwargs):
         piece("oop", **kwargs)
 
 
+def test_affine_breakpoint_captures_threshold_and_kind():
+    """`affine_breakpoint(...)` records one threshold of a schedule and its kind."""
+    bracket = affine_breakpoint("bracket_top", kind="continuous_kink")
+    assert bracket == AffineBreakpoint(threshold="bracket_top", kind="continuous_kink")
+
+
+def test_piecewise_affine_attaches_schedule_metadata():
+    """`piecewise_affine` records the output, monotone variable, and breakpoints."""
+
+    @piecewise_affine(
+        "tax",
+        variable="capital_income",
+        breakpoints=(
+            affine_breakpoint("bracket_low", kind="continuous_kink"),
+            affine_breakpoint("bracket_high", kind="continuous_kink"),
+        ),
+    )
+    def tax_schedule(capital_income, rate):
+        return rate * capital_income
+
+    assert tax_schedule.__lcm_piecewise_affine__ == PiecewiseAffineMeta(  # ty: ignore[unresolved-attribute]
+        output="tax",
+        variable="capital_income",
+        breakpoints=(
+            AffineBreakpoint(threshold="bracket_low", kind="continuous_kink"),
+            AffineBreakpoint(threshold="bracket_high", kind="continuous_kink"),
+        ),
+    )
+
+
+def test_piecewise_affine_returns_the_same_function_object():
+    """The schedule decorator returns the original function, never a wrapper."""
+
+    def tax_schedule(capital_income, rate):
+        return rate * capital_income
+
+    decorated = piecewise_affine(
+        "tax",
+        variable="capital_income",
+        breakpoints=(affine_breakpoint("bracket_low", kind="continuous_kink"),),
+    )(tax_schedule)
+    assert decorated is tax_schedule
+
+
 def test_decorators_are_reexported_from_lcm():
-    """The three user-facing entry points live on the top-level `lcm` namespace."""
+    """The user-facing entry points live on the top-level `lcm` namespace."""
     assert lcm.case_boundary is case_boundary
     assert lcm.piece is piece
     assert lcm.boundary is boundary
+    assert lcm.piecewise_affine is piecewise_affine
+    assert lcm.affine_breakpoint is affine_breakpoint

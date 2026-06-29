@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from _lcm.typing import FunctionName
-from lcm.case_piece import CaseBoundaryMeta, PieceMeta
+from lcm.case_piece import CaseBoundaryMeta, PieceMeta, PiecewiseAffineMeta
 from lcm.exceptions import BQSEGMCaseError
 
 
@@ -40,6 +40,8 @@ class BQSEGMRegistry:
     """Immutable mapping of predicate name to its declared boundary surfaces."""
     piece_sets: tuple[PieceSet, ...]
     """Tuple of fully-covered split outputs, one per (output, predicate)."""
+    piecewise_affine_schedules: tuple[PiecewiseAffineMeta, ...]
+    """Tuple of declared piecewise-affine schedules, one per schedule output."""
 
 
 @dataclass(frozen=True)
@@ -75,9 +77,11 @@ def collect_bqsegm_metadata(
     """
     boundaries = _collect_boundaries(functions)
     piece_sets = _collect_piece_sets(functions, boundaries=boundaries)
+    schedules = _collect_piecewise_affine_schedules(functions)
     return BQSEGMRegistry(
         boundaries=MappingProxyType(boundaries),
         piece_sets=piece_sets,
+        piecewise_affine_schedules=schedules,
     )
 
 
@@ -143,6 +147,20 @@ def swap_producers(
 
     """
     return MappingProxyType({**functions, **variant.producers})
+
+
+def _collect_piecewise_affine_schedules(
+    functions: Mapping[FunctionName, Callable[..., object]],
+) -> tuple[PiecewiseAffineMeta, ...]:
+    """Read every declared piecewise-affine schedule, in pool-iteration order."""
+    schedules: list[PiecewiseAffineMeta] = []
+    for func in functions.values():
+        meta: PiecewiseAffineMeta | None = getattr(
+            func, "__lcm_piecewise_affine__", None
+        )
+        if meta is not None:
+            schedules.append(meta)
+    return tuple(schedules)
 
 
 def _collect_boundaries(

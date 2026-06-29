@@ -54,9 +54,11 @@ from _lcm.variables import (  # noqa: E402
 from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.case_piece import (  # noqa: E402
+    affine_breakpoint,
     boundary,
     case_boundary,
     piece,
+    piecewise_affine,
     smooth_helper,
 )
 from lcm.grids import (  # noqa: E402
@@ -152,6 +154,7 @@ __all__ = [
     "TwoDimEGM",
     "UniformIIDProcess",
     "__version__",
+    "affine_breakpoint",
     "boundary",
     "case_boundary",
     "categorical",
@@ -159,6 +162,7 @@ __all__ = [
     "load_snapshot",
     "load_solution",
     "piece",
+    "piecewise_affine",
     "save_solution",
     "smooth_helper",
 ]
