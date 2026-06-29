@@ -33,7 +33,7 @@ import jax.numpy as jnp
 from _lcm.egm.bqsegm_segments import mask_dead_candidates, segment_ids_from_folds
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
-from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
+from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat
 
 
 def bqsegm_multi_interval_step(
@@ -183,6 +183,220 @@ def _flat_interval_indices(
     if flat_interval_mask is None:
         return ()
     return tuple(i for i in range(n_intervals) if flat_interval_mask[i])
+
+
+def bqsegm_unified_step(  # noqa: PLR0915
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    gross_return: ScalarFloat | float,
+    income: ScalarFloat | float,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    jump_mask: tuple[bool, ...],
+    equality_owner: EqualityOwner = "otherwise",
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one period of a mixed jump-and-kink piecewise-affine budget by EGM.
+
+    The breakpoints split the liquid axis into intervals; `jump_mask` marks which
+    breakpoints are discontinuities (jumps) versus continuous kinks. The jumps
+    partition the axis into cases on each of which cash-on-hand is continuous (kinks
+    only); within a case the EGM runs in `coh` space and inverts the case's
+    continuous `coh(liquid)` — recovered by clamping the interval index to the
+    case's interval range, which is exactly the affine extension of the case's
+    segments. Each case is masked to its liquid range, reads the continuation
+    jump-aware at every jump, and competes a boundary-targeting candidate per jump
+    plus the hard borrowing corner; all merge by the branch-aware upper envelope.
+    The pure-kink (no jump) and pure-jump (slope-1) budgets are special cases.
+
+    Args:
+        next_value: Next period's value on `liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        crra: Coefficient of relative risk aversion.
+        gross_return: Gross liquid return `1 + r`.
+        income: Deterministic income added to next-period liquid.
+        coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
+        coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
+        breakpoints: Sorted ascending liquid breakpoints, length N.
+        jump_mask: Static per-breakpoint flag, length N, `True` for a jump.
+        equality_owner: Side owning each exact jump point (`when` or `otherwise`).
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    n_breakpoints = breakpoints.shape[0]
+    last_interval = coh_slopes.shape[0] - 1
+    jump_positions = tuple(j for j in range(n_breakpoints) if jump_mask[j])
+    jump_breakpoints = (
+        breakpoints[jnp.asarray(jump_positions)]
+        if jump_positions
+        else jnp.zeros((0,), dtype=breakpoints.dtype)
+    )
+    case_starts = (0, *(p + 1 for p in jump_positions))
+    case_ends = (*jump_positions, last_interval)
+    case_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
+
+    next_liquid = gross_return * savings_grid + income
+    value_next = _jump_aware_interp(
+        next_liquid, liquid_grid, next_value, jump_breakpoints, equality_owner
+    )
+    marginal_next = _jump_aware_interp(
+        next_liquid, liquid_grid, next_marginal, jump_breakpoints, equality_owner
+    )
+    consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    coh_endog = consumption + savings_grid
+    interp_value = _crra_utility(consumption, crra) + discount_factor * value_next
+    value_at_income = _jump_aware_interp(
+        jnp.asarray(income), liquid_grid, next_value, jump_breakpoints, equality_owner
+    )
+    grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+    n = liquid_grid.shape[0]
+
+    endog_parts: list[Float1D] = []
+    value_parts: list[Float1D] = []
+    policy_parts: list[Float1D] = []
+    marginal_parts: list[Float1D] = []
+    segment_parts: list[Float1D] = []
+    for case, (start, end) in enumerate(zip(case_starts, case_ends, strict=True)):
+        case_grid_interval = jnp.clip(grid_interval, start, end)
+        coh_case_grid = (
+            coh_slopes[case_grid_interval] * liquid_grid
+            + coh_intercepts[case_grid_interval]
+        )
+        liquid_endog = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
+        endog_interval = jnp.clip(
+            jnp.searchsorted(breakpoints, liquid_endog, side="right"), start, end
+        )
+        marginal_endog = coh_slopes[endog_interval] * consumption ** (-crra)
+        lower = -jnp.inf if start == 0 else breakpoints[start - 1]
+        upper = jnp.inf if end == last_interval else breakpoints[end]
+        in_case = (liquid_endog >= lower) & (liquid_endog < upper)
+        interior = mask_dead_candidates(
+            endog_grid=liquid_endog,
+            value=interp_value,
+            policy=consumption,
+            marginal=marginal_endog,
+            valid=in_case,
+        )
+        segment = segment_ids_from_folds(endog_grid=interior[0])
+        next_segment = jnp.nanmax(segment) + 1.0
+        endog_parts.append(interior[0])
+        value_parts.append(interior[1])
+        policy_parts.append(interior[2])
+        marginal_parts.append(interior[3])
+        segment_parts.append(segment + float(case) * case_stride)
+
+        # Hard borrowing corner over this case's liquid range.
+        s0_consumption = coh_case_grid
+        s0_valid = (liquid_grid >= lower) & (liquid_grid < upper)
+        s0 = mask_dead_candidates(
+            endog_grid=liquid_grid,
+            value=_crra_utility(s0_consumption, crra)
+            + discount_factor * value_at_income,
+            policy=s0_consumption,
+            marginal=coh_slopes[case_grid_interval] * s0_consumption ** (-crra),
+            valid=s0_valid,
+        )
+        endog_parts.append(s0[0])
+        value_parts.append(s0[1])
+        policy_parts.append(s0[2])
+        marginal_parts.append(s0[3])
+        segment_parts.append(
+            jnp.full_like(liquid_grid, float(case) * case_stride + next_segment)
+        )
+
+        # Boundary-targeting at each jump: save to land just inside its eligible
+        # side for the higher continuation, consuming this case's cash-on-hand.
+        for offset, jump_idx in enumerate(jump_positions):
+            cliff = breakpoints[jump_idx]
+            last_below = jnp.clip(jnp.sum(liquid_grid < cliff) - 1, 1, n - 3).astype(
+                jnp.int32
+            )
+            kink = _boundary_targeting_coh(
+                liquid_grid=liquid_grid,
+                coh_case_grid=coh_case_grid,
+                next_value=next_value,
+                discount_factor=discount_factor,
+                crra=crra,
+                gross_return=gross_return,
+                income=income,
+                asset_limit=cliff,
+                last_below=last_below,
+                valid=s0_valid,
+            )
+            endog_parts.append(kink[0])
+            value_parts.append(kink[1])
+            policy_parts.append(kink[2])
+            marginal_parts.append(kink[3])
+            segment_parts.append(
+                jnp.where(
+                    jnp.isnan(kink[0]),
+                    jnp.nan,
+                    float(case) * case_stride + next_segment + 1.0 + float(offset),
+                )
+            )
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+    )
+    return value, marginal, policy
+
+
+def _boundary_targeting_coh(
+    *,
+    liquid_grid: Float1D,
+    coh_case_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    gross_return: ScalarFloat | float,
+    income: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    last_below: IntND,
+    valid: BoolND,
+) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    """Save to land next-period liquid just inside a cliff's eligible side.
+
+    The case's cash-on-hand `coh_case_grid` funds consumption `coh - s_kink` where
+    `s_kink` lands next-period liquid one ulp below the cliff (the eligible side),
+    paired with that side's continuation so policy and value stay consistent.
+    """
+    limit_minus = jnp.nextafter(
+        jnp.asarray(asset_limit, dtype=liquid_grid.dtype),
+        jnp.asarray(-jnp.inf, dtype=liquid_grid.dtype),
+    )
+    s_kink = (limit_minus - income) / gross_return
+    value_limit_minus = _extrapolate(
+        liquid_grid, next_value, last_below - 1, last_below, asset_limit
+    )
+    kink_consumption = coh_case_grid - s_kink
+    kink_value = (
+        _crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
+    )
+    kink_marginal = kink_consumption ** (-crra)
+    kink_valid = valid & (kink_consumption > 0.0) & (s_kink >= 0.0)
+    return mask_dead_candidates(
+        endog_grid=liquid_grid,
+        value=kink_value,
+        policy=kink_consumption,
+        marginal=kink_marginal,
+        valid=kink_valid,
+    )
 
 
 def bqsegm_recurring_jump_step(

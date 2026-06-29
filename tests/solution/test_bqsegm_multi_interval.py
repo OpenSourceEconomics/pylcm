@@ -11,7 +11,11 @@ Bellman max where both are exact.
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm.bqsegm_step import bqsegm_jump_step, bqsegm_multi_interval_step
+from _lcm.egm.bqsegm_step import (
+    bqsegm_jump_step,
+    bqsegm_multi_interval_step,
+    bqsegm_unified_step,
+)
 
 
 def _crra(consumption, crra):
@@ -361,6 +365,76 @@ def test_jump_step_matches_brute_through_two_additive_cliffs():
     liquid = np.asarray(liquid_grid)
     near_cliff = (np.abs(liquid - 5.0) < 0.3) | (np.abs(liquid - 12.0) < 0.3)
     interior = (liquid > 1.0) & (liquid < 27.0) & ~near_cliff
+    np.testing.assert_allclose(
+        np.asarray(value)[interior], np.asarray(brute)[interior], atol=3e-2, rtol=8e-3
+    )
+
+
+def test_unified_step_matches_brute_through_a_jump_then_a_kink():
+    """A budget with one jump and one continuous kink reproduces the dense oracle.
+
+    Cash-on-hand jumps down at a subsidy cliff and bends at a tax bracket above it,
+    so the budget mixes a discontinuity and a continuous kink. The unified step
+    solves each continuous case by coh inversion and masks across the jump, tracking
+    the dense Bellman max on both sides of the cliff and through the kink.
+    """
+    crra = 2.0
+    discount_factor = 0.95
+    gross_return = 1.03
+    income = 1.0
+    sub_low = 0.5
+    sub_high = 3.0
+    cliff = 6.0
+    rate = 0.3
+    exemption = 14.0
+
+    liquid_grid = jnp.linspace(0.1, 30.0, 200)
+    savings_grid = jnp.linspace(0.0, 28.0, 220)
+
+    def coh_of_liquid(liquid):
+        subsidy = jnp.where(liquid < cliff, sub_high, sub_low)
+        tax = rate * jnp.maximum(liquid - exemption, 0.0)
+        return liquid + subsidy - tax
+
+    def next_value_of_liquid(liquid):
+        return _crra(liquid, crra)
+
+    def next_marginal_of_liquid(liquid):
+        return liquid ** (-crra)
+
+    # Intervals: [0,cliff): coh=liquid+sub_high; [cliff,exemption): liquid+sub_low;
+    # [exemption,inf): (1-rate)*liquid + sub_low + rate*exemption.
+    coh_slopes = jnp.asarray([1.0, 1.0, 1.0 - rate])
+    coh_intercepts = jnp.asarray([sub_high, sub_low, sub_low + rate * exemption])
+    breakpoints = jnp.asarray([cliff, exemption])
+    jump_mask = (True, False)
+
+    value, _marginal, _policy = bqsegm_unified_step(
+        next_value=next_value_of_liquid(liquid_grid),
+        next_marginal=next_marginal_of_liquid(liquid_grid),
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        crra=crra,
+        gross_return=gross_return,
+        income=income,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        jump_mask=jump_mask,
+    )
+    brute = _dense_brute_value(
+        liquid_grid=liquid_grid,
+        coh_of_liquid=coh_of_liquid,
+        next_value_of_liquid=next_value_of_liquid,
+        crra=crra,
+        discount_factor=discount_factor,
+        gross_return=gross_return,
+        income=income,
+    )
+    liquid = np.asarray(liquid_grid)
+    near = (np.abs(liquid - cliff) < 0.3) | (np.abs(liquid - exemption) < 0.3)
+    interior = (liquid > 1.0) & (liquid < 27.0) & ~near
     np.testing.assert_allclose(
         np.asarray(value)[interior], np.asarray(brute)[interior], atol=3e-2, rtol=8e-3
     )

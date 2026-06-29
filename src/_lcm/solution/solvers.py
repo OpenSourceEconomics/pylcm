@@ -2292,15 +2292,6 @@ def _collect_bqsegm_schedule_spec(
         f"{schedule.output}__{bp.threshold}" for bp in schedule.breakpoints
     )
     breakpoint_kinds = tuple(bp.kind for bp in schedule.breakpoints)
-    has_jump = "jump" in breakpoint_kinds
-    all_jump = all(kind == "jump" for kind in breakpoint_kinds)
-    if has_jump and not all_jump:
-        msg = (
-            "BQSEGM schedule path supports either all-jump or all-continuous-kink "
-            f"breakpoints; the schedule mixes them: {breakpoint_kinds!r}. A mixed "
-            "jump-and-kink schedule needs the unified recurring step, not yet wired."
-        )
-        raise RegimeInitializationError(msg)
     return _BQSEGMScheduleSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
@@ -2327,12 +2318,14 @@ def _build_bqsegm_continuous_core(
         bqsegm_multi_interval_step,
         bqsegm_one_asset_step,
         bqsegm_recurring_jump_step,
+        bqsegm_unified_step,
     )
 
-    is_single_jump = schedule_spec.breakpoint_kinds == ("jump",)
-    is_multi_jump = len(schedule_spec.breakpoint_kinds) > 1 and all(
-        kind == "jump" for kind in schedule_spec.breakpoint_kinds
-    )
+    kinds = schedule_spec.breakpoint_kinds
+    is_single_jump = kinds == ("jump",)
+    is_multi_jump = len(kinds) > 1 and all(kind == "jump" for kind in kinds)
+    is_mixed = "jump" in kinds and not all(kind == "jump" for kind in kinds)
+    jump_mask = tuple(kind == "jump" for kind in kinds)
 
     def core(
         *,
@@ -2390,6 +2383,25 @@ def _build_bqsegm_continuous_core(
                 subsidy_levels=coh_intercepts,
                 jump_breakpoints=breakpoints,
                 equality_owner="otherwise",
+            )
+        elif is_mixed:
+            # Jumps and kinks together: the unified step solves each continuous
+            # case by coh inversion and masks across the jumps. The static jump_mask
+            # is aligned with the sorted breakpoints (the schedule declares its
+            # thresholds in ascending order).
+            value, marginal, _policy = bqsegm_unified_step(
+                next_value=next_value,
+                next_marginal=next_marginal,
+                liquid_grid=liquid,
+                savings_grid=savings_grid,
+                discount_factor=params["H__discount_factor"],
+                crra=params["utility__crra"],
+                gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
+                income=params[f"{target}__next_liquid__income"],
+                coh_slopes=coh_slopes,
+                coh_intercepts=coh_intercepts,
+                breakpoints=breakpoints,
+                jump_mask=jump_mask,
             )
         else:
             value, marginal, _policy = bqsegm_multi_interval_step(
