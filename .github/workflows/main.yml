@@ -94,7 +94,9 @@ jobs:
           frozen: false
       - name: Run pytest on GPU
         shell: bash {0}
-        run: pixi run -e tests-cuda12 tests
+        # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
+        # starved of host CPU/memory by parallel JAX AOT compiles. CPU jobs keep -n 4.
+        run: pixi run -e tests-cuda12 tests -n0
   run-tests-gpu-32bit:
     name: Run tests on GPU (32-bit precision)
     runs-on: ubuntu-latest-gpu
@@ -113,7 +115,9 @@ jobs:
           frozen: false
       - name: Run pytest on GPU with 32-bit precision
         shell: bash {0}
-        run: pixi run -e tests-cuda12 tests-32bit
+        # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
+        # starved of host CPU/memory by parallel JAX AOT compiles. CPU jobs keep -n 4.
+        run: pixi run -e tests-cuda12 tests-32bit -n0
   run-explanation-notebooks:
     name: Run explanation notebooks on Python 3.14
     runs-on: ubuntu-latest
