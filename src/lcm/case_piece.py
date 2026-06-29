@@ -149,6 +149,27 @@ def piece(
     return deco
 
 
+def smooth_helper(func: Callable[..., object]) -> Callable[..., object]:
+    """Attest that a user node's `max`/`clip`/`abs` use is numerical, not economic.
+
+    The smoothness gate rejects piecewise primitives in user economic nodes
+    because they usually hide an undeclared case boundary. A reviewed helper whose
+    `clip`/`maximum`/`abs` only guards a numerical edge (a positivity floor, an
+    overflow clamp) is exempt: this decorator marks it `__lcm_smooth_helper__` and
+    returns the same object, so it is skipped by the AST and JAXPR gate.
+
+    Args:
+        func: The user helper whose piecewise primitive is numerical, not a
+            hidden economic case.
+
+    Returns:
+        The same function, marked as a trusted smooth helper.
+
+    """
+    func.__lcm_smooth_helper__ = True  # ty: ignore[unresolved-attribute]
+    return func
+
+
 def _coerce_boundary(spec: BoundarySurface | tuple[str, str]) -> BoundarySurface:
     """Coerce a boundary specification into a `BoundarySurface`.
 

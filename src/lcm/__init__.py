@@ -53,7 +53,12 @@ from _lcm.variables import (  # noqa: E402
 )
 from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
-from lcm.case_piece import boundary, case_boundary, piece  # noqa: E402
+from lcm.case_piece import (  # noqa: E402
+    boundary,
+    case_boundary,
+    piece,
+    smooth_helper,
+)
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
@@ -153,4 +158,5 @@ __all__ = [
     "load_solution",
     "piece",
     "save_solution",
+    "smooth_helper",
 ]
