@@ -141,9 +141,14 @@ pytest-xdist = "*"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
-tests = "pytest tests"
-tests-32bit = "pytest tests --precision=32"
-tests-with-cov = "pytest tests --cov-report=xml --cov=./"
+# Run the suite across 4 xdist workers (`--dist loadfile` in addopts keeps each
+# file on one worker). `XLA_PYTHON_CLIENT_PREALLOCATE=false` is a no-op on CPU but
+# required on GPU: it stops each of the 4 worker processes from preallocating ~75%
+# of the device and OOMing — they grow to their actual (small) per-test need
+# instead, and `loadfile` keeps the one heavy file (Mahler-Yum) on a single worker.
+tests = { cmd = "pytest tests -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+tests-32bit = { cmd = "pytest tests --precision=32 -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 [tool.pixi.feature.type-checking.dependencies]
 matplotlib = "*"
 pandas-stubs = "*"
