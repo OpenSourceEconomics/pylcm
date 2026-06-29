@@ -21,9 +21,17 @@ not on its type.
 """
 
 from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
-from _lcm.solution.solvers import DCEGM, NEGM, GridSearch, OneAssetEGM, TwoDimEGM
+from _lcm.solution.solvers import (
+    BQSEGM,
+    DCEGM,
+    NEGM,
+    GridSearch,
+    OneAssetEGM,
+    TwoDimEGM,
+)
 
 __all__ = [
+    "BQSEGM",
     "DCEGM",
     "NEGM",
     "GridSearch",

@@ -1440,6 +1440,94 @@ class OneAssetEGM(Solver):
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
+class BQSEGM(Solver):
+    """Case-piece endogenous-grid solver for a 1-D consumption--saving regime.
+
+    A regime whose budget is split by a binary case boundary on the liquid state
+    (e.g. a Medicaid asset test) is smooth within each case. BQSEGM solves each
+    case by ordinary 1-D EGM, masks each case's candidates to the region where
+    its predicate is consistent with the recovered state, and merges the two
+    cases on the liquid grid with the branch-aware upper envelope. The
+    strict/non-strict consistency split gives the boundary point to the side that
+    owns equality. The step carries the marginal value of liquid backward, like
+    the plain 1-D EGM, so this regime both reads and publishes a continuation
+    carry.
+
+    The v1 scope is one binary predicate splitting additive cash-on-hand
+    contributions; multi-predicate and non-additive pieces are deferred.
+    """
+
+    savings_grid: ContinuousGrid
+    """Exogenous post-decision savings grid `s = coh - consumption` (>= 0)."""
+
+    @property
+    def requires_continuation_carries(self) -> bool:
+        """The case-piece EGM step reads its continuation's marginal value."""
+        return True
+
+    def validate(self, *, context: SolverBuildContext) -> None:
+        """Check case coverage and reject hidden branching in user pieces.
+
+        Collecting the metadata enforces strict coverage (each split output has a
+        `when` and an `otherwise` piece, every boundary declares a surface). The
+        AST gate then rejects Python branching / hidden comparisons in the user
+        pieces and any non-comparison branching in the boundary predicate.
+        """
+        from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
+        from _lcm.egm.bqsegm_validation import find_ast_violations  # noqa: PLC0415
+
+        functions = cast(
+            "Mapping[FunctionName, Callable[..., object]]",
+            context.user_regimes[context.regime_name].functions,
+        )
+        registry = collect_bqsegm_metadata(functions=functions)
+        violations: list[str] = []
+        for predicate_name in registry.boundaries:
+            violations += find_ast_violations(
+                functions[predicate_name], mode="boundary"
+            )
+        for piece_set in registry.piece_sets:
+            for piece_name in (piece_set.when_func, piece_set.otherwise_func):
+                violations += find_ast_violations(
+                    functions[piece_name], mode="smooth_user"
+                )
+        if violations:
+            from lcm.exceptions import BQSEGMCaseError  # noqa: PLC0415
+
+            msg = "BQSEGM smoothness gate failed:\n" + "\n".join(violations)
+            raise BQSEGMCaseError(msg)
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build one case-piece EGM period adapter per active period."""
+        savings_grid = self.savings_grid.to_jax()
+        liquid_grid = context.grids[context.state_action_space.state_names[0]].to_jax()
+
+        case_spec = _collect_bqsegm_case_spec(context=context)
+        period_to_target = _period_to_continuation_target(context=context)
+        cores: dict[RegimeName, Callable] = {}
+        period_kernels: dict[int, PeriodKernel] = {}
+        for period, target in period_to_target.items():
+            if target not in cores:
+                core = _build_bqsegm_core(
+                    savings_grid=savings_grid, target=target, case_spec=case_spec
+                )
+                cores[target] = jax.jit(core) if context.enable_jit else core
+            period_kernels[period] = _OneAssetEGMPeriodKernel(
+                core=cores[target],
+                regime_name=context.regime_name,
+                continuation_target=target,
+                transition_target_names=tuple(context.transitions),
+            )
+        return SolutionKernels(
+            period_kernels=MappingProxyType(period_kernels),
+            continuation_template=_build_one_asset_carry_template(
+                liquid_grid=liquid_grid
+            ),
+        )
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
 class TwoDimEGM(Solver):
     """Two-asset G2EGM solver for a regime with two continuous Euler states.
 
@@ -1898,6 +1986,122 @@ def _build_two_dim_core(
         return result.value - params["utility__work_disutility"]
 
     return boundary_core if is_boundary else interior_core
+
+
+@dataclass(frozen=True, kw_only=True)
+class _BQSEGMCaseSpec:
+    """Build-time statics describing one binary case split (v1 scope)."""
+
+    when_callable: Callable
+    """The `when` piece — its contribution applies where the predicate holds."""
+    otherwise_callable: Callable
+    """The `otherwise` piece — its contribution applies where the predicate fails."""
+    when_func: FunctionName
+    """Qualified-name prefix of the `when` piece's params."""
+    otherwise_func: FunctionName
+    """Qualified-name prefix of the `otherwise` piece's params."""
+    when_param_names: tuple[str, ...]
+    """Parameter names of the `when` piece."""
+    otherwise_param_names: tuple[str, ...]
+    """Parameter names of the `otherwise` piece."""
+    predicate_name: FunctionName
+    """Qualified-name prefix of the boundary predicate's params."""
+    threshold_name: str
+    """Name of the predicate's threshold parameter."""
+
+
+def _collect_bqsegm_case_spec(*, context: SolverBuildContext) -> _BQSEGMCaseSpec:
+    """Collect the single binary case split from the regime's user functions."""
+    import inspect  # noqa: PLC0415
+
+    from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
+
+    functions = cast(
+        "Mapping[FunctionName, Callable[..., object]]",
+        context.user_regimes[context.regime_name].functions,
+    )
+    registry = collect_bqsegm_metadata(functions=functions)
+    if len(registry.piece_sets) != 1:
+        msg = (
+            "BQSEGM v1 supports exactly one split output; the regime declares "
+            f"{len(registry.piece_sets)}."
+        )
+        raise RegimeInitializationError(msg)
+    piece_set = registry.piece_sets[0]
+    surfaces = registry.boundaries[piece_set.predicate_name].boundaries
+    if len(surfaces) != 1:
+        msg = (
+            "BQSEGM v1 supports exactly one boundary surface; the predicate "
+            f"{piece_set.predicate_name!r} declares {len(surfaces)}."
+        )
+        raise RegimeInitializationError(msg)
+    when_callable = functions[piece_set.when_func]
+    otherwise_callable = functions[piece_set.otherwise_func]
+    return _BQSEGMCaseSpec(
+        when_callable=when_callable,
+        otherwise_callable=otherwise_callable,
+        when_func=piece_set.when_func,
+        otherwise_func=piece_set.otherwise_func,
+        when_param_names=tuple(inspect.signature(when_callable).parameters),
+        otherwise_param_names=tuple(inspect.signature(otherwise_callable).parameters),
+        predicate_name=piece_set.predicate_name,
+        threshold_name=surfaces[0].threshold,
+    )
+
+
+def _build_bqsegm_core(
+    *, savings_grid: Float1D, target: RegimeName, case_spec: _BQSEGMCaseSpec
+) -> Callable:
+    """Build the jittable case-piece EGM core closing over the case split.
+
+    The core evaluates each piece's additive contribution and the boundary
+    threshold from the regime's flat params, runs the two-case EGM merge, and
+    returns the value array and the marginal-value carry on the liquid grid.
+    """
+    from _lcm.egm.bqsegm_step import bqsegm_one_asset_step  # noqa: PLC0415
+
+    def core(
+        *,
+        liquid: Float1D,
+        next_value: Float1D,
+        next_marginal: Float1D,
+        **params: FloatND,
+    ) -> tuple[Float1D, EGMCarry]:
+        subsidy_when = case_spec.when_callable(
+            **{
+                p: params[f"{case_spec.when_func}__{p}"]
+                for p in case_spec.when_param_names
+            }
+        )
+        subsidy_otherwise = case_spec.otherwise_callable(
+            **{
+                p: params[f"{case_spec.otherwise_func}__{p}"]
+                for p in case_spec.otherwise_param_names
+            }
+        )
+        asset_limit = params[f"{case_spec.predicate_name}__{case_spec.threshold_name}"]
+        value, marginal, _policy = bqsegm_one_asset_step(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid,
+            savings_grid=savings_grid,
+            discount_factor=params["H__discount_factor"],
+            crra=params["utility__crra"],
+            return_liquid=params[f"{target}__next_liquid__return_liquid"],
+            income=params[f"{target}__next_liquid__income"],
+            subsidy_when=subsidy_when,
+            subsidy_otherwise=subsidy_otherwise,
+            asset_limit=asset_limit,
+        )
+        carry = EGMCarry(
+            endog_grid=liquid,
+            value=value,
+            marginal_utility=marginal,
+            taste_shock_scale=jnp.asarray(0.0, dtype=value.dtype),
+        )
+        return value, carry
+
+    return core
 
 
 def _build_one_asset_carry_template(*, liquid_grid: Float1D) -> EGMCarry:
