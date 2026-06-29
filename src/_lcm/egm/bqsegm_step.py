@@ -408,7 +408,6 @@ def bqsegm_unified_step(  # noqa: PLR0915
         jnp.asarray(income), liquid_grid, next_value, jump_breakpoints, equality_owner
     )
     grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
-    n = liquid_grid.shape[0]
 
     endog_parts: list[Float1D] = []
     value_parts: list[Float1D] = []
@@ -470,8 +469,10 @@ def bqsegm_unified_step(  # noqa: PLR0915
         # side for the higher continuation, consuming this case's cash-on-hand.
         for offset, jump_idx in enumerate(jump_positions):
             cliff = breakpoints[jump_idx]
-            last_below = jnp.clip(jnp.sum(liquid_grid < cliff) - 1, 1, n - 3).astype(
-                jnp.int32
+            # Bound the below-side continuation read to the segment between this
+            # cliff and the breakpoint below it, so close cliffs don't bridge.
+            prev_limit = (
+                breakpoints[jump_idx - 1] if jump_idx > 0 else liquid_grid[0] - 1.0
             )
             kink = _boundary_targeting_coh(
                 liquid_grid=liquid_grid,
@@ -482,7 +483,7 @@ def bqsegm_unified_step(  # noqa: PLR0915
                 gross_return=gross_return,
                 income=income,
                 asset_limit=cliff,
-                last_below=last_below,
+                prev_limit=prev_limit,
                 valid=s0_valid,
             )
             endog_parts.append(kink[0])
@@ -518,22 +519,28 @@ def _boundary_targeting_coh(
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
-    last_below: IntND,
+    prev_limit: ScalarFloat | float,
     valid: BoolND,
 ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
     """Save to land next-period liquid just inside a cliff's eligible side.
 
     The case's cash-on-hand `coh_case_grid` funds consumption `coh - s_kink` where
     `s_kink` lands next-period liquid one ulp below the cliff (the eligible side),
-    paired with that side's continuation so policy and value stay consistent.
+    paired with that side's continuation so policy and value stay consistent. The
+    below-side continuation limit reads only nodes in `(prev_limit, asset_limit)`,
+    so with cliffs close together it does not bridge the neighbouring jump.
     """
     limit_minus = jnp.nextafter(
         jnp.asarray(asset_limit, dtype=liquid_grid.dtype),
         jnp.asarray(-jnp.inf, dtype=liquid_grid.dtype),
     )
     s_kink = (limit_minus - income) / gross_return
-    value_limit_minus = _extrapolate(
-        liquid_grid, next_value, last_below - 1, last_below, asset_limit
+    value_limit_minus = _bounded_limit_below(
+        liquid_grid,
+        next_value,
+        limit=asset_limit,
+        prev_limit=prev_limit,
+        n=liquid_grid.shape[0],
     )
     kink_consumption = coh_case_grid - s_kink
     kink_value = (

@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.bqsegm_step import (
+    _boundary_targeting_coh,
     _bounded_limit_above,
     _bounded_limit_below,
     _jump_aware_interp,
@@ -67,3 +68,41 @@ def test_bounded_limit_above_uses_only_nodes_below_the_next_cliff():
     # only node 3 (value 50) qualifies, so the limit is the middle level 50.
     out = float(_bounded_limit_above(grid, values, limit=2.5, next_limit=3.5, n=7))
     np.testing.assert_allclose(out, 50.0, atol=1e-6)
+
+
+def test_boundary_targeting_coh_reads_continuation_without_bridging_lower_cliff():
+    """The mixed step's boundary-targeting candidate reads the continuation just
+    below a cliff from the segment between it and the cliff below, not bridged
+    across the lower cliff.
+
+    The candidate value is `u(coh - s_kink) + beta * V(asset_limit^-)`, so backing
+    `V(asset_limit^-)` out of the returned value must give the middle-segment level
+    (50), not a value extrapolated across the neighbouring jump (70).
+    """
+    grid = jnp.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    # Continuation jumps at 2.5 and 3.5: below 2.5 -> 10, middle -> 50, above -> 100.
+    next_value = jnp.array([10.0, 10.0, 10.0, 50.0, 100.0, 100.0, 100.0])
+    asset_limit = 3.5
+    income, gross_return, crra, discount_factor = 1.0, 1.0, 2.0, 0.95
+    coh_case_grid = grid + 10.0
+    valid = jnp.ones(grid.shape[0], dtype=bool)
+
+    kink = _boundary_targeting_coh(
+        liquid_grid=grid,
+        coh_case_grid=coh_case_grid,
+        next_value=next_value,
+        discount_factor=discount_factor,
+        crra=crra,
+        gross_return=gross_return,
+        income=income,
+        asset_limit=asset_limit,
+        prev_limit=2.5,
+        valid=valid,
+    )
+
+    limit_minus = float(np.nextafter(np.float32(asset_limit), np.float32(-np.inf)))
+    s_kink = (limit_minus - income) / gross_return
+    kink_consumption0 = float(coh_case_grid[0]) - s_kink
+    utility0 = kink_consumption0 ** (1.0 - crra) / (1.0 - crra)
+    value_limit_minus = (float(kink[1][0]) - utility0) / discount_factor
+    np.testing.assert_allclose(value_limit_minus, 50.0, atol=1e-3)
