@@ -2326,6 +2326,17 @@ def _build_bqsegm_continuous_core(
     is_multi_jump = len(kinds) > 1 and all(kind == "jump" for kind in kinds)
     is_mixed = "jump" in kinds and not all(kind == "jump" for kind in kinds)
     jump_mask = tuple(kind == "jump" for kind in kinds)
+    # A hard-constraint breakpoint floors the interval below it (slope 0); the mask
+    # is per interval (N+1), aligned with the sorted, ascending-declared breakpoints.
+    has_floor = "hard_constraint" in kinds
+    flat_mask = (
+        tuple(
+            j < len(kinds) and kinds[j] == "hard_constraint"
+            for j in range(len(kinds) + 1)
+        )
+        if has_floor
+        else None
+    )
 
     def core(
         *,
@@ -2416,6 +2427,7 @@ def _build_bqsegm_continuous_core(
                 coh_slopes=coh_slopes,
                 coh_intercepts=coh_intercepts,
                 breakpoints=breakpoints,
+                flat_interval_mask=flat_mask,
             )
         carry = EGMCarry(
             endog_grid=liquid,

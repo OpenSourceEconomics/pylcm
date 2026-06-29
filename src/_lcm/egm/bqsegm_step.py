@@ -38,6 +38,10 @@ from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat
 
+# Below this marginal value of liquid the continuation is treated as flat, so the
+# Euler inversion is degenerate (consumption diverges) and the candidate is dropped.
+_DEGENERATE_MARGINAL_TOL = 1e-10
+
 
 def bqsegm_multi_interval_step(
     *,
@@ -121,10 +125,19 @@ def bqsegm_multi_interval_step(
     # Pull each flat interval's degenerate interior candidates onto its crossing
     # breakpoint at the floor's own optimum, where they link to the rising interior
     # just above; a flat corner below carries the constant value across the interval.
+    # The floor's optimum is read by a dense consumption search at `coh = floor` —
+    # robust to a recurring flat continuation, where the Euler inversion is degenerate.
     flat_corners: list[tuple[Float1D, Float1D, Float1D, Float1D]] = []
     for i in flat_indices:
-        floor_value = jnp.interp(coh_intercepts[i], coh_endog, value_endog)
-        floor_policy = jnp.interp(coh_intercepts[i], coh_endog, consumption)
+        floor_value, floor_policy = _floor_optimum(
+            floor_coh=coh_intercepts[i],
+            liquid_grid=liquid_grid,
+            next_value=next_value,
+            discount_factor=discount_factor,
+            crra=crra,
+            gross_return=gross_return,
+            income=income,
+        )
         in_flat = endog_interval == i
         liquid_endog = jnp.where(in_flat, upper_edges[i], liquid_endog)
         value_endog = jnp.where(in_flat, floor_value, value_endog)
@@ -138,6 +151,13 @@ def bqsegm_multi_interval_step(
                 jnp.zeros((2,)),
             )
         )
+    # Degenerate-inversion guard: where the continuation is flat (a recurring floor
+    # gives zero marginal value of liquid), the Euler inversion sends consumption to
+    # infinity, so those interior candidates are spurious. Drop the ones not already
+    # pulled onto a floor crossing; the floor corner and the s=0 corner cover them.
+    degenerate = marginal_next <= _DEGENERATE_MARGINAL_TOL
+    in_any_flat = jnp.isin(endog_interval, jnp.asarray(flat_indices, dtype=jnp.int32))
+    liquid_endog = jnp.where(degenerate & ~in_any_flat, jnp.nan, liquid_endog)
     # A non-concave (convex-kinked) budget can fold the interior path back, so keep
     # its monotone runs apart for the upper envelope.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
@@ -186,6 +206,34 @@ def _flat_interval_indices(
     if flat_interval_mask is None:
         return ()
     return tuple(i for i in range(n_intervals) if flat_interval_mask[i])
+
+
+def _floor_optimum(
+    *,
+    floor_coh: ScalarFloat,
+    liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    gross_return: ScalarFloat | float,
+    income: ScalarFloat | float,
+    n_dense: int = 512,
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Find the value and policy at a fixed floor cash-on-hand by a dense search.
+
+    Where the floor binds, cash-on-hand equals `floor_coh` for every liquid, so the
+    value is the single-point Bellman max over consumption. A dense consumption
+    search evaluates it directly — convention-free and robust to a recurring flat
+    continuation, where the Euler inversion is degenerate.
+    """
+    fractions = jnp.linspace(1e-4, 1.0, n_dense)
+    consumption = fractions * floor_coh
+    next_liquid = gross_return * (floor_coh - consumption) + income
+    value = _crra_utility(consumption, crra) + discount_factor * jnp.interp(
+        next_liquid, liquid_grid, next_value
+    )
+    best = jnp.argmax(value)
+    return value[best], consumption[best]
 
 
 def bqsegm_discrete_envelope_step(
