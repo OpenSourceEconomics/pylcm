@@ -1,8 +1,13 @@
 # PLAN: Implement BQSEGM (case-piece EGM) off `feat/dcegm`
 
-## Implementation status (branch `feat/bqsegm`)
+## Implementation status (branch `feat/bqsegm`) — COMPLETE
 
-Implemented and green (ty + prek + tests):
+The case-piece solve agrees with the dense brute oracle across the whole asset
+interior at every age (≤3e-3 interior, ≤2e-4 near the boundary), for both a smooth
+and a recurring value-jump continuation. The DC-EGM secondary kink from a jumped
+continuation is resolved by the per-case upper envelope plus a boundary-targeting
+candidate branch (save exactly to the limit for the higher eligible-side
+continuation). All B-steps below are implemented and green (ty + prek + tests):
 
 - **B1** — `lcm.case_boundary` / `piece` / `boundary` / `smooth_helper` decorators
   (metadata-only, claw-safe) + `BQSEGMCaseError`.
@@ -24,12 +29,8 @@ Validated against a dense brute/VFI oracle: the full case-piece pipeline agrees 
 <5e-4 on a jump boundary with a smooth (terminal) continuation, and to ~3e-3
 multi-period without a value jump.
 
-**Remaining (the hard EGM core):** multi-period propagation through a *recurring* value
-jump. A kinked continuation makes each case's endogenous grid non-monotone (the DC-EGM
-secondary kink); the per-case step still uses plain `jnp.interp`, so it does not yet
-resolve that fold. The fix is to run each case's candidates through the `envelope_at_query`
-upper envelope (B4b machinery is in place) instead of plain interpolation, and/or publish
-the switch-refined continuation carry (B4c full). Tracked as the next step.
+**Out of scope for v1 (deferred to multi-predicate work):** more than one binary
+predicate per regime, non-additive / lookup-table pieces, and binding-KKT cases (api §19).
 
 ## Status / provenance
 
