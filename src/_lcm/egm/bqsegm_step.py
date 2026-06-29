@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 from _lcm.egm.bqsegm_segments import mask_dead_candidates
 from _lcm.egm.upper_envelope.query import envelope_at_query
-from lcm.typing import Float1D, ScalarFloat
+from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
 
 
 def bqsegm_one_asset_step(
@@ -61,6 +61,7 @@ def bqsegm_one_asset_step(
         return_liquid=return_liquid,
         income=income,
         subsidy=subsidy_when,
+        asset_limit=asset_limit,
     )
     otherwise_value, otherwise_marginal, otherwise_policy = _case_step(
         next_value=next_value,
@@ -72,6 +73,7 @@ def bqsegm_one_asset_step(
         return_liquid=return_liquid,
         income=income,
         subsidy=subsidy_otherwise,
+        asset_limit=asset_limit,
     )
 
     when_valid = liquid_grid < asset_limit
@@ -124,18 +126,24 @@ def _case_step(
     return_liquid: ScalarFloat | float,
     income: ScalarFloat | float,
     subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one case's smooth 1-D consumption--saving sub-problem by EGM.
 
     `coh = liquid + subsidy`, so the endogenous state recovered from the Euler
     inversion is `liquid = consumption + savings - subsidy`. Below the smallest
     endogenous liquid the borrowing constraint binds: the agent consumes all
-    cash-on-hand and saves nothing.
+    cash-on-hand and saves nothing. The continuation is read kink-aware at
+    `asset_limit`: the next-period value and marginal jump there, so a query
+    landing in the boundary cell reads the correct one-sided branch rather than a
+    bridged average (the topology-preserving continuation read).
     """
     gross_return = 1.0 + return_liquid
     next_liquid = gross_return * savings_grid + income
-    value_next = jnp.interp(next_liquid, liquid_grid, next_value)
-    marginal_next = jnp.interp(next_liquid, liquid_grid, next_marginal)
+    value_next = _kink_aware_interp(next_liquid, liquid_grid, next_value, asset_limit)
+    marginal_next = _kink_aware_interp(
+        next_liquid, liquid_grid, next_marginal, asset_limit
+    )
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     liquid_endog = consumption + savings_grid - subsidy
@@ -145,7 +153,9 @@ def _case_step(
     interior_consumption = jnp.interp(liquid_grid, liquid_endog, consumption)
 
     constrained = liquid_grid < liquid_endog[0]
-    value_at_zero_savings = jnp.interp(income, liquid_grid, next_value)
+    value_at_zero_savings = _kink_aware_interp(
+        jnp.asarray(income), liquid_grid, next_value, asset_limit
+    )
     constrained_consumption = liquid_grid + subsidy
     constrained_value = (
         _crra_utility(constrained_consumption, crra)
@@ -157,6 +167,49 @@ def _case_step(
     value = jnp.where(constrained, constrained_value, interior_value)
     marginal = consumption_on_grid ** (-crra)
     return value, marginal, consumption_on_grid
+
+
+def _kink_aware_interp(
+    query: FloatND,
+    grid: Float1D,
+    values: Float1D,
+    limit: ScalarFloat | float,
+) -> FloatND:
+    """Interpolate `values` on `grid` without bridging the jump at `limit`.
+
+    The continuation carries a value jump at the case boundary: the grid node
+    just below `limit` holds the `when`-side value and the node just above holds
+    the `otherwise`-side value, so a plain linear interpolation across that cell
+    returns a meaningless average. Two extra abscissae are inserted at `limit`
+    (split by a negligible epsilon) carrying each side's value, linearly
+    extrapolated from the two nearest same-side nodes. A query below `limit` then
+    interpolates within the `when` branch, a query above within the `otherwise`
+    branch, and neither bridges the discontinuity.
+    """
+    n = grid.shape[0]
+    last_below = jnp.clip(jnp.sum(grid < limit) - 1, 1, n - 3).astype(jnp.int32)
+    left_at_limit = _extrapolate(grid, values, last_below - 1, last_below, limit)
+    right_at_limit = _extrapolate(grid, values, last_below + 1, last_below + 2, limit)
+
+    eps = jnp.asarray(1e-9, dtype=grid.dtype)
+    aug_grid = jnp.concatenate([grid, jnp.stack([limit - eps, limit + eps])])
+    aug_values = jnp.concatenate([values, jnp.stack([left_at_limit, right_at_limit])])
+    order = jnp.argsort(aug_grid)
+    return jnp.interp(query, aug_grid[order], aug_values[order])
+
+
+def _extrapolate(
+    grid: Float1D,
+    values: Float1D,
+    lower: IntND,
+    upper: IntND,
+    target: ScalarFloat | float,
+) -> ScalarFloat:
+    """Linearly extrapolate `values` to `target` through nodes `lower`, `upper`."""
+    g0, g1 = grid[lower], grid[upper]
+    v0, v1 = values[lower], values[upper]
+    slope = (v1 - v0) / (g1 - g0)
+    return v1 + slope * (target - g1)
 
 
 def _crra_utility(consumption: Float1D, crra: ScalarFloat | float) -> Float1D:
