@@ -348,6 +348,133 @@ def bqsegm_multi_interval_step_savings(
     return value, marginal, policy
 
 
+def bqsegm_per_interval_continuation_step_savings(
+    *,
+    cont_value: FloatND,
+    cont_marginal: FloatND,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve a budget whose continuation differs per liquid interval.
+
+    When the next-period state law carries a current-asset boundary — a transfer,
+    eligibility scale, or tax-rate term that is piecewise-constant in the current
+    liquid state through the declared cliffs — the expected continuation is itself
+    piecewise-constant-shifted across intervals: within interval `k` the boundary
+    term is the constant the cliff partition fixes, so `next_liquid(savings)` and
+    hence the continuation `E[V'(next_liquid)]` take interval `k`'s form. The caller
+    therefore supplies one continuation row per interval (the boundary term bound to
+    that interval's value), and each interval is solved as its own case: the EGM
+    inverts interval `k`'s continuous `coh(liquid)` against interval `k`'s
+    continuation, masks to `[breakpoint_{k-1}, breakpoint_k)`, and adds its
+    hard-borrowing corner. The cases plus corners merge by the branch-aware upper
+    envelope.
+
+    Args:
+        cont_value: Expected continuation value per interval and savings node,
+            shaped `(n_intervals, n_savings)`.
+        cont_marginal: Expected marginal continuation (savings space) per interval
+            and savings node, shaped `(n_intervals, n_savings)`.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
+            with `savings_grid[0] == 0` the no-save corner).
+        discount_factor: Discount factor.
+        utility_of_action: The regime's period utility as a function of consumption,
+            with the ride-along cell's states and the utility params already bound.
+        inverse_marginal_utility: The regime's inverse marginal utility, cell-bound.
+        coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
+        coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
+        breakpoints: Sorted ascending liquid breakpoints, length N.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    n_intervals = coh_slopes.shape[0]
+    marginal_utility = jax.grad(utility_of_action)
+    interval_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
+
+    endog_parts: list[Float1D] = []
+    value_parts: list[Float1D] = []
+    policy_parts: list[Float1D] = []
+    marginal_parts: list[Float1D] = []
+    segment_parts: list[Float1D] = []
+    for interval in range(n_intervals):
+        interval_value = cont_value[interval]
+        interval_marginal = cont_marginal[interval]
+        consumption = _invert_euler_over_savings(
+            cont_marginal=interval_marginal,
+            discount_factor=discount_factor,
+            inverse_marginal_utility=inverse_marginal_utility,
+        )
+        coh_endog = consumption + savings_grid
+        interp_value = (
+            jax.vmap(utility_of_action)(consumption) + discount_factor * interval_value
+        )
+        value_at_no_save = interval_value[0]
+        degenerate = interval_marginal <= _DEGENERATE_MARGINAL_TOL
+
+        coh_case_grid = coh_slopes[interval] * liquid_grid + coh_intercepts[interval]
+        liquid_endog = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
+        marginal_endog = coh_slopes[interval] * jax.vmap(marginal_utility)(consumption)
+        lower = -jnp.inf if interval == 0 else breakpoints[interval - 1]
+        upper = jnp.inf if interval == n_intervals - 1 else breakpoints[interval]
+        in_grid = (coh_endog >= coh_case_grid[0]) & (coh_endog <= coh_case_grid[-1])
+        in_case = (
+            (liquid_endog >= lower) & (liquid_endog < upper) & in_grid & (~degenerate)
+        )
+        interior = mask_dead_candidates(
+            endog_grid=liquid_endog,
+            value=interp_value,
+            policy=consumption,
+            marginal=marginal_endog,
+            valid=in_case,
+        )
+        segment = segment_ids_from_folds(endog_grid=interior[0])
+        next_segment = jnp.nanmax(segment) + 1.0
+        endog_parts.append(interior[0])
+        value_parts.append(interior[1])
+        policy_parts.append(interior[2])
+        marginal_parts.append(interior[3])
+        segment_parts.append(segment + float(interval) * interval_stride)
+
+        # Hard borrowing corner (save nothing) over this interval's liquid range.
+        s0_consumption = coh_case_grid
+        s0_valid = (liquid_grid >= lower) & (liquid_grid < upper)
+        s0 = mask_dead_candidates(
+            endog_grid=liquid_grid,
+            value=jax.vmap(utility_of_action)(s0_consumption)
+            + discount_factor * value_at_no_save,
+            policy=s0_consumption,
+            marginal=coh_slopes[interval] * jax.vmap(marginal_utility)(s0_consumption),
+            valid=s0_valid,
+        )
+        endog_parts.append(s0[0])
+        value_parts.append(s0[1])
+        policy_parts.append(s0[2])
+        marginal_parts.append(s0[3])
+        segment_parts.append(
+            jnp.full_like(liquid_grid, float(interval) * interval_stride + next_segment)
+        )
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+    )
+    return value, marginal, policy
+
+
 def bqsegm_unified_step_savings(
     *,
     cont_value: Float1D,

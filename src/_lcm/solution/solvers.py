@@ -3060,6 +3060,9 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
         interval_segment_coefficients,
         linear_asset_preimage,
     )
+    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
+        bqsegm_per_interval_continuation_step_savings,
+    )
     from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
     from _lcm.egm.numeric_inverse import (  # noqa: PLC0415
         numeric_inverse_marginal_utility,
@@ -3082,6 +3085,19 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
     liquid_name = schedule_spec.liquid_state_name
     ride_names = schedule_spec.ride_along_state_names
     state_names = (liquid_name, *ride_names)
+
+    # When a carry target's next-state law reads the liquid (Euler) state — a
+    # current-asset boundary in `next_<liquid>` (e.g. a Medicaid transfer or pension
+    # adjustment that switches at a declared cliff) — the continuation is constant
+    # only within each declared interval. Detect it once: the per-interval path then
+    # binds the liquid state to each interval's node and solves interval by interval.
+    def _next_state_reads_liquid(target: str) -> bool:
+        next_state_func = continuation_plan.child_reads[target].next_state_func
+        return liquid_name in inspect.signature(next_state_func).parameters
+
+    next_state_reads_liquid = any(
+        _next_state_reads_liquid(target) for target in continuation_plan.carry_targets
+    )
 
     # The period utility reads the consumption action, the ride-along states it
     # depends on (bound per cell), and qualified utility params (bound from kwargs).
@@ -3176,13 +3192,6 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
                     **discount_params,
                 )
             )
-            continuation = bind_continuation(
-                plan=continuation_plan,
-                combo_pool=combo_pool,
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
-                dtype=dtype,
-            )
-            cont_value, cont_marginal = jax.vmap(continuation)(savings_grid)
 
             # Every declared schedule's breakpoints, each mapped to its asset value
             # in its own variable, merge into one sorted per-cell liquid partition.
@@ -3222,6 +3231,48 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
                     c_upper=action_upper,
                 )
 
+            if next_state_reads_liquid:
+                # The next-period state law carries a current-asset boundary, so the
+                # correction is constant only within each declared interval. Bind the
+                # liquid (Euler) state to each interval's representative node, building
+                # one continuation row per interval; the per-interval step solves each
+                # interval against its own continuation and merges by the envelope.
+                n_intervals = int(midpoints.shape[0])
+                value_rows: list[Float1D] = []
+                marginal_rows: list[Float1D] = []
+                for index in range(n_intervals):
+                    interval_pool = {**combo_pool, liquid_name: midpoints[index]}
+                    interval_continuation = bind_continuation(
+                        plan=continuation_plan,
+                        combo_pool=interval_pool,
+                        next_regime_to_egm_carry=next_regime_to_egm_carry,
+                        dtype=dtype,
+                    )
+                    row_value, row_marginal = jax.vmap(interval_continuation)(
+                        savings_grid
+                    )
+                    value_rows.append(row_value)
+                    marginal_rows.append(row_marginal)
+                return bqsegm_per_interval_continuation_step_savings(
+                    cont_value=jnp.stack(value_rows),
+                    cont_marginal=jnp.stack(marginal_rows),
+                    liquid_grid=liquid,
+                    savings_grid=savings_grid,
+                    discount_factor=cell_discount_factor,
+                    utility_of_action=utility_of_consumption,
+                    inverse_marginal_utility=inverse_marginal_utility,
+                    coh_slopes=coh_slopes,
+                    coh_intercepts=coh_intercepts,
+                    breakpoints=breakpoints,
+                )
+
+            continuation = bind_continuation(
+                plan=continuation_plan,
+                combo_pool=combo_pool,
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                dtype=dtype,
+            )
+            cont_value, cont_marginal = jax.vmap(continuation)(savings_grid)
             return _solve_ride_along_cell_step(
                 has_jump=has_jump,
                 jump_positions=jump_positions,
