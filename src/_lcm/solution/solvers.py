@@ -1672,10 +1672,15 @@ class BQSEGM(Solver):
         )
         transition_target_names = tuple(context.transitions)
 
-        period_to_target = _period_to_continuation_target(context=context)
+        # The ride-along kernel takes the continuation as a probability-weighted
+        # blend over the full reachable target set (`bind_continuation` sums the
+        # per-target carries by `compute_regime_transition_probs`), so it admits a
+        # stochastic multi-target lifecycle transition. Enumerate the regime's
+        # active periods directly rather than resolving a single target per period.
+        active_periods = sorted(context.regimes_to_active_periods[context.regime_name])
         cores: dict[tuple[RegimeName, ...], Callable] = {}
         period_kernels: dict[int, PeriodKernel] = {}
-        for period in period_to_target:
+        for period in active_periods:
             plan = _build_bqsegm_continuation_plan(
                 context=context,
                 period=period,
