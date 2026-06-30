@@ -3266,25 +3266,29 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
                 # liquid (Euler) state to each interval's representative node, building
                 # one continuation row per interval; the per-interval step solves each
                 # interval against its own continuation and merges by the envelope.
-                n_intervals = int(midpoints.shape[0])
-                value_rows: list[Float1D] = []
-                marginal_rows: list[Float1D] = []
-                for index in range(n_intervals):
-                    interval_pool = {**combo_pool, liquid_name: midpoints[index]}
+                # Map the interval body over the midpoints with `lax.map` so the
+                # continuation DAG compiles once and XLA iterates, rather than a Python
+                # unroll that bakes one copy of the (model-sized) per-cell DAG into the
+                # graph per interval. The midpoint binds to the Euler slot as a traced
+                # value — the same traced-Euler-slot path the asset-row continuation
+                # uses — so the per-interval reads stay correct.
+                def interval_rows(
+                    midpoint: FloatND,
+                    combo_pool: dict[str, Any] = combo_pool,
+                ) -> tuple[Float1D, Float1D]:
+                    interval_pool = {**combo_pool, liquid_name: midpoint}
                     interval_continuation = bind_continuation(
                         plan=continuation_plan,
                         combo_pool=interval_pool,
                         next_regime_to_egm_carry=next_regime_to_egm_carry,
                         dtype=dtype,
                     )
-                    row_value, row_marginal = jax.vmap(interval_continuation)(
-                        savings_grid
-                    )
-                    value_rows.append(row_value)
-                    marginal_rows.append(row_marginal)
+                    return jax.vmap(interval_continuation)(savings_grid)
+
+                cont_value, cont_marginal = jax.lax.map(interval_rows, midpoints)
                 return bqsegm_per_interval_continuation_step_savings(
-                    cont_value=jnp.stack(value_rows),
-                    cont_marginal=jnp.stack(marginal_rows),
+                    cont_value=cont_value,
+                    cont_marginal=cont_marginal,
                     liquid_grid=liquid,
                     savings_grid=savings_grid,
                     discount_factor=cell_discount_factor,
