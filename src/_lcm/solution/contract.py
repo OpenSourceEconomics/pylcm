@@ -286,6 +286,18 @@ class Solver(ABC):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build the regime's per-period solve adapters."""
 
+    @property
+    def carry_retains_discrete_action_rows(self) -> bool:
+        """Whether this regime's continuation carry keeps per-discrete-action rows.
+
+        A reading parent aggregates the child's discrete choices (the DC-EGM
+        logsum) only when the carry retains a row per discrete-action combo. A
+        value-only solver that publishes an already-action-maxed value array
+        (brute `GridSearch`, the case-piece `BQSEGM`) sets this `False`, so the
+        parent reads the maxed value directly without spurious action rows.
+        """
+        return True
+
     def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Check the regime is in scope for this solver. Default: no-op."""
 

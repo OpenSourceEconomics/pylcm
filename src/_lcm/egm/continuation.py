@@ -1073,9 +1073,16 @@ def _build_child_reads(
             )
             for name in passive_state_names
         )
-        action_names, action_values = _get_child_discrete_actions(
-            user_regime=target_regime
-        )
+        # A value-only child (brute `GridSearch`, the case-piece `BQSEGM`)
+        # publishes a value array already maxed over its discrete actions, so the
+        # read carries no per-action rows; only a choice-retaining child (DC-EGM)
+        # leaves them for the parent to aggregate.
+        if target_regime.solver.carry_retains_discrete_action_rows:
+            action_names, action_values = _get_child_discrete_actions(
+                user_regime=target_regime
+            )
+        else:
+            action_names, action_values = (), ()
         resources_func = _get_child_resources_function(user_regime=target_regime)
         resources_arg_names = frozenset(
             _get_child_resources_arg_names(user_regime=target_regime)

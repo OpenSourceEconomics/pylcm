@@ -81,6 +81,11 @@ from lcm.typing import (
 class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
 
+    @property
+    def carry_retains_discrete_action_rows(self) -> bool:
+        """A brute living child publishes an already-action-maxed value array."""
+        return False
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one max-Q-over-a period adapter per period.
 
@@ -1494,6 +1499,11 @@ class BQSEGM(Solver):
     def requires_continuation_carries(self) -> bool:
         """The case-piece EGM step reads its continuation's marginal value."""
         return True
+
+    @property
+    def carry_retains_discrete_action_rows(self) -> bool:
+        """The case-piece carry publishes a value maxed over the continuous action."""
+        return False
 
     def validate(self, *, context: SolverBuildContext) -> None:
         """Check case coverage and reject hidden branching in user pieces.
@@ -3111,6 +3121,11 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
     utility_state_names = tuple(
         name for name in ride_names if name in utility_arg_names
     )
+    # The cash-on-hand schedule reads the liquid state plus whichever ride-along states
+    # and params enter its DAG; bind exactly those per cell so unread ride-along states
+    # (e.g. a preference type the budget ignores) are not forwarded to the DAG.
+    coh_arg_names = tuple(inspect.signature(schedule_spec.coh_of_liquid_dag).parameters)
+    coh_state_names = tuple(name for name in ride_names if name in coh_arg_names)
     # The discount factor is either pylcm's flat `H__discount_factor` param or, when
     # the regime supplies a `discount_factor` DAG function (e.g. a per-preference-type
     # beta read off a ride-along state), resolved per cell from that function's
@@ -3207,7 +3222,9 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
 
             def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
                 return schedule_spec.coh_of_liquid_dag(
-                    **{liquid_name: scalar_liquid}, **cell, **coh_params
+                    **{liquid_name: scalar_liquid},
+                    **{name: cell[name] for name in coh_state_names},
+                    **coh_params,
                 )
 
             coh_slopes, coh_intercepts = interval_segment_coefficients(

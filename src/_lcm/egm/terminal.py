@@ -37,7 +37,7 @@ from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.typing import EconFunctionsMapping, EGMCarryProducer, StateName
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import FloatND, IntND, ScalarFloat
+from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
 
 # Static row count of a stateless terminal carry: two grid slots suffice to
 # represent a constant function under linear interpolation.
@@ -56,7 +56,7 @@ def get_stateless_terminal_carry_producer() -> EGMCarryProducer:
     def produce_stateless_carry(
         *,
         V_arr: FloatND,
-        **kwargs: FloatND | IntND,  # noqa: ARG001
+        **kwargs: FloatND | IntND | BoolND,  # noqa: ARG001
     ) -> EGMCarry:
         """Broadcast the scalar terminal value into constant carry rows."""
         dtype = canonical_float_dtype()
@@ -131,7 +131,7 @@ def get_terminal_wealth_carry_producer(
     cont_order = continuous_state_order or (state_name,)
 
     def produce_terminal_wealth_carry(
-        *, V_arr: FloatND, **kwargs: FloatND | IntND
+        *, V_arr: FloatND, **kwargs: FloatND | IntND | BoolND
     ) -> EGMCarry:
         """Evaluate the terminal value and its Euler-state gradient on the grid."""
         dtype = canonical_float_dtype()
@@ -241,7 +241,7 @@ def get_brute_child_carry_producer(
     cont_order = continuous_state_order or (state_name,)
 
     def produce_brute_child_carry(
-        *, V_arr: FloatND, **kwargs: FloatND | IntND
+        *, V_arr: FloatND, **kwargs: FloatND | IntND | BoolND
     ) -> EGMCarry:
         """Carry the solved value array and its Euler-state gradient."""
         dtype = canonical_float_dtype()

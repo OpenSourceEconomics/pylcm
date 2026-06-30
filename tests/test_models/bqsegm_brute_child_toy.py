@@ -46,6 +46,12 @@ class ConsumerKind:
     hi: ScalarInt
 
 
+@categorical(ordered=False)
+class WorkChoice:
+    home: ScalarInt
+    work: ScalarInt
+
+
 def _crra(consumption: FloatND, crra: float) -> FloatND:
     return jnp.where(
         crra == 1.0,
@@ -82,6 +88,18 @@ def coh(
 ) -> FloatND:
     """Cash-on-hand: liquid plus the kind's base income, net of the tax."""
     return liquid + base_income[kind] - tax
+
+
+def coh_with_work(
+    liquid: ContinuousState,
+    kind: DiscreteState,
+    tax: FloatND,
+    base_income: FloatND,
+    work: DiscreteState,
+    wage: float,
+) -> FloatND:
+    """Cash-on-hand with a discrete work choice adding `work * wage` earnings."""
+    return liquid + base_income[kind] + work * wage - tax
 
 
 def next_liquid(
@@ -126,6 +144,7 @@ def prob_young_dead(age: int) -> FloatND:
 def build_model(
     *,
     young_variant: str = "brute",
+    old_discrete_action: bool = False,
     n_liquid: int = 120,
     n_consumption: int = 150,
     liquid_max: float = 30.0,
@@ -188,8 +207,13 @@ def build_model(
         active=lambda age: age < 1,
         solver=young_solver,
     )
+    old_actions = {"consumption": consumption_grid}
+    old_functions = {"utility": utility, "tax": tax, "coh": coh}
+    if old_discrete_action:
+        old_actions = {"work": DiscreteGrid(WorkChoice), **old_actions}
+        old_functions = {**old_functions, "coh": coh_with_work}
     old = Regime(
-        actions={"consumption": consumption_grid},
+        actions=old_actions,
         states={"liquid": liquid_grid, "kind": kind_grid},
         state_transitions={
             "liquid": {"dead": next_liquid},
@@ -197,7 +221,7 @@ def build_model(
         },
         constraints={"feasible": feasible},
         transition={"dead": MarkovTransition(lambda: jnp.array(1.0))},
-        functions={"utility": utility, "tax": tax, "coh": coh},
+        functions=old_functions,
         active=lambda age: age == 1,
         solver=GridSearch(),
     )
@@ -225,15 +249,22 @@ def build_params(
     base_income_hi: float = 4.0,
     tax_rate: float = 0.3,
     tax_exemption: float = 12.0,
+    old_discrete_action: bool = False,
+    wage: float = 3.0,
 ) -> dict:
     """Get parameters for the young→old→dead toy.
 
     `base_income` is a length-2 array indexed by the `kind` code (`lo`, `hi`), so
     the budget differs across the ride-along slices in both `young` and `old`.
+    With `old_discrete_action`, `old` gains a discrete `work` choice whose
+    earnings are `work * wage`, so its value array is maxed over `work` too.
     """
     base_income = jnp.array([base_income_lo, base_income_hi])
     budget = {"return_liquid": return_liquid, "income": income}
     tax_params = {"tax_rate": tax_rate, "tax_exemption": tax_exemption}
+    old_coh = {"base_income": base_income}
+    if old_discrete_action:
+        old_coh = {"base_income": base_income, "wage": wage}
     return {
         "young": {
             "utility": {"crra": crra},
@@ -247,7 +278,7 @@ def build_params(
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
             "tax": tax_params,
-            "coh": {"base_income": base_income},
+            "coh": old_coh,
             "dead": {"next_liquid": budget},
         },
         "dead": {"utility": {"crra": crra}},
