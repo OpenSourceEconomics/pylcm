@@ -121,9 +121,9 @@ def boundary(
     )
 
 
-def case_boundary(
+def case_boundary[F: Callable[..., object]](
     *boundaries: BoundarySurface | tuple[str, str],
-) -> Callable[[Callable[..., object]], Callable[..., object]]:
+) -> Callable[[F], F]:
     """Mark a Boolean DAG function as a case boundary with declared surfaces.
 
     The decorated function stays an ordinary DAG node returning a Boolean array;
@@ -141,19 +141,19 @@ def case_boundary(
     """
     coerced = tuple(_coerce_boundary(boundary_spec) for boundary_spec in boundaries)
 
-    def deco(func: Callable[..., object]) -> Callable[..., object]:
+    def deco(func: F) -> F:
         func.__lcm_case_boundary__ = CaseBoundaryMeta(coerced)  # ty: ignore[unresolved-attribute]
         return func
 
     return deco
 
 
-def piece(
+def piece[F: Callable[..., object]](
     output: str,
     *,
     when: Callable[..., object] | None = None,
     otherwise: Callable[..., object] | None = None,
-) -> Callable[[Callable[..., object]], Callable[..., object]]:
+) -> Callable[[F], F]:
     """Mark a DAG function as the formula for one side of a case boundary.
 
     Args:
@@ -179,7 +179,7 @@ def piece(
         msg = "Use exactly one of when= or otherwise=."
         raise ValueError(msg)
 
-    def deco(func: Callable[..., object]) -> Callable[..., object]:
+    def deco(func: F) -> F:
         func.__lcm_piece__ = PieceMeta(  # ty: ignore[unresolved-attribute]
             output=output,
             predicate_name=predicate.__name__,  # ty: ignore[unresolved-attribute]
@@ -226,12 +226,12 @@ def affine_breakpoint(
     )
 
 
-def piecewise_affine(
+def piecewise_affine[F: Callable[..., object]](
     output: str,
     *,
     variable: str,
     breakpoints: tuple[AffineBreakpoint, ...],
-) -> Callable[[Callable[..., object]], Callable[..., object]]:
+) -> Callable[[F], F]:
     """Mark a DAG function as a piecewise-affine schedule on a monotone variable.
 
     The decorated function stays an ordinary DAG node; the decorator only records
@@ -250,7 +250,7 @@ def piecewise_affine(
 
     """
 
-    def deco(func: Callable[..., object]) -> Callable[..., object]:
+    def deco(func: F) -> F:
         func.__lcm_piecewise_affine__ = PiecewiseAffineMeta(  # ty: ignore[unresolved-attribute]
             output=output,
             variable=variable,
@@ -261,7 +261,7 @@ def piecewise_affine(
     return deco
 
 
-def smooth_helper(func: Callable[..., object]) -> Callable[..., object]:
+def smooth_helper[F: Callable[..., object]](func: F) -> F:
     """Attest that a user node's `max`/`clip`/`abs` use is numerical, not economic.
 
     The smoothness gate rejects piecewise primitives in user economic nodes
