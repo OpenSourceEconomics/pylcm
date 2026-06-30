@@ -2801,6 +2801,7 @@ def _build_bqsegm_ride_along_core(
     ride_names = schedule_spec.ride_along_state_names
     state_names = (liquid_name, *ride_names)
     is_derived = bool(schedule_spec.derived_var_name)
+    derived_dag = schedule_spec.derived_of_liquid_dag
 
     def core(
         *,
@@ -2841,12 +2842,12 @@ def _build_bqsegm_ride_along_core(
             )
             cont_value, cont_marginal = jax.vmap(continuation)(savings_grid)
 
-            if is_derived:
+            if derived_dag is not None:
 
-                def derived_of_liquid(scalar_liquid: FloatND) -> FloatND:
-                    return schedule_spec.derived_of_liquid_dag(
-                        **{liquid_name: scalar_liquid}, **cell, **derived_params
-                    )
+                def derived_of_liquid(
+                    scalar_liquid: FloatND, dag: Callable = derived_dag
+                ) -> FloatND:
+                    return dag(**{liquid_name: scalar_liquid}, **cell, **derived_params)
 
                 breakpoints = jnp.sort(
                     jnp.stack(
@@ -2860,6 +2861,7 @@ def _build_bqsegm_ride_along_core(
                     )
                 )
             else:
+                assert liquid_breakpoints is not None  # noqa: S101
                 breakpoints = liquid_breakpoints
             midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
 
