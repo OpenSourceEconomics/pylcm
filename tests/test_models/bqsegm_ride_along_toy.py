@@ -64,6 +64,16 @@ def bequest(liquid: ContinuousState, crra: float) -> FloatND:
     return _crra(liquid, crra)
 
 
+def discount_factor(kind: DiscreteState, discount_factor_by_kind: FloatND) -> FloatND:
+    """Per-kind subjective discount factor read off the ride-along `kind` code.
+
+    Stands in for a model whose discount factor is a DAG function of a ride-along
+    state (e.g. a preference type) rather than the default flat `H__discount_factor`
+    parameter, so the budget's Euler weight differs across ride-along slices.
+    """
+    return discount_factor_by_kind[kind]
+
+
 @lcm.piecewise_affine(
     "tax",
     variable="liquid",
@@ -126,6 +136,7 @@ def prob_die(age: int, final_age_alive: float) -> FloatND:
 def build_model(
     *,
     variant: str = "brute",
+    per_kind_discount: bool = False,
     n_periods: int = 4,
     n_liquid: int = 120,
     n_consumption: int = 150,
@@ -155,6 +166,10 @@ def build_model(
     liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
 
     alive_functions = {"utility": utility, "tax": tax, "coh": coh}
+    if per_kind_discount:
+        # Drive the discount factor off the ride-along `kind` code so the Euler
+        # weight differs across slices, exercising DAG-resolved discounting.
+        alive_functions = {**alive_functions, "discount_factor": discount_factor}
     if variant == "brute":
         alive_solver = GridSearch()
         liquid_law = next_liquid
@@ -213,6 +228,9 @@ def build_model(
 def build_params(
     *,
     discount_factor: float = 0.95,
+    per_kind_discount: bool = False,
+    discount_factor_lo: float = 0.90,
+    discount_factor_hi: float = 0.97,
     crra: float = 2.0,
     return_liquid: float = 0.03,
     income: float = 1.0,
@@ -225,14 +243,27 @@ def build_params(
     """Get parameters for the ride-along tax toy.
 
     `base_income` is a length-2 array indexed by the `kind` code (`lo`, `hi`), so
-    the budget differs across the ride-along slices.
+    the budget differs across the ride-along slices. With `per_kind_discount`, the
+    discount factor is supplied as a length-2 `discount_factor_by_kind` array under
+    the `discount_factor` DAG function instead of the flat `H__discount_factor`.
     """
     base_income = jnp.array([base_income_lo, base_income_hi])
     alive_budget = {"return_liquid": return_liquid, "income": income}
+    discount_slot = (
+        {
+            "discount_factor": {
+                "discount_factor_by_kind": jnp.array(
+                    [discount_factor_lo, discount_factor_hi]
+                )
+            }
+        }
+        if per_kind_discount
+        else {"H": {"discount_factor": discount_factor}}
+    )
     return {
         "alive": {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            **discount_slot,
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
             "coh": {"base_income": base_income},
             "alive": {

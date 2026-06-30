@@ -2557,6 +2557,10 @@ class _BQSEGMScheduleSpec:
     derived_param_names: tuple[str, ...] = ()
     """Unqualified parameter names the derived schedule variable reads (everything
     but the state axes)."""
+    discount_factor_dag: Callable | None = None
+    """Composed `discount_factor` as a function of its ride-along state arguments and
+    qualified params, or `None` when the regime uses pylcm's flat `H__discount_factor`
+    parameter. When set, the ride-along core resolves the discount factor per cell."""
 
 
 def _collect_bqsegm_schedule_spec(
@@ -2676,6 +2680,14 @@ def _collect_bqsegm_schedule_spec(
     coh_args = tuple(inspect.signature(coh_dag).parameters)
     coh_param_names = tuple(name for name in coh_args if name not in state_names)
     utility_dag = concatenate_functions(dict(context.functions), targets="utility")
+    # A regime whose discount factor is a DAG function (e.g. a per-preference-type
+    # beta indexed by a ride-along state) exposes it as a target; absent that, the
+    # default flat `H__discount_factor` param drives discounting.
+    discount_factor_dag = (
+        concatenate_functions(dict(context.functions), targets="discount_factor")
+        if "discount_factor" in context.functions
+        else None
+    )
     consumption_action_name = next(iter(context.state_action_space.continuous_actions))
     # Legacy single-schedule fields drive the non-ride-along continuous core, which
     # is reached only for a regime with no ride-along axis (so a single liquid-
@@ -2704,6 +2716,7 @@ def _collect_bqsegm_schedule_spec(
         derived_var_name=first_derived[0],
         derived_of_liquid_dag=first_derived[1],
         derived_param_names=first_derived[2],
+        discount_factor_dag=discount_factor_dag,
     )
 
 
@@ -3022,7 +3035,7 @@ def _indexed_threshold_value(
     return value
 
 
-def _build_bqsegm_ride_along_core(  # noqa: PLR0915
+def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
     *,
     savings_grid: Float1D,
     schedule_spec: _BQSEGMScheduleSpec,
@@ -3082,6 +3095,22 @@ def _build_bqsegm_ride_along_core(  # noqa: PLR0915
     utility_state_names = tuple(
         name for name in ride_names if name in utility_arg_names
     )
+    # The discount factor is either pylcm's flat `H__discount_factor` param or, when
+    # the regime supplies a `discount_factor` DAG function (e.g. a per-preference-type
+    # beta read off a ride-along state), resolved per cell from that function's
+    # qualified params and ride-along state arguments.
+    discount_factor_dag = schedule_spec.discount_factor_dag
+    if discount_factor_dag is None:
+        discount_param_names: tuple[str, ...] = ()
+        discount_state_names: tuple[str, ...] = ()
+    else:
+        discount_arg_names = tuple(inspect.signature(discount_factor_dag).parameters)
+        discount_param_names = tuple(
+            name for name in discount_arg_names if name not in state_names
+        )
+        discount_state_names = tuple(
+            name for name in ride_names if name in discount_arg_names
+        )
     # The continuous action solving the Euler equation is bracketed numerically when
     # the regime supplies no analytic inverse: a small floor up to a generous
     # multiple of the savings grid's top node (the resources scale). The clamped
@@ -3101,7 +3130,7 @@ def _build_bqsegm_ride_along_core(  # noqa: PLR0915
         param_pool = {key: v for key, v in kwargs.items() if key not in state_names}
         coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
         utility_params = {name: kwargs[name] for name in utility_param_names}
-        discount_factor = kwargs["H__discount_factor"]
+        discount_params = {name: kwargs[name] for name in discount_param_names}
 
         def cell_breakpoint(source: _BQSEGMSource, cell: dict[str, Any]) -> FloatND:
             """Map one source's threshold to its asset breakpoint in this cell.
@@ -3139,6 +3168,14 @@ def _build_bqsegm_ride_along_core(  # noqa: PLR0915
         ) -> tuple[Float1D, Float1D, Float1D]:
             cell = dict(zip(ride_names, ride_values, strict=True))
             combo_pool = {**param_pool, **cell}
+            cell_discount_factor = (
+                kwargs["H__discount_factor"]
+                if discount_factor_dag is None
+                else discount_factor_dag(
+                    **{name: cell[name] for name in discount_state_names},
+                    **discount_params,
+                )
+            )
             continuation = bind_continuation(
                 plan=continuation_plan,
                 combo_pool=combo_pool,
@@ -3192,7 +3229,7 @@ def _build_bqsegm_ride_along_core(  # noqa: PLR0915
                 cont_marginal=cont_marginal,
                 liquid_grid=liquid,
                 savings_grid=savings_grid,
-                discount_factor=discount_factor,
+                discount_factor=cell_discount_factor,
                 utility_of_action=utility_of_consumption,
                 inverse_marginal_utility=inverse_marginal_utility,
                 coh_slopes=coh_slopes,
