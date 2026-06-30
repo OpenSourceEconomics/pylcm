@@ -32,6 +32,7 @@ from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.bqsegm import BQSEGMRegistry
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.outer_envelope import (
@@ -1710,7 +1711,9 @@ class BQSEGM(Solver):
         # stochastic multi-target lifecycle transition. Enumerate the regime's
         # active periods directly rather than resolving a single target per period.
         active_periods = sorted(context.regimes_to_active_periods[context.regime_name])
-        cores: dict[tuple[RegimeName, ...], Callable] = {}
+        continuation_cores: dict[tuple[RegimeName, ...], Callable] = {}
+        envelope_cores: dict[tuple[RegimeName, ...], Callable] = {}
+        statics_by_key: dict[tuple[RegimeName, ...], _BQSEGMRideAlongStatics] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         for period in active_periods:
             plan = _build_bqsegm_continuation_plan(
@@ -1721,15 +1724,36 @@ class BQSEGM(Solver):
                 stochastic_node_batch_size=self.stochastic_node_batch_size,
             )
             key = (*plan.carry_targets, "|", *plan.scalar_targets)
-            if key not in cores:
-                core = _build_bqsegm_ride_along_core(
+            if key not in continuation_cores:
+                statics = _bqsegm_ride_along_statics(
                     savings_grid=savings_grid,
                     schedule_spec=schedule_spec,
                     continuation_plan=plan,
                 )
-                cores[key] = jax.jit(core) if context.enable_jit else core
+                continuation_core = _build_bqsegm_continuation_core(
+                    savings_grid=savings_grid,
+                    schedule_spec=schedule_spec,
+                    continuation_plan=plan,
+                    statics=statics,
+                )
+                envelope_core = _build_bqsegm_envelope_core(
+                    savings_grid=savings_grid,
+                    schedule_spec=schedule_spec,
+                    statics=statics,
+                )
+                continuation_cores[key] = (
+                    jax.jit(continuation_core)
+                    if context.enable_jit
+                    else continuation_core
+                )
+                envelope_cores[key] = (
+                    jax.jit(envelope_core) if context.enable_jit else envelope_core
+                )
+                statics_by_key[key] = statics
             period_kernels[period] = _RideAlongBQSEGMPeriodKernel(
-                core=cores[key],
+                continuation_core=continuation_cores[key],
+                envelope_core=envelope_cores[key],
+                statics=statics_by_key[key],
                 regime_name=context.regime_name,
                 reachable_targets=reachable_targets,
                 transition_target_names=transition_target_names,
@@ -1932,16 +1956,28 @@ class _OneAssetEGMPeriodKernel:
 class _RideAlongBQSEGMPeriodKernel:
     """The case-piece EGM adapter for a regime carrying a ride-along co-state.
 
-    Mirrors `_DCEGMPeriodKernel`: the continuation comes from the next period's
-    EGM carries (read through the transition-aware continuation reader, not the
-    next-period liquid grid), so the core reads `next_regime_to_egm_carry` and
-    binds one continuation per ride-along cell. Calling it solves the 1-D liquid
-    problem once per cell, batched, and returns the value array and the
-    ride-along-axis-leading continuation carry a parent interpolates.
+    The solve splits into two independently-jitted cores so neither XLA program
+    carries the other's instruction graph:
+
+    - `continuation`: reads `next_regime_to_egm_carry` and binds one continuation per
+      ride-along cell through the transition-aware reader, returning the
+      probability-weighted expected value and marginal over the savings grid.
+    - `envelope`: re-derives each cell's budget and utility and solves the 1-D liquid
+      step against the continuation core's stacks, returning the value array and the
+      ride-along-axis-leading continuation carry a parent interpolates.
+
+    Calling the adapter runs `continuation` then `envelope` unjitted and assembles the
+    `KernelResult`; no JIT spans the two calls.
     """
 
-    core: Callable
-    """The shared jitted ride-along case-piece core (`id`-deduped across periods)."""
+    continuation_core: Callable
+    """The jitted continuation half (`id`-deduped across periods)."""
+
+    envelope_core: Callable
+    """The jitted EGM/envelope half (`id`-deduped across periods)."""
+
+    statics: _BQSEGMRideAlongStatics
+    """Build-time config — supplies the envelope core's placeholder stack shapes."""
 
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
@@ -1952,14 +1988,24 @@ class _RideAlongBQSEGMPeriodKernel:
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
+    @property
+    def core(self) -> Callable:
+        """The continuation core, exposed for any single-core reader."""
+        return self.continuation_core
+
     def cores(self) -> Mapping[str, Callable]:
-        """Return the single case-piece core under the `"main"` key."""
-        return MappingProxyType({"main": self.core})
+        """Return the continuation and envelope cores under their own keys."""
+        return MappingProxyType(
+            {
+                "continuation": self.continuation_core,
+                "envelope": self.envelope_core,
+            }
+        )
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
     ) -> _RideAlongBQSEGMPeriodKernel:
-        """Bind the regime's and its carry targets' fixed params into the core."""
+        """Bind the regime's and its carry targets' fixed params into both cores."""
         bound = dict(fixed_flat_params.get(self.regime_name, MappingProxyType({})))
         for target_name in self.transition_target_names:
             for key, value in fixed_flat_params.get(
@@ -1968,12 +2014,16 @@ class _RideAlongBQSEGMPeriodKernel:
                 bound.setdefault(key, value)
         if not bound:
             return self
-        return replace(self, core=functools.partial(self.core, **bound))
+        return replace(
+            self,
+            continuation_core=functools.partial(self.continuation_core, **bound),
+            envelope_core=functools.partial(self.envelope_core, **bound),
+        )
 
     def build_lower_args(
         self,
         *,
-        core_key: str = "main",  # noqa: ARG002
+        core_key: str = "continuation",
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
@@ -1981,15 +2031,32 @@ class _RideAlongBQSEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
     ) -> Mapping[str, object]:
-        """Build the core's lowering arguments: states, carries, EGM params."""
+        """Build the named core's lowering arguments.
+
+        The continuation core takes the state grids, the filtered carries, and the
+        regime's flat params. The envelope core takes the same state and param args
+        minus the carries, plus correctly-shaped zero placeholders for the two
+        continuation stacks (statically derivable from the ride-along grid sizes, the
+        savings grid, and the interval count).
+        """
+        states = dict(state_action_space.states)
+        params = self._kernel_params(flat_params=flat_params)
+        if core_key == "envelope":
+            return {
+                **states,
+                **self._stack_placeholders(states=states),
+                **params,
+                "period": jnp.int32(period),
+                "age": ages.values[period],
+            }
         return {
-            **dict(state_action_space.states),
+            **states,
             "next_regime_to_egm_carry": _reachable_carry_subset(
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
                 reachable_targets=self.reachable_targets,
             ),
             "next_regime_to_V_arr": next_regime_to_V_arr,
-            **self._kernel_params(flat_params=flat_params),
+            **params,
             "period": jnp.int32(period),
             "age": ages.values[period],
         }
@@ -2005,22 +2072,49 @@ class _RideAlongBQSEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
     ) -> KernelResult:
-        """Run the ride-along case-piece step and assemble the `KernelResult`."""
-        V_arr, carry = compiled_cores["main"](
-            **state_action_space.states,
+        """Run the continuation then envelope core and assemble the `KernelResult`."""
+        states = dict(state_action_space.states)
+        params = self._kernel_params(flat_params=flat_params)
+        cont_value_stack, cont_marginal_stack = compiled_cores["continuation"](
+            **states,
             next_regime_to_egm_carry=_reachable_carry_subset(
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
                 reachable_targets=self.reachable_targets,
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
-            **self._kernel_params(flat_params=flat_params),
+            **params,
+            period=jnp.int32(period),
+            age=ages.values[period],
+        )
+        V_arr, carry = compiled_cores["envelope"](
+            **states,
+            cont_value_stack=cont_value_stack,
+            cont_marginal_stack=cont_marginal_stack,
+            **params,
             period=jnp.int32(period),
             age=ages.values[period],
         )
         return KernelResult(V_arr=V_arr, carry=carry)
 
+    def _stack_placeholders(self, *, states: Mapping[str, object]) -> dict[str, object]:
+        """Zero placeholders for the envelope core's continuation stacks.
+
+        The interval regime reads one continuation row per declared interval, so the
+        stacks carry an interval axis between the ride-cell and savings axes; the
+        non-interval regime reads a single row over the savings grid.
+        """
+        n_ride_cells = self.statics.n_ride_cells(states=states)
+        n_savings = self.statics.n_savings
+        shape: tuple[int, ...] = (
+            (n_ride_cells, self.statics.n_intervals, n_savings)
+            if self.statics.next_state_reads_liquid
+            else (n_ride_cells, n_savings)
+        )
+        zeros = jnp.zeros(shape, dtype=canonical_float_dtype())
+        return {"cont_value_stack": zeros, "cont_marginal_stack": zeros}
+
     def _kernel_params(self, *, flat_params: FlatParams) -> dict[str, object]:
-        """Flat params fed into the core: the regime's plus its targets'."""
+        """Flat params fed into the cores: the regime's plus its targets'."""
         params: dict[str, object] = dict(flat_params[self.regime_name])
         for target_name in self.transition_target_names:
             for key, value in flat_params.get(
@@ -3057,38 +3151,76 @@ def _indexed_threshold_value(
     return value
 
 
-def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
+@dataclass(frozen=True)
+class _BQSEGMRideAlongStatics:
+    """Build-time config the ride-along continuation and envelope cores share.
+
+    Both cores rebuild each ride-along cell's breakpoint partition, budget schedule,
+    discount factor, and utility identically off this config; the continuation core
+    additionally reads the regime transition through `bind_continuation`. Every field
+    is a Python-level static derived once from the schedule spec and continuation plan.
+    """
+
+    sources: tuple[_BQSEGMSource, ...]
+    """Every declared breakpoint, merged on the liquid axis."""
+    jump_flags_arr: BoolND
+    """Per-source jump indicator in declared order."""
+    n_jumps: int
+    """Number of jump breakpoints across all sources."""
+    has_jump: bool
+    """Whether any declared breakpoint is a jump (vs. a continuous kink)."""
+    static_jump_positions: tuple[int, ...]
+    """Jump indices in the sorted partition when a single variable fixes the order."""
+    dynamic_jumps: bool
+    """Whether the sorted-order jump indices must be recovered per cell."""
+    liquid_name: str
+    """Name of the liquid (Euler) state."""
+    ride_names: tuple[str, ...]
+    """Ride-along state axes (the budget varies per cell over these)."""
+    state_names: tuple[str, ...]
+    """Liquid plus ride-along state names — the kwargs that are state grids."""
+    next_state_reads_liquid: bool
+    """Whether a carry target's next-state law reads the current liquid state, so the
+    continuation is piecewise-constant across declared intervals and the per-interval
+    path applies."""
+    consumption_action_name: ActionName
+    """Name of the continuous consumption action the period utility reads."""
+    utility_param_names: tuple[str, ...]
+    """Qualified utility params (excluding the consumption action and states)."""
+    utility_state_names: tuple[str, ...]
+    """Ride-along states the period utility reads, bound per cell."""
+    coh_state_names: tuple[str, ...]
+    """Ride-along states the cash-on-hand schedule reads, bound per cell."""
+    discount_param_names: tuple[str, ...]
+    """Qualified params the discount-factor DAG reads, or empty for flat discount."""
+    discount_state_names: tuple[str, ...]
+    """Ride-along states the discount-factor DAG reads, or empty for flat discount."""
+    n_intervals: int
+    """Number of liquid intervals the breakpoints split each cell into (N + 1)."""
+    n_savings: int
+    """Length of the post-decision savings grid."""
+
+    def n_ride_cells(self, *, states: Mapping[str, object]) -> int:
+        """Number of flattened ride-along cells for the given state grids."""
+        count = 1
+        for name in self.ride_names:
+            count *= int(jnp.asarray(states[name]).shape[0])
+        return count
+
+
+def _bqsegm_ride_along_statics(
     *,
     savings_grid: Float1D,
     schedule_spec: _BQSEGMScheduleSpec,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
-) -> Callable:
-    """Build the case-piece core that batches the 1-D solve over ride-along cells.
+) -> _BQSEGMRideAlongStatics:
+    """Derive the static config the ride-along continuation and envelope cores share.
 
-    Per ride-along cell (a combo of the non-liquid state axes), the continuation
-    is read through `bind_continuation` — integrating the next-period regime
-    transition, stochastic shocks, and the ride-along co-state transition — and
-    evaluated over the savings grid. The cell's budget schedule is recovered with
-    its ride-along state values bound, and the 1-D continuous-budget step solves
-    against that savings-space continuation. The cells stack into the value array
-    and carry with the ride-along (discrete/passive) axes leading the liquid axis,
-    matching the canonical value-function layout.
+    Partitions the schedule's breakpoints, classifies the jump structure, and reads
+    each component DAG's argument names (utility, cash-on-hand, discount factor) into
+    the per-cell parameter and state splits both cores apply identically.
     """
     import inspect  # noqa: PLC0415
-
-    from _lcm.dtypes import canonical_float_dtype  # noqa: PLC0415
-    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
-        interval_midpoints,
-        interval_segment_coefficients,
-        linear_asset_preimage,
-    )
-    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
-        bqsegm_per_interval_continuation_step_savings,
-    )
-    from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
-    from _lcm.egm.numeric_inverse import (  # noqa: PLC0415
-        numeric_inverse_marginal_utility,
-    )
 
     sources = schedule_spec.sources
     kinds = tuple(source.kind for source in sources)
@@ -3154,124 +3286,138 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
         discount_state_names = tuple(
             name for name in ride_names if name in discount_arg_names
         )
-    # The continuous action solving the Euler equation is bracketed numerically when
-    # the regime supplies no analytic inverse: a small floor up to a generous
-    # multiple of the savings grid's top node (the resources scale). The clamped
-    # near-zero-marginal corner whose root exceeds the bracket lands far to the right
-    # and is discarded by the upper envelope.
-    action_upper = savings_grid[-1] * 1000.0 + 1000.0
-    action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
 
-    def core(
+    return _BQSEGMRideAlongStatics(
+        sources=sources,
+        jump_flags_arr=jump_flags_arr,
+        n_jumps=n_jumps,
+        has_jump=has_jump,
+        static_jump_positions=static_jump_positions,
+        dynamic_jumps=dynamic_jumps,
+        liquid_name=liquid_name,
+        ride_names=ride_names,
+        state_names=state_names,
+        next_state_reads_liquid=next_state_reads_liquid,
+        consumption_action_name=consumption_action_name,
+        utility_param_names=utility_param_names,
+        utility_state_names=utility_state_names,
+        coh_state_names=coh_state_names,
+        discount_param_names=discount_param_names,
+        discount_state_names=discount_state_names,
+        n_intervals=len(sources) + 1,
+        n_savings=int(savings_grid.shape[0]),
+    )
+
+
+def _bqsegm_cell_breakpoints(
+    *,
+    statics: _BQSEGMRideAlongStatics,
+    schedule_spec: _BQSEGMScheduleSpec,
+    kwargs: Mapping[str, Any],
+    cell: dict[str, Any],
+    dtype: Any,  # noqa: ANN401  # canonical float dtype
+) -> tuple[Float1D, tuple[Any, ...]]:
+    """Build one ride-along cell's sorted liquid breakpoints and jump positions.
+
+    Each declared schedule's threshold maps to its asset value in its own variable
+    (directly for a liquid-state schedule, via the per-cell affine preimage for a
+    derived-variable schedule), and the sources merge into one sorted partition.
+    """
+    from _lcm.egm.bqsegm_breakpoints import linear_asset_preimage  # noqa: PLC0415
+
+    liquid_name = statics.liquid_name
+
+    def cell_breakpoint(source: _BQSEGMSource) -> FloatND:
+        threshold_value = _indexed_threshold_value(
+            table=kwargs[source.threshold_param_name],
+            subkey=source.threshold_subkey,
+            index_state=source.threshold_index_state,
+            static_index=source.threshold_static_index,
+            cell=cell,
+        )
+        threshold = jnp.asarray(threshold_value, dtype=dtype)
+        if source.derived_of_liquid_dag is None:
+            return threshold
+        dag = source.derived_of_liquid_dag
+        derived_params = {name: kwargs[name] for name in source.derived_param_names}
+        cell_for_dag = {name: cell[name] for name in source.derived_state_names}
+
+        def derived_of_liquid(scalar_liquid: FloatND) -> FloatND:
+            return dag(**{liquid_name: scalar_liquid}, **cell_for_dag, **derived_params)
+
+        return linear_asset_preimage(derived_of_liquid, threshold=threshold)
+
+    preimages = jnp.stack([cell_breakpoint(source) for source in schedule_spec.sources])
+    return _partition_jumps(
+        preimages,
+        dynamic_jumps=statics.dynamic_jumps,
+        jump_flags=statics.jump_flags_arr,
+        n_jumps=statics.n_jumps,
+        static_jump_positions=statics.static_jump_positions,
+    )
+
+
+def _build_bqsegm_continuation_core(
+    *,
+    savings_grid: Float1D,
+    schedule_spec: _BQSEGMScheduleSpec,
+    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    statics: _BQSEGMRideAlongStatics,
+) -> Callable:
+    """Build the continuation half of the ride-along solve, jitted in isolation.
+
+    Per ride-along cell the continuation is read through `bind_continuation` —
+    integrating the next-period regime transition, stochastic shocks, the ride-along
+    co-state transition, and the child value interpolation — and evaluated over the
+    savings grid. The interval regime binds the liquid state to each interval's node
+    and returns one continuation row per interval; the non-interval regime returns one
+    row over the savings grid. The cells stack into `(n_ride_cells, [n_intervals,]
+    n_savings)` expected-value and expected-marginal arrays the envelope core consumes.
+
+    The heavy fan-out lives only here: this core builds no utility, cash-on-hand, or
+    discount closure, so its compiled program never carries the EGM/envelope math.
+    """
+    from _lcm.egm.bqsegm_breakpoints import interval_midpoints  # noqa: PLC0415
+    from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
+
+    liquid_name = statics.liquid_name
+    ride_names = statics.ride_names
+    state_names = statics.state_names
+
+    def continuation_core(
         *,
         next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
         **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
-    ) -> tuple[FloatND, EGMCarry]:
+    ) -> tuple[FloatND, FloatND]:
         dtype = canonical_float_dtype()
         liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
         param_pool = {key: v for key, v in kwargs.items() if key not in state_names}
-        coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
-        utility_params = {name: kwargs[name] for name in utility_param_names}
-        discount_params = {name: kwargs[name] for name in discount_param_names}
 
-        def cell_breakpoint(source: _BQSEGMSource, cell: dict[str, Any]) -> FloatND:
-            """Map one source's threshold to its asset breakpoint in this cell.
-
-            A schedule on the liquid state reads its threshold directly as a liquid
-            breakpoint; a derived-variable schedule maps the threshold to its
-            per-cell asset preimage in that variable, offset by the cell's states.
-            A threshold nested in a `MappingLeaf` is read through its sub-key, and
-            one declared `indexed_by` a ride-along state is read at this cell's
-            state row (and optional static column), before the preimage map.
-            """
-            threshold_value = _indexed_threshold_value(
-                table=kwargs[source.threshold_param_name],
-                subkey=source.threshold_subkey,
-                index_state=source.threshold_index_state,
-                static_index=source.threshold_static_index,
-                cell=cell,
-            )
-            threshold = jnp.asarray(threshold_value, dtype=dtype)
-            if source.derived_of_liquid_dag is None:
-                return threshold
-            dag = source.derived_of_liquid_dag
-            derived_params = {name: kwargs[name] for name in source.derived_param_names}
-            cell_for_dag = {name: cell[name] for name in source.derived_state_names}
-
-            def derived_of_liquid(scalar_liquid: FloatND) -> FloatND:
-                return dag(
-                    **{liquid_name: scalar_liquid}, **cell_for_dag, **derived_params
-                )
-
-            return linear_asset_preimage(derived_of_liquid, threshold=threshold)
-
-        def solve_one_cell(
-            ride_values: tuple[Any, ...],  # ride-along codes/values
-        ) -> tuple[Float1D, Float1D, Float1D]:
+        def cell_continuation(
+            ride_values: tuple[Any, ...],
+        ) -> tuple[FloatND, FloatND]:
             cell = dict(zip(ride_names, ride_values, strict=True))
             combo_pool = {**param_pool, **cell}
-            cell_discount_factor = (
-                kwargs["H__discount_factor"]
-                if discount_factor_dag is None
-                else discount_factor_dag(
-                    **{name: cell[name] for name in discount_state_names},
-                    **discount_params,
-                )
-            )
 
-            # Every declared schedule's breakpoints, each mapped to its asset value
-            # in its own variable, merge into one sorted per-cell liquid partition.
-            preimages = jnp.stack([cell_breakpoint(source, cell) for source in sources])
-            breakpoints, jump_positions = _partition_jumps(
-                preimages,
-                dynamic_jumps=dynamic_jumps,
-                jump_flags=jump_flags_arr,
-                n_jumps=n_jumps,
-                static_jump_positions=static_jump_positions,
-            )
-            midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
-
-            def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
-                return schedule_spec.coh_of_liquid_dag(
-                    **{liquid_name: scalar_liquid},
-                    **{name: cell[name] for name in coh_state_names},
-                    **coh_params,
-                )
-
-            coh_slopes, coh_intercepts = interval_segment_coefficients(
-                schedule=coh_of_liquid, interval_midpoints=midpoints
-            )
-
-            def utility_of_consumption(consumption_value: FloatND) -> FloatND:
-                return schedule_spec.utility_dag(
-                    **{consumption_action_name: consumption_value},
-                    **{name: cell[name] for name in utility_state_names},
-                    **utility_params,
-                )
-
-            marginal_utility = jax.grad(utility_of_consumption)
-
-            def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
-                return numeric_inverse_marginal_utility(
-                    marginal_continuation=marginal_continuation,
-                    marginal_utility=marginal_utility,
-                    c_lower=action_lower,
-                    c_upper=action_upper,
-                )
-
-            if next_state_reads_liquid:
+            if statics.next_state_reads_liquid:
                 # The next-period state law carries a current-asset boundary, so the
-                # correction is constant only within each declared interval. Bind the
-                # liquid (Euler) state to each interval's representative node, building
-                # one continuation row per interval; the per-interval step solves each
-                # interval against its own continuation and merges by the envelope.
-                # Map the interval body over the midpoints with `lax.map` so the
-                # continuation DAG compiles once and XLA iterates, rather than a Python
-                # unroll that bakes one copy of the (model-sized) per-cell DAG into the
-                # graph per interval. The midpoint binds to the Euler slot as a traced
-                # value — the same traced-Euler-slot path the asset-row continuation
-                # uses — so the per-interval reads stay correct.
+                # continuation is constant only within each declared interval. Bind
+                # the liquid (Euler) state to each interval's representative node,
+                # building one continuation row per interval. `lax.map` compiles the
+                # continuation DAG once and XLA iterates, rather than a Python unroll
+                # that bakes one copy of the per-cell DAG into the graph per interval.
+                breakpoints, _ = _bqsegm_cell_breakpoints(
+                    statics=statics,
+                    schedule_spec=schedule_spec,
+                    kwargs=kwargs,
+                    cell=cell,
+                    dtype=dtype,
+                )
+                midpoints = interval_midpoints(
+                    liquid_grid=liquid, breakpoints=breakpoints
+                )
+
                 def interval_rows(
                     midpoint: FloatND,
                     combo_pool: dict[str, Any] = combo_pool,
@@ -3285,7 +3431,130 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
                     )
                     return jax.vmap(interval_continuation)(savings_grid)
 
-                cont_value, cont_marginal = jax.lax.map(interval_rows, midpoints)
+                return jax.lax.map(interval_rows, midpoints)
+
+            continuation = bind_continuation(
+                plan=continuation_plan,
+                combo_pool=combo_pool,
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                dtype=dtype,
+            )
+            return jax.vmap(continuation)(savings_grid)
+
+        ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
+        mesh = jnp.meshgrid(*ride_grids, indexing="ij")
+        flat_cells = tuple(grid.ravel() for grid in mesh)
+        return jax.vmap(lambda *vals: cell_continuation(vals))(*flat_cells)
+
+    return continuation_core
+
+
+def _build_bqsegm_envelope_core(
+    *,
+    savings_grid: Float1D,
+    schedule_spec: _BQSEGMScheduleSpec,
+    statics: _BQSEGMRideAlongStatics,
+) -> Callable:
+    """Build the EGM/envelope half of the ride-along solve, jitted in isolation.
+
+    Per ride-along cell this re-derives the budget schedule, discount factor, and
+    utility from the same (states, params), then solves the 1-D continuous-budget step
+    against the cell's continuation row supplied by the continuation core. The interval
+    regime runs the per-interval continuation step; the non-interval regime runs the
+    multi-interval or unified jump step. The cells stack into the value array and carry
+    with the ride-along axes leading the liquid axis, matching the canonical layout.
+
+    Re-deriving the breakpoints, cash-on-hand coefficients, and discount factor here is
+    cheap closed-form work; this core calls no continuation reader, so the heavy
+    transition fan-out never enters its compiled program.
+    """
+    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
+        interval_midpoints,
+        interval_segment_coefficients,
+    )
+    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
+        bqsegm_per_interval_continuation_step_savings,
+    )
+    from _lcm.egm.numeric_inverse import (  # noqa: PLC0415
+        numeric_inverse_marginal_utility,
+    )
+
+    liquid_name = statics.liquid_name
+    ride_names = statics.ride_names
+    discount_factor_dag = schedule_spec.discount_factor_dag
+    # The continuous action solving the Euler equation is bracketed numerically when
+    # the regime supplies no analytic inverse: a small floor up to a generous
+    # multiple of the savings grid's top node (the resources scale). The clamped
+    # near-zero-marginal corner whose root exceeds the bracket lands far to the right
+    # and is discarded by the upper envelope.
+    action_upper = savings_grid[-1] * 1000.0 + 1000.0
+    action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+
+    def envelope_core(
+        *,
+        cont_value_stack: FloatND,
+        cont_marginal_stack: FloatND,
+        **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
+    ) -> tuple[FloatND, EGMCarry]:
+        dtype = canonical_float_dtype()
+        liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
+        coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
+        utility_params = {name: kwargs[name] for name in statics.utility_param_names}
+        discount_params = {name: kwargs[name] for name in statics.discount_param_names}
+
+        def solve_one_cell(
+            ride_values: tuple[Any, ...],
+            cont_value: FloatND,
+            cont_marginal: FloatND,
+        ) -> tuple[Float1D, Float1D, Float1D]:
+            cell = dict(zip(ride_names, ride_values, strict=True))
+            cell_discount_factor = (
+                kwargs["H__discount_factor"]
+                if discount_factor_dag is None
+                else discount_factor_dag(
+                    **{name: cell[name] for name in statics.discount_state_names},
+                    **discount_params,
+                )
+            )
+
+            breakpoints, jump_positions = _bqsegm_cell_breakpoints(
+                statics=statics,
+                schedule_spec=schedule_spec,
+                kwargs=kwargs,
+                cell=cell,
+                dtype=dtype,
+            )
+            midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
+
+            def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
+                return schedule_spec.coh_of_liquid_dag(
+                    **{liquid_name: scalar_liquid},
+                    **{name: cell[name] for name in statics.coh_state_names},
+                    **coh_params,
+                )
+
+            coh_slopes, coh_intercepts = interval_segment_coefficients(
+                schedule=coh_of_liquid, interval_midpoints=midpoints
+            )
+
+            def utility_of_consumption(consumption_value: FloatND) -> FloatND:
+                return schedule_spec.utility_dag(
+                    **{statics.consumption_action_name: consumption_value},
+                    **{name: cell[name] for name in statics.utility_state_names},
+                    **utility_params,
+                )
+
+            marginal_utility = jax.grad(utility_of_consumption)
+
+            def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+                return numeric_inverse_marginal_utility(
+                    marginal_continuation=marginal_continuation,
+                    marginal_utility=marginal_utility,
+                    c_lower=action_lower,
+                    c_upper=action_upper,
+                )
+
+            if statics.next_state_reads_liquid:
                 return bqsegm_per_interval_continuation_step_savings(
                     cont_value=cont_value,
                     cont_marginal=cont_marginal,
@@ -3299,15 +3568,8 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
                     breakpoints=breakpoints,
                 )
 
-            continuation = bind_continuation(
-                plan=continuation_plan,
-                combo_pool=combo_pool,
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
-                dtype=dtype,
-            )
-            cont_value, cont_marginal = jax.vmap(continuation)(savings_grid)
             return _solve_ride_along_cell_step(
-                has_jump=has_jump,
+                has_jump=statics.has_jump,
                 jump_positions=jump_positions,
                 cont_value=cont_value,
                 cont_marginal=cont_marginal,
@@ -3326,8 +3588,8 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
         mesh = jnp.meshgrid(*ride_grids, indexing="ij")
         flat_cells = tuple(grid.ravel() for grid in mesh)
         value_stack, marginal_stack, policy_stack = jax.vmap(
-            lambda *vals: solve_one_cell(vals)
-        )(*flat_cells)
+            lambda *args: solve_one_cell(args[:-2], args[-2], args[-1])
+        )(*flat_cells, cont_value_stack, cont_marginal_stack)
 
         n_liquid = liquid.shape[0]
         # The published value array follows the productmap state order, so the
@@ -3351,7 +3613,7 @@ def _build_bqsegm_ride_along_core(  # noqa: C901, PLR0915
         del policy_stack
         return value_arr, carry
 
-    return core
+    return envelope_core
 
 
 @dataclass(frozen=True)
