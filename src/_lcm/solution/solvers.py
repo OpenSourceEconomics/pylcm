@@ -1479,6 +1479,16 @@ class BQSEGM(Solver):
     axes. `None` for a single-liquid-axis regime, whose continuation is read
     directly off the next period's liquid grid.
     """
+    continuous_state: StateName | None = None
+    """Name of the liquid (Euler) continuous state, like `DCEGM.continuous_state`.
+
+    Its post-decision law of motion reads `post_decision_function`; every other
+    state — discrete, a continuous co-state (e.g. AIME), or a stochastic process —
+    rides along, integrated by the continuation reader. `None` lets the solver
+    infer it as the regime's single continuous state (the single-liquid case), and
+    is rejected when the regime carries more than one continuous state, where the
+    Euler axis must be named to separate it from the ride-along axes.
+    """
 
     @property
     def requires_continuation_carries(self) -> bool:
@@ -1567,7 +1577,9 @@ class BQSEGM(Solver):
         )
         schedule_spec = (
             _collect_bqsegm_schedule_spec(
-                context=context, budget_target=self.budget_target
+                context=context,
+                budget_target=self.budget_target,
+                continuous_state=self.continuous_state,
             )
             if is_schedule
             else None
@@ -2515,6 +2527,13 @@ class _BQSEGMScheduleSpec:
     """Name of the liquid state the schedule and budget vary in."""
     ride_along_state_names: tuple[str, ...]
     """State axes other than the liquid axis (the budget varies per ride-along cell)."""
+    liquid_axis_pos: int
+    """Index of the liquid axis in the canonical productmap state order. The
+    ride-along core solves in working layout (ride axes leading the liquid axis)
+    and moves the liquid axis to this position so the published value array follows
+    the productmap order — a no-op when every ride-along axis is a discrete state
+    sorting ahead of the liquid axis, a genuine transpose for a continuous co-state
+    declared after it."""
     threshold_param_names: tuple[str, ...]
     """Qualified parameter names of the schedule's thresholds."""
     breakpoint_kinds: tuple[str, ...]
@@ -2535,7 +2554,10 @@ class _BQSEGMScheduleSpec:
 
 
 def _collect_bqsegm_schedule_spec(
-    *, context: SolverBuildContext, budget_target: str = "coh"
+    *,
+    context: SolverBuildContext,
+    budget_target: str = "coh",
+    continuous_state: StateName | None = None,
 ) -> _BQSEGMScheduleSpec:
     """Collect a regime's piecewise-affine schedules into one breakpoint partition.
 
@@ -2560,21 +2582,35 @@ def _collect_bqsegm_schedule_spec(
         msg = "BQSEGM schedule path needs at least one piecewise-affine schedule."
         raise RegimeInitializationError(msg)
     state_names = context.state_action_space.state_names
-    # The Euler axis is the regime's single continuous state, not the first state
-    # axis: the canonical order leads with discrete states, so a ride-along
-    # co-state sorts ahead of the liquid axis. A schedule on that state varies in
-    # the liquid axis directly; a schedule on a derived monotone quantity (gross
-    # income, MAGI) maps each threshold to a per-ride-along-cell asset preimage.
+    # The Euler axis is one continuous state, not the first state axis: the
+    # canonical order leads with discrete states, so a ride-along co-state sorts
+    # ahead of the liquid axis. The remaining continuous states — a co-state (AIME)
+    # or stochastic processes — ride along, integrated by the continuation reader.
+    # When the regime carries more than one continuous state the Euler axis is named
+    # via the solver's `continuous_state`; a single continuous state is the liquid
+    # axis unambiguously. A schedule on the liquid state varies in it directly; a
+    # schedule on a derived monotone quantity (gross income, MAGI) maps each
+    # threshold to a per-ride-along-cell asset preimage.
     continuous_states = tuple(
         name for name in state_names if isinstance(context.grids[name], ContinuousGrid)
     )
-    if len(continuous_states) != 1:
+    if continuous_state is not None:
+        if continuous_state not in continuous_states:
+            msg = (
+                f"BQSEGM `continuous_state={continuous_state!r}` is not a continuous "
+                f"state of the regime; its continuous states are {continuous_states}."
+            )
+            raise RegimeInitializationError(msg)
+        liquid_state_name = continuous_state
+    elif len(continuous_states) != 1:
         msg = (
-            "BQSEGM schedule path needs exactly one continuous (liquid) state, "
-            f"but the regime has {continuous_states}."
+            "BQSEGM schedule path needs exactly one continuous (liquid) state, or "
+            "`continuous_state` naming the Euler axis when the regime carries a "
+            f"continuous co-state; the regime has {continuous_states}."
         )
         raise RegimeInitializationError(msg)
-    liquid_state_name = continuous_states[0]
+    else:
+        liquid_state_name = continuous_states[0]
     ride_along_state_names = tuple(
         name for name in state_names if name != liquid_state_name
     )
@@ -2651,6 +2687,7 @@ def _collect_bqsegm_schedule_spec(
         coh_param_names=coh_param_names,
         liquid_state_name=liquid_state_name,
         ride_along_state_names=ride_along_state_names,
+        liquid_axis_pos=state_names.index(liquid_state_name),
         threshold_param_names=threshold_param_names,
         breakpoint_kinds=breakpoint_kinds,
         sources=tuple(sources),
@@ -3112,7 +3149,16 @@ def _build_bqsegm_ride_along_core(
         )(*flat_cells)
 
         n_liquid = liquid.shape[0]
-        value_arr = value_stack.reshape(*ride_shape, n_liquid)
+        # The published value array follows the productmap state order, so the
+        # liquid axis moves from the working layout's trailing position to its
+        # canonical index. The continuation carry keeps the working layout (ride
+        # axes leading the liquid axis): it is read back only by `bind_continuation`,
+        # which produced it, so the round-trip stays self-consistent.
+        value_arr = jnp.moveaxis(
+            value_stack.reshape(*ride_shape, n_liquid),
+            -1,
+            schedule_spec.liquid_axis_pos,
+        )
         carry = EGMCarry(
             endog_grid=jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
             value=value_stack.reshape(*ride_shape, n_liquid).astype(dtype),
