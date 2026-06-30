@@ -38,7 +38,7 @@ from _lcm.egm.bqsegm_segments import mask_dead_candidates, segment_ids_from_fold
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
-from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat
+from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
 # Below this marginal value of liquid the continuation is treated as flat, so the
 # Euler inversion is degenerate (consumption diverges) and the candidate is dropped.
@@ -401,14 +401,28 @@ def bqsegm_per_interval_continuation_step_savings(
     marginal_utility = jax.grad(utility_of_action)
     interval_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
 
-    endog_parts: list[Float1D] = []
-    value_parts: list[Float1D] = []
-    policy_parts: list[Float1D] = []
-    marginal_parts: list[Float1D] = []
-    segment_parts: list[Float1D] = []
-    for interval in range(n_intervals):
-        interval_value = cont_value[interval]
-        interval_marginal = cont_marginal[interval]
+    # Each interval's lower/upper liquid bound, with the open ends at the extremes.
+    edge = jnp.array([jnp.inf], dtype=breakpoints.dtype)
+    lowers = jnp.concatenate([-edge, breakpoints])
+    uppers = jnp.concatenate([breakpoints, edge])
+
+    def solve_interval(
+        interval_index: ScalarInt,
+        interval_value: Float1D,
+        interval_marginal: Float1D,
+        coh_slope: ScalarFloat,
+        coh_intercept: ScalarFloat,
+        lower: ScalarFloat,
+        upper: ScalarFloat,
+    ) -> tuple[Float1D, ...]:
+        """Solve one interval's EGM case and its no-save corner.
+
+        Returns the interior candidate (endog grid, value, policy, marginal,
+        segment id) followed by the s=0 corner candidate, each on its own grid.
+        The segment ids are offset by `interval_index * interval_stride` so the
+        per-interval folds stay disjoint when the cases merge under one envelope.
+        """
+        base = interval_index.astype(jnp.result_type(float)) * interval_stride
         consumption = _invert_euler_over_savings(
             cont_marginal=interval_marginal,
             discount_factor=discount_factor,
@@ -421,11 +435,9 @@ def bqsegm_per_interval_continuation_step_savings(
         value_at_no_save = interval_value[0]
         degenerate = interval_marginal <= _DEGENERATE_MARGINAL_TOL
 
-        coh_case_grid = coh_slopes[interval] * liquid_grid + coh_intercepts[interval]
+        coh_case_grid = coh_slope * liquid_grid + coh_intercept
         liquid_endog = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
-        marginal_endog = coh_slopes[interval] * jax.vmap(marginal_utility)(consumption)
-        lower = -jnp.inf if interval == 0 else breakpoints[interval - 1]
-        upper = jnp.inf if interval == n_intervals - 1 else breakpoints[interval]
+        marginal_endog = coh_slope * jax.vmap(marginal_utility)(consumption)
         in_grid = (coh_endog >= coh_case_grid[0]) & (coh_endog <= coh_case_grid[-1])
         in_case = (
             (liquid_endog >= lower) & (liquid_endog < upper) & in_grid & (~degenerate)
@@ -439,11 +451,6 @@ def bqsegm_per_interval_continuation_step_savings(
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
         next_segment = jnp.nanmax(segment) + 1.0
-        endog_parts.append(interior[0])
-        value_parts.append(interior[1])
-        policy_parts.append(interior[2])
-        marginal_parts.append(interior[3])
-        segment_parts.append(segment + float(interval) * interval_stride)
 
         # Hard borrowing corner (save nothing) over this interval's liquid range.
         s0_consumption = coh_case_grid
@@ -453,23 +460,52 @@ def bqsegm_per_interval_continuation_step_savings(
             value=jax.vmap(utility_of_action)(s0_consumption)
             + discount_factor * value_at_no_save,
             policy=s0_consumption,
-            marginal=coh_slopes[interval] * jax.vmap(marginal_utility)(s0_consumption),
+            marginal=coh_slope * jax.vmap(marginal_utility)(s0_consumption),
             valid=s0_valid,
         )
-        endog_parts.append(s0[0])
-        value_parts.append(s0[1])
-        policy_parts.append(s0[2])
-        marginal_parts.append(s0[3])
-        segment_parts.append(
-            jnp.full_like(liquid_grid, float(interval) * interval_stride + next_segment)
+        return (
+            interior[0],
+            interior[1],
+            interior[2],
+            interior[3],
+            segment + base,
+            s0[0],
+            s0[1],
+            s0[2],
+            s0[3],
+            jnp.full_like(liquid_grid, base + next_segment),
         )
 
+    (
+        int_endog,
+        int_value,
+        int_policy,
+        int_marginal,
+        int_segment,
+        s0_endog,
+        s0_value,
+        s0_policy,
+        s0_marginal,
+        s0_segment,
+    ) = jax.vmap(solve_interval)(
+        jnp.arange(n_intervals, dtype=jnp.int32),
+        cont_value,
+        cont_marginal,
+        coh_slopes,
+        coh_intercepts,
+        lowers,
+        uppers,
+    )
+
+    def both(interior: FloatND, corner: FloatND) -> Float1D:
+        return jnp.concatenate([interior.reshape(-1), corner.reshape(-1)])
+
     value, policy, marginal = envelope_at_query(
-        endog_grid=jnp.concatenate(endog_parts),
-        policy=jnp.concatenate(policy_parts),
-        value=jnp.concatenate(value_parts),
-        marginal=jnp.concatenate(marginal_parts),
-        segment_id=jnp.concatenate(segment_parts),
+        endog_grid=both(int_endog, s0_endog),
+        policy=both(int_policy, s0_policy),
+        value=both(int_value, s0_value),
+        marginal=both(int_marginal, s0_marginal),
+        segment_id=both(int_segment, s0_segment),
         x_query=liquid_grid,
     )
     return value, marginal, policy
