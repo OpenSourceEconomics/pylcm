@@ -1,4 +1,10 @@
-"""Carry producers for terminal regimes targeted by DC-EGM regimes.
+"""Carry producers for regimes targeted by DC-EGM / BQSEGM regimes.
+
+A regime an endogenous-grid regime transitions into must publish its value and
+marginal value of resources on its own state grid so the parent can interpolate
+them as a continuation. Terminal targets carry their utility in closed form;
+living brute (`GridSearch`) targets carry their solved value array and its
+gradient. This module builds both.
 
 A terminal regime's value is its utility, so its carry rows are closed-form
 rather than the output of an EGM step. Two cases:
@@ -191,6 +197,79 @@ def get_terminal_wealth_carry_producer(
         )
 
     return produce_terminal_wealth_carry
+
+
+def get_brute_child_carry_producer(
+    *,
+    state_name: StateName,
+    discrete_state_names: tuple[StateName, ...] = (),
+    passive_state_names: tuple[StateName, ...] = (),
+    continuous_state_order: tuple[StateName, ...] = (),
+) -> EGMCarryProducer:
+    """Build the carry producer for a living brute (`GridSearch`) carry target.
+
+    A brute regime an endogenous-grid parent transitions into produces a solved
+    value-function array rather than a closed-form value. Its carry holds that
+    array as the value rows and the array's gradient with respect to the Euler
+    state as the marginal-value-of-resources rows. The carry lives in M-space
+    ($R \\equiv M$), so the endogenous grid is the Euler-state grid itself and
+    the parent's composed-gradient factor $\\partial R'/\\partial A$ maps it into
+    savings space.
+
+    The carry's leading axes are the regime's discrete states (process states
+    included, as node-valued discrete dimensions), then its passive continuous
+    states, both in value-function-array order; the Euler state trails as the row
+    axis. This matches the layout the parent's child read indexes.
+
+    Args:
+        state_name: Name of the regime's Euler state (the parent's continuous
+            state, gradient and endogenous-grid axis).
+        discrete_state_names: Discrete-state names in value-function (carry
+            leading-axis) order; empty for a single-Euler-state carry.
+        passive_state_names: Passive continuous-state names in value-function
+            order — carried as interpolated leading axes; empty for a single
+            continuous state.
+        continuous_state_order: The value-function array's continuous-axis
+            order, used to transpose `V_arr` into `(discrete…, passive…,
+            Euler)`; empty defaults to `(state_name,)`.
+
+    Returns:
+        Producer mapping the state grids and the regime's value-function array to
+        the brute child's carry.
+
+    """
+    cont_order = continuous_state_order or (state_name,)
+
+    def produce_brute_child_carry(
+        *, V_arr: FloatND, **kwargs: FloatND | IntND
+    ) -> EGMCarry:
+        """Carry the solved value array and its Euler-state gradient."""
+        dtype = canonical_float_dtype()
+        euler_grid = jnp.asarray(kwargs[state_name], dtype=dtype)
+        value = _reorder_terminal_value(
+            V_arr=jnp.asarray(V_arr, dtype=dtype),
+            n_discrete=len(discrete_state_names),
+            continuous_state_order=cont_order,
+            passive_state_names=passive_state_names,
+            euler_state_name=state_name,
+        )
+        # The marginal value of resources is the value array's slope along the
+        # Euler grid; infeasible (`-inf`) rows carry zero marginal so the parent's
+        # probability-weighted expectation stays finite.
+        finite_value = jnp.where(jnp.isneginf(value), jnp.nan, value)
+        marginal = jnp.asarray(jnp.gradient(finite_value, euler_grid, axis=-1))
+        leading_shape = value.shape[:-1]
+        endog_grid = jnp.broadcast_to(euler_grid, (*leading_shape, euler_grid.shape[0]))
+        return EGMCarry(
+            endog_grid=endog_grid,
+            value=value,
+            marginal_utility=jnp.where(jnp.isfinite(marginal), marginal, 0.0).astype(
+                dtype
+            ),
+            taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
+        )
+
+    return produce_brute_child_carry
 
 
 def _reorder_terminal_value(

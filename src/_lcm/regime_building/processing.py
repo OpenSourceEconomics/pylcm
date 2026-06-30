@@ -22,6 +22,7 @@ from _lcm.egm.carry import EGMCarry, build_template_egm_carry
 from _lcm.egm.negm_validation import validate_negm_regimes
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
+    get_brute_child_carry_producer,
     get_stateless_terminal_carry_producer,
     get_terminal_wealth_carry_producer,
 )
@@ -487,12 +488,13 @@ def _build_solution_phase(
     # and marginal utility. Build the producer engine-side and compose it as an
     # output decorator around each period adapter, so the solver stays unaware
     # of the continuation it is being asked to emit.
-    egm_carry_producer, egm_carry_template = _build_terminal_carry_producer(
+    egm_carry_producer, egm_carry_template = _build_egm_child_carry_producer(
         user_regime=user_regimes[regime_name],
         functions=core.functions,
         variables=variables,
         grids=all_grids[regime_name],
         model_has_egm_regime=model_has_egm_regime,
+        solver_produces_carry=solver_kernels.continuation_template is not None,
         enable_jit=enable_jit,
     )
     period_kernels = solver_kernels.period_kernels
@@ -649,36 +651,41 @@ class _TerminalCarryPeriodKernel:
         return KernelResult(V_arr=result.V_arr, carry=carry)
 
 
-def _build_terminal_carry_producer(
+def _build_egm_child_carry_producer(
     *,
     user_regime: UserRegime,
     functions: EconFunctionsMapping,
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
     model_has_egm_regime: bool,
+    solver_produces_carry: bool,
     enable_jit: bool,
 ) -> tuple[EGMCarryProducer | None, EGMCarry | None]:
-    """Build the EGM carry producer and template for a terminal regime.
+    """Build the carry producer and template for an EGM regime's carry target.
 
-    Terminal regimes produce closed-form carries when the model contains an
-    endogenous-grid regime, so an EGM parent can interpolate their value and
-    marginal utility. Cases:
+    A regime an endogenous-grid regime transitions into must publish its value
+    and marginal value of resources so the parent can interpolate them. The
+    regime's own solver already builds its carry when it is endogenous-grid
+    (`solver_produces_carry`); this engine-side producer covers the brute
+    (`GridSearch`) targets that do not. Cases:
 
-    - no states ⇒ constant-value, zero-marginal-utility broadcast rows
-    - exactly one continuous state, no actions, and discrete states only of
-      the fixed (non-process) kind ⇒ terminal utility and its wealth gradient
-      on the regime's own state grid, with the discrete states as the carry's
-      leading axes (one wealth row per discrete combo)
-    - anything else ⇒ no producer (an EGM regime targeting such a terminal
-      regime is rejected by the EGM kernel builder)
+    - no states (terminal) ⇒ constant-value, zero-marginal-utility broadcast rows
+    - terminal with ≥1 continuous state, no actions, and discrete states only of
+      the fixed (non-process) kind ⇒ terminal utility and its wealth gradient on
+      the regime's own state grid, the discrete states leading
+    - living brute regime with a continuous Euler state ⇒ its solved value array
+      and the array's Euler-state gradient, discrete states (process states
+      included) and passive continuous states leading
+    - anything else ⇒ no producer (an EGM regime targeting an unsupported shape
+      is rejected by the EGM kernel builder)
 
     Returns:
-        Tuple of the producer and the regime's carry template, both `None`
-        for non-terminal regimes, for models without an endogenous-grid
-        regime, and for unsupported terminal shapes.
+        Tuple of the producer and the regime's carry template, both `None` for
+        models without an endogenous-grid regime, for regimes whose own solver
+        already produces a carry, and for unsupported shapes.
 
     """
-    if not (model_has_egm_regime and user_regime.terminal):
+    if not model_has_egm_regime or solver_produces_carry:
         return None, None
     producer: EGMCarryProducer
     discrete_state_names = tuple(
@@ -686,30 +693,57 @@ def _build_terminal_carry_producer(
         for name in variables.state_names
         if name in set(variables.discrete_state_names)
     )
-    has_only_fixed_discrete_states = all(
-        not isinstance(grids[name], _ContinuousStochasticProcess)
-        for name in discrete_state_names
-    )
     continuous_state_names = tuple(variables.continuous_state_names)
     euler_state_name = next(iter(user_regime.states), None)
-    if not variables.state_names:
-        producer = get_stateless_terminal_carry_producer()
-        template = build_template_egm_carry(n_rows=N_STATELESS_CARRY_ROWS)
+    if user_regime.terminal:
+        has_only_fixed_discrete_states = all(
+            not isinstance(grids[name], _ContinuousStochasticProcess)
+            for name in discrete_state_names
+        )
+        if not variables.state_names:
+            producer = get_stateless_terminal_carry_producer()
+            template = build_template_egm_carry(n_rows=N_STATELESS_CARRY_ROWS)
+        elif (
+            len(continuous_state_names) >= 1
+            and has_only_fixed_discrete_states
+            and not user_regime.actions
+            and euler_state_name in continuous_state_names
+        ):
+            # The parent's child read picks the terminal's Euler state as its
+            # first declared state (`_get_child_state_name`); the remaining
+            # continuous states are the passive (durable / outer) margins it
+            # interpolates as leading carry axes — the NEGM housing-bequest shape.
+            passive_state_names = tuple(
+                name for name in continuous_state_names if name != euler_state_name
+            )
+            producer = get_terminal_wealth_carry_producer(
+                functions=functions,
+                state_name=euler_state_name,
+                discrete_state_names=discrete_state_names,
+                passive_state_names=passive_state_names,
+                continuous_state_order=continuous_state_names,
+            )
+            leading_shape = tuple(
+                int(grids[name].to_jax().shape[0])
+                for name in discrete_state_names + passive_state_names
+            )
+            template = build_template_egm_carry(
+                n_rows=int(grids[euler_state_name].to_jax().shape[0]),
+                leading_shape=leading_shape,
+            )
+        else:
+            return None, None
     elif (
-        len(continuous_state_names) >= 1
-        and has_only_fixed_discrete_states
-        and not user_regime.actions
-        and euler_state_name in continuous_state_names
+        len(continuous_state_names) >= 1 and euler_state_name in continuous_state_names
     ):
-        # The parent's child read picks the terminal's Euler state as its first
-        # declared state (`_get_child_state_name`); the remaining continuous
-        # states are the passive (durable / outer) margins it interpolates as
-        # leading carry axes — the NEGM housing-bequest shape.
+        # A living brute target: its solved value array is the carry value and the
+        # array's Euler-state gradient is the marginal value of resources. The
+        # parent reads it in M-space ($R \\equiv M$) via the same child read it
+        # uses for an endogenous-grid target.
         passive_state_names = tuple(
             name for name in continuous_state_names if name != euler_state_name
         )
-        producer = get_terminal_wealth_carry_producer(
-            functions=functions,
+        producer = get_brute_child_carry_producer(
             state_name=euler_state_name,
             discrete_state_names=discrete_state_names,
             passive_state_names=passive_state_names,
