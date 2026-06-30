@@ -10,6 +10,7 @@ from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from tests.test_models import bqsegm_derived_var_toy as toy
 
@@ -18,7 +19,9 @@ _LIQUID = jnp.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
-def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(
+    variant: str, *, n_consumption: int = 120, tax_kink: float = 15.0
+) -> Mapping[int, Mapping]:
     """Solve the derived-income tax toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -28,7 +31,7 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(params=toy.build_params(tax_kink=tax_kink), log_level="off")
 
 
 def test_bqsegm_matches_brute_in_every_ride_along_slice_every_age():
@@ -41,6 +44,42 @@ def test_bqsegm_matches_brute_in_every_ride_along_slice_every_age():
         brute_v = np.asarray(brute[period]["alive"])
         bqsegm_v = np.asarray(bqsegm[period]["alive"])
         # Value is shaped (kind, liquid); compare the interior of each kind slice.
+        for kind in range(brute_v.shape[0]):
+            np.testing.assert_allclose(
+                bqsegm_v[kind, _INTERIOR],
+                brute_v[kind, _INTERIOR],
+                atol=2e-2,
+                rtol=5e-3,
+                err_msg=f"period={period} kind={kind}",
+            )
+
+
+@pytest.mark.parametrize(
+    "tax_kink",
+    [
+        # kink above the grid for `lo` (preimage 31.0 > 30.0), inside for `hi`.
+        32.0,
+        # kink below the grid for `hi` (preimage 0.0 < 0.1), inside for `lo`.
+        4.0,
+    ],
+)
+def test_bqsegm_matches_brute_when_kink_preimage_leaves_the_grid(
+    tax_kink: float,
+) -> None:
+    """A threshold whose asset preimage falls outside the grid is a no-op there.
+
+    When `gross_income == tax_kink` maps to a liquid value outside `[0.1, 30]` for
+    one `kind`, that slice never crosses the kink within the grid and stays on the
+    single below-kink segment — matching brute, where the kink is likewise never
+    reached.
+    """
+    bqsegm = _solve("bqsegm", tax_kink=tax_kink)
+    brute = _solve("brute", n_consumption=1500, tax_kink=tax_kink)
+    for period in brute:
+        if "alive" not in brute[period] or "alive" not in bqsegm[period]:
+            continue
+        brute_v = np.asarray(brute[period]["alive"])
+        bqsegm_v = np.asarray(bqsegm[period]["alive"])
         for kind in range(brute_v.shape[0]):
             np.testing.assert_allclose(
                 bqsegm_v[kind, _INTERIOR],
