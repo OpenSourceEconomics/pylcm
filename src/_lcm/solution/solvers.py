@@ -2762,6 +2762,57 @@ def _build_bqsegm_continuation_plan(
     )
 
 
+def _solve_ride_along_cell_step(
+    *,
+    has_jump: bool,
+    jump_mask: tuple[bool, ...],
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: FloatND,
+    crra: FloatND,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Run one ride-along cell's 1-D case-piece step against savings continuation.
+
+    A pure-kink schedule uses the continuous multi-interval step; a schedule with a
+    jump breakpoint uses the unified jump-and-kink step, both reading the expected
+    value and marginal already evaluated on the savings grid.
+    """
+    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
+        bqsegm_multi_interval_step_savings,
+        bqsegm_unified_step_savings,
+    )
+
+    if has_jump:
+        return bqsegm_unified_step_savings(
+            cont_value=cont_value,
+            cont_marginal=cont_marginal,
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=discount_factor,
+            crra=crra,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            jump_mask=jump_mask,
+        )
+    return bqsegm_multi_interval_step_savings(
+        cont_value=cont_value,
+        cont_marginal=cont_marginal,
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        crra=crra,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+    )
+
+
 def _build_bqsegm_ride_along_core(
     *,
     savings_grid: Float1D,
@@ -2785,17 +2836,22 @@ def _build_bqsegm_ride_along_core(
         interval_segment_coefficients,
         linear_asset_preimage,
     )
-    from _lcm.egm.bqsegm_step import bqsegm_multi_interval_step_savings  # noqa: PLC0415
     from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
 
-    if any(kind != "continuous_kink" for kind in schedule_spec.breakpoint_kinds):
+    kinds = schedule_spec.breakpoint_kinds
+    if "hard_constraint" in kinds:
         msg = (
-            "BQSEGM ride-along path supports continuous-kink schedules only; "
-            f"got breakpoint kinds {schedule_spec.breakpoint_kinds}. Jumped or "
-            "hard-constraint breakpoints with a ride-along co-state are a later "
-            "slice."
+            "BQSEGM ride-along path supports continuous-kink and jump schedules; "
+            f"got breakpoint kinds {kinds}. A hard-constraint (floor) breakpoint "
+            "with a ride-along co-state is a later slice."
         )
         raise RegimeInitializationError(msg)
+    has_jump = any(kind == "jump" for kind in kinds)
+    # The static jump mask aligns with the sorted breakpoints under the assumption
+    # that each cell's preimage order matches the declared threshold order — true
+    # for a single positive-slope derived var (gross_income rising in assets), the
+    # M1 case. A cell whose preimages reorder the declared kinds is a later slice.
+    jump_mask = tuple(kind == "jump" for kind in kinds)
 
     liquid_name = schedule_spec.liquid_state_name
     ride_names = schedule_spec.ride_along_state_names
@@ -2873,7 +2929,9 @@ def _build_bqsegm_ride_along_core(
             coh_slopes, coh_intercepts = interval_segment_coefficients(
                 schedule=coh_of_liquid, interval_midpoints=midpoints
             )
-            value, marginal, policy = bqsegm_multi_interval_step_savings(
+            return _solve_ride_along_cell_step(
+                has_jump=has_jump,
+                jump_mask=jump_mask,
                 cont_value=cont_value,
                 cont_marginal=cont_marginal,
                 liquid_grid=liquid,
@@ -2884,7 +2942,6 @@ def _build_bqsegm_ride_along_core(
                 coh_intercepts=coh_intercepts,
                 breakpoints=breakpoints,
             )
-            return value, marginal, policy
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
