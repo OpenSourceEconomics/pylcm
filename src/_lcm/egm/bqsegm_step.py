@@ -28,13 +28,14 @@ fixes which side owns the exact boundary point: `equality_owner="otherwise"` giv
 the otherwise side ownership through the strict `<` / non-strict `>=` split.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 
 from _lcm.egm.bqsegm_segments import mask_dead_candidates, segment_ids_from_folds
+from _lcm.egm.euler import invert_euler
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat
@@ -206,14 +207,39 @@ def bqsegm_multi_interval_step(
     return value, marginal, policy
 
 
+def _invert_euler_over_savings(
+    *,
+    cont_marginal: Float1D,
+    discount_factor: ScalarFloat,
+    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+) -> Float1D:
+    """Recover the consumption action at every savings node via the Euler equation.
+
+    The expected marginal continuation is already in savings space (it carries the
+    gross-return factor `dR/ds`), so each node inverts the regime's marginal utility
+    at the discounted expected marginal continuation — `invert_euler` applies the
+    degenerate-inversion clamp before calling `inverse_marginal_utility`.
+    """
+
+    def invert_one(node_marginal: ScalarFloat) -> ScalarFloat:
+        return invert_euler(
+            expected_marginal_continuation=node_marginal,
+            discount_factor=discount_factor,
+            inverse_marginal_utility=inverse_marginal_utility,
+        )
+
+    return jax.vmap(invert_one)(cont_marginal)
+
+
 def bqsegm_multi_interval_step_savings(
     *,
     cont_value: Float1D,
     cont_marginal: Float1D,
     liquid_grid: Float1D,
     savings_grid: Float1D,
-    discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    discount_factor: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -229,6 +255,13 @@ def bqsegm_multi_interval_step_savings(
     gross-return factor `dR/ds`, so the Euler inversion reads it directly with no
     explicit return term.
 
+    The Euler inversion, the period value, and the marginal value of liquid all
+    read the regime's own utility: the consumption action solving the savings-node
+    Euler equation comes from `inverse_marginal_utility` (the regime's analytic
+    inverse, or a numeric inversion of `u'` built from the utility), the value adds
+    `utility_of_action(consumption)`, and the marginal value of liquid is the
+    cash-on-hand slope times `u'(consumption)` by the envelope theorem.
+
     The hard-borrowing corner (save nothing) lands on the lowest savings node, so
     its continuation value is `cont_value[0]` (the expectation at `savings = 0`).
     The flat-interval (hard-constraint floor) case is not covered here; a regime
@@ -242,7 +275,11 @@ def bqsegm_multi_interval_step_savings(
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
             with `savings_grid[0] == 0` the no-save corner).
         discount_factor: Discount factor.
-        crra: Coefficient of relative risk aversion.
+        utility_of_action: The regime's period utility as a function of consumption,
+            with the ride-along cell's states and the utility params already bound.
+        inverse_marginal_utility: The regime's inverse marginal utility as a function
+            of the discounted expected marginal continuation, with the cell already
+            bound — `invert_euler` calls it to recover the consumption action.
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
@@ -259,14 +296,21 @@ def bqsegm_multi_interval_step_savings(
 
     # The expected marginal is already in savings space (it carries `dR/ds`), so
     # the Euler inversion reads it directly — no explicit gross-return factor.
-    consumption = (discount_factor * cont_marginal) ** (-1.0 / crra)
+    marginal_utility = jax.grad(utility_of_action)
+    consumption = _invert_euler_over_savings(
+        cont_marginal=cont_marginal,
+        discount_factor=discount_factor,
+        inverse_marginal_utility=inverse_marginal_utility,
+    )
     coh_endog = consumption + savings_grid
     off_grid = (coh_endog < coh_grid[0]) | (coh_endog > coh_grid[-1])
     liquid_endog = jnp.interp(coh_endog, coh_grid, liquid_grid)
     endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
     slope_endog = coh_slopes[endog_interval]
-    value_endog = _crra_utility(consumption, crra) + discount_factor * cont_value
-    marginal_endog = slope_endog * consumption ** (-crra)
+    value_endog = (
+        jax.vmap(utility_of_action)(consumption) + discount_factor * cont_value
+    )
+    marginal_endog = slope_endog * jax.vmap(marginal_utility)(consumption)
 
     # Where the continuation is flat (zero marginal value of liquid), the Euler
     # inversion diverges; drop those interior candidates and the off-grid ones.
@@ -281,12 +325,12 @@ def bqsegm_multi_interval_step_savings(
     endog_parts = [liquid_endog, liquid_grid]
     value_parts = [
         value_endog,
-        _crra_utility(coh_grid, crra) + discount_factor * value_at_no_save,
+        jax.vmap(utility_of_action)(coh_grid) + discount_factor * value_at_no_save,
     ]
     policy_parts = [consumption, coh_grid]
     marginal_parts = [
         marginal_endog,
-        coh_slopes[interval_of_grid] * coh_grid ** (-crra),
+        coh_slopes[interval_of_grid] * jax.vmap(marginal_utility)(coh_grid),
     ]
     segment_parts = [
         interior_segment,
@@ -310,8 +354,9 @@ def bqsegm_unified_step_savings(
     cont_marginal: Float1D,
     liquid_grid: Float1D,
     savings_grid: Float1D,
-    discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    discount_factor: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -341,7 +386,11 @@ def bqsegm_unified_step_savings(
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
             with `savings_grid[0] == 0` the no-save corner).
         discount_factor: Discount factor.
-        crra: Coefficient of relative risk aversion.
+        utility_of_action: The regime's period utility as a function of consumption,
+            with the ride-along cell's states and the utility params already bound.
+        inverse_marginal_utility: The regime's inverse marginal utility as a function
+            of the discounted expected marginal continuation, with the cell already
+            bound — `invert_euler` calls it to recover the consumption action.
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
@@ -363,9 +412,16 @@ def bqsegm_unified_step_savings(
     # The expected marginal already carries `dR/ds`, so the Euler inversion reads
     # it directly. The continuation does not depend on the current-period jump, so
     # the same consumption schedule serves every subsidy case.
-    consumption = (discount_factor * cont_marginal) ** (-1.0 / crra)
+    marginal_utility = jax.grad(utility_of_action)
+    consumption = _invert_euler_over_savings(
+        cont_marginal=cont_marginal,
+        discount_factor=discount_factor,
+        inverse_marginal_utility=inverse_marginal_utility,
+    )
     coh_endog = consumption + savings_grid
-    interp_value = _crra_utility(consumption, crra) + discount_factor * cont_value
+    interp_value = (
+        jax.vmap(utility_of_action)(consumption) + discount_factor * cont_value
+    )
     value_at_no_save = cont_value[0]
     degenerate = cont_marginal <= _DEGENERATE_MARGINAL_TOL
     grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
@@ -385,7 +441,9 @@ def bqsegm_unified_step_savings(
         endog_interval = jnp.clip(
             jnp.searchsorted(breakpoints, liquid_endog, side="right"), start, end
         )
-        marginal_endog = coh_slopes[endog_interval] * consumption ** (-crra)
+        marginal_endog = coh_slopes[endog_interval] * jax.vmap(marginal_utility)(
+            consumption
+        )
         # The first case opens at the lower grid edge and the last closes at the
         # upper edge; interior case edges are the adjacent breakpoints, gathered at
         # the (possibly per-cell traced) jump positions `start - 1` and `end`.
@@ -417,10 +475,11 @@ def bqsegm_unified_step_savings(
         s0_valid = (liquid_grid >= lower) & (liquid_grid < upper)
         s0 = mask_dead_candidates(
             endog_grid=liquid_grid,
-            value=_crra_utility(s0_consumption, crra)
+            value=jax.vmap(utility_of_action)(s0_consumption)
             + discount_factor * value_at_no_save,
             policy=s0_consumption,
-            marginal=coh_slopes[case_grid_interval] * s0_consumption ** (-crra),
+            marginal=coh_slopes[case_grid_interval]
+            * jax.vmap(marginal_utility)(s0_consumption),
             valid=s0_valid,
         )
         endog_parts.append(s0[0])

@@ -2523,6 +2523,12 @@ class _BQSEGMScheduleSpec:
     """Composed `coh` as a function of the liquid state and qualified params."""
     coh_param_names: tuple[str, ...]
     """Qualified parameter names `coh` reads (everything but the state axes)."""
+    utility_dag: Callable
+    """Composed period utility as a function of the consumption action, the
+    ride-along states it reads, and qualified utility params. The ride-along core
+    binds it per cell to invert the Euler equation and evaluate the period value."""
+    consumption_action_name: ActionName
+    """Name of the continuous consumption action the period utility reads."""
     liquid_state_name: str
     """Name of the liquid state the schedule and budget vary in."""
     ride_along_state_names: tuple[str, ...]
@@ -2669,6 +2675,8 @@ def _collect_bqsegm_schedule_spec(
     coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
     coh_param_names = tuple(name for name in coh_args if name not in state_names)
+    utility_dag = concatenate_functions(dict(context.functions), targets="utility")
+    consumption_action_name = next(iter(context.state_action_space.continuous_actions))
     # Legacy single-schedule fields drive the non-ride-along continuous core, which
     # is reached only for a regime with no ride-along axis (so a single liquid-
     # direct schedule). They mirror the first schedule for that case.
@@ -2685,6 +2693,8 @@ def _collect_bqsegm_schedule_spec(
     return _BQSEGMScheduleSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
+        utility_dag=utility_dag,
+        consumption_action_name=consumption_action_name,
         liquid_state_name=liquid_state_name,
         ride_along_state_names=ride_along_state_names,
         liquid_axis_pos=state_names.index(liquid_state_name),
@@ -2889,7 +2899,8 @@ def _solve_ride_along_cell_step(
     liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: FloatND,
-    crra: FloatND,
+    utility_of_action: Callable[[FloatND], FloatND],
+    inverse_marginal_utility: Callable[[FloatND], FloatND],
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -2898,9 +2909,12 @@ def _solve_ride_along_cell_step(
 
     A pure-kink schedule uses the continuous multi-interval step; a schedule with a
     jump breakpoint uses the unified jump-and-kink step, both reading the expected
-    value and marginal already evaluated on the savings grid. The jump positions
-    locate the jump breakpoints in the sorted partition — static for a single
-    variable, a per-cell traced tuple when several variables reorder per cell.
+    value and marginal already evaluated on the savings grid. The Euler inversion,
+    the period value, and the marginal value of liquid all read the regime's own
+    utility through `utility_of_action` and `inverse_marginal_utility` (bound to this
+    cell). The jump positions locate the jump breakpoints in the sorted partition —
+    static for a single variable, a per-cell traced tuple when several variables
+    reorder per cell.
     """
     from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
         bqsegm_multi_interval_step_savings,
@@ -2914,7 +2928,8 @@ def _solve_ride_along_cell_step(
             liquid_grid=liquid_grid,
             savings_grid=savings_grid,
             discount_factor=discount_factor,
-            crra=crra,
+            utility_of_action=utility_of_action,
+            inverse_marginal_utility=inverse_marginal_utility,
             coh_slopes=coh_slopes,
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
@@ -2926,7 +2941,8 @@ def _solve_ride_along_cell_step(
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        utility_of_action=utility_of_action,
+        inverse_marginal_utility=inverse_marginal_utility,
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
@@ -3006,7 +3022,7 @@ def _indexed_threshold_value(
     return value
 
 
-def _build_bqsegm_ride_along_core(
+def _build_bqsegm_ride_along_core(  # noqa: PLR0915
     *,
     savings_grid: Float1D,
     schedule_spec: _BQSEGMScheduleSpec,
@@ -3023,6 +3039,8 @@ def _build_bqsegm_ride_along_core(
     and carry with the ride-along (discrete/passive) axes leading the liquid axis,
     matching the canonical value-function layout.
     """
+    import inspect  # noqa: PLC0415
+
     from _lcm.dtypes import canonical_float_dtype  # noqa: PLC0415
     from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
         interval_midpoints,
@@ -3030,6 +3048,9 @@ def _build_bqsegm_ride_along_core(
         linear_asset_preimage,
     )
     from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
+    from _lcm.egm.numeric_inverse import (  # noqa: PLC0415
+        numeric_inverse_marginal_utility,
+    )
 
     sources = schedule_spec.sources
     kinds = tuple(source.kind for source in sources)
@@ -3049,6 +3070,26 @@ def _build_bqsegm_ride_along_core(
     ride_names = schedule_spec.ride_along_state_names
     state_names = (liquid_name, *ride_names)
 
+    # The period utility reads the consumption action, the ride-along states it
+    # depends on (bound per cell), and qualified utility params (bound from kwargs).
+    consumption_action_name = schedule_spec.consumption_action_name
+    utility_arg_names = tuple(inspect.signature(schedule_spec.utility_dag).parameters)
+    utility_param_names = tuple(
+        name
+        for name in utility_arg_names
+        if name not in state_names and name != consumption_action_name
+    )
+    utility_state_names = tuple(
+        name for name in ride_names if name in utility_arg_names
+    )
+    # The continuous action solving the Euler equation is bracketed numerically when
+    # the regime supplies no analytic inverse: a small floor up to a generous
+    # multiple of the savings grid's top node (the resources scale). The clamped
+    # near-zero-marginal corner whose root exceeds the bracket lands far to the right
+    # and is discarded by the upper envelope.
+    action_upper = savings_grid[-1] * 1000.0 + 1000.0
+    action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+
     def core(
         *,
         next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
@@ -3059,8 +3100,8 @@ def _build_bqsegm_ride_along_core(
         liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
         param_pool = {key: v for key, v in kwargs.items() if key not in state_names}
         coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
+        utility_params = {name: kwargs[name] for name in utility_param_names}
         discount_factor = kwargs["H__discount_factor"]
-        crra = kwargs["utility__crra"]
 
         def cell_breakpoint(source: _BQSEGMSource, cell: dict[str, Any]) -> FloatND:
             """Map one source's threshold to its asset breakpoint in this cell.
@@ -3126,6 +3167,24 @@ def _build_bqsegm_ride_along_core(
             coh_slopes, coh_intercepts = interval_segment_coefficients(
                 schedule=coh_of_liquid, interval_midpoints=midpoints
             )
+
+            def utility_of_consumption(consumption_value: FloatND) -> FloatND:
+                return schedule_spec.utility_dag(
+                    **{consumption_action_name: consumption_value},
+                    **{name: cell[name] for name in utility_state_names},
+                    **utility_params,
+                )
+
+            marginal_utility = jax.grad(utility_of_consumption)
+
+            def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+                return numeric_inverse_marginal_utility(
+                    marginal_continuation=marginal_continuation,
+                    marginal_utility=marginal_utility,
+                    c_lower=action_lower,
+                    c_upper=action_upper,
+                )
+
             return _solve_ride_along_cell_step(
                 has_jump=has_jump,
                 jump_positions=jump_positions,
@@ -3134,7 +3193,8 @@ def _build_bqsegm_ride_along_core(
                 liquid_grid=liquid,
                 savings_grid=savings_grid,
                 discount_factor=discount_factor,
-                crra=crra,
+                utility_of_action=utility_of_consumption,
+                inverse_marginal_utility=inverse_marginal_utility,
                 coh_slopes=coh_slopes,
                 coh_intercepts=coh_intercepts,
                 breakpoints=breakpoints,
