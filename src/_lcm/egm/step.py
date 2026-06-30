@@ -145,9 +145,8 @@ from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.asset_row import _get_solve_one_combo_asset_rows
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry
 from _lcm.egm.continuation import (
-    ContinuationPlan,
-    _build_child_reads,
     _is_runtime_process,
+    build_continuation_plan,
     get_egm_continuation_targets,
 )
 from _lcm.egm.kernel_scope import _find_unsupported_feature
@@ -727,22 +726,17 @@ def _build_kernel_pieces(
         solver.savings_grid.to_jax(), dtype=canonical_float_dtype()
     )
     n_constrained = solver.n_constrained_points
-    child_reads = _build_child_reads(
+    continuation_plan = build_continuation_plan(
         user_regimes=user_regimes,
         functions=functions,
         transitions=transitions,
         stochastic_transition_names=stochastic_transition_names,
         carry_targets=carry_targets,
-        post_decision_name=solver.post_decision_function,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-    )
-    continuation_plan = ContinuationPlan(
-        carry_targets=carry_targets,
         scalar_targets=scalar_targets,
-        child_reads=child_reads,
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=solver.post_decision_function,
         stochastic_node_batch_size=solver.stochastic_node_batch_size,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
     return _EgmKernelPieces(
         euler_state_name=solver.continuous_state,

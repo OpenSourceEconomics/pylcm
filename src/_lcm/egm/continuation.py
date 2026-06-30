@@ -337,6 +337,52 @@ def bind_continuation(
     return continuation
 
 
+def build_continuation_plan(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    functions: EconFunctionsMapping,
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
+    carry_targets: tuple[RegimeName, ...],
+    scalar_targets: tuple[RegimeName, ...],
+    compute_regime_transition_probs: RegimeTransitionFunction,
+    post_decision_name: FunctionName,
+    stochastic_node_batch_size: int,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> ContinuationPlan:
+    """Assemble a `ContinuationPlan` from the regime's continuation statics.
+
+    The plan binds (via `bind_continuation`) to one combo pool and the next
+    period's carries to yield the expected continuation as a function of
+    end-of-period savings. The post-decision function names the savings slot the
+    child next-state reads consume; `stochastic_node_batch_size` splays the child
+    stochastic-node expectation. Both the DC-EGM kernel and the BQSEGM case-piece
+    solver build their plan through this seam, so the continuation construction
+    lives in one place.
+
+    Returns:
+        The assembled continuation plan.
+
+    """
+    child_reads = _build_child_reads(
+        user_regimes=user_regimes,
+        functions=functions,
+        transitions=transitions,
+        stochastic_transition_names=stochastic_transition_names,
+        carry_targets=carry_targets,
+        post_decision_name=post_decision_name,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+    )
+    return ContinuationPlan(
+        carry_targets=carry_targets,
+        scalar_targets=scalar_targets,
+        child_reads=child_reads,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        post_decision_name=post_decision_name,
+        stochastic_node_batch_size=stochastic_node_batch_size,
+    )
+
+
 def _get_child_carry_reader(
     *,
     read: _ChildRead,
