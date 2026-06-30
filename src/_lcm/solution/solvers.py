@@ -66,6 +66,7 @@ from lcm.case_piece import EqualityOwner
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
     ActionName,
+    BoolND,
     ContinuousState,
     Float1D,
     FloatND,
@@ -2820,7 +2821,7 @@ def _build_bqsegm_continuation_plan(
 def _solve_ride_along_cell_step(
     *,
     has_jump: bool,
-    jump_mask: tuple[bool, ...],
+    jump_positions: tuple[Any, ...],
     cont_value: Float1D,
     cont_marginal: Float1D,
     liquid_grid: Float1D,
@@ -2835,7 +2836,9 @@ def _solve_ride_along_cell_step(
 
     A pure-kink schedule uses the continuous multi-interval step; a schedule with a
     jump breakpoint uses the unified jump-and-kink step, both reading the expected
-    value and marginal already evaluated on the savings grid.
+    value and marginal already evaluated on the savings grid. The jump positions
+    locate the jump breakpoints in the sorted partition — static for a single
+    variable, a per-cell traced tuple when several variables reorder per cell.
     """
     from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
         bqsegm_multi_interval_step_savings,
@@ -2853,7 +2856,7 @@ def _solve_ride_along_cell_step(
             coh_slopes=coh_slopes,
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
-            jump_mask=jump_mask,
+            jump_positions=jump_positions,
         )
     return bqsegm_multi_interval_step_savings(
         cont_value=cont_value,
@@ -2866,6 +2869,52 @@ def _solve_ride_along_cell_step(
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
     )
+
+
+def _ride_along_jump_config(
+    kinds: tuple[str, ...], *, n_variables: int
+) -> tuple[BoolND, int, bool, tuple[int, ...], bool]:
+    """Derive the merged partition's jump statics from the declared breakpoint kinds.
+
+    Returns the per-breakpoint jump flags, the static jump count, whether any jump
+    is present, the declared-order jump positions, and whether the jump positions
+    must be recovered per cell — true only when jump and kink breakpoints declared
+    on several variables interleave differently in each ride-along cell.
+    """
+    jump_flags = tuple(kind == "jump" for kind in kinds)
+    n_jumps = sum(jump_flags)
+    static_jump_positions = tuple(
+        index for index, is_jump in enumerate(jump_flags) if is_jump
+    )
+    dynamic_jumps = n_variables > 1 and 0 < n_jumps < len(kinds)
+    return (
+        jnp.asarray(jump_flags),
+        n_jumps,
+        n_jumps > 0,
+        static_jump_positions,
+        dynamic_jumps,
+    )
+
+
+def _partition_jumps(
+    preimages: Float1D,
+    *,
+    dynamic_jumps: bool,
+    jump_flags: BoolND,
+    n_jumps: int,
+    static_jump_positions: tuple[int, ...],
+) -> tuple[Float1D, tuple[Any, ...]]:
+    """Sort a cell's breakpoint preimages and locate the jumps in the sorted order.
+
+    With fixed jump positions the declared-order positions carry over; when the
+    jumps reorder per cell the sorted-order jump indices are recovered from the
+    permutation that sorts the preimages.
+    """
+    if dynamic_jumps:
+        order = jnp.argsort(preimages)
+        sorted_jumps = jnp.nonzero(jump_flags[order], size=n_jumps)[0]
+        return preimages[order], tuple(sorted_jumps[k] for k in range(n_jumps))
+    return jnp.sort(preimages), static_jump_positions
 
 
 def _build_bqsegm_ride_along_core(
@@ -2903,20 +2952,9 @@ def _build_bqsegm_ride_along_core(
         )
         raise RegimeInitializationError(msg)
     n_variables = len({source.variable for source in sources})
-    has_jump = any(kind == "jump" for kind in kinds)
-    if n_variables > 1 and len(set(kinds)) > 1:
-        msg = (
-            "BQSEGM ride-along path merges mixed jump-and-kink breakpoints only "
-            f"on a single variable; the regime brackets across {n_variables} "
-            "variables with mixed kinds, whose per-cell preimages reorder the "
-            "jump and kink positions — a later slice."
-        )
-        raise RegimeInitializationError(msg)
-    # The jump mask aligns with the sorted breakpoints: with one variable the
-    # per-cell preimage order matches the declared (ascending) threshold order, and
-    # with several variables every breakpoint shares the same kind (checked above),
-    # so the mask is uniform and order-independent.
-    jump_mask = tuple(kind == "jump" for kind in kinds)
+    jump_flags_arr, n_jumps, has_jump, static_jump_positions, dynamic_jumps = (
+        _ride_along_jump_config(kinds, n_variables=n_variables)
+    )
 
     liquid_name = schedule_spec.liquid_state_name
     ride_names = schedule_spec.ride_along_state_names
@@ -2968,8 +3006,13 @@ def _build_bqsegm_ride_along_core(
 
             # Every declared schedule's breakpoints, each mapped to its asset value
             # in its own variable, merge into one sorted per-cell liquid partition.
-            breakpoints = jnp.sort(
-                jnp.stack([cell_breakpoint(source, cell) for source in sources])
+            preimages = jnp.stack([cell_breakpoint(source, cell) for source in sources])
+            breakpoints, jump_positions = _partition_jumps(
+                preimages,
+                dynamic_jumps=dynamic_jumps,
+                jump_flags=jump_flags_arr,
+                n_jumps=n_jumps,
+                static_jump_positions=static_jump_positions,
             )
             midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
 
@@ -2983,7 +3026,7 @@ def _build_bqsegm_ride_along_core(
             )
             return _solve_ride_along_cell_step(
                 has_jump=has_jump,
-                jump_mask=jump_mask,
+                jump_positions=jump_positions,
                 cont_value=cont_value,
                 cont_marginal=cont_marginal,
                 liquid_grid=liquid,

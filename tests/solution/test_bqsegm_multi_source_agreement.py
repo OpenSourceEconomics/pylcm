@@ -13,6 +13,7 @@ from collections.abc import Mapping
 import jax.numpy as jnp
 import numpy as np
 
+from tests.test_models import bqsegm_multi_source_jump_toy as jump_toy
 from tests.test_models import bqsegm_multi_source_toy as toy
 
 _LIQUID = jnp.linspace(0.1, 30.0, 120)
@@ -52,3 +53,53 @@ def test_bqsegm_merges_two_derived_variable_kinks_matching_brute() -> None:
                 rtol=5e-3,
                 err_msg=f"period={period} kind={kind}",
             )
+
+
+# Jump preimage `cliff_b - base_b[kind]` is 12.0 in both slices; the kink preimage
+# `kink_a - base_a[kind]` is 14.0 (lo) / 11.0 (hi), so the jump's sorted position
+# swaps between slices.
+_JUMP_PREIMAGE = (12.0, 12.0)
+
+
+def _interior_away_from_jump(kind: int) -> np.ndarray:
+    """Grid-edge interior minus the one cell straddling this slice's jump."""
+    edge = (_LIQUID > 1.5) & (_LIQUID < 27.0)
+    return np.asarray(edge & (jnp.abs(_LIQUID - _JUMP_PREIMAGE[kind]) > 0.75))
+
+
+def _solve_jump(variant: str, *, n_consumption: int = 160) -> Mapping[int, Mapping]:
+    """Solve the mixed jump-and-kink two-variable toy on the comparison grids."""
+    model = jump_toy.build_model(
+        variant=variant,
+        n_liquid=120,
+        liquid_max=30.0,
+        n_savings=220,
+        savings_max=28.0,
+        n_consumption=n_consumption,
+    )
+    return model.solve(params=jump_toy.build_params(), log_level="off")
+
+
+def test_bqsegm_merges_a_jump_and_kink_across_variables_matching_brute() -> None:
+    """A jump and a kink on two income vars, reordering per slice, equals brute.
+
+    At the terminal-adjacent working period the continuation is the smooth
+    bequest, so the savings-space jump step is exact. The jump (on `income_b`) and
+    the kink (on `income_a`) map to per-`kind` asset preimages whose order swaps
+    between slices; BQSEGM recovers the jump's position per cell and matches the
+    dense `GridSearch` value across each slice's cliff.
+    """
+    bqsegm = _solve_jump("bqsegm")
+    brute = _solve_jump("brute", n_consumption=1800)
+    period = max(p for p in bqsegm if "alive" in bqsegm[p])
+    brute_v = np.asarray(brute[period]["alive"])
+    bqsegm_v = np.asarray(bqsegm[period]["alive"])
+    for kind in range(brute_v.shape[0]):
+        interior = _interior_away_from_jump(kind)
+        np.testing.assert_allclose(
+            bqsegm_v[kind, interior],
+            brute_v[kind, interior],
+            atol=2e-2,
+            rtol=5e-3,
+            err_msg=f"period={period} kind={kind}",
+        )

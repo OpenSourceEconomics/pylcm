@@ -29,6 +29,7 @@ the otherwise side ownership through the strict `<` / non-strict `>=` split.
 """
 
 from collections.abc import Mapping
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -314,7 +315,7 @@ def bqsegm_unified_step_savings(
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
-    jump_mask: tuple[bool, ...],
+    jump_positions: tuple[Any, ...],
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a mixed jump-and-kink piecewise-affine budget against savings continuation.
 
@@ -344,17 +345,18 @@ def bqsegm_unified_step_savings(
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
-        jump_mask: Static per-breakpoint flag, length N, `True` for a jump.
+        jump_positions: Indices (into the sorted breakpoints) of the jump
+            breakpoints, length J. Static for a single variable; a per-cell traced
+            array when breakpoints declared on several variables reorder per cell.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
         policy, each on `liquid_grid`.
 
     """
-    n_breakpoints = breakpoints.shape[0]
     last_interval = coh_slopes.shape[0] - 1
-    jump_positions = tuple(j for j in range(n_breakpoints) if jump_mask[j])
-    case_starts = (0, *(p + 1 for p in jump_positions))
+    n_cases = len(jump_positions) + 1
+    case_starts = (0, *(position + 1 for position in jump_positions))
     case_ends = (*jump_positions, last_interval)
     case_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
 
@@ -384,8 +386,11 @@ def bqsegm_unified_step_savings(
             jnp.searchsorted(breakpoints, liquid_endog, side="right"), start, end
         )
         marginal_endog = coh_slopes[endog_interval] * consumption ** (-crra)
-        lower = -jnp.inf if start == 0 else breakpoints[start - 1]
-        upper = jnp.inf if end == last_interval else breakpoints[end]
+        # The first case opens at the lower grid edge and the last closes at the
+        # upper edge; interior case edges are the adjacent breakpoints, gathered at
+        # the (possibly per-cell traced) jump positions `start - 1` and `end`.
+        lower = -jnp.inf if case == 0 else breakpoints[start - 1]
+        upper = jnp.inf if case == n_cases - 1 else breakpoints[end]
         # An endogenous coh outside the case's monotone coh range inverts off-grid;
         # `jnp.interp` clips it onto a boundary node, so exclude it from the case.
         in_grid = (coh_endog >= coh_case_grid[0]) & (coh_endog <= coh_case_grid[-1])
