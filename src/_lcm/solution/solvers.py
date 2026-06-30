@@ -2476,6 +2476,16 @@ class _BQSEGMScheduleSpec:
     """Qualified parameter names of the schedule's thresholds."""
     breakpoint_kinds: tuple[str, ...]
     """Discontinuity kind per threshold, in the schedule's declared order."""
+    derived_var_name: str = ""
+    """Name of the derived monotone schedule variable, or `""` when the schedule
+    varies directly in the liquid state. When set, the thresholds live in this
+    variable's units and map to a per-ride-along-cell asset preimage."""
+    derived_of_liquid_dag: Callable | None = None
+    """Composed derived schedule variable as a function of the liquid state and
+    qualified params, used to recover its per-cell affine asset preimage."""
+    derived_param_names: tuple[str, ...] = ()
+    """Unqualified parameter names the derived schedule variable reads (everything
+    but the state axes)."""
 
 
 def _collect_bqsegm_schedule_spec(
@@ -2505,18 +2515,47 @@ def _collect_bqsegm_schedule_spec(
         raise RegimeInitializationError(msg)
     schedule = registry.piecewise_affine_schedules[0]
     state_names = context.state_action_space.state_names
-    # The Euler axis is the liquid state the schedule varies in, not the first
-    # state axis: the canonical order leads with discrete states, so a ride-along
-    # co-state sorts ahead of the liquid axis. The remaining states ride along.
-    liquid_state_name = schedule.variable
-    if liquid_state_name not in state_names:
-        msg = (
-            f"BQSEGM schedule varies in {schedule.variable!r}, which is not a state "
-            f"of the regime (states: {state_names}). A schedule on a derived "
-            "monotone quantity needs the asset-preimage map, which is not yet "
-            "wired into the solver."
+    # The Euler axis is the liquid state, not the first state axis: the canonical
+    # order leads with discrete states, so a ride-along co-state sorts ahead of it.
+    # A schedule on a state varies in the liquid axis directly; a schedule on a
+    # derived monotone quantity (e.g. gross income) varies in the regime's single
+    # continuous state and maps each threshold to a per-cell asset preimage.
+    derived_var_name = ""
+    derived_of_liquid_dag: Callable | None = None
+    derived_param_names: tuple[str, ...] = ()
+    if schedule.variable in state_names:
+        liquid_state_name = schedule.variable
+    else:
+        continuous_states = tuple(
+            name
+            for name in state_names
+            if isinstance(context.grids[name], ContinuousGrid)
         )
-        raise RegimeInitializationError(msg)
+        if len(continuous_states) != 1:
+            msg = (
+                f"BQSEGM schedule varies in the derived quantity "
+                f"{schedule.variable!r}; mapping it to an asset preimage needs "
+                f"exactly one continuous state, but the regime has "
+                f"{continuous_states}."
+            )
+            raise RegimeInitializationError(msg)
+        liquid_state_name = continuous_states[0]
+        if liquid_state_name == state_names[0] and len(state_names) == 1:
+            msg = (
+                f"BQSEGM schedule varies in the derived quantity "
+                f"{schedule.variable!r} but the regime has no ride-along co-state; "
+                "a derived schedule maps thresholds to per-cell asset preimages and "
+                "is only wired on the ride-along path."
+            )
+            raise RegimeInitializationError(msg)
+        derived_var_name = schedule.variable
+        derived_of_liquid_dag = concatenate_functions(
+            dict(context.functions), targets=schedule.variable
+        )
+        derived_args = tuple(inspect.signature(derived_of_liquid_dag).parameters)
+        derived_param_names = tuple(
+            name for name in derived_args if name not in state_names
+        )
     ride_along_state_names = tuple(
         name for name in state_names if name != liquid_state_name
     )
@@ -2534,6 +2573,9 @@ def _collect_bqsegm_schedule_spec(
         ride_along_state_names=ride_along_state_names,
         threshold_param_names=threshold_param_names,
         breakpoint_kinds=breakpoint_kinds,
+        derived_var_name=derived_var_name,
+        derived_of_liquid_dag=derived_of_liquid_dag,
+        derived_param_names=derived_param_names,
     )
 
 
@@ -2741,6 +2783,7 @@ def _build_bqsegm_ride_along_core(
     from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
         interval_midpoints,
         interval_segment_coefficients,
+        linear_asset_preimage,
     )
     from _lcm.egm.bqsegm_step import bqsegm_multi_interval_step_savings  # noqa: PLC0415
     from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
@@ -2757,6 +2800,7 @@ def _build_bqsegm_ride_along_core(
     liquid_name = schedule_spec.liquid_state_name
     ride_names = schedule_spec.ride_along_state_names
     state_names = (liquid_name, *ride_names)
+    is_derived = bool(schedule_spec.derived_var_name)
 
     def core(
         *,
@@ -2768,10 +2812,19 @@ def _build_bqsegm_ride_along_core(
         liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
         param_pool = {key: v for key, v in kwargs.items() if key not in state_names}
         coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
-        breakpoints = jnp.sort(
-            jnp.stack([kwargs[name] for name in schedule_spec.threshold_param_names])
+        thresholds = tuple(kwargs[name] for name in schedule_spec.threshold_param_names)
+        derived_params = {
+            name: kwargs[name] for name in schedule_spec.derived_param_names
+        }
+        # A schedule on the liquid state reads its thresholds directly as liquid
+        # breakpoints, identical across ride-along cells; a derived-variable
+        # schedule maps each threshold to its asset preimage per cell, so its
+        # breakpoints are recovered inside `solve_one_cell`.
+        liquid_breakpoints = (
+            None
+            if is_derived
+            else jnp.sort(jnp.stack([jnp.asarray(t, dtype=dtype) for t in thresholds]))
         )
-        midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
         discount_factor = kwargs["H__discount_factor"]
         crra = kwargs["utility__crra"]
 
@@ -2787,6 +2840,28 @@ def _build_bqsegm_ride_along_core(
                 dtype=dtype,
             )
             cont_value, cont_marginal = jax.vmap(continuation)(savings_grid)
+
+            if is_derived:
+
+                def derived_of_liquid(scalar_liquid: FloatND) -> FloatND:
+                    return schedule_spec.derived_of_liquid_dag(
+                        **{liquid_name: scalar_liquid}, **cell, **derived_params
+                    )
+
+                breakpoints = jnp.sort(
+                    jnp.stack(
+                        [
+                            linear_asset_preimage(
+                                derived_of_liquid,
+                                threshold=jnp.asarray(t, dtype=dtype),
+                            )
+                            for t in thresholds
+                        ]
+                    )
+                )
+            else:
+                breakpoints = liquid_breakpoints
+            midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
 
             def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
                 return schedule_spec.coh_of_liquid_dag(
