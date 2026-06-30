@@ -2497,6 +2497,10 @@ class _BQSEGMSource:
     threshold_static_index: int | None = None
     """Static column index into the threshold table, applied after the ride-along
     row index. `None` leaves the row-indexed value as-is."""
+    threshold_subkey: str | None = None
+    """Entry to select inside a `MappingLeaf` threshold param (`leaf.data[subkey]`),
+    resolved before the ride-along row index and static column index. `None` when
+    the threshold param is a bare array."""
 
 
 @dataclass(frozen=True)
@@ -2621,6 +2625,7 @@ def _collect_bqsegm_schedule_spec(
                 derived_state_names=states_read,
                 threshold_index_state=bracket.indexed_by,
                 threshold_static_index=bracket.static_index,
+                threshold_subkey=bracket.threshold_subkey,
             )
             for bracket in schedule.breakpoints
         )
@@ -2939,18 +2944,24 @@ def _partition_jumps(
 
 def _indexed_threshold_value(
     *,
-    table: Any,  # noqa: ANN401  # scalar param or threshold table (mixed dtypes)
+    table: Any,  # noqa: ANN401  # scalar param, threshold table, or mapping leaf
+    subkey: str | None,
     index_state: str | None,
     static_index: int | None,
     cell: dict[str, Any],
 ) -> Any:  # noqa: ANN401
-    """Read a breakpoint threshold from its table for one ride-along cell.
+    """Read a breakpoint threshold from its param for one ride-along cell.
 
-    A scalar threshold (`index_state is None`) passes through. A threshold
-    declared `indexed_by` a ride-along state is read at that state's row in this
-    cell; a `static_index` then selects its column (e.g. a bracket edge).
+    The param is resolved to a value in this order:
+    - `subkey` selects an entry inside a `MappingLeaf` (`leaf.data[subkey]`).
+    - `index_state` reads the row at that ride-along state's code in this cell.
+    - `static_index` selects a column (e.g. a bracket edge).
+
+    A scalar threshold leaves every step disabled and passes through unchanged.
     """
     value = table
+    if subkey is not None:
+        value = value.data[subkey]
     if index_state is not None:
         value = value[cell[index_state]]
     if static_index is not None:
@@ -3020,11 +3031,13 @@ def _build_bqsegm_ride_along_core(
             A schedule on the liquid state reads its threshold directly as a liquid
             breakpoint; a derived-variable schedule maps the threshold to its
             per-cell asset preimage in that variable, offset by the cell's states.
-            A threshold declared `indexed_by` a ride-along state is read from its
-            table at this cell's state row (and optional static column) first.
+            A threshold nested in a `MappingLeaf` is read through its sub-key, and
+            one declared `indexed_by` a ride-along state is read at this cell's
+            state row (and optional static column), before the preimage map.
             """
             threshold_value = _indexed_threshold_value(
                 table=kwargs[source.threshold_param_name],
+                subkey=source.threshold_subkey,
                 index_state=source.threshold_index_state,
                 static_index=source.threshold_static_index,
                 cell=cell,

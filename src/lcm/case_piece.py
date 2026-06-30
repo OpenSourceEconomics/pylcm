@@ -58,7 +58,9 @@ class AffineBreakpoint:
     """One threshold of a piecewise-affine schedule on a monotone variable."""
 
     threshold: str
-    """Name of the DAG variable or parameter holding the threshold value."""
+    """Name of the DAG variable or parameter holding the threshold value. When the
+    threshold lives inside a `MappingLeaf` param, this is the leaf's name and
+    `threshold_subkey` selects the entry within it."""
     kind: BoundaryKind
     """Discontinuity kind at the threshold (a bracket edge is a continuous kink)."""
     indexed_by: str | None = None
@@ -68,6 +70,10 @@ class AffineBreakpoint:
     static_index: int | None = None
     """Static column index into the threshold table (e.g. a bracket edge), applied
     after the ride-along-state row index. `None` leaves the indexed value as-is."""
+    threshold_subkey: str | None = None
+    """Entry to select inside a `MappingLeaf` threshold param (`leaf.data[subkey]`),
+    or `None` when the threshold param is a bare array. Resolved before the
+    ride-along-state row index and static column index."""
 
 
 @dataclass(frozen=True)
@@ -194,7 +200,9 @@ def affine_breakpoint(
     """Declare one threshold of a piecewise-affine schedule.
 
     Args:
-        threshold: Name of the DAG variable or parameter holding the threshold.
+        threshold: Name of the DAG variable or parameter holding the threshold. A
+            dotted name `leaf.subkey` reads the threshold from a `MappingLeaf`
+            param: `leaf` is the parameter, `subkey` the entry within its `.data`.
         kind: Discontinuity kind at the threshold; a bracket edge is a continuous
             kink (the schedule is continuous, only its slope changes).
         indexed_by: Name of the ride-along state indexing the threshold table. When
@@ -208,11 +216,13 @@ def affine_breakpoint(
         The threshold as an `AffineBreakpoint`.
 
     """
+    leaf, _, subkey = threshold.partition(".")
     return AffineBreakpoint(
-        threshold=threshold,
+        threshold=leaf,
         kind=kind,
         indexed_by=indexed_by,
         static_index=static_index,
+        threshold_subkey=subkey or None,
     )
 
 
