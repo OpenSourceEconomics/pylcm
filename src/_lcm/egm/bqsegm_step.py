@@ -205,6 +205,104 @@ def bqsegm_multi_interval_step(
     return value, marginal, policy
 
 
+def bqsegm_multi_interval_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    crra: ScalarFloat | float,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve a continuous piecewise-affine regime against savings-space continuation.
+
+    Same EGM geometry as `bqsegm_multi_interval_step`, but the continuation is
+    supplied as the expected value and expected marginal continuation already
+    evaluated at each post-decision savings node — the transition-aware
+    continuation reader has integrated the next-period regime transition,
+    stochastic shocks, and ride-along co-state transitions and returned both in
+    savings space. The expected marginal therefore already carries the
+    gross-return factor `dR/ds`, so the Euler inversion reads it directly with no
+    explicit return term.
+
+    The hard-borrowing corner (save nothing) lands on the lowest savings node, so
+    its continuation value is `cont_value[0]` (the expectation at `savings = 0`).
+    The flat-interval (hard-constraint floor) case is not covered here; a regime
+    with a ride-along co-state and a floor breakpoint is a later slice.
+
+    Args:
+        cont_value: Expected continuation value at each savings node.
+        cont_marginal: Expected marginal continuation (savings space) at each
+            savings node.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
+            with `savings_grid[0] == 0` the no-save corner).
+        discount_factor: Discount factor.
+        crra: Coefficient of relative risk aversion.
+        coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
+        coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
+        breakpoints: Sorted ascending liquid breakpoints, length N.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+    coh_grid = (
+        coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
+    )
+
+    # The expected marginal is already in savings space (it carries `dR/ds`), so
+    # the Euler inversion reads it directly — no explicit gross-return factor.
+    consumption = (discount_factor * cont_marginal) ** (-1.0 / crra)
+    coh_endog = consumption + savings_grid
+    off_grid = (coh_endog < coh_grid[0]) | (coh_endog > coh_grid[-1])
+    liquid_endog = jnp.interp(coh_endog, coh_grid, liquid_grid)
+    endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
+    slope_endog = coh_slopes[endog_interval]
+    value_endog = _crra_utility(consumption, crra) + discount_factor * cont_value
+    marginal_endog = slope_endog * consumption ** (-crra)
+
+    # Where the continuation is flat (zero marginal value of liquid), the Euler
+    # inversion diverges; drop those interior candidates and the off-grid ones.
+    degenerate = cont_marginal <= _DEGENERATE_MARGINAL_TOL
+    liquid_endog = jnp.where(degenerate | off_grid, jnp.nan, liquid_endog)
+    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
+    next_segment = jnp.nanmax(interior_segment) + 1.0
+
+    # Hard borrowing corner: save nothing (savings = 0), consume all cash-on-hand,
+    # earn the lowest-savings-node continuation. A candidate over the whole grid.
+    value_at_no_save = cont_value[0]
+    endog_parts = [liquid_endog, liquid_grid]
+    value_parts = [
+        value_endog,
+        _crra_utility(coh_grid, crra) + discount_factor * value_at_no_save,
+    ]
+    policy_parts = [consumption, coh_grid]
+    marginal_parts = [
+        marginal_endog,
+        coh_slopes[interval_of_grid] * coh_grid ** (-crra),
+    ]
+    segment_parts = [
+        interior_segment,
+        jnp.full_like(liquid_grid, next_segment),
+    ]
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+    )
+    return value, marginal, policy
+
+
 def _flat_interval_indices(
     flat_interval_mask: tuple[bool, ...] | None, *, n_intervals: int
 ) -> tuple[int, ...]:

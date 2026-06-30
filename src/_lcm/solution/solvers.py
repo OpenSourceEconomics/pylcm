@@ -23,7 +23,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -1469,6 +1469,15 @@ class BQSEGM(Solver):
     that names its budget node differently (`resources`, `cash_on_hand`) selects
     it here.
     """
+    post_decision_function: FunctionName | None = None
+    """Name of the post-decision savings function (the `savings = coh - c` slot).
+
+    Required when the regime carries a ride-along co-state: the continuation is
+    then read through the transition-aware continuation reader (which consumes
+    the savings slot), so the 1-D case-piece solve batches over the ride-along
+    axes. `None` for a single-liquid-axis regime, whose continuation is read
+    directly off the next period's liquid grid.
+    """
 
     @property
     def requires_continuation_carries(self) -> bool:
@@ -1541,7 +1550,6 @@ class BQSEGM(Solver):
         from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
 
         savings_grid = self.savings_grid.to_jax()
-        liquid_grid = context.grids[context.state_action_space.state_names[0]].to_jax()
 
         functions = cast(
             "Mapping[FunctionName, Callable[..., object]]",
@@ -1563,6 +1571,19 @@ class BQSEGM(Solver):
             if is_schedule
             else None
         )
+        if schedule_spec is not None and schedule_spec.ride_along_state_names:
+            return self._build_ride_along_kernels(
+                context=context,
+                savings_grid=savings_grid,
+                schedule_spec=schedule_spec,
+            )
+
+        liquid_state_name = (
+            schedule_spec.liquid_state_name
+            if schedule_spec is not None
+            else context.state_action_space.state_names[0]
+        )
+        liquid_grid = context.grids[liquid_state_name].to_jax()
         discrete_spec = (
             _collect_bqsegm_discrete_spec(
                 context=context, budget_target=self.budget_target
@@ -1610,6 +1631,74 @@ class BQSEGM(Solver):
             period_kernels=MappingProxyType(period_kernels),
             continuation_template=_build_one_asset_carry_template(
                 liquid_grid=liquid_grid
+            ),
+        )
+
+    def _build_ride_along_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        savings_grid: Float1D,
+        schedule_spec: _BQSEGMScheduleSpec,
+    ) -> SolutionKernels:
+        """Build the case-piece kernels for a regime carrying a ride-along co-state.
+
+        The continuation is read through the transition-aware reader, so each
+        period's plan depends on its reachable carry/scalar target split; cores
+        are deduplicated by that split. The 1-D liquid solve runs once per
+        ride-along cell, batched.
+        """
+        from _lcm.egm.validation import _reachable_target_names  # noqa: PLC0415
+
+        if self.post_decision_function is None:
+            msg = (
+                "BQSEGM with a ride-along co-state requires `post_decision_function` "
+                "(the savings slot the continuation reader consumes); the regime "
+                f"{context.regime_name!r} leaves it unset."
+            )
+            raise RegimeInitializationError(msg)
+
+        liquid_grid = context.grids[schedule_spec.liquid_state_name].to_jax()
+        ride_shape = tuple(
+            int(context.grids[name].to_jax().shape[0])
+            for name in schedule_spec.ride_along_state_names
+        )
+        reachable_targets = frozenset(
+            _reachable_target_names(
+                user_regime=context.user_regimes[context.regime_name],
+                user_regimes=context.user_regimes,
+            )
+        )
+        transition_target_names = tuple(context.transitions)
+
+        period_to_target = _period_to_continuation_target(context=context)
+        cores: dict[tuple[RegimeName, ...], Callable] = {}
+        period_kernels: dict[int, PeriodKernel] = {}
+        for period in period_to_target:
+            plan = _build_bqsegm_continuation_plan(
+                context=context,
+                period=period,
+                reachable_targets=reachable_targets,
+                post_decision_name=self.post_decision_function,
+            )
+            key = (*plan.carry_targets, "|", *plan.scalar_targets)
+            if key not in cores:
+                core = _build_bqsegm_ride_along_core(
+                    savings_grid=savings_grid,
+                    schedule_spec=schedule_spec,
+                    continuation_plan=plan,
+                )
+                cores[key] = jax.jit(core) if context.enable_jit else core
+            period_kernels[period] = _RideAlongBQSEGMPeriodKernel(
+                core=cores[key],
+                regime_name=context.regime_name,
+                reachable_targets=reachable_targets,
+                transition_target_names=transition_target_names,
+            )
+        return SolutionKernels(
+            period_kernels=MappingProxyType(period_kernels),
+            continuation_template=_build_ride_along_carry_template(
+                liquid_grid=liquid_grid, ride_shape=ride_shape
             ),
         )
 
@@ -1798,6 +1887,108 @@ class _OneAssetEGMPeriodKernel:
             ),
         )
         return KernelResult(V_arr=V_arr, carry=carry)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RideAlongBQSEGMPeriodKernel:
+    """The case-piece EGM adapter for a regime carrying a ride-along co-state.
+
+    Mirrors `_DCEGMPeriodKernel`: the continuation comes from the next period's
+    EGM carries (read through the transition-aware continuation reader, not the
+    next-period liquid grid), so the core reads `next_regime_to_egm_carry` and
+    binds one continuation per ride-along cell. Calling it solves the 1-D liquid
+    problem once per cell, batched, and returns the value array and the
+    ride-along-axis-leading continuation carry a parent interpolates.
+    """
+
+    core: Callable
+    """The shared jitted ride-along case-piece core (`id`-deduped across periods)."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params this adapter projects."""
+
+    reachable_targets: frozenset[RegimeName]
+    """The carry keys the core reads; the rolling carry is filtered to these."""
+
+    transition_target_names: tuple[RegimeName, ...]
+    """Names of the regime's transition targets, whose params are unioned in."""
+
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the single case-piece core under the `"main"` key."""
+        return MappingProxyType({"main": self.core})
+
+    def with_fixed_params(
+        self, *, fixed_flat_params: FlatParams
+    ) -> _RideAlongBQSEGMPeriodKernel:
+        """Bind the regime's and its carry targets' fixed params into the core."""
+        bound = dict(fixed_flat_params.get(self.regime_name, MappingProxyType({})))
+        for target_name in self.transition_target_names:
+            for key, value in fixed_flat_params.get(
+                target_name, MappingProxyType({})
+            ).items():
+                bound.setdefault(key, value)
+        if not bound:
+            return self
+        return replace(self, core=functools.partial(self.core, **bound))
+
+    def build_lower_args(
+        self,
+        *,
+        core_key: str = "main",  # noqa: ARG002
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> Mapping[str, object]:
+        """Build the core's lowering arguments: states, carries, EGM params."""
+        return {
+            **dict(state_action_space.states),
+            "next_regime_to_egm_carry": _reachable_carry_subset(
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                reachable_targets=self.reachable_targets,
+            ),
+            "next_regime_to_V_arr": next_regime_to_V_arr,
+            **self._kernel_params(flat_params=flat_params),
+            "period": jnp.int32(period),
+            "age": ages.values[period],
+        }
+
+    def __call__(
+        self,
+        *,
+        compiled_cores: Mapping[str, Callable],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Run the ride-along case-piece step and assemble the `KernelResult`."""
+        V_arr, carry = compiled_cores["main"](
+            **state_action_space.states,
+            next_regime_to_egm_carry=_reachable_carry_subset(
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                reachable_targets=self.reachable_targets,
+            ),
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **self._kernel_params(flat_params=flat_params),
+            period=jnp.int32(period),
+            age=ages.values[period],
+        )
+        return KernelResult(V_arr=V_arr, carry=carry)
+
+    def _kernel_params(self, *, flat_params: FlatParams) -> dict[str, object]:
+        """Flat params fed into the core: the regime's plus its targets'."""
+        params: dict[str, object] = dict(flat_params[self.regime_name])
+        for target_name in self.transition_target_names:
+            for key, value in flat_params.get(
+                target_name, MappingProxyType({})
+            ).items():
+                params.setdefault(key, value)
+        return params
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -2276,9 +2467,11 @@ class _BQSEGMScheduleSpec:
     coh_of_liquid_dag: Callable
     """Composed `coh` as a function of the liquid state and qualified params."""
     coh_param_names: tuple[str, ...]
-    """Qualified parameter names `coh` reads (everything but the liquid state)."""
+    """Qualified parameter names `coh` reads (everything but the state axes)."""
     liquid_state_name: str
     """Name of the liquid state the schedule and budget vary in."""
+    ride_along_state_names: tuple[str, ...]
+    """State axes other than the liquid axis (the budget varies per ride-along cell)."""
     threshold_param_names: tuple[str, ...]
     """Qualified parameter names of the schedule's thresholds."""
     breakpoint_kinds: tuple[str, ...]
@@ -2311,18 +2504,25 @@ def _collect_bqsegm_schedule_spec(
         )
         raise RegimeInitializationError(msg)
     schedule = registry.piecewise_affine_schedules[0]
-    liquid_state_name = context.state_action_space.state_names[0]
-    if schedule.variable != liquid_state_name:
+    state_names = context.state_action_space.state_names
+    # The Euler axis is the liquid state the schedule varies in, not the first
+    # state axis: the canonical order leads with discrete states, so a ride-along
+    # co-state sorts ahead of the liquid axis. The remaining states ride along.
+    liquid_state_name = schedule.variable
+    if liquid_state_name not in state_names:
         msg = (
-            "BQSEGM schedule path supports a schedule on the liquid state "
-            f"{liquid_state_name!r}; the schedule varies in {schedule.variable!r}. "
-            "A schedule on a derived monotone quantity needs the asset-preimage "
-            "map, which is not yet wired into the solver."
+            f"BQSEGM schedule varies in {schedule.variable!r}, which is not a state "
+            f"of the regime (states: {state_names}). A schedule on a derived "
+            "monotone quantity needs the asset-preimage map, which is not yet "
+            "wired into the solver."
         )
         raise RegimeInitializationError(msg)
+    ride_along_state_names = tuple(
+        name for name in state_names if name != liquid_state_name
+    )
     coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
-    coh_param_names = tuple(name for name in coh_args if name != liquid_state_name)
+    coh_param_names = tuple(name for name in coh_args if name not in state_names)
     threshold_param_names = tuple(
         f"{schedule.output}__{bp.threshold}" for bp in schedule.breakpoints
     )
@@ -2331,6 +2531,7 @@ def _collect_bqsegm_schedule_spec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
         liquid_state_name=liquid_state_name,
+        ride_along_state_names=ride_along_state_names,
         threshold_param_names=threshold_param_names,
         breakpoint_kinds=breakpoint_kinds,
     )
@@ -2475,6 +2676,163 @@ def _build_bqsegm_continuous_core(
     return core
 
 
+def _build_bqsegm_continuation_plan(
+    *,
+    context: SolverBuildContext,
+    period: int,
+    reachable_targets: frozenset[RegimeName],
+    post_decision_name: FunctionName,
+) -> Any:  # noqa: ANN401  # `ContinuationPlan`; not annotated precisely (importing
+    # module scope closes an import cycle (`continuation` → … → `lcm.solvers`).
+    """Assemble the period's continuation plan for the ride-along case-piece core."""
+    from _lcm.egm.continuation import (  # noqa: PLC0415
+        build_continuation_plan,
+        get_egm_continuation_targets,
+    )
+
+    # A regime running the case-piece solver is non-terminal, so it always has a
+    # regime transition; narrow the optional for the continuation reader.
+    compute_regime_transition_probs = context.compute_regime_transition_probs
+    if compute_regime_transition_probs is None:
+        msg = (
+            f"BQSEGM regime {context.regime_name!r} has no regime transition; the "
+            "case-piece solver is for non-terminal regimes only."
+        )
+        raise RegimeInitializationError(msg)
+    carry_targets, scalar_targets = get_egm_continuation_targets(
+        period=period,
+        transitions=context.transitions,
+        reachable_targets=reachable_targets,
+        regimes_to_active_periods=context.regimes_to_active_periods,
+        regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
+    )
+    return build_continuation_plan(
+        user_regimes=context.user_regimes,
+        functions=context.functions,
+        transitions=context.transitions,
+        stochastic_transition_names=context.stochastic_transition_names,
+        carry_targets=carry_targets,
+        scalar_targets=scalar_targets,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        post_decision_name=post_decision_name,
+        stochastic_node_batch_size=0,
+        regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
+    )
+
+
+def _build_bqsegm_ride_along_core(
+    *,
+    savings_grid: Float1D,
+    schedule_spec: _BQSEGMScheduleSpec,
+    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+) -> Callable:
+    """Build the case-piece core that batches the 1-D solve over ride-along cells.
+
+    Per ride-along cell (a combo of the non-liquid state axes), the continuation
+    is read through `bind_continuation` — integrating the next-period regime
+    transition, stochastic shocks, and the ride-along co-state transition — and
+    evaluated over the savings grid. The cell's budget schedule is recovered with
+    its ride-along state values bound, and the 1-D continuous-budget step solves
+    against that savings-space continuation. The cells stack into the value array
+    and carry with the ride-along (discrete/passive) axes leading the liquid axis,
+    matching the canonical value-function layout.
+    """
+    from _lcm.dtypes import canonical_float_dtype  # noqa: PLC0415
+    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
+        interval_midpoints,
+        interval_segment_coefficients,
+    )
+    from _lcm.egm.bqsegm_step import bqsegm_multi_interval_step_savings  # noqa: PLC0415
+    from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
+
+    if any(kind != "continuous_kink" for kind in schedule_spec.breakpoint_kinds):
+        msg = (
+            "BQSEGM ride-along path supports continuous-kink schedules only; "
+            f"got breakpoint kinds {schedule_spec.breakpoint_kinds}. Jumped or "
+            "hard-constraint breakpoints with a ride-along co-state are a later "
+            "slice."
+        )
+        raise RegimeInitializationError(msg)
+
+    liquid_name = schedule_spec.liquid_state_name
+    ride_names = schedule_spec.ride_along_state_names
+    state_names = (liquid_name, *ride_names)
+
+    def core(
+        *,
+        next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
+        **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
+    ) -> tuple[FloatND, EGMCarry]:
+        dtype = canonical_float_dtype()
+        liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
+        param_pool = {key: v for key, v in kwargs.items() if key not in state_names}
+        coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
+        breakpoints = jnp.sort(
+            jnp.stack([kwargs[name] for name in schedule_spec.threshold_param_names])
+        )
+        midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
+        discount_factor = kwargs["H__discount_factor"]
+        crra = kwargs["utility__crra"]
+
+        def solve_one_cell(
+            ride_values: tuple[Any, ...],  # ride-along codes/values
+        ) -> tuple[Float1D, Float1D, Float1D]:
+            cell = dict(zip(ride_names, ride_values, strict=True))
+            combo_pool = {**param_pool, **cell}
+            continuation = bind_continuation(
+                plan=continuation_plan,
+                combo_pool=combo_pool,
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                dtype=dtype,
+            )
+            cont_value, cont_marginal = jax.vmap(continuation)(savings_grid)
+
+            def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
+                return schedule_spec.coh_of_liquid_dag(
+                    **{liquid_name: scalar_liquid}, **cell, **coh_params
+                )
+
+            coh_slopes, coh_intercepts = interval_segment_coefficients(
+                schedule=coh_of_liquid, interval_midpoints=midpoints
+            )
+            value, marginal, policy = bqsegm_multi_interval_step_savings(
+                cont_value=cont_value,
+                cont_marginal=cont_marginal,
+                liquid_grid=liquid,
+                savings_grid=savings_grid,
+                discount_factor=discount_factor,
+                crra=crra,
+                coh_slopes=coh_slopes,
+                coh_intercepts=coh_intercepts,
+                breakpoints=breakpoints,
+            )
+            return value, marginal, policy
+
+        ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
+        ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
+        mesh = jnp.meshgrid(*ride_grids, indexing="ij")
+        flat_cells = tuple(grid.ravel() for grid in mesh)
+        value_stack, marginal_stack, policy_stack = jax.vmap(
+            lambda *vals: solve_one_cell(vals)
+        )(*flat_cells)
+
+        n_liquid = liquid.shape[0]
+        value_arr = value_stack.reshape(*ride_shape, n_liquid)
+        carry = EGMCarry(
+            endog_grid=jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
+            value=value_stack.reshape(*ride_shape, n_liquid).astype(dtype),
+            marginal_utility=marginal_stack.reshape(*ride_shape, n_liquid).astype(
+                dtype
+            ),
+            taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
+        )
+        del policy_stack
+        return value_arr, carry
+
+    return core
+
+
 @dataclass(frozen=True)
 class _BQSEGMDiscreteSpec:
     """Build-time statics for a discrete-action regime with a smooth budget.
@@ -2606,6 +2964,24 @@ def _build_one_asset_carry_template(*, liquid_grid: Float1D) -> EGMCarry:
         endog_grid=liquid_grid,
         value=jnp.zeros_like(liquid_grid),
         marginal_utility=jnp.zeros_like(liquid_grid),
+        taste_shock_scale=jnp.asarray(0.0, dtype=liquid_grid.dtype),
+    )
+
+
+def _build_ride_along_carry_template(
+    *, liquid_grid: Float1D, ride_shape: tuple[int, ...]
+) -> EGMCarry:
+    """Build the all-finite case-piece carry template with ride-along axes leading.
+
+    Each ride-along cell publishes one liquid-grid carry row; the template carries
+    the ride-along (discrete/passive) axes ahead of the liquid axis, matching the
+    canonical value-function layout the continuation reader interpolates.
+    """
+    block = jnp.broadcast_to(liquid_grid, (*ride_shape, liquid_grid.shape[0]))
+    return EGMCarry(
+        endog_grid=block,
+        value=jnp.zeros_like(block),
+        marginal_utility=jnp.zeros_like(block),
         taste_shock_scale=jnp.asarray(0.0, dtype=liquid_grid.dtype),
     )
 
