@@ -1494,6 +1494,16 @@ class BQSEGM(Solver):
     is rejected when the regime carries more than one continuous state, where the
     Euler axis must be named to separate it from the ride-along axes.
     """
+    stochastic_node_batch_size: int = 0
+    """Block size for splaying the child stochastic-node expectation.
+
+    The continuation read integrates the child's stochastic next-states (health,
+    health-cost shocks, the wage residual) over their joint node mesh. `0` reads the
+    whole mesh in one vectorized pass; a positive block size loops the mesh in chunks
+    of that many nodes, trading compile/runtime for a smaller peak intermediate. Like
+    `DCEGM.stochastic_node_batch_size`; raise it when the joint node mesh dominates
+    the per-cell memory budget.
+    """
 
     @property
     def requires_continuation_carries(self) -> bool:
@@ -1708,6 +1718,7 @@ class BQSEGM(Solver):
                 period=period,
                 reachable_targets=reachable_targets,
                 post_decision_name=self.post_decision_function,
+                stochastic_node_batch_size=self.stochastic_node_batch_size,
             )
             key = (*plan.carry_targets, "|", *plan.scalar_targets)
             if key not in cores:
@@ -2875,6 +2886,7 @@ def _build_bqsegm_continuation_plan(
     period: int,
     reachable_targets: frozenset[RegimeName],
     post_decision_name: FunctionName,
+    stochastic_node_batch_size: int = 0,
 ) -> Any:  # noqa: ANN401  # `ContinuationPlan`; not annotated precisely (importing
     # module scope closes an import cycle (`continuation` → … → `lcm.solvers`).
     """Assemble the period's continuation plan for the ride-along case-piece core."""
@@ -2908,7 +2920,7 @@ def _build_bqsegm_continuation_plan(
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
-        stochastic_node_batch_size=0,
+        stochastic_node_batch_size=stochastic_node_batch_size,
         regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
     )
 
