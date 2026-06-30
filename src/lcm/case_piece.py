@@ -61,6 +61,13 @@ class AffineBreakpoint:
     """Name of the DAG variable or parameter holding the threshold value."""
     kind: BoundaryKind
     """Discontinuity kind at the threshold (a bracket edge is a continuous kink)."""
+    indexed_by: str | None = None
+    """Name of the ride-along state indexing the threshold table, or `None` for a
+    scalar threshold. When set, the threshold parameter is a table read per
+    ride-along cell as `threshold[cell_state, static_index]`."""
+    static_index: int | None = None
+    """Static column index into the threshold table (e.g. a bracket edge), applied
+    after the ride-along-state row index. `None` leaves the indexed value as-is."""
 
 
 @dataclass(frozen=True)
@@ -181,6 +188,8 @@ def affine_breakpoint(
     threshold: str,
     *,
     kind: BoundaryKind = "continuous_kink",
+    indexed_by: str | None = None,
+    static_index: int | None = None,
 ) -> AffineBreakpoint:
     """Declare one threshold of a piecewise-affine schedule.
 
@@ -188,12 +197,23 @@ def affine_breakpoint(
         threshold: Name of the DAG variable or parameter holding the threshold.
         kind: Discontinuity kind at the threshold; a bracket edge is a continuous
             kink (the schedule is continuous, only its slope changes).
+        indexed_by: Name of the ride-along state indexing the threshold table. When
+            given, the threshold parameter is a table and BQSEGM reads each cell's
+            threshold as `threshold[cell_state, static_index]`; the bare scalar
+            form (`None`) is unchanged.
+        static_index: Static column index into the threshold table (e.g. a bracket
+            edge), applied after the ride-along-state row index.
 
     Returns:
         The threshold as an `AffineBreakpoint`.
 
     """
-    return AffineBreakpoint(threshold=threshold, kind=kind)
+    return AffineBreakpoint(
+        threshold=threshold,
+        kind=kind,
+        indexed_by=indexed_by,
+        static_index=static_index,
+    )
 
 
 def piecewise_affine(

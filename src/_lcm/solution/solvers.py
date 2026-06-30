@@ -2487,6 +2487,16 @@ class _BQSEGMSource:
     when the schedule varies in the liquid state directly (no preimage needed)."""
     derived_param_names: tuple[str, ...]
     """Unqualified parameter names the schedule variable reads (non-state args)."""
+    derived_state_names: tuple[str, ...] = ()
+    """Ride-along state names the schedule variable reads, so the per-cell call
+    passes only the cell entries the derived DAG accepts."""
+    threshold_index_state: str | None = None
+    """Ride-along state indexing this breakpoint's threshold table, or `None` for a
+    scalar threshold. When set, the threshold is read per cell as
+    `threshold[cell_state, static_index]`."""
+    threshold_static_index: int | None = None
+    """Static column index into the threshold table, applied after the ride-along
+    row index. `None` leaves the row-indexed value as-is."""
 
 
 @dataclass(frozen=True)
@@ -2580,24 +2590,26 @@ def _collect_bqsegm_schedule_spec(
         raise RegimeInitializationError(msg)
 
     # Cache the composed derived-variable DAG per variable across its breakpoints.
-    derived_dags: dict[str, tuple[Callable, tuple[str, ...]]] = {}
+    derived_dags: dict[str, tuple[Callable, tuple[str, ...], tuple[str, ...]]] = {}
 
-    def _derived_dag(variable: str) -> tuple[Callable, tuple[str, ...]]:
+    def _derived_dag(
+        variable: str,
+    ) -> tuple[Callable, tuple[str, ...], tuple[str, ...]]:
         if variable not in derived_dags:
             dag = concatenate_functions(dict(context.functions), targets=variable)
-            params = tuple(
-                name
-                for name in inspect.signature(dag).parameters
-                if name not in state_names
+            dag_params = tuple(inspect.signature(dag).parameters)
+            params = tuple(name for name in dag_params if name not in state_names)
+            states_read = tuple(
+                name for name in dag_params if name in ride_along_state_names
             )
-            derived_dags[variable] = (dag, params)
+            derived_dags[variable] = (dag, params, states_read)
         return derived_dags[variable]
 
     sources: list[_BQSEGMSource] = []
     for schedule in schedules:
         is_liquid_direct = schedule.variable == liquid_state_name
-        dag, params = (
-            (None, ()) if is_liquid_direct else _derived_dag(schedule.variable)
+        dag, params, states_read = (
+            (None, (), ()) if is_liquid_direct else _derived_dag(schedule.variable)
         )
         sources.extend(
             _BQSEGMSource(
@@ -2606,6 +2618,9 @@ def _collect_bqsegm_schedule_spec(
                 kind=bracket.kind,
                 derived_of_liquid_dag=dag,
                 derived_param_names=params,
+                derived_state_names=states_read,
+                threshold_index_state=bracket.indexed_by,
+                threshold_static_index=bracket.static_index,
             )
             for bracket in schedule.breakpoints
         )
@@ -2624,7 +2639,7 @@ def _collect_bqsegm_schedule_spec(
     first_derived = (
         ("", None, ())
         if first.variable == liquid_state_name
-        else (first.variable, *_derived_dag(first.variable))
+        else (first.variable, *_derived_dag(first.variable)[:2])
     )
     return _BQSEGMScheduleSpec(
         coh_of_liquid_dag=coh_dag,
@@ -2922,6 +2937,27 @@ def _partition_jumps(
     return jnp.sort(preimages), static_jump_positions
 
 
+def _indexed_threshold_value(
+    *,
+    table: Any,  # noqa: ANN401  # scalar param or threshold table (mixed dtypes)
+    index_state: str | None,
+    static_index: int | None,
+    cell: dict[str, Any],
+) -> Any:  # noqa: ANN401
+    """Read a breakpoint threshold from its table for one ride-along cell.
+
+    A scalar threshold (`index_state is None`) passes through. A threshold
+    declared `indexed_by` a ride-along state is read at that state's row in this
+    cell; a `static_index` then selects its column (e.g. a bracket edge).
+    """
+    value = table
+    if index_state is not None:
+        value = value[cell[index_state]]
+    if static_index is not None:
+        value = value[static_index]
+    return value
+
+
 def _build_bqsegm_ride_along_core(
     *,
     savings_grid: Float1D,
@@ -2984,15 +3020,26 @@ def _build_bqsegm_ride_along_core(
             A schedule on the liquid state reads its threshold directly as a liquid
             breakpoint; a derived-variable schedule maps the threshold to its
             per-cell asset preimage in that variable, offset by the cell's states.
+            A threshold declared `indexed_by` a ride-along state is read from its
+            table at this cell's state row (and optional static column) first.
             """
-            threshold = jnp.asarray(kwargs[source.threshold_param_name], dtype=dtype)
+            threshold_value = _indexed_threshold_value(
+                table=kwargs[source.threshold_param_name],
+                index_state=source.threshold_index_state,
+                static_index=source.threshold_static_index,
+                cell=cell,
+            )
+            threshold = jnp.asarray(threshold_value, dtype=dtype)
             if source.derived_of_liquid_dag is None:
                 return threshold
             dag = source.derived_of_liquid_dag
             derived_params = {name: kwargs[name] for name in source.derived_param_names}
+            cell_for_dag = {name: cell[name] for name in source.derived_state_names}
 
             def derived_of_liquid(scalar_liquid: FloatND) -> FloatND:
-                return dag(**{liquid_name: scalar_liquid}, **cell, **derived_params)
+                return dag(
+                    **{liquid_name: scalar_liquid}, **cell_for_dag, **derived_params
+                )
 
             return linear_asset_preimage(derived_of_liquid, threshold=threshold)
 
