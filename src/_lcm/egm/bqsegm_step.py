@@ -476,6 +476,9 @@ def bqsegm_per_interval_continuation_step_savings(
             jnp.full_like(liquid_grid, base + next_segment),
         )
 
+    # `lax.map` (not `vmap`) so the intervals solve sequentially: the body traces
+    # once — keeping the HLO small — while its per-interval intermediates are freed
+    # between intervals instead of all n_intervals materializing at once.
     (
         int_endog,
         int_value,
@@ -487,14 +490,17 @@ def bqsegm_per_interval_continuation_step_savings(
         s0_policy,
         s0_marginal,
         s0_segment,
-    ) = jax.vmap(solve_interval)(
-        jnp.arange(n_intervals, dtype=jnp.int32),
-        cont_value,
-        cont_marginal,
-        coh_slopes,
-        coh_intercepts,
-        lowers,
-        uppers,
+    ) = jax.lax.map(
+        lambda packed: solve_interval(*packed),
+        (
+            jnp.arange(n_intervals, dtype=jnp.int32),
+            cont_value,
+            cont_marginal,
+            coh_slopes,
+            coh_intercepts,
+            lowers,
+            uppers,
+        ),
     )
 
     def both(interior: FloatND, corner: FloatND) -> Float1D:
