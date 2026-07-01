@@ -44,6 +44,12 @@ from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 # Euler inversion is degenerate (consumption diverges) and the candidate is dropped.
 _DEGENERATE_MARGINAL_TOL = 1e-10
 
+# A budget interval whose cash-on-hand slope in the liquid state is at or below this
+# tolerance is flat: the consumption floor binds, cash-on-hand is constant across the
+# interval, and the Euler inversion onto the coh-endogenous grid is degenerate. Such an
+# interval is solved by a dense savings search at the constant budget, not by EGM.
+_FLAT_SLOPE_TOL = 1e-8
+
 # Intervals of the per-interval continuation step solve in chunks of this many at a
 # time: parallel (vmap) within a chunk, sequential (lax.map) across chunks. Larger
 # chunks run more intervals in parallel — trading peak memory (a chunk's intermediates
@@ -443,12 +449,25 @@ def bqsegm_per_interval_continuation_step_savings(
         value_at_no_save = interval_value[0]
         degenerate = interval_marginal <= _DEGENERATE_MARGINAL_TOL
 
+        flat = jnp.abs(coh_slope) <= _FLAT_SLOPE_TOL
+
         coh_case_grid = coh_slope * liquid_grid + coh_intercept
-        liquid_endog = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
+        # A flat interval's `coh_case_grid` is constant, and `jnp.interp` needs a strictly
+        # increasing `xp`; guard the recovered liquid to a finite in-interval value there
+        # so no NaN endog leaks into the envelope (the interior is killed just below).
+        liquid_endog = jnp.where(
+            flat,
+            jnp.full_like(coh_endog, lower),
+            jnp.interp(coh_endog, coh_case_grid, liquid_grid),
+        )
         marginal_endog = coh_slope * jax.vmap(marginal_utility)(consumption)
         in_grid = (coh_endog >= coh_case_grid[0]) & (coh_endog <= coh_case_grid[-1])
         in_case = (
-            (liquid_endog >= lower) & (liquid_endog < upper) & in_grid & (~degenerate)
+            (liquid_endog >= lower)
+            & (liquid_endog < upper)
+            & in_grid
+            & (~degenerate)
+            & (~flat)
         )
         interior = mask_dead_candidates(
             endog_grid=liquid_endog,
@@ -458,16 +477,41 @@ def bqsegm_per_interval_continuation_step_savings(
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        next_segment = jnp.nanmax(segment) + 1.0
+        # A flat interval kills every interior candidate, so `segment` is all-NaN and
+        # `nanmax` would be NaN; fall back to `0` there so the live no-save/floor corner
+        # still gets a finite segment id.
+        segment_max = jnp.nanmax(segment)
+        next_segment = jnp.where(jnp.isnan(segment_max), 0.0, segment_max) + 1.0
 
-        # Hard borrowing corner (save nothing) over this interval's liquid range.
+        # No-save / floor corner over this interval's liquid range. Where the budget is
+        # flat (the consumption floor binds), cash-on-hand is the constant `coh_intercept`
+        # for every liquid, so the value is the single-point Bellman max over savings — a
+        # dense search at the constant budget, robust to the degenerate Euler inversion.
+        floor_consumption = coh_intercept - savings_grid
+        floor_feasible = floor_consumption > 0.0
+        floor_node_value = jnp.where(
+            floor_feasible,
+            jax.vmap(utility_of_action)(
+                jnp.where(floor_feasible, floor_consumption, 1.0)
+            )
+            + discount_factor * interval_value,
+            -jnp.inf,
+        )
+        best_floor = jnp.argmax(floor_node_value)
+        flat_value = floor_node_value[best_floor]
+        flat_policy = floor_consumption[best_floor]
+
         s0_consumption = coh_case_grid
         s0_valid = (liquid_grid >= lower) & (liquid_grid < upper)
         s0 = mask_dead_candidates(
             endog_grid=liquid_grid,
-            value=jax.vmap(utility_of_action)(s0_consumption)
-            + discount_factor * value_at_no_save,
-            policy=s0_consumption,
+            value=jnp.where(
+                flat,
+                flat_value,
+                jax.vmap(utility_of_action)(s0_consumption)
+                + discount_factor * value_at_no_save,
+            ),
+            policy=jnp.where(flat, flat_policy, s0_consumption),
             marginal=coh_slope * jax.vmap(marginal_utility)(s0_consumption),
             valid=s0_valid,
         )
