@@ -44,6 +44,14 @@ from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 # Euler inversion is degenerate (consumption diverges) and the candidate is dropped.
 _DEGENERATE_MARGINAL_TOL = 1e-10
 
+# Intervals of the per-interval continuation step solve in chunks of this many at a
+# time: parallel (vmap) within a chunk, sequential (lax.map) across chunks. Larger
+# chunks run more intervals in parallel — trading peak memory (a chunk's intermediates
+# materialize together) for a shallower sequential loop. A small value keeps the
+# vmap memory bounded while still cutting the sequential depth to `n_intervals /
+# _CHUNK_SIZE`.
+_CHUNK_SIZE = 4
+
 
 def bqsegm_multi_interval_step(
     *,
@@ -476,9 +484,48 @@ def bqsegm_per_interval_continuation_step_savings(
             jnp.full_like(liquid_grid, base + next_segment),
         )
 
-    # `lax.map` (not `vmap`) so the intervals solve sequentially: the body traces
-    # once — keeping the HLO small — while its per-interval intermediates are freed
-    # between intervals instead of all n_intervals materializing at once.
+    # Solve the intervals in chunks of `_CHUNK_SIZE`: `lax.map` runs the chunks
+    # sequentially (so at most one chunk's intermediates materialize at once,
+    # bounding peak memory), while a `vmap` inside each chunk solves its intervals in
+    # parallel. The chunk body traces once, keeping the HLO small, and the sequential
+    # depth drops from `n_intervals` to `ceil(n_intervals / _CHUNK_SIZE)`.
+    #
+    # `n_intervals` need not divide `_CHUNK_SIZE`, so the inputs are padded up to a
+    # whole number of chunks. Each padding lane carries a global interval index of
+    # `n_intervals` or above (a unique segment offset) and `lower == upper == +inf`,
+    # so both its `in_case` and `s0_valid` masks are all-False and every one of its
+    # candidates is NaN-dead — the padding contributes nothing live to the envelope.
+    n_chunks = -(-n_intervals // _CHUNK_SIZE)
+    n_padded = n_chunks * _CHUNK_SIZE
+    pad = n_padded - n_intervals
+
+    interval_indices = jnp.arange(n_padded, dtype=jnp.int32)
+    edge = jnp.array([jnp.inf], dtype=breakpoints.dtype)
+    padded_cont_value = jnp.concatenate(
+        [cont_value, jnp.zeros((pad, cont_value.shape[1]), dtype=cont_value.dtype)]
+    )
+    padded_cont_marginal = jnp.concatenate(
+        [
+            cont_marginal,
+            jnp.zeros((pad, cont_marginal.shape[1]), dtype=cont_marginal.dtype),
+        ]
+    )
+    padded_coh_slopes = jnp.concatenate(
+        [coh_slopes, jnp.ones((pad,), dtype=coh_slopes.dtype)]
+    )
+    padded_coh_intercepts = jnp.concatenate(
+        [coh_intercepts, jnp.zeros((pad,), dtype=coh_intercepts.dtype)]
+    )
+    padded_lowers = jnp.concatenate([lowers, jnp.broadcast_to(edge, (pad,))])
+    padded_uppers = jnp.concatenate([uppers, jnp.broadcast_to(edge, (pad,))])
+
+    def solve_chunk(packed: tuple[IntND | FloatND, ...]) -> tuple[FloatND, ...]:
+        """Solve one chunk of intervals in parallel with `vmap`."""
+        return jax.vmap(solve_interval)(*packed)
+
+    def to_chunks(array: IntND | FloatND) -> IntND | FloatND:
+        return array.reshape((n_chunks, _CHUNK_SIZE, *array.shape[1:]))
+
     (
         int_endog,
         int_value,
@@ -491,15 +538,15 @@ def bqsegm_per_interval_continuation_step_savings(
         s0_marginal,
         s0_segment,
     ) = jax.lax.map(
-        lambda packed: solve_interval(*packed),
+        solve_chunk,
         (
-            jnp.arange(n_intervals, dtype=jnp.int32),
-            cont_value,
-            cont_marginal,
-            coh_slopes,
-            coh_intercepts,
-            lowers,
-            uppers,
+            to_chunks(interval_indices),
+            to_chunks(padded_cont_value),
+            to_chunks(padded_cont_marginal),
+            to_chunks(padded_coh_slopes),
+            to_chunks(padded_coh_intercepts),
+            to_chunks(padded_lowers),
+            to_chunks(padded_uppers),
         ),
     )
 
