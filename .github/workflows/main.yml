@@ -30,8 +30,8 @@ jobs:
         python-version:
           - '3.14'
     steps:
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
           pixi-version: v0.70.1
           cache: true
@@ -49,7 +49,7 @@ jobs:
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
-        uses: codecov/codecov-action@v6.0.1
+        uses: codecov/codecov-action@v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
   run-ty:
@@ -61,8 +61,8 @@ jobs:
         python-version:
           - '3.14'
     steps:
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
           pixi-version: v0.70.1
           cache: true
@@ -84,8 +84,8 @@ jobs:
         run: |
           nvidia-smi
           nvcc --version || echo "nvcc not found"
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
           pixi-version: v0.70.1
           cache: true
@@ -103,8 +103,8 @@ jobs:
         run: |
           nvidia-smi
           nvcc --version || echo "nvcc not found"
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
           pixi-version: v0.70.1
           cache: true
@@ -118,8 +118,8 @@ jobs:
     name: Run explanation notebooks on Python 3.14
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
           pixi-version: v0.70.1
           cache: true
