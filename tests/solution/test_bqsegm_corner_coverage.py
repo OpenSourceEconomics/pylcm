@@ -76,6 +76,47 @@ def test_high_liquid_value_uses_the_upper_savings_corner():
     np.testing.assert_allclose(value[-1], node_value.max(), atol=1e-2, rtol=1e-2)
 
 
+def test_corners_use_true_cash_on_hand_where_the_affine_model_goes_negative():
+    """A corner stays finite where the per-interval affine budget goes below zero.
+
+    An undeclared kink in the budget (a consumption floor that binds only in part of
+    an interval) makes the recovered affine cash-on-hand extrapolate below zero at the
+    low end of the interval, even though the true cash-on-hand is floored at a positive
+    value. Supplying the true cash-on-hand per grid point keeps the no-save corner a
+    real feasible action — `u(true_coh) + beta * V'(0)` — rather than `u(<=0)` = NaN.
+    """
+    liquid_grid = jnp.asarray([0.0, 5.0, 20.0])
+    savings_grid = jnp.linspace(0.0, 4.0, 40)
+    # Affine model: coh = liquid - 10, negative at the two low grid points.
+    coh_slopes = jnp.asarray([1.0])
+    coh_intercepts = jnp.asarray([-10.0])
+    # True cash-on-hand, floored positive everywhere.
+    true_coh = jnp.asarray([3.0, 6.0, 12.0])
+    cont_value = jnp.linspace(1.0, 3.0, 40)[None, :]
+    cont_marginal = jnp.linspace(1.0, 0.1, 40)[None, :]
+
+    value, _, _ = bqsegm_per_interval_continuation_step_savings(
+        cont_value=cont_value,
+        cont_marginal=cont_marginal,
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=jnp.asarray(_DISCOUNT),
+        utility_of_action=_utility_of_action,
+        inverse_marginal_utility=_inverse_marginal_utility,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=jnp.asarray([], dtype=liquid_grid.dtype),
+        coh_grid=true_coh,
+    )
+    value = np.asarray(value)
+    assert np.isfinite(value).all()
+
+    # The no-save corner at the lowest grid point is a feasible action, so the envelope
+    # value there is at least its value under the true cash-on-hand.
+    no_save = _utility_of_action(3.0) + _DISCOUNT * float(cont_value[0, 0])
+    assert value[0] >= no_save - 1e-4
+
+
 def test_corner_is_visible_when_an_interval_holds_one_grid_point():
     """A corner in a singleton interval is not lost by the link-only envelope.
 

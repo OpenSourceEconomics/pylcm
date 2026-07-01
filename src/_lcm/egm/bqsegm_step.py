@@ -367,7 +367,7 @@ def bqsegm_multi_interval_step_savings(
 
 def _interval_corner_candidates(
     *,
-    coh_case_grid: Float1D,
+    corner_coh_grid: Float1D,
     liquid_grid: Float1D,
     savings_grid: Float1D,
     lower: ScalarFloat,
@@ -384,6 +384,11 @@ def _interval_corner_candidates(
     next_segment: ScalarFloat,
 ) -> tuple[Float1D, ...]:
     """Build one interval's no-save and upper-savings corner candidates.
+
+    Both corners consume `corner_coh_grid` — the true per-grid-point cash-on-hand — so
+    a corner is always a real feasible action's value, robust to an interval whose
+    recovered affine budget extrapolates below zero where a kink binds only in part of
+    the interval.
 
     Both corners span the interval's liquid range and are each duplicated into an
     interleaved self-segment pair, so a corner in an interval that holds a single liquid
@@ -410,17 +415,23 @@ def _interval_corner_candidates(
         -jnp.inf,
     )
     best_floor = jnp.argmax(floor_node_value)
+    # A no-save corner consumes the whole cash-on-hand. `corner_coh_grid` is the true
+    # per-grid-point cash-on-hand, so consumption is feasible (positive) at every grid
+    # point where the budget is defined; the positivity guard drops any point where an
+    # undeclared kink still leaves it non-positive rather than letting `u(<=0)` = NaN
+    # leak into the envelope as a live candidate.
+    s0_consumption_safe = jnp.where(corner_coh_grid > 0.0, corner_coh_grid, 1.0)
     s0 = mask_dead_candidates(
         endog_grid=liquid_grid,
         value=jnp.where(
             flat,
             floor_node_value[best_floor],
-            jax.vmap(utility_of_action)(coh_case_grid)
+            jax.vmap(utility_of_action)(s0_consumption_safe)
             + discount_factor * value_at_no_save,
         ),
-        policy=jnp.where(flat, floor_consumption[best_floor], coh_case_grid),
-        marginal=coh_slope * jax.vmap(marginal_utility)(coh_case_grid),
-        valid=in_interval,
+        policy=jnp.where(flat, floor_consumption[best_floor], corner_coh_grid),
+        marginal=coh_slope * jax.vmap(marginal_utility)(s0_consumption_safe),
+        valid=in_interval & (flat | (corner_coh_grid > 0.0)),
     )
 
     # Upper-savings corner (`s = savings_grid[-1]`). With a finite savings grid the
@@ -428,7 +439,7 @@ def _interval_corner_candidates(
     # rather than at an interior Euler point, above where the recovered endogenous grid
     # reaches. Feasible only where residual consumption is positive; redundant on a flat
     # interval, whose dense floor search already spans the whole savings grid.
-    smax_consumption = coh_case_grid - savings_grid[-1]
+    smax_consumption = corner_coh_grid - savings_grid[-1]
     smax_feasible = (smax_consumption > 0.0) & (~flat) & in_interval
     smax_consumption_safe = jnp.where(smax_feasible, smax_consumption, 1.0)
     smax = mask_dead_candidates(
@@ -459,6 +470,7 @@ def bqsegm_per_interval_continuation_step_savings(
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
+    coh_grid: Float1D | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a budget whose continuation differs per liquid interval.
 
@@ -490,6 +502,13 @@ def bqsegm_per_interval_continuation_step_savings(
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
+        coh_grid: True cash-on-hand at each liquid grid point, length equal to
+            `liquid_grid`. The corners consume this instead of the recovered affine
+            budget, so a corner stays a real feasible action where an undeclared kink
+            (a consumption floor binding only in part of an interval) makes the affine
+            cash-on-hand extrapolate below zero. When `None`, the corners fall back to
+            the per-interval affine budget — exact whenever the budget is smooth across
+            the whole interval.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -571,8 +590,12 @@ def bqsegm_per_interval_continuation_step_savings(
         segment_max = jnp.nanmax(segment)
         next_segment = jnp.where(jnp.isnan(segment_max), 0.0, segment_max) + 1.0
 
+        # Corners consume the true cash-on-hand at each grid point when supplied, so a
+        # no-save/upper-savings corner stays feasible where the interval's affine budget
+        # extrapolates below zero; without it they fall back to the affine budget.
+        corner_coh_grid = coh_case_grid if coh_grid is None else coh_grid
         corners = _interval_corner_candidates(
-            coh_case_grid=coh_case_grid,
+            corner_coh_grid=corner_coh_grid,
             liquid_grid=liquid_grid,
             savings_grid=savings_grid,
             lower=lower,

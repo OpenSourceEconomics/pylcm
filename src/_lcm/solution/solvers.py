@@ -3570,6 +3570,10 @@ def _build_bqsegm_envelope_core(
                 )
 
             if statics.next_state_reads_liquid:
+                # True cash-on-hand per liquid grid point keeps the step's corners
+                # feasible where a partly-binding kink makes an interval's recovered
+                # affine budget extrapolate below zero.
+                coh_grid = jax.vmap(coh_of_liquid)(liquid)
                 return bqsegm_per_interval_continuation_step_savings(
                     cont_value=cont_value,
                     cont_marginal=cont_marginal,
@@ -3581,6 +3585,7 @@ def _build_bqsegm_envelope_core(
                     coh_slopes=coh_slopes,
                     coh_intercepts=coh_intercepts,
                     breakpoints=breakpoints,
+                    coh_grid=coh_grid,
                 )
 
             return _solve_ride_along_cell_step(
