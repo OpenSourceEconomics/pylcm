@@ -142,6 +142,37 @@ def linear_asset_preimage(
     return (threshold - intercept) / slope
 
 
+def clamp_breakpoints_to_grid(*, breakpoints: Float1D, liquid_grid: Float1D) -> Float1D:
+    """Clamp asset breakpoints to a margin just outside the liquid grid.
+
+    A boundary whose derived variable has (near-)zero slope in the liquid state has no
+    finite asset preimage: `linear_asset_preimage` sends it to `±inf` (the threshold is
+    never crossed within reach) or `NaN` (the whole cell sits on the boundary). A
+    non-finite breakpoint would make the adjacent interval's midpoint non-finite and
+    poison that interval's recovered affine segment — including the live interval that
+    holds the query grid. Clamping every breakpoint into a margin one grid-width outside
+    `[grid_min, grid_max]` collapses such a boundary to an empty edge interval whose
+    midpoint stays finite, while leaving every genuine in-grid breakpoint untouched. A
+    `NaN` breakpoint is sent to the upper margin.
+
+    Args:
+        breakpoints: Asset breakpoints on the liquid axis, in any order.
+        liquid_grid: Ascending liquid-state grid; its endpoints bound the grid.
+
+    Returns:
+        The breakpoints clamped into `[grid_min - margin, grid_max + margin]`, all
+        finite.
+
+    """
+    grid_min = liquid_grid[0]
+    grid_max = liquid_grid[-1]
+    margin = jnp.maximum(grid_max - grid_min, 1.0)
+    lower = grid_min - margin
+    upper = grid_max + margin
+    finite = jnp.where(jnp.isnan(breakpoints), upper, breakpoints)
+    return jnp.clip(finite, lower, upper)
+
+
 def n_intervals(*, n_breakpoints: int) -> int:
     """Return the interval count for a partition of N breakpoints on one axis.
 

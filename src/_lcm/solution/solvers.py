@@ -3315,15 +3315,23 @@ def _bqsegm_cell_breakpoints(
     schedule_spec: _BQSEGMScheduleSpec,
     kwargs: Mapping[str, Any],
     cell: dict[str, Any],
+    liquid_grid: Float1D,
     dtype: Any,  # noqa: ANN401  # canonical float dtype
 ) -> tuple[Float1D, tuple[Any, ...]]:
     """Build one ride-along cell's sorted liquid breakpoints and jump positions.
 
     Each declared schedule's threshold maps to its asset value in its own variable
     (directly for a liquid-state schedule, via the per-cell affine preimage for a
-    derived-variable schedule), and the sources merge into one sorted partition.
+    derived-variable schedule), and the sources merge into one sorted partition. A
+    degenerate boundary — a derived variable with (near-)zero asset slope in this cell,
+    so the threshold is never crossed — has a non-finite preimage; clamping to a margin
+    just outside the grid collapses it to an empty edge interval instead of poisoning a
+    live interval's affine segment.
     """
-    from _lcm.egm.bqsegm_breakpoints import linear_asset_preimage  # noqa: PLC0415
+    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
+        clamp_breakpoints_to_grid,
+        linear_asset_preimage,
+    )
 
     liquid_name = statics.liquid_name
 
@@ -3347,7 +3355,12 @@ def _bqsegm_cell_breakpoints(
 
         return linear_asset_preimage(derived_of_liquid, threshold=threshold)
 
-    preimages = jnp.stack([cell_breakpoint(source) for source in schedule_spec.sources])
+    preimages = clamp_breakpoints_to_grid(
+        breakpoints=jnp.stack(
+            [cell_breakpoint(source) for source in schedule_spec.sources]
+        ),
+        liquid_grid=liquid_grid,
+    )
     return _partition_jumps(
         preimages,
         dynamic_jumps=statics.dynamic_jumps,
@@ -3412,6 +3425,7 @@ def _build_bqsegm_continuation_core(
                     schedule_spec=schedule_spec,
                     kwargs=kwargs,
                     cell=cell,
+                    liquid_grid=liquid,
                     dtype=dtype,
                 )
                 midpoints = interval_midpoints(
@@ -3522,6 +3536,7 @@ def _build_bqsegm_envelope_core(
                 schedule_spec=schedule_spec,
                 kwargs=kwargs,
                 cell=cell,
+                liquid_grid=liquid,
                 dtype=dtype,
             )
             midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)

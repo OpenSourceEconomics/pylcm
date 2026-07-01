@@ -17,6 +17,7 @@ from _lcm.egm.bqsegm_breakpoints import (
     BreakpointSource,
     affine_coefficients,
     breakpoint_sources_from_registry,
+    clamp_breakpoints_to_grid,
     interval_index,
     interval_midpoints,
     interval_segment_coefficients,
@@ -58,6 +59,46 @@ def test_breakpoint_source_records_the_boundary_variable_and_threshold():
     assert len(sources) == 1
     assert sources[0].variable == "assets"
     assert sources[0].threshold == "medicaid_asset_limit"
+
+
+def test_clamp_sends_a_degenerate_preimage_outside_the_grid_and_keeps_it_finite():
+    """A non-finite breakpoint is clamped to a finite point just outside the grid.
+
+    A boundary whose derived variable has (near-)zero slope in the liquid state has no
+    finite asset preimage — `linear_asset_preimage` sends it to ±inf (never crossed) or
+    NaN (exactly on the boundary). Clamping keeps every breakpoint finite and just
+    outside `[grid_min, grid_max]`, so it collapses to an empty edge interval whose
+    midpoint stays finite, while a genuine in-grid breakpoint is left untouched.
+    """
+    liquid_grid = jnp.asarray([-159132.0, 170433.0, 500000.0])
+    breakpoints = jnp.asarray([-jnp.inf, 250000.0, jnp.inf, jnp.nan])
+
+    clamped = clamp_breakpoints_to_grid(
+        breakpoints=breakpoints, liquid_grid=liquid_grid
+    )
+
+    assert bool(jnp.all(jnp.isfinite(clamped)))
+    np.testing.assert_allclose(float(clamped[1]), 250000.0)
+    assert float(clamped[0]) < -159132.0
+    assert float(clamped[2]) > 500000.0
+    assert float(clamped[3]) > 500000.0
+
+
+def test_clamped_degenerate_breakpoint_yields_finite_interval_midpoints():
+    """A degenerate boundary does not make the live interval's midpoint non-finite.
+
+    The interval that holds the most-negative asset point must have a finite midpoint
+    even when another boundary is degenerate, so the affine segment recovered there is
+    finite rather than poisoned by a `±inf` interval edge.
+    """
+    liquid_grid = jnp.asarray([-159132.0, 170433.0, 500000.0])
+    degenerate = clamp_breakpoints_to_grid(
+        breakpoints=jnp.asarray([-jnp.inf, 300000.0]), liquid_grid=liquid_grid
+    )
+
+    midpoints = interval_midpoints(liquid_grid=liquid_grid, breakpoints=degenerate)
+
+    assert bool(jnp.all(jnp.isfinite(midpoints)))
 
 
 def test_breakpoint_sources_lift_a_piecewise_affine_schedule():
