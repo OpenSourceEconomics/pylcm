@@ -101,3 +101,22 @@ def test_fold_leaves_value_function_unchanged(monkeypatch):
                 atol=_TOL,
                 err_msg=f"period={period} regime={regime_name}",
             )
+
+
+def test_fully_foldable_read_bypasses_the_node_loop(monkeypatch):
+    """When every stochastic dim folds, the read skips the per-node expectation.
+
+    The folded dims' expectation is pre-applied to the carry rows once per
+    cell, so the per-savings read is a single interpolation — the node-loop
+    machinery is never entered.
+    """
+    calls = []
+    original = cont_mod._expect_over_stochastic_nodes
+
+    def spy(**kwargs):
+        calls.append(kwargs["read"].stochastic_state_names)
+        return original(**kwargs)
+
+    monkeypatch.setattr(cont_mod, "_expect_over_stochastic_nodes", spy)
+    toy.build_model(variant="bqsegm").solve(params=toy.build_params(), log_level="off")
+    assert all("income" not in names for names in calls)

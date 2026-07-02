@@ -14,7 +14,7 @@ behind that boundary.
 """
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -401,6 +401,108 @@ def build_continuation_plan(
     )
 
 
+def _fold_stochastic_dims(
+    *,
+    read: _ChildRead,
+    carry: EGMCarry,
+    stochastic_node_values: tuple[FloatND | IntND, ...],
+    weight_vecs: tuple[Float1D, ...],
+) -> tuple[_ChildRead, EGMCarry, tuple[FloatND | IntND, ...], tuple[Float1D, ...]]:
+    """Pre-apply the foldable stochastic dims' expectation to the carry rows.
+
+    Each foldable dimension's intrinsic weights are savings-independent, its
+    node values never reach the resources queries, and (under the fold gates)
+    every node row shares the abscissae — so its expectation commutes with the
+    per-row interpolation and folds into the carry once per cell. The folded
+    carry's value and marginal rows are the guarded weighted sums over the
+    dimension's node axis (`w * 0` on zero-weight nodes, so a `-inf`
+    infeasible row on a zero-weight node contributes exactly zero and a NaN
+    weight still poisons the sum); the abscissae are taken from the first
+    node (identical across nodes under the gate). The read's per-dimension
+    tuples shrink to the unfolded dims, so the remaining node loop — or, when
+    everything folds, the loop-free branch — runs unchanged downstream.
+
+    Returns:
+        Tuple of the reduced read, the folded carry, and the unfolded dims'
+        node values and weight vectors.
+
+    """
+    folded_names = frozenset(
+        name
+        for name, foldable in zip(
+            read.stochastic_state_names, read.foldable_stochastic_flags, strict=True
+        )
+        if foldable
+    )
+
+    def fold_rows(rows: FloatND, axis: int, weights: Float1D) -> FloatND:
+        moved = jnp.moveaxis(rows, axis, 0)
+        broadcast_weights = weights.reshape(
+            (weights.shape[0],) + (1,) * (moved.ndim - 1)
+        )
+        return jnp.sum(
+            jnp.where(
+                broadcast_weights > 0.0,
+                broadcast_weights * moved,
+                broadcast_weights * 0.0,
+            ),
+            axis=0,
+        )
+
+    weight_by_name = dict(zip(read.stochastic_state_names, weight_vecs, strict=True))
+    endog_grid = carry.endog_grid
+    value = carry.value
+    marginal_utility = carry.marginal_utility
+    for axis in sorted(
+        (read.discrete_state_names.index(name) for name in folded_names), reverse=True
+    ):
+        name = read.discrete_state_names[axis]
+        node_weights = weight_by_name[name]
+        endog_grid = jnp.take(endog_grid, 0, axis=axis)
+        value = fold_rows(value, axis, node_weights)
+        marginal_utility = fold_rows(marginal_utility, axis, node_weights)
+    folded_carry = replace(
+        carry,
+        endog_grid=endog_grid,
+        value=value,
+        marginal_utility=marginal_utility,
+    )
+
+    keep_stochastic = tuple(
+        name not in folded_names for name in read.stochastic_state_names
+    )
+
+    def kept[T](entries: tuple[T, ...]) -> tuple[T, ...]:
+        return tuple(
+            entry for entry, keep in zip(entries, keep_stochastic, strict=True) if keep
+        )
+
+    reduced_read = replace(
+        read,
+        discrete_state_names=tuple(
+            name for name in read.discrete_state_names if name not in folded_names
+        ),
+        stochastic_flags=tuple(
+            flag
+            for name, flag in zip(
+                read.discrete_state_names, read.stochastic_flags, strict=True
+            )
+            if name not in folded_names
+        ),
+        stochastic_state_names=kept(read.stochastic_state_names),
+        foldable_stochastic_flags=kept(read.foldable_stochastic_flags),
+        stochastic_node_values=kept(read.stochastic_node_values),
+        process_grid_names=kept(read.process_grid_names),
+        weight_keys=kept(read.weight_keys),
+    )
+    return (
+        reduced_read,
+        folded_carry,
+        kept(stochastic_node_values),
+        kept(weight_vecs),
+    )
+
+
 def _get_child_carry_reader(
     *,
     read: _ChildRead,
@@ -442,6 +544,13 @@ def _get_child_carry_reader(
     if read.weights_func is not None:
         weights = read.weights_func(**combo_pool)
         weight_vecs = tuple(weights[key] for key in read.weight_keys)
+    if any(read.foldable_stochastic_flags):
+        read, carry, stochastic_node_values, weight_vecs = _fold_stochastic_dims(
+            read=read,
+            carry=carry,
+            stochastic_node_values=stochastic_node_values,
+            weight_vecs=weight_vecs,
+        )
     resources_reads_stochastic = bool(
         set(read.stochastic_state_names) & read.resources_arg_names
     )
