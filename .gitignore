@@ -55,3 +55,7 @@ htmlcov/
 src/*/_version.py
 src/_lcm/version.py
 tmp/
+
+# Agent working files
+docs/superpowers/
+.superpowers/
