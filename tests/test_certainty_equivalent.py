@@ -224,3 +224,107 @@ def test_zero_risk_aversion_reduces_to_expected_utility():
                 rtol=1e-5,
                 err_msg=f"period={period}, regime={regime_name}",
             )
+
+
+from tests.test_models.epstein_zin_health import (  # noqa: E402
+    BAD_HEALTH_SURVIVAL_FACTOR,
+    CONSUMPTION_GRID,
+    DEAD_WEALTH_GRID,
+    HEALTH_TRANSITION,
+    INCOME,
+    SURVIVAL_PROBS,
+    WEALTH_GRID,
+)
+
+
+def _reference_backward_induction(
+    *, risk_aversion: float, discount_factor: float, rho: float
+) -> tuple[dict[int, np.ndarray], np.ndarray]:
+    """Independent numpy backward induction of the toy Epstein-Zin model.
+
+    Mirrors the engine's computation order on the same grids: interpolate
+    each target's V at next wealth, transform, average over health, weight
+    by regime probabilities, invert, aggregate via the EZ `H`. Returns the
+    per-period alive V arrays (shape `(n_wealth, n_health)`) and the
+    period-0 argmax consumption (same shape).
+    """
+    wealth = np.linspace(WEALTH_GRID.start, WEALTH_GRID.stop, WEALTH_GRID.n_points)
+    dead_wealth = np.linspace(
+        DEAD_WEALTH_GRID.start, DEAD_WEALTH_GRID.stop, DEAD_WEALTH_GRID.n_points
+    )
+    consumption = np.linspace(
+        CONSUMPTION_GRID.start, CONSUMPTION_GRID.stop, CONSUMPTION_GRID.n_points
+    )
+    health_transition = np.array(HEALTH_TRANSITION)
+    exponent = 1.0 - risk_aversion
+
+    def g(v: np.ndarray) -> np.ndarray:
+        return v**exponent
+
+    def g_inv(v: np.ndarray) -> np.ndarray:
+        return v ** (1.0 / exponent)
+
+    V_dead = np.sqrt(dead_wealth)
+    n_decision_periods = len(SURVIVAL_PROBS)
+    V_alive: dict[int, np.ndarray] = {}
+    policy_c: dict[int, np.ndarray] = {}
+    V_next: np.ndarray | None = None
+
+    for period in reversed(range(n_decision_periods)):
+        V_p = np.empty((len(wealth), 2))
+        c_p = np.empty((len(wealth), 2))
+        for iw, w in enumerate(wealth):
+            for ih in range(2):
+                survival = SURVIVAL_PROBS[period] * (
+                    1.0 if ih == 1 else BAD_HEALTH_SURVIVAL_FACTOR
+                )
+                best_q, best_c = -np.inf, np.nan
+                for c in consumption:
+                    if c > w:
+                        continue
+                    w_next = w - c + INCOME
+                    acc = (1.0 - survival) * g(np.interp(w_next, dead_wealth, V_dead))
+                    if V_next is not None:
+                        alive_vals = np.array(
+                            [
+                                np.interp(w_next, wealth, V_next[:, jh])
+                                for jh in range(2)
+                            ]
+                        )
+                        acc += survival * (health_transition[ih] @ g(alive_vals))
+                    ce = g_inv(acc)
+                    q = (
+                        (1.0 - discount_factor) * c**rho + discount_factor * ce**rho
+                    ) ** (1.0 / rho)
+                    if q > best_q:
+                        best_q, best_c = q, c
+                V_p[iw, ih] = best_q
+                c_p[iw, ih] = best_c
+        V_alive[period] = V_p
+        policy_c[period] = c_p
+        V_next = V_p
+
+    return V_alive, policy_c[0]
+
+
+def test_epstein_zin_solved_values_match_numpy_reference():
+    """The solved alive-V equals an independent numpy backward induction."""
+    risk_aversion, discount_factor, rho = 0.5, 0.9, 0.5
+    model = get_model(certainty_equivalent=PowerCertaintyEquivalent())
+    solution = model.solve(
+        params=get_params(
+            risk_aversion=risk_aversion, discount_factor=discount_factor, rho=rho
+        ),
+        log_level="debug",
+    )
+    expected, _ = _reference_backward_induction(
+        risk_aversion=risk_aversion, discount_factor=discount_factor, rho=rho
+    )
+    for period, expected_arr in expected.items():
+        # Engine axis order: (health, wealth); reference: (wealth, health).
+        np.testing.assert_allclose(
+            np.asarray(solution[period]["alive"]),
+            expected_arr.T,
+            rtol=5e-5,
+            err_msg=f"period={period}",
+        )
