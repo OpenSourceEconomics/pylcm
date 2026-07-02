@@ -9,8 +9,10 @@ kink, in every `kind` slice and at every working age.
 
 from collections.abc import Mapping
 
+import jax.numpy as jnp
 import numpy as np
 
+from _lcm.egm.interp import interp_on_prepared_grid, prepare_padded_grid
 from tests.test_models import bqsegm_ride_along_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
@@ -121,3 +123,62 @@ def test_bqsegm_matches_brute_with_per_kind_utility_curvature():
                 rtol=5e-3,
                 err_msg=f"period={period} kind={kind}",
             )
+
+
+def test_top_edge_query_matches_convention_oracle_on_a_coarse_liquid_grid():
+    """The top liquid grid point carries the continuum optimum's value.
+
+    The oracle is convention-matched (a dense consumption search against the
+    same Hermite carry read BQSEGM's continuation uses), so it isolates the
+    candidate-set geometry at the grid edge: an Euler branch whose endogenous
+    abscissae stop just inside the grid span must still bracket the boundary
+    query (its preimage extends past the sampled grid), and an optimum at a
+    continuation kink between Euler roots (a child-value interpolation node)
+    must be carried by a savings-node candidate. A brute reference cannot
+    serve here: its linear child-value read diverges from the Hermite read on
+    a coarse child grid.
+    """
+    crra_by_kind = (3.84, 1.0)
+    params = toy.build_params(
+        per_kind_crra=True, crra_lo=crra_by_kind[0], crra_hi=crra_by_kind[1]
+    )
+    bqsegm = toy.build_model(
+        variant="bqsegm",
+        per_kind_crra=True,
+        n_liquid=3,
+        liquid_max=30.0,
+        n_savings=180,
+        savings_max=28.0,
+    ).solve(params=params, log_level="off")
+    last_alive = max(period for period in bqsegm if "alive" in bqsegm[period])
+    bqsegm_v = np.asarray(bqsegm[last_alive]["alive"])
+
+    liquid_grid = jnp.array([0.1, 15.05, 30.0])
+    dead_value = liquid_grid ** (1.0 - 2.0) / (1.0 - 2.0)
+    dead_marginal = liquid_grid ** (-2.0)
+    search_grid, valid_length = prepare_padded_grid(liquid_grid)
+    base_income = (1.0, 4.0)
+    for kind, crra in enumerate(crra_by_kind):
+        coh_top = 30.0 + base_income[kind] - 0.3 * (30.0 - 12.0)
+        consumption = jnp.linspace(1e-3, coh_top - 1e-6, 200_000)
+        next_liquid = 1.03 * (coh_top - consumption) + 1.0
+        continuation = interp_on_prepared_grid(
+            x_query=next_liquid,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=liquid_grid,
+            fp=dead_value,
+            fp_slopes=dead_marginal,
+        )
+        if crra == 1.0:
+            utility = jnp.log(consumption)
+        else:
+            utility = consumption ** (1.0 - crra) / (1.0 - crra)
+        oracle = float(jnp.max(utility + 0.95 * continuation))
+        np.testing.assert_allclose(
+            bqsegm_v[kind, -1],
+            oracle,
+            atol=5e-2,
+            rtol=5e-3,
+            err_msg=f"top point, kind={kind}",
+        )

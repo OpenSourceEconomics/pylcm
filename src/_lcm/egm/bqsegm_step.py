@@ -93,9 +93,10 @@ def bqsegm_multi_interval_step(
     optimum. The coh inversion is degenerate there, so a flat interval's interior
     candidates are pulled onto its crossing breakpoint (where they link to the
     rising interior just above) and a flat corner segment carries the constant value
-    across the interval below. The hard borrowing corner competes over the whole
-    grid, and the interior path, flat corners, and borrowing corner merge by the
-    branch-aware upper envelope.
+    across the interval below. A savings-node corner chain per post-decision node
+    competes over the whole grid (the `s = 0` chain is the hard borrowing corner),
+    and the interior path, flat corners, and node chains merge by the branch-aware
+    upper envelope.
 
     Args:
         next_value: Next period's value on `liquid_grid`.
@@ -128,11 +129,12 @@ def bqsegm_multi_interval_step(
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     coh_endog = consumption + savings_grid
-    # An endogenous cash-on-hand outside the grid's monotone coh range inverts to a
-    # liquid outside the grid; `jnp.interp` would clip it onto the boundary node,
-    # admitting an infeasible candidate. Such points are dropped below.
-    off_grid = (coh_endog < coh_grid[0]) | (coh_endog > coh_grid[-1])
-    liquid_endog = jnp.interp(coh_endog, coh_grid, liquid_grid)
+    # An endogenous cash-on-hand beyond the grid's coh range inverts to a liquid
+    # beyond the grid; the boundary segments' slopes continue the inversion there,
+    # so the branch's last live link still brackets the boundary query points.
+    liquid_endog = _invert_coh_with_linear_extension(
+        coh_endog=coh_endog, coh_case_grid=coh_grid, liquid_grid=liquid_grid
+    )
     # Marginal value of liquid = u'(c) * d coh / d liquid; the slope is the active
     # interval's at the recovered liquid (envelope theorem through the budget).
     endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
@@ -180,9 +182,7 @@ def bqsegm_multi_interval_step(
     # pulled onto a floor crossing; the floor corner and the s=0 corner cover them.
     degenerate = marginal_next <= _DEGENERATE_MARGINAL_TOL
     in_any_flat = jnp.isin(endog_interval, jnp.asarray(flat_indices, dtype=jnp.int32))
-    liquid_endog = jnp.where(
-        (degenerate | off_grid) & ~in_any_flat, jnp.nan, liquid_endog
-    )
+    liquid_endog = jnp.where(degenerate & ~in_any_flat, jnp.nan, liquid_endog)
     # A non-concave (convex-kinked) budget can fold the interior path back, so keep
     # its monotone runs apart for the upper envelope.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
@@ -222,6 +222,38 @@ def bqsegm_multi_interval_step(
         x_query=liquid_grid,
     )
     return value, marginal, policy
+
+
+def _invert_coh_with_linear_extension(
+    *, coh_endog: Float1D, coh_case_grid: Float1D, liquid_grid: Float1D
+) -> Float1D:
+    """Invert the case's monotone coh map, extending linearly past its range.
+
+    `jnp.interp` clips an endogenous coh beyond the sampled range onto the
+    boundary grid node, which strands the branch's last live link inside the
+    grid span and leaves the boundary query points unbracketed — the envelope
+    then falls back to a corner there. Continuing the boundary segments'
+    slopes keeps the branch extending past the first/last grid point; the
+    per-case interval mask still bounds where its candidates may live.
+    """
+    inner = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
+    lower_width = coh_case_grid[1] - coh_case_grid[0]
+    upper_width = coh_case_grid[-1] - coh_case_grid[-2]
+    lower_slope = (liquid_grid[1] - liquid_grid[0]) / jnp.where(
+        lower_width > 0.0, lower_width, 1.0
+    )
+    upper_slope = (liquid_grid[-1] - liquid_grid[-2]) / jnp.where(
+        upper_width > 0.0, upper_width, 1.0
+    )
+    below = liquid_grid[0] + (coh_endog - coh_case_grid[0]) * lower_slope
+    above = liquid_grid[-1] + (coh_endog - coh_case_grid[-1]) * upper_slope
+    below = jnp.where(lower_width > 0.0, below, inner)
+    above = jnp.where(upper_width > 0.0, above, inner)
+    return jnp.where(
+        coh_endog < coh_case_grid[0],
+        below,
+        jnp.where(coh_endog > coh_case_grid[-1], above, inner),
+    )
 
 
 def _invert_euler_over_savings(
@@ -320,8 +352,9 @@ def bqsegm_multi_interval_step_savings(
         inverse_marginal_utility=inverse_marginal_utility,
     )
     coh_endog = consumption + savings_grid
-    off_grid = (coh_endog < coh_grid[0]) | (coh_endog > coh_grid[-1])
-    liquid_endog = jnp.interp(coh_endog, coh_grid, liquid_grid)
+    liquid_endog = _invert_coh_with_linear_extension(
+        coh_endog=coh_endog, coh_case_grid=coh_grid, liquid_grid=liquid_grid
+    )
     endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
     slope_endog = coh_slopes[endog_interval]
     value_endog = (
@@ -330,29 +363,45 @@ def bqsegm_multi_interval_step_savings(
     marginal_endog = slope_endog * jax.vmap(marginal_utility)(consumption)
 
     # Where the continuation is flat (zero marginal value of liquid), the Euler
-    # inversion diverges; drop those interior candidates and the off-grid ones.
+    # inversion diverges; drop those interior candidates.
     degenerate = cont_marginal <= _DEGENERATE_MARGINAL_TOL
-    liquid_endog = jnp.where(degenerate | off_grid, jnp.nan, liquid_endog)
+    liquid_endog = jnp.where(degenerate, jnp.nan, liquid_endog)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
     next_segment = jnp.nanmax(interior_segment) + 1.0
 
-    # Hard borrowing corner: save nothing (savings = 0), consume all cash-on-hand,
-    # earn the lowest-savings-node continuation. A candidate over the whole grid.
-    value_at_no_save = cont_value[0]
-    endog_parts = [liquid_endog, liquid_grid]
-    value_parts = [
-        value_endog,
-        jax.vmap(utility_of_action)(coh_grid) + discount_factor * value_at_no_save,
-    ]
-    policy_parts = [consumption, coh_grid]
-    marginal_parts = [
-        marginal_endog,
-        coh_slopes[interval_of_grid] * jax.vmap(marginal_utility)(coh_grid),
-    ]
-    segment_parts = [
-        interior_segment,
-        jnp.full_like(liquid_grid, next_segment),
-    ]
+    # Savings-node corner chains: for every post-decision node `s_i`, consume
+    # `coh - s_i` at each liquid grid point and earn that node's continuation. The
+    # family is a dense Bellman floor on the savings grid at every query point, so
+    # a continuation kink between Euler roots (a child-value interpolation node,
+    # where the inversion has no root) still gets a candidate; the `s = 0` chain
+    # is the hard borrowing corner. One segment id per node keeps chains apart.
+    node_consumption = coh_grid[None, :] - savings_grid[:, None]
+    node_feasible = node_consumption > 0.0
+    node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
+    node_utility = jax.vmap(jax.vmap(utility_of_action))(node_consumption_safe)
+    node_value = jnp.where(
+        node_feasible,
+        node_utility + discount_factor * cont_value[:, None],
+        jnp.nan,
+    )
+    node_endog = jnp.where(
+        node_feasible,
+        jnp.broadcast_to(liquid_grid, node_consumption.shape),
+        jnp.nan,
+    )
+    node_marginal = coh_slopes[interval_of_grid][None, :] * jax.vmap(
+        jax.vmap(marginal_utility)
+    )(node_consumption_safe)
+    node_segment = jnp.broadcast_to(
+        next_segment
+        + jnp.arange(savings_grid.shape[0], dtype=liquid_grid.dtype)[:, None],
+        node_consumption.shape,
+    )
+    endog_parts = [liquid_endog, node_endog.ravel()]
+    value_parts = [value_endog, node_value.ravel()]
+    policy_parts = [consumption, node_consumption_safe.ravel()]
+    marginal_parts = [marginal_endog, node_marginal.ravel()]
+    segment_parts = [interior_segment, node_segment.ravel()]
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
@@ -571,16 +620,15 @@ def bqsegm_per_interval_continuation_step_savings(
         liquid_endog = jnp.where(
             flat,
             jnp.full_like(coh_endog, lower),
-            jnp.interp(coh_endog, coh_case_grid, liquid_grid),
+            _invert_coh_with_linear_extension(
+                coh_endog=coh_endog,
+                coh_case_grid=coh_case_grid,
+                liquid_grid=liquid_grid,
+            ),
         )
         marginal_endog = coh_slope * jax.vmap(marginal_utility)(consumption)
-        in_grid = (coh_endog >= coh_case_grid[0]) & (coh_endog <= coh_case_grid[-1])
         in_case = (
-            (liquid_endog >= lower)
-            & (liquid_endog < upper)
-            & in_grid
-            & (~degenerate)
-            & (~flat)
+            (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate) & (~flat)
         )
         interior = mask_dead_candidates(
             endog_grid=liquid_endog,
@@ -801,7 +849,11 @@ def bqsegm_unified_step_savings(
             coh_slopes[case_grid_interval] * liquid_grid
             + coh_intercepts[case_grid_interval]
         )
-        liquid_endog = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
+        liquid_endog = _invert_coh_with_linear_extension(
+            coh_endog=coh_endog,
+            coh_case_grid=coh_case_grid,
+            liquid_grid=liquid_grid,
+        )
         endog_interval = jnp.clip(
             jnp.searchsorted(breakpoints, liquid_endog, side="right"), start, end
         )
@@ -813,12 +865,7 @@ def bqsegm_unified_step_savings(
         # the (possibly per-cell traced) jump positions `start - 1` and `end`.
         lower = -jnp.inf if case == 0 else breakpoints[start - 1]
         upper = jnp.inf if case == n_cases - 1 else breakpoints[end]
-        # An endogenous coh outside the case's monotone coh range inverts off-grid;
-        # `jnp.interp` clips it onto a boundary node, so exclude it from the case.
-        in_grid = (coh_endog >= coh_case_grid[0]) & (coh_endog <= coh_case_grid[-1])
-        in_case = (
-            (liquid_endog >= lower) & (liquid_endog < upper) & in_grid & (~degenerate)
-        )
+        in_case = (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate)
         interior = mask_dead_candidates(
             endog_grid=liquid_endog,
             value=interp_value,
@@ -1080,17 +1127,18 @@ def bqsegm_unified_step(  # noqa: PLR0915
             coh_slopes[case_grid_interval] * liquid_grid
             + coh_intercepts[case_grid_interval]
         )
-        liquid_endog = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
+        liquid_endog = _invert_coh_with_linear_extension(
+            coh_endog=coh_endog,
+            coh_case_grid=coh_case_grid,
+            liquid_grid=liquid_grid,
+        )
         endog_interval = jnp.clip(
             jnp.searchsorted(breakpoints, liquid_endog, side="right"), start, end
         )
         marginal_endog = coh_slopes[endog_interval] * consumption ** (-crra)
         lower = -jnp.inf if start == 0 else breakpoints[start - 1]
         upper = jnp.inf if end == last_interval else breakpoints[end]
-        # An endogenous coh outside the case's monotone coh range inverts off-grid;
-        # `jnp.interp` clips it onto a boundary node, so exclude it from the case.
-        in_grid = (coh_endog >= coh_case_grid[0]) & (coh_endog <= coh_case_grid[-1])
-        in_case = (liquid_endog >= lower) & (liquid_endog < upper) & in_grid
+        in_case = (liquid_endog >= lower) & (liquid_endog < upper)
         interior = mask_dead_candidates(
             endog_grid=liquid_endog,
             value=interp_value,
