@@ -53,6 +53,11 @@ from _lcm.variables import (  # noqa: E402
 )
 from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.certainty_equivalent import (  # noqa: E402
+    CertaintyEquivalent,
+    PowerCertaintyEquivalent,
+    TransformedExpectation,
+)
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
@@ -111,6 +116,7 @@ jax.tree_util.register_pytree_node(
 __all__ = [
     "DCEGM",
     "AgeGrid",
+    "CertaintyEquivalent",
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
     "GridSearch",
@@ -126,6 +132,7 @@ __all__ = [
     "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
+    "PowerCertaintyEquivalent",
     "Regime",
     "RouwenhorstAR1Process",
     "SimulateSnapshot",
@@ -133,6 +140,7 @@ __all__ = [
     "SolveSnapshot",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
+    "TransformedExpectation",
     "UniformIIDProcess",
     "__version__",
     "categorical",
