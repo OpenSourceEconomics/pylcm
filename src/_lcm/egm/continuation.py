@@ -190,6 +190,24 @@ class _ChildRead:
     stochastic_state_names: tuple[StateName, ...]
     """Child stochastic node-axis names (process or Markov) in carry-axis order."""
 
+    foldable_stochastic_flags: tuple[bool, ...]
+    """Per stochastic dimension: whether its expectation folds into the carry.
+
+    A dimension folds when its nodes cannot move the per-row resources
+    queries or the aggregation those queries feed, so its expectation
+    commutes with the row-linear carry interpolation and pre-folds into an
+    expected carry once per cell (instead of looping its nodes per savings
+    query). All three conditions are static model topology:
+
+    - the child's resources DAG does not read the dimension's node value;
+    - the child's carry rows share the state grid as abscissae
+      (`Solver.carry_rows_share_state_grid`), so every node row interpolates
+      with the same bracket structure;
+    - the carry keeps no per-discrete-action rows
+      (`Solver.carry_retains_discrete_action_rows` is `False`), so no
+      per-node choice aggregation sits between interpolation and the fold.
+    """
+
     stochastic_node_values: tuple[FloatND | IntND, ...]
     """Per stochastic dimension: the node values fed into the resources query.
 
@@ -1097,6 +1115,14 @@ def _build_child_reads(
             | set(action_names)
         )
         resources_param_names = resources_arg_names - child_binding_names
+        child_carry_rows_uniform = (
+            target_regime.solver.carry_rows_share_state_grid
+            and not target_regime.solver.carry_retains_discrete_action_rows
+        )
+        foldable_stochastic_flags = tuple(
+            child_carry_rows_uniform and name not in resources_arg_names
+            for name in stochastic_state_names
+        )
         row_grids = passive_grids + action_values
         if row_grids:
             row_mesh = jnp.meshgrid(*row_grids, indexing="ij")
@@ -1121,6 +1147,7 @@ def _build_child_reads(
             discrete_state_names=discrete_state_names,
             stochastic_flags=stochastic_flags,
             stochastic_state_names=stochastic_state_names,
+            foldable_stochastic_flags=foldable_stochastic_flags,
             stochastic_node_values=stochastic_node_values,
             process_grid_names=process_grid_names,
             weight_keys=weight_keys,

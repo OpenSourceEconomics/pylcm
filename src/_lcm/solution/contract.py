@@ -298,6 +298,18 @@ class Solver(ABC):
         """
         return True
 
+    @property
+    def carry_rows_share_state_grid(self) -> bool:
+        """Whether every published carry row shares the state grid as abscissae.
+
+        Grid-aligned rows (a value array published on the regime's own state
+        grid) all interpolate with the same bracket structure, so reads that
+        are linear in the rows commute with expectations over the carry's
+        node axes. Endogenous-grid solvers publish per-row abscissae and set
+        this `False`.
+        """
+        return False
+
     def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Check the regime is in scope for this solver. Default: no-op."""
 

@@ -88,6 +88,11 @@ class GridSearch(Solver):
         """A brute living child publishes an already-action-maxed value array."""
         return False
 
+    @property
+    def carry_rows_share_state_grid(self) -> bool:
+        """Grid-search carries sit on the regime's own state grid."""
+        return True
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one max-Q-over-a period adapter per period.
 
@@ -1535,6 +1540,11 @@ class BQSEGM(Solver):
     def carry_retains_discrete_action_rows(self) -> bool:
         """The case-piece carry publishes a value maxed over the continuous action."""
         return False
+
+    @property
+    def carry_rows_share_state_grid(self) -> bool:
+        """The case-piece ride-along carry sits on the shared liquid grid."""
+        return True
 
     def validate(self, *, context: SolverBuildContext) -> None:
         """Check case coverage and reject hidden branching in user pieces.
