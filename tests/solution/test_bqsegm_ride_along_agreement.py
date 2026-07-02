@@ -53,10 +53,11 @@ def test_bqsegm_matches_brute_in_every_ride_along_slice_every_age():
 def test_value_is_invariant_to_envelope_cell_blocking():
     """The solved value does not depend on the envelope's ride-cell block size.
 
-    `envelope_cell_block_size` streams the per-cell envelope solve over blocks of
-    ride cells instead of vmapping the whole flattened mesh at once; padding cells
-    are discarded after the scan, so the value function is identical for any block
-    size, including one that does not divide the cell count.
+    `cell_block_size` streams both ride-along cores (continuation fan-out and
+    envelope solve) over blocks of ride cells instead of vmapping the whole
+    flattened mesh at once; padding cells are discarded after the scan, so the
+    value function is identical for any block size, including one that does not
+    divide the cell count.
     """
     reference = _solve("bqsegm")
     for block_size in (1, 3):
@@ -66,7 +67,7 @@ def test_value_is_invariant_to_envelope_cell_blocking():
             liquid_max=30.0,
             n_savings=180,
             savings_max=28.0,
-            bqsegm_overrides={"envelope_cell_block_size": block_size},
+            bqsegm_overrides={"cell_block_size": block_size},
         )
         blocked = model.solve(params=toy.build_params(), log_level="off")
         for period in reference:

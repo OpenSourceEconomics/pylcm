@@ -1515,14 +1515,15 @@ class BQSEGM(Solver):
     intermediate). Raise it when the query grid is large enough that the per-cell
     bracket matrix dominates the per-cell memory budget.
     """
-    envelope_cell_block_size: int = 0
-    """Block size for streaming the envelope solve over ride-along cells.
+    cell_block_size: int = 0
+    """Block size for streaming the ride-along solve over ride cells.
 
-    The envelope core solves one candidate set per ride cell; `0` vmaps the whole
-    flattened ride mesh at once, so every cell's candidate buffers (intervals x
-    savings nodes plus corners) are in flight together — the dominant peak-memory
-    term at production mesh sizes. A positive block size scans the mesh in blocks
-    of that many cells (identical result, peak bounded by one block's buffers).
+    Both ride-along cores fan out per cell — the continuation core's transition/
+    child-interpolation read and the envelope core's candidate solve; `0` vmaps
+    the whole flattened ride mesh at once in each, so every cell's buffers are in
+    flight together — the dominant peak-memory term at production mesh sizes. A
+    positive block size scans the mesh in blocks of that many cells in both cores
+    (identical result, peak bounded by one block's buffers).
     """
 
     @property
@@ -1749,7 +1750,7 @@ class BQSEGM(Solver):
                     schedule_spec=schedule_spec,
                     continuation_plan=plan,
                     envelope_segment_block_size=self.envelope_segment_block_size,
-                    envelope_cell_block_size=self.envelope_cell_block_size,
+                    cell_block_size=self.cell_block_size,
                 )
                 continuation_core = _build_bqsegm_continuation_core(
                     savings_grid=savings_grid,
@@ -3223,9 +3224,9 @@ class _BQSEGMRideAlongStatics:
     envelope_segment_block_size: int
     """Block size for streaming the merged upper envelope over candidate segments;
     `0` keeps the one-shot dense envelope (see `BQSEGM.envelope_segment_block_size`)."""
-    envelope_cell_block_size: int
-    """Block size for streaming the envelope solve over ride-along cells; `0` vmaps
-    the whole flattened mesh at once (see `BQSEGM.envelope_cell_block_size`)."""
+    cell_block_size: int
+    """Block size for streaming both ride-along cores over ride cells; `0` vmaps
+    the whole flattened mesh at once (see `BQSEGM.cell_block_size`)."""
 
     def n_ride_cells(self, *, states: Mapping[str, object]) -> int:
         """Number of flattened ride-along cells for the given state grids."""
@@ -3241,7 +3242,7 @@ def _bqsegm_ride_along_statics(
     schedule_spec: _BQSEGMScheduleSpec,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     envelope_segment_block_size: int = 0,
-    envelope_cell_block_size: int = 0,
+    cell_block_size: int = 0,
 ) -> _BQSEGMRideAlongStatics:
     """Derive the static config the ride-along continuation and envelope cores share.
 
@@ -3336,7 +3337,7 @@ def _bqsegm_ride_along_statics(
         n_intervals=len(sources) + 1,
         n_savings=int(savings_grid.shape[0]),
         envelope_segment_block_size=envelope_segment_block_size,
-        envelope_cell_block_size=envelope_cell_block_size,
+        cell_block_size=cell_block_size,
     )
 
 
@@ -3489,7 +3490,33 @@ def _build_bqsegm_continuation_core(
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         mesh = jnp.meshgrid(*ride_grids, indexing="ij")
         flat_cells = tuple(grid.ravel() for grid in mesh)
-        return jax.vmap(lambda *vals: cell_continuation(vals))(*flat_cells)
+        solve_cells = jax.vmap(lambda *vals: cell_continuation(vals))
+        n_cells = int(flat_cells[0].shape[0])
+        cell_block = statics.cell_block_size
+        if cell_block <= 0 or cell_block >= n_cells:
+            return solve_cells(*flat_cells)
+        # Scan the flattened mesh in cell blocks so only one block's transition
+        # fan-out is in flight; padding repeats the last cell and its results are
+        # dropped after the scan.
+        pad = (-n_cells) % cell_block
+
+        def to_blocks(arr: FloatND | IntND) -> FloatND | IntND:
+            padded = (
+                jnp.concatenate([arr, jnp.repeat(arr[-1:], pad, axis=0)])
+                if pad
+                else arr
+            )
+            return padded.reshape(-1, cell_block, *arr.shape[1:])
+
+        blocked_cells = tuple(to_blocks(arr) for arr in flat_cells)
+        value_blocks, marginal_blocks = jax.lax.map(
+            lambda args: solve_cells(*args), blocked_cells
+        )
+
+        def from_blocks(arr: FloatND) -> FloatND:
+            return arr.reshape(-1, *arr.shape[2:])[:n_cells]
+
+        return from_blocks(value_blocks), from_blocks(marginal_blocks)
 
     return continuation_core
 
@@ -3643,7 +3670,7 @@ def _build_bqsegm_envelope_core(
             lambda *args: solve_one_cell(args[:-2], args[-2], args[-1])
         )
         n_cells = int(flat_cells[0].shape[0])
-        cell_block = statics.envelope_cell_block_size
+        cell_block = statics.cell_block_size
         if cell_block <= 0 or cell_block >= n_cells:
             value_stack, marginal_stack, policy_stack = solve_cells(
                 *flat_cells, cont_value_stack, cont_marginal_stack
