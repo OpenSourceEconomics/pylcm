@@ -11,20 +11,20 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Phased,
-    PowerCertaintyEquivalent,
+    PowerMean,
+    QuasiArithmeticMean,
     Regime,
-    TransformedExpectation,
     categorical,
 )
 from lcm.exceptions import InvalidNameError, RegimeInitializationError
 from lcm.solvers import DCEGM
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.epstein_zin_health import get_model, get_params
+from lcm_examples.epstein_zin import get_model, get_params
 
 
 def test_power_certainty_equivalent_transform_and_inverse_are_inverses():
     """`inverse(transform(x)) == x` for positive values."""
-    ce = PowerCertaintyEquivalent()
+    ce = PowerMean()
     x = jnp.array([0.5, 1.0, 2.0, 7.5])
     roundtrip = ce.inverse(
         value=ce.transform(value=x, risk_aversion=jnp.asarray(0.5)),
@@ -35,10 +35,10 @@ def test_power_certainty_equivalent_transform_and_inverse_are_inverses():
 
 def test_power_certainty_equivalent_param_names():
     """The power CE declares exactly the `risk_aversion` runtime param."""
-    assert PowerCertaintyEquivalent().param_names == frozenset({"risk_aversion"})
+    assert PowerMean().param_names == frozenset({"risk_aversion"})
 
 
-def test_transformed_expectation_param_names_union_over_both_callables():
+def test_quasi_arithmetic_mean_param_names_union_over_both_callables():
     """`param_names` is the union of transform and inverse args minus `value`."""
 
     def g(value: FloatND, theta: FloatND) -> FloatND:
@@ -47,11 +47,11 @@ def test_transformed_expectation_param_names_union_over_both_callables():
     def g_inv(value: FloatND, theta: FloatND, offset: FloatND) -> FloatND:
         return value / theta + offset
 
-    ce = TransformedExpectation(transform=g, inverse=g_inv)
+    ce = QuasiArithmeticMean(transform=g, inverse=g_inv)
     assert ce.param_names == frozenset({"theta", "offset"})
 
 
-def test_transformed_expectation_rejects_callable_without_value_arg():
+def test_quasi_arithmetic_mean_rejects_callable_without_value_arg():
     """Both callables must take the value array via an argument named `value`."""
 
     def g(v: FloatND) -> FloatND:
@@ -61,7 +61,7 @@ def test_transformed_expectation_rejects_callable_without_value_arg():
         return value
 
     with pytest.raises(RegimeInitializationError, match="value"):
-        TransformedExpectation(transform=g, inverse=g_inv)
+        QuasiArithmeticMean(transform=g, inverse=g_inv)
 
 
 @categorical(ordered=False)
@@ -124,7 +124,7 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
 def test_regime_accepts_certainty_equivalent():
     """A non-terminal grid-search regime may declare a certainty equivalent."""
     model = _make_model(
-        alive_kwargs={"certainty_equivalent": PowerCertaintyEquivalent()},
+        alive_kwargs={"certainty_equivalent": PowerMean()},
         dead_kwargs={},
     )
     assert model.user_regimes["alive"].certainty_equivalent is not None
@@ -135,7 +135,7 @@ def test_terminal_regime_rejects_certainty_equivalent():
     with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
         _make_model(
             alive_kwargs={},
-            dead_kwargs={"certainty_equivalent": PowerCertaintyEquivalent()},
+            dead_kwargs={"certainty_equivalent": PowerMean()},
         )
 
 
@@ -151,7 +151,7 @@ def test_dcegm_rejects_certainty_equivalent():
     with pytest.raises(RegimeInitializationError, match="GridSearch"):
         _make_model(
             alive_kwargs={
-                "certainty_equivalent": PowerCertaintyEquivalent(),
+                "certainty_equivalent": PowerMean(),
                 "solver": dcegm,
             },
             dead_kwargs={},
@@ -164,8 +164,8 @@ def test_certainty_equivalent_rejects_phased():
         _make_model(
             alive_kwargs={
                 "certainty_equivalent": Phased(
-                    solve=PowerCertaintyEquivalent(),
-                    simulate=PowerCertaintyEquivalent(),
+                    solve=PowerMean(),
+                    simulate=PowerMean(),
                 ),
             },
             dead_kwargs={},
@@ -175,7 +175,7 @@ def test_certainty_equivalent_rejects_phased():
 def test_params_template_contains_certainty_equivalent_params():
     """CE params surface under the pseudo-function name `certainty_equivalent`."""
     model = _make_model(
-        alive_kwargs={"certainty_equivalent": PowerCertaintyEquivalent()},
+        alive_kwargs={"certainty_equivalent": PowerMean()},
         dead_kwargs={},
     )
     template = model.get_params_template()
@@ -191,7 +191,7 @@ def test_certainty_equivalent_name_collision_with_function_is_rejected():
     with pytest.raises(InvalidNameError, match="certainty_equivalent"):
         _make_model(
             alive_kwargs={
-                "certainty_equivalent": PowerCertaintyEquivalent(),
+                "certainty_equivalent": PowerMean(),
                 "functions": {
                     "utility": _utility_alive,
                     "certainty_equivalent": certainty_equivalent,
@@ -203,7 +203,7 @@ def test_certainty_equivalent_name_collision_with_function_is_rejected():
 
 def test_nonlinear_certainty_equivalent_changes_solved_values():
     """With `risk_aversion = 2`, solved values differ from expected utility."""
-    ez_model = get_model(certainty_equivalent=PowerCertaintyEquivalent())
+    ez_model = get_model(certainty_equivalent=PowerMean())
     eu_model = get_model(certainty_equivalent=None)
     V_ez = ez_model.solve(params=get_params(risk_aversion=2.0), log_level="debug")
     V_eu = eu_model.solve(params=get_params(risk_aversion=None), log_level="debug")
@@ -214,7 +214,7 @@ def test_nonlinear_certainty_equivalent_changes_solved_values():
 
 def test_zero_risk_aversion_reduces_to_expected_utility():
     """`risk_aversion = 0` makes the power CE the linear expectation."""
-    ez_model = get_model(certainty_equivalent=PowerCertaintyEquivalent())
+    ez_model = get_model(certainty_equivalent=PowerMean())
     eu_model = get_model(certainty_equivalent=None)
     V_ez = ez_model.solve(params=get_params(risk_aversion=0.0), log_level="debug")
     V_eu = eu_model.solve(params=get_params(risk_aversion=None), log_level="debug")
@@ -228,7 +228,7 @@ def test_zero_risk_aversion_reduces_to_expected_utility():
             )
 
 
-from tests.test_models.epstein_zin_health import (  # noqa: E402
+from lcm_examples.epstein_zin import (  # noqa: E402
     BAD_HEALTH_SURVIVAL_FACTOR,
     CONSUMPTION_GRID,
     DEAD_WEALTH_GRID,
@@ -312,7 +312,7 @@ def _reference_backward_induction(
 def test_epstein_zin_solved_values_match_numpy_reference():
     """The solved alive-V equals an independent numpy backward induction."""
     risk_aversion, discount_factor, rho = 0.5, 0.9, 0.5
-    model = get_model(certainty_equivalent=PowerCertaintyEquivalent())
+    model = get_model(certainty_equivalent=PowerMean())
     solution = model.solve(
         params=get_params(
             risk_aversion=risk_aversion, discount_factor=discount_factor, rho=rho

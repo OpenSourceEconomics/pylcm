@@ -55,8 +55,8 @@ from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.certainty_equivalent import (  # noqa: E402
     CertaintyEquivalent,
-    PowerCertaintyEquivalent,
-    TransformedExpectation,
+    PowerMean,
+    QuasiArithmeticMean,
 )
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
@@ -132,7 +132,8 @@ __all__ = [
     "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
-    "PowerCertaintyEquivalent",
+    "PowerMean",
+    "QuasiArithmeticMean",
     "Regime",
     "RouwenhorstAR1Process",
     "SimulateSnapshot",
@@ -140,7 +141,6 @@ __all__ = [
     "SolveSnapshot",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
-    "TransformedExpectation",
     "UniformIIDProcess",
     "__version__",
     "categorical",

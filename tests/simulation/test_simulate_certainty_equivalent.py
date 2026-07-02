@@ -3,20 +3,20 @@
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import PowerCertaintyEquivalent
-from tests.test_certainty_equivalent import _reference_backward_induction
-from tests.test_models.epstein_zin_health import (
-    EzRegimeId,
+from lcm import PowerMean
+from lcm_examples.epstein_zin import (
+    EZRegimeId,
     HealthStatus,
     get_model,
     get_params,
 )
+from tests.test_certainty_equivalent import _reference_backward_induction
 
 
 def test_simulated_period0_consumption_matches_reference_policy():
     """Period-0 consumption equals the reference argmax at the initial states."""
     risk_aversion, discount_factor, rho = 0.5, 0.9, 0.5
-    model = get_model(certainty_equivalent=PowerCertaintyEquivalent())
+    model = get_model(certainty_equivalent=PowerMean())
     params = get_params(
         risk_aversion=risk_aversion, discount_factor=discount_factor, rho=rho
     )
@@ -28,7 +28,7 @@ def test_simulated_period0_consumption_matches_reference_policy():
             "age": jnp.full(3, 60.0),
             "wealth": initial_wealth,
             "health": initial_health,
-            "regime_id": jnp.full(3, EzRegimeId.alive),
+            "regime_id": jnp.full(3, EZRegimeId.alive),
         },
         period_to_regime_to_V_arr=None,
         log_level="debug",

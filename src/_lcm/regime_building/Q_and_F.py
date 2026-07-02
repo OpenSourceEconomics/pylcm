@@ -5,6 +5,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 
+from _lcm.certainty_equivalent import resolve_certainty_equivalent
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -25,11 +26,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.certainty_equivalent import (
-    CE_VALUE_ARG,
-    CertaintyEquivalent,
-    TransformedExpectation,
-)
+from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.typing import BoolND, Float1D, FloatND, IntND
 
 
@@ -132,7 +129,7 @@ def get_Q_and_F(
     # ----------------------------------------------------------------------------------
 
     _build_H_kwargs = _get_build_H_kwargs(functions)
-    ce, ce_transform_flat_names, ce_inverse_flat_names = _resolve_certainty_equivalent(
+    ce, ce_transform_flat_names, ce_inverse_flat_names = resolve_certainty_equivalent(
         certainty_equivalent
     )
 
@@ -334,7 +331,7 @@ def get_compute_intermediates(
             batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
 
-    ce, ce_transform_flat_names, ce_inverse_flat_names = _resolve_certainty_equivalent(
+    ce, ce_transform_flat_names, ce_inverse_flat_names = resolve_certainty_equivalent(
         certainty_equivalent
     )
 
@@ -632,46 +629,3 @@ def _get_feasibility(
             return True
 
     return cast("ConstraintFunction", combined_constraint)
-
-
-def _resolve_certainty_equivalent(
-    certainty_equivalent: CertaintyEquivalent | None,
-) -> tuple[
-    TransformedExpectation | None,
-    MappingProxyType[str, str],
-    MappingProxyType[str, str],
-]:
-    """Narrow the certainty equivalent and map its args to flat param names.
-
-    The runtime parameters live under the pseudo-function name
-    `certainty_equivalent` in the regime's flat params
-    (`certainty_equivalent__<arg>`); the returned mappings let the Q-and-F
-    closure pull each callable's kwargs from `states_actions_params`.
-
-    Returns:
-        Tuple of the narrowed transform-pair CE (or `None`), the transform's
-        arg-to-flat-name mapping, and the inverse's arg-to-flat-name mapping.
-
-    """
-    if certainty_equivalent is None:
-        return None, MappingProxyType({}), MappingProxyType({})
-    if not isinstance(certainty_equivalent, TransformedExpectation):
-        msg = (
-            "Only `TransformedExpectation` certainty equivalents are "
-            f"supported, got {type(certainty_equivalent).__name__}."
-        )
-        raise NotImplementedError(msg)
-
-    def flat_names(func: Callable[..., FloatND]) -> MappingProxyType[str, str]:
-        return MappingProxyType(
-            {
-                arg: f"certainty_equivalent__{arg}"
-                for arg in get_union_of_args([func]) - {CE_VALUE_ARG}
-            }
-        )
-
-    return (
-        certainty_equivalent,
-        flat_names(certainty_equivalent.transform),
-        flat_names(certainty_equivalent.inverse),
-    )
