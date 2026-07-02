@@ -5,7 +5,7 @@ Ziebarth (2025, JPE 133(6), doi:10.1086/734781) - savings, a two-state
 health Markov chain, and health-dependent survival into a terminal `dead`
 regime - with the recursion swapped to Epstein-Zin:
 
-- `V = ((1 - b) * c^r + b * CE^r)^(1/r)` via a user-supplied `H`,
+- `V = ((1 - b) * c^r + b * CE^r)^(1/r)` via `lcm.aggregators.H_epstein_zin`,
 - `CE = (E[V'^(1-g)])^(1/(1-g))` via `PowerMean`.
 
 Utility is consumption itself, so values stay in (positive) consumption
@@ -26,6 +26,7 @@ from lcm import (
     AgeGrid,
     CertaintyEquivalent,
     DiscreteGrid,
+    H_epstein_zin,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -71,14 +72,6 @@ def utility_alive(consumption: ContinuousAction) -> FloatND:
 
 def utility_dead(wealth: ContinuousState) -> FloatND:
     return jnp.sqrt(wealth)
-
-
-def H_epstein_zin(
-    utility: FloatND, E_next_V: FloatND, discount_factor: FloatND, rho: FloatND
-) -> FloatND:
-    return (
-        (1.0 - discount_factor) * utility**rho + discount_factor * E_next_V**rho
-    ) ** (1.0 / rho)
 
 
 def next_wealth(
@@ -176,7 +169,7 @@ def get_params(
     *,
     risk_aversion: float | None,
     discount_factor: float = 0.9,
-    rho: float = 0.5,
+    intertemporal_elasticity_of_substitution: float = 2.0,
     survival_probs: tuple[float, ...] = SURVIVAL_PROBS,
 ) -> dict:
     """Get parameters for the Epstein-Zin lifecycle model.
@@ -185,7 +178,8 @@ def get_params(
         risk_aversion: Coefficient of relative risk aversion (gamma) for the certainty
             equivalent. Pass `None` when solving without a certainty equivalent.
         discount_factor: Time discount factor (beta).
-        rho: Intertemporal elasticity exponent (rho = 1 - 1/psi).
+        intertemporal_elasticity_of_substitution: IES (psi); the aggregator
+            curvature is `rho = 1 - 1/psi`.
         survival_probs: Per-period survival probabilities (last entry must be 0.0);
             its length is `n_periods - 1`.
 
@@ -195,7 +189,12 @@ def get_params(
     """
     params: dict = {
         "alive": {
-            "H": {"discount_factor": discount_factor, "rho": rho},
+            "H": {
+                "discount_factor": discount_factor,
+                "intertemporal_elasticity_of_substitution": (
+                    intertemporal_elasticity_of_substitution
+                ),
+            },
             "next_wealth": {"income": INCOME},
             "next_regime": {"survival_probs": jnp.array(survival_probs)},
         },

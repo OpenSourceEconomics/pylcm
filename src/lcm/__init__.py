@@ -53,6 +53,7 @@ from _lcm.variables import (  # noqa: E402
 )
 from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.aggregators import H_epstein_zin, H_linear  # noqa: E402
 from lcm.certainty_equivalent import (  # noqa: E402
     CertaintyEquivalent,
     PowerMean,
@@ -120,6 +121,8 @@ __all__ = [
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
     "GridSearch",
+    "H_epstein_zin",
+    "H_linear",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogNormalIIDProcess",

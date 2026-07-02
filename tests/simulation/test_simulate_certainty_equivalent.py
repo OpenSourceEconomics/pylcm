@@ -15,10 +15,12 @@ from tests.test_certainty_equivalent import _reference_backward_induction
 
 def test_simulated_period0_consumption_matches_reference_policy():
     """Period-0 consumption equals the reference argmax at the initial states."""
-    risk_aversion, discount_factor, rho = 0.5, 0.9, 0.5
+    risk_aversion, discount_factor, ies = 0.5, 0.9, 2.0
     model = get_model(certainty_equivalent=PowerMean())
     params = get_params(
-        risk_aversion=risk_aversion, discount_factor=discount_factor, rho=rho
+        risk_aversion=risk_aversion,
+        discount_factor=discount_factor,
+        intertemporal_elasticity_of_substitution=ies,
     )
     initial_wealth = jnp.array([2.8, 7.4, 12.0])  # on-grid nodes
     initial_health = jnp.array([HealthStatus.bad, HealthStatus.good, HealthStatus.good])
@@ -37,7 +39,9 @@ def test_simulated_period0_consumption_matches_reference_policy():
     period0 = df.query("period == 0").sort_index()
 
     _, policy_c = _reference_backward_induction(
-        risk_aversion=risk_aversion, discount_factor=discount_factor, rho=rho
+        risk_aversion=risk_aversion,
+        discount_factor=discount_factor,
+        intertemporal_elasticity_of_substitution=ies,
     )
     wealth_grid = np.linspace(0.5, 12.0, 6)
     expected = np.array(

@@ -31,13 +31,13 @@ from _lcm.solution.backward_induction import _log_per_period_stats
 from _lcm.state_action_space import _validate_all_states_present
 from _lcm.transition_checks import _validate_regime_transition_probs
 from lcm import AgeGrid, LinSpacedGrid, Model
+from lcm.aggregators import H_linear
 from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
     RegimeInitializationError,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _default_H
 
 
 def test_claw_checks_lcm_simulation() -> None:
@@ -94,7 +94,7 @@ def test_claw_checks_lcm_engine() -> None:
 def test_claw_checks_lcm_regime() -> None:
     """Type-violating arguments to `lcm.regime` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
-        _default_H(
+        H_linear(
             utility=np.array([1.0]),  # ty: ignore[invalid-argument-type]
             E_next_V=jnp.array([1.0]),
             discount_factor=jnp.array([0.95]),

@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
 
+import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
@@ -83,13 +84,21 @@ class QuasiArithmeticMean(CertaintyEquivalent):
 
 
 def power_transform(value: FloatND, risk_aversion: FloatND) -> FloatND:
-    """Apply `g(v) = v^(1 - risk_aversion)`."""
-    return value ** (1.0 - risk_aversion)
+    """Apply `g(v) = v^(1 - risk_aversion)`, or `log(v)` at `risk_aversion = 1`."""
+    return jnp.where(
+        risk_aversion == 1.0, jnp.log(value), value ** (1.0 - risk_aversion)
+    )
 
 
 def power_inverse(value: FloatND, risk_aversion: FloatND) -> FloatND:
-    """Apply `g^(-1)(v) = v^(1 / (1 - risk_aversion))`."""
-    return value ** (1.0 / (1.0 - risk_aversion))
+    """Apply `g^(-1)(v) = v^(1 / (1 - risk_aversion))`; `exp(v)` in the log case."""
+    # The unselected power branch must not divide by zero at `risk_aversion = 1`.
+    safe_risk_aversion = jnp.where(risk_aversion == 1.0, 0.0, risk_aversion)
+    return jnp.where(
+        risk_aversion == 1.0,
+        jnp.exp(value),
+        value ** (1.0 / (1.0 - safe_risk_aversion)),
+    )
 
 
 @beartype(conf=REGIME_CONF)
@@ -99,9 +108,9 @@ class PowerMean(QuasiArithmeticMean):
 
     `CE = (E[V'^(1 - risk_aversion)])^(1 / (1 - risk_aversion))` with the
     runtime parameter `{"certainty_equivalent": {"risk_aversion": ...}}`.
-    Requires strictly positive continuation values; `risk_aversion = 1`
-    (the log case) is not representable. `risk_aversion = 0` reduces to
-    the linear expectation.
+    Requires strictly positive continuation values. `risk_aversion = 1` is
+    the geometric-mean (log) limit, `CE = exp(E[log V'])`; `risk_aversion
+    = 0` reduces to the linear expectation.
     """
 
     transform: Callable[..., FloatND] = power_transform

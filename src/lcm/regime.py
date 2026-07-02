@@ -2,9 +2,8 @@
 
 The validators and the identity transition live behind a leading underscore in
 `_lcm.user_regime_validation` and `_lcm.regime_building.transitions`. This
-module is intentionally thin: the public class definition plus the private
-default Bellman aggregator (`_default_H`), which `Regime` injects when a
-non-terminal regime supplies no `H`.
+module is intentionally thin: the public class definition. A non-terminal
+regime that supplies no `H` gets `lcm.aggregators.H_linear` at model build.
 
 """
 
@@ -34,7 +33,7 @@ from lcm.phased import Phased
 from lcm.solvers import GridSearch, Solver
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import MarkovTransition
-from lcm.typing import FloatND, UserFunction
+from lcm.typing import UserFunction
 
 
 @beartype(conf=REGIME_CONF)
@@ -298,10 +297,3 @@ class Regime:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
-
-
-def _default_H(
-    utility: FloatND, E_next_V: FloatND, discount_factor: FloatND
-) -> FloatND:
-    """Default Bellman aggregator: `U + β · E[V_next]`."""
-    return utility + discount_factor * E_next_V

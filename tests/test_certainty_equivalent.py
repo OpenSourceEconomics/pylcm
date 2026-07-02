@@ -1,5 +1,6 @@
 """Tests for nonlinear certainty equivalents over the continuation value."""
 
+from collections.abc import Callable
 from typing import Any
 
 import jax.numpy as jnp
@@ -239,8 +240,31 @@ from lcm_examples.epstein_zin import (  # noqa: E402
 )
 
 
+def _reference_transform_pair(
+    risk_aversion: float,
+) -> tuple[Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray]]:
+    """Return the numpy transform pair `(g, g_inv)` of the power mean.
+
+    `risk_aversion = 1` is the geometric-mean (log) limit.
+    """
+    if risk_aversion == 1.0:
+        return np.log, np.exp
+    exponent = 1.0 - risk_aversion
+
+    def g(v: np.ndarray) -> np.ndarray:
+        return v**exponent
+
+    def g_inv(v: np.ndarray) -> np.ndarray:
+        return v ** (1.0 / exponent)
+
+    return g, g_inv
+
+
 def _reference_backward_induction(
-    *, risk_aversion: float, discount_factor: float, rho: float
+    *,
+    risk_aversion: float,
+    discount_factor: float,
+    intertemporal_elasticity_of_substitution: float,
 ) -> tuple[dict[int, np.ndarray], np.ndarray]:
     """Independent numpy backward induction of the toy Epstein-Zin model.
 
@@ -258,13 +282,8 @@ def _reference_backward_induction(
         CONSUMPTION_GRID.start, CONSUMPTION_GRID.stop, CONSUMPTION_GRID.n_points
     )
     health_transition = np.array(HEALTH_TRANSITION)
-    exponent = 1.0 - risk_aversion
-
-    def g(v: np.ndarray) -> np.ndarray:
-        return v**exponent
-
-    def g_inv(v: np.ndarray) -> np.ndarray:
-        return v ** (1.0 / exponent)
+    g, g_inv = _reference_transform_pair(risk_aversion)
+    rho = 1.0 - 1.0 / intertemporal_elasticity_of_substitution
 
     V_dead = np.sqrt(dead_wealth)
     n_decision_periods = len(SURVIVAL_PROBS)
@@ -309,18 +328,42 @@ def _reference_backward_induction(
     return V_alive, policy_c[0]
 
 
-def test_epstein_zin_solved_values_match_numpy_reference():
-    """The solved alive-V equals an independent numpy backward induction."""
-    risk_aversion, discount_factor, rho = 0.5, 0.9, 0.5
+def test_power_mean_log_limit_is_geometric_mean():
+    """At `risk_aversion = 1` the power-mean transform pair is `log`/`exp`."""
+    ce = PowerMean()
+    x = jnp.array([0.5, 1.0, 2.0, 7.5])
+    one = jnp.asarray(1.0)
+    np.testing.assert_allclose(
+        ce.transform(value=x, risk_aversion=one), jnp.log(x), rtol=1e-6
+    )
+    np.testing.assert_allclose(
+        ce.inverse(value=ce.transform(value=x, risk_aversion=one), risk_aversion=one),
+        x,
+        rtol=1e-6,
+    )
+
+
+@pytest.mark.parametrize("risk_aversion", [0.5, 1.0])
+def test_epstein_zin_solved_values_match_numpy_reference(risk_aversion: float):
+    """The solved alive-V equals an independent numpy backward induction.
+
+    `risk_aversion = 1` exercises the geometric-mean (log) limit of the
+    power mean, `CE = exp(E[log V'])`.
+    """
+    discount_factor, ies = 0.9, 2.0
     model = get_model(certainty_equivalent=PowerMean())
     solution = model.solve(
         params=get_params(
-            risk_aversion=risk_aversion, discount_factor=discount_factor, rho=rho
+            risk_aversion=risk_aversion,
+            discount_factor=discount_factor,
+            intertemporal_elasticity_of_substitution=ies,
         ),
         log_level="debug",
     )
     expected, _ = _reference_backward_induction(
-        risk_aversion=risk_aversion, discount_factor=discount_factor, rho=rho
+        risk_aversion=risk_aversion,
+        discount_factor=discount_factor,
+        intertemporal_elasticity_of_substitution=ies,
     )
     for period, expected_arr in expected.items():
         # Engine axis order: (health, wealth); reference: (wealth, health).
