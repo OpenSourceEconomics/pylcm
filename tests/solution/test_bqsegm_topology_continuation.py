@@ -1,0 +1,63 @@
+"""Acceptance target for the topology-preserving continuation read.
+
+A BQSEGM regime whose child value carries a recurring jump (next period's
+budget has the same cliff) must read that child value without averaging
+across the cliff: a query on the cliff's bad side must see the bad side's
+continuation. With a side-faithful read, the deep-period solve agrees with
+dense brute force to the same tolerance as the smooth-continuation period.
+
+Until the reader is topology-aware this is an xfail (strict): the linear
+read across the child's jump leaves a savings-grid-independent residual,
+documented in `test_bqsegm_jump_ride_along_recurring_needs_topology`. When
+the feature lands, this test flips to XPASS and that residual test retires.
+"""
+
+import numpy as np
+import pytest
+
+from tests.test_models import bqsegm_jump_ride_along_toy as toy
+
+_N_LIQUID = 160
+_LIQUID = np.linspace(0.1, 30.0, _N_LIQUID)
+_CLIFF_BY_KIND = (15.0 - 1.0, 15.0 - 4.0)
+_EDGE = (_LIQUID > 1.5) & (_LIQUID < 27.0)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="continuation reader interpolates linearly across the child's jump",
+)
+def test_recurring_jump_period_matches_brute_with_side_faithful_read():
+    """Deep-period BQSEGM equals dense brute across each slice's cliff."""
+    brute_model = toy.build_model(
+        variant="brute",
+        n_liquid=_N_LIQUID,
+        liquid_max=30.0,
+        n_savings=220,
+        savings_max=28.0,
+        n_consumption=1800,
+    )
+    brute = brute_model.solve(params=toy.build_params(), log_level="off")
+    bqsegm_model = toy.build_model(
+        variant="bqsegm",
+        n_liquid=_N_LIQUID,
+        liquid_max=30.0,
+        n_savings=220,
+        savings_max=28.0,
+        n_consumption=160,
+    )
+    bqsegm = bqsegm_model.solve(params=toy.build_params(), log_level="off")
+
+    period = min(p for p in brute if "alive" in brute[p])
+    brute_v = np.asarray(brute[period]["alive"])
+    bqsegm_v = np.asarray(bqsegm[period]["alive"])
+    for kind in range(brute_v.shape[0]):
+        away_from_cliff = np.abs(_LIQUID - _CLIFF_BY_KIND[kind]) > 0.75
+        interior = _EDGE & away_from_cliff
+        np.testing.assert_allclose(
+            bqsegm_v[kind, interior],
+            brute_v[kind, interior],
+            atol=2e-2,
+            rtol=5e-3,
+            err_msg=f"period={period} kind={kind}",
+        )
