@@ -1805,7 +1805,9 @@ class BQSEGM(Solver):
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
             continuation_template=_build_ride_along_carry_template(
-                liquid_grid=liquid_grid, ride_shape=ride_shape
+                liquid_grid=liquid_grid,
+                ride_shape=ride_shape,
+                n_breakpoints=len(schedule_spec.sources),
             ),
         )
 
@@ -3600,7 +3602,7 @@ def _build_bqsegm_envelope_core(
             ride_values: tuple[Any, ...],
             cont_value: FloatND,
             cont_marginal: FloatND,
-        ) -> tuple[Float1D, Float1D, Float1D]:
+        ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
             cell = dict(zip(ride_names, ride_values, strict=True))
             cell_discount_factor = (
                 kwargs["H__discount_factor"]
@@ -3654,7 +3656,7 @@ def _build_bqsegm_envelope_core(
                 # feasible where a partly-binding kink makes an interval's recovered
                 # affine budget extrapolate below zero.
                 coh_grid = jax.vmap(coh_of_liquid)(liquid)
-                return bqsegm_per_interval_continuation_step_savings(
+                step = bqsegm_per_interval_continuation_step_savings(
                     cont_value=cont_value,
                     cont_marginal=cont_marginal,
                     liquid_grid=liquid,
@@ -3668,8 +3670,9 @@ def _build_bqsegm_envelope_core(
                     coh_grid=coh_grid,
                     envelope_segment_block_size=statics.envelope_segment_block_size,
                 )
+                return (*step, breakpoints)
 
-            return _solve_ride_along_cell_step(
+            step = _solve_ride_along_cell_step(
                 has_jump=statics.has_jump,
                 jump_positions=jump_positions,
                 cont_value=cont_value,
@@ -3683,6 +3686,7 @@ def _build_bqsegm_envelope_core(
                 coh_intercepts=coh_intercepts,
                 breakpoints=breakpoints,
             )
+            return (*step, breakpoints)
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
@@ -3691,40 +3695,13 @@ def _build_bqsegm_envelope_core(
         solve_cells = jax.vmap(
             lambda *args: solve_one_cell(args[:-2], args[-2], args[-1])
         )
-        n_cells = int(flat_cells[0].shape[0])
-        cell_block = statics.cell_block_size
-        if cell_block <= 0 or cell_block >= n_cells:
-            value_stack, marginal_stack, policy_stack = solve_cells(
-                *flat_cells, cont_value_stack, cont_marginal_stack
+        value_stack, marginal_stack, policy_stack, breakpoint_stack = (
+            _stream_cell_solves(
+                solve_cells=solve_cells,
+                inputs=(*flat_cells, cont_value_stack, cont_marginal_stack),
+                cell_block=statics.cell_block_size,
             )
-        else:
-            # Scan the flattened mesh in cell blocks so only one block's candidate
-            # buffers are in flight; padding repeats the last cell and its results
-            # are dropped after the scan.
-            pad = (-n_cells) % cell_block
-
-            def to_blocks(arr: FloatND | IntND) -> FloatND | IntND:
-                padded = (
-                    jnp.concatenate([arr, jnp.repeat(arr[-1:], pad, axis=0)])
-                    if pad
-                    else arr
-                )
-                return padded.reshape(-1, cell_block, *arr.shape[1:])
-
-            blocked_inputs = tuple(
-                to_blocks(arr)
-                for arr in (*flat_cells, cont_value_stack, cont_marginal_stack)
-            )
-            value_blocks, marginal_blocks, policy_blocks = jax.lax.map(
-                lambda args: solve_cells(*args), blocked_inputs
-            )
-
-            def from_blocks(arr: FloatND | IntND) -> FloatND | IntND:
-                return arr.reshape(-1, *arr.shape[2:])[:n_cells]
-
-            value_stack = from_blocks(value_blocks)
-            marginal_stack = from_blocks(marginal_blocks)
-            policy_stack = from_blocks(policy_blocks)
+        )
 
         n_liquid = liquid.shape[0]
         # The published value array follows the productmap state order, so the
@@ -3744,6 +3721,9 @@ def _build_bqsegm_envelope_core(
                 dtype
             ),
             taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
+            breakpoints=breakpoint_stack.reshape(
+                *ride_shape, len(schedule_spec.sources)
+            ).astype(dtype),
         )
         del policy_stack
         return value_arr, carry
@@ -3886,8 +3866,42 @@ def _build_one_asset_carry_template(*, liquid_grid: Float1D) -> EGMCarry:
     )
 
 
+def _stream_cell_solves(
+    *,
+    solve_cells: Callable,
+    inputs: tuple[FloatND | IntND, ...],
+    cell_block: int,
+) -> tuple[FloatND, FloatND, FloatND, FloatND]:
+    """Run the vmapped per-cell solve over the flattened ride mesh.
+
+    A non-positive (or mesh-covering) `cell_block` solves every cell in one
+    vmap; otherwise the mesh is scanned in cell blocks so only one block's
+    candidate buffers are in flight — padding repeats the last cell and its
+    results are dropped after the scan.
+    """
+    n_cells = int(inputs[0].shape[0])
+    if cell_block <= 0 or cell_block >= n_cells:
+        return solve_cells(*inputs)
+    pad = (-n_cells) % cell_block
+
+    def to_blocks(arr: FloatND | IntND) -> FloatND | IntND:
+        padded = (
+            jnp.concatenate([arr, jnp.repeat(arr[-1:], pad, axis=0)]) if pad else arr
+        )
+        return padded.reshape(-1, cell_block, *arr.shape[1:])
+
+    blocked = jax.lax.map(
+        lambda args: solve_cells(*args), tuple(to_blocks(arr) for arr in inputs)
+    )
+
+    def from_blocks(arr: FloatND | IntND) -> FloatND | IntND:
+        return arr.reshape(-1, *arr.shape[2:])[:n_cells]
+
+    return tuple(from_blocks(arr) for arr in blocked)  # ty: ignore[invalid-return-type]
+
+
 def _build_ride_along_carry_template(
-    *, liquid_grid: Float1D, ride_shape: tuple[int, ...]
+    *, liquid_grid: Float1D, ride_shape: tuple[int, ...], n_breakpoints: int
 ) -> EGMCarry:
     """Build the all-finite case-piece carry template with ride-along axes leading.
 
@@ -3901,6 +3915,10 @@ def _build_ride_along_carry_template(
         value=jnp.zeros_like(block),
         marginal_utility=jnp.zeros_like(block),
         taste_shock_scale=jnp.asarray(0.0, dtype=liquid_grid.dtype),
+        # Same pytree as the runtime carry: a schedule regime always publishes
+        # its per-cell breakpoint preimages, so the lowering template carries
+        # the same fixed-shape (all-finite, grid-edge-benign) rows.
+        breakpoints=jnp.zeros((*ride_shape, n_breakpoints), dtype=liquid_grid.dtype),
     )
 
 

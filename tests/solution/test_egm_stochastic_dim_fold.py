@@ -107,23 +107,33 @@ def test_fold_leaves_value_function_unchanged(monkeypatch):
             )
 
 
-def test_fully_foldable_read_bypasses_the_node_loop(monkeypatch):
-    """When every stochastic dim folds, the read skips the per-node expectation.
+def test_foldable_smooth_read_bypasses_the_node_loop(monkeypatch):
+    """A foldable dim of a smooth-valued child skips the per-node expectation.
 
     The folded dims' expectation is pre-applied to the carry rows once per
-    cell, so the per-savings read is a single interpolation — the node-loop
-    machinery is never entered.
+    cell, so the per-savings read is a single interpolation. A child that
+    publishes value-jump locations keeps its node loop (the fold would
+    average across each node's cliff), so only reads of breakpoint-free
+    carries must have `income` folded away.
     """
     calls = []
     original = cont_mod._expect_over_stochastic_nodes
 
     def spy(**kwargs):
-        calls.append(kwargs["read"].stochastic_state_names)
+        calls.append(
+            (
+                kwargs["read"].stochastic_state_names,
+                kwargs["carry"].breakpoints is not None,
+            )
+        )
         return original(**kwargs)
 
     monkeypatch.setattr(cont_mod, "_expect_over_stochastic_nodes", spy)
     toy.build_model(variant="bqsegm").solve(params=toy.build_params(), log_level="off")
-    assert all("income" not in names for names in calls)
+    smooth_calls = [names for names, has_jumps in calls if not has_jumps]
+    jumped_calls = [names for names, has_jumps in calls if has_jumps]
+    assert all("income" not in names for names in smooth_calls)
+    assert all("income" in names for names in jumped_calls)
 
 
 def test_fold_refuses_topology_bearing_carries():
