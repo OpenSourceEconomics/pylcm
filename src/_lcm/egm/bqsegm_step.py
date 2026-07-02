@@ -745,19 +745,104 @@ def bqsegm_per_interval_continuation_step_savings(
         ),
     )
 
+    node_endog, node_value, node_policy, node_marginal, node_segment = (
+        _savings_node_point_candidates(
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            cont_value=cont_value,
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            marginal_utility=marginal_utility,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            coh_grid=coh_grid,
+            segment_base=float(n_padded * interval_stride),
+        )
+    )
+
     def stack(*parts: FloatND) -> Float1D:
         return jnp.concatenate([part.reshape(-1) for part in parts])
 
     value, policy, marginal = envelope_at_query(
-        endog_grid=stack(int_endog, s0_endog, smax_endog),
-        policy=stack(int_policy, s0_policy, smax_policy),
-        value=stack(int_value, s0_value, smax_value),
-        marginal=stack(int_marginal, s0_marginal, smax_marginal),
-        segment_id=stack(int_segment, s0_segment, smax_segment),
+        endog_grid=stack(int_endog, s0_endog, smax_endog, node_endog),
+        policy=stack(int_policy, s0_policy, smax_policy, node_policy),
+        value=stack(int_value, s0_value, smax_value, node_value),
+        marginal=stack(int_marginal, s0_marginal, smax_marginal, node_marginal),
+        segment_id=stack(int_segment, s0_segment, smax_segment, node_segment),
         x_query=liquid_grid,
         segment_block_size=envelope_segment_block_size,
     )
     return value, marginal, policy
+
+
+def _savings_node_point_candidates(
+    *,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    cont_value: FloatND,
+    discount_factor: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None,
+    segment_base: float,
+) -> tuple[Float1D, ...]:
+    """Build the savings-node point candidates of the per-interval merge.
+
+    At every liquid grid point, one zero-width candidate pair per post-decision
+    node: consume that point's cash-on-hand minus the node and earn the node's
+    own-interval continuation. The family is a dense Bellman floor at every
+    query point — an optimum at a continuation kink between Euler roots (where
+    the inversion has no root) is still carried — and each pair is a segment
+    the envelope brackets exactly at its own grid point, so visibility does not
+    depend on how many grid points the interval holds. Infeasible entries
+    (consumption non-positive) are NaN-dead.
+
+    Returns:
+        Tuple of the flattened pair-interleaved `(endog, value, policy,
+        marginal, segment)` columns.
+
+    """
+    interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+    point_coh = (
+        coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
+        if coh_grid is None
+        else coh_grid
+    )
+    node_consumption = point_coh[:, None] - savings_grid[None, :]
+    node_feasible = node_consumption > 0.0
+    node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
+    node_utility = jax.vmap(jax.vmap(utility_of_action))(node_consumption_safe)
+    node_value = jnp.where(
+        node_feasible,
+        node_utility + discount_factor * cont_value[interval_of_grid],
+        jnp.nan,
+    )
+    node_endog = jnp.where(
+        node_feasible,
+        jnp.broadcast_to(liquid_grid[:, None], node_consumption.shape),
+        jnp.nan,
+    )
+    node_marginal = coh_slopes[interval_of_grid][:, None] * jax.vmap(
+        jax.vmap(marginal_utility)
+    )(node_consumption_safe)
+    node_segment = segment_base + jnp.arange(
+        node_consumption.size, dtype=jnp.result_type(float)
+    ).reshape(node_consumption.shape)
+
+    def as_pairs(entries: FloatND) -> Float1D:
+        return jnp.stack([entries, entries], axis=-1).reshape(-1)
+
+    return (
+        as_pairs(node_endog),
+        as_pairs(node_value),
+        as_pairs(node_consumption_safe),
+        as_pairs(node_marginal),
+        as_pairs(node_segment),
+    )
 
 
 def bqsegm_unified_step_savings(
