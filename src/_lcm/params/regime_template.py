@@ -91,7 +91,17 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
     )
 
     _add_runtime_grid_params(function_params, user_regime)
-    _add_pseudo_function_params(function_params, user_regime)
+
+    if user_regime.taste_shocks is not None:
+        if "taste_shocks" in function_params:
+            raise InvalidNameError(
+                "The regime declares `taste_shocks`, whose scale parameter lives "
+                "under the pseudo-function name 'taste_shocks' in the params — "
+                "this conflicts with a regime function of the same name."
+            )
+        function_params["taste_shocks"] = {"scale": "float"}
+
+    _add_certainty_equivalent_params(function_params, user_regime)
 
     top_level_collisions = set(function_params) & set(per_target_params)
     if top_level_collisions:
@@ -114,36 +124,28 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
     )
 
 
-def _add_pseudo_function_params(
+def _add_certainty_equivalent_params(
     function_params: dict[FunctionName, dict[str, str]],
     user_regime: UserRegime,
 ) -> None:
-    """Add pseudo-function param entries for taste shocks and certainty equivalents.
+    """Add the certainty equivalent's params under its pseudo-function name in place.
 
-    Both `taste_shocks` and `certainty_equivalent` surface their parameters in
-    the template under a reserved pseudo-function key. A conflict with an
-    existing function name at that key is rejected.
+    The transform parameters surface in the template under the reserved
+    key `certainty_equivalent`; a regime function of that name collides
+    and is rejected.
     """
-    if user_regime.taste_shocks is not None:
-        if "taste_shocks" in function_params:
-            raise InvalidNameError(
-                "The regime declares `taste_shocks`, whose scale parameter lives "
-                "under the pseudo-function name 'taste_shocks' in the params — "
-                "this conflicts with a regime function of the same name."
-            )
-        function_params["taste_shocks"] = {"scale": "float"}
-
-    if user_regime.certainty_equivalent is not None:
-        if "certainty_equivalent" in function_params:
-            raise InvalidNameError(
-                "The regime declares `certainty_equivalent`, whose parameters "
-                "live under the pseudo-function name 'certainty_equivalent' in "
-                "the params — this conflicts with a regime function of the "
-                "same name."
-            )
-        function_params["certainty_equivalent"] = dict.fromkeys(
-            sorted(user_regime.certainty_equivalent.param_names), "float"
+    if user_regime.certainty_equivalent is None:
+        return
+    if "certainty_equivalent" in function_params:
+        raise InvalidNameError(
+            "The regime declares `certainty_equivalent`, whose parameters "
+            "live under the pseudo-function name 'certainty_equivalent' in "
+            "the params — this conflicts with a regime function of the "
+            "same name."
         )
+    function_params["certainty_equivalent"] = dict.fromkeys(
+        sorted(user_regime.certainty_equivalent.param_names), "float"
+    )
 
 
 def _add_runtime_grid_params(
