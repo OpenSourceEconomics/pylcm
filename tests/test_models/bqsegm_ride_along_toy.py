@@ -11,6 +11,9 @@ budget and continuation. The brute variant (`GridSearch`) productmaps over
 `(liquid, kind, consumption)` and is the dense agreement oracle.
 """
 
+import dataclasses
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 
 import lcm
@@ -143,6 +146,7 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
+    bqsegm_overrides: Mapping[str, object] | None = None,
 ) -> Model:
     """Create the (alive, dead) tax toy with a deterministic ride-along `kind`.
 
@@ -187,6 +191,8 @@ def build_model(
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
             post_decision_function="savings",
         )
+        if bqsegm_overrides:
+            alive_solver = dataclasses.replace(alive_solver, **bqsegm_overrides)
     else:
         msg = f"unknown variant {variant!r}; use 'brute' or 'bqsegm'."
         raise ValueError(msg)
