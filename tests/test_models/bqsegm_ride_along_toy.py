@@ -50,10 +50,15 @@ class ConsumerKind:
 
 
 def _crra(consumption: FloatND, crra: float | FloatND) -> FloatND:
+    # Clamp the inactive power branch's exponent/denominator at `crra == 1` so
+    # `jax.grad` through the `where` (the EGM marginal-utility path) stays finite;
+    # the unguarded `1/(1 - crra)` is infinite there and its zero-weighted gradient
+    # contribution turns into NaN.
+    one_minus_crra = jnp.where(crra == 1.0, 1.0, 1.0 - crra)
     return jnp.where(
         crra == 1.0,
         jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
+        consumption**one_minus_crra / one_minus_crra,
     )
 
 
