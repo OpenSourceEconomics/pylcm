@@ -3,7 +3,7 @@
 The validators and the identity transition live behind a leading underscore in
 `_lcm.user_regime_validation` and `_lcm.regime_building.transitions`. This
 module is intentionally thin: the public class definition. A non-terminal
-regime that supplies no `H` gets `lcm.aggregators.H_linear` at model build.
+regime that supplies no `H` gets `lcm.temporal_aggregation.H_linear` at model build.
 
 """
 

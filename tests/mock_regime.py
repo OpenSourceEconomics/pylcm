@@ -2,8 +2,8 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 from _lcm.grids import Grid
-from lcm.aggregators import H_linear
 from lcm.regime import Regime as UserRegime
+from lcm.temporal_aggregation import H_linear
 from lcm.typing import UserFunction
 
 

@@ -5,7 +5,7 @@ Ziebarth (2025, JPE 133(6), doi:10.1086/734781) - savings, a two-state
 health Markov chain, and health-dependent survival into a terminal `dead`
 regime - with the recursion swapped to Epstein-Zin:
 
-- `V = ((1 - b) * c^r + b * CE^r)^(1/r)` via `lcm.aggregators.H_epstein_zin`,
+- `V = ((1 - b) * c^r + b * CE^r)^(1/r)` via `lcm.temporal_aggregation.H_epstein_zin`,
 - `CE = (E[V'^(1-g)])^(1/(1-g))` via `PowerMean`.
 
 Utility is consumption itself, so values stay in (positive) consumption

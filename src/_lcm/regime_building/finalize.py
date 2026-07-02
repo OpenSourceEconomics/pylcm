@@ -17,9 +17,9 @@ from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
-from lcm.aggregators import H_linear
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.temporal_aggregation import H_linear
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
 # `lcm.regime.Regime`; internal signatures use this alias to mark values

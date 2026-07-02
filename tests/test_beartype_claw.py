@@ -31,13 +31,13 @@ from _lcm.solution.backward_induction import _log_per_period_stats
 from _lcm.state_action_space import _validate_all_states_present
 from _lcm.transition_checks import _validate_regime_transition_probs
 from lcm import AgeGrid, LinSpacedGrid, Model
-from lcm.aggregators import H_linear
 from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
     RegimeInitializationError,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.temporal_aggregation import H_linear
 
 
 def test_claw_checks_lcm_simulation() -> None:
