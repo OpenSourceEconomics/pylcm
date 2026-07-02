@@ -55,6 +55,15 @@ class EGMCarry:
     taste_shock_scale: ScalarFloat
     """EV1 taste-shock scale of the regime as a 0-d array; `0.0` = hard max."""
 
+    breakpoints: FloatND | None = None
+    """Per-row value-jump locations in the child's liquid state, NaN-padded.
+
+    Published only by solvers whose value rows carry declared jumps (a BQSEGM
+    schedule regime); `None` for smooth-valued regimes. A parent's carry
+    reader must not interpolate `value` across these points — it reads each
+    query from its own side (`interp_across_breakpoints`).
+    """
+
 
 # Pytree registration with an `__init__`-bypassing unflatten: JAX's transform
 # and AOT-lowering machinery reconstructs pytrees with non-array leaves
@@ -65,6 +74,7 @@ _EGM_CARRY_FIELDS = (
     "value",
     "marginal_utility",
     "taste_shock_scale",
+    "breakpoints",
 )
 
 
