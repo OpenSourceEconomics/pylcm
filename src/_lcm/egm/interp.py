@@ -77,6 +77,59 @@ def interp_on_padded_grid(
     )
 
 
+def interp_across_breakpoints(
+    *,
+    queries: Float1D,
+    grid: Float1D,
+    values: Float1D,
+    breakpoints: Float1D,
+) -> Float1D:
+    """Interpolate linearly without averaging across declared value jumps.
+
+    The values are smooth on each side of every breakpoint but may jump across
+    it. Each query's stencil is restricted to grid points on the query's own
+    side of the breakpoints:
+
+    - both bracketing grid points on the query's side ⇒ ordinary linear
+      interpolation between them;
+    - the bracketing segment straddles a breakpoint ⇒ one-sided extrapolation
+      from the query's own side's boundary segment (the nearest two grid
+      points fully inside its interval).
+
+    Each breakpoint interval is assumed to contain at least two grid points;
+    a sparser interval falls back to whatever segment the shift reaches.
+
+    Args:
+        queries: Points at which to read the values.
+        grid: Ascending sample grid.
+        values: Values at the grid points, jump-discontinuous only at the
+            breakpoints.
+        breakpoints: Ascending jump locations partitioning the grid's span.
+
+    Returns:
+        The side-faithful linear read at each query.
+
+    """
+    query_interval = jnp.searchsorted(breakpoints, queries, side="right")
+    grid_interval = jnp.searchsorted(breakpoints, grid, side="right")
+    n_points = grid.shape[0]
+    hi = jnp.clip(jnp.searchsorted(grid, queries, side="right"), 1, n_points - 1)
+    lo = hi - 1
+    lo_on_side = grid_interval[lo] == query_interval
+    hi_on_side = grid_interval[hi] == query_interval
+    # Query below the breakpoint with `hi` beyond it: step the segment left.
+    lo_shifted = jnp.clip(jnp.where(hi_on_side, lo, lo - 1), 0, n_points - 1)
+    hi_shifted = jnp.where(hi_on_side, hi, lo)
+    # Query above the breakpoint with `lo` before it: step the segment right.
+    lo_final = jnp.where(lo_on_side, lo_shifted, hi)
+    hi_final = jnp.where(lo_on_side, hi_shifted, jnp.clip(hi + 1, 0, n_points - 1))
+    x0, x1 = grid[lo_final], grid[hi_final]
+    y0, y1 = values[lo_final], values[hi_final]
+    span = jnp.where(x1 > x0, x1 - x0, 1.0)
+    slope = jnp.where(x1 > x0, (y1 - y0) / span, 0.0)
+    return y0 + slope * (queries - x0)
+
+
 def prepare_padded_grid(xp: Float1D) -> tuple[Float1D, ScalarInt]:
     """Build a NaN-padded grid row's search key and valid prefix length.
 
