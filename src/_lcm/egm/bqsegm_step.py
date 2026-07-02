@@ -471,6 +471,7 @@ def bqsegm_per_interval_continuation_step_savings(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     coh_grid: Float1D | None = None,
+    envelope_segment_block_size: int = 0,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a budget whose continuation differs per liquid interval.
 
@@ -509,6 +510,11 @@ def bqsegm_per_interval_continuation_step_savings(
             cash-on-hand extrapolate below zero. When `None`, the corners fall back to
             the per-interval affine budget — exact whenever the budget is smooth across
             the whole interval.
+        envelope_segment_block_size: Streams the merged upper envelope over
+            candidate-segment blocks of this size instead of materialising the full
+            `(n_query, n_segment)` bracket matrix; `0` keeps the one-shot dense
+            envelope. The result is identical either way — the knob trades peak
+            memory against a sequential scan.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -701,6 +707,7 @@ def bqsegm_per_interval_continuation_step_savings(
         marginal=stack(int_marginal, s0_marginal, smax_marginal),
         segment_id=stack(int_segment, s0_segment, smax_segment),
         x_query=liquid_grid,
+        segment_block_size=envelope_segment_block_size,
     )
     return value, marginal, policy
 

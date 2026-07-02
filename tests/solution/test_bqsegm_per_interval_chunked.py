@@ -107,3 +107,27 @@ def test_chunk_size_is_a_small_positive_constant():
     """The chunk size is a small, tunable module-level constant of at least two."""
     assert isinstance(_CHUNK_SIZE, int)
     assert 2 <= _CHUNK_SIZE <= 16
+
+
+@pytest.mark.parametrize("envelope_segment_block_size", [1, 7, 64])
+def test_value_is_invariant_to_envelope_segment_blocking(envelope_segment_block_size):
+    """The merged value/marginal/policy does not depend on envelope blocking.
+
+    `envelope_segment_block_size` streams the query envelope over candidate-segment
+    blocks instead of materialising the full `(n_query, n_segment)` bracket matrix;
+    the reduction is associative, so the result is identical to the unblocked
+    envelope for any block size.
+    """
+    inputs = _build_inputs(n_intervals=8)
+    ref = bqsegm_per_interval_continuation_step_savings(**inputs)
+    blocked = bqsegm_per_interval_continuation_step_savings(
+        **inputs, envelope_segment_block_size=envelope_segment_block_size
+    )
+    for reference, candidate in zip(ref, blocked, strict=True):
+        np.testing.assert_allclose(
+            np.asarray(candidate),
+            np.asarray(reference),
+            atol=1e-6,
+            rtol=1e-6,
+            equal_nan=True,
+        )

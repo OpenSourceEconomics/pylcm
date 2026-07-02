@@ -1505,6 +1505,15 @@ class BQSEGM(Solver):
     `DCEGM.stochastic_node_batch_size`; raise it when the joint node mesh dominates
     the per-cell memory budget.
     """
+    envelope_segment_block_size: int = 0
+    """Block size for streaming the merged upper envelope over candidate segments.
+
+    The per-interval envelope brackets every candidate segment against every liquid
+    query point; `0` materialises that matrix in one pass, a positive block size
+    streams it in blocks of that many segments (identical result, smaller peak
+    intermediate). Raise it when the candidate set — intervals x savings nodes plus
+    corners, per ride cell — dominates the per-cell memory budget.
+    """
 
     @property
     def requires_continuation_carries(self) -> bool:
@@ -1729,6 +1738,7 @@ class BQSEGM(Solver):
                     savings_grid=savings_grid,
                     schedule_spec=schedule_spec,
                     continuation_plan=plan,
+                    envelope_segment_block_size=self.envelope_segment_block_size,
                 )
                 continuation_core = _build_bqsegm_continuation_core(
                     savings_grid=savings_grid,
@@ -3199,6 +3209,9 @@ class _BQSEGMRideAlongStatics:
     """Number of liquid intervals the breakpoints split each cell into (N + 1)."""
     n_savings: int
     """Length of the post-decision savings grid."""
+    envelope_segment_block_size: int
+    """Block size for streaming the merged upper envelope over candidate segments;
+    `0` keeps the one-shot dense envelope (see `BQSEGM.envelope_segment_block_size`)."""
 
     def n_ride_cells(self, *, states: Mapping[str, object]) -> int:
         """Number of flattened ride-along cells for the given state grids."""
@@ -3213,6 +3226,7 @@ def _bqsegm_ride_along_statics(
     savings_grid: Float1D,
     schedule_spec: _BQSEGMScheduleSpec,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    envelope_segment_block_size: int = 0,
 ) -> _BQSEGMRideAlongStatics:
     """Derive the static config the ride-along continuation and envelope cores share.
 
@@ -3306,6 +3320,7 @@ def _bqsegm_ride_along_statics(
         discount_state_names=discount_state_names,
         n_intervals=len(sources) + 1,
         n_savings=int(savings_grid.shape[0]),
+        envelope_segment_block_size=envelope_segment_block_size,
     )
 
 
@@ -3586,6 +3601,7 @@ def _build_bqsegm_envelope_core(
                     coh_intercepts=coh_intercepts,
                     breakpoints=breakpoints,
                     coh_grid=coh_grid,
+                    envelope_segment_block_size=statics.envelope_segment_block_size,
                 )
 
             return _solve_ride_along_cell_step(
