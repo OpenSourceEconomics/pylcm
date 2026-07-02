@@ -79,3 +79,44 @@ def test_value_is_invariant_to_envelope_cell_blocking():
                 rtol=1e-10,
                 err_msg=f"period={period} block_size={block_size}",
             )
+
+
+def test_bqsegm_matches_brute_with_per_kind_utility_curvature():
+    """Per-`kind` CRRA routed through a DAG node yields brute-level accuracy.
+
+    Each ride-along slice carries its own utility curvature
+    (`crra_of_kind = crra_by_kind[kind]`), so the Euler inversion and the value
+    assembly must both use the cell's own coefficient; using another slice's
+    curvature would shift the whole value function.
+    """
+    bqsegm_model = toy.build_model(
+        variant="bqsegm",
+        per_kind_crra=True,
+        n_liquid=120,
+        liquid_max=30.0,
+        n_savings=180,
+        savings_max=28.0,
+    )
+    brute_model = toy.build_model(
+        variant="brute",
+        per_kind_crra=True,
+        n_liquid=120,
+        liquid_max=30.0,
+        n_consumption=1500,
+    )
+    params = toy.build_params(per_kind_crra=True)
+    bqsegm = bqsegm_model.solve(params=params, log_level="off")
+    brute = brute_model.solve(params=params, log_level="off")
+    for period in brute:
+        if "alive" not in brute[period] or "alive" not in bqsegm[period]:
+            continue
+        brute_v = np.asarray(brute[period]["alive"])
+        bqsegm_v = np.asarray(bqsegm[period]["alive"])
+        for kind in range(brute_v.shape[0]):
+            np.testing.assert_allclose(
+                bqsegm_v[kind, _INTERIOR],
+                brute_v[kind, _INTERIOR],
+                atol=2e-2,
+                rtol=5e-3,
+                err_msg=f"period={period} kind={kind}",
+            )

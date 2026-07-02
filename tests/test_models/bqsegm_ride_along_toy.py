@@ -67,6 +67,21 @@ def bequest(liquid: ContinuousState, crra: float) -> FloatND:
     return _crra(liquid, crra)
 
 
+def crra_of_kind(kind: DiscreteState, crra_by_kind: FloatND) -> FloatND:
+    """Per-kind CRRA coefficient read off the ride-along `kind` code."""
+    return crra_by_kind[kind]
+
+
+def utility_per_kind(consumption: ContinuousAction, crra_of_kind: FloatND) -> FloatND:
+    """CRRA consumption utility whose curvature differs across `kind` slices.
+
+    Stands in for a model whose utility parameters are indexed by a ride-along
+    preference type through an intermediate DAG node, so the Euler inversion
+    must use each cell's own curvature.
+    """
+    return _crra(consumption, crra_of_kind)
+
+
 def discount_factor(kind: DiscreteState, discount_factor_by_kind: FloatND) -> FloatND:
     """Per-kind subjective discount factor read off the ride-along `kind` code.
 
@@ -140,6 +155,7 @@ def build_model(
     *,
     variant: str = "brute",
     per_kind_discount: bool = False,
+    per_kind_crra: bool = False,
     n_periods: int = 4,
     n_liquid: int = 120,
     n_consumption: int = 150,
@@ -170,6 +186,14 @@ def build_model(
     liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
 
     alive_functions = {"utility": utility, "tax": tax, "coh": coh}
+    if per_kind_crra:
+        # Route the utility curvature through a DAG node indexed by the
+        # ride-along `kind`, exercising per-cell utility parameters.
+        alive_functions = {
+            **alive_functions,
+            "utility": utility_per_kind,
+            "crra_of_kind": crra_of_kind,
+        }
     if per_kind_discount:
         # Drive the discount factor off the ride-along `kind` code so the Euler
         # weight differs across slices, exercising DAG-resolved discounting.
@@ -235,6 +259,9 @@ def build_params(
     *,
     discount_factor: float = 0.95,
     per_kind_discount: bool = False,
+    per_kind_crra: bool = False,
+    crra_lo: float = 3.0,
+    crra_hi: float = 1.5,
     discount_factor_lo: float = 0.90,
     discount_factor_hi: float = 0.97,
     crra: float = 2.0,
@@ -266,9 +293,14 @@ def build_params(
         if per_kind_discount
         else {"H": {"discount_factor": discount_factor}}
     )
+    utility_slot = (
+        {"crra_of_kind": {"crra_by_kind": jnp.array([crra_lo, crra_hi])}}
+        if per_kind_crra
+        else {"utility": {"crra": crra}}
+    )
     return {
         "alive": {
-            "utility": {"crra": crra},
+            **utility_slot,
             **discount_slot,
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
             "coh": {"base_income": base_income},
