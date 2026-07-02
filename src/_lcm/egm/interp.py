@@ -123,6 +123,13 @@ def interp_across_breakpoints(
     # Query above the breakpoint with `lo` before it: step the segment right.
     lo_final = jnp.where(lo_on_side, lo_shifted, hi)
     hi_final = jnp.where(lo_on_side, hi_shifted, jnp.clip(hi + 1, 0, n_points - 1))
+    # A shifted endpoint can itself sit beyond a *second* breakpoint (a sparse
+    # interval with fewer than two grid nodes). Collapse any off-side endpoint
+    # onto the own-side one, degrading to a constant own-side read.
+    lo_ok = grid_interval[lo_final] == query_interval
+    hi_ok = grid_interval[hi_final] == query_interval
+    lo_final = jnp.where(lo_ok, lo_final, hi_final)
+    hi_final = jnp.where(hi_ok, hi_final, lo_final)
     x0, x1 = grid[lo_final], grid[hi_final]
     y0, y1 = values[lo_final], values[hi_final]
     span = jnp.where(x1 > x0, x1 - x0, 1.0)
