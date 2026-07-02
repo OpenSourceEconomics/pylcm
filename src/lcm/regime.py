@@ -28,6 +28,7 @@ from _lcm.user_regime_validation import (
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
 )
+from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import GridSearch, Solver
@@ -163,6 +164,16 @@ class Regime:
     `{"taste_shocks": {"scale": ...}}` and the solve aggregates discrete
     actions via the smoothed expected maximum instead of the hard maximum.
     Requires at least one discrete action.
+    """
+
+    certainty_equivalent: CertaintyEquivalent | None = None
+    """Nonlinear certainty equivalent over the next-period value distribution.
+
+    When set, the solve aggregates the continuation as
+    `g⁻¹(Σ_r p_r · E_w[g(V')])` instead of the linear expectation, and the
+    transform parameters become runtime params under the pseudo-function
+    name `certainty_equivalent`. Only non-terminal regimes solved by
+    `GridSearch` support it.
     """
 
     description: str = ""
