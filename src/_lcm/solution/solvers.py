@@ -1636,6 +1636,18 @@ class BQSEGM(Solver):
             else None
         )
         if schedule_spec is not None and schedule_spec.ride_along_state_names:
+            if context.state_action_space.discrete_actions:
+                msg = (
+                    "BQSEGM's schedule+ride-along path solves one continuous "
+                    "consumption problem per ride cell and carries no envelope "
+                    "over discrete actions; the regime "
+                    f"{context.regime_name!r} declares the discrete action(s) "
+                    f"{tuple(context.state_action_space.discrete_actions)}, "
+                    "which would be silently ignored. Fix each such action in "
+                    "the regime's functions (and drop it from `actions`), or "
+                    "use a solver that aggregates discrete branches."
+                )
+                raise RegimeInitializationError(msg)
             return self._build_ride_along_kernels(
                 context=context,
                 savings_grid=savings_grid,

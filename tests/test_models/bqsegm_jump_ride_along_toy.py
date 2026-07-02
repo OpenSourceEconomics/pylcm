@@ -13,6 +13,7 @@ continuation. The brute variant (`GridSearch`) productmaps over
 """
 
 import jax.numpy as jnp
+from dags import with_signature
 
 import lcm
 from lcm import (
@@ -139,6 +140,7 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 200,
     savings_max: float = 28.0,
+    extra_actions: dict | None = None,
 ) -> Model:
     """Create the (alive, dead) toy whose subsidy cliff lives on derived income.
 
@@ -189,14 +191,25 @@ def build_model(
         actions={
             "consumption": LinSpacedGrid(
                 start=0.1, stop=liquid_max, n_points=n_consumption
-            )
+            ),
+            **(extra_actions or {}),
         },
         states={"liquid": liquid_grid, "kind": DiscreteGrid(ConsumerKind)},
         state_transitions={
             "liquid": {"alive": liquid_law, "dead": liquid_law},
             "kind": {"alive": lcm.fixed_transition("kind")},
         },
-        constraints=constraints,
+        constraints={
+            **constraints,
+            # Each extra action gets a discrete-only consumer so the model's
+            # unused-variable gate passes and the action reaches the solver.
+            **{
+                f"{name}_nonnegative": with_signature(args=[name])(
+                    lambda *values: values[0] >= 0
+                )
+                for name in (extra_actions or {})
+            },
+        },
         transition={
             "alive": MarkovTransition(prob_stay_alive),
             "dead": MarkovTransition(prob_die),
