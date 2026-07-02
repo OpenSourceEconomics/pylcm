@@ -114,6 +114,10 @@ def get_model(
 ) -> Model:
     """Create the Epstein-Zin lifecycle model with health-dependent mortality.
 
+    Args:
+        certainty_equivalent: Certainty equivalent specification for the expectation.
+            Pass `None` to use the linear-expectation (expected-utility) recursion.
+
     Returns:
         A configured Model instance.
 

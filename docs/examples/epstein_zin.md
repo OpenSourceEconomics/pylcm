@@ -83,6 +83,7 @@ for risk_aversion in [0.5, 5.0]:
     result = model.simulate(
         params=params,
         initial_conditions={
+            "age": jnp.full(n_subjects, 60.0),
             "wealth": jnp.linspace(1.0, 20.0, n_subjects),
             "health": jnp.full(n_subjects, HealthStatus.good, dtype=jnp.int32),
             "regime_id": jnp.full(n_subjects, EzRegimeId.alive, dtype=jnp.int32),

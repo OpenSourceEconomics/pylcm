@@ -76,10 +76,12 @@ class TransformedExpectation(CertaintyEquivalent):
 
 
 def _power_transform(value: FloatND, risk_aversion: FloatND) -> FloatND:
+    """Apply `g(v) = v^(1 - risk_aversion)`."""
     return value ** (1.0 - risk_aversion)
 
 
 def _power_inverse(value: FloatND, risk_aversion: FloatND) -> FloatND:
+    """Apply `g^(-1)(v) = v^(1 / (1 - risk_aversion))`."""
     return value ** (1.0 / (1.0 - risk_aversion))
 
 
