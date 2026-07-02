@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.regime_building.Q_and_F import (
     _apply_continuation_operator,
     _invert_joint,
@@ -239,3 +240,25 @@ def test_supplying_only_one_transform_is_rejected():
             ages=ages,
             regime_id_class=stochastic.RegimeId,
         ).solve(params=stochastic.get_params(n_periods), log_level="off")
+
+
+def test_transform_and_average_accepts_mapping_leaf_payload_entries():
+    """A flat-param payload may carry `MappingLeaf` entries the transform ignores.
+
+    Carry producers forward the full flat regime-params payload, which includes
+    qualified schedule params stored as `MappingLeaf` (e.g. a tax table). The
+    averaging seam reads only the transform's own arguments, so unrelated leaf
+    entries must pass through without a type violation.
+    """
+    values = jnp.array([1.0, 2.0, 3.0])
+    weights = jnp.array([0.2, 0.3, 0.5])
+    payload = {
+        "some_schedule__threshold": MappingLeaf({"lower": jnp.array([1.0, 2.0])}),
+    }
+    result = _transform_and_average(
+        values=values,
+        weights=weights,
+        value_transform=None,
+        params=payload,
+    )
+    np.testing.assert_allclose(np.asarray(result), 2.3, atol=1e-12)

@@ -5,6 +5,8 @@ from typing import Any, cast
 import jax.numpy as jnp
 from dags import concatenate_functions, get_ancestors, with_signature
 
+from _lcm.params.mapping_leaf import MappingLeaf
+from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -310,7 +312,7 @@ def _transform_and_average(
     values: FloatND,
     weights: FloatND,
     value_transform: Callable[..., FloatND] | None,
-    params: Mapping[str, FloatND | IntND | BoolND],
+    params: Mapping[str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf],
 ) -> FloatND:
     """Average the (optionally transformed) value over one target's stochastic lottery.
 
@@ -337,7 +339,7 @@ def _invert_joint(
     transformed: FloatND,
     *,
     inverse_value_transform: Callable[..., FloatND] | None,
-    params: Mapping[str, FloatND | IntND | BoolND],
+    params: Mapping[str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf],
 ) -> FloatND:
     """Apply `g_inv` once to the regime-mixed transformed continuation, or identity.
 
@@ -361,7 +363,7 @@ def _apply_continuation_operator(
     weights: FloatND,
     value_transform: Callable[..., FloatND] | None,
     inverse_value_transform: Callable[..., FloatND] | None,
-    params: Mapping[str, FloatND | IntND | BoolND],
+    params: Mapping[str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf],
 ) -> FloatND:
     """The single-lottery certainty equivalent `g_inv(E[g(V)])` (or the mean).
 
