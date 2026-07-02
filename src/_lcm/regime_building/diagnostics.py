@@ -16,6 +16,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
 from _lcm.regime_building.Q_and_F import get_compute_intermediates, get_period_targets
@@ -33,7 +34,6 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from lcm.ages import AgeGrid
-from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.typing import BoolND, FloatND, IntND
 
 

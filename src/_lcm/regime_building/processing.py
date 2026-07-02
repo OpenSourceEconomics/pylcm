@@ -12,6 +12,7 @@ from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.engine import (
     Regime,
@@ -77,7 +78,6 @@ from _lcm.variables import (
     simulate_variables_from_regime,
 )
 from lcm.ages import AgeGrid
-from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import Solver

@@ -7,6 +7,7 @@ from typing import Literal, cast
 import jax
 from jax import Array
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import (
@@ -28,7 +29,6 @@ from _lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from _lcm.utils.containers import first_non_none
-from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import PyLCMError
 from lcm.typing import (
     Bool1D,

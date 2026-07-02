@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
 from _lcm.typing import (
@@ -26,7 +27,6 @@ from _lcm.typing import (
     StateName,
     StateOrActionName,
 )
-from lcm.certainty_equivalent import CertaintyEquivalent
 
 
 @dataclass(frozen=True, kw_only=True)

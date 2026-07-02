@@ -5,7 +5,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 
-from _lcm.certainty_equivalent import resolve_certainty_equivalent
+from _lcm.certainty_equivalent import CertaintyEquivalent, resolve_certainty_equivalent
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -26,7 +26,6 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.typing import BoolND, Float1D, FloatND, IntND
 
 
