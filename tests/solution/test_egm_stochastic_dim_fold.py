@@ -22,9 +22,7 @@ from tests.conftest import X64_ENABLED
 from tests.solution import test_egm_process_states as dcegm_fixture
 from tests.test_models import bqsegm_stochastic_node_toy as toy
 
-_TOLERANCE = (
-    {"rtol": 1e-9, "atol": 1e-9} if X64_ENABLED else {"rtol": 1e-4, "atol": 1e-4}
-)
+_TOL = 1e-9 if X64_ENABLED else 1e-4
 
 
 def _capture_child_reads(monkeypatch, solve) -> list:
@@ -99,6 +97,7 @@ def test_fold_leaves_value_function_unchanged(monkeypatch):
             np.testing.assert_allclose(
                 np.asarray(folded[period][regime_name]),
                 np.asarray(unfolded[period][regime_name]),
+                rtol=_TOL,
+                atol=_TOL,
                 err_msg=f"period={period} regime={regime_name}",
-                **_TOLERANCE,
             )
