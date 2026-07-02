@@ -401,6 +401,19 @@ def build_continuation_plan(
     )
 
 
+def _fold_is_topology_safe(*, carry: EGMCarry) -> bool:
+    """Whether the per-dim stochastic fold may consume this carry.
+
+    Folding value rows across stochastic nodes and then reading the folded
+    row equals the expectation of per-node reads only for smooth rows. A
+    carry publishing value-jump locations (`breakpoints`) can have
+    node-specific jump preimages, and averaging rows across nodes would
+    interpolate across each node's cliff — so topology-bearing carries are
+    excluded from folding until the fold merges topologies explicitly.
+    """
+    return carry.breakpoints is None
+
+
 def _fold_stochastic_dims(
     *,
     read: _ChildRead,
@@ -544,7 +557,7 @@ def _get_child_carry_reader(
     if read.weights_func is not None:
         weights = read.weights_func(**combo_pool)
         weight_vecs = tuple(weights[key] for key in read.weight_keys)
-    if any(read.foldable_stochastic_flags):
+    if any(read.foldable_stochastic_flags) and _fold_is_topology_safe(carry=carry):
         read, carry, stochastic_node_values, weight_vecs = _fold_stochastic_dims(
             read=read,
             carry=carry,
