@@ -49,7 +49,7 @@ class ConsumerKind:
     hi: ScalarInt
 
 
-def _crra(consumption: FloatND, crra: float) -> FloatND:
+def _crra(consumption: FloatND, crra: float | FloatND) -> FloatND:
     return jnp.where(
         crra == 1.0,
         jnp.log(consumption),
