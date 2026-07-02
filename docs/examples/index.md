@@ -13,7 +13,7 @@ models live in the `lcm_examples` package and can be imported directly.
 1. **[Mortality](mortality.md)** — `lcm_examples.mortality` 3-regime model with death.
    Discrete labor, borrowing constraint.
 
-1. **[Epstein–Zin Lifecycle](epstein_zin.md)** — `lcm_examples.epstein_zin` 2-regime
+1. **[Epstein–Zin Lifecycle](epstein_zin.ipynb)** — `lcm_examples.epstein_zin` 2-regime
    model with health shocks, mortality, and Epstein–Zin preferences.
 
 1. **[Iskhakov et al. (2017)](iskhakov_et_al_2017.md)** —
