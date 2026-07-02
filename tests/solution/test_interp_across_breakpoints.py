@@ -16,6 +16,7 @@ import numpy as np
 from _lcm.egm.interp import (
     interp_across_breakpoints,
     interp_across_breakpoints_on_prepared_grid,
+    interp_on_prepared_grid,
     prepare_padded_grid,
 )
 
@@ -82,3 +83,39 @@ def test_padded_row_read_is_side_faithful():
     )(jnp.array([4.9, 5.1, 3.0, 7.0]))
 
     np.testing.assert_allclose(np.asarray(read), [4.9, -94.9, 3.0, -93.0], atol=1e-6)
+
+
+def test_padded_row_read_keeps_hermite_accuracy_away_from_jumps():
+    """Away from every breakpoint, the jumped-row read equals the Hermite read.
+
+    A curved row read linearly is biased between nodes; the side-faithful
+    read must not pay that bias where its bracket never touches a jump, so
+    given the row's slopes it reproduces the Hermite interpolant there.
+    """
+    xp = jnp.array([1.0, 2.0, 3.0, 4.0, 9.0, 10.0, jnp.nan, jnp.nan])
+    fp = jnp.where(xp < 5.0, -(xp**-1.0), 50.0 - (xp**-1.0))
+    slopes = xp**-2.0
+    search_grid, valid_length = prepare_padded_grid(xp)
+
+    smooth_query = jnp.asarray(2.5)
+    hermite = interp_on_prepared_grid(
+        x_query=smooth_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=slopes,
+    )
+    side_faithful = interp_across_breakpoints_on_prepared_grid(
+        x_query=smooth_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=slopes,
+        breakpoints=jnp.array([5.0]),
+    )
+    linear = jnp.interp(smooth_query, xp[:6], fp[:6])
+
+    np.testing.assert_allclose(float(side_faithful), float(hermite), atol=1e-9)
+    assert abs(float(hermite) - float(linear)) > 1e-3

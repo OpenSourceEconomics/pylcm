@@ -145,6 +145,7 @@ def interp_across_breakpoints_on_prepared_grid(
     xp: Float1D,
     fp: Float1D,
     breakpoints: Float1D,
+    fp_slopes: Float1D | None = None,
 ) -> ScalarFloat:
     """Read one NaN-padded row at a query without averaging across jumps.
 
@@ -154,6 +155,13 @@ def interp_across_breakpoints_on_prepared_grid(
     — shifting off the straddling segment and collapsing onto the own-side
     endpoint where the side holds fewer than two nodes.
 
+    With `fp_slopes`, brackets whose two endpoints both lie on the query's
+    side keep the cubic Hermite read (`interp_on_prepared_grid`) — a curved
+    row read linearly is biased between nodes and the bias compounds across
+    backward induction — while jump-adjacent brackets stay side-faithful
+    linear, where a Hermite correction would consume jump-contaminated
+    slopes.
+
     Args:
         x_query: The query point.
         search_grid: The row's `+inf`-padded search key from
@@ -162,9 +170,11 @@ def interp_across_breakpoints_on_prepared_grid(
         xp: The NaN-padded, weakly ascending abscissae row.
         fp: Values at `xp`, jump-discontinuous only at the breakpoints.
         breakpoints: Ascending jump locations partitioning the row's span.
+        fp_slopes: Derivatives of `fp` at the `xp` nodes, NaN-padded in
+            lockstep; `None` keeps every bracket linear.
 
     Returns:
-        The side-faithful linear read at the query.
+        The side-faithful read at the query.
 
     """
     last = jnp.maximum(valid_length - 1, 1)
@@ -189,7 +199,19 @@ def interp_across_breakpoints_on_prepared_grid(
     y0, y1 = fp[lo_final], fp[hi_final]
     span = jnp.where(x1 > x0, x1 - x0, 1.0)
     slope = jnp.where(x1 > x0, (y1 - y0) / span, 0.0)
-    return y0 + slope * (x_query - x0)
+    side_faithful = y0 + slope * (x_query - x0)
+    if fp_slopes is None:
+        return side_faithful
+    bracket_is_clean = lo_on_side & hi_on_side
+    hermite = interp_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+    return jnp.where(bracket_is_clean, hermite, side_faithful)
 
 
 def prepare_padded_grid(xp: Float1D) -> tuple[Float1D, ScalarInt]:

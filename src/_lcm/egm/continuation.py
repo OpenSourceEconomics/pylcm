@@ -1048,9 +1048,10 @@ def _aggregate_child_choices(
             search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
         )
     else:
-        # The child's value jumps at its published breakpoint preimages, so the
-        # value read is side-faithful linear there: a Hermite correction would
-        # feed jump-contaminated slopes into the straddling segments.
+        # The child's value jumps at its published breakpoint preimages, so
+        # jump-adjacent brackets read side-faithful linear (a Hermite
+        # correction there would consume jump-contaminated slopes) while
+        # clean brackets keep the cubic Hermite read.
         breakpoint_block = carry.breakpoints[child_index]
         breakpoint_rows = jnp.broadcast_to(
             breakpoint_block, (*block_shape, breakpoint_block.shape[-1])
@@ -1061,6 +1062,7 @@ def _aggregate_child_choices(
             valid_length: ScalarInt,
             xp: Float1D,
             fp: Float1D,
+            fp_slopes: Float1D,
             row_breakpoints: Float1D,
             x_query: ScalarFloat,
         ) -> ScalarFloat:
@@ -1071,6 +1073,7 @@ def _aggregate_child_choices(
                 valid_length=valid_length,
                 xp=xp,
                 fp=fp,
+                fp_slopes=fp_slopes,
                 breakpoints=row_breakpoints,
             )
 
@@ -1079,6 +1082,7 @@ def _aggregate_child_choices(
             valid_rows,
             grid_rows,
             value_rows,
+            marginal_rows,
             breakpoint_rows,
             queries_flat,
         )
