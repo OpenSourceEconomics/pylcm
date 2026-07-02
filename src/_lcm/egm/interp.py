@@ -137,6 +137,61 @@ def interp_across_breakpoints(
     return y0 + slope * (queries - x0)
 
 
+def interp_across_breakpoints_on_prepared_grid(
+    *,
+    x_query: ScalarFloat,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    breakpoints: Float1D,
+) -> ScalarFloat:
+    """Read one NaN-padded row at a query without averaging across jumps.
+
+    The padded-row counterpart of `interp_across_breakpoints`: the bracket is
+    located on the prepared search key and clamped to the row's valid prefix,
+    then the stencil is restricted to the query's own side of the breakpoints
+    — shifting off the straddling segment and collapsing onto the own-side
+    endpoint where the side holds fewer than two nodes.
+
+    Args:
+        x_query: The query point.
+        search_grid: The row's `+inf`-padded search key from
+            `prepare_padded_grid`.
+        valid_length: The row's valid prefix length.
+        xp: The NaN-padded, weakly ascending abscissae row.
+        fp: Values at `xp`, jump-discontinuous only at the breakpoints.
+        breakpoints: Ascending jump locations partitioning the row's span.
+
+    Returns:
+        The side-faithful linear read at the query.
+
+    """
+    last = jnp.maximum(valid_length - 1, 1)
+    hi = jnp.clip(jnp.searchsorted(search_grid, x_query, side="right"), 1, last)
+    lo = hi - 1
+    query_interval = jnp.searchsorted(breakpoints, x_query, side="right")
+
+    def node_interval(index: ScalarInt) -> ScalarInt:
+        return jnp.searchsorted(breakpoints, xp[index], side="right")
+
+    lo_on_side = node_interval(lo) == query_interval
+    hi_on_side = node_interval(hi) == query_interval
+    lo_shifted = jnp.clip(jnp.where(hi_on_side, lo, lo - 1), 0, last)
+    hi_shifted = jnp.where(hi_on_side, hi, lo)
+    lo_final = jnp.where(lo_on_side, lo_shifted, hi)
+    hi_final = jnp.where(lo_on_side, hi_shifted, jnp.clip(hi + 1, 0, last))
+    lo_ok = node_interval(lo_final) == query_interval
+    hi_ok = node_interval(hi_final) == query_interval
+    lo_final = jnp.where(lo_ok, lo_final, hi_final)
+    hi_final = jnp.where(hi_ok, hi_final, lo_final)
+    x0, x1 = xp[lo_final], xp[hi_final]
+    y0, y1 = fp[lo_final], fp[hi_final]
+    span = jnp.where(x1 > x0, x1 - x0, 1.0)
+    slope = jnp.where(x1 > x0, (y1 - y0) / span, 0.0)
+    return y0 + slope * (x_query - x0)
+
+
 def prepare_padded_grid(xp: Float1D) -> tuple[Float1D, ScalarInt]:
     """Build a NaN-padded grid row's search key and valid prefix length.
 

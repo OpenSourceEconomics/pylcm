@@ -25,7 +25,11 @@ _EDGE = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 @pytest.mark.xfail(
     strict=True,
-    reason="continuation reader interpolates linearly across the child's jump",
+    reason=(
+        "the optimal save-to-cliff action can fall between savings nodes; "
+        "closing this needs an explicit candidate at each child breakpoint "
+        "preimage in savings space"
+    ),
 )
 def test_recurring_jump_period_matches_brute_with_side_faithful_read():
     """Deep-period BQSEGM equals dense brute across each slice's cliff."""

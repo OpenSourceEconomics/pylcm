@@ -9,10 +9,15 @@ queries between the breakpoint and the first grid point beyond it extrapolate
 one-sidedly from their own side's boundary segment.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm.interp import interp_across_breakpoints
+from _lcm.egm.interp import (
+    interp_across_breakpoints,
+    interp_across_breakpoints_on_prepared_grid,
+    prepare_padded_grid,
+)
 
 
 def test_queries_near_a_jump_read_their_own_side():
@@ -52,3 +57,28 @@ def test_sparse_interval_never_reads_across_a_second_breakpoint():
     )
 
     np.testing.assert_allclose(np.asarray(read), [100.0], atol=1e-6)
+
+
+def test_padded_row_read_is_side_faithful():
+    """The NaN-padded-row variant reads each query from its own side.
+
+    Same jumped values as the clean-grid case, on a row with a NaN tail: the
+    query below the breakpoint must not blend the above-side node into its
+    read, and the padding must stay inert.
+    """
+    xp = jnp.array([0.0, 2.0, 4.0, 6.0, 8.0, 10.0, jnp.nan, jnp.nan])
+    fp = jnp.where(xp < 5.0, xp, xp - 100.0)
+    search_grid, valid_length = prepare_padded_grid(xp)
+
+    read = jax.vmap(
+        lambda x: interp_across_breakpoints_on_prepared_grid(
+            x_query=x,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=xp,
+            fp=fp,
+            breakpoints=jnp.array([5.0]),
+        )
+    )(jnp.array([4.9, 5.1, 3.0, 7.0]))
+
+    np.testing.assert_allclose(np.asarray(read), [4.9, -94.9, 3.0, -93.0], atol=1e-6)

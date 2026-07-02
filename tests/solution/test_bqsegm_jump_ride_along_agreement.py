@@ -79,15 +79,16 @@ def test_bqsegm_jump_matches_brute_across_the_cliff_smooth_continuation():
         )
 
 
-def test_bqsegm_jump_ride_along_recurring_needs_topology():
-    """The recurring-jump residual is grid-independent, not a resolution artifact.
+def test_bqsegm_jump_ride_along_recurring_is_resolution_limited():
+    """The recurring-jump residual shrinks with the savings grid.
 
-    Refining the savings grid does not shrink the deeper periods' error, pinning
-    it to the linear continuation read across next period's jump rather than to
-    EGM resolution — the topology-preserving-continuation limitation. This test
-    documents that the residual stays above the smooth-continuation tolerance and
-    is insensitive to the savings grid, so a future topology-preserving reader has
-    a concrete target to beat.
+    The side-faithful continuation read never averages across next period's
+    value cliff, so the deeper periods' error is set by how close the nearest
+    savings node lands to the cliff's savings-space preimage: refining the
+    savings grid shrinks it. The coarse-grid residual stays above the
+    smooth-continuation tolerance until an explicit save-to-cliff candidate
+    (an off-grid savings candidate at each child breakpoint preimage) closes
+    the gap independently of the grid.
     """
     brute = _solve("brute", n_consumption=1800)
     period = min(period for period in brute if "alive" in brute[period])
@@ -116,8 +117,9 @@ def test_bqsegm_jump_ride_along_recurring_needs_topology():
 
     coarse = _worst_recurring_error(220)
     fine = _worst_recurring_error(880)
-    # Above the smooth-continuation tolerance, and not closed by 4x more savings
-    # nodes: the residual is the continuation topology, not EGM resolution.
+    # Above tolerance at the coarse savings grid, but shrinking with 4x more
+    # nodes: the residual is savings-grid resolution at the cliff preimage,
+    # not the continuation read.
     assert coarse > 2e-2
-    assert fine > 2e-2
-    assert abs(coarse - fine) < 5e-3
+    assert fine < coarse
+    assert fine < 2e-2
