@@ -14,7 +14,7 @@ from lcm import (
     TransformedExpectation,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import InvalidNameError, RegimeInitializationError
 from lcm.solvers import DCEGM
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
@@ -95,22 +95,22 @@ _CONSUMPTION = LinSpacedGrid(start=0.5, stop=5.0, n_points=5)
 
 def _make_model(*, alive_kwargs: dict, dead_kwargs: dict) -> Model:
     """Build a minimal two-regime model with extra kwargs spliced per regime."""
-    alive = Regime(
-        transition=_next_regime,
-        states={"wealth": _WEALTH},
-        state_transitions={"wealth": _next_wealth},
-        actions={"consumption": _CONSUMPTION},
-        constraints={"budget": _budget},
-        functions={"utility": _utility_alive},
-        active=lambda age: age < 41,
-        **alive_kwargs,
-    )
-    dead = Regime(
-        transition=None,
-        states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
-        functions={"utility": _utility_dead},
-        **dead_kwargs,
-    )
+    base_alive = {
+        "transition": _next_regime,
+        "states": {"wealth": _WEALTH},
+        "state_transitions": {"wealth": _next_wealth},
+        "actions": {"consumption": _CONSUMPTION},
+        "constraints": {"budget": _budget},
+        "functions": {"utility": _utility_alive},
+        "active": lambda age: age < 41,
+    }
+    base_dead = {
+        "transition": None,
+        "states": {"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
+        "functions": {"utility": _utility_dead},
+    }
+    alive = Regime(**(base_alive | alive_kwargs))
+    dead = Regime(**(base_dead | dead_kwargs))
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, stop=41, step="Y"),
@@ -164,6 +164,35 @@ def test_certainty_equivalent_rejects_phased():
                     solve=PowerCertaintyEquivalent(),
                     simulate=PowerCertaintyEquivalent(),
                 ),
+            },
+            dead_kwargs={},
+        )
+
+
+def test_params_template_contains_certainty_equivalent_params():
+    """CE params surface under the pseudo-function name `certainty_equivalent`."""
+    model = _make_model(
+        alive_kwargs={"certainty_equivalent": PowerCertaintyEquivalent()},
+        dead_kwargs={},
+    )
+    template = model.get_params_template()
+    assert template["alive"]["certainty_equivalent"] == {"risk_aversion": "float"}
+
+
+def test_certainty_equivalent_name_collision_with_function_is_rejected():
+    """A function named `certainty_equivalent` collides with the pseudo-function."""
+
+    def certainty_equivalent(wealth: ContinuousState) -> FloatND:
+        return wealth
+
+    with pytest.raises(InvalidNameError, match="certainty_equivalent"):
+        _make_model(
+            alive_kwargs={
+                "certainty_equivalent": PowerCertaintyEquivalent(),
+                "functions": {
+                    "utility": _utility_alive,
+                    "certainty_equivalent": certainty_equivalent,
+                },
             },
             dead_kwargs={},
         )
