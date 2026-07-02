@@ -25,6 +25,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
+from lcm.certainty_equivalent import (
+    CE_VALUE_ARG,
+    CertaintyEquivalent,
+    TransformedExpectation,
+)
 from lcm.typing import BoolND, Float1D, FloatND, IntND
 
 
@@ -39,6 +44,7 @@ def get_Q_and_F(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     co_map_state_names: tuple[StateName, ...] = (),
+    certainty_equivalent: CertaintyEquivalent | None = None,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -62,6 +68,8 @@ def get_Q_and_F(
             their axes are sliced off each `next_V_arr` leaf by the backward-induction
             co-map, so their coordinates are dropped from the interpolation. Only fixed
             (never-transitioning) distributed states qualify.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None` for the linear expectation.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -124,6 +132,9 @@ def get_Q_and_F(
     # ----------------------------------------------------------------------------------
 
     _build_H_kwargs = _get_build_H_kwargs(functions)
+    ce, ce_transform_flat_names, ce_inverse_flat_names = _resolve_certainty_equivalent(
+        certainty_equivalent
+    )
 
     # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
     # induction co-map, so their `next_`-prefixed coordinates are not passed to
@@ -195,6 +206,14 @@ def get_Q_and_F(
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
+            if ce is not None:
+                next_V_at_stochastic_states_arr = ce.transform(
+                    value=next_V_at_stochastic_states_arr,
+                    **{
+                        arg: states_actions_params[flat_name]
+                        for arg, flat_name in ce_transform_flat_names.items()
+                    },
+                )
 
             # We then take the weighted average of the next value function at the
             # stochastic states to get the expected next value function.
@@ -204,6 +223,15 @@ def get_Q_and_F(
             )
             E_next_V = (
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
+            )
+
+        if ce is not None:
+            E_next_V = ce.inverse(
+                value=E_next_V,
+                **{
+                    arg: states_actions_params[flat_name]
+                    for arg, flat_name in ce_inverse_flat_names.items()
+                },
             )
 
         Q_arr = functions["H"](
@@ -229,6 +257,7 @@ def get_compute_intermediates(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    certainty_equivalent: CertaintyEquivalent | None = None,
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
@@ -253,6 +282,8 @@ def get_compute_intermediates(
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
             V-interpolation info.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None` for the linear expectation.
 
     Returns:
         Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
@@ -302,6 +333,10 @@ def get_compute_intermediates(
             variables=stochastic_variables,
             batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
+
+    ce, ce_transform_flat_names, ce_inverse_flat_names = _resolve_certainty_equivalent(
+        certainty_equivalent
+    )
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         deps=[
@@ -354,8 +389,25 @@ def get_compute_intermediates(
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
+            if ce is not None:
+                next_V_stoch = ce.transform(
+                    value=next_V_stoch,
+                    **{
+                        arg: states_actions_params[flat_name]
+                        for arg, flat_name in ce_transform_flat_names.items()
+                    },
+                )
             contribution = jnp.average(next_V_stoch, weights=joint)
             E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
+
+        if ce is not None:
+            E_next_V = ce.inverse(
+                value=E_next_V,
+                **{
+                    arg: states_actions_params[flat_name]
+                    for arg, flat_name in ce_inverse_flat_names.items()
+                },
+            )
 
         Q_arr = functions["H"](
             utility=U_arr,
@@ -580,3 +632,46 @@ def _get_feasibility(
             return True
 
     return cast("ConstraintFunction", combined_constraint)
+
+
+def _resolve_certainty_equivalent(
+    certainty_equivalent: CertaintyEquivalent | None,
+) -> tuple[
+    TransformedExpectation | None,
+    MappingProxyType[str, str],
+    MappingProxyType[str, str],
+]:
+    """Narrow the certainty equivalent and map its args to flat param names.
+
+    The runtime parameters live under the pseudo-function name
+    `certainty_equivalent` in the regime's flat params
+    (`certainty_equivalent__<arg>`); the returned mappings let the Q-and-F
+    closure pull each callable's kwargs from `states_actions_params`.
+
+    Returns:
+        Tuple of the narrowed transform-pair CE (or `None`), the transform's
+        arg-to-flat-name mapping, and the inverse's arg-to-flat-name mapping.
+
+    """
+    if certainty_equivalent is None:
+        return None, MappingProxyType({}), MappingProxyType({})
+    if not isinstance(certainty_equivalent, TransformedExpectation):
+        msg = (
+            "Only `TransformedExpectation` certainty equivalents are "
+            f"supported, got {type(certainty_equivalent).__name__}."
+        )
+        raise NotImplementedError(msg)
+
+    def flat_names(func: Callable[..., FloatND]) -> MappingProxyType[str, str]:
+        return MappingProxyType(
+            {
+                arg: f"certainty_equivalent__{arg}"
+                for arg in get_union_of_args([func]) - {CE_VALUE_ARG}
+            }
+        )
+
+    return (
+        certainty_equivalent,
+        flat_names(certainty_equivalent.transform),
+        flat_names(certainty_equivalent.inverse),
+    )

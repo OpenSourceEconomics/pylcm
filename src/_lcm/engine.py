@@ -28,6 +28,7 @@ from _lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from _lcm.utils.containers import first_non_none
+from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import PyLCMError
 from lcm.typing import (
     Bool1D,
@@ -596,6 +597,9 @@ class Regime:
 
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
+
+    certainty_equivalent: CertaintyEquivalent | None = None
+    """Nonlinear certainty equivalent declared by the regime, if any."""
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""

@@ -17,6 +17,7 @@ from lcm import (
 from lcm.exceptions import InvalidNameError, RegimeInitializationError
 from lcm.solvers import DCEGM
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.epstein_zin_health import get_model, get_params
 
 
 def test_power_certainty_equivalent_transform_and_inverse_are_inverses():
@@ -196,3 +197,30 @@ def test_certainty_equivalent_name_collision_with_function_is_rejected():
             },
             dead_kwargs={},
         )
+
+
+def test_nonlinear_certainty_equivalent_changes_solved_values():
+    """With `risk_aversion = 2`, solved values differ from expected utility."""
+    ez_model = get_model(certainty_equivalent=PowerCertaintyEquivalent())
+    eu_model = get_model(certainty_equivalent=None)
+    V_ez = ez_model.solve(params=get_params(risk_aversion=2.0), log_level="debug")
+    V_eu = eu_model.solve(params=get_params(risk_aversion=None), log_level="debug")
+    assert not np.allclose(
+        np.asarray(V_ez[0]["alive"]), np.asarray(V_eu[0]["alive"]), rtol=1e-6
+    )
+
+
+def test_zero_risk_aversion_reduces_to_expected_utility():
+    """`risk_aversion = 0` makes the power CE the linear expectation."""
+    ez_model = get_model(certainty_equivalent=PowerCertaintyEquivalent())
+    eu_model = get_model(certainty_equivalent=None)
+    V_ez = ez_model.solve(params=get_params(risk_aversion=0.0), log_level="debug")
+    V_eu = eu_model.solve(params=get_params(risk_aversion=None), log_level="debug")
+    for period in V_eu:
+        for regime_name in V_eu[period]:
+            np.testing.assert_allclose(
+                np.asarray(V_ez[period][regime_name]),
+                np.asarray(V_eu[period][regime_name]),
+                rtol=1e-5,
+                err_msg=f"period={period}, regime={regime_name}",
+            )
