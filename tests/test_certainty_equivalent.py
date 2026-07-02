@@ -1,5 +1,7 @@
 """Tests for nonlinear certainty equivalents over the continuation value."""
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -94,9 +96,9 @@ _WEALTH = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
 _CONSUMPTION = LinSpacedGrid(start=0.5, stop=5.0, n_points=5)
 
 
-def _make_model(*, alive_kwargs: dict, dead_kwargs: dict) -> Model:
+def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) -> Model:
     """Build a minimal two-regime model with extra kwargs spliced per regime."""
-    base_alive = {
+    base_alive: dict[str, Any] = {
         "transition": _next_regime,
         "states": {"wealth": _WEALTH},
         "state_transitions": {"wealth": _next_wealth},
@@ -105,7 +107,7 @@ def _make_model(*, alive_kwargs: dict, dead_kwargs: dict) -> Model:
         "functions": {"utility": _utility_alive},
         "active": lambda age: age < 41,
     }
-    base_dead = {
+    base_dead: dict[str, Any] = {
         "transition": None,
         "states": {"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
         "functions": {"utility": _utility_dead},
