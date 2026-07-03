@@ -53,8 +53,6 @@ class _SegmentLinks(NamedTuple):
     right_policy: Float1D
     left_marginal: Float1D
     right_marginal: Float1D
-    left_closed: BoolND
-    right_closed: BoolND
     live: BoolND
 
 
@@ -66,8 +64,6 @@ def envelope_at_query(
     marginal: Float1D,
     segment_id: Float1D,
     x_query: FloatND,
-    left_endpoint_closed: BoolND | None = None,
-    right_endpoint_closed: BoolND | None = None,
     segment_block_size: int = 0,
 ) -> tuple[FloatND, FloatND, FloatND]:
     """Evaluate the branch-aware upper envelope at each query abscissa.
@@ -81,15 +77,6 @@ def envelope_at_query(
         segment_id: Per-candidate branch label. A segment is a consecutive-pair
             link whose endpoints share a label, so unrelated branches never join.
         x_query: Abscissae at which to evaluate the envelope.
-        left_endpoint_closed: Per-candidate flag for whether candidate `i`, acting
-            as the *left* endpoint of link `(i, i+1)`, includes the boundary
-            abscissa. `None` treats every left endpoint as closed (the inclusive
-            bracket the full-row refiners use). An open endpoint is ineligible at
-            a query landing exactly on it — the case-boundary side that does not
-            own equality cannot win there.
-        right_endpoint_closed: Per-candidate flag for whether candidate `i`, acting
-            as the *right* endpoint of link `(i-1, i)`, includes the boundary
-            abscissa. `None` treats every right endpoint as closed.
         segment_block_size: When `0` (or at least the number of segments), the
             dense `(n_query, n_segment)` reduction. A positive value below the
             segment count instead runs the two-pass blocked scan, peaking at
@@ -101,10 +88,6 @@ def envelope_at_query(
         query no live segment brackets yields NaN in all three.
     """
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
-    if left_endpoint_closed is None:
-        left_endpoint_closed = jnp.ones_like(endog_grid, dtype=bool)
-    if right_endpoint_closed is None:
-        right_endpoint_closed = jnp.ones_like(endog_grid, dtype=bool)
     # A link is a real segment only within one branch: both endpoints live and
     # carrying the same label.
     links = _SegmentLinks(
@@ -116,8 +99,6 @@ def envelope_at_query(
         right_policy=policy[1:],
         left_marginal=marginal[:-1],
         right_marginal=marginal[1:],
-        left_closed=left_endpoint_closed[:-1],
-        right_closed=right_endpoint_closed[1:],
         live=~dead[:-1] & ~dead[1:] & (segment_id[:-1] == segment_id[1:]),
     )
 
@@ -136,14 +117,7 @@ def envelope_at_query(
     segment_live = links.live
     lower = jnp.minimum(left_grid, right_grid)[None, :]
     upper = jnp.maximum(left_grid, right_grid)[None, :]
-    brackets = segment_live[None, :] & _endpoint_brackets(
-        flat=flat,
-        lower=lower,
-        upper=upper,
-        left_is_lower=(left_grid <= right_grid)[None, :],
-        left_closed=links.left_closed[None, :],
-        right_closed=links.right_closed[None, :],
-    )
+    brackets = segment_live[None, :] & (flat >= lower) & (flat <= upper)
 
     width = (right_grid - left_grid)[None, :]
     safe_width = jnp.where(width == 0.0, 1.0, width)
@@ -183,47 +157,17 @@ def envelope_at_query(
     )
 
 
-def _endpoint_brackets(
-    *,
-    flat: FloatND,
-    lower: FloatND,
-    upper: FloatND,
-    left_is_lower: BoolND,
-    left_closed: BoolND,
-    right_closed: BoolND,
-) -> BoolND:
-    """Bracket mask honoring per-link open/closed endpoint flags.
-
-    A query strictly between the link endpoints always brackets; a query exactly
-    on an endpoint brackets only if that endpoint is closed. With both endpoints
-    closed this reduces to the inclusive `lower <= q <= upper` test the full-row
-    refiners use.
-    """
-    lower_closed = jnp.where(left_is_lower, left_closed, right_closed)
-    upper_closed = jnp.where(left_is_lower, right_closed, left_closed)
-    inside = (flat > lower) & (flat < upper)
-    at_lower = flat == lower
-    at_upper = flat == upper
-    return inside | (at_lower & lower_closed) | (at_upper & upper_closed)
-
-
 def _block_query_terms(
-    *,
-    block: FloatND,
-    live: BoolND,
-    left_closed: BoolND,
-    right_closed: BoolND,
-    flat: Float1D,
+    *, block: FloatND, live: BoolND, flat: Float1D
 ) -> tuple[BoolND, FloatND, FloatND, FloatND, FloatND]:
     """Bracket-and-interpolate one segment block against every query.
 
-    `block` is one `(block_size, 8)` slice of the stacked link endpoint columns,
-    `live` its `(block_size,)` live-flag slice, and `left_closed` / `right_closed`
-    its per-link endpoint-closure slices. Returns the `(n_query, block_size)`
-    bracket mask and the value, policy, marginal, and value-slope interpolated at
-    each query for each link in the block — the same quantities the dense path
-    forms over all segments at once, but only for this block, so the peak working
-    set is `(n_query, block_size)`.
+    `block` is one `(block_size, 8)` slice of the stacked link endpoint columns
+    and `live` its `(block_size,)` live-flag slice. Returns the
+    `(n_query, block_size)` bracket mask and the value, policy, marginal, and
+    value-slope interpolated at each query for each link in the block — the same
+    quantities the dense path forms over all segments at once, but only for this
+    block, so the peak working set is `(n_query, block_size)`.
     """
     left_grid, right_grid = block[:, 0], block[:, 1]
     left_value, right_value = block[:, 2], block[:, 3]
@@ -233,14 +177,7 @@ def _block_query_terms(
     q = flat[:, None]
     lower = jnp.minimum(left_grid, right_grid)[None, :]
     upper = jnp.maximum(left_grid, right_grid)[None, :]
-    brackets = live[None, :] & _endpoint_brackets(
-        flat=q,
-        lower=lower,
-        upper=upper,
-        left_is_lower=(left_grid <= right_grid)[None, :],
-        left_closed=left_closed[None, :],
-        right_closed=right_closed[None, :],
-    )
+    brackets = live[None, :] & (q >= lower) & (q <= upper)
 
     width = (right_grid - left_grid)[None, :]
     safe_width = jnp.where(width == 0.0, 1.0, width)
@@ -301,11 +238,6 @@ def _envelope_at_query_blocked(
         axis=1,
     )
 
-    def _padded_bool(column: BoolND) -> BoolND:
-        if pad == 0:
-            return column
-        return jnp.concatenate([column, jnp.ones((pad,), dtype=bool)])
-
     live = (
         links.live
         if pad == 0
@@ -313,22 +245,16 @@ def _envelope_at_query_blocked(
     )
     blocks = columns.reshape(-1, block_size, columns.shape[1])
     live_blocks = live.reshape(-1, block_size)
-    left_closed_blocks = _padded_bool(links.left_closed).reshape(-1, block_size)
-    right_closed_blocks = _padded_bool(links.right_closed).reshape(-1, block_size)
     dtype = links.left_grid.dtype
 
     def max_step(
         carry: tuple[FloatND, BoolND],
-        block_and_live: tuple[FloatND, BoolND, BoolND, BoolND],
+        block_and_live: tuple[FloatND, BoolND],
     ) -> tuple[tuple[FloatND, BoolND], None]:
         running_max, any_bracket = carry
-        block, block_live, block_left_closed, block_right_closed = block_and_live
+        block, block_live = block_and_live
         brackets, value_interp, *_ = _block_query_terms(
-            block=block,
-            live=block_live,
-            left_closed=block_left_closed,
-            right_closed=block_right_closed,
-            flat=flat,
+            block=block, live=block_live, flat=flat
         )
         block_max = jnp.max(jnp.where(brackets, value_interp, -jnp.inf), axis=1)
         return (
@@ -342,24 +268,18 @@ def _envelope_at_query_blocked(
             jnp.full((n_query,), -jnp.inf, dtype=dtype),
             jnp.zeros((n_query,), dtype=bool),
         ),
-        (blocks, live_blocks, left_closed_blocks, right_closed_blocks),
+        (blocks, live_blocks),
     )
     env_value = jnp.where(any_bracket, running_max, jnp.nan)
 
     def policy_step(
         carry: tuple[FloatND, FloatND, FloatND],
-        block_and_live: tuple[FloatND, BoolND, BoolND, BoolND],
+        block_and_live: tuple[FloatND, BoolND],
     ) -> tuple[tuple[FloatND, FloatND, FloatND], None]:
         best_slope, best_policy, best_marginal = carry
-        block, block_live, block_left_closed, block_right_closed = block_and_live
+        block, block_live = block_and_live
         brackets, value_interp, policy_interp, marginal_interp, slope = (
-            _block_query_terms(
-                block=block,
-                live=block_live,
-                left_closed=block_left_closed,
-                right_closed=block_right_closed,
-                flat=flat,
-            )
+            _block_query_terms(block=block, live=block_live, flat=flat)
         )
         near_max = brackets & (value_interp >= env_value[:, None] - _VALUE_TIE_ATOL)
         candidate_slope = jnp.where(near_max, slope, -jnp.inf)
@@ -381,7 +301,7 @@ def _envelope_at_query_blocked(
             jnp.full((n_query,), jnp.nan, dtype=dtype),
             jnp.full((n_query,), jnp.nan, dtype=dtype),
         ),
-        (blocks, live_blocks, left_closed_blocks, right_closed_blocks),
+        (blocks, live_blocks),
     )
     env_policy = jnp.where(any_bracket, env_policy_flat, jnp.nan)
     env_marginal = jnp.where(any_bracket, env_marginal_flat, jnp.nan)
