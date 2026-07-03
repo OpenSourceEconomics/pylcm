@@ -1,8 +1,10 @@
-"""Smoothness gate for the user-authored economic nodes of a BQSEGM case.
+"""Smoothness gate for the declared functions of a BQSEGM case split.
 
-BQSEGM lowers each case to a smooth DAG and runs EGM on it, which is only valid if
-every user formula in the case is genuinely smooth. Two complementary static
-checks enforce that on the *user-authored* sub-DAG only:
+BQSEGM lowers each case to a smooth DAG and runs EGM on it, which is only valid
+if every declared formula is genuinely smooth within its case. Two complementary
+static checks enforce that on the declared split functions — the boundary
+predicates (AST-only, `"boundary"` mode) and the `when`/`otherwise` pieces
+(AST plus JAXPR):
 
 - AST: reject Python branching (`if`, conditional expression, `match`) and, in a
   smooth piece, bare comparisons / boolean logic / piecewise calls that hide an
@@ -11,24 +13,16 @@ checks enforce that on the *user-authored* sub-DAG only:
   `cond`, `lt`, `max`, `searchsorted`, …), including those nested in a `cond` or
   `scan` helper that the AST cannot see.
 
-Both gates run only on nodes reachable from the case's economic targets and not
-marked trusted: continuation interpolation, grid location, and EGM-kernel
-internals legitimately use these primitives and are excluded by scoping. A
-reviewed numerical helper opts out with `lcm.smooth_helper`.
+A reviewed numerical helper opts out with `lcm.smooth_helper`.
 """
 
 import ast
 import inspect
 import textwrap
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator
 from typing import Literal
 
 import jax
-import jax.numpy as jnp
-from dags import get_ancestors
-
-from _lcm.typing import FunctionName
-from lcm.typing import Float1D
 
 type CheckMode = Literal["smooth_user", "boundary"]
 
@@ -134,75 +128,6 @@ def find_jaxpr_violations(
                 f"boundary or mark a reviewed helper with `lcm.smooth_helper`."
             )
     return violations
-
-
-def find_monotonicity_violations(
-    z_of_liquid: Callable[[Float1D], Float1D],
-    *,
-    name: FunctionName,
-    liquid_grid: Float1D,
-    tol: float = 1e-9,
-) -> list[str]:
-    """Reject a boundary variable whose slope in the liquid state changes sign.
-
-    A BQSEGM boundary on a derived quantity `z(assets, …)` maps a scalar threshold
-    to a single asset breakpoint only when `z` is monotone in the liquid state — a
-    sign-changing slope would give one threshold two (or no) asset preimages,
-    breaking the 1-D interval partition the solver relies on. The gate
-    differentiates `z` at every liquid grid point and rejects it when both a
-    strictly positive and a strictly negative slope appear. A constant (zero-slope)
-    or single-signed quantity passes.
-
-    Args:
-        z_of_liquid: The boundary variable reduced to a function of the scalar
-            liquid state, with every other argument bound.
-        name: Name of the boundary variable, used in the violation message.
-        liquid_grid: Liquid-state grid points at which to check the slope.
-        tol: Magnitude below which a slope counts as zero.
-
-    Returns:
-        List with a single violation message when the slope changes sign across the
-        grid; empty when `z` is monotone (or constant) in the liquid state.
-
-    """
-    slope = jax.vmap(jax.grad(z_of_liquid))(liquid_grid)
-    has_positive = bool(jnp.any(slope > tol))
-    has_negative = bool(jnp.any(slope < -tol))
-    if has_positive and has_negative:
-        return [
-            f"boundary variable {name!r} is not monotone in the liquid state: its "
-            f"slope changes sign across the liquid grid, so its threshold has no "
-            f"single asset preimage. A BQSEGM boundary must be monotone in the "
-            f"liquid state."
-        ]
-    return []
-
-
-def user_economic_nodes(
-    functions: Mapping[FunctionName, Callable[..., object]],
-    *,
-    targets: Iterable[FunctionName],
-    trusted_names: Iterable[FunctionName],
-) -> set[FunctionName]:
-    """Find the user-authored producers to validate for one case variant.
-
-    The validated set is every producer reachable from the case's economic
-    targets, minus the trusted solver nodes (continuation interpolation, grid
-    location, EGM-kernel internals). Leaf inputs without a producer are not
-    returned — only nodes the user actually authored a formula for.
-
-    Args:
-        functions: Mapping of name to the case variant's DAG producers.
-        targets: Economic target names whose ancestors define the scope.
-        trusted_names: Names of solver-provided nodes to exclude from the gate.
-
-    Returns:
-        Set of producer names to run the smoothness gate on.
-
-    """
-    trusted = set(trusted_names)
-    ancestors = get_ancestors(functions, targets=list(targets), include_targets=True)
-    return {name for name in ancestors if name in functions and name not in trusted}
 
 
 def is_smooth_helper(func: Callable[..., object]) -> bool:
