@@ -3727,11 +3727,11 @@ def _split_cliff_columns(
 def _vmapped_cell_solver(
     *,
     solve_one_cell: Callable,
-    flat_cells: tuple[FloatND, ...],
+    flat_cells: tuple[FloatND | IntND, ...],
     cont_value_stack: FloatND,
     cont_marginal_stack: FloatND,
     cliff_savings_stack: FloatND | None,
-) -> tuple[Callable, tuple[FloatND, ...]]:
+) -> tuple[Callable, tuple[FloatND | IntND, ...]]:
     """Vmap the per-cell solve over the ride mesh and its continuation stacks.
 
     The trailing per-cell inputs are the continuation core's stacks — value and
