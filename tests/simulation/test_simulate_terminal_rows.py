@@ -24,7 +24,7 @@ def result() -> SimulationResult:
     return model.simulate(
         params=get_params(risk_aversion=0.5),
         initial_conditions={
-            "age": jnp.full(N_SUBJECTS, 60.0),
+            "age": jnp.full(N_SUBJECTS, 25.0),
             "wealth": jnp.linspace(1.0, 10.0, N_SUBJECTS),
             "health": jnp.full(N_SUBJECTS, HealthStatus.good, dtype=jnp.int32),
             "regime_id": jnp.full(N_SUBJECTS, EZRegimeId.alive, dtype=jnp.int32),
