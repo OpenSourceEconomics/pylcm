@@ -1807,7 +1807,9 @@ class BQSEGM(Solver):
             continuation_template=_build_ride_along_carry_template(
                 liquid_grid=liquid_grid,
                 ride_shape=ride_shape,
-                n_breakpoints=len(schedule_spec.sources),
+                n_breakpoints=(
+                    next(iter(statics_by_key.values())).n_jumps if statics_by_key else 0
+                ),
             ),
         )
 
@@ -3602,7 +3604,7 @@ def _build_bqsegm_envelope_core(
             ride_values: tuple[Any, ...],
             cont_value: FloatND,
             cont_marginal: FloatND,
-        ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+        ) -> tuple[Float1D, ...]:
             cell = dict(zip(ride_names, ride_values, strict=True))
             cell_discount_factor = (
                 kwargs["H__discount_factor"]
@@ -3670,7 +3672,9 @@ def _build_bqsegm_envelope_core(
                     coh_grid=coh_grid,
                     envelope_segment_block_size=statics.envelope_segment_block_size,
                 )
-                return (*step, breakpoints)
+                if statics.n_jumps == 0:
+                    return step
+                return (*step, jnp.stack([breakpoints[p] for p in jump_positions]))
 
             step = _solve_ride_along_cell_step(
                 has_jump=statics.has_jump,
@@ -3686,7 +3690,9 @@ def _build_bqsegm_envelope_core(
                 coh_intercepts=coh_intercepts,
                 breakpoints=breakpoints,
             )
-            return (*step, breakpoints)
+            if statics.n_jumps == 0:
+                return step
+            return (*step, jnp.stack([breakpoints[p] for p in jump_positions]))
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
@@ -3695,13 +3701,13 @@ def _build_bqsegm_envelope_core(
         solve_cells = jax.vmap(
             lambda *args: solve_one_cell(args[:-2], args[-2], args[-1])
         )
-        value_stack, marginal_stack, policy_stack, breakpoint_stack = (
-            _stream_cell_solves(
-                solve_cells=solve_cells,
-                inputs=(*flat_cells, cont_value_stack, cont_marginal_stack),
-                cell_block=statics.cell_block_size,
-            )
+        stacks = _stream_cell_solves(
+            solve_cells=solve_cells,
+            inputs=(*flat_cells, cont_value_stack, cont_marginal_stack),
+            cell_block=statics.cell_block_size,
         )
+        value_stack, marginal_stack, policy_stack = stacks[:3]
+        breakpoint_stack = stacks[3] if statics.n_jumps else None
 
         n_liquid = liquid.shape[0]
         # The published value array follows the productmap state order, so the
@@ -3721,9 +3727,11 @@ def _build_bqsegm_envelope_core(
                 dtype
             ),
             taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
-            breakpoints=breakpoint_stack.reshape(
-                *ride_shape, len(schedule_spec.sources)
-            ).astype(dtype),
+            breakpoints=(
+                breakpoint_stack.reshape(*ride_shape, statics.n_jumps).astype(dtype)
+                if breakpoint_stack is not None
+                else None
+            ),
         )
         del policy_stack
         return value_arr, carry
@@ -3871,7 +3879,7 @@ def _stream_cell_solves(
     solve_cells: Callable,
     inputs: tuple[FloatND | IntND, ...],
     cell_block: int,
-) -> tuple[FloatND, FloatND, FloatND, FloatND]:
+) -> tuple[FloatND, ...]:
     """Run the vmapped per-cell solve over the flattened ride mesh.
 
     A non-positive (or mesh-covering) `cell_block` solves every cell in one
@@ -3897,7 +3905,7 @@ def _stream_cell_solves(
     def from_blocks(arr: FloatND | IntND) -> FloatND | IntND:
         return arr.reshape(-1, *arr.shape[2:])[:n_cells]
 
-    return tuple(from_blocks(arr) for arr in blocked)  # ty: ignore[invalid-return-type]
+    return tuple(from_blocks(arr) for arr in blocked)
 
 
 def _build_ride_along_carry_template(
@@ -3915,10 +3923,15 @@ def _build_ride_along_carry_template(
         value=jnp.zeros_like(block),
         marginal_utility=jnp.zeros_like(block),
         taste_shock_scale=jnp.asarray(0.0, dtype=liquid_grid.dtype),
-        # Same pytree as the runtime carry: a schedule regime always publishes
-        # its per-cell breakpoint preimages, so the lowering template carries
-        # the same fixed-shape (all-finite, grid-edge-benign) rows.
-        breakpoints=jnp.zeros((*ride_shape, n_breakpoints), dtype=liquid_grid.dtype),
+        # Same pytree as the runtime carry: a regime with jump breakpoints
+        # publishes their per-cell preimages (kink breakpoints leave the value
+        # continuous and carry no read topology), so the lowering template
+        # holds the same fixed-shape (all-finite, grid-edge-benign) rows.
+        breakpoints=(
+            jnp.zeros((*ride_shape, n_breakpoints), dtype=liquid_grid.dtype)
+            if n_breakpoints
+            else None
+        ),
     )
 
 
