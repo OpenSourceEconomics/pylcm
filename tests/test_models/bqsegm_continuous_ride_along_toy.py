@@ -15,46 +15,17 @@ continuation. The brute variant (`GridSearch`) productmaps over
 import jax.numpy as jnp
 
 import lcm
-from lcm import (
-    AgeGrid,
-    LinSpacedGrid,
-    MarkovTransition,
-    Model,
-    categorical,
+from lcm import LinSpacedGrid, Model
+from lcm.typing import ContinuousState, FloatND
+from tests.test_models.bqsegm_common import (
+    feasible,
+    make_alive_dead_model,
+    next_liquid,
+    next_liquid_from_savings,
+    resolve_solver,
+    savings,
+    utility,
 )
-from lcm.regime import Regime
-from lcm.solvers import GridSearch
-from lcm.typing import (
-    BoolND,
-    ContinuousAction,
-    ContinuousState,
-    FloatND,
-    ScalarInt,
-)
-
-
-@categorical(ordered=False)
-class RegimeId:
-    alive: ScalarInt
-    dead: ScalarInt
-
-
-def _crra(consumption: FloatND, crra: float) -> FloatND:
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
-    )
-
-
-def utility(consumption: ContinuousAction, crra: float) -> FloatND:
-    """CRRA consumption utility."""
-    return _crra(consumption, crra)
-
-
-def bequest(liquid: ContinuousState, crra: float) -> FloatND:
-    """Terminal value: consume remaining liquid wealth."""
-    return _crra(liquid, crra)
 
 
 def gross_income(liquid: ContinuousState, wage: ContinuousState) -> FloatND:
@@ -79,48 +50,9 @@ def coh(gross_income: FloatND, subsidy: FloatND) -> FloatND:
     return gross_income + subsidy
 
 
-def next_liquid(
-    coh: FloatND,
-    consumption: ContinuousAction,
-    return_liquid: float,
-    income: float,
-) -> ContinuousState:
-    """Liquid law of motion: saved cash earns the liquid return, plus income."""
-    return (1.0 + return_liquid) * (coh - consumption) + income
-
-
-def savings(coh: FloatND, consumption: ContinuousAction) -> FloatND:
-    """Post-decision savings: the cash-on-hand not consumed."""
-    return coh - consumption
-
-
-def next_liquid_from_savings(
-    savings: FloatND,
-    return_liquid: float,
-    income: float,
-) -> ContinuousState:
-    """Liquid law in post-decision form: saved cash earns the return, plus income."""
-    return (1.0 + return_liquid) * savings + income
-
-
 def next_wage(wage: ContinuousState, wage_persistence: float) -> ContinuousState:
     """Wage co-state law: a deterministic decay that never reads the savings slot."""
     return wage_persistence * wage
-
-
-def feasible(coh: FloatND, consumption: ContinuousAction) -> BoolND:
-    """Borrowing constraint: consumption cannot exceed cash-on-hand."""
-    return consumption <= coh
-
-
-def prob_stay_alive(age: int, final_age_alive: float) -> FloatND:
-    """Deterministic (0/1) probability of staying alive next period."""
-    return jnp.where(age + 1 < final_age_alive, 1.0, 0.0)
-
-
-def prob_die(age: int, final_age_alive: float) -> FloatND:
-    """Deterministic (0/1) probability of dying next period."""
-    return jnp.where(age + 1 >= final_age_alive, 1.0, 0.0)
 
 
 def build_model(
@@ -154,9 +86,6 @@ def build_model(
         The assembled `Model`.
 
     """
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    final_age = ages.exact_values[-1]
-    liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
     wage_grid = LinSpacedGrid(start=0.5, stop=wage_max, n_points=n_wage)
 
     alive_functions = {
@@ -165,56 +94,31 @@ def build_model(
         "subsidy": subsidy,
         "coh": coh,
     }
-    if variant == "brute":
-        alive_solver = GridSearch()
-        liquid_law = next_liquid
-        constraints = {"feasible": feasible}
-    elif variant == "bqsegm":
-        from lcm.solvers import BQSEGM  # noqa: PLC0415
-
+    alive_solver = resolve_solver(
+        variant,
+        savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
+        continuous_state="liquid",
+        post_decision_function="savings",
+    )
+    if variant == "bqsegm":
         alive_functions = {**alive_functions, "savings": savings}
         liquid_law = next_liquid_from_savings
         constraints = {}
-        alive_solver = BQSEGM(
-            savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-            continuous_state="liquid",
-            post_decision_function="savings",
-        )
     else:
-        msg = f"unknown variant {variant!r}; use 'brute' or 'bqsegm'."
-        raise ValueError(msg)
+        liquid_law = next_liquid
+        constraints = {"feasible": feasible}
 
-    alive = Regime(
-        actions={
-            "consumption": LinSpacedGrid(
-                start=0.1, stop=liquid_max, n_points=n_consumption
-            )
-        },
-        states={"liquid": liquid_grid, "wage": wage_grid},
-        state_transitions={
-            "liquid": {"alive": liquid_law, "dead": liquid_law},
-            "wage": {"alive": next_wage},
-        },
+    return make_alive_dead_model(
+        n_periods=n_periods,
+        n_liquid=n_liquid,
+        liquid_max=liquid_max,
+        n_consumption=n_consumption,
+        alive_functions=alive_functions,
+        liquid_law=liquid_law,
+        alive_solver=alive_solver,
         constraints=constraints,
-        transition={
-            "alive": MarkovTransition(prob_stay_alive),
-            "dead": MarkovTransition(prob_die),
-        },
-        functions=alive_functions,
-        active=lambda age, fa=final_age: age < fa,
-        solver=alive_solver,
-    )
-    dead = Regime(
-        transition=None,
-        states={"liquid": liquid_grid},
-        functions={"utility": bequest},
-        active=lambda age, fa=final_age: age >= fa,
-        solver=GridSearch(),
-    )
-    return Model(
-        regimes={"alive": alive, "dead": dead},
-        ages=ages,
-        regime_id_class=RegimeId,
+        extra_states={"wage": wage_grid},
+        extra_state_transitions={"wage": {"alive": next_wage}},
     )
 
 

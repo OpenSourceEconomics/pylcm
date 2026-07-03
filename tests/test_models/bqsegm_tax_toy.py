@@ -13,34 +13,15 @@ import jax.numpy as jnp
 from dags import rename_arguments
 
 import lcm
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
-from lcm.regime import Regime
-from lcm.solvers import GridSearch
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
-
-
-@categorical(ordered=False)
-class RegimeId:
-    alive: ScalarInt
-    dead: ScalarInt
-
-
-def _crra(consumption: FloatND, crra: float) -> FloatND:
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
-    )
-
-
-def utility(consumption: ContinuousAction, crra: float) -> FloatND:
-    """CRRA consumption utility."""
-    return _crra(consumption, crra)
-
-
-def bequest(liquid: ContinuousState, crra: float) -> FloatND:
-    """Terminal value: consume remaining liquid wealth."""
-    return _crra(liquid, crra)
+from lcm import LinSpacedGrid, Model
+from lcm.typing import ContinuousState, FloatND
+from tests.test_models.bqsegm_common import (
+    feasible,
+    make_alive_dead_model,
+    next_liquid,
+    resolve_solver,
+    utility,
+)
 
 
 @lcm.piecewise_affine(
@@ -56,31 +37,6 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
 def coh(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
     """Cash-on-hand: liquid wealth plus base income, net of the tax."""
     return liquid + base_income - tax
-
-
-def next_liquid(
-    coh: FloatND,
-    consumption: ContinuousAction,
-    return_liquid: float,
-    income: float,
-) -> ContinuousState:
-    """Liquid law of motion: saved cash earns the liquid return, plus income."""
-    return (1.0 + return_liquid) * (coh - consumption) + income
-
-
-def feasible(coh: FloatND, consumption: ContinuousAction) -> BoolND:
-    """Borrowing constraint: consumption cannot exceed cash-on-hand."""
-    return consumption <= coh
-
-
-def prob_stay_alive(age: int, final_age_alive: float) -> FloatND:
-    """Deterministic (0/1) probability of staying alive next period."""
-    return jnp.where(age + 1 < final_age_alive, 1.0, 0.0)
-
-
-def prob_die(age: int, final_age_alive: float) -> FloatND:
-    """Deterministic (0/1) probability of dying next period."""
-    return jnp.where(age + 1 >= final_age_alive, 1.0, 0.0)
 
 
 def build_model(
@@ -114,62 +70,27 @@ def build_model(
         The assembled `Model`.
 
     """
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    final_age = ages.exact_values[-1]
-    liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
-
     next_liquid_func, feasible_func = next_liquid, feasible
     if budget_name != "coh":
         next_liquid_func = rename_arguments(next_liquid, mapper={"coh": budget_name})
         feasible_func = rename_arguments(feasible, mapper={"coh": budget_name})
-    alive_functions = {
-        "utility": utility,
-        "tax": tax,
-        budget_name: coh,
-    }
-    if variant == "brute":
-        alive_solver = GridSearch()
-    elif variant == "bqsegm":
-        from lcm.solvers import BQSEGM  # noqa: PLC0415
-
-        alive_solver = BQSEGM(
+    return make_alive_dead_model(
+        n_periods=n_periods,
+        n_liquid=n_liquid,
+        liquid_max=liquid_max,
+        n_consumption=n_consumption,
+        alive_functions={
+            "utility": utility,
+            "tax": tax,
+            budget_name: coh,
+        },
+        liquid_law=next_liquid_func,
+        alive_solver=resolve_solver(
+            variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
             budget_target=budget_name,
-        )
-    else:
-        msg = f"unknown variant {variant!r}; use 'brute' or 'bqsegm'."
-        raise ValueError(msg)
-
-    alive = Regime(
-        actions={
-            "consumption": LinSpacedGrid(
-                start=0.1, stop=liquid_max, n_points=n_consumption
-            )
-        },
-        states={"liquid": liquid_grid},
-        state_transitions={
-            "liquid": {"alive": next_liquid_func, "dead": next_liquid_func}
-        },
+        ),
         constraints={"feasible": feasible_func},
-        transition={
-            "alive": MarkovTransition(prob_stay_alive),
-            "dead": MarkovTransition(prob_die),
-        },
-        functions=alive_functions,
-        active=lambda age, fa=final_age: age < fa,
-        solver=alive_solver,
-    )
-    dead = Regime(
-        transition=None,
-        states={"liquid": liquid_grid},
-        functions={"utility": bequest},
-        active=lambda age, fa=final_age: age >= fa,
-        solver=GridSearch(),
-    )
-    return Model(
-        regimes={"alive": alive, "dead": dead},
-        ages=ages,
-        regime_id_class=RegimeId,
     )
 
 

@@ -24,12 +24,19 @@ from lcm import (
 from lcm.regime import Regime
 from lcm.solvers import GridSearch
 from lcm.typing import (
-    BoolND,
-    ContinuousAction,
     ContinuousState,
     DiscreteState,
     FloatND,
     ScalarInt,
+)
+from tests.test_models.bqsegm_common import (
+    bequest,
+    feasible,
+    next_liquid,
+    next_liquid_from_savings,
+    resolve_solver,
+    savings,
+    utility,
 )
 
 
@@ -44,24 +51,6 @@ class RegimeId:
 class ConsumerKind:
     lo: ScalarInt
     hi: ScalarInt
-
-
-def _crra(consumption: FloatND, crra: float) -> FloatND:
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
-    )
-
-
-def utility(consumption: ContinuousAction, crra: float) -> FloatND:
-    """CRRA consumption utility."""
-    return _crra(consumption, crra)
-
-
-def bequest(liquid: ContinuousState, crra: float) -> FloatND:
-    """Terminal value: consume remaining liquid wealth."""
-    return _crra(liquid, crra)
 
 
 @lcm.piecewise_affine(
@@ -82,35 +71,6 @@ def coh(
 ) -> FloatND:
     """Cash-on-hand: liquid plus the kind's base income, net of the tax."""
     return liquid + base_income[kind] - tax
-
-
-def next_liquid(
-    coh: FloatND,
-    consumption: ContinuousAction,
-    return_liquid: float,
-    income: float,
-) -> ContinuousState:
-    """Liquid law of motion: saved cash earns the liquid return, plus income."""
-    return (1.0 + return_liquid) * (coh - consumption) + income
-
-
-def savings(coh: FloatND, consumption: ContinuousAction) -> FloatND:
-    """Post-decision savings: the cash-on-hand not consumed."""
-    return coh - consumption
-
-
-def next_liquid_from_savings(
-    savings: FloatND,
-    return_liquid: float,
-    income: float,
-) -> ContinuousState:
-    """Liquid law in post-decision form: saved cash earns the return, plus income."""
-    return (1.0 + return_liquid) * savings + income
-
-
-def feasible(coh: FloatND, consumption: ContinuousAction) -> BoolND:
-    """Borrowing constraint: consumption cannot exceed cash-on-hand."""
-    return consumption <= coh
 
 
 def prob_to_alive_a(age: int, final_age_alive: float) -> FloatND:
@@ -140,23 +100,18 @@ def _build_living_regime(
 ) -> Regime:
     """Assemble one living regime transitioning to both living regimes and dead."""
     functions = {"utility": utility, "tax": tax, "coh": coh}
-    if variant == "brute":
-        solver = GridSearch()
-        liquid_law = next_liquid
-        constraints = {"feasible": feasible}
-    elif variant == "bqsegm":
-        from lcm.solvers import BQSEGM  # noqa: PLC0415
-
+    solver = resolve_solver(
+        variant,
+        savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
+        post_decision_function="savings",
+    )
+    if variant == "bqsegm":
         functions = {**functions, "savings": savings}
         liquid_law = next_liquid_from_savings
         constraints = {}
-        solver = BQSEGM(
-            savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-            post_decision_function="savings",
-        )
     else:
-        msg = f"unknown variant {variant!r}; use 'brute' or 'bqsegm'."
-        raise ValueError(msg)
+        liquid_law = next_liquid
+        constraints = {"feasible": feasible}
 
     return Regime(
         actions={

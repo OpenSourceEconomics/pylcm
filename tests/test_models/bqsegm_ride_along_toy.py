@@ -11,65 +11,35 @@ budget and continuation. The brute variant (`GridSearch`) productmaps over
 `(liquid, kind, consumption)` and is the dense agreement oracle.
 """
 
-import dataclasses
 from collections.abc import Mapping
 
 import jax.numpy as jnp
 
 import lcm
-from lcm import (
-    AgeGrid,
-    DiscreteGrid,
-    LinSpacedGrid,
-    MarkovTransition,
-    Model,
-    categorical,
-)
-from lcm.regime import Regime
-from lcm.solvers import GridSearch
+from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.typing import (
-    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
     FloatND,
     ScalarInt,
 )
-
-
-@categorical(ordered=False)
-class RegimeId:
-    alive: ScalarInt
-    dead: ScalarInt
+from tests.test_models.bqsegm_common import (
+    crra_utility,
+    feasible,
+    make_alive_dead_model,
+    next_liquid,
+    next_liquid_from_savings,
+    resolve_solver,
+    savings,
+    utility,
+)
 
 
 @categorical(ordered=False)
 class ConsumerKind:
     lo: ScalarInt
     hi: ScalarInt
-
-
-def _crra(consumption: FloatND, crra: float | FloatND) -> FloatND:
-    # Clamp the inactive power branch's exponent/denominator at `crra == 1` so
-    # `jax.grad` through the `where` (the EGM marginal-utility path) stays finite;
-    # the unguarded `1/(1 - crra)` is infinite there and its zero-weighted gradient
-    # contribution turns into NaN.
-    one_minus_crra = jnp.where(crra == 1.0, 1.0, 1.0 - crra)
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption**one_minus_crra / one_minus_crra,
-    )
-
-
-def utility(consumption: ContinuousAction, crra: float) -> FloatND:
-    """CRRA consumption utility."""
-    return _crra(consumption, crra)
-
-
-def bequest(liquid: ContinuousState, crra: float) -> FloatND:
-    """Terminal value: consume remaining liquid wealth."""
-    return _crra(liquid, crra)
 
 
 def crra_of_kind(kind: DiscreteState, crra_by_kind: FloatND) -> FloatND:
@@ -84,7 +54,7 @@ def utility_per_kind(consumption: ContinuousAction, crra_of_kind: FloatND) -> Fl
     preference type through an intermediate DAG node, so the Euler inversion
     must use each cell's own curvature.
     """
-    return _crra(consumption, crra_of_kind)
+    return crra_utility(consumption, crra_of_kind)
 
 
 def discount_factor(kind: DiscreteState, discount_factor_by_kind: FloatND) -> FloatND:
@@ -117,45 +87,6 @@ def coh(
     return liquid + base_income[kind] - tax
 
 
-def next_liquid(
-    coh: FloatND,
-    consumption: ContinuousAction,
-    return_liquid: float,
-    income: float,
-) -> ContinuousState:
-    """Liquid law of motion: saved cash earns the liquid return, plus income."""
-    return (1.0 + return_liquid) * (coh - consumption) + income
-
-
-def savings(coh: FloatND, consumption: ContinuousAction) -> FloatND:
-    """Post-decision savings: the cash-on-hand not consumed."""
-    return coh - consumption
-
-
-def next_liquid_from_savings(
-    savings: FloatND,
-    return_liquid: float,
-    income: float,
-) -> ContinuousState:
-    """Liquid law in post-decision form: saved cash earns the return, plus income."""
-    return (1.0 + return_liquid) * savings + income
-
-
-def feasible(coh: FloatND, consumption: ContinuousAction) -> BoolND:
-    """Borrowing constraint: consumption cannot exceed cash-on-hand."""
-    return consumption <= coh
-
-
-def prob_stay_alive(age: int, final_age_alive: float) -> FloatND:
-    """Deterministic (0/1) probability of staying alive next period."""
-    return jnp.where(age + 1 < final_age_alive, 1.0, 0.0)
-
-
-def prob_die(age: int, final_age_alive: float) -> FloatND:
-    """Deterministic (0/1) probability of dying next period."""
-    return jnp.where(age + 1 >= final_age_alive, 1.0, 0.0)
-
-
 def build_model(
     *,
     variant: str = "brute",
@@ -186,10 +117,6 @@ def build_model(
         The assembled `Model`.
 
     """
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    final_age = ages.exact_values[-1]
-    liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
-
     alive_functions = {"utility": utility, "tax": tax, "coh": coh}
     if per_kind_crra:
         # Route the utility curvature through a DAG node indexed by the
@@ -203,60 +130,34 @@ def build_model(
         # Drive the discount factor off the ride-along `kind` code so the Euler
         # weight differs across slices, exercising DAG-resolved discounting.
         alive_functions = {**alive_functions, "discount_factor": discount_factor}
-    if variant == "brute":
-        alive_solver = GridSearch()
-        liquid_law = next_liquid
-        constraints = {"feasible": feasible}
-    elif variant == "bqsegm":
-        from lcm.solvers import BQSEGM  # noqa: PLC0415
-
+    alive_solver = resolve_solver(
+        variant,
+        savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
+        post_decision_function="savings",
+        **(dict(bqsegm_overrides) if bqsegm_overrides else {}),
+    )
+    if variant == "bqsegm":
         # The case-piece path inverts the Euler equation against the
         # post-decision savings node, so the liquid law is in savings form and
         # the budget exposes the `savings` slot the continuation reader consumes.
         alive_functions = {**alive_functions, "savings": savings}
         liquid_law = next_liquid_from_savings
         constraints = {}
-        alive_solver = BQSEGM(
-            savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-            post_decision_function="savings",
-        )
-        if bqsegm_overrides:
-            alive_solver = dataclasses.replace(alive_solver, **bqsegm_overrides)
     else:
-        msg = f"unknown variant {variant!r}; use 'brute' or 'bqsegm'."
-        raise ValueError(msg)
+        liquid_law = next_liquid
+        constraints = {"feasible": feasible}
 
-    alive = Regime(
-        actions={
-            "consumption": LinSpacedGrid(
-                start=0.1, stop=liquid_max, n_points=n_consumption
-            )
-        },
-        states={"liquid": liquid_grid, "kind": DiscreteGrid(ConsumerKind)},
-        state_transitions={
-            "liquid": {"alive": liquid_law, "dead": liquid_law},
-            "kind": {"alive": lcm.fixed_transition("kind")},
-        },
+    return make_alive_dead_model(
+        n_periods=n_periods,
+        n_liquid=n_liquid,
+        liquid_max=liquid_max,
+        n_consumption=n_consumption,
+        alive_functions=alive_functions,
+        liquid_law=liquid_law,
+        alive_solver=alive_solver,
         constraints=constraints,
-        transition={
-            "alive": MarkovTransition(prob_stay_alive),
-            "dead": MarkovTransition(prob_die),
-        },
-        functions=alive_functions,
-        active=lambda age, fa=final_age: age < fa,
-        solver=alive_solver,
-    )
-    dead = Regime(
-        transition=None,
-        states={"liquid": liquid_grid},
-        functions={"utility": bequest},
-        active=lambda age, fa=final_age: age >= fa,
-        solver=GridSearch(),
-    )
-    return Model(
-        regimes={"alive": alive, "dead": dead},
-        ages=ages,
-        regime_id_class=RegimeId,
+        extra_states={"kind": DiscreteGrid(ConsumerKind)},
+        extra_state_transitions={"kind": {"alive": lcm.fixed_transition("kind")}},
     )
 
 
