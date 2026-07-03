@@ -3659,7 +3659,7 @@ def _build_bqsegm_envelope_core(
             # jump, solved in the same call, and split back out positionally.
             if statics.n_jumps:
                 jumps = jnp.stack([breakpoints[p] for p in jump_positions])
-                query_grid, unsort = _augment_liquid_with_jump_sides(
+                query_grid, endog_row, unsort = _augment_liquid_with_jump_sides(
                     liquid_grid=liquid, jumps=jumps
                 )
             else:
@@ -3701,13 +3701,13 @@ def _build_bqsegm_envelope_core(
                 )
             if statics.n_jumps == 0:
                 return step
-            return _split_jump_side_limits(
-                step=step,
-                unsort=unsort,
-                n_liquid=liquid.shape[0],
-                n_jumps=statics.n_jumps,
-                jumps=jumps,
-            )
+            # The carry keeps the whole augmented row — the jump rides inside
+            # the endogenous grid as a duplicated abscissa carrying its exact
+            # one-sided value and marginal limits. Only the published value
+            # array needs the original liquid nodes, sliced back out through
+            # the sort permutation.
+            value_at_liquid = step[0][unsort][: liquid.shape[0]]
+            return (value_at_liquid, endog_row, step[0], step[1], jumps)
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
@@ -3721,40 +3721,14 @@ def _build_bqsegm_envelope_core(
             inputs=(*flat_cells, cont_value_stack, cont_marginal_stack),
             cell_block=statics.cell_block_size,
         )
-        value_stack, marginal_stack, policy_stack = stacks[:3]
-        breakpoint_stack = stacks[3] if statics.n_jumps else None
-        side_value_stack = stacks[4] if statics.n_jumps else None
-
-        n_liquid = liquid.shape[0]
-        # The published value array follows the productmap state order, so the
-        # liquid axis moves from the working layout's trailing position to its
-        # canonical index. The continuation carry keeps the working layout (ride
-        # axes leading the liquid axis): it is read back only by `bind_continuation`,
-        # which produced it, so the round-trip stays self-consistent.
-        value_arr = jnp.moveaxis(
-            value_stack.reshape(*ride_shape, n_liquid),
-            -1,
-            schedule_spec.liquid_axis_pos,
+        value_arr, carry = _assemble_ride_carry(
+            stacks=stacks,
+            n_jumps=statics.n_jumps,
+            liquid=liquid,
+            ride_shape=ride_shape,
+            liquid_axis_pos=schedule_spec.liquid_axis_pos,
+            dtype=dtype,
         )
-        carry = EGMCarry(
-            endog_grid=jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
-            value=value_stack.reshape(*ride_shape, n_liquid).astype(dtype),
-            marginal_utility=marginal_stack.reshape(*ride_shape, n_liquid).astype(
-                dtype
-            ),
-            taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
-            breakpoints=(
-                breakpoint_stack.reshape(*ride_shape, statics.n_jumps).astype(dtype)
-                if breakpoint_stack is not None
-                else None
-            ),
-            breakpoint_side_values=(
-                side_value_stack.reshape(*ride_shape, statics.n_jumps, 2).astype(dtype)
-                if side_value_stack is not None
-                else None
-            ),
-        )
-        del policy_stack
         return value_arr, carry
 
     return envelope_core
@@ -3929,42 +3903,88 @@ def _stream_cell_solves(
     return tuple(from_blocks(arr) for arr in blocked)
 
 
+def _assemble_ride_carry(
+    *,
+    stacks: tuple[FloatND, ...],
+    n_jumps: int,
+    liquid: Float1D,
+    ride_shape: tuple[int, ...],
+    liquid_axis_pos: int,
+    dtype: Any,  # noqa: ANN401  # jnp dtype object
+) -> tuple[FloatND, EGMCarry]:
+    """Reshape the per-cell solve stacks into the value array and the carry.
+
+    - With jump breakpoints, the cell solve returns the value at the liquid
+      nodes plus the augmented carry rows (duplicated jump abscissae with
+      one-sided limits) and the jump locations.
+    - Without jumps, it returns plain liquid-grid rows and the carry sits on
+      the shared broadcast grid.
+
+    The published value array follows the productmap state order, so the
+    liquid axis moves from the working layout's trailing position to its
+    canonical index. The carry keeps the working layout (ride axes leading
+    the row axis): it is read back only by `bind_continuation`, which
+    produced it, so the round-trip stays self-consistent.
+    """
+    n_liquid = liquid.shape[0]
+    if n_jumps:
+        value_stack, endog_stack, row_value_stack, row_marginal_stack = stacks[:4]
+        n_row = n_liquid + 2 * n_jumps
+        carry_rows = (
+            endog_stack.reshape(*ride_shape, n_row).astype(dtype),
+            row_value_stack.reshape(*ride_shape, n_row).astype(dtype),
+            row_marginal_stack.reshape(*ride_shape, n_row).astype(dtype),
+        )
+        breakpoint_rows = stacks[4].reshape(*ride_shape, n_jumps).astype(dtype)
+    else:
+        value_stack, marginal_stack = stacks[:2]
+        carry_rows = (
+            jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
+            value_stack.reshape(*ride_shape, n_liquid).astype(dtype),
+            marginal_stack.reshape(*ride_shape, n_liquid).astype(dtype),
+        )
+        breakpoint_rows = None
+    value_arr = jnp.moveaxis(
+        value_stack.reshape(*ride_shape, n_liquid), -1, liquid_axis_pos
+    )
+    carry = EGMCarry(
+        endog_grid=carry_rows[0],
+        value=carry_rows[1],
+        marginal_utility=carry_rows[2],
+        taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
+        breakpoints=breakpoint_rows,
+    )
+    return value_arr, carry
+
+
 def _augment_liquid_with_jump_sides(
     *, liquid_grid: Float1D, jumps: Float1D
-) -> tuple[Float1D, IntND]:
-    """Insert a query point just inside each side of every jump preimage.
+) -> tuple[Float1D, Float1D, IntND]:
+    """Insert a query point one float step inside each side of every jump.
 
-    Returns the sorted augmented query grid and the permutation mapping its
-    positions back to concatenation order — liquid nodes first, then the
-    left-side points, then the right-side points.
+    Returns the sorted augmented query grid, the matching published
+    abscissae — the same order with each side point relabeled to its exact
+    jump location, so the row carries the jump as a duplicated abscissa —
+    and the permutation mapping sorted positions back to concatenation
+    order (liquid nodes first, then left-side points, then right-side
+    points).
     """
-    nudge = jnp.maximum(jnp.abs(jumps), 1.0) * 1e-9
-    concatenated = jnp.concatenate([liquid_grid, jumps - nudge, jumps + nudge])
-    sort_order = jnp.argsort(concatenated)
-    # int32 permutation: the augmented grid has at most a few hundred entries.
-    return concatenated[sort_order], jnp.argsort(sort_order).astype(jnp.int32)
-
-
-def _split_jump_side_limits(
-    *,
-    step: tuple[Float1D, ...],
-    unsort: IntND,
-    n_liquid: int,
-    n_jumps: int,
-    jumps: Float1D,
-) -> tuple[Float1D, ...]:
-    """Split an augmented-grid step into grid rows, preimages, and limits.
-
-    The side-limit payload interleaves each jump's left and right value
-    limit (`[l0, r0, l1, r1, …]`), matching the carry's trailing
-    `(n_jumps, 2)` layout after reshape.
-    """
-    rows = tuple(arr[unsort][:n_liquid] for arr in step)
-    value_at_sides = step[0][unsort][n_liquid:]
-    side_values = jnp.stack(
-        [value_at_sides[:n_jumps], value_at_sides[n_jumps:]], axis=-1
-    ).ravel()
-    return (*rows, jumps, side_values)
+    evaluation_points = jnp.concatenate(
+        [
+            liquid_grid,
+            jnp.nextafter(jumps, -jnp.inf),
+            jnp.nextafter(jumps, jnp.inf),
+        ]
+    )
+    published_abscissae = jnp.concatenate([liquid_grid, jumps, jumps])
+    sort_order = jnp.argsort(evaluation_points)
+    return (
+        evaluation_points[sort_order],
+        published_abscissae[sort_order],
+        # int32 permutation: the augmented grid has at most a few hundred
+        # entries.
+        jnp.argsort(sort_order).astype(jnp.int32),
+    )
 
 
 def _build_ride_along_carry_template(
@@ -3976,23 +3996,23 @@ def _build_ride_along_carry_template(
     the ride-along (discrete/passive) axes ahead of the liquid axis, matching the
     canonical value-function layout the continuation reader interpolates.
     """
-    block = jnp.broadcast_to(liquid_grid, (*ride_shape, liquid_grid.shape[0]))
+    # Same pytree as the runtime carry: a regime with jump breakpoints holds
+    # each jump inside its rows as a duplicated abscissa (two extra row slots
+    # per jump) and publishes the jump locations (kink breakpoints leave the
+    # value continuous and add no row slots), so the lowering template shares
+    # both fixed shapes. Repeating the top node keeps the template rows
+    # weakly ascending and all-finite.
+    row = jnp.concatenate(
+        [liquid_grid, jnp.repeat(liquid_grid[-1:], 2 * n_breakpoints)]
+    )
+    block = jnp.broadcast_to(row, (*ride_shape, row.shape[0]))
     return EGMCarry(
         endog_grid=block,
         value=jnp.zeros_like(block),
         marginal_utility=jnp.zeros_like(block),
         taste_shock_scale=jnp.asarray(0.0, dtype=liquid_grid.dtype),
-        # Same pytree as the runtime carry: a regime with jump breakpoints
-        # publishes their per-cell preimages (kink breakpoints leave the value
-        # continuous and carry no read topology), so the lowering template
-        # holds the same fixed-shape (all-finite, grid-edge-benign) rows.
         breakpoints=(
             jnp.zeros((*ride_shape, n_breakpoints), dtype=liquid_grid.dtype)
-            if n_breakpoints
-            else None
-        ),
-        breakpoint_side_values=(
-            jnp.zeros((*ride_shape, n_breakpoints, 2), dtype=liquid_grid.dtype)
             if n_breakpoints
             else None
         ),

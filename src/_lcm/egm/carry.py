@@ -59,18 +59,12 @@ class EGMCarry:
     """Per-row value-jump locations in the child's liquid state, NaN-padded.
 
     Published only by solvers whose value rows carry declared jumps (a BQSEGM
-    schedule regime); `None` for smooth-valued regimes. A parent's carry
-    reader must not interpolate `value` across these points — it reads each
-    query from its own side (`interp_across_breakpoints`).
-    """
-
-    breakpoint_side_values: FloatND | None = None
-    """Per-row one-sided value limits at each jump, trailing shape `(…, 2)`.
-
-    Column 0 holds the left limit, column 1 the right limit at the matching
-    `breakpoints` entry. The parent's read anchors breakpoint-straddling
-    brackets on these exact limits, so it interpolates instead of
-    extrapolating; published in lockstep with `breakpoints`.
+    schedule regime); `None` for smooth-valued regimes. The jumps themselves
+    ride inside `endog_grid` as duplicated abscissae holding the one-sided
+    value and marginal limits, so the ordinary padded-row read is one-sided
+    by construction; this field marks the rows' topology for the
+    stochastic-dim fold, which must not average rows whose jump locations
+    differ across the folded nodes.
     """
 
 
@@ -84,7 +78,6 @@ _EGM_CARRY_FIELDS = (
     "marginal_utility",
     "taste_shock_scale",
     "breakpoints",
-    "breakpoint_side_values",
 )
 
 

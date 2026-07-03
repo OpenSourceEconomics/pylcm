@@ -25,7 +25,6 @@ from dags import concatenate_functions
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import (
-    interp_across_breakpoints_on_prepared_grid,
     interp_on_prepared_grid,
     locate_on_grid,
     prepare_padded_grid,
@@ -1043,57 +1042,9 @@ def _aggregate_child_choices(
             fp=fp,
         )
 
-    if carry.breakpoints is None:
-        value_at_child = jax.vmap(interp_value_row)(
-            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
-        )
-    else:
-        # The child's value jumps at its published breakpoint preimages, so
-        # jump-adjacent brackets read side-faithful linear (a Hermite
-        # correction there would consume jump-contaminated slopes) while
-        # clean brackets keep the cubic Hermite read.
-        breakpoint_block = carry.breakpoints[child_index]
-        breakpoint_rows = jnp.broadcast_to(
-            breakpoint_block, (*block_shape, breakpoint_block.shape[-1])
-        ).reshape(-1, breakpoint_block.shape[-1])
-        if carry.breakpoint_side_values is None:
-            msg = "a carry publishing breakpoints must publish side values"
-            raise ValueError(msg)
-        side_value_block = carry.breakpoint_side_values[child_index]
-        side_value_rows = side_value_block.reshape(-1, *side_value_block.shape[-2:])
-
-        def interp_value_row_jumped(
-            search_grid: Float1D,
-            valid_length: ScalarInt,
-            xp: Float1D,
-            fp: Float1D,
-            fp_slopes: Float1D,
-            row_breakpoints: Float1D,
-            row_side_values: FloatND,
-            x_query: ScalarFloat,
-        ) -> ScalarFloat:
-            """Side-faithful read of one jumped row; positional per `jax.vmap`."""
-            return interp_across_breakpoints_on_prepared_grid(
-                x_query=x_query,
-                search_grid=search_grid,
-                valid_length=valid_length,
-                xp=xp,
-                fp=fp,
-                fp_slopes=fp_slopes,
-                breakpoints=row_breakpoints,
-                breakpoint_side_values=row_side_values,
-            )
-
-        value_at_child = jax.vmap(interp_value_row_jumped)(
-            search_rows,
-            valid_rows,
-            grid_rows,
-            value_rows,
-            marginal_rows,
-            breakpoint_rows,
-            side_value_rows,
-            queries_flat,
-        )
+    value_at_child = jax.vmap(interp_value_row)(
+        search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+    )
     marginal_at_child = jax.vmap(interp_row)(
         search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
     )
