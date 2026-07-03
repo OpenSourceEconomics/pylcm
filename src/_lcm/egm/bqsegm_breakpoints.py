@@ -1,94 +1,19 @@
-"""Mixed-kind breakpoint IR: the solver's uniform view of a case boundary.
+"""Breakpoint geometry on the liquid axis.
 
 BQSEGM merges every institutional boundary on the liquid axis into one sorted
-interval partition. That requires a representation independent of which user form
-declared the boundary: a Medicaid asset-test jump, a tax-bracket continuous kink,
-and a consumption-floor hard constraint all become a `BreakpointSource` carrying
-the monotone boundary variable, its threshold, the discontinuity kind, and the
-side that owns the exact boundary point.
-
-This module only lifts the declared metadata (`lcm.case_boundary` /
-`lcm.boundary`) into that IR. Mapping each source to its asset preimage, merging
-the breakpoints into intervals, specializing per-interval formulas, and emitting
-per-kind candidates are downstream solver steps.
+interval partition: each interval is lower-closed/upper-open, so a liquid value
+exactly on a breakpoint belongs to the interval above it. The helpers here map
+declared thresholds to their liquid-space preimages, clamp them to the grid
+span, and derive per-interval representative points and affine segment
+coefficients — consumed by the BQSEGM solver's core builders.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Literal
 
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.bqsegm import BQSEGMRegistry
-from _lcm.typing import FunctionName
-from lcm.case_piece import EqualityOwner
-from lcm.typing import Float1D, Int1D, ScalarFloat
-
-type BreakpointKind = Literal[
-    "jump", "continuous_kink", "hard_constraint", "open_boundary"
-]
-
-
-@dataclass(frozen=True)
-class BreakpointSource:
-    """One breakpoint on the liquid axis, in mixed-kind solver IR form.
-
-    A user-declared boundary surface (jump, continuous kink, hard constraint) and
-    a solver-synthesized open one-sided limit (`open_boundary`) share this record,
-    so the downstream interval partition treats them uniformly.
-    """
-
-    variable: FunctionName
-    """Name of the monotone boundary variable compared against the threshold."""
-    threshold: str
-    """Name of the DAG variable or parameter holding the threshold value."""
-    kind: BreakpointKind
-    """Discontinuity kind: jump, continuous kink, hard constraint, or open limit."""
-    equality_owner: EqualityOwner
-    """Side that owns the exact boundary point (`when` or `otherwise`)."""
-
-
-def breakpoint_sources_from_registry(
-    registry: BQSEGMRegistry,
-) -> tuple[BreakpointSource, ...]:
-    """Lift every declared boundary and schedule threshold to a breakpoint source.
-
-    A case boundary (a jump on the liquid state) and each threshold of a
-    piecewise-affine schedule contribute uniformly to the same partition. A
-    continuous-kink schedule threshold has no jump, so its exact point is owned by
-    neither side meaningfully; it is recorded with `otherwise` ownership as a
-    neutral default.
-
-    Args:
-        registry: Collected case-piece metadata of one regime's function pool.
-
-    Returns:
-        Tuple of breakpoint sources — boundary surfaces first (predicate-then-
-        surface order), then schedule thresholds (schedule-then-threshold order).
-
-    """
-    boundary_sources = tuple(
-        BreakpointSource(
-            variable=surface.variable,
-            threshold=surface.threshold,
-            kind=surface.kind,
-            equality_owner=surface.equality_owner,
-        )
-        for meta in registry.boundaries.values()
-        for surface in meta.boundaries
-    )
-    schedule_sources = tuple(
-        BreakpointSource(
-            variable=schedule.variable,
-            threshold=bracket.threshold,
-            kind=bracket.kind,
-            equality_owner="otherwise",
-        )
-        for schedule in registry.piecewise_affine_schedules
-        for bracket in schedule.breakpoints
-    )
-    return boundary_sources + schedule_sources
+from lcm.typing import Float1D, ScalarFloat
 
 
 def affine_coefficients(
@@ -171,48 +96,6 @@ def clamp_breakpoints_to_grid(*, breakpoints: Float1D, liquid_grid: Float1D) -> 
     upper = grid_max + margin
     finite = jnp.where(jnp.isnan(breakpoints), upper, breakpoints)
     return jnp.clip(finite, lower, upper)
-
-
-def n_intervals(*, n_breakpoints: int) -> int:
-    """Return the interval count for a partition of N breakpoints on one axis.
-
-    N breakpoints merged on the liquid axis split it into N+1 ordered intervals.
-    This is a build-time static count — the number of per-cell EGM solves the
-    partition fans out into.
-
-    Args:
-        n_breakpoints: Number of asset breakpoints on the liquid axis.
-
-    Returns:
-        The number of intervals, `n_breakpoints + 1`.
-
-    """
-    return n_breakpoints + 1
-
-
-def interval_index(*, liquid_grid: Float1D, breakpoints: Float1D) -> Int1D:
-    """Assign each liquid grid point the index of the interval it falls in.
-
-    The breakpoints are sorted ascending and merged into one partition; interval
-    `i` spans `[b_{i-1}, b_i)` with the open ends `[-inf, b_0)` and
-    `[b_{N-1}, +inf)`. A liquid point exactly on a breakpoint joins the interval
-    above it (lower-closed, upper-open cells); which case's candidate ultimately
-    owns that exact point is resolved later by the branch-aware envelope using the
-    per-breakpoint equality owner. Coincident breakpoints leave an empty interval,
-    which is harmless.
-
-    Args:
-        liquid_grid: Liquid-state grid points to classify.
-        breakpoints: Asset breakpoints on the liquid axis, in any order.
-
-    Returns:
-        Per-grid-point interval index in `0 .. len(breakpoints)`.
-
-    """
-    sorted_breakpoints = jnp.sort(breakpoints)
-    return jnp.searchsorted(sorted_breakpoints, liquid_grid, side="right").astype(
-        jnp.int32
-    )
 
 
 def interval_midpoints(*, liquid_grid: Float1D, breakpoints: Float1D) -> Float1D:

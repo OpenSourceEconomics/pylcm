@@ -7,13 +7,7 @@ that every split output is fully covered, and produces one producer-swap map per
 
 import pytest
 
-from _lcm.egm.bqsegm import (
-    CaseVariant,
-    PieceSet,
-    build_case_variants,
-    collect_bqsegm_metadata,
-    swap_producers,
-)
+from _lcm.egm.bqsegm import PieceSet, collect_bqsegm_metadata
 from lcm.case_piece import boundary, case_boundary, piece
 from lcm.exceptions import BQSEGMCaseError
 
@@ -114,39 +108,3 @@ def test_collect_rejects_a_piece_referencing_an_undeclared_boundary():
     pool = {"oop_a": oop_a, "oop_b": oop_b}
     with pytest.raises(BQSEGMCaseError, match="case_boundary"):
         collect_bqsegm_metadata(functions=pool)
-
-
-def test_build_case_variants_emits_one_variant_per_side():
-    """Each predicate lowers to a `when` and an `otherwise` case variant."""
-    registry = collect_bqsegm_metadata(functions=_covered_pool())
-    variants = build_case_variants(registry=registry, functions=_covered_pool())
-    assert {(v.predicate_name, v.side) for v in variants} == {
-        ("medicaid_eligible", "when"),
-        ("medicaid_eligible", "otherwise"),
-    }
-
-
-def test_when_variant_routes_the_output_to_the_when_piece():
-    """The `when` variant produces `oop` from the Medicaid piece."""
-    registry = collect_bqsegm_metadata(functions=_covered_pool())
-    variants = build_case_variants(registry=registry, functions=_covered_pool())
-    when_variant = next(v for v in variants if v.side == "when")
-    assert when_variant.producers["oop"] is oop_medicaid
-
-
-def test_swap_producers_replaces_the_output_and_preserves_the_rest():
-    """A variant's producer-swap routes `oop` to its piece, leaving others intact."""
-    pool = _covered_pool()
-    registry = collect_bqsegm_metadata(functions=pool)
-    variants = build_case_variants(registry=registry, functions=pool)
-    otherwise_variant = next(v for v in variants if v.side == "otherwise")
-    swapped = swap_producers(functions=pool, variant=otherwise_variant)
-    assert swapped["oop"] is oop_private
-    assert swapped["utility"] is utility
-
-
-def test_swap_producers_is_a_concrete_case_variant():
-    """`build_case_variants` returns `CaseVariant` records (not raw tuples)."""
-    registry = collect_bqsegm_metadata(functions=_covered_pool())
-    variants = build_case_variants(registry=registry, functions=_covered_pool())
-    assert all(isinstance(v, CaseVariant) for v in variants)

@@ -1776,7 +1776,6 @@ class BQSEGM(Solver):
                 )
                 continuation_core = _build_bqsegm_continuation_core(
                     savings_grid=savings_grid,
-                    schedule_spec=schedule_spec,
                     continuation_plan=plan,
                     statics=statics,
                 )
@@ -2710,16 +2709,6 @@ class _BQSEGMScheduleSpec:
     sources: tuple[_BQSEGMSource, ...] = ()
     """Every breakpoint across all declared schedules, merged on the liquid axis.
     The ride-along core maps each source to its own per-cell asset preimage."""
-    derived_var_name: str = ""
-    """Name of the derived monotone schedule variable, or `""` when the schedule
-    varies directly in the liquid state. When set, the thresholds live in this
-    variable's units and map to a per-ride-along-cell asset preimage."""
-    derived_of_liquid_dag: Callable | None = None
-    """Composed derived schedule variable as a function of the liquid state and
-    qualified params, used to recover its per-cell affine asset preimage."""
-    derived_param_names: tuple[str, ...] = ()
-    """Unqualified parameter names the derived schedule variable reads (everything
-    but the state axes)."""
     discount_factor_dag: Callable | None = None
     """Composed `discount_factor` as a function of its ride-along state arguments and
     qualified params, or `None` when the regime uses pylcm's flat `H__discount_factor`
@@ -2852,19 +2841,14 @@ def _collect_bqsegm_schedule_spec(
         else None
     )
     consumption_action_name = next(iter(context.state_action_space.continuous_actions))
-    # Legacy single-schedule fields drive the non-ride-along continuous core, which
-    # is reached only for a regime with no ride-along axis (so a single liquid-
-    # direct schedule). They mirror the first schedule for that case.
+    # `threshold_param_names` / `breakpoint_kinds` mirror the first schedule and
+    # drive the non-ride-along continuous core, which is reached only for a
+    # regime with no ride-along axis (a single liquid-direct schedule).
     first = schedules[0]
     threshold_param_names = tuple(
         f"{first.output}__{bp.threshold}" for bp in first.breakpoints
     )
     breakpoint_kinds = tuple(bp.kind for bp in first.breakpoints)
-    first_derived = (
-        ("", None, ())
-        if first.variable == liquid_state_name
-        else (first.variable, *_derived_dag(first.variable)[:2])
-    )
     return _BQSEGMScheduleSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
@@ -2876,9 +2860,6 @@ def _collect_bqsegm_schedule_spec(
         threshold_param_names=threshold_param_names,
         breakpoint_kinds=breakpoint_kinds,
         sources=tuple(sources),
-        derived_var_name=first_derived[0],
-        derived_of_liquid_dag=first_derived[1],
-        derived_param_names=first_derived[2],
         discount_factor_dag=discount_factor_dag,
     )
 
@@ -3370,7 +3351,6 @@ def _bqsegm_ride_along_statics(
 def _bqsegm_cell_breakpoints(
     *,
     statics: _BQSEGMRideAlongStatics,
-    schedule_spec: _BQSEGMScheduleSpec,
     kwargs: Mapping[str, Any],
     cell: dict[str, Any],
     liquid_grid: Float1D,
@@ -3414,9 +3394,7 @@ def _bqsegm_cell_breakpoints(
         return linear_asset_preimage(derived_of_liquid, threshold=threshold)
 
     preimages = clamp_breakpoints_to_grid(
-        breakpoints=jnp.stack(
-            [cell_breakpoint(source) for source in schedule_spec.sources]
-        ),
+        breakpoints=jnp.stack([cell_breakpoint(source) for source in statics.sources]),
         liquid_grid=liquid_grid,
     )
     return _partition_jumps(
@@ -3431,7 +3409,6 @@ def _bqsegm_cell_breakpoints(
 def _build_bqsegm_continuation_core(
     *,
     savings_grid: Float1D,
-    schedule_spec: _BQSEGMScheduleSpec,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     statics: _BQSEGMRideAlongStatics,
 ) -> Callable:
@@ -3480,7 +3457,6 @@ def _build_bqsegm_continuation_core(
                 # that bakes one copy of the per-cell DAG into the graph per interval.
                 breakpoints, _ = _bqsegm_cell_breakpoints(
                     statics=statics,
-                    schedule_spec=schedule_spec,
                     kwargs=kwargs,
                     cell=cell,
                     liquid_grid=liquid,
@@ -3617,7 +3593,6 @@ def _build_bqsegm_envelope_core(
 
             breakpoints, jump_positions = _bqsegm_cell_breakpoints(
                 statics=statics,
-                schedule_spec=schedule_spec,
                 kwargs=kwargs,
                 cell=cell,
                 liquid_grid=liquid,

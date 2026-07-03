@@ -1,28 +1,20 @@
-"""Breakpoint IR: the mixed-kind solver representation of a case boundary.
+"""Breakpoint geometry helpers map thresholds to a liquid interval partition.
 
-BQSEGM merges every institutional boundary on the liquid axis into one sorted
-interval partition. The first step is a uniform representation: each declared
-case-boundary surface (a jump, a continuous kink, a hard constraint) becomes a
-`BreakpointSource` carrying the monotone boundary variable, its threshold, the
-discontinuity kind, and the side that owns the exact boundary point — regardless
-of which `@lcm.case`/`@lcm.piece` form the author used.
+Preimages are clamped to the grid span, intervals are lower-closed/upper-open
+(a value exactly on a breakpoint belongs to the interval above), and each
+interval's representative point recovers the active affine budget segment.
 """
 
 import jax.numpy as jnp
 import numpy as np
 
 import lcm
-from _lcm.egm.bqsegm import collect_bqsegm_metadata
 from _lcm.egm.bqsegm_breakpoints import (
-    BreakpointSource,
     affine_coefficients,
-    breakpoint_sources_from_registry,
     clamp_breakpoints_to_grid,
-    interval_index,
     interval_midpoints,
     interval_segment_coefficients,
     linear_asset_preimage,
-    n_intervals,
 )
 
 
@@ -50,15 +42,6 @@ def _medicaid_pool():
         "subsidy_medicaid": subsidy_medicaid,
         "subsidy_none": subsidy_none,
     }
-
-
-def test_breakpoint_source_records_the_boundary_variable_and_threshold():
-    """A breakpoint source names the monotone variable and its threshold."""
-    registry = collect_bqsegm_metadata(functions=_medicaid_pool())
-    sources = breakpoint_sources_from_registry(registry)
-    assert len(sources) == 1
-    assert sources[0].variable == "assets"
-    assert sources[0].threshold == "medicaid_asset_limit"
 
 
 def test_clamp_sends_a_degenerate_preimage_outside_the_grid_and_keeps_it_finite():
@@ -99,47 +82,6 @@ def test_clamped_degenerate_breakpoint_yields_finite_interval_midpoints():
     midpoints = interval_midpoints(liquid_grid=liquid_grid, breakpoints=degenerate)
 
     assert bool(jnp.all(jnp.isfinite(midpoints)))
-
-
-def test_breakpoint_sources_lift_a_piecewise_affine_schedule():
-    """A declared multi-bracket schedule contributes one breakpoint per threshold."""
-
-    @lcm.piecewise_affine(
-        "tax",
-        variable="capital_income",
-        breakpoints=(
-            lcm.affine_breakpoint("bracket_low", kind="continuous_kink"),
-            lcm.affine_breakpoint("bracket_high", kind="continuous_kink"),
-        ),
-    )
-    def tax_schedule(capital_income, rate):
-        return rate * capital_income
-
-    registry = collect_bqsegm_metadata(functions={"tax": tax_schedule})
-    sources = breakpoint_sources_from_registry(registry)
-    assert [(s.variable, s.threshold, s.kind) for s in sources] == [
-        ("capital_income", "bracket_low", "continuous_kink"),
-        ("capital_income", "bracket_high", "continuous_kink"),
-    ]
-
-
-def test_breakpoint_source_records_the_kind_and_equality_owner():
-    """A breakpoint source carries the discontinuity kind and equality owner."""
-    registry = collect_bqsegm_metadata(functions=_medicaid_pool())
-    source = breakpoint_sources_from_registry(registry)[0]
-    assert source.kind == "jump"
-    assert source.equality_owner == "otherwise"
-
-
-def test_breakpoint_source_admits_an_open_boundary_kind():
-    """The IR represents a solver-synthesized open one-sided limit breakpoint."""
-    source = BreakpointSource(
-        variable="savings",
-        threshold="asset_limit",
-        kind="open_boundary",
-        equality_owner="when",
-    )
-    assert source.kind == "open_boundary"
 
 
 def test_affine_coefficients_recover_slope_and_intercept():
@@ -191,41 +133,6 @@ def test_linear_asset_preimage_traces_a_runtime_threshold_and_slope():
     # z = 0.05 a + 12000, threshold 17000 -> a = 5000 / 0.05 = 100000.
     np.testing.assert_allclose(
         jitted(jnp.asarray(0.05), jnp.asarray(17_000.0)), 100_000.0, atol=1e-3
-    )
-
-
-def test_n_intervals_is_one_more_than_the_breakpoint_count():
-    """Merging N breakpoints on the asset axis yields N+1 ordered intervals."""
-    assert n_intervals(n_breakpoints=3) == 4
-    assert n_intervals(n_breakpoints=0) == 1
-
-
-def test_interval_index_sorts_unordered_breakpoints():
-    """Each liquid grid point lands in the interval bounded by sorted breakpoints."""
-    breakpoints = jnp.asarray([200_000.0, 50_000.0])
-    grid = jnp.asarray([0.0, 60_000.0, 250_000.0])
-    np.testing.assert_array_equal(
-        np.asarray(interval_index(liquid_grid=grid, breakpoints=breakpoints)),
-        np.asarray([0, 1, 2]),
-    )
-
-
-def test_interval_index_assigns_a_point_on_a_breakpoint_to_the_upper_interval():
-    """A liquid point exactly on a breakpoint joins the interval above it."""
-    breakpoints = jnp.asarray([50_000.0, 200_000.0])
-    grid = jnp.asarray([50_000.0, 200_000.0])
-    np.testing.assert_array_equal(
-        np.asarray(interval_index(liquid_grid=grid, breakpoints=breakpoints)),
-        np.asarray([1, 2]),
-    )
-
-
-def test_interval_index_with_no_breakpoints_is_a_single_interval():
-    """With no breakpoints every liquid point shares interval zero."""
-    grid = jnp.asarray([0.0, 1_000.0, 500_000.0])
-    np.testing.assert_array_equal(
-        np.asarray(interval_index(liquid_grid=grid, breakpoints=jnp.zeros((0,)))),
-        np.asarray([0, 0, 0]),
     )
 
 

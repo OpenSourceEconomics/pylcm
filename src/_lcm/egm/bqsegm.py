@@ -1,17 +1,16 @@
-"""Lower a case-piece model into per-case smooth DAG variants.
+"""Collect and validate a regime's case-piece metadata for BQSEGM.
 
 A case-piece model declares, for one or more DAG outputs, a smooth formula per
 side of a Boolean case boundary (see `lcm.case_piece`). BQSEGM solves each case
 separately so that within a case the Euler RHS is smooth. This module reads the
-decorator metadata off a regime's function pool, validates coverage and boundary
-declarations, and builds the producer-swap maps that specialize the DAG to one
-case — the form an EGM step can run unchanged.
+decorator metadata off a regime's function pool — boundaries, when/otherwise
+piece sets, piecewise-affine schedules — and validates coverage; the solver
+resolves the collected registry into its per-case specification.
 """
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
 
 from _lcm.typing import FunctionName
 from lcm.case_piece import CaseBoundaryMeta, PieceMeta, PiecewiseAffineMeta
@@ -44,18 +43,6 @@ class BQSEGMRegistry:
     """Tuple of declared piecewise-affine schedules, one per schedule output."""
 
 
-@dataclass(frozen=True)
-class CaseVariant:
-    """One case of the model: a predicate side and its per-output producers."""
-
-    predicate_name: FunctionName
-    """Name of the case-boundary predicate this case fixes."""
-    side: Literal["when", "otherwise"]
-    """Side of the predicate this case holds fixed."""
-    producers: MappingProxyType[FunctionName, Callable[..., object]]
-    """Immutable mapping of split output name to the piece producing it here."""
-
-
 def collect_bqsegm_metadata(
     *,
     functions: Mapping[FunctionName, Callable[..., object]],
@@ -83,70 +70,6 @@ def collect_bqsegm_metadata(
         piece_sets=piece_sets,
         piecewise_affine_schedules=schedules,
     )
-
-
-def build_case_variants(
-    *,
-    registry: BQSEGMRegistry,
-    functions: Mapping[FunctionName, Callable[..., object]],
-) -> tuple[CaseVariant, ...]:
-    """Build one case variant per (predicate, side) over the registered pieces.
-
-    Each predicate that splits at least one output yields two cases — `when` and
-    `otherwise` — and each case routes every output the predicate splits to that
-    side's piece.
-
-    Args:
-        registry: Collected case-piece metadata.
-        functions: Mapping of function name to the regime's DAG functions, used
-            to resolve piece names to callables.
-
-    Returns:
-        Tuple of case variants, two per splitting predicate.
-
-    """
-    variants: list[CaseVariant] = []
-    for predicate_name in registry.boundaries:
-        sets = [ps for ps in registry.piece_sets if ps.predicate_name == predicate_name]
-        if not sets:
-            continue
-        for side in ("when", "otherwise"):
-            producers = {
-                ps.output: functions[
-                    ps.when_func if side == "when" else ps.otherwise_func
-                ]
-                for ps in sets
-            }
-            variants.append(
-                CaseVariant(
-                    predicate_name=predicate_name,
-                    side=side,
-                    producers=MappingProxyType(producers),
-                )
-            )
-    return tuple(variants)
-
-
-def swap_producers(
-    *,
-    functions: Mapping[FunctionName, Callable[..., object]],
-    variant: CaseVariant,
-) -> MappingProxyType[FunctionName, Callable[..., object]]:
-    """Specialize a function pool to one case by routing each split output.
-
-    The combined (brute-force) producer of each split output, if present, is
-    replaced by the case's piece; the remaining functions pass through. The
-    now-unreachable opposite-side pieces are pruned later by DAG reachability.
-
-    Args:
-        functions: Mapping of function name to the regime's DAG functions.
-        variant: The case whose pieces produce the split outputs.
-
-    Returns:
-        The specialized function pool as an immutable mapping.
-
-    """
-    return MappingProxyType({**functions, **variant.producers})
 
 
 def _collect_piecewise_affine_schedules(

@@ -14,8 +14,8 @@ import numpy as np
 
 from _lcm.egm.bqsegm_step import (
     bqsegm_discrete_envelope_step,
-    bqsegm_jump_step,
     bqsegm_multi_interval_step,
+    bqsegm_recurring_jump_step,
     bqsegm_unified_step,
 )
 
@@ -341,7 +341,7 @@ def test_jump_step_matches_brute_through_two_additive_cliffs():
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
 
-    value, _marginal, _policy = bqsegm_jump_step(
+    value, _marginal, _policy = bqsegm_recurring_jump_step(
         next_value=next_value_of_liquid(liquid_grid),
         next_marginal=next_marginal_of_liquid(liquid_grid),
         liquid_grid=liquid_grid,
