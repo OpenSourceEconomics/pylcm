@@ -2053,12 +2053,11 @@ class _RideAlongBQSEGMPeriodKernel:
         self, *, fixed_flat_params: FlatParams
     ) -> _RideAlongBQSEGMPeriodKernel:
         """Bind the regime's and its carry targets' fixed params into both cores."""
-        bound = dict(fixed_flat_params.get(self.regime_name, MappingProxyType({})))
-        for target_name in self.transition_target_names:
-            for key, value in fixed_flat_params.get(
-                target_name, MappingProxyType({})
-            ).items():
-                bound.setdefault(key, value)
+        bound = _union_fixed_params(
+            fixed_flat_params=fixed_flat_params,
+            regime_name=self.regime_name,
+            transition_target_names=self.transition_target_names,
+        )
         if not bound:
             return self
         return replace(
@@ -2162,13 +2161,11 @@ class _RideAlongBQSEGMPeriodKernel:
 
     def _kernel_params(self, *, flat_params: FlatParams) -> dict[str, object]:
         """Flat params fed into the cores: the regime's plus its targets'."""
-        params: dict[str, object] = dict(flat_params[self.regime_name])
-        for target_name in self.transition_target_names:
-            for key, value in flat_params.get(
-                target_name, MappingProxyType({})
-            ).items():
-                params.setdefault(key, value)
-        return params
+        return _union_free_params(
+            flat_params=flat_params,
+            regime_name=self.regime_name,
+            transition_target_names=self.transition_target_names,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -3493,32 +3490,12 @@ def _build_bqsegm_continuation_core(
         mesh = jnp.meshgrid(*ride_grids, indexing="ij")
         flat_cells = tuple(grid.ravel() for grid in mesh)
         solve_cells = jax.vmap(lambda *vals: cell_continuation(vals))
-        n_cells = int(flat_cells[0].shape[0])
-        cell_block = statics.cell_block_size
-        if cell_block <= 0 or cell_block >= n_cells:
-            return solve_cells(*flat_cells)
-        # Scan the flattened mesh in cell blocks so only one block's transition
-        # fan-out is in flight; padding repeats the last cell and its results are
-        # dropped after the scan.
-        pad = (-n_cells) % cell_block
-
-        def to_blocks(arr: FloatND | IntND) -> FloatND | IntND:
-            padded = (
-                jnp.concatenate([arr, jnp.repeat(arr[-1:], pad, axis=0)])
-                if pad
-                else arr
-            )
-            return padded.reshape(-1, cell_block, *arr.shape[1:])
-
-        blocked_cells = tuple(to_blocks(arr) for arr in flat_cells)
-        value_blocks, marginal_blocks = jax.lax.map(
-            lambda args: solve_cells(*args), blocked_cells
+        expected_value, expected_marginal = _stream_cell_solves(
+            solve_cells=solve_cells,
+            inputs=flat_cells,
+            cell_block=statics.cell_block_size,
         )
-
-        def from_blocks(arr: FloatND) -> FloatND:
-            return arr.reshape(-1, *arr.shape[2:])[:n_cells]
-
-        return from_blocks(value_blocks), from_blocks(marginal_blocks)
+        return expected_value, expected_marginal
 
     return continuation_core
 
