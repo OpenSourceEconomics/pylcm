@@ -3,13 +3,16 @@
 A BQSEGM regime whose child value carries a recurring jump (next period's
 budget has the same cliff) must read that child value without averaging
 across the cliff: a query on the cliff's bad side must see the bad side's
-continuation. With a side-faithful read, the deep-period solve agrees with
-dense brute force to the same tolerance as the smooth-continuation period.
+continuation. The side-faithful read delivers that; full agreement with
+dense brute additionally needs the parent's candidate set to contain the
+save-to-cliff action, whose optimum can fall strictly between savings
+nodes.
 
-Until the reader is topology-aware this is an xfail (strict): the linear
-read across the child's jump leaves a savings-grid-independent residual,
-documented in `test_bqsegm_jump_ride_along_recurring_needs_topology`. When
-the feature lands, this test flips to XPASS and that residual test retires.
+Until that off-grid candidate lands this is an xfail (strict): the
+remaining residual is savings-grid resolution at the cliff preimage,
+documented in `test_bqsegm_jump_ride_along_recurring_is_resolution_limited`.
+When the candidate lands, this test flips to XPASS and that residual test
+retires.
 """
 
 import numpy as np
