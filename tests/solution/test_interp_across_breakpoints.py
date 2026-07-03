@@ -177,30 +177,3 @@ def test_sparse_interval_interpolates_between_facing_limits():
     )
 
     np.testing.assert_allclose(float(read), 41.0, atol=1e-6)
-
-
-def test_anchored_bracket_uses_the_node_slope_when_given():
-    """An anchored read with slopes recovers a quadratic row exactly.
-
-    For `f(x) = x²` with a jump declared at 5.0 on a bracket [4, 8], the
-    query at 4.5 anchors on the node (4, 16) with exact slope 8 and the left
-    limit (5, 25): the quadratic interpolant through them reproduces
-    `4.5² = 20.25`, where the linear secant would give 20.5.
-    """
-    xp = jnp.array([0.0, 2.0, 4.0, 8.0, 10.0, jnp.nan])
-    fp = jnp.where(xp < 5.0, xp**2, xp**2 + 1000.0)
-    slopes = 2.0 * xp
-    search_grid, valid_length = prepare_padded_grid(xp)
-
-    read = interp_across_breakpoints_on_prepared_grid(
-        x_query=jnp.asarray(4.5),
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=slopes,
-        breakpoints=jnp.array([5.0]),
-        breakpoint_side_values=jnp.array([[25.0, 1025.0]]),
-    )
-
-    np.testing.assert_allclose(float(read), 20.25, atol=1e-9)

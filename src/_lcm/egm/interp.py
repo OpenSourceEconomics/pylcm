@@ -211,30 +211,7 @@ def interp_across_breakpoints_on_prepared_grid(
     y1 = jnp.where(hi_on_side, fp[hi], breakpoint_side_values[above_anchor, 0])
     span = jnp.where(x1 > x0, x1 - x0, 1.0)
     slope = jnp.where(x1 > x0, (y1 - y0) / span, 0.0)
-    x_clipped = jnp.clip(x_query, x0, x1)
-    anchored = y0 + slope * (x_clipped - x0)
-    if fp_slopes is not None:
-        # One endpoint of an anchored bracket is usually a grid node with a
-        # known exact derivative; the quadratic through node-with-slope and
-        # the limit removes the secant's curvature bias — a per-read bias
-        # that compounds across backward induction. Non-finite slopes and
-        # both-off brackets keep the linear secant.
-        node_slope = jnp.where(lo_on_side, fp_slopes[lo], fp_slopes[hi])
-        node_x = jnp.where(lo_on_side, x0, x1)
-        node_y = jnp.where(lo_on_side, y0, y1)
-        limit_x = jnp.where(lo_on_side, x1, x0)
-        limit_y = jnp.where(lo_on_side, y1, y0)
-        gap = limit_x - node_x
-        curvature = jnp.where(
-            gap != 0.0,
-            (limit_y - node_y - node_slope * gap)
-            / jnp.where(gap != 0.0, gap, 1.0) ** 2,
-            0.0,
-        )
-        offset = x_clipped - node_x
-        quadratic = node_y + node_slope * offset + curvature * offset**2
-        one_node = lo_on_side ^ hi_on_side
-        anchored = jnp.where(one_node & jnp.isfinite(quadratic), quadratic, anchored)
+    anchored = y0 + slope * (jnp.clip(x_query, x0, x1) - x0)
     bracket_is_clean = lo_on_side & hi_on_side
     if fp_slopes is None:
         smooth = interp_on_prepared_grid(
