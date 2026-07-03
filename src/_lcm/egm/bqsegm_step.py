@@ -1,31 +1,41 @@
 """One-period BQSEGM steps for a 1-D consumption--saving regime.
 
-Two regime shapes are covered:
+The step family, and where the solver dispatches each:
 
-- A *continuous* piecewise-affine budget (`bqsegm_multi_interval_step`) — every
-  breakpoint a kink, no jump — where `coh(liquid)` stays continuous and monotone,
-  so one EGM pass in `coh` space and an inversion of `coh(liquid)` recover the
-  whole liquid grid with no interval seam.
-- A binary *jump* case boundary (`bqsegm_one_asset_step`) where cash-on-hand jumps
-  across the boundary, requiring two masked cases merged through the value
-  discontinuity.
+- `bqsegm_one_asset_step` — a binary *jump* case boundary on the liquid state
+  (`liquid < asset_limit`) shifting an additive subsidy into cash-on-hand.
+  Dispatched for the direct case-piece split and for a schedule whose single
+  breakpoint is a jump.
+- `bqsegm_multi_interval_step` — a *continuous* piecewise-affine budget (every
+  breakpoint a kink or hard-constraint floor, no jump), where `coh(liquid)`
+  stays continuous and monotone, so one EGM pass in `coh` space and an inversion
+  of `coh(liquid)` recover the whole liquid grid with no interval seam.
+- `bqsegm_unified_step` — a schedule mixing kinds (jumps and kinks together):
+  each continuous run of intervals solves by `coh` inversion and the cases are
+  masked across the jumps.
+- `bqsegm_recurring_jump_step` — a schedule of multiple jump breakpoints (N
+  cliffs), resolving every jump with boundary-targeting and jump-aware
+  continuation reads.
+- `bqsegm_multi_interval_step_savings` / `bqsegm_unified_step_savings` —
+  savings-space variants for the ride-along path, consuming a continuation
+  supplied on the exogenous savings grid instead of the next liquid grid.
+- `bqsegm_per_interval_continuation_step_savings` — the ride-along cell whose
+  next-state law reads the liquid state, so the continuation is constant only
+  within each declared interval and the step consumes one continuation row per
+  interval.
+- `bqsegm_discrete_envelope_step` — a discrete action shifting a smooth budget:
+  the continuous subproblem solves per discrete-action value and the discrete
+  choice is taken by the upper envelope over the branch values.
 
-The binary jump case: a case boundary on the liquid state (`liquid < asset_limit`)
-shifts an additive subsidy into cash-on-hand. Within each case the budget is
-smooth, so the period solves by ordinary 1-D EGM on `coh = liquid + subsidy`; the
-recovered endogenous state is `liquid = coh - subsidy`. Each case's value is the
-upper envelope over three candidate branches on the liquid grid:
-
-- the Euler interior path from the EGM inversion;
-- the boundary-targeting branch that saves just enough to land on the eligible
-  side of the boundary and earn its higher continuation;
-- the hard borrowing corner that saves nothing and consumes all cash-on-hand.
-
-The two cases are then merged by the branch-aware upper envelope after NaN-dead
-masking each case to its consistent region — the `when` case where the predicate
-holds, the `otherwise` case where it fails. The `equality_owner` of the boundary
-fixes which side owns the exact boundary point: `equality_owner="otherwise"` gives
-the otherwise side ownership through the strict `<` / non-strict `>=` split.
+Shared mechanics: within each case/interval the budget is smooth, so the period
+solves by ordinary 1-D EGM on cash-on-hand; the recovered endogenous state is the
+budget inverse. A case's value is the upper envelope over its candidate branches
+(the Euler interior path, boundary-targeting saves that land exactly on the
+eligible side of a jump, and the hard borrowing corner). Cases are NaN-dead
+masked to the region where their predicate is consistent with the recovered
+state and merged by the branch-aware upper envelope; the boundary's
+`equality_owner` fixes which side owns the exact boundary point through the
+strict/non-strict comparison split.
 """
 
 from collections.abc import Callable, Mapping

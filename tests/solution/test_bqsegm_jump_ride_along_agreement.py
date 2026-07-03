@@ -9,13 +9,13 @@ per-cell preimage, the savings-space case partition, and the ride-along batching
 end-to-end.
 
 The deeper working periods carry a *recurring* jumped continuation: next
-period's value itself has the cliff, and the transition-aware reader
-(`bind_continuation`) interpolates that next value linearly across the jump, so
-an agent who would save to the eligible side reads a smoothed continuation. That
-residual (a few percent of value, grid-independent — see
-`test_bqsegm_jump_ride_along_recurring_needs_topology` below) is the
-topology-preserving-continuation limitation, tracked separately; it is a property
-of the continuation reader, not of the jump-budget step exercised here.
+period's value itself has the cliff. The transition-aware reader
+(`bind_continuation`) reads it side-faithfully — the jump rides inside the carry
+as a duplicated abscissa with exact one-sided limits, so a straddling bracket
+interpolates between the nearest own-side node and the cliff's side limit and
+never averages across the jump. The remaining error is grid resolution at the
+cliff preimage, shrinking as the savings grid refines
+(`test_bqsegm_jump_ride_along_recurring_is_resolution_limited` below).
 """
 
 from collections.abc import Mapping

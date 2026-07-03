@@ -76,8 +76,16 @@ class FunctionDispatchError(PyLCMError):
 class BQSEGMCaseError(PyLCMError):
     """Raised when a BQSEGM case-boundary or formula-piece declaration is invalid.
 
-    Covers an un-inferable boundary specification (a bare `(variable, threshold)`
-    tuple that does not declare equality ownership), incomplete piece coverage
-    (a missing `when` or `otherwise` side for an output), and a case boundary
-    that does not return a Boolean.
+    Covers three families of checks:
+
+    - Invalid boundary/piece declarations: a bare `(variable, threshold)` tuple
+      that does not declare equality ownership, a case boundary with no
+      `lcm.boundary(...)` surface, a piece referencing an undeclared predicate,
+      or a duplicate/missing `when`/`otherwise` side for an output.
+    - The AST/JAXPR smoothness gate: hidden branching (a Python `if`, a bare
+      comparison, a piecewise primitive inside a helper) in a case's economic
+      nodes.
+    - The v1 scope gate: a non-`'subsidy'` split output, a state-dependent
+      piece, a `'when'`-owned equality, a non-`'jump'` boundary kind, or a
+      boundary on a variable other than the liquid state.
     """

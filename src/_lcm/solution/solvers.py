@@ -1458,18 +1458,29 @@ class OneAssetEGM(Solver):
 class BQSEGM(Solver):
     """Case-piece endogenous-grid solver for a 1-D consumption--saving regime.
 
-    A regime whose budget is split by a binary case boundary on the liquid state
-    (e.g. a Medicaid asset test) is smooth within each case. BQSEGM solves each
-    case by ordinary 1-D EGM, masks each case's candidates to the region where
-    its predicate is consistent with the recovered state, and merges the two
-    cases on the liquid grid with the branch-aware upper envelope. The
-    strict/non-strict consistency split gives the boundary point to the side that
-    owns equality. The step carries the marginal value of liquid backward, like
-    the plain 1-D EGM, so this regime both reads and publishes a continuation
-    carry.
+    A regime whose budget is split by case boundaries on the liquid state (e.g. a
+    Medicaid asset test) is smooth within each case. BQSEGM solves each case by
+    ordinary 1-D EGM, masks each case's candidates to the region where its
+    predicate is consistent with the recovered state, and merges the cases on the
+    liquid grid with the branch-aware upper envelope. The strict/non-strict
+    consistency split gives the boundary point to the side that owns equality.
+    The step carries the marginal value of liquid backward, like the plain 1-D
+    EGM, so this regime both reads and publishes a continuation carry.
 
-    The v1 scope is one binary predicate splitting additive cash-on-hand
-    contributions; multi-predicate and non-additive pieces are deferred.
+    The regime's declarations select the kernel:
+
+    - Case-piece split (`lcm.case_boundary` / `lcm.piece`): the binary jump step
+      on the two masked subsidy cases. The v1 scope is one binary predicate
+      splitting additive cash-on-hand contributions; multi-predicate and
+      non-additive pieces are deferred.
+    - Piecewise-affine schedule (`lcm.piecewise_affine`): the breakpoint
+      kinds pick the step — kinks/floors only, jumps only, or mixed —
+      solved by `coh` inversion per continuous run and masked across the jumps.
+    - Schedule with ride-along co-states: two independently-jitted cores per
+      period (transition-aware continuation read, then the per-cell envelope
+      solve in savings space), batched over the ride-along cells.
+    - Discrete action over a smooth budget: one continuous subproblem per
+      discrete-action value, merged by the discrete upper envelope.
     """
 
     savings_grid: ContinuousGrid
