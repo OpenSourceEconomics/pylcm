@@ -1056,6 +1056,11 @@ def _aggregate_child_choices(
         breakpoint_rows = jnp.broadcast_to(
             breakpoint_block, (*block_shape, breakpoint_block.shape[-1])
         ).reshape(-1, breakpoint_block.shape[-1])
+        if carry.breakpoint_side_values is None:
+            msg = "a carry publishing breakpoints must publish side values"
+            raise ValueError(msg)
+        side_value_block = carry.breakpoint_side_values[child_index]
+        side_value_rows = side_value_block.reshape(-1, *side_value_block.shape[-2:])
 
         def interp_value_row_jumped(
             search_grid: Float1D,
@@ -1064,6 +1069,7 @@ def _aggregate_child_choices(
             fp: Float1D,
             fp_slopes: Float1D,
             row_breakpoints: Float1D,
+            row_side_values: FloatND,
             x_query: ScalarFloat,
         ) -> ScalarFloat:
             """Side-faithful read of one jumped row; positional per `jax.vmap`."""
@@ -1075,6 +1081,7 @@ def _aggregate_child_choices(
                 fp=fp,
                 fp_slopes=fp_slopes,
                 breakpoints=row_breakpoints,
+                breakpoint_side_values=row_side_values,
             )
 
         value_at_child = jax.vmap(interp_value_row_jumped)(
@@ -1084,6 +1091,7 @@ def _aggregate_child_choices(
             value_rows,
             marginal_rows,
             breakpoint_rows,
+            side_value_rows,
             queries_flat,
         )
     marginal_at_child = jax.vmap(interp_row)(

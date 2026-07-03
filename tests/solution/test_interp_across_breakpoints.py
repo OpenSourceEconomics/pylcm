@@ -79,6 +79,7 @@ def test_padded_row_read_is_side_faithful():
             xp=xp,
             fp=fp,
             breakpoints=jnp.array([5.0]),
+            breakpoint_side_values=jnp.array([[5.0, -95.0]]),
         )
     )(jnp.array([4.9, 5.1, 3.0, 7.0]))
 
@@ -114,8 +115,65 @@ def test_padded_row_read_keeps_hermite_accuracy_away_from_jumps():
         fp=fp,
         fp_slopes=slopes,
         breakpoints=jnp.array([5.0]),
+        breakpoint_side_values=jnp.array([[-0.2, 49.8]]),
     )
     linear = jnp.interp(smooth_query, xp[:6], fp[:6])
 
     np.testing.assert_allclose(float(side_faithful), float(hermite), atol=1e-9)
     assert abs(float(hermite) - float(linear)) > 1e-3
+
+
+def test_straddling_bracket_interpolates_to_the_side_limit():
+    """A breakpoint-straddling bracket anchors on the exact boundary limit.
+
+    On a coarse row whose bracket [4, 8] straddles a jump at 5.0, a query at
+    4.5 interpolates between the node (4, 16) and the left limit (5, 25) —
+    it must neither extrapolate from the below-side boundary segment nor
+    blend the above-side node into the read. A query at 6.0 interpolates
+    between the right limit (5, 1025) and the node (8, 1064).
+    """
+    xp = jnp.array([0.0, 2.0, 4.0, 8.0, 10.0, jnp.nan])
+    fp = jnp.where(xp < 5.0, xp**2, xp**2 + 1000.0)
+    search_grid, valid_length = prepare_padded_grid(xp)
+
+    read = jax.vmap(
+        lambda x: interp_across_breakpoints_on_prepared_grid(
+            x_query=x,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=xp,
+            fp=fp,
+            breakpoints=jnp.array([5.0]),
+            breakpoint_side_values=jnp.array([[25.0, 1025.0]]),
+        )
+    )(jnp.array([4.5, 6.0]))
+
+    expected_below = 16.0 + (25.0 - 16.0) / (5.0 - 4.0) * (4.5 - 4.0)
+    expected_above = 1025.0 + (1064.0 - 1025.0) / (8.0 - 5.0) * (6.0 - 5.0)
+    np.testing.assert_allclose(
+        np.asarray(read), [expected_below, expected_above], atol=1e-6
+    )
+
+
+def test_sparse_interval_interpolates_between_facing_limits():
+    """An interval holding no grid node reads between its two boundary limits.
+
+    With breakpoints at 5.0 and 7.0 and nodes at [0, 4, 8, 10], the interval
+    (5, 7) contains no node: a query at 6.0 interpolates between 5.0's right
+    limit and 7.0's left limit, touching neither side's nodes.
+    """
+    xp = jnp.array([0.0, 4.0, 8.0, 10.0, jnp.nan, jnp.nan])
+    fp = jnp.array([0.0, 4.0, -100.0, -98.0, jnp.nan, jnp.nan])
+    search_grid, valid_length = prepare_padded_grid(xp)
+
+    read = interp_across_breakpoints_on_prepared_grid(
+        x_query=jnp.asarray(6.0),
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        breakpoints=jnp.array([5.0, 7.0]),
+        breakpoint_side_values=jnp.array([[5.0, 40.0], [42.0, -101.0]]),
+    )
+
+    np.testing.assert_allclose(float(read), 41.0, atol=1e-6)

@@ -145,22 +145,30 @@ def interp_across_breakpoints_on_prepared_grid(
     xp: Float1D,
     fp: Float1D,
     breakpoints: Float1D,
+    breakpoint_side_values: FloatND,
     fp_slopes: Float1D | None = None,
 ) -> ScalarFloat:
     """Read one NaN-padded row at a query without averaging across jumps.
 
-    The padded-row counterpart of `interp_across_breakpoints`: the bracket is
-    located on the prepared search key and clamped to the row's valid prefix,
-    then the stencil is restricted to the query's own side of the breakpoints
-    — shifting off the straddling segment and collapsing onto the own-side
-    endpoint where the side holds fewer than two nodes.
+    The padded-row counterpart of `interp_across_breakpoints`, anchored on
+    exact one-sided limits: the bracket is located on the prepared search
+    key and clamped to the row's valid prefix, and any bracket endpoint on
+    the wrong side of a breakpoint is replaced by that breakpoint's facing
+    side limit `(breakpoint, limit_value)`. Every read therefore
+    interpolates — never extrapolates — and a breakpoint whose jump is tiny
+    reads almost identically to the smooth path:
 
-    With `fp_slopes`, brackets whose two endpoints both lie on the query's
-    side keep the cubic Hermite read (`interp_on_prepared_grid`) — a curved
-    row read linearly is biased between nodes and the bias compounds across
-    backward induction — while jump-adjacent brackets stay side-faithful
-    linear, where a Hermite correction would consume jump-contaminated
-    slopes.
+    - both endpoints on the query's side ⇒ ordinary bracket read;
+    - bracket straddles the breakpoint above (below) ⇒ interpolate between
+      the own-side node and that breakpoint's left (right) limit;
+    - both endpoints off-side (an interval holding no node) ⇒ interpolate
+      between the two enclosing breakpoints' facing limits.
+
+    With `fp_slopes`, clean brackets keep the cubic Hermite read
+    (`interp_on_prepared_grid`) — a curved row read linearly is biased
+    between nodes and the bias compounds across backward induction — while
+    anchored brackets stay linear, where a Hermite correction would consume
+    jump-contaminated slopes.
 
     Args:
         x_query: The query point.
@@ -170,6 +178,9 @@ def interp_across_breakpoints_on_prepared_grid(
         xp: The NaN-padded, weakly ascending abscissae row.
         fp: Values at `xp`, jump-discontinuous only at the breakpoints.
         breakpoints: Ascending jump locations partitioning the row's span.
+        breakpoint_side_values: Per-breakpoint one-sided limits, shape
+            `(n_breakpoints, 2)` — column 0 the left limit, column 1 the
+            right limit.
         fp_slopes: Derivatives of `fp` at the `xp` nodes, NaN-padded in
             lockstep; `None` keeps every bracket linear.
 
@@ -180,6 +191,7 @@ def interp_across_breakpoints_on_prepared_grid(
     last = jnp.maximum(valid_length - 1, 1)
     hi = jnp.clip(jnp.searchsorted(search_grid, x_query, side="right"), 1, last)
     lo = hi - 1
+    n_breakpoints = breakpoints.shape[0]
     query_interval = jnp.searchsorted(breakpoints, x_query, side="right")
 
     def node_interval(index: ScalarInt) -> ScalarInt:
@@ -187,31 +199,38 @@ def interp_across_breakpoints_on_prepared_grid(
 
     lo_on_side = node_interval(lo) == query_interval
     hi_on_side = node_interval(hi) == query_interval
-    lo_shifted = jnp.clip(jnp.where(hi_on_side, lo, lo - 1), 0, last)
-    hi_shifted = jnp.where(hi_on_side, hi, lo)
-    lo_final = jnp.where(lo_on_side, lo_shifted, hi)
-    hi_final = jnp.where(lo_on_side, hi_shifted, jnp.clip(hi + 1, 0, last))
-    lo_ok = node_interval(lo_final) == query_interval
-    hi_ok = node_interval(hi_final) == query_interval
-    lo_final = jnp.where(lo_ok, lo_final, hi_final)
-    hi_final = jnp.where(hi_ok, hi_final, lo_final)
-    x0, x1 = xp[lo_final], xp[hi_final]
-    y0, y1 = fp[lo_final], fp[hi_final]
+    # An off-side `lo` means a breakpoint sits below the query
+    # (`query_interval >= 1`); an off-side `hi` means one sits above
+    # (`query_interval <= n_breakpoints - 1`), so the clipped anchor indices
+    # are exact wherever they are used.
+    below_anchor = jnp.clip(query_interval - 1, 0, n_breakpoints - 1)
+    above_anchor = jnp.clip(query_interval, 0, n_breakpoints - 1)
+    x0 = jnp.where(lo_on_side, xp[lo], breakpoints[below_anchor])
+    y0 = jnp.where(lo_on_side, fp[lo], breakpoint_side_values[below_anchor, 1])
+    x1 = jnp.where(hi_on_side, xp[hi], breakpoints[above_anchor])
+    y1 = jnp.where(hi_on_side, fp[hi], breakpoint_side_values[above_anchor, 0])
     span = jnp.where(x1 > x0, x1 - x0, 1.0)
     slope = jnp.where(x1 > x0, (y1 - y0) / span, 0.0)
-    side_faithful = y0 + slope * (x_query - x0)
-    if fp_slopes is None:
-        return side_faithful
+    anchored = y0 + slope * (jnp.clip(x_query, x0, x1) - x0)
     bracket_is_clean = lo_on_side & hi_on_side
-    hermite = interp_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
-    return jnp.where(bracket_is_clean, hermite, side_faithful)
+    if fp_slopes is None:
+        smooth = interp_on_prepared_grid(
+            x_query=x_query,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=xp,
+            fp=fp,
+        )
+    else:
+        smooth = interp_on_prepared_grid(
+            x_query=x_query,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=xp,
+            fp=fp,
+            fp_slopes=fp_slopes,
+        )
+    return jnp.where(bracket_is_clean, smooth, anchored)
 
 
 def prepare_padded_grid(xp: Float1D) -> tuple[Float1D, ScalarInt]:

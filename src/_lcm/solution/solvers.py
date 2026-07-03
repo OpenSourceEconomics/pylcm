@@ -3653,15 +3653,27 @@ def _build_bqsegm_envelope_core(
                     c_upper=action_upper,
                 )
 
+            # With jump breakpoints, the cell also publishes each jump's
+            # preimage and its exact one-sided value limits: the liquid query
+            # grid is augmented with a point just inside each side of every
+            # jump, solved in the same call, and split back out positionally.
+            if statics.n_jumps:
+                jumps = jnp.stack([breakpoints[p] for p in jump_positions])
+                query_grid, unsort = _augment_liquid_with_jump_sides(
+                    liquid_grid=liquid, jumps=jumps
+                )
+            else:
+                query_grid = liquid
+
             if statics.next_state_reads_liquid:
                 # True cash-on-hand per liquid grid point keeps the step's corners
                 # feasible where a partly-binding kink makes an interval's recovered
                 # affine budget extrapolate below zero.
-                coh_grid = jax.vmap(coh_of_liquid)(liquid)
+                coh_grid = jax.vmap(coh_of_liquid)(query_grid)
                 step = bqsegm_per_interval_continuation_step_savings(
                     cont_value=cont_value,
                     cont_marginal=cont_marginal,
-                    liquid_grid=liquid,
+                    liquid_grid=query_grid,
                     savings_grid=savings_grid,
                     discount_factor=cell_discount_factor,
                     utility_of_action=utility_of_consumption,
@@ -3672,27 +3684,30 @@ def _build_bqsegm_envelope_core(
                     coh_grid=coh_grid,
                     envelope_segment_block_size=statics.envelope_segment_block_size,
                 )
-                if statics.n_jumps == 0:
-                    return step
-                return (*step, jnp.stack([breakpoints[p] for p in jump_positions]))
-
-            step = _solve_ride_along_cell_step(
-                has_jump=statics.has_jump,
-                jump_positions=jump_positions,
-                cont_value=cont_value,
-                cont_marginal=cont_marginal,
-                liquid_grid=liquid,
-                savings_grid=savings_grid,
-                discount_factor=cell_discount_factor,
-                utility_of_action=utility_of_consumption,
-                inverse_marginal_utility=inverse_marginal_utility,
-                coh_slopes=coh_slopes,
-                coh_intercepts=coh_intercepts,
-                breakpoints=breakpoints,
-            )
+            else:
+                step = _solve_ride_along_cell_step(
+                    has_jump=statics.has_jump,
+                    jump_positions=jump_positions,
+                    cont_value=cont_value,
+                    cont_marginal=cont_marginal,
+                    liquid_grid=query_grid,
+                    savings_grid=savings_grid,
+                    discount_factor=cell_discount_factor,
+                    utility_of_action=utility_of_consumption,
+                    inverse_marginal_utility=inverse_marginal_utility,
+                    coh_slopes=coh_slopes,
+                    coh_intercepts=coh_intercepts,
+                    breakpoints=breakpoints,
+                )
             if statics.n_jumps == 0:
                 return step
-            return (*step, jnp.stack([breakpoints[p] for p in jump_positions]))
+            return _split_jump_side_limits(
+                step=step,
+                unsort=unsort,
+                n_liquid=liquid.shape[0],
+                n_jumps=statics.n_jumps,
+                jumps=jumps,
+            )
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
@@ -3708,6 +3723,7 @@ def _build_bqsegm_envelope_core(
         )
         value_stack, marginal_stack, policy_stack = stacks[:3]
         breakpoint_stack = stacks[3] if statics.n_jumps else None
+        side_value_stack = stacks[4] if statics.n_jumps else None
 
         n_liquid = liquid.shape[0]
         # The published value array follows the productmap state order, so the
@@ -3730,6 +3746,11 @@ def _build_bqsegm_envelope_core(
             breakpoints=(
                 breakpoint_stack.reshape(*ride_shape, statics.n_jumps).astype(dtype)
                 if breakpoint_stack is not None
+                else None
+            ),
+            breakpoint_side_values=(
+                side_value_stack.reshape(*ride_shape, statics.n_jumps, 2).astype(dtype)
+                if side_value_stack is not None
                 else None
             ),
         )
@@ -3908,6 +3929,43 @@ def _stream_cell_solves(
     return tuple(from_blocks(arr) for arr in blocked)
 
 
+def _augment_liquid_with_jump_sides(
+    *, liquid_grid: Float1D, jumps: Float1D
+) -> tuple[Float1D, IntND]:
+    """Insert a query point just inside each side of every jump preimage.
+
+    Returns the sorted augmented query grid and the permutation mapping its
+    positions back to concatenation order — liquid nodes first, then the
+    left-side points, then the right-side points.
+    """
+    nudge = jnp.maximum(jnp.abs(jumps), 1.0) * 1e-9
+    concatenated = jnp.concatenate([liquid_grid, jumps - nudge, jumps + nudge])
+    sort_order = jnp.argsort(concatenated)
+    return concatenated[sort_order], jnp.argsort(sort_order)
+
+
+def _split_jump_side_limits(
+    *,
+    step: tuple[Float1D, ...],
+    unsort: IntND,
+    n_liquid: int,
+    n_jumps: int,
+    jumps: Float1D,
+) -> tuple[Float1D, ...]:
+    """Split an augmented-grid step into grid rows, preimages, and limits.
+
+    The side-limit payload interleaves each jump's left and right value
+    limit (`[l0, r0, l1, r1, …]`), matching the carry's trailing
+    `(n_jumps, 2)` layout after reshape.
+    """
+    rows = tuple(arr[unsort][:n_liquid] for arr in step)
+    value_at_sides = step[0][unsort][n_liquid:]
+    side_values = jnp.stack(
+        [value_at_sides[:n_jumps], value_at_sides[n_jumps:]], axis=-1
+    ).ravel()
+    return (*rows, jumps, side_values)
+
+
 def _build_ride_along_carry_template(
     *, liquid_grid: Float1D, ride_shape: tuple[int, ...], n_breakpoints: int
 ) -> EGMCarry:
@@ -3929,6 +3987,11 @@ def _build_ride_along_carry_template(
         # holds the same fixed-shape (all-finite, grid-edge-benign) rows.
         breakpoints=(
             jnp.zeros((*ride_shape, n_breakpoints), dtype=liquid_grid.dtype)
+            if n_breakpoints
+            else None
+        ),
+        breakpoint_side_values=(
+            jnp.zeros((*ride_shape, n_breakpoints, 2), dtype=liquid_grid.dtype)
             if n_breakpoints
             else None
         ),

@@ -64,6 +64,15 @@ class EGMCarry:
     query from its own side (`interp_across_breakpoints`).
     """
 
+    breakpoint_side_values: FloatND | None = None
+    """Per-row one-sided value limits at each jump, trailing shape `(…, 2)`.
+
+    Column 0 holds the left limit, column 1 the right limit at the matching
+    `breakpoints` entry. The parent's read anchors breakpoint-straddling
+    brackets on these exact limits, so it interpolates instead of
+    extrapolating; published in lockstep with `breakpoints`.
+    """
+
 
 # Pytree registration with an `__init__`-bypassing unflatten: JAX's transform
 # and AOT-lowering machinery reconstructs pytrees with non-array leaves
@@ -75,6 +84,7 @@ _EGM_CARRY_FIELDS = (
     "marginal_utility",
     "taste_shock_scale",
     "breakpoints",
+    "breakpoint_side_values",
 )
 
 
