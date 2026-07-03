@@ -3941,7 +3941,8 @@ def _augment_liquid_with_jump_sides(
     nudge = jnp.maximum(jnp.abs(jumps), 1.0) * 1e-9
     concatenated = jnp.concatenate([liquid_grid, jumps - nudge, jumps + nudge])
     sort_order = jnp.argsort(concatenated)
-    return concatenated[sort_order], jnp.argsort(sort_order)
+    # int32 permutation: the augmented grid has at most a few hundred entries.
+    return concatenated[sort_order], jnp.argsort(sort_order).astype(jnp.int32)
 
 
 def _split_jump_side_limits(
