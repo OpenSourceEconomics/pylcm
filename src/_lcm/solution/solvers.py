@@ -3699,15 +3699,16 @@ def _build_bqsegm_envelope_core(
                     coh_intercepts=coh_intercepts,
                     breakpoints=breakpoints,
                 )
+            value_row, marginal_row, _policy_row = step
             if statics.n_jumps == 0:
-                return step
+                return (value_row, marginal_row)
             # The carry keeps the whole augmented row — the jump rides inside
             # the endogenous grid as a duplicated abscissa carrying its exact
             # one-sided value and marginal limits. Only the published value
             # array needs the original liquid nodes, sliced back out through
             # the sort permutation.
-            value_at_liquid = step[0][unsort][: liquid.shape[0]]
-            return (value_at_liquid, endog_row, step[0], step[1], jumps)
+            value_at_liquid = value_row[unsort][: liquid.shape[0]]
+            return (value_at_liquid, endog_row, value_row, marginal_row, jumps)
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
@@ -3928,16 +3929,22 @@ def _assemble_ride_carry(
     """
     n_liquid = liquid.shape[0]
     if n_jumps:
-        value_stack, endog_stack, row_value_stack, row_marginal_stack = stacks[:4]
+        (
+            value_stack,
+            endog_stack,
+            row_value_stack,
+            row_marginal_stack,
+            breakpoint_stack,
+        ) = stacks
         n_row = n_liquid + 2 * n_jumps
         carry_rows = (
             endog_stack.reshape(*ride_shape, n_row).astype(dtype),
             row_value_stack.reshape(*ride_shape, n_row).astype(dtype),
             row_marginal_stack.reshape(*ride_shape, n_row).astype(dtype),
         )
-        breakpoint_rows = stacks[4].reshape(*ride_shape, n_jumps).astype(dtype)
+        breakpoint_rows = breakpoint_stack.reshape(*ride_shape, n_jumps).astype(dtype)
     else:
-        value_stack, marginal_stack = stacks[:2]
+        value_stack, marginal_stack = stacks
         carry_rows = (
             jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
             value_stack.reshape(*ride_shape, n_liquid).astype(dtype),

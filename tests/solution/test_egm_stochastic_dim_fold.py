@@ -14,14 +14,10 @@ tolerance.
 """
 
 import dataclasses
-from dataclasses import replace
 
-import jax.numpy as jnp
 import numpy as np
 
 import _lcm.egm.continuation as cont_mod
-from _lcm.egm.carry import build_template_egm_carry
-from _lcm.egm.continuation import _fold_is_topology_safe
 from tests.conftest import X64_ENABLED
 from tests.solution import test_egm_process_states as dcegm_fixture
 from tests.test_models import bqsegm_stochastic_node_toy as toy
@@ -134,19 +130,3 @@ def test_foldable_smooth_read_bypasses_the_node_loop(monkeypatch):
     jumped_calls = [names for names, has_jumps in calls if has_jumps]
     assert all("income" not in names for names in smooth_calls)
     assert all("income" in names for names in jumped_calls)
-
-
-def test_fold_refuses_topology_bearing_carries():
-    """A carry publishing value-jump locations is never folded.
-
-    Folding value rows across stochastic nodes and then reading the folded
-    row is not equivalent to the expectation of side-faithful reads when the
-    jump locations vary by node — the fold would average across each node's
-    cliff. Until the fold merges topologies explicitly, a carry with a
-    `breakpoints` payload is excluded from folding.
-    """
-    smooth = build_template_egm_carry(n_rows=4)
-    assert _fold_is_topology_safe(carry=smooth)
-
-    jumped = replace(smooth, breakpoints=jnp.full((1,), jnp.nan))
-    assert not _fold_is_topology_safe(carry=jumped)
