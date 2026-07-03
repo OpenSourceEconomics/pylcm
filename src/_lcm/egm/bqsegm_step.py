@@ -531,6 +531,8 @@ def bqsegm_per_interval_continuation_step_savings(
     breakpoints: Float1D,
     coh_grid: Float1D | None = None,
     envelope_segment_block_size: int = 0,
+    extra_savings: FloatND | None = None,
+    extra_cont_value: FloatND | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a budget whose continuation differs per liquid interval.
 
@@ -771,15 +773,39 @@ def bqsegm_per_interval_continuation_step_savings(
         )
     )
 
+    # Save-to-cliff point candidates: interval-dependent one-sided savings
+    # targets with the continuation's exact one-sided values, offered at every
+    # liquid grid point next to the dense savings-node floor.
+    if extra_savings is not None and extra_cont_value is not None:
+        cliff_parts = _savings_node_point_candidates(
+            liquid_grid=liquid_grid,
+            savings_grid=extra_savings,
+            cont_value=extra_cont_value,
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            marginal_utility=marginal_utility,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            coh_grid=coh_grid,
+            segment_base=float((n_padded + 1) * interval_stride),
+        )
+    else:
+        cliff_parts = (jnp.empty(0),) * 5
+
     def stack(*parts: FloatND) -> Float1D:
         return jnp.concatenate([part.reshape(-1) for part in parts])
 
     value, policy, marginal = envelope_at_query(
-        endog_grid=stack(int_endog, s0_endog, smax_endog, node_endog),
-        policy=stack(int_policy, s0_policy, smax_policy, node_policy),
-        value=stack(int_value, s0_value, smax_value, node_value),
-        marginal=stack(int_marginal, s0_marginal, smax_marginal, node_marginal),
-        segment_id=stack(int_segment, s0_segment, smax_segment, node_segment),
+        endog_grid=stack(int_endog, s0_endog, smax_endog, node_endog, cliff_parts[0]),
+        policy=stack(int_policy, s0_policy, smax_policy, node_policy, cliff_parts[2]),
+        value=stack(int_value, s0_value, smax_value, node_value, cliff_parts[1]),
+        marginal=stack(
+            int_marginal, s0_marginal, smax_marginal, node_marginal, cliff_parts[3]
+        ),
+        segment_id=stack(
+            int_segment, s0_segment, smax_segment, node_segment, cliff_parts[4]
+        ),
         x_query=liquid_grid,
         segment_block_size=envelope_segment_block_size,
     )
@@ -789,7 +815,7 @@ def bqsegm_per_interval_continuation_step_savings(
 def _savings_node_point_candidates(
     *,
     liquid_grid: Float1D,
-    savings_grid: Float1D,
+    savings_grid: FloatND,
     cont_value: FloatND,
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
@@ -822,7 +848,16 @@ def _savings_node_point_candidates(
         if coh_grid is None
         else coh_grid
     )
-    node_consumption = point_coh[:, None] - savings_grid[None, :]
+    # A 2-D `(n_intervals, n_nodes)` savings input holds interval-dependent
+    # entries (save-to-cliff targets under an interval-bound liquid law); each
+    # liquid grid point consumes its own interval's row.
+    per_interval_savings = savings_grid.ndim > 1
+    savings_at_grid = (
+        savings_grid[interval_of_grid, :]
+        if per_interval_savings
+        else savings_grid[None, :]
+    )
+    node_consumption = point_coh[:, None] - savings_at_grid
     node_feasible = node_consumption > 0.0
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     node_utility = jax.vmap(jax.vmap(utility_of_action))(node_consumption_safe)
@@ -868,6 +903,8 @@ def bqsegm_unified_step_savings(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     jump_positions: tuple[Any, ...],
+    extra_savings: Float1D | None = None,
+    extra_cont_value: Float1D | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a mixed jump-and-kink piecewise-affine budget against savings continuation.
 
@@ -995,6 +1032,33 @@ def bqsegm_unified_step_savings(
         segment_parts.append(
             jnp.full_like(liquid_grid, float(case) * case_stride + next_segment)
         )
+
+    # Save-to-cliff point candidates: the continuation's one-sided values at
+    # the child cliffs' savings targets, offered at every liquid grid point.
+    # The continuation is interval-independent here, so the extra values
+    # broadcast across the intervals for the shared point-candidate builder.
+    if extra_savings is not None and extra_cont_value is not None:
+        cliff = _savings_node_point_candidates(
+            liquid_grid=liquid_grid,
+            savings_grid=extra_savings,
+            cont_value=jnp.broadcast_to(
+                extra_cont_value[None, :],
+                (coh_slopes.shape[0], extra_cont_value.shape[0]),
+            ),
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            marginal_utility=marginal_utility,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            coh_grid=None,
+            segment_base=float(n_cases * case_stride),
+        )
+        endog_parts.append(cliff[0])
+        value_parts.append(cliff[1])
+        policy_parts.append(cliff[2])
+        marginal_parts.append(cliff[3])
+        segment_parts.append(cliff[4])
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),

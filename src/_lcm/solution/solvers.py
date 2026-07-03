@@ -1785,6 +1785,7 @@ class BQSEGM(Solver):
         continuation_cores: dict[tuple[RegimeName, ...], Callable] = {}
         envelope_cores: dict[tuple[RegimeName, ...], Callable] = {}
         statics_by_key: dict[tuple[RegimeName, ...], _BQSEGMRideAlongStatics] = {}
+        cliff_candidates_by_key: dict[tuple[RegimeName, ...], bool] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         for period in active_periods:
             plan = _build_bqsegm_continuation_plan(
@@ -1804,10 +1805,19 @@ class BQSEGM(Solver):
                     cell_block_size=self.cell_block_size,
                     publish_jump_topology=self.jump_read == "one_sided",
                 )
+                # Save-to-cliff candidates need the regime's own carry read
+                # (the cliffs are the self-schedule's); a period whose targets
+                # exclude the regime itself solves without them.
+                cliff_candidates = (
+                    statics.n_published_jumps > 0
+                    and context.regime_name in plan.child_reads
+                )
                 continuation_core = _build_bqsegm_continuation_core(
                     savings_grid=savings_grid,
                     continuation_plan=plan,
                     statics=statics,
+                    regime_name=context.regime_name,
+                    cliff_candidates=cliff_candidates,
                 )
                 envelope_core = _build_bqsegm_envelope_core(
                     savings_grid=savings_grid,
@@ -1823,10 +1833,12 @@ class BQSEGM(Solver):
                     jax.jit(envelope_core) if context.enable_jit else envelope_core
                 )
                 statics_by_key[key] = statics
+                cliff_candidates_by_key[key] = cliff_candidates
             period_kernels[period] = _RideAlongBQSEGMPeriodKernel(
                 continuation_core=continuation_cores[key],
                 envelope_core=envelope_cores[key],
                 statics=statics_by_key[key],
+                cliff_candidates=cliff_candidates_by_key[key],
                 regime_name=context.regime_name,
                 reachable_targets=reachable_targets,
                 transition_target_names=transition_target_names,
@@ -2058,6 +2070,13 @@ class _RideAlongBQSEGMPeriodKernel:
     statics: _BQSEGMRideAlongStatics
     """Build-time config — supplies the envelope core's placeholder stack shapes."""
 
+    cliff_candidates: bool
+    """Whether this period's cores exchange save-to-cliff candidate columns.
+
+    True only when the carry publishes jump topology and the period's targets
+    include the regime itself (the cliffs are the self-schedule's).
+    """
+
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
 
@@ -2153,7 +2172,7 @@ class _RideAlongBQSEGMPeriodKernel:
         """Run the continuation then envelope core and assemble the `KernelResult`."""
         states = dict(state_action_space.states)
         params = self._kernel_params(flat_params=flat_params)
-        cont_value_stack, cont_marginal_stack = compiled_cores["continuation"](
+        continuation_stacks = compiled_cores["continuation"](
             **states,
             next_regime_to_egm_carry=_reachable_carry_subset(
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
@@ -2164,10 +2183,17 @@ class _RideAlongBQSEGMPeriodKernel:
             period=jnp.int32(period),
             age=ages.values[period],
         )
+        if self.cliff_candidates:
+            cont_value_stack, cont_marginal_stack, cliff_stack = continuation_stacks
+            cliff_kwargs = {"cliff_savings_stack": cliff_stack}
+        else:
+            cont_value_stack, cont_marginal_stack = continuation_stacks
+            cliff_kwargs = {}
         V_arr, carry = compiled_cores["envelope"](
             **states,
             cont_value_stack=cont_value_stack,
             cont_marginal_stack=cont_marginal_stack,
+            **cliff_kwargs,
             **params,
             period=jnp.int32(period),
             age=ages.values[period],
@@ -2182,14 +2208,28 @@ class _RideAlongBQSEGMPeriodKernel:
         non-interval regime reads a single row over the savings grid.
         """
         n_ride_cells = self.statics.n_ride_cells(states=states)
-        n_savings = self.statics.n_savings
+        n_extra = 2 * self.statics.n_published_jumps if self.cliff_candidates else 0
+        n_savings = self.statics.n_savings + n_extra
         shape: tuple[int, ...] = (
             (n_ride_cells, self.statics.n_intervals, n_savings)
             if self.statics.next_state_reads_liquid
             else (n_ride_cells, n_savings)
         )
         zeros = jnp.zeros(shape, dtype=canonical_float_dtype())
-        return {"cont_value_stack": zeros, "cont_marginal_stack": zeros}
+        placeholders: dict[str, object] = {
+            "cont_value_stack": zeros,
+            "cont_marginal_stack": zeros,
+        }
+        if self.cliff_candidates:
+            cliff_shape: tuple[int, ...] = (
+                (n_ride_cells, self.statics.n_intervals, n_extra)
+                if self.statics.next_state_reads_liquid
+                else (n_ride_cells, n_extra)
+            )
+            placeholders["cliff_savings_stack"] = jnp.zeros(
+                cliff_shape, dtype=canonical_float_dtype()
+            )
+        return placeholders
 
     def _kernel_params(self, *, flat_params: FlatParams) -> dict[str, object]:
         """Flat params fed into the cores: the regime's plus its targets'."""
@@ -3091,6 +3131,8 @@ def _solve_ride_along_cell_step(
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
+    extra_savings: Float1D | None = None,
+    extra_cont_value: Float1D | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Run one ride-along cell's 1-D case-piece step against savings continuation.
 
@@ -3121,6 +3163,8 @@ def _solve_ride_along_cell_step(
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
             jump_positions=jump_positions,
+            extra_savings=extra_savings,
+            extra_cont_value=extra_cont_value,
         )
     return bqsegm_multi_interval_step_savings(
         cont_value=cont_value,
@@ -3450,11 +3494,74 @@ def _bqsegm_cell_breakpoints(
     )
 
 
+def _cliff_savings_targets(
+    *,
+    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    regime_name: RegimeName,
+    statics: _BQSEGMRideAlongStatics,
+    kwargs: dict[str, Any],
+    cell: dict[str, Any],
+    combo_pool: dict[str, Any],
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    dtype: Any,  # noqa: ANN401
+    midpoints: Float1D | None = None,
+) -> FloatND:
+    """Map the self-read child's value cliffs to one-sided savings targets.
+
+    A child value jump creates a legitimate one-sided optimum — save to just
+    inside the cliff's owning side — that generically falls strictly between
+    savings nodes. Per ride cell this recovers the cell's jump preimages in
+    the child's liquid space, inverts the affine savings-form liquid law, and
+    returns one target one float margin inside each side of every jump
+    (`2 * n_jumps` entries). Targets outside the savings grid's span, or under
+    a non-increasing liquid law, are NaN — the envelope's point-candidate
+    family treats NaN entries as dead.
+    """
+    read = continuation_plan.child_reads[regime_name]
+    post_decision_name = continuation_plan.post_decision_name
+    breakpoints, jump_positions = _bqsegm_cell_breakpoints(
+        statics=statics, kwargs=kwargs, cell=cell, liquid_grid=liquid_grid, dtype=dtype
+    )
+    jumps = jnp.stack([breakpoints[position] for position in jump_positions])
+
+    def targets_for_pool(pool: dict[str, Any]) -> FloatND:
+        def next_euler_state(savings_value: FloatND) -> FloatND:
+            next_states = read.next_state_func(
+                **pool, **{post_decision_name: savings_value}
+            )
+            return jnp.asarray(next_states[read.next_state_key], dtype=dtype)
+
+        intercept = next_euler_state(jnp.asarray(0.0, dtype=dtype))
+        slope = next_euler_state(jnp.asarray(1.0, dtype=dtype)) - intercept
+        s_star = (jumps - intercept) / slope
+        margin = jnp.maximum(jnp.abs(s_star), 1.0) * jnp.finfo(dtype).eps * 1e4
+        candidates = jnp.stack([s_star - margin, s_star + margin], axis=-1).reshape(-1)
+        valid = (
+            (candidates >= savings_grid[0])
+            & (candidates <= savings_grid[-1])
+            & (slope > 0.0)
+        )
+        return jnp.where(valid, candidates, jnp.nan)
+
+    if midpoints is None:
+        return targets_for_pool(combo_pool)
+    # An interval-bound liquid law: the savings-to-liquid map (and so each
+    # cliff's savings preimage) is specific to the interval whose node the
+    # liquid state is bound to — one target row per interval.
+    liquid_name = statics.liquid_name
+    return jax.vmap(
+        lambda midpoint: targets_for_pool({**combo_pool, liquid_name: midpoint})
+    )(midpoints)
+
+
 def _build_bqsegm_continuation_core(
     *,
     savings_grid: Float1D,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     statics: _BQSEGMRideAlongStatics,
+    regime_name: RegimeName,
+    cliff_candidates: bool,
 ) -> Callable:
     """Build the continuation half of the ride-along solve, jitted in isolation.
 
@@ -3481,16 +3588,42 @@ def _build_bqsegm_continuation_core(
         next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
         **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
-    ) -> tuple[FloatND, FloatND]:
+    ) -> tuple[FloatND, ...]:
         dtype = canonical_float_dtype()
         liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
         param_pool = {key: v for key, v in kwargs.items() if key not in state_names}
 
         def cell_continuation(
             ride_values: tuple[Any, ...],
-        ) -> tuple[FloatND, FloatND]:
+        ) -> tuple[FloatND, ...]:
             cell = dict(zip(ride_names, ride_values, strict=True))
             combo_pool = {**param_pool, **cell}
+
+            def cliff_targets_for(midpoints: Float1D | None) -> FloatND:
+                # Under the one-sided read, the cell also evaluates the blended
+                # continuation at each self-read cliff's one-sided savings
+                # targets; the extra columns ride at the end of the savings
+                # axis and the envelope core adds them as point candidates.
+                return _cliff_savings_targets(
+                    continuation_plan=continuation_plan,
+                    regime_name=regime_name,
+                    statics=statics,
+                    kwargs=kwargs,
+                    cell=cell,
+                    combo_pool=combo_pool,
+                    liquid_grid=liquid,
+                    savings_grid=savings_grid,
+                    dtype=dtype,
+                    midpoints=midpoints,
+                )
+
+            def query_with(targets: FloatND) -> Float1D:
+                return jnp.concatenate(
+                    [
+                        savings_grid,
+                        jnp.where(jnp.isnan(targets), savings_grid[0], targets),
+                    ]
+                )
 
             if statics.next_state_reads_liquid:
                 # The next-period state law carries a current-asset boundary, so the
@@ -3509,11 +3642,15 @@ def _build_bqsegm_continuation_core(
                 midpoints = interval_midpoints(
                     liquid_grid=liquid, breakpoints=breakpoints
                 )
+                cliff_targets = (
+                    cliff_targets_for(midpoints) if cliff_candidates else None
+                )
 
                 def interval_rows(
-                    midpoint: FloatND,
+                    interval_inputs: tuple[FloatND, ...],
                     combo_pool: dict[str, Any] = combo_pool,
                 ) -> tuple[Float1D, Float1D]:
+                    midpoint, *interval_targets = interval_inputs
                     interval_pool = {**combo_pool, liquid_name: midpoint}
                     interval_continuation = bind_continuation(
                         plan=continuation_plan,
@@ -3521,9 +3658,22 @@ def _build_bqsegm_continuation_core(
                         next_regime_to_egm_carry=next_regime_to_egm_carry,
                         dtype=dtype,
                     )
-                    return jax.vmap(interval_continuation)(savings_grid)
+                    query = (
+                        savings_grid
+                        if not interval_targets
+                        else query_with(interval_targets[0])
+                    )
+                    return jax.vmap(interval_continuation)(query)
 
-                return jax.lax.map(interval_rows, midpoints)
+                interval_inputs = (
+                    (midpoints,)
+                    if cliff_targets is None
+                    else (midpoints, cliff_targets)
+                )
+                rows = jax.lax.map(interval_rows, interval_inputs)
+                if cliff_targets is None:
+                    return rows
+                return (*rows, cliff_targets)
 
             continuation = bind_continuation(
                 plan=continuation_plan,
@@ -3531,20 +3681,72 @@ def _build_bqsegm_continuation_core(
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
                 dtype=dtype,
             )
-            return jax.vmap(continuation)(savings_grid)
+            cliff_targets = cliff_targets_for(None) if cliff_candidates else None
+            rows = jax.vmap(continuation)(
+                savings_grid if cliff_targets is None else query_with(cliff_targets)
+            )
+            if cliff_targets is None:
+                return rows
+            return (*rows, cliff_targets)
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         mesh = jnp.meshgrid(*ride_grids, indexing="ij")
         flat_cells = tuple(grid.ravel() for grid in mesh)
         solve_cells = jax.vmap(lambda *vals: cell_continuation(vals))
-        expected_value, expected_marginal = _stream_cell_solves(
+        return _stream_cell_solves(
             solve_cells=solve_cells,
             inputs=flat_cells,
             cell_block=statics.cell_block_size,
         )
-        return expected_value, expected_marginal
 
     return continuation_core
+
+
+def _split_cliff_columns(
+    *,
+    cont_value: FloatND,
+    cont_marginal: FloatND,
+    n_nodes: int,
+    has_cliff_columns: bool,
+) -> tuple[FloatND, FloatND, FloatND | None]:
+    """Split a cell's continuation rows into node columns and cliff columns.
+
+    The continuation core rides the save-to-cliff targets' values at the end
+    of the savings axis; the leading `n_nodes` columns are the savings-node
+    rows the EGM step consumes, the rest feed the point-candidate family.
+    """
+    if not has_cliff_columns:
+        return cont_value, cont_marginal, None
+    return (
+        cont_value[..., :n_nodes],
+        cont_marginal[..., :n_nodes],
+        cont_value[..., n_nodes:],
+    )
+
+
+def _vmapped_cell_solver(
+    *,
+    solve_one_cell: Callable,
+    flat_cells: tuple[FloatND, ...],
+    cont_value_stack: FloatND,
+    cont_marginal_stack: FloatND,
+    cliff_savings_stack: FloatND | None,
+) -> tuple[Callable, tuple[FloatND, ...]]:
+    """Vmap the per-cell solve over the ride mesh and its continuation stacks.
+
+    The trailing per-cell inputs are the continuation core's stacks — value and
+    marginal rows, plus the save-to-cliff savings targets when the one-sided
+    read publishes jump topology.
+    """
+    if cliff_savings_stack is None:
+        return jax.vmap(lambda *args: solve_one_cell(args[:-2], args[-2], args[-1])), (
+            *flat_cells,
+            cont_value_stack,
+            cont_marginal_stack,
+        )
+    return jax.vmap(
+        lambda *args: solve_one_cell(args[:-3], args[-3], args[-2], args[-1])
+    ), (*flat_cells, cont_value_stack, cont_marginal_stack, cliff_savings_stack)
 
 
 def _build_bqsegm_envelope_core(
@@ -3592,6 +3794,7 @@ def _build_bqsegm_envelope_core(
         *,
         cont_value_stack: FloatND,
         cont_marginal_stack: FloatND,
+        cliff_savings_stack: FloatND | None = None,
         **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
     ) -> tuple[FloatND, EGMCarry]:
         dtype = canonical_float_dtype()
@@ -3604,7 +3807,14 @@ def _build_bqsegm_envelope_core(
             ride_values: tuple[Any, ...],
             cont_value: FloatND,
             cont_marginal: FloatND,
+            cliff_savings: FloatND | None = None,
         ) -> tuple[Float1D, ...]:
+            cont_value, cont_marginal, extra_cont_value = _split_cliff_columns(
+                cont_value=cont_value,
+                cont_marginal=cont_marginal,
+                n_nodes=savings_grid.shape[0],
+                has_cliff_columns=cliff_savings is not None,
+            )
             cell = dict(zip(ride_names, ride_values, strict=True))
             cell_discount_factor = (
                 kwargs["H__discount_factor"]
@@ -3684,11 +3894,15 @@ def _build_bqsegm_envelope_core(
                     breakpoints=breakpoints,
                     coh_grid=coh_grid,
                     envelope_segment_block_size=statics.envelope_segment_block_size,
+                    extra_savings=cliff_savings,
+                    extra_cont_value=extra_cont_value,
                 )
             else:
                 step = _solve_ride_along_cell_step(
                     has_jump=statics.has_jump,
                     jump_positions=jump_positions,
+                    extra_savings=cliff_savings,
+                    extra_cont_value=extra_cont_value,
                     cont_value=cont_value,
                     cont_marginal=cont_marginal,
                     liquid_grid=query_grid,
@@ -3715,12 +3929,16 @@ def _build_bqsegm_envelope_core(
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
         mesh = jnp.meshgrid(*ride_grids, indexing="ij")
         flat_cells = tuple(grid.ravel() for grid in mesh)
-        solve_cells = jax.vmap(
-            lambda *args: solve_one_cell(args[:-2], args[-2], args[-1])
+        solve_cells, stream_inputs = _vmapped_cell_solver(
+            solve_one_cell=solve_one_cell,
+            flat_cells=flat_cells,
+            cont_value_stack=cont_value_stack,
+            cont_marginal_stack=cont_marginal_stack,
+            cliff_savings_stack=cliff_savings_stack,
         )
         stacks = _stream_cell_solves(
             solve_cells=solve_cells,
-            inputs=(*flat_cells, cont_value_stack, cont_marginal_stack),
+            inputs=stream_inputs,
             cell_block=statics.cell_block_size,
         )
         value_arr, carry = _assemble_ride_carry(
