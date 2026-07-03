@@ -8,6 +8,7 @@ piece sets, piecewise-affine schedules — and validates coverage; the solver
 resolves the collected registry into its per-case specification.
 """
 
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -70,6 +71,96 @@ def collect_bqsegm_metadata(
         piece_sets=piece_sets,
         piecewise_affine_schedules=schedules,
     )
+
+
+def jump_moving_state_names(
+    *,
+    functions: Mapping[FunctionName, object],
+    state_names: frozenset[str],
+    euler_state_name: str,
+) -> frozenset[str]:
+    """Get the non-Euler states that move any declared jump's liquid preimage.
+
+    A jump's preimage on the Euler axis is `(threshold - offset) / slope`,
+    where offset and slope come from the jump variable's DAG at the cell's
+    non-Euler values and the threshold may be a state-indexed table. A state
+    moves the preimage when it reaches the variable or the threshold through
+    the DAG, or indexes the threshold table. States that reach neither leave
+    every cell's published jump locations identical along their axis.
+
+    Args:
+        functions: Mapping of function name to the regime's DAG functions.
+        state_names: The regime's state names.
+        euler_state_name: The Euler-axis state (excluded from the result).
+
+    Returns:
+        Frozen set of the state names that move at least one jump preimage.
+
+    """
+    registry = collect_bqsegm_metadata(
+        functions={name: func for name, func in functions.items() if callable(func)}
+    )
+    moving: set[str] = set()
+    for schedule in registry.piecewise_affine_schedules:
+        moving |= _schedule_jump_state_args(
+            schedule=schedule, functions=functions, state_names=state_names
+        )
+    for boundary_meta in registry.boundaries.values():
+        for surface in boundary_meta.boundaries:
+            if surface.kind == "jump":
+                moving |= _transitive_state_args(
+                    surface.variable, functions=functions, state_names=state_names
+                )
+                moving |= _transitive_state_args(
+                    surface.threshold, functions=functions, state_names=state_names
+                )
+    return frozenset(moving) - {euler_state_name}
+
+
+def _schedule_jump_state_args(
+    *,
+    schedule: PiecewiseAffineMeta,
+    functions: Mapping[FunctionName, object],
+    state_names: frozenset[str],
+) -> set[str]:
+    """Get the states moving one schedule's jump preimages (empty if no jump)."""
+    jump_breakpoints = tuple(
+        breakpoint_meta
+        for breakpoint_meta in schedule.breakpoints
+        if breakpoint_meta.kind == "jump"
+    )
+    if not jump_breakpoints:
+        return set()
+    moving = _transitive_state_args(
+        schedule.variable, functions=functions, state_names=state_names
+    )
+    for breakpoint_meta in jump_breakpoints:
+        moving |= _transitive_state_args(
+            breakpoint_meta.threshold, functions=functions, state_names=state_names
+        )
+        if breakpoint_meta.indexed_by is not None:
+            moving.add(breakpoint_meta.indexed_by)
+    return moving
+
+
+def _transitive_state_args(
+    target: str,
+    *,
+    functions: Mapping[FunctionName, object],
+    state_names: frozenset[str],
+) -> set[str]:
+    """Get the state names reachable from `target` through the function DAG."""
+    visited: set[str] = set()
+    stack = [target]
+    while stack:
+        name = stack.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        func = functions.get(name)
+        if callable(func):
+            stack.extend(inspect.signature(func).parameters)
+    return visited & state_names
 
 
 def _collect_piecewise_affine_schedules(

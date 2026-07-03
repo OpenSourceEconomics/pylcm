@@ -23,6 +23,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions
 
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm.bqsegm import jump_moving_state_names
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import (
     interp_on_prepared_grid,
@@ -205,7 +206,15 @@ class _ChildRead:
       with the same bracket structure;
     - the carry keeps no per-discrete-action rows
       (`Solver.carry_retains_discrete_action_rows` is `False`), so no
-      per-node choice aggregation sits between interpolation and the fold.
+      per-node choice aggregation sits between interpolation and the fold;
+    - for a topology-publishing child, no jump source reads the dimension's
+      node value, so the published jump preimages (and the rows' duplicated
+      abscissae) are identical along it.
+
+    The fold commutes with the read exactly wherever the value read's
+    monotone slope limiter is inactive; where it binds (near jumps) the
+    folded read is a different valid interpolant of the same data, deviating
+    at interpolation-error order.
     """
 
     stochastic_node_values: tuple[FloatND | IntND, ...]
@@ -453,6 +462,7 @@ def _fold_stochastic_dims(
     endog_grid = carry.endog_grid
     value = carry.value
     marginal_utility = carry.marginal_utility
+    breakpoints = carry.breakpoints
     for axis in sorted(
         (read.discrete_state_names.index(name) for name in folded_names), reverse=True
     ):
@@ -461,11 +471,17 @@ def _fold_stochastic_dims(
         endog_grid = jnp.take(endog_grid, 0, axis=axis)
         value = fold_rows(value, axis, node_weights)
         marginal_utility = fold_rows(marginal_utility, axis, node_weights)
+        if breakpoints is not None:
+            # Jump locations are identical along a foldable dim (its rows
+            # share the duplicated abscissae), so the first node's row stands
+            # for all of them.
+            breakpoints = jnp.take(breakpoints, 0, axis=axis)
     folded_carry = replace(
         carry,
         endog_grid=endog_grid,
         value=value,
         marginal_utility=marginal_utility,
+        breakpoints=breakpoints,
     )
 
     keep_stochastic = tuple(
@@ -544,10 +560,11 @@ def _get_child_carry_reader(
     if read.weights_func is not None:
         weights = read.weights_func(**combo_pool)
         weight_vecs = tuple(weights[key] for key in read.weight_keys)
-    # Folding is refused for topology-bearing carries: folded rows read as one
-    # row, which equals the expectation of per-node reads only when the rows
-    # are smooth — node-specific jump locations would be averaged across.
-    if any(read.foldable_stochastic_flags) and carry.breakpoints is None:
+    # A foldable dim of a topology-bearing carry shares the duplicated jump
+    # abscissae across its rows (no jump source reads it — enforced by the
+    # fold flags), so averaging the rows preserves both one-sided limits and
+    # the fold applies exactly as for a smooth carry.
+    if any(read.foldable_stochastic_flags):
         read, carry, stochastic_node_values, weight_vecs = _fold_stochastic_dims(
             read=read,
             carry=carry,
@@ -1231,8 +1248,21 @@ def _build_child_reads(
             target_regime.solver.carry_rows_share_state_grid
             and not target_regime.solver.carry_retains_discrete_action_rows
         )
+        # Under a topology-publishing read, a dim is only foldable when no
+        # jump source reads its node value — otherwise the published jump
+        # preimages (and so the rows' duplicated abscissae) vary along it.
+        if getattr(target_regime.solver, "jump_read", None) == "one_sided":
+            jump_moving = jump_moving_state_names(
+                functions=target_regime.functions,
+                state_names=frozenset(target_regime.states),
+                euler_state_name=euler_state_name,
+            )
+        else:
+            jump_moving = frozenset()
         foldable_stochastic_flags = tuple(
-            child_carry_rows_uniform and name not in resources_arg_names
+            child_carry_rows_uniform
+            and name not in resources_arg_names
+            and name not in jump_moving
             for name in stochastic_state_names
         )
         row_grids = passive_grids + action_values

@@ -130,3 +130,86 @@ def test_foldable_smooth_read_bypasses_the_node_loop(monkeypatch):
     jumped_calls = [names for names, has_jumps in calls if has_jumps]
     assert all("income" not in names for names in smooth_calls)
     assert all("income" in names for names in jumped_calls)
+
+
+def _solve_jump_variant(**kwargs):
+    return toy.build_model(variant="bqsegm", tax_kind="jump", **kwargs).solve(
+        params=toy.build_params(tax_lump=1.5), log_level="off"
+    )
+
+
+def test_breakpoint_independent_dim_folds_under_published_topology(monkeypatch):
+    """A dim no jump source reads folds out of a jump-bearing carry's read.
+
+    The cliff sits on the child's own liquid axis, so the income node cannot
+    move the published jump preimages: every income row shares the duplicated
+    abscissae and the expectation pre-folds into the carry exactly as for a
+    smooth carry. The jump-bearing read therefore never loops the income
+    nodes.
+    """
+    calls = []
+    original = cont_mod._expect_over_stochastic_nodes
+
+    def spy(**kwargs):
+        calls.append(
+            (
+                kwargs["read"].stochastic_state_names,
+                kwargs["carry"].breakpoints is not None,
+            )
+        )
+        return original(**kwargs)
+
+    jump_carry_reads = []
+    original_reader = cont_mod._get_child_carry_reader
+
+    def reader_spy(**kwargs):
+        if kwargs["carry"].breakpoints is not None:
+            jump_carry_reads.append(True)
+        return original_reader(**kwargs)
+
+    monkeypatch.setattr(cont_mod, "_expect_over_stochastic_nodes", spy)
+    monkeypatch.setattr(cont_mod, "_get_child_carry_reader", reader_spy)
+    _solve_jump_variant()
+
+    assert jump_carry_reads, "no jump-bearing carry was read"
+    jumped_calls = [names for names, has_jumps in calls if has_jumps]
+    assert all("income" not in names for names in jumped_calls)
+
+
+def test_fold_leaves_value_function_unchanged_under_published_topology(monkeypatch):
+    """Folding a breakpoint-independent dim reproduces the unfolded V.
+
+    The rows share abscissae and jump locations along the folded dim, so the
+    fold commutes with the read wherever the value read's monotone slope
+    limiter is inactive. Where the limiter binds (near the published jumps)
+    the folded and per-node reads are different valid interpolants of the
+    same one-sided data and may differ at interpolation-error order — far
+    below the solver's accuracy frontier, hence the loose tolerance.
+    """
+    folded = _solve_jump_variant()
+
+    def keep_unfolded(read):
+        return dataclasses.replace(
+            read,
+            foldable_stochastic_flags=tuple(
+                False for _ in read.foldable_stochastic_flags
+            ),
+        )
+
+    original = cont_mod._get_child_carry_reader
+
+    def unfolded_reader(**kwargs):
+        return original(**{**kwargs, "read": keep_unfolded(kwargs["read"])})
+
+    monkeypatch.setattr(cont_mod, "_get_child_carry_reader", unfolded_reader)
+    unfolded = _solve_jump_variant()
+
+    for period in folded:
+        for regime_name in folded[period]:
+            np.testing.assert_allclose(
+                np.asarray(folded[period][regime_name]),
+                np.asarray(unfolded[period][regime_name]),
+                rtol=1e-3,
+                atol=1e-3,
+                err_msg=f"period={period} regime={regime_name}",
+            )

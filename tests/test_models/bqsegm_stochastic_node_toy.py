@@ -46,6 +46,22 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
+@lcm.piecewise_affine(
+    "tax",
+    variable="liquid",
+    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="jump"),),
+)
+def tax_cliff(
+    liquid: ContinuousState, tax_rate: float, tax_exemption: float, tax_lump: float
+) -> FloatND:
+    """Cliff tax: zero below the exemption, a lump plus `tax_rate` on the excess."""
+    return jnp.where(
+        liquid >= tax_exemption,
+        tax_lump + tax_rate * (liquid - tax_exemption),
+        0.0,
+    )
+
+
 def coh(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
     """Cash-on-hand: liquid plus a flat base income, net of the tax."""
     return liquid + base_income - tax
@@ -73,6 +89,7 @@ def next_liquid_from_savings(
 def build_model(
     *,
     variant: str = "brute",
+    tax_kind: str = "kink",
     stochastic_node_batch_size: int = 0,
     n_periods: int = 4,
     n_liquid: int = 120,
@@ -87,6 +104,10 @@ def build_model(
         variant: `"brute"` drives the alive regime by `GridSearch`; `"bqsegm"` by the
             `BQSEGM` schedule solver, which batches the 1-D liquid step over the income
             node and takes the continuation expectation over the child nodes.
+        tax_kind: `"kink"` uses the continuous tax; `"jump"` swaps in the cliff
+            tax, whose declared jump makes the one-sided carry publish
+            breakpoints on the child's own liquid axis (the income node never
+            moves them).
         stochastic_node_batch_size: Block size for splaying the continuation's
             income-node expectation (BQSEGM only); `0` reads the whole mesh in one pass.
         n_periods: Number of lifecycle periods (the last is terminal).
@@ -102,7 +123,8 @@ def build_model(
     """
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
 
-    alive_functions = {"utility": utility, "tax": tax, "coh": coh}
+    tax_func = tax if tax_kind == "kink" else tax_cliff
+    alive_functions = {"utility": utility, "tax": tax_func, "coh": coh}
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -141,6 +163,7 @@ def build_params(
     income_sigma: float = 0.2,
     tax_rate: float = 0.3,
     tax_exemption: float = 12.0,
+    tax_lump: float = 0.0,
     final_age_alive: float = 3.0,
 ) -> dict:
     """Get parameters for the stochastic-node tax toy.
@@ -153,7 +176,8 @@ def build_params(
         "alive": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
-            "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
+            "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption}
+            | ({"tax_lump": tax_lump} if tax_lump else {}),
             "coh": {"base_income": base_income},
             "income": {"mu": income_mu, "sigma": income_sigma},
             "alive": {
