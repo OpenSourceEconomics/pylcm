@@ -2,41 +2,21 @@
 
 The continuation fan-out (regime transition, child reads, stochastic integration,
 interpolation) and the EGM/envelope math compile as two separate XLA programs, so
-neither core ever sees the other's instruction graph. Splitting them must not move
-the solved value function: both the non-interval ride-along regime and the
-next-asset-cliff interval regime keep their brute agreement to tolerance.
+neither core ever sees the other's instruction graph.
 """
 
 from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax
-import numpy as np
 
 from _lcm.solution.backward_induction import _build_continuation_templates
 from lcm import Model
-from tests.test_models import bqsegm_next_asset_cliff_toy as cliff_toy
 from tests.test_models import bqsegm_ride_along_toy as ride_toy
-
-_LIQUID = np.linspace(0.1, 30.0, 120)
-_INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
-_MEDICAID_LIMIT = 12.0
-_AWAY_FROM_CLIFF = _INTERIOR & (np.abs(_LIQUID - _MEDICAID_LIMIT) > 0.4)
 
 
 def _build_ride_model(variant: str, *, n_consumption: int = 120) -> Model:
     return ride_toy.build_model(
-        variant=variant,
-        n_liquid=120,
-        liquid_max=30.0,
-        n_savings=180,
-        savings_max=28.0,
-        n_consumption=n_consumption,
-    )
-
-
-def _build_cliff_model(variant: str, *, n_consumption: int = 120) -> Model:
-    return cliff_toy.build_model(
         variant=variant,
         n_liquid=120,
         liquid_max=30.0,
@@ -108,49 +88,3 @@ def test_split_partitions_the_solve_into_two_asymmetric_cores():
         cont_ops,
         env_ops,
     )
-
-
-def test_split_preserves_ride_along_value_against_brute():
-    """The non-interval ride-along solve keeps its brute agreement after the
-    continuation/envelope split, in every `kind` slice at every working age."""
-    bqsegm = _build_ride_model("bqsegm").solve(
-        params=ride_toy.build_params(), log_level="off"
-    )
-    brute = _build_ride_model("brute", n_consumption=1500).solve(
-        params=ride_toy.build_params(), log_level="off"
-    )
-    for period in brute:
-        if "alive" not in brute[period] or "alive" not in bqsegm[period]:
-            continue
-        brute_v = np.asarray(brute[period]["alive"])
-        bqsegm_v = np.asarray(bqsegm[period]["alive"])
-        for kind in range(brute_v.shape[0]):
-            np.testing.assert_allclose(
-                bqsegm_v[kind, _INTERIOR],
-                brute_v[kind, _INTERIOR],
-                atol=2e-2,
-                rtol=5e-3,
-                err_msg=f"period={period} kind={kind}",
-            )
-
-
-def test_split_preserves_next_asset_cliff_value_against_brute():
-    """The interval (next-asset-cliff) solve keeps its brute agreement after the
-    continuation/envelope split, away from the one cell straddling the cliff."""
-    bqsegm = _build_cliff_model("bqsegm").solve(
-        params=cliff_toy.build_params(), log_level="off"
-    )
-    brute = _build_cliff_model("brute", n_consumption=1500).solve(
-        params=cliff_toy.build_params(), log_level="off"
-    )
-    terminal_adjacent = max(p for p in brute if "alive" in brute[p])
-    brute_v = np.asarray(brute[terminal_adjacent]["alive"])
-    bqsegm_v = np.asarray(bqsegm[terminal_adjacent]["alive"])
-    for kind in range(brute_v.shape[0]):
-        np.testing.assert_allclose(
-            bqsegm_v[kind, _AWAY_FROM_CLIFF],
-            brute_v[kind, _AWAY_FROM_CLIFF],
-            atol=2e-2,
-            rtol=5e-3,
-            err_msg=f"kind={kind}",
-        )

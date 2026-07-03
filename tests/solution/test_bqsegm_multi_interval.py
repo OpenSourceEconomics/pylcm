@@ -18,38 +18,7 @@ from _lcm.egm.bqsegm_step import (
     bqsegm_recurring_jump_step,
     bqsegm_unified_step,
 )
-
-
-def _crra(consumption, crra):
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
-    )
-
-
-def _dense_brute_value(
-    *,
-    liquid_grid,
-    coh_of_liquid,
-    next_value_of_liquid,
-    crra,
-    discount_factor,
-    gross_return,
-    income,
-    n_consumption=4000,
-):
-    """Bellman max over a dense consumption grid — the convention-free oracle."""
-    coh = coh_of_liquid(liquid_grid)
-    fractions = jnp.linspace(1e-4, 1.0, n_consumption)
-    # consumption = fraction * coh, broadcast over the liquid grid.
-    consumption = fractions[:, None] * coh[None, :]
-    savings = coh[None, :] - consumption
-    next_liquid = gross_return * savings + income
-    value = _crra(consumption, crra) + discount_factor * next_value_of_liquid(
-        next_liquid
-    )
-    return jnp.max(value, axis=0)
+from tests.solution._bqsegm_step_helpers import crra_utility, dense_brute_value
 
 
 def test_multi_interval_step_matches_brute_through_a_continuous_tax_kink():
@@ -75,7 +44,7 @@ def test_multi_interval_step_matches_brute_through_a_continuous_tax_kink():
         return liquid + base - rate * jnp.maximum(liquid - exemption, 0.0)
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -100,7 +69,7 @@ def test_multi_interval_step_matches_brute_through_a_continuous_tax_kink():
         breakpoints=breakpoints,
     )
 
-    brute = _dense_brute_value(
+    brute = dense_brute_value(
         liquid_grid=liquid_grid,
         coh_of_liquid=coh_of_liquid,
         next_value_of_liquid=next_value_of_liquid,
@@ -143,7 +112,7 @@ def test_multi_interval_step_matches_brute_through_a_convex_kink():
         )
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -165,7 +134,7 @@ def test_multi_interval_step_matches_brute_through_a_convex_kink():
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
     )
-    brute = _dense_brute_value(
+    brute = dense_brute_value(
         liquid_grid=liquid_grid,
         coh_of_liquid=coh_of_liquid,
         next_value_of_liquid=next_value_of_liquid,
@@ -209,7 +178,7 @@ def test_multi_interval_step_matches_brute_through_two_continuous_kinks():
         )
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -238,7 +207,7 @@ def test_multi_interval_step_matches_brute_through_two_continuous_kinks():
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
     )
-    brute = _dense_brute_value(
+    brute = dense_brute_value(
         liquid_grid=liquid_grid,
         coh_of_liquid=coh_of_liquid,
         next_value_of_liquid=next_value_of_liquid,
@@ -276,7 +245,7 @@ def test_multi_interval_step_matches_brute_through_a_hard_constraint_floor():
         return jnp.maximum(liquid + base, floor)
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -299,7 +268,7 @@ def test_multi_interval_step_matches_brute_through_a_hard_constraint_floor():
         breakpoints=breakpoints,
         flat_interval_mask=(True, False),
     )
-    brute = _dense_brute_value(
+    brute = dense_brute_value(
         liquid_grid=liquid_grid,
         coh_of_liquid=coh_of_liquid,
         next_value_of_liquid=next_value_of_liquid,
@@ -336,7 +305,7 @@ def test_jump_step_matches_brute_through_two_additive_cliffs():
         return liquid + subsidy_levels[interval]
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -353,7 +322,7 @@ def test_jump_step_matches_brute_through_two_additive_cliffs():
         subsidy_levels=subsidy_levels,
         jump_breakpoints=jump_breakpoints,
     )
-    brute = _dense_brute_value(
+    brute = dense_brute_value(
         liquid_grid=liquid_grid,
         coh_of_liquid=coh_of_liquid,
         next_value_of_liquid=next_value_of_liquid,
@@ -399,7 +368,7 @@ def test_unified_step_matches_brute_through_a_jump_then_a_kink():
         return liquid + subsidy - tax
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -425,7 +394,7 @@ def test_unified_step_matches_brute_through_a_jump_then_a_kink():
         breakpoints=breakpoints,
         jump_mask=jump_mask,
     )
-    brute = _dense_brute_value(
+    brute = dense_brute_value(
         liquid_grid=liquid_grid,
         coh_of_liquid=coh_of_liquid,
         next_value_of_liquid=next_value_of_liquid,
@@ -467,7 +436,7 @@ def test_discrete_envelope_step_matches_brute_over_a_binary_choice():
         return liquid + base_no
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -499,15 +468,15 @@ def test_discrete_envelope_step_matches_brute_over_a_binary_choice():
 
     # Dense brute over both the discrete choice and consumption.
     def brute_choice(coh_of_liquid):
-        coh = coh_of_liquid(liquid_grid)
-        fractions = jnp.linspace(1e-4, 1.0, 4000)
-        consumption = fractions[:, None] * coh[None, :]
-        savings = coh[None, :] - consumption
-        next_liquid = gross_return * savings + income
-        val = _crra(consumption, crra) + discount_factor * next_value_of_liquid(
-            next_liquid
+        return dense_brute_value(
+            liquid_grid=liquid_grid,
+            coh_of_liquid=coh_of_liquid,
+            next_value_of_liquid=next_value_of_liquid,
+            crra=crra,
+            discount_factor=discount_factor,
+            gross_return=gross_return,
+            income=income,
         )
-        return jnp.max(val, axis=0)
 
     brute = jnp.maximum(brute_choice(coh_yes), brute_choice(coh_no))
     interior = (np.asarray(liquid_grid) > 1.0) & (np.asarray(liquid_grid) < 28.0)
@@ -537,7 +506,7 @@ def test_discrete_envelope_step_smooths_with_an_ev1_taste_shock():
     savings_grid = jnp.linspace(0.0, 28.0, 200)
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -569,15 +538,15 @@ def test_discrete_envelope_step_smooths_with_an_ev1_taste_shock():
     )
 
     def brute_choice(base):
-        coh = liquid_grid + base
-        fractions = jnp.linspace(1e-4, 1.0, 4000)
-        consumption = fractions[:, None] * coh[None, :]
-        savings = coh[None, :] - consumption
-        next_liquid = gross_return * savings + income
-        val = _crra(consumption, crra) + discount_factor * next_value_of_liquid(
-            next_liquid
+        return dense_brute_value(
+            liquid_grid=liquid_grid,
+            coh_of_liquid=lambda liquid: liquid + base,
+            next_value_of_liquid=next_value_of_liquid,
+            crra=crra,
+            discount_factor=discount_factor,
+            gross_return=gross_return,
+            income=income,
         )
-        return jnp.max(val, axis=0)
 
     stacked = jnp.stack([brute_choice(base_yes), brute_choice(base_no)])
     brute = scale * jax.scipy.special.logsumexp(stacked / scale, axis=0)

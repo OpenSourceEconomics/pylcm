@@ -39,7 +39,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: tests/mock_regime.py|^tests/test_models/|^tests/data/|tests/solution/_envelope_oracle.py|tests/solution/_rfc_2d_host.py|tests/solution/_branch_aware_vfi_oracle.py|tests/solution/_ds2024_housing_vfi_oracle.py
+        exclude: tests/mock_regime.py|^tests/test_models/|^tests/data/|tests/solution/_envelope_oracle.py|tests/solution/_rfc_2d_host.py|tests/solution/_branch_aware_vfi_oracle.py|tests/solution/_ds2024_housing_vfi_oracle.py|tests/solution/_bqsegm_step_helpers.py
       - id: no-commit-to-branch
         args:
           - --branch

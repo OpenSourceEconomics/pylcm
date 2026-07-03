@@ -15,37 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.bqsegm_step import bqsegm_multi_interval_step, bqsegm_unified_step
-
-
-def _crra(consumption, crra):
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
-    )
-
-
-def _dense_brute_value(
-    *,
-    liquid_grid,
-    coh_of_liquid,
-    next_value_of_liquid,
-    crra,
-    discount_factor,
-    gross_return,
-    income,
-    n_consumption=4000,
-):
-    """Bellman max over a dense feasible consumption grid — convention-free oracle."""
-    coh = coh_of_liquid(liquid_grid)
-    fractions = jnp.linspace(1e-4, 1.0, n_consumption)
-    consumption = fractions[:, None] * coh[None, :]
-    savings = coh[None, :] - consumption
-    next_liquid = gross_return * savings + income
-    value = _crra(consumption, crra) + discount_factor * next_value_of_liquid(
-        next_liquid
-    )
-    return jnp.max(value, axis=0)
+from tests.solution._bqsegm_step_helpers import crra_utility, dense_brute_value
 
 
 def test_multi_interval_step_drops_off_grid_inverse_at_the_upper_boundary():
@@ -69,7 +39,7 @@ def test_multi_interval_step_drops_off_grid_inverse_at_the_upper_boundary():
         return liquid + base - rate * jnp.maximum(liquid - exemption, 0.0)
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -91,7 +61,7 @@ def test_multi_interval_step_drops_off_grid_inverse_at_the_upper_boundary():
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
     )
-    brute = _dense_brute_value(
+    brute = dense_brute_value(
         liquid_grid=liquid_grid,
         coh_of_liquid=coh_of_liquid,
         next_value_of_liquid=next_value_of_liquid,
@@ -132,7 +102,7 @@ def test_unified_step_drops_off_grid_inverse_at_the_upper_boundary():
         return liquid + base + subsidy * (liquid < cliff)
 
     def next_value_of_liquid(liquid):
-        return _crra(liquid, crra)
+        return crra_utility(liquid, crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -155,7 +125,7 @@ def test_unified_step_drops_off_grid_inverse_at_the_upper_boundary():
         breakpoints=breakpoints,
         jump_mask=(True,),
     )
-    brute = _dense_brute_value(
+    brute = dense_brute_value(
         liquid_grid=liquid_grid,
         coh_of_liquid=coh_of_liquid,
         next_value_of_liquid=next_value_of_liquid,

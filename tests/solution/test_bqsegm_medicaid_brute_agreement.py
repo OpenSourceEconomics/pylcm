@@ -133,77 +133,13 @@ def test_bqsegm_reproduces_the_medicaid_value_drop_at_the_boundary():
     np.testing.assert_allclose(bqsegm_drop, brute_drop, atol=2e-2)
 
 
-def test_bqsegm_rejects_a_piece_with_a_hidden_where():
-    """A smooth piece hiding `jnp.where` fails the smoothness gate at model build."""
+def _build_model(*, predicate, subsidy_when, subsidy_otherwise) -> Model:
+    """Assemble the one-period alive/dead Medicaid toy around one case split.
 
-    @lcm.case_boundary(
-        lcm.boundary("liquid", "limit", equality="otherwise", kind="jump")
-    )
-    def predicate(liquid, limit):
-        return liquid < limit
-
-    @lcm.piece("subsidy", when=predicate)
-    def subsidy_when(subsidy_high):
-        return jnp.where(subsidy_high > 0.0, subsidy_high, 0.0)
-
-    @lcm.piece("subsidy", otherwise=predicate)
-    def subsidy_otherwise(subsidy_low):
-        return jnp.asarray(subsidy_low)
-
-    grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=40)
-    alive = Regime(
-        actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
-        states={"liquid": grid},
-        state_transitions={
-            "liquid": {"alive": toy.next_liquid, "dead": toy.next_liquid}
-        },
-        constraints={"feasible": toy.feasible},
-        transition={
-            "alive": MarkovTransition(toy.prob_stay_alive),
-            "dead": MarkovTransition(toy.prob_die),
-        },
-        functions={
-            "utility": toy.utility,
-            "predicate": predicate,
-            "subsidy_when": subsidy_when,
-            "subsidy_otherwise": subsidy_otherwise,
-            "coh": toy.coh,
-        },
-        active=lambda age: age < 1.0,
-        solver=BQSEGM(savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=40)),
-    )
-    dead = Regime(
-        transition=None,
-        states={"liquid": grid},
-        functions={"utility": toy.bequest},
-        active=lambda age: age >= 1.0,
-        solver=GridSearch(),
-    )
-    with pytest.raises(BQSEGMCaseError, match="smoothness gate"):
-        Model(
-            regimes={"alive": alive, "dead": dead},
-            ages=AgeGrid(start=0, stop=1, step="Y"),
-            regime_id_class=toy.RegimeId,
-        )
-
-
-def _build_bqsegm_with_boundary(
-    *, equality: EqualityOwner, kind: BoundaryKind, variable: str = "liquid"
-) -> Model:
-    """Assemble a one-period BQSEGM toy whose boundary carries given metadata."""
-
-    @lcm.case_boundary(lcm.boundary(variable, "limit", equality=equality, kind=kind))
-    def predicate(liquid, limit):
-        return liquid < limit
-
-    @lcm.piece("subsidy", when=predicate)
-    def subsidy_when(subsidy_high):
-        return jnp.asarray(subsidy_high)
-
-    @lcm.piece("subsidy", otherwise=predicate)
-    def subsidy_otherwise(subsidy_low):
-        return jnp.asarray(subsidy_low)
-
+    The alive regime carries the given boundary predicate and subsidy pieces and
+    solves under BQSEGM, so building the `Model` runs the case-piece validation
+    (coverage, smoothness gate, v1 scope gate) against exactly that split.
+    """
     grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=40)
     alive = Regime(
         actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
@@ -237,6 +173,55 @@ def _build_bqsegm_with_boundary(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=toy.RegimeId,
+    )
+
+
+def test_bqsegm_rejects_a_piece_with_a_hidden_where():
+    """A smooth piece hiding `jnp.where` fails the smoothness gate at model build."""
+
+    @lcm.case_boundary(
+        lcm.boundary("liquid", "limit", equality="otherwise", kind="jump")
+    )
+    def predicate(liquid, limit):
+        return liquid < limit
+
+    @lcm.piece("subsidy", when=predicate)
+    def subsidy_when(subsidy_high):
+        return jnp.where(subsidy_high > 0.0, subsidy_high, 0.0)
+
+    @lcm.piece("subsidy", otherwise=predicate)
+    def subsidy_otherwise(subsidy_low):
+        return jnp.asarray(subsidy_low)
+
+    with pytest.raises(BQSEGMCaseError, match="smoothness gate"):
+        _build_model(
+            predicate=predicate,
+            subsidy_when=subsidy_when,
+            subsidy_otherwise=subsidy_otherwise,
+        )
+
+
+def _build_bqsegm_with_boundary(
+    *, equality: EqualityOwner, kind: BoundaryKind, variable: str = "liquid"
+) -> Model:
+    """Assemble a one-period BQSEGM toy whose boundary carries given metadata."""
+
+    @lcm.case_boundary(lcm.boundary(variable, "limit", equality=equality, kind=kind))
+    def predicate(liquid, limit):
+        return liquid < limit
+
+    @lcm.piece("subsidy", when=predicate)
+    def subsidy_when(subsidy_high):
+        return jnp.asarray(subsidy_high)
+
+    @lcm.piece("subsidy", otherwise=predicate)
+    def subsidy_otherwise(subsidy_low):
+        return jnp.asarray(subsidy_low)
+
+    return _build_model(
+        predicate=predicate,
+        subsidy_when=subsidy_when,
+        subsidy_otherwise=subsidy_otherwise,
     )
 
 
@@ -279,40 +264,11 @@ def test_bqsegm_rejects_a_state_dependent_subsidy_piece():
     def subsidy_otherwise(subsidy_low):
         return jnp.asarray(subsidy_low)
 
-    grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=40)
-    alive = Regime(
-        actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
-        states={"liquid": grid},
-        state_transitions={
-            "liquid": {"alive": toy.next_liquid, "dead": toy.next_liquid}
-        },
-        constraints={"feasible": toy.feasible},
-        transition={
-            "alive": MarkovTransition(toy.prob_stay_alive),
-            "dead": MarkovTransition(toy.prob_die),
-        },
-        functions={
-            "utility": toy.utility,
-            "predicate": predicate,
-            "subsidy_when": subsidy_when,
-            "subsidy_otherwise": subsidy_otherwise,
-            "coh": toy.coh,
-        },
-        active=lambda age: age < 1.0,
-        solver=BQSEGM(savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=40)),
-    )
-    dead = Regime(
-        transition=None,
-        states={"liquid": grid},
-        functions={"utility": toy.bequest},
-        active=lambda age: age >= 1.0,
-        solver=GridSearch(),
-    )
     with pytest.raises(BQSEGMCaseError, match="v1"):
-        Model(
-            regimes={"alive": alive, "dead": dead},
-            ages=AgeGrid(start=0, stop=1, step="Y"),
-            regime_id_class=toy.RegimeId,
+        _build_model(
+            predicate=predicate,
+            subsidy_when=subsidy_when,
+            subsidy_otherwise=subsidy_otherwise,
         )
 
 
@@ -341,38 +297,9 @@ def test_bqsegm_rejects_a_piece_whose_helper_hides_a_where():
     def subsidy_otherwise():
         return jnp.asarray(0.0)
 
-    grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=40)
-    alive = Regime(
-        actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
-        states={"liquid": grid},
-        state_transitions={
-            "liquid": {"alive": toy.next_liquid, "dead": toy.next_liquid}
-        },
-        constraints={"feasible": toy.feasible},
-        transition={
-            "alive": MarkovTransition(toy.prob_stay_alive),
-            "dead": MarkovTransition(toy.prob_die),
-        },
-        functions={
-            "utility": toy.utility,
-            "predicate": predicate,
-            "subsidy_when": subsidy_when,
-            "subsidy_otherwise": subsidy_otherwise,
-            "coh": toy.coh,
-        },
-        active=lambda age: age < 1.0,
-        solver=BQSEGM(savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=40)),
-    )
-    dead = Regime(
-        transition=None,
-        states={"liquid": grid},
-        functions={"utility": toy.bequest},
-        active=lambda age: age >= 1.0,
-        solver=GridSearch(),
-    )
     with pytest.raises(BQSEGMCaseError, match="smoothness gate"):
-        Model(
-            regimes={"alive": alive, "dead": dead},
-            ages=AgeGrid(start=0, stop=1, step="Y"),
-            regime_id_class=toy.RegimeId,
+        _build_model(
+            predicate=predicate,
+            subsidy_when=subsidy_when,
+            subsidy_otherwise=subsidy_otherwise,
         )
