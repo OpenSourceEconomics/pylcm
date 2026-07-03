@@ -76,6 +76,7 @@ def build_model(
     n_savings: int = 200,
     savings_max: float = 28.0,
     extra_actions: dict | None = None,
+    jump_read: str = "one_sided",
 ) -> Model:
     """Create the (alive, dead) toy whose subsidy cliff lives on derived income.
 
@@ -89,6 +90,8 @@ def build_model(
         liquid_max: Upper bound of the liquid grid.
         n_savings: Post-decision savings grid size (BQSEGM only).
         savings_max: Upper bound of the savings grid (BQSEGM only).
+        jump_read: `BQSEGM.jump_read` — how the parent's continuation read
+            treats the child value's cliffs (BQSEGM only).
 
     Returns:
         The assembled `Model`.
@@ -104,6 +107,7 @@ def build_model(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         post_decision_function="savings",
+        jump_read=jump_read,
     )
     if variant == "bqsegm":
         alive_functions = {**alive_functions, "savings": savings}

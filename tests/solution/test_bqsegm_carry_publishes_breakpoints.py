@@ -91,3 +91,38 @@ def test_schedule_carry_rows_hold_the_cliff_as_a_duplicated_abscissa(
         assert at_cliff.sum() == 2, "cliff preimage must appear exactly twice"
         left_value, right_value = value[kind, at_cliff]
         assert left_value > right_value + 1e-3
+
+
+def test_bridged_jump_read_publishes_plain_rows_without_breakpoints(monkeypatch):
+    """`BQSEGM(jump_read="bridged")` carries plain liquid-grid rows.
+
+    Under the bridged read the parent interpolates the child value across its
+    cliffs like any finite-grid solver: the carry publishes no breakpoints
+    (so the stochastic-dim fold stays available) and each row's endogenous
+    grid is exactly the liquid grid, with no duplicated jump abscissae.
+    """
+    n_liquid = 24
+    seen = []
+    original = cont_mod._get_child_carry_reader
+
+    def spy(*args, **kwargs):
+        carry = kwargs["carry"] if "carry" in kwargs else args[0]
+        if getattr(carry, "endog_grid", None) is not None:
+            seen.append((carry.breakpoints is None, int(carry.endog_grid.shape[-1])))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cont_mod, "_get_child_carry_reader", spy)
+    model = toy.build_model(
+        variant="bqsegm",
+        n_liquid=n_liquid,
+        liquid_max=30.0,
+        n_savings=40,
+        savings_max=28.0,
+        n_consumption=8,
+        jump_read="bridged",
+    )
+    model.solve(params=toy.build_params(), log_level="off")
+
+    assert seen, "no EGM carry was read"
+    assert all(no_breakpoints for no_breakpoints, _ in seen)
+    assert {width for _, width in seen} == {n_liquid}

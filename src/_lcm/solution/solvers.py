@@ -1512,6 +1512,24 @@ class BQSEGM(Solver):
     is rejected when the regime carries more than one continuous state, where the
     Euler axis must be named to separate it from the ride-along axes.
     """
+    jump_read: Literal["one_sided", "bridged"] = "one_sided"
+    """How the parent's continuation read treats the child value's cliffs.
+
+    The within-period case solve is jump-aware in both modes (masked cases,
+    boundary-owner equality); the mode selects what the carry publishes for the
+    parents that read it:
+
+    - `"one_sided"` — each carry row holds every jump preimage as a duplicated
+      abscissa carrying the exact one-sided value and marginal limits, so reads
+      near a cliff are one-sided by construction. Publishing breakpoints gates
+      the stochastic-dim fold off on jump-bearing reads, so this mode trades
+      runtime for cliff fidelity.
+    - `"bridged"` — plain liquid-grid rows with no breakpoints; the parent's
+      interpolation may average across a cliff, like any finite-grid solver
+      reading the same rows. The fold stays available, so this is the fast
+      mode for solves whose consumer tolerates finite-grid cliff error (e.g.
+      inner estimation loops, polished afterwards under `"one_sided"`).
+    """
     stochastic_node_batch_size: int = 0
     """Block size for splaying the child stochastic-node expectation.
 
@@ -1784,6 +1802,7 @@ class BQSEGM(Solver):
                     continuation_plan=plan,
                     envelope_segment_block_size=self.envelope_segment_block_size,
                     cell_block_size=self.cell_block_size,
+                    publish_jump_topology=self.jump_read == "one_sided",
                 )
                 continuation_core = _build_bqsegm_continuation_core(
                     savings_grid=savings_grid,
@@ -1818,7 +1837,9 @@ class BQSEGM(Solver):
                 liquid_grid=liquid_grid,
                 ride_shape=ride_shape,
                 n_breakpoints=(
-                    next(iter(statics_by_key.values())).n_jumps if statics_by_key else 0
+                    next(iter(statics_by_key.values())).n_published_jumps
+                    if statics_by_key
+                    else 0
                 ),
             ),
         )
@@ -3204,6 +3225,14 @@ class _BQSEGMRideAlongStatics:
     """Per-source jump indicator in declared order."""
     n_jumps: int
     """Number of jump breakpoints across all sources."""
+    publish_jump_topology: bool
+    """Whether the carry publishes jump preimages as duplicated row abscissae.
+
+    `False` (`BQSEGM.jump_read == "bridged"`) keeps the within-period case solve
+    jump-aware but carries plain liquid-grid rows with no breakpoints, so
+    parents interpolate across the cliffs and the stochastic-dim fold stays
+    available.
+    """
     has_jump: bool
     """Whether any declared breakpoint is a jump (vs. a continuous kink)."""
     static_jump_positions: tuple[int, ...]
@@ -3243,6 +3272,11 @@ class _BQSEGMRideAlongStatics:
     """Block size for streaming both ride-along cores over ride cells; `0` vmaps
     the whole flattened mesh at once (see `BQSEGM.cell_block_size`)."""
 
+    @property
+    def n_published_jumps(self) -> int:
+        """Number of jump preimages the carry publishes per row."""
+        return self.n_jumps if self.publish_jump_topology else 0
+
     def n_ride_cells(self, *, states: Mapping[str, object]) -> int:
         """Number of flattened ride-along cells for the given state grids."""
         count = 1
@@ -3258,6 +3292,7 @@ def _bqsegm_ride_along_statics(
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     envelope_segment_block_size: int = 0,
     cell_block_size: int = 0,
+    publish_jump_topology: bool = True,
 ) -> _BQSEGMRideAlongStatics:
     """Derive the static config the ride-along continuation and envelope cores share.
 
@@ -3336,6 +3371,7 @@ def _bqsegm_ride_along_statics(
         sources=sources,
         jump_flags_arr=jump_flags_arr,
         n_jumps=n_jumps,
+        publish_jump_topology=publish_jump_topology,
         has_jump=has_jump,
         static_jump_positions=static_jump_positions,
         dynamic_jumps=dynamic_jumps,
@@ -3616,11 +3652,13 @@ def _build_bqsegm_envelope_core(
                     c_upper=action_upper,
                 )
 
-            # With jump breakpoints, the cell also publishes each jump's
-            # preimage and its exact one-sided value limits: the liquid query
-            # grid is augmented with a point just inside each side of every
-            # jump, solved in the same call, and split back out positionally.
-            if statics.n_jumps:
+            # With published jump breakpoints, the cell also publishes each
+            # jump's preimage and its exact one-sided value limits: the liquid
+            # query grid is augmented with a point just inside each side of
+            # every jump, solved in the same call, and split back out
+            # positionally. The bridged read skips the augmentation and
+            # carries plain liquid-grid rows.
+            if statics.n_published_jumps:
                 jumps = jnp.stack([breakpoints[p] for p in jump_positions])
                 query_grid, endog_row, unsort = _augment_liquid_with_jump_sides(
                     liquid_grid=liquid, jumps=jumps
@@ -3663,7 +3701,7 @@ def _build_bqsegm_envelope_core(
                     breakpoints=breakpoints,
                 )
             value_row, marginal_row, _policy_row = step
-            if statics.n_jumps == 0:
+            if statics.n_published_jumps == 0:
                 return (value_row, marginal_row)
             # The carry keeps the whole augmented row — the jump rides inside
             # the endogenous grid as a duplicated abscissa carrying its exact
@@ -3687,7 +3725,7 @@ def _build_bqsegm_envelope_core(
         )
         value_arr, carry = _assemble_ride_carry(
             stacks=stacks,
-            n_jumps=statics.n_jumps,
+            n_jumps=statics.n_published_jumps,
             liquid=liquid,
             ride_shape=ride_shape,
             liquid_axis_pos=schedule_spec.liquid_axis_pos,
