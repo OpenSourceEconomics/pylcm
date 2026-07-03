@@ -137,7 +137,8 @@ def get_model(
     Args:
         certainty_equivalent: Certainty equivalent specification for the expectation.
             Pass `None` to use the linear-expectation (expected-utility) recursion.
-        n_periods: Number of lifecycle periods (annual, starting at age 60).
+        n_periods: Number of annual lifecycle periods, starting at age 25 (so
+            `n_periods` annual steps reach age `25 + n_periods - 1`).
         n_wealth_points: Number of points in the alive wealth grid.
         n_consumption_points: Number of points in the consumption grid.
         n_dead_wealth_points: Number of points in the dead (bequest) wealth grid.
@@ -146,7 +147,7 @@ def get_model(
         A configured Model instance.
 
     """
-    last_age = 60 + n_periods - 1
+    last_age = 25 + n_periods - 1
     wealth_grid = LinSpacedGrid(
         start=WEALTH_GRID.start, stop=WEALTH_GRID.stop, n_points=n_wealth_points
     )
@@ -183,7 +184,7 @@ def get_model(
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=60, stop=last_age, step="Y"),
+        ages=AgeGrid(start=25, stop=last_age, step="Y"),
         regime_id_class=EZRegimeId,
     )
 

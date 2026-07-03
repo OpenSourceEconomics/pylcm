@@ -27,7 +27,7 @@ def test_simulated_period0_consumption_matches_reference_policy():
     result = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(3, 60.0),
+            "age": jnp.full(3, 25.0),
             "wealth": initial_wealth,
             "health": initial_health,
             "regime_id": jnp.full(3, EZRegimeId.alive),
@@ -68,7 +68,7 @@ def test_bad_health_cost_drains_wealth_in_simulation():
     result = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(n_subjects, 60.0),
+            "age": jnp.full(n_subjects, 25.0),
             "wealth": jnp.linspace(0.5, 12.0, n_subjects),
             "health": jnp.tile(
                 jnp.array([HealthStatus.bad, HealthStatus.good]), n_subjects // 2
@@ -108,7 +108,7 @@ def test_bequest_scale_scales_the_dead_regime_utility():
     result = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(n_subjects, 60.0),
+            "age": jnp.full(n_subjects, 25.0),
             "wealth": jnp.linspace(0.5, 12.0, n_subjects),
             "health": jnp.full(n_subjects, HealthStatus.bad),
             "regime_id": jnp.full(n_subjects, EZRegimeId.alive),
