@@ -10,11 +10,25 @@ regime - with the recursion swapped to Epstein-Zin:
 
 Utility is consumption itself, so values stay in (positive) consumption
 units and the power transform is well-defined. The `dead` bequest value
-`sqrt(wealth)` is strictly positive at every reachable wealth. At default
-grid sizes next wealth `w - c + income` stays inside the wealth grids
-(`income` equals the consumption-grid lower bound), so linear interpolation
+`bequest_scale * sqrt(wealth)` is strictly positive at every reachable
+wealth. At default parameters next wealth `w - c + income` stays inside the
+wealth grids (`income` equals the consumption-grid lower bound, `health_cost`
+is zero, and the clip in `next_wealth` never binds), so linear interpolation
 never extrapolates and an in-test numpy backward induction on the same
 grids reproduces the solve exactly.
+
+Three optional parameters give the model economic content beyond the
+default test configuration:
+
+- `income` above the consumption floor makes saving possible.
+- `health_cost` is an out-of-pocket expense while in bad health — the
+  uninsurable expense risk (in the spirit of the paper's medical spending)
+  that gives risk aversion a precautionary-saving channel.
+- `bequest_scale` prices the bequest in consumption-equivalent units.
+  `H_epstein_zin` is a weighted power *mean*, so the alive value sits at
+  the scale of per-period consumption; an unscaled `sqrt(wealth)` exceeds
+  it at moderate wealth, making death the good branch of the certainty
+  equivalent. Scale the bequest below the alive value to keep death bad.
 
 See docs/examples/epstein_zin.ipynb for a full exposition of the model,
 its recursion, and usage examples.
@@ -70,14 +84,23 @@ def utility_alive(consumption: ContinuousAction) -> FloatND:
     return consumption
 
 
-def utility_dead(wealth: ContinuousState) -> FloatND:
-    return jnp.sqrt(wealth)
+def utility_dead(wealth: ContinuousState, bequest_scale: FloatND) -> FloatND:
+    return bequest_scale * jnp.sqrt(wealth)
 
 
 def next_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction, income: FloatND
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    income: FloatND,
+    health_cost: FloatND,
+    health: DiscreteState,
 ) -> ContinuousState:
-    return wealth - consumption + income
+    out_of_pocket = jnp.where(health == HealthStatus.bad, health_cost, 0.0)
+    return jnp.clip(
+        wealth - consumption + income - out_of_pocket,
+        WEALTH_GRID.start,
+        WEALTH_GRID.stop,
+    )
 
 
 def health_probs(health: DiscreteState) -> FloatND:
@@ -171,6 +194,9 @@ def get_params(
     discount_factor: float = 0.9,
     intertemporal_elasticity_of_substitution: float = 2.0,
     survival_probs: tuple[float, ...] = SURVIVAL_PROBS,
+    income: float = INCOME,
+    health_cost: float = 0.0,
+    bequest_scale: float = 1.0,
 ) -> dict:
     """Get parameters for the Epstein-Zin lifecycle model.
 
@@ -182,6 +208,11 @@ def get_params(
             curvature is `rho = 1 - 1/psi`.
         survival_probs: Per-period survival probabilities (last entry must be 0.0);
             its length is `n_periods - 1`.
+        income: Per-period income while alive. Above the consumption-grid lower
+            bound, saving is possible.
+        health_cost: Out-of-pocket expense per period while in bad health.
+        bequest_scale: Scale of the `dead` bequest value
+            `bequest_scale * sqrt(wealth)` in consumption-equivalent units.
 
     Returns:
         Parameter dict ready for `model.solve()`.
@@ -195,9 +226,10 @@ def get_params(
                     intertemporal_elasticity_of_substitution
                 ),
             },
-            "next_wealth": {"income": INCOME},
+            "next_wealth": {"income": income, "health_cost": health_cost},
             "next_regime": {"survival_probs": jnp.array(survival_probs)},
         },
+        "dead": {"utility": {"bequest_scale": bequest_scale}},
     }
     if risk_aversion is not None:
         params["alive"]["certainty_equivalent"] = {"risk_aversion": risk_aversion}
