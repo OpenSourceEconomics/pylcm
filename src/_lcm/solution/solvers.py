@@ -2989,33 +2989,24 @@ def _collect_bqsegm_schedule_spec(
     )
 
 
-def _build_bqsegm_continuous_core(
-    *, savings_grid: Float1D, target: RegimeName, schedule_spec: _BQSEGMScheduleSpec
-) -> Callable:
-    """Build the jittable continuous-schedule EGM core for one continuation target.
+def _schedule_kind_flags(
+    kinds: tuple[str, ...],
+) -> tuple[bool, bool, bool, tuple[bool, ...], tuple[bool, ...] | None]:
+    """Classify a schedule's breakpoint kinds into the step-dispatch flags.
 
-    The core reads the schedule's thresholds as liquid breakpoints, recovers the
-    active affine cash-on-hand segment per interval by differentiating the composed
-    `coh` at each interval's representative, and runs the multi-interval EGM step.
+    Returns `(is_single_jump, is_multi_jump, is_mixed, jump_mask, flat_mask)`:
+
+    - `is_single_jump` — one jump, the binary recurring case.
+    - `is_multi_jump` — every breakpoint a jump, the N-cliff recurring case.
+    - `is_mixed` — jumps and kinks together, solved by the unified step.
+    - `jump_mask` — per breakpoint, whether it is a jump (for the unified step).
+    - `flat_mask` — per interval (N+1), whether a hard-constraint floors it, or
+      `None` when no breakpoint is a hard constraint.
     """
-    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
-        interval_midpoints,
-        interval_segment_coefficients,
-    )
-    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
-        bqsegm_multi_interval_step,
-        bqsegm_one_asset_step,
-        bqsegm_recurring_jump_step,
-        bqsegm_unified_step,
-    )
-
-    kinds = schedule_spec.breakpoint_kinds
     is_single_jump = kinds == ("jump",)
     is_multi_jump = len(kinds) > 1 and all(kind == "jump" for kind in kinds)
     is_mixed = "jump" in kinds and not all(kind == "jump" for kind in kinds)
     jump_mask = tuple(kind == "jump" for kind in kinds)
-    # A hard-constraint breakpoint floors the interval below it (slope 0); the mask
-    # is per interval (N+1), aligned with the sorted, ascending-declared breakpoints.
     has_floor = "hard_constraint" in kinds
     flat_mask = (
         tuple(
@@ -3024,6 +3015,131 @@ def _build_bqsegm_continuous_core(
         )
         if has_floor
         else None
+    )
+    return is_single_jump, is_multi_jump, is_mixed, jump_mask, flat_mask
+
+
+def _solve_cliffed_budget(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: FloatND,
+    crra: FloatND,
+    return_liquid: FloatND,
+    income: FloatND,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    is_single_jump: bool,
+    is_multi_jump: bool,
+    is_mixed: bool,
+    jump_mask: tuple[bool, ...],
+    flat_mask: tuple[bool, ...] | None,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one period of a cliffed single-liquid budget, dispatching on kind.
+
+    Reads the continuation jump-aware at every jump (no bridging), so the solve
+    is exact through recurring jumps, not only at a terminal-adjacent period.
+    The kind flags come from `_schedule_kind_flags`. Returns this period's value,
+    marginal value of liquid, and consumption policy on `liquid`.
+    """
+    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
+        bqsegm_multi_interval_step,
+        bqsegm_one_asset_step,
+        bqsegm_recurring_jump_step,
+        bqsegm_unified_step,
+    )
+
+    gross_return = 1.0 + return_liquid
+    if is_single_jump:
+        # A single jump in cash-on-hand is the binary case the v1 step solves
+        # exactly, including its recurring jumped continuation: each interval's
+        # affine segment has slope 1, so its intercept is the additive cash-on-hand
+        # level on that side of the cliff.
+        return bqsegm_one_asset_step(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid,
+            savings_grid=savings_grid,
+            discount_factor=discount_factor,
+            crra=crra,
+            return_liquid=return_liquid,
+            income=income,
+            subsidy_when=coh_intercepts[0],
+            subsidy_otherwise=coh_intercepts[1],
+            asset_limit=breakpoints[0],
+            equality_owner="otherwise",
+        )
+    if is_multi_jump:
+        # N cliffs: each affine segment has slope 1, so its intercept is the additive
+        # cash-on-hand level on that side, and the recurring step resolves every jump
+        # (boundary-targeting + jump-aware continuation).
+        return bqsegm_recurring_jump_step(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid,
+            savings_grid=savings_grid,
+            discount_factor=discount_factor,
+            crra=crra,
+            gross_return=gross_return,
+            income=income,
+            subsidy_levels=coh_intercepts,
+            jump_breakpoints=breakpoints,
+            equality_owner="otherwise",
+        )
+    if is_mixed:
+        # Jumps and kinks together: the unified step solves each continuous case by
+        # coh inversion and masks across the jumps. The jump_mask is aligned with the
+        # sorted breakpoints (the schedule declares its thresholds ascending).
+        return bqsegm_unified_step(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid,
+            savings_grid=savings_grid,
+            discount_factor=discount_factor,
+            crra=crra,
+            gross_return=gross_return,
+            income=income,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            jump_mask=jump_mask,
+        )
+    return bqsegm_multi_interval_step(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        liquid_grid=liquid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        crra=crra,
+        gross_return=gross_return,
+        income=income,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        flat_interval_mask=flat_mask,
+    )
+
+
+def _build_bqsegm_continuous_core(
+    *, savings_grid: Float1D, target: RegimeName, schedule_spec: _BQSEGMScheduleSpec
+) -> Callable:
+    """Build the jittable continuous-schedule EGM core for one continuation target.
+
+    The core reads the schedule's thresholds as liquid breakpoints, recovers the
+    active affine cash-on-hand segment per interval by differentiating the composed
+    `coh` at each interval's representative, and runs the kind-appropriate EGM step.
+    """
+    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
+        interval_midpoints,
+        interval_segment_coefficients,
+    )
+
+    kinds = schedule_spec.breakpoint_kinds
+    is_single_jump, is_multi_jump, is_mixed, jump_mask, flat_mask = (
+        _schedule_kind_flags(kinds)
     )
 
     def core(
@@ -3047,76 +3163,24 @@ def _build_bqsegm_continuous_core(
         coh_slopes, coh_intercepts = interval_segment_coefficients(
             schedule=coh_of_liquid, interval_midpoints=midpoints
         )
-        if is_single_jump:
-            # A single jump in cash-on-hand is the binary case the v1 step solves
-            # exactly, including its recurring jumped continuation: each interval's
-            # affine segment has slope 1, so its intercept is the additive
-            # cash-on-hand level on that side of the cliff.
-            value, marginal, _policy = bqsegm_one_asset_step(
-                next_value=next_value,
-                next_marginal=next_marginal,
-                liquid_grid=liquid,
-                savings_grid=savings_grid,
-                discount_factor=params["H__discount_factor"],
-                crra=params["utility__crra"],
-                return_liquid=params[f"{target}__next_liquid__return_liquid"],
-                income=params[f"{target}__next_liquid__income"],
-                subsidy_when=coh_intercepts[0],
-                subsidy_otherwise=coh_intercepts[1],
-                asset_limit=breakpoints[0],
-                equality_owner="otherwise",
-            )
-        elif is_multi_jump:
-            # N cliffs: each affine segment has slope 1, so its intercept is the
-            # additive cash-on-hand level on that side, and the recurring step
-            # resolves every jump (boundary-targeting + jump-aware continuation).
-            value, marginal, _policy = bqsegm_recurring_jump_step(
-                next_value=next_value,
-                next_marginal=next_marginal,
-                liquid_grid=liquid,
-                savings_grid=savings_grid,
-                discount_factor=params["H__discount_factor"],
-                crra=params["utility__crra"],
-                gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
-                income=params[f"{target}__next_liquid__income"],
-                subsidy_levels=coh_intercepts,
-                jump_breakpoints=breakpoints,
-                equality_owner="otherwise",
-            )
-        elif is_mixed:
-            # Jumps and kinks together: the unified step solves each continuous
-            # case by coh inversion and masks across the jumps. The static jump_mask
-            # is aligned with the sorted breakpoints (the schedule declares its
-            # thresholds in ascending order).
-            value, marginal, _policy = bqsegm_unified_step(
-                next_value=next_value,
-                next_marginal=next_marginal,
-                liquid_grid=liquid,
-                savings_grid=savings_grid,
-                discount_factor=params["H__discount_factor"],
-                crra=params["utility__crra"],
-                gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
-                income=params[f"{target}__next_liquid__income"],
-                coh_slopes=coh_slopes,
-                coh_intercepts=coh_intercepts,
-                breakpoints=breakpoints,
-                jump_mask=jump_mask,
-            )
-        else:
-            value, marginal, _policy = bqsegm_multi_interval_step(
-                next_value=next_value,
-                next_marginal=next_marginal,
-                liquid_grid=liquid,
-                savings_grid=savings_grid,
-                discount_factor=params["H__discount_factor"],
-                crra=params["utility__crra"],
-                gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
-                income=params[f"{target}__next_liquid__income"],
-                coh_slopes=coh_slopes,
-                coh_intercepts=coh_intercepts,
-                breakpoints=breakpoints,
-                flat_interval_mask=flat_mask,
-            )
+        value, marginal, _policy = _solve_cliffed_budget(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid=liquid,
+            savings_grid=savings_grid,
+            discount_factor=params["H__discount_factor"],
+            crra=params["utility__crra"],
+            return_liquid=params[f"{target}__next_liquid__return_liquid"],
+            income=params[f"{target}__next_liquid__income"],
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            is_single_jump=is_single_jump,
+            is_multi_jump=is_multi_jump,
+            is_mixed=is_mixed,
+            jump_mask=jump_mask,
+            flat_mask=flat_mask,
+        )
         carry = EGMCarry(
             endog_grid=liquid,
             value=value,
@@ -4103,6 +4167,8 @@ class _BQSEGMScheduleDiscreteSpec:
     """Integer codes of the discrete action's grid values."""
     threshold_param_names: tuple[str, ...]
     """Qualified parameter names of the schedule's thresholds (liquid breakpoints)."""
+    breakpoint_kinds: tuple[str, ...]
+    """Discontinuity kind per threshold, in the schedule's declared order."""
 
 
 def _collect_bqsegm_schedule_discrete_spec(
@@ -4165,6 +4231,7 @@ def _collect_bqsegm_schedule_discrete_spec(
     threshold_param_names = tuple(
         f"{first.output}__{bp.threshold}" for bp in first.breakpoints
     )
+    breakpoint_kinds = tuple(bp.kind for bp in first.breakpoints)
     return _BQSEGMScheduleDiscreteSpec(
         coh_of_liquid_action_dag=coh_dag,
         coh_param_names=coh_param_names,
@@ -4172,6 +4239,7 @@ def _collect_bqsegm_schedule_discrete_spec(
         discrete_action_name=discrete_action_name,
         discrete_action_codes=codes,
         threshold_param_names=threshold_param_names,
+        breakpoint_kinds=breakpoint_kinds,
     )
 
 
@@ -4185,16 +4253,19 @@ def _build_bqsegm_schedule_discrete_core(
     """Build the discrete-envelope core over a cliffed single-liquid budget.
 
     Per discrete-action value the core recovers the schedule's per-interval affine
-    cash-on-hand and the liquid breakpoints, then the discrete choice is taken by
-    the upper envelope over the branch values (`bqsegm_discrete_envelope_step`),
-    which solves each branch with the multi-interval step honouring the cliff.
+    cash-on-hand and the liquid breakpoints and solves that branch with the
+    kind-appropriate step (reading the continuation jump-aware, so the solve is
+    exact through recurring jumps). The discrete choice is then taken by the upper
+    envelope over the branch values — the hard maximum, or the EV1 logsum under a
+    taste-shock scale.
     """
     from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
         interval_midpoints,
         interval_segment_coefficients,
     )
-    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
-        bqsegm_discrete_envelope_step,
+
+    is_single_jump, is_multi_jump, is_mixed, jump_mask, flat_mask = (
+        _schedule_kind_flags(spec.breakpoint_kinds)
     )
 
     def core(
@@ -4209,7 +4280,8 @@ def _build_bqsegm_schedule_discrete_core(
             jnp.stack([params[name] for name in spec.threshold_param_names])
         )
         midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
-        choices: list[dict[str, Float1D]] = []
+        values: list[Float1D] = []
+        marginals: list[Float1D] = []
         for code in spec.discrete_action_codes:
 
             def coh_of_liquid(scalar_liquid: FloatND, code: int = code) -> FloatND:
@@ -4224,25 +4296,43 @@ def _build_bqsegm_schedule_discrete_core(
             coh_slopes, coh_intercepts = interval_segment_coefficients(
                 schedule=coh_of_liquid, interval_midpoints=midpoints
             )
-            choices.append(
-                {
-                    "coh_slopes": coh_slopes,
-                    "coh_intercepts": coh_intercepts,
-                    "breakpoints": breakpoints,
-                }
+            branch_value, branch_marginal, _policy = _solve_cliffed_budget(
+                next_value=next_value,
+                next_marginal=next_marginal,
+                liquid=liquid,
+                savings_grid=savings_grid,
+                discount_factor=params["H__discount_factor"],
+                crra=params["utility__crra"],
+                return_liquid=params[f"{target}__next_liquid__return_liquid"],
+                income=params[f"{target}__next_liquid__income"],
+                coh_slopes=coh_slopes,
+                coh_intercepts=coh_intercepts,
+                breakpoints=breakpoints,
+                is_single_jump=is_single_jump,
+                is_multi_jump=is_multi_jump,
+                is_mixed=is_mixed,
+                jump_mask=jump_mask,
+                flat_mask=flat_mask,
             )
-        value, marginal, _policy, _choice = bqsegm_discrete_envelope_step(
-            next_value=next_value,
-            next_marginal=next_marginal,
-            liquid_grid=liquid,
-            savings_grid=savings_grid,
-            discount_factor=params["H__discount_factor"],
-            crra=params["utility__crra"],
-            gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
-            income=params[f"{target}__next_liquid__income"],
-            choices=tuple(choices),
-            taste_shock_scale=taste_shock_scale,
-        )
+            values.append(branch_value)
+            marginals.append(branch_marginal)
+
+        value_stack = jnp.stack(values)
+        marginal_stack = jnp.stack(marginals)
+        if taste_shock_scale == 0.0:
+            # Hard maximum: by Danskin's theorem the winning branch's marginal
+            # value of liquid carries through.
+            modal = jnp.argmax(value_stack, axis=0)
+            index = jnp.arange(liquid.shape[0])
+            value = value_stack[modal, index]
+            marginal = marginal_stack[modal, index]
+        else:
+            # EV1 taste shocks: the smoothed value is the scaled logsum and the
+            # smoothed marginal is the choice-probability-weighted branch marginal.
+            scaled = value_stack / taste_shock_scale
+            probabilities = jax.nn.softmax(scaled, axis=0)
+            value = taste_shock_scale * jax.scipy.special.logsumexp(scaled, axis=0)
+            marginal = jnp.sum(probabilities * marginal_stack, axis=0)
         carry = EGMCarry(
             endog_grid=liquid,
             value=value,

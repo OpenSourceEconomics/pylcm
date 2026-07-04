@@ -43,14 +43,14 @@ class BuyPrivate:
     breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="jump"),),
 )
 def tax_cliff(
-    liquid: ContinuousState, tax_rate: float, tax_exemption: float, tax_lump: float
+    liquid: ContinuousState, tax_exemption: float, tax_lump: float
 ) -> FloatND:
-    """Cliff tax: zero below the exemption, a lump plus `tax_rate` on the excess."""
-    return jnp.where(
-        liquid >= tax_exemption,
-        tax_lump + tax_rate * (liquid - tax_exemption),
-        0.0,
-    )
+    """Cliff tax: zero below the exemption, a flat lump above (a pure jump).
+
+    A level drop in cash-on-hand at the exemption with slope 1 on both sides —
+    the shape of an income-tested subsidy cliff (a lump loss of eligibility).
+    """
+    return jnp.where(liquid >= tax_exemption, tax_lump, 0.0)
 
 
 def coh(
@@ -101,7 +101,6 @@ def build_params(
     return_liquid: float = 0.03,
     income: float = 1.0,
     premium: float = 1.5,
-    tax_rate: float = 0.2,
     tax_exemption: float = 12.0,
     tax_lump: float = 1.0,
     final_age_alive: float = 3.0,
@@ -114,7 +113,6 @@ def build_params(
             "H": {"discount_factor": discount_factor},
             "coh": {"premium": premium},
             "tax": {
-                "tax_rate": tax_rate,
                 "tax_exemption": tax_exemption,
                 "tax_lump": tax_lump,
             },

@@ -47,3 +47,17 @@ def test_bqsegm_discrete_envelope_matches_brute_over_a_cliffed_budget() -> None:
     np.testing.assert_allclose(
         bq_v[_AWAY_FROM_CLIFF], brute_v[_AWAY_FROM_CLIFF], rtol=2e-3, atol=2e-3
     )
+
+
+def test_bqsegm_discrete_envelope_matches_brute_through_a_recurring_jump() -> None:
+    """`V` agrees with a 1500-point brute at an early period, where the child
+    value itself carries the discrete-plus-cliff jump, so each branch must read
+    the continuation jump-aware rather than bridging across it."""
+    bqsegm = _solve("bqsegm")
+    brute = _solve("brute", n_consumption=1500)
+    period = min(p for p in brute if _ALIVE in brute[p])
+    bq_v = np.asarray(bqsegm[period][_ALIVE])
+    brute_v = np.asarray(brute[period][_ALIVE])
+    np.testing.assert_allclose(
+        bq_v[_AWAY_FROM_CLIFF], brute_v[_AWAY_FROM_CLIFF], rtol=5e-3, atol=5e-3
+    )
