@@ -4429,7 +4429,10 @@ def _discrete_envelope_over_branches(
     the liquid grid:
 
     - Hard maximum (`taste_shock_scale == 0`): `max` over branches, with the
-      winning branch's marginal by Danskin's theorem.
+      winning branch's marginal by Danskin's theorem. At a value tie the envelope
+      has a kink and the derivative is a subgradient set; the `argmax` convention
+      selects the lowest-index tied branch's marginal — a well-defined subgradient,
+      not the true (set-valued) derivative.
     - EV1 taste shocks (`taste_shock_scale > 0`): the scaled logsum value and the
       choice-probability-weighted branch marginal.
     """
