@@ -221,6 +221,15 @@ def get_brute_child_carry_producer(
     states, both in value-function-array order; the Euler state trails as the row
     axis. This matches the layout the parent's child read indexes.
 
+    A brute carry's read convention is **bridged by construction**: it
+    publishes no breakpoints, so the parent interpolates its value rows
+    linearly across any value cliffs between grid nodes. One-sided topology
+    cannot be recovered from the finite rows — a sampled row does not identify
+    a jump's location between nodes, its side ownership, or whether it is
+    institutional or a discrete-choice envelope switch — so sharp semantics
+    for a brute child require declaration-published breakpoints or solving
+    the child with a topology-publishing solver.
+
     Args:
         state_name: Name of the regime's Euler state (the parent's continuous
             state, gradient and endogenous-grid axis).
