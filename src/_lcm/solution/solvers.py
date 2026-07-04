@@ -1549,6 +1549,16 @@ class BQSEGM(Solver):
     intermediate). Raise it when the query grid is large enough that the per-cell
     bracket matrix dominates the per-cell memory budget.
     """
+    interval_batch_size: int = 0
+    """Batch size for the per-interval continuation read.
+
+    When a carry target's next-state law reads the current liquid state, the
+    continuation core evaluates the continuation DAG once per declared liquid
+    interval. `0` evaluates all intervals in one vectorized pass; a positive
+    batch size runs them in sequential chunks of that many intervals
+    (identical result, peak intermediates bounded by one chunk). Raise it when
+    the per-interval continuation buffers dominate the per-cell memory budget.
+    """
     cell_block_size: int = 0
     """Block size for streaming the ride-along solve over ride cells.
 
@@ -1803,6 +1813,7 @@ class BQSEGM(Solver):
                     continuation_plan=plan,
                     envelope_segment_block_size=self.envelope_segment_block_size,
                     cell_block_size=self.cell_block_size,
+                    interval_batch_size=self.interval_batch_size,
                     publish_jump_topology=self.jump_read == "one_sided",
                 )
                 # Save-to-cliff candidates need the regime's own carry read
@@ -3293,6 +3304,10 @@ class _BQSEGMRideAlongStatics:
     """Whether a carry target's next-state law reads the current liquid state, so the
     continuation is piecewise-constant across declared intervals and the per-interval
     path applies."""
+    interval_batch_size: int
+    """Batch size for the per-interval continuation read: `0` evaluates all
+    intervals in one vectorized pass, a positive size runs sequential chunks of
+    that many intervals."""
     consumption_action_name: ActionName
     """Name of the continuous consumption action the period utility reads."""
     utility_param_names: tuple[str, ...]
@@ -3336,6 +3351,7 @@ def _bqsegm_ride_along_statics(
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     envelope_segment_block_size: int = 0,
     cell_block_size: int = 0,
+    interval_batch_size: int = 0,
     publish_jump_topology: bool = True,
 ) -> _BQSEGMRideAlongStatics:
     """Derive the static config the ride-along continuation and envelope cores share.
@@ -3433,6 +3449,7 @@ def _bqsegm_ride_along_statics(
         n_savings=int(savings_grid.shape[0]),
         envelope_segment_block_size=envelope_segment_block_size,
         cell_block_size=cell_block_size,
+        interval_batch_size=interval_batch_size,
     )
 
 
@@ -3670,7 +3687,14 @@ def _build_bqsegm_continuation_core(
                     if cliff_targets is None
                     else (midpoints, cliff_targets)
                 )
-                rows = jax.lax.map(interval_rows, interval_inputs)
+                if statics.interval_batch_size:
+                    rows = jax.lax.map(
+                        interval_rows,
+                        interval_inputs,
+                        batch_size=statics.interval_batch_size,
+                    )
+                else:
+                    rows = jax.vmap(interval_rows)(interval_inputs)
                 if cliff_targets is None:
                     return rows
                 return (*rows, cliff_targets)

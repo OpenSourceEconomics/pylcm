@@ -92,6 +92,7 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
+    **solver_kwargs: object,
 ) -> Model:
     """Create the (alive, dead) toy whose next-asset law jumps at a liquid cliff."""
     alive_functions = {
@@ -104,6 +105,7 @@ def build_model(
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         post_decision_function="savings",
         continuous_state="liquid",
+        **solver_kwargs,
     )
     if variant == "bqsegm":
         alive_functions = {**alive_functions, "savings": savings}
