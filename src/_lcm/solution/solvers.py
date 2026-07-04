@@ -1676,6 +1676,7 @@ class BQSEGM(Solver):
                 context=context,
                 budget_target=self.budget_target,
                 continuous_state=self.continuous_state,
+                post_decision_function=self.post_decision_function,
             )
             if is_schedule_discrete
             else None
@@ -1708,7 +1709,9 @@ class BQSEGM(Solver):
         liquid_grid = context.grids[liquid_state_name].to_jax()
         discrete_spec = (
             _collect_bqsegm_discrete_spec(
-                context=context, budget_target=self.budget_target
+                context=context,
+                budget_target=self.budget_target,
+                post_decision_function=self.post_decision_function,
             )
             if is_discrete
             else None
@@ -1770,13 +1773,17 @@ class BQSEGM(Solver):
 
         The ride-along discrete envelope solves the continuous subproblem per
         discrete branch and takes the upper envelope, but only when the action
-        stays inside the budget schedule and the schedule carries no jump:
+        stays inside the budget schedule:
 
         - more than one discrete action is unsupported (the envelope is over one
           action's grid),
-        - a jump breakpoint would need the published one-sided limits to be the
-          max over branches (topology through the envelope), not yet wired,
-        - an action the period utility reads directly is not bound per branch.
+        - an action the period utility reads directly is not bound per branch,
+        - an action that shifts the shared continuation (regime transition, a
+          non-liquid state's law, or the liquid law off the budget channel) is
+          rejected, and an action that feeds a derived schedule variable is too.
+
+        A jump breakpoint is supported: each branch publishes its one-sided cliff
+        limits and the envelope takes the max over branches.
         """
         import inspect  # noqa: PLC0415
 
@@ -1802,6 +1809,8 @@ class BQSEGM(Solver):
             context=context,
             action_name=action_name,
             liquid_state_name=schedule_spec.liquid_state_name,
+            budget_target=self.budget_target,
+            post_decision_function=self.post_decision_function,
         )
         # A published jump shares one breakpoint partition across the branches, so
         # the action may shift cash-on-hand but not the schedule variable itself —
@@ -2898,15 +2907,26 @@ def _fail_if_discrete_action_feeds_continuation(
     context: SolverBuildContext,
     action_name: str,
     liquid_state_name: str,
+    budget_target: str,
+    post_decision_function: str | None,
 ) -> None:
     """Reject a discrete action that shifts the continuation, not just the budget.
 
     The discrete envelope solves every branch against one shared next-period
-    continuation, valid only when the action enters the current budget and
-    utility alone. If the action feeds the regime transition or a non-liquid
-    state's law of motion, each branch's continuation differs and the shared read
-    is wrong. Feeding cash-on-hand (hence the liquid post-decision state) is the
-    intended budget channel and is allowed.
+    continuation, valid only when the action enters the current budget and utility
+    alone. Two channels make the continuation branch-dependent and are refused:
+
+    - the regime transition or a non-liquid state's law of motion reads the action
+      (each branch would evolve to different targets / co-states);
+    - the liquid law reads the action through anything other than the budget — e.g.
+      an out-of-pocket cost that lands directly on next assets — so the branches
+      reach different next liquid at the same savings.
+
+    Feeding cash-on-hand is the intended budget channel: for the liquid law the
+    budget nodes (the budget target and the post-decision savings) are cut to free
+    leaves, so the action reaching next liquid only through the budget — whether the
+    law reads `coh` directly or a post-decision `savings` — is exempt, while any
+    off-budget path is still caught.
     """
     import inspect  # noqa: PLC0415
 
@@ -2933,11 +2953,19 @@ def _fail_if_discrete_action_feeds_continuation(
     funcs: dict[str, Callable[..., object]] = {
         name: func for name, func in regime.functions.items() if callable(func)
     }
+    budget_nodes = {budget_target, post_decision_function}
 
-    def _law_reads_action(law: Callable[..., object]) -> bool:
+    def _law_reads_action(law: Callable[..., object], *, cut_budget: bool) -> bool:
+        # For the liquid law, drop the budget nodes so the action reaches the law
+        # only through an off-budget path (an out-of-pocket cost on next assets).
+        pool = {
+            name: func
+            for name, func in funcs.items()
+            if not (cut_budget and name in budget_nodes)
+        }
         try:
             combined = concatenate_functions(
-                {**funcs, "__continuation_target__": law},
+                {**pool, "__continuation_target__": law},
                 targets="__continuation_target__",
             )
         except Exception:  # noqa: BLE001  # unanalysable law: leave to other gates
@@ -2945,15 +2973,19 @@ def _fail_if_discrete_action_feeds_continuation(
         return action_name in inspect.signature(combined).parameters
 
     for state_name, law in regime.state_transitions.items():
-        if state_name == liquid_state_name:
-            continue
+        is_liquid = state_name == liquid_state_name
         candidates = law.values() if isinstance(law, Mapping) else [law]
         for candidate in candidates:
             func = (
                 candidate.func if isinstance(candidate, MarkovTransition) else candidate
             )
-            if callable(func) and _law_reads_action(func):
-                _reject(f"the law of motion for {state_name!r}")
+            if callable(func) and _law_reads_action(func, cut_budget=is_liquid):
+                where = (
+                    f"the law of motion for {state_name!r} off the budget channel"
+                    if is_liquid
+                    else f"the law of motion for {state_name!r}"
+                )
+                _reject(where)
 
 
 def _ride_discrete_action(
@@ -4281,7 +4313,10 @@ class _BQSEGMDiscreteSpec:
 
 
 def _collect_bqsegm_discrete_spec(
-    *, context: SolverBuildContext, budget_target: str = "coh"
+    *,
+    context: SolverBuildContext,
+    budget_target: str = "coh",
+    post_decision_function: str | None = None,
 ) -> _BQSEGMDiscreteSpec:
     """Collect the single binary/multi-valued discrete action of a smooth regime."""
     import inspect  # noqa: PLC0415
@@ -4300,6 +4335,8 @@ def _collect_bqsegm_discrete_spec(
         context=context,
         action_name=discrete_action_name,
         liquid_state_name=liquid_state_name,
+        budget_target=budget_target,
+        post_decision_function=post_decision_function,
     )
     coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
@@ -4351,6 +4388,7 @@ def _collect_bqsegm_schedule_discrete_spec(
     context: SolverBuildContext,
     budget_target: str = "coh",
     continuous_state: StateName | None = None,
+    post_decision_function: str | None = None,
 ) -> _BQSEGMScheduleDiscreteSpec:
     """Collect a single discrete action layered over a single-liquid cliff schedule."""
     import inspect  # noqa: PLC0415
@@ -4387,6 +4425,8 @@ def _collect_bqsegm_schedule_discrete_spec(
         context=context,
         action_name=discrete_action_name,
         liquid_state_name=liquid_state_name,
+        budget_target=budget_target,
+        post_decision_function=post_decision_function,
     )
     user_functions = {
         name: func for name, func in context.functions.items() if callable(func)

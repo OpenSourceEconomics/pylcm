@@ -106,6 +106,26 @@ def next_streak(
     return jnp.where(buy_private == BuyPrivate.yes, streak + 1.0, 0.0)
 
 
+def oop(buy_private: DiscreteAction, oop_uninsured: float) -> FloatND:
+    """Out-of-pocket medical cost: zero when insured, a fixed hit when not.
+
+    An action-dependent shift of *next* liquid that does not run through the
+    current budget — the channel that makes a shared next-period continuation
+    wrong, since each `buy_private` branch then lands on different next assets.
+    """
+    return jnp.where(buy_private == BuyPrivate.yes, 0.0, oop_uninsured)
+
+
+def next_liquid_from_savings_with_oop(
+    savings: FloatND,
+    income: ContinuousState,
+    return_liquid: float,
+    oop: FloatND,
+) -> ContinuousState:
+    """Post-decision liquid law that also nets an action-dependent OOP cost."""
+    return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(income) - oop
+
+
 def build_model(
     *,
     variant: str = "brute",
@@ -116,6 +136,7 @@ def build_model(
     n_savings: int = 150,
     savings_max: float = 28.0,
     action_in_costate: bool = False,
+    action_in_liquid_law: bool = False,
     jump_schedule: bool = False,
 ) -> Model:
     """Create the (alive, dead) ride-along toy with a discrete insurance choice.
@@ -147,7 +168,11 @@ def build_model(
     )
     if variant == "bqsegm":
         alive_functions = {**alive_functions, "savings": savings}
-        liquid_law = next_liquid_from_savings
+        if action_in_liquid_law:
+            alive_functions = {**alive_functions, "oop": oop}
+            liquid_law = next_liquid_from_savings_with_oop
+        else:
+            liquid_law = next_liquid_from_savings
         constraints = {}
     else:
         liquid_law = next_liquid
@@ -180,6 +205,8 @@ def build_params(
     final_age_alive: float = 3.0,
     jump_schedule: bool = False,
     tax_lump: float = 2.0,
+    action_in_liquid_law: bool = False,
+    oop_uninsured: float = 1.0,
 ) -> dict:
     """Get parameters for the ride-along discrete-choice toy."""
     alive_budget = {"return_liquid": return_liquid}
@@ -188,6 +215,9 @@ def build_params(
         if jump_schedule
         else {"tax_rate": tax_rate, "tax_exemption": tax_exemption}
     )
+    oop_params = (
+        {"oop": {"oop_uninsured": oop_uninsured}} if action_in_liquid_law else {}
+    )
     return {
         "alive": {
             "utility": {"crra": crra},
@@ -195,6 +225,7 @@ def build_params(
             "coh": {"base_income": base_income, "premium": premium},
             "income": {"mu": 0.0, "sigma": 1.0},
             "tax": tax_params,
+            **oop_params,
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

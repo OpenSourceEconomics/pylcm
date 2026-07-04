@@ -32,3 +32,23 @@ def test_discrete_action_feeding_a_co_state_law_is_rejected_at_build() -> None:
             n_consumption=8,
             action_in_costate=True,
         )
+
+
+def test_discrete_action_shifting_next_liquid_off_budget_is_rejected_at_build() -> None:
+    """A discrete action that shifts next liquid off the budget channel fails build.
+
+    Binding the action into cash-on-hand is the allowed budget channel — it reaches
+    next liquid only through the post-decision savings. An action that instead feeds
+    next liquid directly (an out-of-pocket cost that lands on next assets) gives each
+    branch a different continuation, so the shared-continuation envelope refuses it.
+    """
+    with pytest.raises(RegimeInitializationError, match=r"liquid|continuation"):
+        ride_toy.build_model(
+            variant="bqsegm",
+            n_liquid=12,
+            liquid_max=30.0,
+            n_savings=20,
+            savings_max=28.0,
+            n_consumption=8,
+            action_in_liquid_law=True,
+        )
