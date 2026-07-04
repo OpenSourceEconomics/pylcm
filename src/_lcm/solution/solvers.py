@@ -1691,17 +1691,9 @@ class BQSEGM(Solver):
         )
         if schedule_spec is not None and schedule_spec.ride_along_state_names:
             if context.state_action_space.discrete_actions:
-                msg = (
-                    "BQSEGM's schedule+ride-along path solves one continuous "
-                    "consumption problem per ride cell and carries no envelope "
-                    "over discrete actions; the regime "
-                    f"{context.regime_name!r} declares the discrete action(s) "
-                    f"{tuple(context.state_action_space.discrete_actions)}, "
-                    "which would be silently ignored. Fix each such action in "
-                    "the regime's functions (and drop it from `actions`), or "
-                    "use a solver that aggregates discrete branches."
+                self._fail_if_unsupported_ride_discrete(
+                    context=context, schedule_spec=schedule_spec
                 )
-                raise RegimeInitializationError(msg)
             return self._build_ride_along_kernels(
                 context=context,
                 savings_grid=savings_grid,
@@ -1770,6 +1762,50 @@ class BQSEGM(Solver):
                 liquid_grid=liquid_grid
             ),
         )
+
+    def _fail_if_unsupported_ride_discrete(
+        self, *, context: SolverBuildContext, schedule_spec: _BQSEGMScheduleSpec
+    ) -> None:
+        """Reject a ride-along discrete action the envelope path cannot handle.
+
+        The ride-along discrete envelope solves the continuous subproblem per
+        discrete branch and takes the upper envelope, but only when the action
+        stays inside the budget schedule and the schedule carries no jump:
+
+        - more than one discrete action is unsupported (the envelope is over one
+          action's grid),
+        - a jump breakpoint would need the published one-sided limits to be the
+          max over branches (topology through the envelope), not yet wired,
+        - an action the period utility reads directly is not bound per branch.
+        """
+        import inspect  # noqa: PLC0415
+
+        actions = context.state_action_space.discrete_actions
+        action_name = schedule_spec.discrete_action_name
+        if len(actions) != 1:
+            msg = (
+                "BQSEGM's schedule+ride-along discrete envelope supports exactly "
+                f"one discrete action; the regime {context.regime_name!r} declares "
+                f"{tuple(actions)}."
+            )
+            raise RegimeInitializationError(msg)
+        if any(source.kind == "jump" for source in schedule_spec.sources):
+            msg = (
+                "BQSEGM's schedule+ride-along discrete envelope handles kink "
+                "schedules only; a jump breakpoint with a discrete action needs "
+                "the published one-sided limits taken over branches. Regime "
+                f"{context.regime_name!r} declares a jump and a discrete action."
+            )
+            raise RegimeInitializationError(msg)
+        utility_args = tuple(inspect.signature(schedule_spec.utility_dag).parameters)
+        if action_name in utility_args:
+            msg = (
+                f"BQSEGM's schedule+ride-along discrete envelope binds the action "
+                f"{action_name!r} into cash-on-hand only; the regime "
+                f"{context.regime_name!r} reads it in the period utility, which the "
+                "envelope core does not yet bind per branch."
+            )
+            raise RegimeInitializationError(msg)
 
     def _schedule_has_ride_along(self, *, context: SolverBuildContext) -> bool:
         """Whether the schedule regime carries a ride-along co-state.
@@ -2838,6 +2874,26 @@ class _BQSEGMScheduleSpec:
     """Composed `discount_factor` as a function of its ride-along state arguments and
     qualified params, or `None` when the regime uses pylcm's flat `H__discount_factor`
     parameter. When set, the ride-along core resolves the discount factor per cell."""
+    discrete_action_name: str | None = None
+    """Name of a single discrete action the budget shifts, enveloped over per ride
+    cell, or `None` when the regime carries no discrete action. Excluded from
+    `coh_param_names` — the envelope core binds it per branch."""
+    discrete_action_codes: tuple[int, ...] = ()
+    """Integer codes of the discrete action's grid values, in envelope order."""
+
+
+def _ride_discrete_action(
+    *, context: SolverBuildContext
+) -> tuple[str | None, tuple[int, ...]]:
+    """Identify a single budget-shifting discrete action and its grid codes.
+
+    Returns `(None, ())` when the regime carries no discrete action.
+    """
+    discrete_actions = context.state_action_space.discrete_actions
+    if not discrete_actions:
+        return None, ()
+    name = next(iter(discrete_actions))
+    return name, tuple(int(code) for code in discrete_actions[name])
 
 
 def _collect_bqsegm_schedule_spec(
@@ -2953,9 +3009,17 @@ def _collect_bqsegm_schedule_spec(
             for bracket in schedule.breakpoints
         )
 
+    # A single discrete action shifting the budget is enveloped over per ride
+    # cell; it is neither a state nor a coh param, so exclude it from
+    # `coh_param_names` (the envelope core binds it per branch).
+    discrete_action_name, discrete_action_codes = _ride_discrete_action(context=context)
     coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
-    coh_param_names = tuple(name for name in coh_args if name not in state_names)
+    coh_param_names = tuple(
+        name
+        for name in coh_args
+        if name not in state_names and name != discrete_action_name
+    )
     utility_dag = concatenate_functions(dict(context.functions), targets="utility")
     # A regime whose discount factor is a DAG function (e.g. a per-preference-type
     # beta indexed by a ride-along state) exposes it as a target; absent that, the
@@ -2986,6 +3050,8 @@ def _collect_bqsegm_schedule_spec(
         breakpoint_kinds=breakpoint_kinds,
         sources=tuple(sources),
         discount_factor_dag=discount_factor_dag,
+        discrete_action_name=discrete_action_name,
+        discrete_action_codes=discrete_action_codes,
     )
 
 
@@ -3882,7 +3948,7 @@ def _vmapped_cell_solver(
     ), (*flat_cells, cont_value_stack, cont_marginal_stack, cliff_savings_stack)
 
 
-def _build_bqsegm_envelope_core(
+def _build_bqsegm_envelope_core(  # noqa: C901
     *,
     savings_grid: Float1D,
     schedule_spec: _BQSEGMScheduleSpec,
@@ -3967,17 +4033,6 @@ def _build_bqsegm_envelope_core(
             )
             midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
 
-            def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
-                return schedule_spec.coh_of_liquid_dag(
-                    **{liquid_name: scalar_liquid},
-                    **{name: cell[name] for name in statics.coh_state_names},
-                    **coh_params,
-                )
-
-            coh_slopes, coh_intercepts = interval_segment_coefficients(
-                schedule=coh_of_liquid, interval_midpoints=midpoints
-            )
-
             def utility_of_consumption(consumption_value: FloatND) -> FloatND:
                 return schedule_spec.utility_dag(
                     **{statics.consumption_action_name: consumption_value},
@@ -4009,29 +4064,50 @@ def _build_bqsegm_envelope_core(
             else:
                 query_grid = liquid
 
-            if statics.next_state_reads_liquid:
-                # True cash-on-hand per liquid grid point keeps the step's corners
-                # feasible where a partly-binding kink makes an interval's recovered
-                # affine budget extrapolate below zero.
-                coh_grid = jax.vmap(coh_of_liquid)(query_grid)
-                step = bqsegm_per_interval_continuation_step_savings(
-                    cont_value=cont_value,
-                    cont_marginal=cont_marginal,
-                    liquid_grid=query_grid,
-                    savings_grid=savings_grid,
-                    discount_factor=cell_discount_factor,
-                    utility_of_action=utility_of_consumption,
-                    inverse_marginal_utility=inverse_marginal_utility,
-                    coh_slopes=coh_slopes,
-                    coh_intercepts=coh_intercepts,
-                    breakpoints=breakpoints,
-                    coh_grid=coh_grid,
-                    envelope_segment_block_size=statics.envelope_segment_block_size,
-                    extra_savings=cliff_savings,
-                    extra_cont_value=extra_cont_value,
+            def solve_branch(
+                action_binding: Mapping[str, IntND],
+            ) -> tuple[Float1D, Float1D, Float1D]:
+                """Solve the cell's continuous subproblem for one discrete branch.
+
+                `action_binding` binds the discrete action into cash-on-hand (empty
+                when the regime carries no discrete action). The breakpoint partition,
+                utility, and jump augmentation are action-independent and computed once
+                in the enclosing scope.
+                """
+
+                def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
+                    return schedule_spec.coh_of_liquid_dag(
+                        **{liquid_name: scalar_liquid},
+                        **{name: cell[name] for name in statics.coh_state_names},
+                        **coh_params,
+                        **action_binding,
+                    )
+
+                coh_slopes, coh_intercepts = interval_segment_coefficients(
+                    schedule=coh_of_liquid, interval_midpoints=midpoints
                 )
-            else:
-                step = _solve_ride_along_cell_step(
+                if statics.next_state_reads_liquid:
+                    # True cash-on-hand per liquid grid point keeps the step's corners
+                    # feasible where a partly-binding kink makes an interval's recovered
+                    # affine budget extrapolate below zero.
+                    coh_grid = jax.vmap(coh_of_liquid)(query_grid)
+                    return bqsegm_per_interval_continuation_step_savings(
+                        cont_value=cont_value,
+                        cont_marginal=cont_marginal,
+                        liquid_grid=query_grid,
+                        savings_grid=savings_grid,
+                        discount_factor=cell_discount_factor,
+                        utility_of_action=utility_of_consumption,
+                        inverse_marginal_utility=inverse_marginal_utility,
+                        coh_slopes=coh_slopes,
+                        coh_intercepts=coh_intercepts,
+                        breakpoints=breakpoints,
+                        coh_grid=coh_grid,
+                        envelope_segment_block_size=statics.envelope_segment_block_size,
+                        extra_savings=cliff_savings,
+                        extra_cont_value=extra_cont_value,
+                    )
+                return _solve_ride_along_cell_step(
                     has_jump=statics.has_jump,
                     jump_positions=jump_positions,
                     extra_savings=cliff_savings,
@@ -4047,7 +4123,26 @@ def _build_bqsegm_envelope_core(
                     coh_intercepts=coh_intercepts,
                     breakpoints=breakpoints,
                 )
-            value_row, marginal_row, _policy_row = step
+
+            # A discrete action shifting the budget is enveloped over per cell: each
+            # branch solves the continuous subproblem with the action bound into
+            # cash-on-hand, then the discrete choice is taken by the upper envelope.
+            # The ride-along discrete envelope is gated to jump-free schedules, so the
+            # branch rows are plain liquid-grid rows.
+            action_name = schedule_spec.discrete_action_name
+            if action_name is not None:
+                branch_steps = [
+                    solve_branch({action_name: jnp.asarray(code, dtype=jnp.int32)})
+                    for code in schedule_spec.discrete_action_codes
+                ]
+                value_row, marginal_row = _discrete_envelope_over_branches(
+                    value_stack=jnp.stack([step[0] for step in branch_steps]),
+                    marginal_stack=jnp.stack([step[1] for step in branch_steps]),
+                    taste_shock_scale=0.0,
+                )
+                return (value_row, marginal_row)
+
+            value_row, marginal_row, _policy_row = solve_branch({})
             if statics.n_published_jumps == 0:
                 return (value_row, marginal_row)
             # The carry keeps the whole augmented row — the jump rides inside

@@ -1,12 +1,11 @@
-"""BQSEGM's schedule+ride-along path rejects unsupported discrete actions.
+"""BQSEGM's ride-along discrete envelope rejects the cases it cannot solve.
 
-The ride-along kernels solve one continuous consumption problem per ride cell;
-they carry no loop or envelope over discrete actions. A regime that declares a
-discrete action on this path would have that action silently ignored — the
-solver would publish the value of one arbitrary branch instead of the max over
-branches. The model build must refuse such a regime so the restriction is
-explicit: fix the action in the regime's functions (and drop it from
-`actions`), or use a solver that aggregates discrete branches.
+The ride-along path envelopes a single discrete action over a kink budget: each
+branch solves the continuous subproblem with the action bound into cash-on-hand,
+and the discrete choice is taken by the upper envelope. A schedule carrying a
+jump breakpoint falls outside that contract — its published one-sided value
+limits would have to be taken over branches (topology through the envelope) — so
+a jump schedule with a discrete action is refused at model build.
 """
 
 import pytest
@@ -14,7 +13,7 @@ import pytest
 from lcm import DiscreteGrid, categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ScalarInt
-from tests.test_models import bqsegm_jump_ride_along_toy as toy
+from tests.test_models import bqsegm_jump_ride_along_toy as jump_toy
 
 
 @categorical(ordered=False)
@@ -23,10 +22,10 @@ class WorkChoice:
     yes: ScalarInt
 
 
-def test_ride_along_regime_with_discrete_action_is_rejected_at_build():
-    """A schedule+ride regime declaring a discrete action fails model build."""
-    with pytest.raises(RegimeInitializationError, match="discrete action"):
-        toy.build_model(
+def test_ride_along_regime_with_a_jump_and_discrete_action_is_rejected_at_build():
+    """A ride regime with a jump schedule plus a discrete action fails build."""
+    with pytest.raises(RegimeInitializationError, match=r"jump.*discrete action"):
+        jump_toy.build_model(
             variant="bqsegm",
             n_liquid=12,
             liquid_max=30.0,
