@@ -53,6 +53,33 @@ def tax_cliff(
     return jnp.where(liquid >= tax_exemption, tax_lump, 0.0)
 
 
+@lcm.piecewise_affine(
+    "tax",
+    variable="liquid",
+    breakpoints=(
+        lcm.affine_breakpoint("tax_exemption", kind="jump"),
+        lcm.affine_breakpoint("tax_bracket", kind="continuous_kink"),
+    ),
+)
+def tax_mixed(
+    liquid: ContinuousState,
+    tax_exemption: float,
+    tax_lump: float,
+    tax_bracket: float,
+    tax_rate: float,
+) -> FloatND:
+    """Cliff lump at the exemption plus a rising bracket above a higher threshold.
+
+    Cash-on-hand drops by `tax_lump` at the exemption (slope unchanged) and then
+    slopes down by `tax_rate` above `tax_bracket`. The bracket case has non-unit
+    liquid slope, so the save-to-cliff candidate landing at the exemption must
+    scale its published marginal by that slope.
+    """
+    lump = jnp.where(liquid >= tax_exemption, tax_lump, 0.0)
+    bracket = tax_rate * jnp.maximum(liquid - tax_bracket, 0.0)
+    return lump + bracket
+
+
 def coh(
     liquid: ContinuousState,
     tax: FloatND,
@@ -72,9 +99,16 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
+    mixed_schedule: bool = False,
 ) -> Model:
-    """Create the two-regime (alive, dead) discrete-choice-plus-cliff toy."""
-    alive_functions = {"utility": utility, "tax": tax_cliff, "coh": coh}
+    """Create the two-regime (alive, dead) discrete-choice-plus-cliff toy.
+
+    With `mixed_schedule`, the budget carries a jump *and* a kink (a rising
+    bracket) so each discrete branch routes to the mixed-kind unified step, whose
+    save-to-cliff candidate must scale its marginal by the bracket case's slope.
+    """
+    tax_func = tax_mixed if mixed_schedule else tax_cliff
+    alive_functions = {"utility": utility, "tax": tax_func, "coh": coh}
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -104,18 +138,21 @@ def build_params(
     tax_exemption: float = 12.0,
     tax_lump: float = 1.0,
     final_age_alive: float = 3.0,
+    mixed_schedule: bool = False,
+    tax_bracket: float = 18.0,
+    tax_rate: float = 0.2,
 ) -> dict:
     """Get parameters for the discrete-choice-plus-cliff one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
+    tax_params = {"tax_exemption": tax_exemption, "tax_lump": tax_lump}
+    if mixed_schedule:
+        tax_params = {**tax_params, "tax_bracket": tax_bracket, "tax_rate": tax_rate}
     return {
         "alive": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
             "coh": {"premium": premium},
-            "tax": {
-                "tax_exemption": tax_exemption,
-                "tax_lump": tax_lump,
-            },
+            "tax": tax_params,
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

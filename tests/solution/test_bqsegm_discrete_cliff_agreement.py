@@ -16,13 +16,17 @@ from tests.test_models import bqsegm_discrete_cliff_toy as toy
 
 _ALIVE = "alive"
 _TAX_EXEMPTION = 12.0
+_TAX_BRACKET = 18.0
 _LIQUID = np.linspace(0.1, 30.0, 120)
 _AWAY_FROM_CLIFF = (
     (_LIQUID > 1.5) & (_LIQUID < 27.0) & (np.abs(_LIQUID - _TAX_EXEMPTION) > 0.4)
 )
+_AWAY_FROM_BREAKPOINTS = _AWAY_FROM_CLIFF & (np.abs(_LIQUID - _TAX_BRACKET) > 0.4)
 
 
-def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(
+    variant: str, *, n_consumption: int = 120, mixed_schedule: bool = False
+) -> Mapping[int, Mapping]:
     model = toy.build_model(
         variant=variant,
         n_liquid=120,
@@ -30,8 +34,11 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
         n_savings=180,
         savings_max=28.0,
         n_consumption=n_consumption,
+        mixed_schedule=mixed_schedule,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(
+        params=toy.build_params(mixed_schedule=mixed_schedule), log_level="off"
+    )
 
 
 def test_bqsegm_discrete_envelope_matches_brute_over_a_cliffed_budget() -> None:
@@ -60,4 +67,24 @@ def test_bqsegm_discrete_envelope_matches_brute_through_a_recurring_jump() -> No
     brute_v = np.asarray(brute[period][_ALIVE])
     np.testing.assert_allclose(
         bq_v[_AWAY_FROM_CLIFF], brute_v[_AWAY_FROM_CLIFF], rtol=5e-3, atol=5e-3
+    )
+
+
+def test_bqsegm_discrete_envelope_matches_brute_through_a_mixed_jump_and_kink() -> None:
+    """`V` agrees with brute when each branch's budget carries a jump and a kink.
+
+    Above the bracket the case has non-unit liquid slope, so at a recurring period
+    — where the child value carries the jump — the save-to-cliff candidate must
+    publish a slope-scaled marginal. An unscaled marginal shifts the recovered
+    policy and breaks agreement across the bracket case."""
+    bqsegm = _solve("bqsegm", mixed_schedule=True)
+    brute = _solve("brute", n_consumption=1500, mixed_schedule=True)
+    period = min(p for p in brute if _ALIVE in brute[p])
+    bq_v = np.asarray(bqsegm[period][_ALIVE])
+    brute_v = np.asarray(brute[period][_ALIVE])
+    np.testing.assert_allclose(
+        bq_v[_AWAY_FROM_BREAKPOINTS],
+        brute_v[_AWAY_FROM_BREAKPOINTS],
+        rtol=5e-3,
+        atol=5e-3,
     )
