@@ -38,6 +38,18 @@ def coh(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     return liquid + subsidy
 
 
+def coh_non_additive(
+    liquid: ContinuousState, subsidy: FloatND, coh_slope: float
+) -> FloatND:
+    """Cash-on-hand whose liquid slope is `coh_slope` (≠ 1) plus the jump subsidy.
+
+    The schedule declares only the jump, so an all-jump route would solve this
+    with the additive pure-jump step (unit-slope assumption) and silently
+    mis-solve it — the case the build-time additivity guard must reject.
+    """
+    return coh_slope * liquid + subsidy
+
+
 def build_model(
     *,
     variant: str = "brute",
@@ -47,9 +59,16 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
+    non_additive: bool = False,
 ) -> Model:
-    """Create the two-regime (alive, dead) jump-schedule one-asset toy."""
-    alive_functions = {"utility": utility, "subsidy": subsidy, "coh": coh}
+    """Create the two-regime (alive, dead) jump-schedule one-asset toy.
+
+    With `non_additive`, cash-on-hand carries a non-unit liquid slope while the
+    schedule still declares only the jump — the misdeclaration the pure-jump
+    additivity guard rejects.
+    """
+    coh_func = coh_non_additive if non_additive else coh
+    alive_functions = {"utility": utility, "subsidy": subsidy, "coh": coh_func}
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -77,13 +96,17 @@ def build_params(
     subsidy_low: float = 0.5,
     cliff: float = 8.0,
     final_age_alive: float = 3.0,
+    non_additive: bool = False,
+    coh_slope: float = 0.8,
 ) -> dict:
     """Get parameters for the jump-schedule one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
+    coh_params = {"coh": {"coh_slope": coh_slope}} if non_additive else {}
     return {
         "alive": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
+            **coh_params,
             "subsidy": {
                 "subsidy_low": subsidy_low,
                 "subsidy_high": subsidy_high,
