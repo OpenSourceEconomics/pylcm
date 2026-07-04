@@ -53,6 +53,22 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
+@lcm.piecewise_affine(
+    "tax",
+    variable="liquid",
+    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="jump"),),
+)
+def tax_jump(liquid: ContinuousState, tax_lump: float, tax_exemption: float) -> FloatND:
+    """Cliff tax: zero below the exemption, a flat lump above (an additive jump).
+
+    A pure level drop in cash-on-hand at the exemption — the shape of an
+    income-tested subsidy cliff. Paired with the discrete insurance choice and the
+    income ride co-state, it is the jump-plus-discrete-plus-ride case the envelope
+    resolves by taking the discrete max over each branch's published cliff limits.
+    """
+    return jnp.where(liquid >= tax_exemption, tax_lump, 0.0)
+
+
 def coh(
     liquid: ContinuousState,
     tax: FloatND,
@@ -100,15 +116,21 @@ def build_model(
     n_savings: int = 150,
     savings_max: float = 28.0,
     action_in_costate: bool = False,
+    jump_schedule: bool = False,
 ) -> Model:
     """Create the (alive, dead) ride-along toy with a discrete insurance choice.
 
     With `action_in_costate`, a `streak` co-state carries a law of motion that
     reads `buy_private` — so the discrete action shifts the continuation, not just
     the current budget, which the shared-continuation envelope cannot represent.
+
+    With `jump_schedule`, the budget carries a jump cliff (not a kink), so the
+    discrete envelope must take the discrete choice over each branch's published
+    one-sided cliff limits — the jump-plus-discrete-plus-ride composition.
     """
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
-    alive_functions = {"utility": utility, "tax": tax, "coh": coh}
+    tax_func = tax_jump if jump_schedule else tax
+    alive_functions = {"utility": utility, "tax": tax_func, "coh": coh}
     extra_states: dict[str, Grid] = {"income": income_grid}
     extra_state_transitions: dict[str, object] = {}
     if action_in_costate:
@@ -156,16 +178,23 @@ def build_params(
     tax_rate: float = 0.2,
     tax_exemption: float = 12.0,
     final_age_alive: float = 3.0,
+    jump_schedule: bool = False,
+    tax_lump: float = 2.0,
 ) -> dict:
     """Get parameters for the ride-along discrete-choice toy."""
     alive_budget = {"return_liquid": return_liquid}
+    tax_params = (
+        {"tax_lump": tax_lump, "tax_exemption": tax_exemption}
+        if jump_schedule
+        else {"tax_rate": tax_rate, "tax_exemption": tax_exemption}
+    )
     return {
         "alive": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
             "coh": {"base_income": base_income, "premium": premium},
             "income": {"mu": 0.0, "sigma": 1.0},
-            "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
+            "tax": tax_params,
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

@@ -1789,14 +1789,6 @@ class BQSEGM(Solver):
             )
             raise RegimeInitializationError(msg)
         action_name = next(iter(actions))
-        if any(source.kind == "jump" for source in schedule_spec.sources):
-            msg = (
-                "BQSEGM's schedule+ride-along discrete envelope handles kink "
-                "schedules only; a jump breakpoint with a discrete action needs "
-                "the published one-sided limits taken over branches. Regime "
-                f"{context.regime_name!r} declares a jump and a discrete action."
-            )
-            raise RegimeInitializationError(msg)
         utility_args = tuple(inspect.signature(schedule_spec.utility_dag).parameters)
         if action_name in utility_args:
             msg = (
@@ -1811,6 +1803,20 @@ class BQSEGM(Solver):
             action_name=action_name,
             liquid_state_name=schedule_spec.liquid_state_name,
         )
+        # A published jump shares one breakpoint partition across the branches, so
+        # the action may shift cash-on-hand but not the schedule variable itself —
+        # otherwise each branch's cliff would sit at a different asset preimage.
+        for source in schedule_spec.sources:
+            dag = source.derived_of_liquid_dag
+            if dag is not None and action_name in inspect.signature(dag).parameters:
+                msg = (
+                    "BQSEGM's schedule+ride-along discrete envelope shares the jump "
+                    f"breakpoint partition across the branches of {action_name!r}, so "
+                    f"the action must not enter the schedule variable "
+                    f"{source.variable!r} (its asset preimage would then differ per "
+                    f"branch); regime {context.regime_name!r} reads it there."
+                )
+                raise RegimeInitializationError(msg)
 
     def _schedule_has_ride_along(self, *, context: SolverBuildContext) -> bool:
         """Whether the schedule regime carries a ride-along co-state.
@@ -4195,8 +4201,9 @@ def _build_bqsegm_envelope_core(  # noqa: C901
             # A discrete action shifting the budget is enveloped over per cell: each
             # branch solves the continuous subproblem with the action bound into
             # cash-on-hand, then the discrete choice is taken by the upper envelope.
-            # The ride-along discrete envelope is gated to jump-free schedules, so the
-            # branch rows are plain liquid-grid rows.
+            # Under a published jump each branch's row spans the jump-augmented query
+            # grid, so the envelope max naturally takes the discrete choice over each
+            # branch's one-sided cliff limits and the carry keeps the augmented row.
             action_name = schedule_spec.discrete_action_name
             if action_name is not None:
                 branch_steps = [
@@ -4208,9 +4215,9 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                     marginal_stack=jnp.stack([step[1] for step in branch_steps]),
                     taste_shock_scale=0.0,
                 )
-                return (value_row, marginal_row)
+            else:
+                value_row, marginal_row, _policy_row = solve_branch({})
 
-            value_row, marginal_row, _policy_row = solve_branch({})
             if statics.n_published_jumps == 0:
                 return (value_row, marginal_row)
             # The carry keeps the whole augmented row — the jump rides inside
