@@ -4243,6 +4243,34 @@ def _collect_bqsegm_schedule_discrete_spec(
     )
 
 
+def _discrete_envelope_over_branches(
+    *,
+    value_stack: FloatND,
+    marginal_stack: FloatND,
+    taste_shock_scale: float,
+) -> tuple[Float1D, Float1D]:
+    """Take the discrete choice by the upper envelope over branch solves.
+
+    `value_stack` and `marginal_stack` are `(n_branches, n_liquid)` — one solved
+    branch per discrete-action value. Returns the enveloped value and marginal on
+    the liquid grid:
+
+    - Hard maximum (`taste_shock_scale == 0`): `max` over branches, with the
+      winning branch's marginal by Danskin's theorem.
+    - EV1 taste shocks (`taste_shock_scale > 0`): the scaled logsum value and the
+      choice-probability-weighted branch marginal.
+    """
+    if taste_shock_scale == 0.0:
+        modal = jnp.argmax(value_stack, axis=0)
+        index = jnp.arange(value_stack.shape[1])
+        return value_stack[modal, index], marginal_stack[modal, index]
+    scaled = value_stack / taste_shock_scale
+    probabilities = jax.nn.softmax(scaled, axis=0)
+    value = taste_shock_scale * jax.scipy.special.logsumexp(scaled, axis=0)
+    marginal = jnp.sum(probabilities * marginal_stack, axis=0)
+    return value, marginal
+
+
 def _build_bqsegm_schedule_discrete_core(
     *,
     savings_grid: Float1D,
@@ -4317,22 +4345,11 @@ def _build_bqsegm_schedule_discrete_core(
             values.append(branch_value)
             marginals.append(branch_marginal)
 
-        value_stack = jnp.stack(values)
-        marginal_stack = jnp.stack(marginals)
-        if taste_shock_scale == 0.0:
-            # Hard maximum: by Danskin's theorem the winning branch's marginal
-            # value of liquid carries through.
-            modal = jnp.argmax(value_stack, axis=0)
-            index = jnp.arange(liquid.shape[0])
-            value = value_stack[modal, index]
-            marginal = marginal_stack[modal, index]
-        else:
-            # EV1 taste shocks: the smoothed value is the scaled logsum and the
-            # smoothed marginal is the choice-probability-weighted branch marginal.
-            scaled = value_stack / taste_shock_scale
-            probabilities = jax.nn.softmax(scaled, axis=0)
-            value = taste_shock_scale * jax.scipy.special.logsumexp(scaled, axis=0)
-            marginal = jnp.sum(probabilities * marginal_stack, axis=0)
+        value, marginal = _discrete_envelope_over_branches(
+            value_stack=jnp.stack(values),
+            marginal_stack=jnp.stack(marginals),
+            taste_shock_scale=taste_shock_scale,
+        )
         carry = EGMCarry(
             endog_grid=liquid,
             value=value,
