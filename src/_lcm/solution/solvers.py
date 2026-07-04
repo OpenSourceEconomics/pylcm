@@ -1657,13 +1657,28 @@ class BQSEGM(Solver):
             context.user_regimes[context.regime_name].functions,
         )
         registry = collect_bqsegm_metadata(functions=functions)
-        is_schedule = bool(registry.piecewise_affine_schedules) and not (
+        has_schedule = bool(registry.piecewise_affine_schedules) and not (
             registry.piece_sets
         )
-        is_discrete = (
-            not is_schedule
-            and not registry.piece_sets
-            and bool(context.state_action_space.discrete_actions)
+        has_discrete = bool(context.state_action_space.discrete_actions)
+        # A discrete action over a cliffed single-liquid budget composes the
+        # discrete upper envelope with the schedule's per-branch intervals. A
+        # discrete action alongside a ride-along schedule stays rejected below.
+        is_schedule_discrete = (
+            has_schedule
+            and has_discrete
+            and not self._schedule_has_ride_along(context=context)
+        )
+        is_schedule = has_schedule and not is_schedule_discrete
+        is_discrete = not has_schedule and not registry.piece_sets and has_discrete
+        schedule_discrete_spec = (
+            _collect_bqsegm_schedule_discrete_spec(
+                context=context,
+                budget_target=self.budget_target,
+                continuous_state=self.continuous_state,
+            )
+            if is_schedule_discrete
+            else None
         )
         schedule_spec = (
             _collect_bqsegm_schedule_spec(
@@ -1708,7 +1723,7 @@ class BQSEGM(Solver):
         )
         case_spec = (
             _collect_bqsegm_case_spec(context=context)
-            if not is_schedule and not is_discrete
+            if not is_schedule and not is_discrete and schedule_discrete_spec is None
             else None
         )
 
@@ -1717,7 +1732,14 @@ class BQSEGM(Solver):
         period_kernels: dict[int, PeriodKernel] = {}
         for period, target in period_to_target.items():
             if target not in cores:
-                if schedule_spec is not None:
+                if schedule_discrete_spec is not None:
+                    core = _build_bqsegm_schedule_discrete_core(
+                        savings_grid=savings_grid,
+                        target=target,
+                        spec=schedule_discrete_spec,
+                        taste_shock_scale=0.0,
+                    )
+                elif schedule_spec is not None:
                     core = _build_bqsegm_continuous_core(
                         savings_grid=savings_grid,
                         target=target,
@@ -1748,6 +1770,29 @@ class BQSEGM(Solver):
                 liquid_grid=liquid_grid
             ),
         )
+
+    def _schedule_has_ride_along(self, *, context: SolverBuildContext) -> bool:
+        """Whether the schedule regime carries a ride-along co-state.
+
+        A ride-along axis is any state other than the liquid (Euler) axis. The
+        Euler axis is `continuous_state` when named, else the regime's single
+        continuous state; discrete actions are not states and never ride along.
+        """
+        space = context.state_action_space
+        continuous_states = tuple(
+            name
+            for name in space.state_names
+            if isinstance(context.grids[name], ContinuousGrid)
+        )
+        if self.continuous_state is not None:
+            liquid_state_name = self.continuous_state
+        elif len(continuous_states) == 1:
+            liquid_state_name = continuous_states[0]
+        else:
+            # Ambiguous Euler axis: treat as ride-along so the schedule path (and
+            # its explicit multi-continuous-state error) handles it.
+            return True
+        return any(name != liquid_state_name for name in space.state_names)
 
     def _build_ride_along_kernels(
         self,
@@ -4031,6 +4076,182 @@ def _collect_bqsegm_discrete_spec(
         discrete_action_name=discrete_action_name,
         discrete_action_codes=codes,
     )
+
+
+@dataclass(frozen=True)
+class _BQSEGMScheduleDiscreteSpec:
+    """Build-time statics for a discrete action over a cliffed single-liquid budget.
+
+    Each discrete-action value shifts cash-on-hand and the budget also carries a
+    declared schedule (kinks/jumps) on the liquid state. Per action value the
+    continuous subproblem is solved by the multi-interval EGM step honouring the
+    schedule, and the discrete choice is taken by the upper envelope over the
+    branch values.
+    """
+
+    coh_of_liquid_action_dag: Callable
+    """Composed budget node as a function of the liquid state, the discrete action,
+    and qualified params."""
+    coh_param_names: tuple[str, ...]
+    """Qualified parameter names the budget reads (excluding the liquid state and the
+    discrete action)."""
+    liquid_state_name: str
+    """Name of the liquid (Euler) state the budget varies in."""
+    discrete_action_name: str
+    """Name of the discrete action enveloped over."""
+    discrete_action_codes: tuple[int, ...]
+    """Integer codes of the discrete action's grid values."""
+    threshold_param_names: tuple[str, ...]
+    """Qualified parameter names of the schedule's thresholds (liquid breakpoints)."""
+
+
+def _collect_bqsegm_schedule_discrete_spec(
+    *,
+    context: SolverBuildContext,
+    budget_target: str = "coh",
+    continuous_state: StateName | None = None,
+) -> _BQSEGMScheduleDiscreteSpec:
+    """Collect a single discrete action layered over a single-liquid cliff schedule."""
+    import inspect  # noqa: PLC0415
+
+    from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
+
+    space = context.state_action_space
+    if len(space.discrete_actions) != 1:
+        msg = (
+            "BQSEGM schedule+discrete path supports exactly one discrete action; "
+            f"the regime declares {len(space.discrete_actions)}."
+        )
+        raise RegimeInitializationError(msg)
+    discrete_action_name = next(iter(space.discrete_actions))
+    codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
+
+    continuous_states = tuple(
+        name
+        for name in space.state_names
+        if isinstance(context.grids[name], ContinuousGrid)
+    )
+    if continuous_state is not None:
+        liquid_state_name = continuous_state
+    elif len(continuous_states) == 1:
+        liquid_state_name = continuous_states[0]
+    else:
+        msg = (
+            "BQSEGM schedule+discrete path needs exactly one continuous (liquid) "
+            f"state; the regime has {continuous_states}."
+        )
+        raise RegimeInitializationError(msg)
+
+    user_functions = {
+        name: func for name, func in context.functions.items() if callable(func)
+    }
+    registry = collect_bqsegm_metadata(functions=user_functions)
+    schedules = registry.piecewise_affine_schedules
+    if any(schedule.variable != liquid_state_name for schedule in schedules):
+        msg = (
+            "BQSEGM schedule+discrete path handles schedules on the liquid state "
+            "only; a derived-variable schedule needs the ride-along path."
+        )
+        raise RegimeInitializationError(msg)
+
+    coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
+    coh_args = tuple(inspect.signature(coh_dag).parameters)
+    coh_param_names = tuple(
+        name
+        for name in coh_args
+        if name not in (liquid_state_name, discrete_action_name)
+    )
+    first = schedules[0]
+    threshold_param_names = tuple(
+        f"{first.output}__{bp.threshold}" for bp in first.breakpoints
+    )
+    return _BQSEGMScheduleDiscreteSpec(
+        coh_of_liquid_action_dag=coh_dag,
+        coh_param_names=coh_param_names,
+        liquid_state_name=liquid_state_name,
+        discrete_action_name=discrete_action_name,
+        discrete_action_codes=codes,
+        threshold_param_names=threshold_param_names,
+    )
+
+
+def _build_bqsegm_schedule_discrete_core(
+    *,
+    savings_grid: Float1D,
+    target: RegimeName,
+    spec: _BQSEGMScheduleDiscreteSpec,
+    taste_shock_scale: float,
+) -> Callable:
+    """Build the discrete-envelope core over a cliffed single-liquid budget.
+
+    Per discrete-action value the core recovers the schedule's per-interval affine
+    cash-on-hand and the liquid breakpoints, then the discrete choice is taken by
+    the upper envelope over the branch values (`bqsegm_discrete_envelope_step`),
+    which solves each branch with the multi-interval step honouring the cliff.
+    """
+    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
+        interval_midpoints,
+        interval_segment_coefficients,
+    )
+    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
+        bqsegm_discrete_envelope_step,
+    )
+
+    def core(
+        *,
+        liquid: Float1D,
+        next_value: Float1D,
+        next_marginal: Float1D,
+        **params: FloatND,
+    ) -> tuple[Float1D, EGMCarry]:
+        coh_params = {name: params[name] for name in spec.coh_param_names}
+        breakpoints = jnp.sort(
+            jnp.stack([params[name] for name in spec.threshold_param_names])
+        )
+        midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
+        choices: list[dict[str, Float1D]] = []
+        for code in spec.discrete_action_codes:
+
+            def coh_of_liquid(scalar_liquid: FloatND, code: int = code) -> FloatND:
+                return spec.coh_of_liquid_action_dag(
+                    **{
+                        spec.liquid_state_name: scalar_liquid,
+                        spec.discrete_action_name: jnp.asarray(code),
+                    },
+                    **coh_params,
+                )
+
+            coh_slopes, coh_intercepts = interval_segment_coefficients(
+                schedule=coh_of_liquid, interval_midpoints=midpoints
+            )
+            choices.append(
+                {
+                    "coh_slopes": coh_slopes,
+                    "coh_intercepts": coh_intercepts,
+                    "breakpoints": breakpoints,
+                }
+            )
+        value, marginal, _policy, _choice = bqsegm_discrete_envelope_step(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid,
+            savings_grid=savings_grid,
+            discount_factor=params["H__discount_factor"],
+            crra=params["utility__crra"],
+            gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
+            income=params[f"{target}__next_liquid__income"],
+            choices=tuple(choices),
+            taste_shock_scale=taste_shock_scale,
+        )
+        carry = EGMCarry(
+            endog_grid=liquid,
+            value=value,
+            marginal_utility=marginal,
+            taste_shock_scale=jnp.asarray(0.0, dtype=value.dtype),
+        )
+        return value, carry
+
+    return core
 
 
 def _build_bqsegm_discrete_core(
