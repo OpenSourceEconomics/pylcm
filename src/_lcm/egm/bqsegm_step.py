@@ -1351,6 +1351,7 @@ def bqsegm_unified_step(  # noqa: PLR0915
                 income=income,
                 asset_limit=cliff,
                 prev_limit=prev_limit,
+                coh_slope=coh_slopes[case_grid_interval],
                 valid=s0_valid,
             )
             endog_parts.append(kink[0])
@@ -1387,6 +1388,7 @@ def _boundary_targeting_coh(
     income: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
     prev_limit: ScalarFloat | float,
+    coh_slope: Float1D,
     valid: BoolND,
 ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
     """Save to land next-period liquid just inside a cliff's eligible side.
@@ -1413,7 +1415,11 @@ def _boundary_targeting_coh(
     kink_value = (
         _crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
     )
-    kink_marginal = kink_consumption ** (-crra)
+    # The targeted saving is fixed to the cliff, so consumption moves with the
+    # case's affine cash-on-hand: `dc/da = coh_slope`, and the marginal value of
+    # liquid is `coh_slope * c**(-crra)`, matching the interior and corner
+    # candidates.
+    kink_marginal = coh_slope * kink_consumption ** (-crra)
     kink_valid = valid & (kink_consumption > 0.0) & (s_kink >= 0.0)
     return mask_dead_candidates(
         endog_grid=liquid_grid,

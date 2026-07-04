@@ -16,6 +16,7 @@ composition from the published-jump topology.
 import jax.numpy as jnp
 
 import lcm
+from _lcm.grids.base import Grid
 from lcm import DiscreteGrid, LinSpacedGrid, Model, NormalIIDProcess, categorical
 from lcm.typing import (
     ContinuousAction,
@@ -82,6 +83,13 @@ def next_liquid_from_savings(
     return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(income)
 
 
+def next_streak(
+    streak: ContinuousState, buy_private: DiscreteAction
+) -> ContinuousState:
+    """Coverage streak: grows while insured, resets otherwise (reads the action)."""
+    return jnp.where(buy_private == BuyPrivate.yes, streak + 1.0, 0.0)
+
+
 def build_model(
     *,
     variant: str = "brute",
@@ -91,10 +99,24 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
+    action_in_costate: bool = False,
 ) -> Model:
-    """Create the (alive, dead) ride-along toy with a discrete insurance choice."""
+    """Create the (alive, dead) ride-along toy with a discrete insurance choice.
+
+    With `action_in_costate`, a `streak` co-state carries a law of motion that
+    reads `buy_private` — so the discrete action shifts the continuation, not just
+    the current budget, which the shared-continuation envelope cannot represent.
+    """
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
     alive_functions = {"utility": utility, "tax": tax, "coh": coh}
+    extra_states: dict[str, Grid] = {"income": income_grid}
+    extra_state_transitions: dict[str, object] = {}
+    if action_in_costate:
+        extra_states["streak"] = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
+        extra_state_transitions["streak"] = {
+            "alive": next_streak,
+            "dead": next_streak,
+        }
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -118,7 +140,8 @@ def build_model(
         liquid_law=liquid_law,
         alive_solver=alive_solver,
         constraints=constraints,
-        extra_states={"income": income_grid},
+        extra_states=extra_states,
+        extra_state_transitions=extra_state_transitions,
         extra_actions={"buy_private": DiscreteGrid(BuyPrivate)},
     )
 

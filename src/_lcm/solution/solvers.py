@@ -1781,7 +1781,6 @@ class BQSEGM(Solver):
         import inspect  # noqa: PLC0415
 
         actions = context.state_action_space.discrete_actions
-        action_name = schedule_spec.discrete_action_name
         if len(actions) != 1:
             msg = (
                 "BQSEGM's schedule+ride-along discrete envelope supports exactly "
@@ -1789,6 +1788,7 @@ class BQSEGM(Solver):
                 f"{tuple(actions)}."
             )
             raise RegimeInitializationError(msg)
+        action_name = next(iter(actions))
         if any(source.kind == "jump" for source in schedule_spec.sources):
             msg = (
                 "BQSEGM's schedule+ride-along discrete envelope handles kink "
@@ -1806,6 +1806,11 @@ class BQSEGM(Solver):
                 "envelope core does not yet bind per branch."
             )
             raise RegimeInitializationError(msg)
+        _fail_if_discrete_action_feeds_continuation(
+            context=context,
+            action_name=action_name,
+            liquid_state_name=schedule_spec.liquid_state_name,
+        )
 
     def _schedule_has_ride_along(self, *, context: SolverBuildContext) -> bool:
         """Whether the schedule regime carries a ride-along co-state.
@@ -2880,6 +2885,69 @@ class _BQSEGMScheduleSpec:
     `coh_param_names` — the envelope core binds it per branch."""
     discrete_action_codes: tuple[int, ...] = ()
     """Integer codes of the discrete action's grid values, in envelope order."""
+
+
+def _fail_if_discrete_action_feeds_continuation(
+    *,
+    context: SolverBuildContext,
+    action_name: str,
+    liquid_state_name: str,
+) -> None:
+    """Reject a discrete action that shifts the continuation, not just the budget.
+
+    The discrete envelope solves every branch against one shared next-period
+    continuation, valid only when the action enters the current budget and
+    utility alone. If the action feeds the regime transition or a non-liquid
+    state's law of motion, each branch's continuation differs and the shared read
+    is wrong. Feeding cash-on-hand (hence the liquid post-decision state) is the
+    intended budget channel and is allowed.
+    """
+    import inspect  # noqa: PLC0415
+
+    from lcm.transition import MarkovTransition  # noqa: PLC0415
+
+    def _reject(where: str) -> None:
+        msg = (
+            f"BQSEGM's discrete envelope shares one continuation across the "
+            f"branches of {action_name!r}, so the action may shift only the "
+            f"current budget and utility; regime {context.regime_name!r} reads it "
+            f"in {where}. Fix the action there, or use a solver that carries a "
+            "branch-specific continuation."
+        )
+        raise RegimeInitializationError(msg)
+
+    transition_probs = context.compute_regime_transition_probs
+    if (
+        transition_probs is not None
+        and action_name in inspect.signature(transition_probs).parameters
+    ):
+        _reject("the regime transition")
+
+    regime = context.user_regimes[context.regime_name]
+    funcs: dict[str, Callable[..., object]] = {
+        name: func for name, func in regime.functions.items() if callable(func)
+    }
+
+    def _law_reads_action(law: Callable[..., object]) -> bool:
+        try:
+            combined = concatenate_functions(
+                {**funcs, "__continuation_target__": law},
+                targets="__continuation_target__",
+            )
+        except Exception:  # noqa: BLE001  # unanalysable law: leave to other gates
+            return False
+        return action_name in inspect.signature(combined).parameters
+
+    for state_name, law in regime.state_transitions.items():
+        if state_name == liquid_state_name:
+            continue
+        candidates = law.values() if isinstance(law, Mapping) else [law]
+        for candidate in candidates:
+            func = (
+                candidate.func if isinstance(candidate, MarkovTransition) else candidate
+            )
+            if callable(func) and _law_reads_action(func):
+                _reject(f"the law of motion for {state_name!r}")
 
 
 def _ride_discrete_action(
@@ -4221,6 +4289,11 @@ def _collect_bqsegm_discrete_spec(
     discrete_action_name = next(iter(space.discrete_actions))
     codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
     liquid_state_name = space.state_names[0]
+    _fail_if_discrete_action_feeds_continuation(
+        context=context,
+        action_name=discrete_action_name,
+        liquid_state_name=liquid_state_name,
+    )
     coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
     coh_param_names = tuple(
@@ -4303,6 +4376,11 @@ def _collect_bqsegm_schedule_discrete_spec(
         )
         raise RegimeInitializationError(msg)
 
+    _fail_if_discrete_action_feeds_continuation(
+        context=context,
+        action_name=discrete_action_name,
+        liquid_state_name=liquid_state_name,
+    )
     user_functions = {
         name: func for name, func in context.functions.items() if callable(func)
     }
