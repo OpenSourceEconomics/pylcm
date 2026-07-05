@@ -4193,12 +4193,21 @@ def _build_bqsegm_continuation_core(
                 # building one continuation row per interval. `lax.map` compiles the
                 # continuation DAG once and XLA iterates, rather than a Python unroll
                 # that bakes one copy of the per-cell DAG into the graph per interval.
+                # The interval partition follows the action when it feeds the schedule
+                # variable — the branch rides in `combo_pool`, so its per-branch
+                # breakpoints match the envelope's.
+                cell_action_binding = (
+                    {action_name: combo_pool[action_name]}
+                    if action_name is not None and action_name in combo_pool
+                    else {}
+                )
                 breakpoints, _ = _bqsegm_cell_breakpoints(
                     statics=statics,
                     kwargs=kwargs,
                     cell=cell,
                     liquid_grid=liquid,
                     dtype=dtype,
+                    action_binding=cell_action_binding,
                 )
                 midpoints = interval_midpoints(
                     liquid_grid=liquid, breakpoints=breakpoints
