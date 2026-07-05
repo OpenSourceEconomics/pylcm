@@ -106,6 +106,29 @@ def next_streak(
     return jnp.where(buy_private == BuyPrivate.yes, streak + 1.0, 0.0)
 
 
+def next_tracker_smooth(
+    tracker: ContinuousState, liquid: ContinuousState
+) -> ContinuousState:
+    """Co-state that varies smoothly (affine) in the current liquid state.
+
+    Reads the liquid (Euler) state with a nonzero derivative between breakpoints, so
+    the midpoint-bound continuation row is wrong within each interval — the
+    misdeclaration the interval-constant continuation guard rejects.
+    """
+    return tracker + 0.1 * liquid
+
+
+def next_tracker_step(
+    tracker: ContinuousState, liquid: ContinuousState
+) -> ContinuousState:
+    """Co-state switched at a liquid threshold — piecewise-constant in liquid.
+
+    Reads the liquid state only through a level switch, so its derivative between
+    breakpoints is zero and the midpoint-bound continuation row is exact.
+    """
+    return jnp.where(liquid >= 10.0, tracker + 1.0, 0.0)
+
+
 def oop(buy_private: DiscreteAction, oop_uninsured: float) -> FloatND:
     """Out-of-pocket medical cost: zero when insured, a fixed hit when not.
 
@@ -138,6 +161,8 @@ def build_model(
     action_in_costate: bool = False,
     action_in_liquid_law: bool = False,
     jump_schedule: bool = False,
+    costate_reads_liquid: bool = False,
+    costate_smooth: bool = False,
 ) -> Model:
     """Create the (alive, dead) ride-along toy with a discrete insurance choice.
 
@@ -148,6 +173,12 @@ def build_model(
     With `jump_schedule`, the budget carries a jump cliff (not a kink), so the
     discrete envelope must take the discrete choice over each branch's published
     one-sided cliff limits — the jump-plus-discrete-plus-ride composition.
+
+    With `costate_reads_liquid`, a `tracker` co-state carries a law of motion that
+    reads the current liquid state — piecewise-constant by default (a level switched
+    at a threshold), or smoothly varying with `costate_smooth`. BQSEGM binds the
+    liquid state to each interval's node for such a law; the smooth variant is the
+    misdeclaration the interval-constant continuation guard rejects.
     """
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
     tax_func = tax_jump if jump_schedule else tax
@@ -159,6 +190,13 @@ def build_model(
         extra_state_transitions["streak"] = {
             "alive": next_streak,
             "dead": next_streak,
+        }
+    if costate_reads_liquid:
+        tracker_law = next_tracker_smooth if costate_smooth else next_tracker_step
+        extra_states["tracker"] = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
+        extra_state_transitions["tracker"] = {
+            "alive": tracker_law,
+            "dead": tracker_law,
         }
     alive_solver = resolve_solver(
         variant,

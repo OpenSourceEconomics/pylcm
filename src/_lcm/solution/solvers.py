@@ -1908,6 +1908,11 @@ class BQSEGM(Solver):
             )
             key = (*plan.carry_targets, "|", *plan.scalar_targets)
             if key not in continuation_cores:
+                _fail_if_liquid_reading_next_state_varies_within_interval(
+                    continuation_plan=plan,
+                    liquid_name=schedule_spec.liquid_state_name,
+                    regime_name=context.regime_name,
+                )
                 statics = _bqsegm_ride_along_statics(
                     savings_grid=savings_grid,
                     schedule_spec=schedule_spec,
@@ -3095,6 +3100,76 @@ def _fail_if_budget_nonaffine_in_liquid(
             "mixed step, or keep the jump-only budget additive (unit slope)."
         )
         raise RegimeInitializationError(msg)
+
+
+def _fail_if_liquid_reading_next_state_varies_within_interval(
+    *,
+    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    liquid_name: str,
+    regime_name: str,
+) -> None:
+    """Reject a carried-state law that varies smoothly in the liquid state.
+
+    When a carried state's law of motion reads the current liquid (Euler) state,
+    BQSEGM binds the liquid state to each interval's node and reuses that
+    continuation row across the interval — exact only when the law's liquid
+    dependence is piecewise-constant (a level switched at a declared cliff, so its
+    derivative in the liquid state is zero between breakpoints). A smooth (affine or
+    curved) dependence makes the midpoint-bound row wrong for the interval's other
+    liquid points, so it is rejected at build.
+
+    The probe evaluates each liquid-reading law's first liquid-derivative at a few
+    interior points, with the other arguments filled by two constant sets. A law an
+    argument set cannot evaluate on plain scalars leaves the check to the other
+    build-time gates.
+    """
+    import inspect  # noqa: PLC0415
+
+    tol = 1e-6
+
+    def _max_abs_first_derivative(func: Callable[..., object]) -> float | None:
+        # The composed law returns the child's whole carried-state vector, so probe
+        # the Jacobian in the liquid argument and take the max over all outputs.
+        arg_names = tuple(inspect.signature(func).parameters)
+        if liquid_name not in arg_names:
+            return None
+        liquid_pos = arg_names.index(liquid_name)
+
+        def _positional(*args: FloatND) -> object:
+            return func(**dict(zip(arg_names, args, strict=True)))
+
+        try:
+            worst = 0.0
+            for fill in (1.0, 3.0):
+                for sample in (0.37, 1.63, 2.71):
+                    args = [jnp.asarray(fill)] * len(arg_names)
+                    args[liquid_pos] = jnp.asarray(sample)
+                    jac = jax.jacfwd(_positional, argnums=liquid_pos)(*args)
+                    leaves = jax.tree_util.tree_leaves(jac)
+                    worst = max(
+                        worst,
+                        *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
+                    )
+        except Exception:  # noqa: BLE001
+            return None
+        else:
+            return worst
+
+    for target in continuation_plan.carry_targets:
+        next_state_func = continuation_plan.child_reads[target].next_state_func
+        worst = _max_abs_first_derivative(next_state_func)
+        if worst is not None and worst > tol:
+            msg = (
+                "BQSEGM binds the liquid state to each interval's node when a carried "
+                "state's law reads it, exact only if that dependence is "
+                "piecewise-constant (switched at a declared cliff). In regime "
+                f"{regime_name!r} the law of motion for {target!r} varies smoothly in "
+                f"the liquid state {liquid_name!r} (nonzero derivative between "
+                "breakpoints), so the midpoint-bound continuation row is wrong within "
+                f"the interval. Declare the switch as a breakpoint, or keep {target!r} "
+                "independent of the current liquid state."
+            )
+            raise RegimeInitializationError(msg)
 
 
 def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
