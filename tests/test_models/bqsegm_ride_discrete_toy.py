@@ -72,6 +72,30 @@ def tax_jump(liquid: ContinuousState, tax_lump: float, tax_exemption: float) -> 
     return jnp.where(liquid >= tax_exemption, tax_lump, 0.0)
 
 
+def derived_income(
+    liquid: ContinuousState, buy_private: DiscreteAction, income_offset: float
+) -> FloatND:
+    """Monotone income the schedule sits on — the action shifts its intercept.
+
+    Buying insurance moves the income the tax cliff is measured against, so the
+    cliff's asset (liquid) preimage differs per `buy_private` branch — the case a
+    single shared breakpoint partition cannot represent.
+    """
+    return liquid + income_offset * buy_private
+
+
+@lcm.piecewise_affine(
+    "tax",
+    variable="derived_income",
+    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="continuous_kink"),),
+)
+def tax_derived(
+    derived_income: FloatND, tax_rate: float, tax_exemption: float
+) -> FloatND:
+    """Continuous tax on the derived income above the exemption."""
+    return tax_rate * jnp.maximum(derived_income - tax_exemption, 0.0)
+
+
 def coh(
     liquid: ContinuousState,
     tax: FloatND,
@@ -215,6 +239,7 @@ def build_model(
     action_in_liquid_law: bool = False,
     action_in_utility: bool = False,
     action_in_regime_transition: bool = False,
+    action_in_schedule_variable: bool = False,
     jump_schedule: bool = False,
     costate_reads_liquid: bool = False,
     costate_smooth: bool = False,
@@ -239,6 +264,14 @@ def build_model(
     tax_func = tax_jump if jump_schedule else tax
     utility_func = utility_with_action if action_in_utility else utility
     alive_functions = {"utility": utility_func, "tax": tax_func, "coh": coh}
+    if action_in_schedule_variable:
+        # The tax cliff sits on a derived income that reads the action, so its asset
+        # preimage differs per branch — each branch gets its own breakpoint partition.
+        alive_functions = {
+            **alive_functions,
+            "tax": tax_derived,
+            "derived_income": derived_income,
+        }
     extra_states: dict[str, Grid] = {"income": income_grid}
     extra_state_transitions: dict[str, object] = {}
     if action_in_costate:
@@ -314,6 +347,8 @@ def build_params(
     tax_lump: float = 2.0,
     action_in_liquid_law: bool = False,
     oop_uninsured: float = 1.0,
+    action_in_schedule_variable: bool = False,
+    income_offset: float = 4.0,
 ) -> dict:
     """Get parameters for the ride-along discrete-choice toy."""
     alive_budget = {"return_liquid": return_liquid}
@@ -321,6 +356,11 @@ def build_params(
         {"tax_lump": tax_lump, "tax_exemption": tax_exemption}
         if jump_schedule
         else {"tax_rate": tax_rate, "tax_exemption": tax_exemption}
+    )
+    derived_income_params = (
+        {"derived_income": {"income_offset": income_offset}}
+        if action_in_schedule_variable
+        else {}
     )
     oop_params = (
         {"oop": {"oop_uninsured": oop_uninsured}} if action_in_liquid_law else {}
@@ -333,6 +373,7 @@ def build_params(
             "income": {"mu": 0.0, "sigma": 1.0},
             "tax": tax_params,
             **oop_params,
+            **derived_income_params,
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

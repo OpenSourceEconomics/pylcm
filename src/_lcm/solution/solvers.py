@@ -1806,18 +1806,24 @@ class BQSEGM(Solver):
             post_decision_function=self.post_decision_function,
             allow_continuation_feed=True,
         )
-        # A published jump shares one breakpoint partition across the branches, so
-        # the action may shift cash-on-hand but not the schedule variable itself —
-        # otherwise each branch's cliff would sit at a different asset preimage.
+        # An action entering the schedule variable gives each branch its own
+        # breakpoint partition (its own asset preimage of every threshold), which the
+        # envelope solves per branch. A *published* jump is the exception: its
+        # one-sided cliff limits ride a jump-augmented query grid whose extra
+        # abscissae would then sit at a different liquid per branch, so the branches'
+        # rows would no longer share a grid to take the discrete max over.
         for source in schedule_spec.sources:
             dag = source.derived_of_liquid_dag
-            if dag is not None and action_name in inspect.signature(dag).parameters:
+            if dag is None or action_name not in inspect.signature(dag).parameters:
+                continue
+            if source.kind == "jump" and self.jump_read == "one_sided":
                 msg = (
-                    "BQSEGM's schedule+ride-along discrete envelope shares the jump "
-                    f"breakpoint partition across the branches of {action_name!r}, so "
-                    f"the action must not enter the schedule variable "
-                    f"{source.variable!r} (its asset preimage would then differ per "
-                    f"branch); regime {context.regime_name!r} reads it there."
+                    "BQSEGM's schedule+ride-along discrete envelope publishes the jump "
+                    f"breakpoint on a shared query grid, so the action {action_name!r} "
+                    f"must not enter the jumped schedule variable {source.variable!r} "
+                    "under `jump_read='one_sided'` (its cliff would sit at a different "
+                    f"liquid per branch); regime {context.regime_name!r} reads it "
+                    "there. Use `jump_read='bridged'` or a non-jump breakpoint."
                 )
                 raise RegimeInitializationError(msg)
 
@@ -3267,7 +3273,17 @@ def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
         if variable not in derived_dags:
             dag = concatenate_functions(dict(context.functions), targets=variable)
             dag_params = tuple(inspect.signature(dag).parameters)
-            params = tuple(name for name in dag_params if name not in state_names)
+            # A discrete action the schedule variable reads is bound per branch by the
+            # envelope (it shifts the breakpoint partition), not read from kwargs, so it
+            # is neither a state nor a param here.
+            discrete_action_names = frozenset(
+                context.state_action_space.discrete_actions
+            )
+            params = tuple(
+                name
+                for name in dag_params
+                if name not in state_names and name not in discrete_action_names
+            )
             states_read = tuple(
                 name for name in dag_params if name in ride_along_state_names
             )
@@ -3947,6 +3963,7 @@ def _bqsegm_cell_breakpoints(
     cell: dict[str, Any],
     liquid_grid: Float1D,
     dtype: Any,  # noqa: ANN401  # canonical float dtype
+    action_binding: Mapping[str, Any] = MappingProxyType({}),
 ) -> tuple[Float1D, tuple[Any, ...]]:
     """Build one ride-along cell's sorted liquid breakpoints and jump positions.
 
@@ -3958,6 +3975,8 @@ def _bqsegm_cell_breakpoints(
     just outside the grid collapses it to an empty edge interval instead of poisoning a
     live interval's affine segment.
     """
+    import inspect  # noqa: PLC0415
+
     from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
         clamp_breakpoints_to_grid,
         linear_asset_preimage,
@@ -3979,9 +3998,20 @@ def _bqsegm_cell_breakpoints(
         dag = source.derived_of_liquid_dag
         derived_params = {name: kwargs[name] for name in source.derived_param_names}
         cell_for_dag = {name: cell[name] for name in source.derived_state_names}
+        dag_arg_names = frozenset(inspect.signature(dag).parameters)
+        dag_action_binding = {
+            name: value
+            for name, value in action_binding.items()
+            if name in dag_arg_names
+        }
 
         def derived_of_liquid(scalar_liquid: FloatND) -> FloatND:
-            return dag(**{liquid_name: scalar_liquid}, **cell_for_dag, **derived_params)
+            return dag(
+                **{liquid_name: scalar_liquid},
+                **cell_for_dag,
+                **derived_params,
+                **dag_action_binding,
+            )
 
         return linear_asset_preimage(derived_of_liquid, threshold=threshold)
 
@@ -4371,22 +4401,22 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                 )
             )
 
-            breakpoints, jump_positions = _bqsegm_cell_breakpoints(
-                statics=statics,
-                kwargs=kwargs,
-                cell=cell,
-                liquid_grid=liquid,
-                dtype=dtype,
-            )
-            midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
-
-            # With published jump breakpoints, the cell also publishes each
-            # jump's preimage and its exact one-sided value limits: the liquid
-            # query grid is augmented with a point just inside each side of
-            # every jump, solved in the same call, and split back out
-            # positionally. The bridged read skips the augmentation and
-            # carries plain liquid-grid rows.
+            # With published jump breakpoints, the cell publishes each jump's preimage
+            # and its exact one-sided value limits: the liquid query grid is augmented
+            # with a point just inside each side of every jump, solved in the same call,
+            # and split back out positionally. A published jump shares one query grid
+            # across the branches, so the action cannot enter its schedule variable
+            # (guarded), and the cell-level partition is branch-independent. The bridged
+            # read skips the augmentation; each branch then partitions on its own
+            # breakpoints (recomputed inside `solve_branch`) over the plain liquid grid.
             if statics.n_published_jumps:
+                breakpoints, jump_positions = _bqsegm_cell_breakpoints(
+                    statics=statics,
+                    kwargs=kwargs,
+                    cell=cell,
+                    liquid_grid=liquid,
+                    dtype=dtype,
+                )
                 jumps = jnp.stack([breakpoints[p] for p in jump_positions])
                 query_grid, endog_row, unsort = _augment_liquid_with_jump_sides(
                     liquid_grid=liquid, jumps=jumps
@@ -4446,8 +4476,24 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                         c_upper=action_upper,
                     )
 
+                # Recompute the breakpoint partition with the action bound: when the
+                # action enters the schedule variable, its asset preimage — and so the
+                # interval partition and its midpoints — differ per branch. When the
+                # action does not, the binding is dropped and this matches the shared
+                # cell partition.
+                branch_breakpoints, branch_jump_positions = _bqsegm_cell_breakpoints(
+                    statics=statics,
+                    kwargs=kwargs,
+                    cell=cell,
+                    liquid_grid=liquid,
+                    dtype=dtype,
+                    action_binding=action_binding,
+                )
+                branch_midpoints = interval_midpoints(
+                    liquid_grid=liquid, breakpoints=branch_breakpoints
+                )
                 coh_slopes, coh_intercepts = interval_segment_coefficients(
-                    schedule=coh_of_liquid, interval_midpoints=midpoints
+                    schedule=coh_of_liquid, interval_midpoints=branch_midpoints
                 )
                 if statics.next_state_reads_liquid:
                     # True cash-on-hand per liquid grid point keeps the step's corners
@@ -4464,7 +4510,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                         inverse_marginal_utility=inverse_marginal_utility,
                         coh_slopes=coh_slopes,
                         coh_intercepts=coh_intercepts,
-                        breakpoints=breakpoints,
+                        breakpoints=branch_breakpoints,
                         coh_grid=coh_grid,
                         envelope_segment_block_size=statics.envelope_segment_block_size,
                         extra_savings=branch_cliff_savings,
@@ -4472,7 +4518,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                     )
                 return _solve_ride_along_cell_step(
                     has_jump=statics.has_jump,
-                    jump_positions=jump_positions,
+                    jump_positions=branch_jump_positions,
                     extra_savings=branch_cliff_savings,
                     extra_cont_value=branch_extra_cont_value,
                     cont_value=branch_cont_value,
@@ -4484,7 +4530,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                     inverse_marginal_utility=inverse_marginal_utility,
                     coh_slopes=coh_slopes,
                     coh_intercepts=coh_intercepts,
-                    breakpoints=breakpoints,
+                    breakpoints=branch_breakpoints,
                 )
 
             # A discrete action is enveloped over per cell: each branch solves the
