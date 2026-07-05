@@ -92,7 +92,11 @@ def power_transform(value: FloatND, risk_aversion: FloatND) -> FloatND:
 
 def power_inverse(value: FloatND, risk_aversion: FloatND) -> FloatND:
     """Apply `g^(-1)(v) = v^(1 / (1 - risk_aversion))`; `exp(v)` in the log case."""
-    # The unselected power branch must not divide by zero at `risk_aversion = 1`.
+    # Forward pass is NaN-free regardless: at `risk_aversion = 1` the unselected
+    # power branch evaluates `value ** inf`, a finite `inf`/`0` that `jnp.where`
+    # discards — never a NaN. The guard matters only under reverse-mode autodiff,
+    # where `jnp.where` still differentiates the dead branch; the solve path does
+    # not differentiate through this.
     safe_risk_aversion = jnp.where(risk_aversion == 1.0, 0.0, risk_aversion)
     return jnp.where(
         risk_aversion == 1.0,

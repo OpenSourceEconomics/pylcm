@@ -33,7 +33,11 @@ def H_epstein_zin(
     both `U` and `CE` must be strictly positive.
     """
     rho = 1.0 - 1.0 / intertemporal_elasticity_of_substitution
-    # The unselected CES branch must not divide by zero at `ψ = 1`.
+    # Forward pass is NaN-free regardless: at `ψ = 1` (`rho = 0`) the unselected
+    # CES branch evaluates `1.0 ** inf = 1.0`, which `jnp.where` discards. The
+    # guard matters only under reverse-mode autodiff, where `jnp.where` still
+    # differentiates the dead branch; the solve path does not differentiate
+    # through this.
     safe_rho = jnp.where(rho == 0.0, 1.0, rho)
     cobb_douglas = utility ** (1.0 - discount_factor) * E_next_V**discount_factor
     ces = (
