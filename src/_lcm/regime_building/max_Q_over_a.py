@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from dags import with_signature
 
 from _lcm.regime_building.argmax import argmax_and_max
+from _lcm.regime_building.inclusive_value import smoothed_choice_probabilities
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -159,6 +160,68 @@ def get_argmax_and_max_Q_over_a(
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 
     return argmax_and_max_Q_over_a
+
+
+def get_smoothed_choice_probs_Q_over_a(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
+    choice_action: ActionName,
+    tau: float,
+) -> Callable[..., FloatND]:
+    r"""Get the function returning smoothed choice probabilities over `choice_action`.
+
+    The opt-in counterpart to `get_argmax_and_max_Q_over_a`: instead of the hard
+    `argmax` over the joint action grid it returns the `τ`-smoothed probability of
+    each level of `choice_action`, marginalizing the masked joint softmax over the
+    other actions (`smoothed_choice_probabilities`). Nothing in the solve/simulate
+    path calls it; the smoothing diagnostic builds it on demand from the retained
+    `Q_and_F`.
+
+    Args:
+        Q_and_F: A function that takes a state-action combination and returns the
+            action value of that combination and whether it is feasible.
+        action_names: Tuple of action variable names; their order is the action-axis
+            order of `Q_arr`.
+        state_names: Tuple of state names.
+        choice_action: The discrete action whose level probabilities are returned.
+        tau: Smoothing temperature; must be strictly positive.
+
+    Returns:
+        Function returning the probability vector over the levels of `choice_action`
+        for a single state (the subject axis is added by the outer spacemap).
+
+    """
+    extra_param_names = _get_extra_param_names(
+        Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
+    )
+    choice_axis = action_names.index(choice_action)
+
+    Q_and_F = productmap(
+        func=Q_and_F,
+        variables=action_names,
+        batch_sizes=dict.fromkeys(action_names, 0),
+    )
+
+    @with_signature(
+        args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
+        return_annotation="FloatND",
+        enforce=False,
+    )
+    def smoothed_choice_probs_Q_over_a(
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: FloatND | IntND | BoolND,
+    ) -> FloatND:
+        Q_arr, F_arr = Q_and_F(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **states_actions_params,
+        )
+        return smoothed_choice_probabilities(
+            Q_arr, feasible=F_arr, tau=tau, choice_axis=choice_axis
+        )
+
+    return smoothed_choice_probs_Q_over_a
 
 
 def _get_extra_param_names(

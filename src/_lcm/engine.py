@@ -17,6 +17,7 @@ from _lcm.typing import (
     FlatRegimeParams,
     MaxQOverAFunction,
     NextStateSimulationFunction,
+    QAndFFunction,
     RegimeName,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
@@ -333,6 +334,16 @@ class SimulateFunctions:
 
     next_state: NextStateSimulationFunction
     """Compiled function to compute next-period states."""
+
+    Q_and_F_per_period: MappingProxyType[int, QAndFFunction] | None = None
+    """Immutable mapping of period to action-grid value/feasibility functions.
+
+    Retained only for the opt-in smoothing diagnostic, which recomputes the
+    `Q_arr`/`F_arr` at realized states to form smoothed choice probabilities.
+    `None` for terminal regimes and whenever the model is built without the
+    diagnostic. The forward simulation never reads it, so leaving it `None`
+    leaves simulation output unchanged.
+    """
 
 
 @dataclasses.dataclass(frozen=True)

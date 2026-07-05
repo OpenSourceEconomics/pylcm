@@ -459,6 +459,7 @@ def _build_simulate_functions(
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         next_state=next_state,
+        Q_and_F_per_period=Q_and_F_functions,
     )
 
 

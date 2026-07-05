@@ -168,6 +168,47 @@ class SimulationResult:
 
         return df
 
+    def inclusive_value_panel(
+        self,
+        *,
+        tau: float,
+        choice_action: str,
+    ) -> pd.DataFrame:
+        """Compute smoothed choice probabilities over a discrete action (diagnostic).
+
+        Opt-in post-hoc pass for the standard-errors smoothing diagnostic: for
+        every realized subject-period in a regime offering `choice_action`, it
+        recomputes the τ-smoothed probability of each level of `choice_action` at
+        the realized state. It reads only this finished result and leaves the
+        simulation output unchanged. Requires the model to have been built with
+        the retained `Q_and_F` (the default).
+
+        Args:
+            tau: Smoothing temperature; must be strictly positive.
+            choice_action: The discrete action whose level probabilities are
+                computed (e.g. ``"labor_supply"``).
+
+        Returns:
+            A long DataFrame with columns ``subject``, ``period``, ``regime``,
+            ``level``, and ``probability``.
+
+        """
+        # Local import: the diagnostic pulls in regime-building machinery that
+        # would cycle if imported at this foundational module's top level.
+        from _lcm.simulation.inclusive_values import (  # noqa: PLC0415
+            compute_inclusive_value_panel,
+        )
+
+        return compute_inclusive_value_panel(
+            raw_results=self._raw_results,
+            regimes=self._regimes,
+            flat_params=self._flat_params,
+            period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
+            ages=self._ages,
+            tau=tau,
+            choice_action=choice_action,
+        )
+
     def save(
         self,
         *,
