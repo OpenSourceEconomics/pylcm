@@ -47,7 +47,7 @@ budget from below. Each such rule inserts a kink or a cliff into the household's
 cash-on-hand as a function of its liquid assets, and — through backward induction — a
 kink or a jump into the value function itself, recurring period after period.
 
-These features are hostile to the endogenous-grid method [CITE: Carroll EGM]. EGM's
+These features are hostile to the endogenous-grid method (Carroll 2006). EGM's
 appeal is amortization: invert the Euler equation once per post-decision (savings)
 node and read the resulting policy correspondence at every current state. That logic
 requires (i) a smooth, invertible marginal utility, (ii) a budget that maps the
@@ -57,10 +57,10 @@ budgets violate (ii) piecewise; jump discontinuities violate (iii) outright; and
 the institutional rule makes the Euler equation's right-hand side depend on the
 *current* state even after conditioning on savings, the amortization is lost entirely
 — the exact fallback is one EGM problem per current-state node ("asset-row" mode),
-which forfeits EGM's advantage. Discrete–continuous extensions
-[CITE: Iskhakov–Jorgensen–Rust–Schjerning DC-EGM] handle the non-concavities induced
+which forfeits EGM's advantage. Discrete–continuous extensions — DC-EGM
+(Iskhakov, Jørgensen, Rust, and Schjerning 2017) — handle the non-concavities induced
 by discrete choices via upper envelopes, and upper-envelope refinements
-[CITE: Dobrescu–Shanker FUES/RFC; Druedahl–Jorgensen G2EGM; Druedahl NEGM] extend the
+(Dobrescu and Shanker 2022; Druedahl and Jørgensen 2017; Druedahl 2021) extend the
 reach of EGM to non-convex problems, but none of these treats *institutional*
 breakpoints — thresholds known to the modeler in closed form — as first-class
 algorithmic objects.
@@ -273,7 +273,7 @@ or interval:
 
 - **Euler interior path.** One candidate per savings node from the Euler inversion.
   A kinked continuation can fold the endogenous grid back on itself (the secondary
-  kinks of [CITE: DC-EGM]); the path is split into maximal strictly-ascending,
+  kinks of Iskhakov et al. 2017); the path is split into maximal strictly-ascending,
   hole-free runs, each carrying its own segment id, so the envelope never links
   across a fold. Nodes where the expected marginal continuation falls below a small
   tolerance are dropped as degenerate (the inversion sends consumption to infinity);
@@ -885,3 +885,20 @@ disagree, the paper follows the code. The load-bearing deviations:
     $p(x) = \mathbf 1\{g_p(x) \le 0\}$ hard-codes equality into the `when` side while
     the ownership metadata treats it as free. All are repaired in the statements
     above.
+
+
+## References
+
+- Carroll, C. D. (2006). The method of endogenous gridpoints for solving dynamic
+  stochastic optimization problems. *Economics Letters*, 91(3), 312–320.
+- Dobrescu, L., and Shanker, A. (2022). Fast upper-envelope scan for
+  discrete-continuous dynamic programming. SSRN working paper 4181302 / CEPAR working
+  paper, UNSW Sydney.
+- Druedahl, J. (2021). A guide on solving non-convex consumption-saving models.
+  *Computational Economics*, 58(3), 747–775. doi:10.1007/s10614-020-10045-x
+- Druedahl, J., and Jørgensen, T. H. (2017). A general endogenous grid method for
+  multi-dimensional models with non-convexities and constraints. *Journal of Economic
+  Dynamics and Control*, 74, 87–107.
+- Iskhakov, F., Jørgensen, T. H., Rust, J., and Schjerning, B. (2017). The endogenous
+  grid method for discrete-continuous dynamic choice models with (or without) taste
+  shocks. *Quantitative Economics*, 8(2), 317–365. doi:10.3982/QE643
