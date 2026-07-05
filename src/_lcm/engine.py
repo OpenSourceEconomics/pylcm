@@ -485,8 +485,17 @@ class SimulationPhase:
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
 
-    next_state: NextStateSimulationFunction
-    """Compiled function to compute next-period states."""
+    next_state: MappingProxyType[int, NextStateSimulationFunction]
+    """Immutable mapping of period to next-period-state functions."""
+
+    age_specialized_function_names: frozenset[FunctionName] = frozenset()
+    """Function names that were `AgeSpecialized` in the user regime.
+
+    The published `functions` hold these resolved at the regime's representative
+    age only — the per-period programs (`argmax_and_max_Q_over_a`, `next_state`)
+    carry the true per-age closures. Consumers computing period-specific outputs
+    from `functions` (e.g. `additional_targets`) must reject targets that depend
+    on these names."""
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:

@@ -1,7 +1,7 @@
 import functools
 import inspect
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -27,6 +27,11 @@ from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.age_specialization import (
+    _SpecializedEconFunction,
+    resolve_specialized_nodes,
+    tree_signature,
+)
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -82,6 +87,7 @@ from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import Solver
 from lcm.transition import (
+    AgeSpecialized,
     MarkovTransition,
 )
 from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
@@ -171,7 +177,13 @@ def process_regimes(
     canonical_regimes: dict[RegimeName, Regime] = {}
     for regime_name, user_regime in user_regimes.items():
         spec = specs[regime_name]
-        regime_params_template = create_regime_params_template(user_regime)
+        active_periods = regimes_to_active_periods[regime_name]
+        representative_age = (
+            ages.period_to_age(active_periods[0]) if active_periods else None
+        )
+        regime_params_template = create_regime_params_template(
+            user_regime, representative_age=representative_age
+        )
         granular_param_expansions = _granular_param_expansions(
             nested_transitions_by_phase=(
                 solve_nested_transitions[regime_name],
@@ -399,10 +411,27 @@ def _build_solution_phase(
     solver_kernels = solver.build_period_kernels(context=context)
     max_Q_over_a = solver_kernels.max_Q_over_a
 
+    # The published function set is consumed unresolved by feasibility checks and
+    # additional-target computation, so resolve any `AgeSpecialized` marker to its
+    # representative-age concrete function here (the per-period Q_and_F build keeps
+    # resolving the marker-bearing `core.functions` per age).
+    solution_active_periods = regimes_to_active_periods[regime_name]
+    published_solution_functions = (
+        cast(
+            "EconFunctionsMapping",
+            resolve_specialized_nodes(
+                core.functions,
+                float(ages.period_to_age(solution_active_periods[0])),
+            ),
+        )
+        if solution_active_periods
+        else core.functions
+    )
+
     return SolutionPhase(
         _variables=variables,
         grids=all_grids[regime_name],
-        functions=core.functions,
+        functions=published_solution_functions,
         constraints=core.constraints,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
@@ -576,15 +605,38 @@ def _build_simulation_phase(
         all_grids=all_grids,
         variables=variables,
         flat_param_names=flat_param_names,
+        ages=ages,
         enable_jit=enable_jit,
+    )
+
+    # Publish representative-age-resolved functions (feasibility checks and
+    # additional-target computation consume them unresolved); `next_state` above
+    # keeps resolving the marker-bearing `simulate_functions` per age.
+    simulation_active_periods = regimes_to_active_periods[regime_name]
+    published_simulate_functions = (
+        cast(
+            "EconFunctionsMapping",
+            resolve_specialized_nodes(
+                simulate_functions,
+                float(ages.period_to_age(simulation_active_periods[0])),
+            ),
+        )
+        if simulation_active_periods
+        else simulate_functions
+    )
+    age_specialized_function_names = frozenset(
+        name
+        for name, func in simulate_functions.items()
+        if isinstance(func, _SpecializedEconFunction)
     )
 
     return SimulationPhase(
         _variables=simulation_variables,
         grids=simulate_grids,
         carried_only_state_names=frozenset(carried_grids),
-        functions=simulate_functions,
+        functions=published_simulate_functions,
         constraints=constraints,
+        age_specialized_function_names=age_specialized_function_names,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -708,7 +760,7 @@ def _process_regime_core(
     processed_functions: dict[str, EconFunction] = {}
 
     for func_name, func in deterministic_functions.items():
-        processed_functions[func_name] = _rename_params_to_qnames(
+        processed_functions[func_name] = _process_one_function(
             func=func,
             regime_params_template=regime_params_template,
             param_key=func_name,
@@ -934,6 +986,41 @@ def _get_stochastic_transition_names(
             markov_state_names.add(name)
     return frozenset(
         f"next_{name}" for name in markov_state_names | set(variables.process_names)
+    )
+
+
+def _process_one_function(
+    *,
+    func: UserFunction,
+    regime_params_template: RegimeParamsTemplate,
+    param_key: str,
+    names_key: str | None = None,
+) -> EconFunction:
+    """Rename a function's params to qnames, or wrap an `AgeSpecialized` as a marker.
+
+    A plain function is renamed once. An `AgeSpecialized` becomes a
+    `_SpecializedEconFunction` whose `build(age)` renames the concrete function
+    the wrapper produces for that age under the **same** `param_key` / `names_key`,
+    so every age carries identical qnames — sound because the wrapper's call
+    signature is age-invariant by contract.
+    """
+    if isinstance(func, AgeSpecialized):
+        concrete_build = func.build
+
+        def build(age: float) -> EconFunction:
+            return _rename_params_to_qnames(
+                func=concrete_build(age),
+                regime_params_template=regime_params_template,
+                param_key=param_key,
+                names_key=names_key,
+            )
+
+        return _SpecializedEconFunction(build=build, signature=func.signature)
+    return _rename_params_to_qnames(
+        func=func,
+        regime_params_template=regime_params_template,
+        param_key=param_key,
+        names_key=names_key,
     )
 
 
@@ -1713,23 +1800,38 @@ def _build_Q_and_F_per_period(
         Immutable mapping of period index to the per-period Q-and-F closure.
 
     """
-    # Group periods by target configuration
-    configs: dict[tuple[RegimeName, ...], list[int]] = {}
+    # Group periods by (target configuration, per-age policy signature). The
+    # signature separates ages whose `AgeSpecialized` functions/constraints resolve
+    # to different closures, so they never false-share a compiled `Q_and_F`; with no
+    # specialized node every age yields the same (all-`INVARIANT`) signature and the
+    # grouping collapses to the target configuration exactly as an age-invariant model.
+    configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
     for period in range(ages.n_periods):
         complete = get_period_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
         )
-        configs.setdefault(complete, []).append(period)
+        age = ages.period_to_age(period)
+        signature = (tree_signature(functions, age), tree_signature(constraints, age))
+        configs.setdefault((complete, signature), []).append(period)
 
-    # Build one Q_and_F per distinct configuration
-    built: dict[tuple[RegimeName, ...], QAndFFunction] = {}
-    for period_targets in configs:
-        built[period_targets] = get_Q_and_F(
+    # Build one Q_and_F per distinct group, resolving specialized functions and
+    # constraints at the group's age. Equal signature ⇒ identical closures, so any
+    # period in the group is a valid representative.
+    built: dict[tuple[tuple[RegimeName, ...], Hashable], QAndFFunction] = {}
+    for group_key, periods in configs.items():
+        period_targets = group_key[0]
+        age = ages.period_to_age(periods[0])
+        built[group_key] = get_Q_and_F(
             flat_param_names=flat_param_names,
-            functions=functions,
-            constraints=constraints,
+            functions=cast(
+                "EconFunctionsMapping", resolve_specialized_nodes(functions, age)
+            ),
+            constraints=cast(
+                "ConstraintFunctionsMapping",
+                resolve_specialized_nodes(constraints, age),
+            ),
             period_targets=period_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
@@ -1741,9 +1843,9 @@ def _build_Q_and_F_per_period(
 
     # Map each period to its group's function
     result: dict[int, QAndFFunction] = {}
-    for key, periods in configs.items():
+    for group_key, periods in configs.items():
         for period in periods:
-            result[period] = built[key]
+            result[period] = built[group_key]
 
     return MappingProxyType(result)
 
@@ -1796,27 +1898,50 @@ def _build_next_state_vmapped(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variables: Variables,
     flat_param_names: frozenset[str],
+    ages: AgeGrid,
     enable_jit: bool,
-) -> NextStateSimulationFunction:
-    """Build a vmapped next-state function for simulation."""
-    next_state = get_next_state_function_for_simulation(
-        functions=functions,
-        transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
-        all_grids=all_grids,
-        variables=variables,
-    )
-    sig_args = tuple(inspect.signature(next_state).parameters)
+) -> MappingProxyType[int, NextStateSimulationFunction]:
+    """Build a per-period vmapped next-state function for simulation.
 
-    non_vmap = {"period", "age"} | flat_param_names
-    vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)
+    A law of motion can read a specialized function (e.g. `next_wealth` reading
+    `net_income`), so next-state is resolved per age just like `Q_and_F`. Periods
+    whose functions resolve to the same closures share one compiled function; with
+    no `AgeSpecialized` node every period shares a single function, exactly as an
+    age-invariant model.
+    """
+    configs: dict[Hashable, list[int]] = {}
+    for period in range(ages.n_periods):
+        age = ages.period_to_age(period)
+        configs.setdefault(tree_signature(functions, age), []).append(period)
 
-    next_state_vmapped = vmap_1d(func=next_state, variables=vmap_variables)
-    next_state_vmapped = with_signature(
-        next_state_vmapped, kwargs=sig_args, enforce=False
-    )
+    built: dict[Hashable, NextStateSimulationFunction] = {}
+    for signature, periods in configs.items():
+        age = ages.period_to_age(periods[0])
+        next_state = get_next_state_function_for_simulation(
+            functions=cast(
+                "EconFunctionsMapping", resolve_specialized_nodes(functions, age)
+            ),
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+            all_grids=all_grids,
+            variables=variables,
+        )
+        sig_args = tuple(inspect.signature(next_state).parameters)
+        non_vmap = {"period", "age"} | flat_param_names
+        vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)
+        next_state_vmapped = vmap_1d(func=next_state, variables=vmap_variables)
+        next_state_vmapped = with_signature(
+            next_state_vmapped, kwargs=sig_args, enforce=False
+        )
+        built[signature] = (
+            jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
+        )
 
-    return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
+    result: dict[int, NextStateSimulationFunction] = {}
+    for signature, periods in configs.items():
+        for period in periods:
+            result[period] = built[signature]
+    return MappingProxyType(result)
 
 
 def _fail_if_action_has_batch_size(

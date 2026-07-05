@@ -9,9 +9,9 @@ The fused output is consumed by `_enrich_with_diagnostics` in
 `_lcm.utils.error_handling`.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -19,6 +19,10 @@ import jax.numpy as jnp
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
+from _lcm.regime_building.age_specialization import (
+    resolve_specialized_nodes,
+    tree_signature,
+)
 from _lcm.regime_building.Q_and_F import get_compute_intermediates, get_period_targets
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
@@ -93,25 +97,37 @@ def _build_compute_intermediates_per_period(
         if name in state_action_space.state_names
     }
 
-    configs: dict[tuple[RegimeName, ...], list[int]] = {}
+    # Group by (target configuration, per-age policy signature), mirroring
+    # `_build_Q_and_F_per_period`: with no `AgeSpecialized` node the signature is
+    # constant and the grouping collapses to the target configuration.
+    configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
     for period in range(ages.n_periods):
         complete = get_period_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
         )
-        configs.setdefault(complete, []).append(period)
+        age = ages.period_to_age(period)
+        signature = (tree_signature(functions, age), tree_signature(constraints, age))
+        configs.setdefault((complete, signature), []).append(period)
 
     variable_names = (
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
-    built: dict[tuple[RegimeName, ...], Callable] = {}
-    for period_targets in configs:
+    built: dict[tuple[tuple[RegimeName, ...], Hashable], Callable] = {}
+    for group_key, periods in configs.items():
+        period_targets = group_key[0]
+        age = ages.period_to_age(periods[0])
         scalar = get_compute_intermediates(
             flat_param_names=flat_param_names,
-            functions=functions,
-            constraints=constraints,
+            functions=cast(
+                "EconFunctionsMapping", resolve_specialized_nodes(functions, age)
+            ),
+            constraints=cast(
+                "ConstraintFunctionsMapping",
+                resolve_specialized_nodes(constraints, age),
+            ),
             period_targets=period_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
@@ -126,12 +142,12 @@ def _build_compute_intermediates_per_period(
             state_batch_sizes=state_batch_sizes,
         )
         fused = _wrap_with_reduction(func=mapped, variable_names=variable_names)
-        built[period_targets] = jax.jit(fused) if enable_jit else fused
+        built[group_key] = jax.jit(fused) if enable_jit else fused
 
     result: dict[int, Callable] = {}
-    for key, periods in configs.items():
+    for group_key, periods in configs.items():
         for period in periods:
-            result[period] = built[key]
+            result[period] = built[group_key]
 
     return MappingProxyType(result)
 

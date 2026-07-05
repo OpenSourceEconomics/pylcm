@@ -1,4 +1,4 @@
-"""User-facing transition vocabulary: `MarkovTransition` and `fixed_transition`.
+"""User-facing vocabulary: `fixed_transition`, `MarkovTransition`, `AgeSpecialized`.
 
 A thin leaf module with no dependency on `Regime`, the validators, or the
 regime-building code. Keeping the vocabulary here lets the user-facing
@@ -7,7 +7,7 @@ all import it without an import cycle.
 
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,3 +72,51 @@ class MarkovTransition:
 
     def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
         return self.func(*args, **kwargs)
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True)
+class AgeSpecialized:
+    """Wrapper marking a function whose closure is bound per age at build time.
+
+    Wrap a function *factory* to indicate that its closure depends on the agent's
+    age — for example a tax-transfer system pinned to a policy date that moves with
+    calendar time as the agent ages. At build time pylcm calls `build(age)` for each
+    period's age to obtain that period's concrete function, and uses `signature(age)`
+    as a dedup key so ages resolving to the same closure share a single compiled
+    program.
+
+    Usable in `functions` and `constraints` of non-terminal regimes. A
+    policy-dependent law of motion is expressed as a plain state transition that
+    reads an `AgeSpecialized` entry of `functions`; a direct `AgeSpecialized`
+    state-transition value, a specialized regime `transition`, a
+    `MarkovTransition(AgeSpecialized(...))`, and any `AgeSpecialized` in a
+    terminal regime are rejected at `Regime` construction. Every concrete
+    function returned by `build` must expose the same call signature — only the
+    constants it closes over may differ across ages.
+
+        functions={"tax": AgeSpecialized(build=make_tax, signature=policy_key)}
+
+    `signature` is a **correctness precondition**, not a performance hint: ages
+    with equal signatures share one compiled program, so an equal signature must
+    imply identical closure behavior (policy date, price level, overrides, and
+    every other closed-over constant). An incomplete signature silently shares a
+    wrong program across ages.
+
+    A bare callable (without the wrapper) is age-invariant, as before. `AgeSpecialized`
+    is a build-time marker: it is resolved to a concrete function via `build(age)`
+    before the DAG is traced, so calling it directly is an error.
+    """
+
+    build: Callable[[float], UserFunction]
+    """Factory returning the concrete function for a given age."""
+
+    signature: Callable[[float], Hashable]
+    """Returns a hashable identity of the age's closure; used as the dedup key."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+        msg = (
+            "AgeSpecialized is a build-time marker and must be resolved to a concrete "
+            "function via build(age) before it is called."
+        )
+        raise TypeError(msg)
