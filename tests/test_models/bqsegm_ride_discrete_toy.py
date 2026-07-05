@@ -26,6 +26,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models.bqsegm_common import (
+    crra_utility,
     feasible,
     make_alive_dead_model,
     resolve_solver,
@@ -35,6 +36,7 @@ from tests.test_models.bqsegm_common import (
 
 N_INCOME_NODES = 5
 INCOME_SCALE = 0.5
+LEISURE_UTILITY = 0.3
 
 
 @categorical(ordered=False)
@@ -168,6 +170,18 @@ def next_liquid_from_savings_with_oop(
     return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(income) - oop
 
 
+def utility_with_action(
+    consumption: ContinuousAction, crra: float, buy_private: DiscreteAction
+) -> FloatND:
+    """CRRA consumption utility plus a per-branch leisure term reading the action.
+
+    The action enters period utility directly (a leisure/effort-like shift), so each
+    `buy_private` branch has a different utility level and marginal — the case a
+    single shared per-cell utility cannot represent.
+    """
+    return crra_utility(consumption, crra) + LEISURE_UTILITY * buy_private
+
+
 def build_model(
     *,
     variant: str = "brute",
@@ -179,6 +193,7 @@ def build_model(
     savings_max: float = 28.0,
     action_in_costate: bool = False,
     action_in_liquid_law: bool = False,
+    action_in_utility: bool = False,
     jump_schedule: bool = False,
     costate_reads_liquid: bool = False,
     costate_smooth: bool = False,
@@ -201,7 +216,8 @@ def build_model(
     """
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
     tax_func = tax_jump if jump_schedule else tax
-    alive_functions = {"utility": utility, "tax": tax_func, "coh": coh}
+    utility_func = utility_with_action if action_in_utility else utility
+    alive_functions = {"utility": utility_func, "tax": tax_func, "coh": coh}
     extra_states: dict[str, Grid] = {"income": income_grid}
     extra_state_transitions: dict[str, object] = {}
     if action_in_costate:

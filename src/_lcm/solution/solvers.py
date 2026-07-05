@@ -1796,15 +1796,8 @@ class BQSEGM(Solver):
             )
             raise RegimeInitializationError(msg)
         action_name = next(iter(actions))
-        utility_args = tuple(inspect.signature(schedule_spec.utility_dag).parameters)
-        if action_name in utility_args:
-            msg = (
-                f"BQSEGM's schedule+ride-along discrete envelope binds the action "
-                f"{action_name!r} into cash-on-hand only; the regime "
-                f"{context.regime_name!r} reads it in the period utility, which the "
-                "envelope core does not yet bind per branch."
-            )
-            raise RegimeInitializationError(msg)
+        # The envelope binds the action into each branch's period utility, so an
+        # action the utility reads is supported (a leisure/effort-like term).
         _fail_if_discrete_action_feeds_continuation(
             context=context,
             action_name=action_name,
@@ -3885,7 +3878,9 @@ def _bqsegm_ride_along_statics(
     utility_param_names = tuple(
         name
         for name in utility_arg_names
-        if name not in state_names and name != consumption_action_name
+        if name not in state_names
+        and name != consumption_action_name
+        and name != schedule_spec.discrete_action_name
     )
     utility_state_names = tuple(
         name for name in ride_names if name in utility_arg_names
@@ -4330,6 +4325,14 @@ def _build_bqsegm_envelope_core(  # noqa: C901
     # and is discarded by the upper envelope.
     action_upper = savings_grid[-1] * 1000.0 + 1000.0
     action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+    import inspect  # noqa: PLC0415
+
+    # The action binds into a branch's period utility only when the utility DAG reads
+    # it (a leisure/effort-like term); otherwise the binding is dropped so a utility
+    # that does not name the action is called with its own arguments alone.
+    utility_arg_names = frozenset(
+        inspect.signature(schedule_spec.utility_dag).parameters
+    )
 
     def envelope_core(
         *,
@@ -4375,23 +4378,6 @@ def _build_bqsegm_envelope_core(  # noqa: C901
             )
             midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
 
-            def utility_of_consumption(consumption_value: FloatND) -> FloatND:
-                return schedule_spec.utility_dag(
-                    **{statics.consumption_action_name: consumption_value},
-                    **{name: cell[name] for name in statics.utility_state_names},
-                    **utility_params,
-                )
-
-            marginal_utility = jax.grad(utility_of_consumption)
-
-            def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
-                return numeric_inverse_marginal_utility(
-                    marginal_continuation=marginal_continuation,
-                    marginal_utility=marginal_utility,
-                    c_lower=action_lower,
-                    c_upper=action_upper,
-                )
-
             # With published jump breakpoints, the cell also publishes each
             # jump's preimage and its exact one-sided value limits: the liquid
             # query grid is augmented with a point just inside each side of
@@ -4430,6 +4416,32 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                         **{name: cell[name] for name in statics.coh_state_names},
                         **coh_params,
                         **action_binding,
+                    )
+
+                utility_action_binding = {
+                    name: value
+                    for name, value in action_binding.items()
+                    if name in utility_arg_names
+                }
+
+                def utility_of_consumption(consumption_value: FloatND) -> FloatND:
+                    return schedule_spec.utility_dag(
+                        **{statics.consumption_action_name: consumption_value},
+                        **{name: cell[name] for name in statics.utility_state_names},
+                        **utility_params,
+                        **utility_action_binding,
+                    )
+
+                marginal_utility = jax.grad(utility_of_consumption)
+
+                def inverse_marginal_utility(
+                    marginal_continuation: FloatND,
+                ) -> FloatND:
+                    return numeric_inverse_marginal_utility(
+                        marginal_continuation=marginal_continuation,
+                        marginal_utility=marginal_utility,
+                        c_lower=action_lower,
+                        c_upper=action_upper,
                     )
 
                 coh_slopes, coh_intercepts = interval_segment_coefficients(
