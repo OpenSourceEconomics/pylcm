@@ -44,11 +44,15 @@ def test_bqsegm_action_in_costate_matches_brute() -> None:
     bq_v = np.asarray(bqsegm[period][_ALIVE])
     brute_v = np.asarray(brute[period][_ALIVE])
     assert bq_v.shape == brute_v.shape
-    # The liquid (Euler) axis is the trailing one; every leading cell (income
-    # node × streak co-state) must agree across the liquid interior.
+    # The value array is `(income_node, liquid, streak_costate)`; every income
+    # node × streak co-state must agree across the liquid interior. The streak
+    # co-state carries the branch history, so agreement on every streak slice is
+    # the branch-specific-continuation check.
+    liquid_axis = 1
+    assert bq_v.shape[liquid_axis] == _LIQUID.shape[0]
     np.testing.assert_allclose(
-        bq_v[..., _AWAY_FROM_KINK],
-        brute_v[..., _AWAY_FROM_KINK],
+        bq_v[:, _AWAY_FROM_KINK, :],
+        brute_v[:, _AWAY_FROM_KINK, :],
         rtol=5e-3,
         atol=5e-3,
     )

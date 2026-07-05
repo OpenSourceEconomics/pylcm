@@ -1811,6 +1811,7 @@ class BQSEGM(Solver):
             liquid_state_name=schedule_spec.liquid_state_name,
             budget_target=self.budget_target,
             post_decision_function=self.post_decision_function,
+            allow_costate_feed=True,
         )
         # A published jump shares one breakpoint partition across the branches, so
         # the action may shift cash-on-hand but not the schedule variable itself —
@@ -1935,6 +1936,7 @@ class BQSEGM(Solver):
                     statics=statics,
                     regime_name=context.regime_name,
                     cliff_candidates=cliff_candidates,
+                    schedule_spec=schedule_spec,
                 )
                 envelope_core = _build_bqsegm_envelope_core(
                     savings_grid=savings_grid,
@@ -2327,24 +2329,26 @@ class _RideAlongBQSEGMPeriodKernel:
         n_ride_cells = self.statics.n_ride_cells(states=states)
         n_extra = 2 * self.statics.n_published_jumps if self.cliff_candidates else 0
         n_savings = self.statics.n_savings + n_extra
-        shape: tuple[int, ...] = (
-            (n_ride_cells, self.statics.n_intervals, n_savings)
-            if self.statics.next_state_reads_liquid
-            else (n_ride_cells, n_savings)
+        # A discrete action carries a leading branch axis on each cell's continuation
+        # (branch `pos` reads slice `pos`); a branch-free regime keeps the plain shape.
+        branch_axis: tuple[int, ...] = (
+            () if self.statics.n_action_branches == 0 else (self.statics.n_action_branches,)
         )
-        zeros = jnp.zeros(shape, dtype=canonical_float_dtype())
+        interval_axis: tuple[int, ...] = (
+            (self.statics.n_intervals,) if self.statics.next_state_reads_liquid else ()
+        )
+        zeros = jnp.zeros(
+            (n_ride_cells, *branch_axis, *interval_axis, n_savings),
+            dtype=canonical_float_dtype(),
+        )
         placeholders: dict[str, object] = {
             "cont_value_stack": zeros,
             "cont_marginal_stack": zeros,
         }
         if self.cliff_candidates:
-            cliff_shape: tuple[int, ...] = (
-                (n_ride_cells, self.statics.n_intervals, n_extra)
-                if self.statics.next_state_reads_liquid
-                else (n_ride_cells, n_extra)
-            )
             placeholders["cliff_savings_stack"] = jnp.zeros(
-                cliff_shape, dtype=canonical_float_dtype()
+                (n_ride_cells, *branch_axis, *interval_axis, n_extra),
+                dtype=canonical_float_dtype(),
             )
         return placeholders
 
@@ -2914,6 +2918,7 @@ def _fail_if_discrete_action_feeds_continuation(
     liquid_state_name: str,
     budget_target: str,
     post_decision_function: str | None,
+    allow_costate_feed: bool = False,
 ) -> None:
     """Reject a discrete action that shifts the continuation, not just the budget.
 
@@ -2932,6 +2937,12 @@ def _fail_if_discrete_action_feeds_continuation(
     leaves, so the action reaching next liquid only through the budget — whether the
     law reads `coh` directly or a post-decision `savings` — is exempt, while any
     off-budget path is still caught.
+
+    `allow_costate_feed` exempts the non-liquid state-law channel: the ride-along
+    path carries a leading branch axis on the continuation (each branch reads its own
+    next-co-state coordinate), so an action feeding a co-state's law of motion is
+    supported there. The regime-transition and off-budget-liquid channels stay
+    refused regardless.
     """
     import inspect  # noqa: PLC0415
 
@@ -2985,6 +2996,10 @@ def _fail_if_discrete_action_feeds_continuation(
                 candidate.func if isinstance(candidate, MarkovTransition) else candidate
             )
             if callable(func) and _law_reads_action(func, cut_budget=is_liquid):
+                if allow_costate_feed and not is_liquid:
+                    # The branch-indexed continuation reads each branch's own
+                    # next-co-state, so a co-state-law feed is supported.
+                    continue
                 where = (
                     f"the law of motion for {state_name!r} off the budget channel"
                     if is_liquid
@@ -3795,6 +3810,11 @@ class _BQSEGMRideAlongStatics:
     cell_block_size: int
     """Block size for streaming both ride-along cores over ride cells; `0` vmaps
     the whole flattened mesh at once (see `BQSEGM.cell_block_size`)."""
+    n_action_branches: int
+    """Number of discrete-action branches the continuation carries a leading axis
+    over; `0` when the regime carries no discrete action (no branch axis). A branch
+    reads its own next-state continuation, so a co-state-feeding action gets a
+    distinct row per branch and a budget-only action gets identical rows."""
 
     @property
     def n_published_jumps(self) -> int:
@@ -3915,6 +3935,11 @@ def _bqsegm_ride_along_statics(
         envelope_segment_block_size=envelope_segment_block_size,
         cell_block_size=cell_block_size,
         interval_batch_size=interval_batch_size,
+        n_action_branches=(
+            0
+            if schedule_spec.discrete_action_name is None
+            else len(schedule_spec.discrete_action_codes)
+        ),
     )
 
 
@@ -4044,6 +4069,7 @@ def _build_bqsegm_continuation_core(
     statics: _BQSEGMRideAlongStatics,
     regime_name: RegimeName,
     cliff_candidates: bool,
+    schedule_spec: _BQSEGMScheduleSpec,
 ) -> Callable:
     """Build the continuation half of the ride-along solve, jitted in isolation.
 
@@ -4064,6 +4090,8 @@ def _build_bqsegm_continuation_core(
     liquid_name = statics.liquid_name
     ride_names = statics.ride_names
     state_names = statics.state_names
+    action_name = schedule_spec.discrete_action_name
+    action_codes = schedule_spec.discrete_action_codes
 
     def continuation_core(
         *,
@@ -4079,7 +4107,31 @@ def _build_bqsegm_continuation_core(
             ride_values: tuple[Any, ...],
         ) -> tuple[FloatND, ...]:
             cell = dict(zip(ride_names, ride_values, strict=True))
-            combo_pool = {**param_pool, **cell}
+
+            def rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
+                return _cell_rows_for_pool(combo_pool)
+
+            base_pool = {**param_pool, **cell}
+            if action_name is None:
+                return rows_for_pool(base_pool)
+            # A discrete action that feeds the continuation reads a different
+            # next-state per branch, so the continuation is evaluated per branch
+            # (the action rides into `combo_pool` → `next_state_func`). A leading
+            # branch axis is added; when the action does not feed the continuation
+            # the branch rows are identical, matching the shared-continuation case.
+            branch_rows = [
+                rows_for_pool(
+                    {**base_pool, action_name: jnp.asarray(code, dtype=jnp.int32)}
+                )
+                for code in action_codes
+            ]
+            return tuple(
+                jnp.stack([rows[i] for rows in branch_rows], axis=0)
+                for i in range(len(branch_rows[0]))
+            )
+
+        def _cell_rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
+            cell = {name: combo_pool[name] for name in ride_names}
 
             def cliff_targets_for(midpoints: Float1D | None) -> FloatND:
                 # Under the one-sided read, the cell also evaluates the blended
@@ -4356,13 +4408,20 @@ def _build_bqsegm_envelope_core(  # noqa: C901
 
             def solve_branch(
                 action_binding: Mapping[str, IntND],
+                branch_cont_value: FloatND,
+                branch_cont_marginal: FloatND,
+                branch_extra_cont_value: FloatND | None,
+                branch_cliff_savings: FloatND | None,
             ) -> tuple[Float1D, Float1D, Float1D]:
                 """Solve the cell's continuous subproblem for one discrete branch.
 
                 `action_binding` binds the discrete action into cash-on-hand (empty
-                when the regime carries no discrete action). The breakpoint partition,
-                utility, and jump augmentation are action-independent and computed once
-                in the enclosing scope.
+                when the regime carries no discrete action). `branch_cont_value` /
+                `branch_cont_marginal` are this branch's continuation rows — a branch
+                reads its own next-state continuation when the action feeds a co-state's
+                law of motion, and identical rows when it feeds only the budget. The
+                breakpoint partition, utility, and jump augmentation are
+                continuation-independent and computed once in the enclosing scope.
                 """
 
                 def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
@@ -4382,8 +4441,8 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                     # affine budget extrapolate below zero.
                     coh_grid = jax.vmap(coh_of_liquid)(query_grid)
                     return bqsegm_per_interval_continuation_step_savings(
-                        cont_value=cont_value,
-                        cont_marginal=cont_marginal,
+                        cont_value=branch_cont_value,
+                        cont_marginal=branch_cont_marginal,
                         liquid_grid=query_grid,
                         savings_grid=savings_grid,
                         discount_factor=cell_discount_factor,
@@ -4394,16 +4453,16 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                         breakpoints=breakpoints,
                         coh_grid=coh_grid,
                         envelope_segment_block_size=statics.envelope_segment_block_size,
-                        extra_savings=cliff_savings,
-                        extra_cont_value=extra_cont_value,
+                        extra_savings=branch_cliff_savings,
+                        extra_cont_value=branch_extra_cont_value,
                     )
                 return _solve_ride_along_cell_step(
                     has_jump=statics.has_jump,
                     jump_positions=jump_positions,
-                    extra_savings=cliff_savings,
-                    extra_cont_value=extra_cont_value,
-                    cont_value=cont_value,
-                    cont_marginal=cont_marginal,
+                    extra_savings=branch_cliff_savings,
+                    extra_cont_value=branch_extra_cont_value,
+                    cont_value=branch_cont_value,
+                    cont_marginal=branch_cont_marginal,
                     liquid_grid=query_grid,
                     savings_grid=savings_grid,
                     discount_factor=cell_discount_factor,
@@ -4414,17 +4473,26 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                     breakpoints=breakpoints,
                 )
 
-            # A discrete action shifting the budget is enveloped over per cell: each
-            # branch solves the continuous subproblem with the action bound into
-            # cash-on-hand, then the discrete choice is taken by the upper envelope.
-            # Under a published jump each branch's row spans the jump-augmented query
-            # grid, so the envelope max naturally takes the discrete choice over each
-            # branch's one-sided cliff limits and the carry keeps the augmented row.
+            # A discrete action is enveloped over per cell: each branch solves the
+            # continuous subproblem with the action bound into cash-on-hand against its
+            # own continuation slice, then the discrete choice is taken by the upper
+            # envelope. When the action feeds a co-state, the continuation core carries a
+            # leading branch axis over `discrete_action_codes` (branch `pos` reads slice
+            # `pos`); when it feeds only the budget those slices are identical. Under a
+            # published jump each branch's row spans the jump-augmented query grid, so
+            # the envelope max takes the discrete choice over each branch's one-sided
+            # cliff limits and the carry keeps the augmented row.
             action_name = schedule_spec.discrete_action_name
             if action_name is not None:
                 branch_steps = [
-                    solve_branch({action_name: jnp.asarray(code, dtype=jnp.int32)})
-                    for code in schedule_spec.discrete_action_codes
+                    solve_branch(
+                        {action_name: jnp.asarray(code, dtype=jnp.int32)},
+                        cont_value[pos],
+                        cont_marginal[pos],
+                        None if extra_cont_value is None else extra_cont_value[pos],
+                        None if cliff_savings is None else cliff_savings[pos],
+                    )
+                    for pos, code in enumerate(schedule_spec.discrete_action_codes)
                 ]
                 value_row, marginal_row = _discrete_envelope_over_branches(
                     value_stack=jnp.stack([step[0] for step in branch_steps]),
@@ -4432,7 +4500,9 @@ def _build_bqsegm_envelope_core(  # noqa: C901
                     taste_shock_scale=0.0,
                 )
             else:
-                value_row, marginal_row, _policy_row = solve_branch({})
+                value_row, marginal_row, _policy_row = solve_branch(
+                    {}, cont_value, cont_marginal, extra_cont_value, cliff_savings
+                )
 
             if statics.n_published_jumps == 0:
                 return (value_row, marginal_row)
