@@ -1569,6 +1569,16 @@ class BQSEGM(Solver):
     positive block size scans the mesh in blocks of that many cells in both cores
     (identical result, peak bounded by one block's buffers).
     """
+    branch_batch_size: int = 0
+    """Block size for streaming the discrete-action branch axis.
+
+    Both ride-along cores evaluate one instance per discrete-action branch — the
+    continuation core one continuation row per branch, the envelope core one
+    continuous subproblem per branch. `0` runs the whole branch axis in one
+    vectorized pass; a positive block size scans it in blocks of that many
+    branches (identical result, per-branch intermediates bounded by one block).
+    Either way the branch body compiles once — the axis is never Python-unrolled.
+    """
 
     @property
     def requires_continuation_carries(self) -> bool:
@@ -1772,18 +1782,19 @@ class BQSEGM(Solver):
         """Reject a ride-along discrete action the envelope path cannot handle.
 
         The ride-along discrete envelope solves the continuous subproblem per
-        discrete branch and takes the upper envelope, but only when the action
-        stays inside the budget schedule:
+        discrete branch — with the action bound into the budget, period utility,
+        continuation (co-state laws, off-budget liquid law, regime transition),
+        and the breakpoint partition — and takes the upper envelope. Outside that
+        contract, model build refuses:
 
-        - more than one discrete action is unsupported (the envelope is over one
-          action's grid),
-        - an action the period utility reads directly is not bound per branch,
-        - an action that shifts the shared continuation (regime transition, a
-          non-liquid state's law, or the liquid law off the budget channel) is
-          rejected, and an action that feeds a derived schedule variable is too.
+        - more than one discrete action (the envelope is over one action's grid),
+        - an action entering the discount factor (evaluated per cell, not per
+          branch),
+        - an action entering a *jumped* schedule variable under the one-sided
+          cliff read (branches would not share the published parent query grid).
 
-        A jump breakpoint is supported: each branch publishes its one-sided cliff
-        limits and the envelope takes the max over branches.
+        A jump breakpoint is otherwise supported: each branch publishes its
+        one-sided cliff limits and the envelope takes the max over branches.
         """
         import inspect  # noqa: PLC0415
 
@@ -1796,6 +1807,21 @@ class BQSEGM(Solver):
             )
             raise RegimeInitializationError(msg)
         action_name = next(iter(actions))
+        # The discount factor is evaluated once per cell in the envelope core, not
+        # once per branch, so an action-dependent discount factor would silently
+        # use one branch's weight for all branches — refuse it.
+        discount_factor_dag = schedule_spec.discount_factor_dag
+        if (
+            discount_factor_dag is not None
+            and action_name in inspect.signature(discount_factor_dag).parameters
+        ):
+            msg = (
+                "BQSEGM's schedule+ride-along discrete envelope evaluates the "
+                "discount factor per cell, not per discrete branch, so the action "
+                f"{action_name!r} must not enter the discount factor; regime "
+                f"{context.regime_name!r} reads it there."
+            )
+            raise RegimeInitializationError(msg)
         # The envelope binds the action into each branch's period utility, so an
         # action the utility reads is supported (a leisure/effort-like term).
         _fail_if_discrete_action_feeds_continuation(
@@ -1920,6 +1946,7 @@ class BQSEGM(Solver):
                     envelope_segment_block_size=self.envelope_segment_block_size,
                     cell_block_size=self.cell_block_size,
                     interval_batch_size=self.interval_batch_size,
+                    branch_batch_size=self.branch_batch_size,
                     publish_jump_topology=self.jump_read == "one_sided",
                 )
                 # Save-to-cliff candidates need the regime's own carry read
@@ -2336,7 +2363,9 @@ class _RideAlongBQSEGMPeriodKernel:
             else (self.statics.n_action_branches,)
         )
         interval_axis: tuple[int, ...] = (
-            (self.statics.n_intervals,) if self.statics.next_state_reads_liquid else ()
+            (self.statics.n_intervals,)
+            if self.statics.continuation_reads_liquid
+            else ()
         )
         zeros = jnp.zeros(
             (n_ride_cells, *branch_axis, *interval_axis, n_savings),
@@ -3120,7 +3149,7 @@ def _fail_if_budget_nonaffine_in_liquid(
         raise RegimeInitializationError(msg)
 
 
-def _fail_if_liquid_reading_next_state_varies_within_interval(
+def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     *,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     liquid_name: str,
@@ -3137,13 +3166,21 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
     liquid points, so it is rejected at build.
 
     The probe evaluates each liquid-reading law's first liquid-derivative at a few
-    interior points, with the other arguments filled by two constant sets. A law an
-    argument set cannot evaluate on plain scalars leaves the check to the other
-    build-time gates.
+    interior points, with the other arguments filled by several constant and ramped
+    assignments (the ramps activate monotone binary gates like an age cutoff that a
+    symmetric fill would leave on its zero branch). A law an argument set cannot
+    evaluate on plain scalars leaves the check to the other build-time gates.
     """
     import inspect  # noqa: PLC0415
 
     tol = 1e-6
+
+    def _fill_assignments(n_args: int) -> tuple[tuple[float, ...], ...]:
+        constant_1 = tuple(1.0 for _ in range(n_args))
+        constant_3 = tuple(3.0 for _ in range(n_args))
+        ramp_up = tuple(1.0 + 2.0 * position for position in range(n_args))
+        ramp_down = tuple(reversed(ramp_up))
+        return (constant_1, constant_3, ramp_up, ramp_down)
 
     def _max_abs_first_derivative(func: Callable[..., object]) -> float | None:
         # The composed law returns the child's whole carried-state vector, so probe
@@ -3158,9 +3195,9 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
 
         try:
             worst = 0.0
-            for fill in (1.0, 3.0):
+            for fills in _fill_assignments(len(arg_names)):
                 for sample in (0.37, 1.63, 2.71):
-                    args = [jnp.asarray(fill)] * len(arg_names)
+                    args = [jnp.asarray(fill) for fill in fills]
                     args[liquid_pos] = jnp.asarray(sample)
                     jac = jax.jacfwd(_positional, argnums=liquid_pos)(*args)
                     leaves = jax.tree_util.tree_leaves(jac)
@@ -3188,6 +3225,23 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
                 "independent of the current liquid state."
             )
             raise RegimeInitializationError(msg)
+
+    # The regime-transition probabilities enter the continuation the same way: the
+    # target blend must be constant within each declared interval for the
+    # midpoint-bound row to be exact across the interval.
+    worst = _max_abs_first_derivative(continuation_plan.compute_regime_transition_probs)
+    if worst is not None and worst > tol:
+        msg = (
+            "BQSEGM binds the liquid state to each interval's node when the regime-"
+            "transition probabilities read it, exact only if that dependence is "
+            "piecewise-constant (switched at a declared cliff). In regime "
+            f"{regime_name!r} the regime-transition probabilities vary smoothly in "
+            f"the liquid state {liquid_name!r} (nonzero derivative between "
+            "breakpoints), so the midpoint-bound continuation row is wrong within "
+            "the interval. Declare the switch as a breakpoint, or keep the regime "
+            "transition independent of the current liquid state."
+        )
+        raise RegimeInitializationError(msg)
 
 
 def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
@@ -3793,14 +3847,19 @@ class _BQSEGMRideAlongStatics:
     """Ride-along state axes (the budget varies per cell over these)."""
     state_names: tuple[str, ...]
     """Liquid plus ride-along state names — the kwargs that are state grids."""
-    next_state_reads_liquid: bool
-    """Whether a carry target's next-state law reads the current liquid state, so the
+    continuation_reads_liquid: bool
+    """Whether the continuation reads the current liquid state — through a carry
+    target's next-state law or the regime-transition probabilities — so the
     continuation is piecewise-constant across declared intervals and the per-interval
     path applies."""
     interval_batch_size: int
     """Batch size for the per-interval continuation read: `0` evaluates all
     intervals in one vectorized pass, a positive size runs sequential chunks of
     that many intervals."""
+    branch_batch_size: int
+    """Block size for the discrete-action branch axis in both cores: `0` runs the
+    whole axis in one vectorized pass, a positive size scans it in blocks of that
+    many branches."""
     consumption_action_name: ActionName
     """Name of the continuous consumption action the period utility reads."""
     utility_param_names: tuple[str, ...]
@@ -3850,6 +3909,7 @@ def _bqsegm_ride_along_statics(
     envelope_segment_block_size: int = 0,
     cell_block_size: int = 0,
     interval_batch_size: int = 0,
+    branch_batch_size: int = 0,
     publish_jump_topology: bool = True,
 ) -> _BQSEGMRideAlongStatics:
     """Derive the static config the ride-along continuation and envelope cores share.
@@ -3878,16 +3938,26 @@ def _bqsegm_ride_along_statics(
     ride_names = schedule_spec.ride_along_state_names
     state_names = (liquid_name, *ride_names)
 
-    # When a carry target's next-state law reads the liquid (Euler) state — a
-    # current-asset boundary in `next_<liquid>` (e.g. a Medicaid transfer or pension
-    # adjustment that switches at a declared cliff) — the continuation is constant
-    # only within each declared interval. Detect it once: the per-interval path then
-    # binds the liquid state to each interval's node and solves interval by interval.
+    # The continuation is constant only within each declared interval when the
+    # current liquid (Euler) state enters it through either channel:
+    # - a carry target's next-state law reads liquid — a current-asset boundary in
+    #   `next_<liquid>` (e.g. a Medicaid transfer or pension adjustment that switches
+    #   at a declared cliff)
+    # - the regime-transition probabilities read liquid — the target blend then
+    #   differs across intervals (e.g. survival switched at an asset test)
+    # Detect it once: the per-interval path then binds the liquid state to each
+    # interval's node and solves interval by interval.
     def _next_state_reads_liquid(target: str) -> bool:
         next_state_func = continuation_plan.child_reads[target].next_state_func
         return liquid_name in inspect.signature(next_state_func).parameters
 
-    next_state_reads_liquid = any(
+    transition_probs_read_liquid = (
+        liquid_name
+        in inspect.signature(
+            continuation_plan.compute_regime_transition_probs
+        ).parameters
+    )
+    continuation_reads_liquid = transition_probs_read_liquid or any(
         _next_state_reads_liquid(target) for target in continuation_plan.carry_targets
     )
 
@@ -3937,7 +4007,7 @@ def _bqsegm_ride_along_statics(
         liquid_name=liquid_name,
         ride_names=ride_names,
         state_names=state_names,
-        next_state_reads_liquid=next_state_reads_liquid,
+        continuation_reads_liquid=continuation_reads_liquid,
         consumption_action_name=consumption_action_name,
         utility_param_names=utility_param_names,
         utility_state_names=utility_state_names,
@@ -3949,6 +4019,7 @@ def _bqsegm_ride_along_statics(
         envelope_segment_block_size=envelope_segment_block_size,
         cell_block_size=cell_block_size,
         interval_batch_size=interval_batch_size,
+        branch_batch_size=branch_batch_size,
         n_action_branches=(
             0
             if schedule_spec.discrete_action_name is None
@@ -4142,20 +4213,23 @@ def _build_bqsegm_continuation_core(  # noqa: C901
             base_pool = {**param_pool, **cell}
             if action_name is None:
                 return rows_for_pool(base_pool)
+
             # A discrete action that feeds the continuation reads a different
             # next-state per branch, so the continuation is evaluated per branch
             # (the action rides into `combo_pool` → `next_state_func`). A leading
             # branch axis is added; when the action does not feed the continuation
             # the branch rows are identical, matching the shared-continuation case.
-            branch_rows = [
-                rows_for_pool(
-                    {**base_pool, action_name: jnp.asarray(code, dtype=jnp.int32)}
-                )
-                for code in action_codes
-            ]
-            return tuple(
-                jnp.stack([rows[i] for rows in branch_rows], axis=0)
-                for i in range(len(branch_rows[0]))
+            # `lax.map` compiles the branch body once and streams it in
+            # `branch_batch_size` blocks (the whole axis in one vectorized pass by
+            # default), so per-branch intermediates never all sit in flight.
+            def rows_for_code(code: IntND) -> tuple[FloatND, ...]:
+                return rows_for_pool({**base_pool, action_name: code})
+
+            codes = jnp.asarray(action_codes, dtype=jnp.int32)
+            return jax.lax.map(
+                rows_for_code,
+                codes,
+                batch_size=statics.branch_batch_size or codes.shape[0],
             )
 
         def _cell_rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
@@ -4187,7 +4261,7 @@ def _build_bqsegm_continuation_core(  # noqa: C901
                     ]
                 )
 
-            if statics.next_state_reads_liquid:
+            if statics.continuation_reads_liquid:
                 # The next-period state law carries a current-asset boundary, so the
                 # continuation is constant only within each declared interval. Bind
                 # the liquid (Euler) state to each interval's representative node,
@@ -4376,7 +4450,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
         inspect.signature(schedule_spec.utility_dag).parameters
     )
 
-    def envelope_core(
+    def envelope_core(  # noqa: C901
         *,
         cont_value_stack: FloatND,
         cont_marginal_stack: FloatND,
@@ -4389,7 +4463,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
         utility_params = {name: kwargs[name] for name in statics.utility_param_names}
         discount_params = {name: kwargs[name] for name in statics.discount_param_names}
 
-        def solve_one_cell(
+        def solve_one_cell(  # noqa: C901
             ride_values: tuple[Any, ...],
             cont_value: FloatND,
             cont_marginal: FloatND,
@@ -4505,7 +4579,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
                 coh_slopes, coh_intercepts = interval_segment_coefficients(
                     schedule=coh_of_liquid, interval_midpoints=branch_midpoints
                 )
-                if statics.next_state_reads_liquid:
+                if statics.continuation_reads_liquid:
                     # True cash-on-hand per liquid grid point keeps the step's corners
                     # feasible where a partly-binding kink makes an interval's recovered
                     # affine budget extrapolate below zero.
@@ -4552,21 +4626,54 @@ def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
             # published jump each branch's row spans the jump-augmented query grid, so
             # the envelope max takes the discrete choice over each branch's one-sided
             # cliff limits and the carry keeps the augmented row.
+            #
+            # Shared-parent-grid invariant: the pointwise max over branches is valid
+            # only because every branch's result row is evaluated on the same parent
+            # liquid query grid. Branch-specific inputs — continuation slices,
+            # child-cliff candidates, per-branch breakpoint partitions — may change
+            # branch values and candidate sets, never the parent abscissae. The one
+            # violation (an action moving a *published* parent jump preimage per
+            # branch) is refused at build (`_fail_if_unsupported_ride_discrete`).
             action_name = schedule_spec.discrete_action_name
             if action_name is not None:
-                branch_steps = [
-                    solve_branch(
-                        {action_name: jnp.asarray(code, dtype=jnp.int32)},
-                        cont_value[pos],
-                        cont_marginal[pos],
-                        None if extra_cont_value is None else extra_cont_value[pos],
-                        None if cliff_savings is None else cliff_savings[pos],
+                # `lax.map` compiles the branch subproblem once and streams it in
+                # `branch_batch_size` blocks (the whole axis in one vectorized pass
+                # by default) — per-branch EGM intermediates never all sit in
+                # flight, and the branch axis is never Python-unrolled. Optional
+                # branch inputs enter the mapped pytree only when present.
+                branch_inputs: dict[str, Any] = {
+                    "code": jnp.asarray(
+                        schedule_spec.discrete_action_codes, dtype=jnp.int32
+                    ),
+                    "cont_value": cont_value,
+                    "cont_marginal": cont_marginal,
+                }
+                if extra_cont_value is not None:
+                    branch_inputs["extra_cont_value"] = extra_cont_value
+                if cliff_savings is not None:
+                    branch_inputs["cliff_savings"] = cliff_savings
+
+                def solve_one_branch(
+                    inputs: dict[str, Any],
+                ) -> tuple[Float1D, Float1D]:
+                    step = solve_branch(
+                        {action_name: inputs["code"]},
+                        inputs["cont_value"],
+                        inputs["cont_marginal"],
+                        inputs.get("extra_cont_value"),
+                        inputs.get("cliff_savings"),
                     )
-                    for pos, code in enumerate(schedule_spec.discrete_action_codes)
-                ]
+                    return step[0], step[1]
+
+                n_branches = len(schedule_spec.discrete_action_codes)
+                value_stack, marginal_stack = jax.lax.map(
+                    solve_one_branch,
+                    branch_inputs,
+                    batch_size=statics.branch_batch_size or n_branches,
+                )
                 value_row, marginal_row = _discrete_envelope_over_branches(
-                    value_stack=jnp.stack([step[0] for step in branch_steps]),
-                    marginal_stack=jnp.stack([step[1] for step in branch_steps]),
+                    value_stack=value_stack,
+                    marginal_stack=marginal_stack,
                     taste_shock_scale=0.0,
                 )
             else:

@@ -96,6 +96,22 @@ def tax_derived(
     return tax_rate * jnp.maximum(derived_income - tax_exemption, 0.0)
 
 
+@lcm.piecewise_affine(
+    "tax",
+    variable="derived_income",
+    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="jump"),),
+)
+def tax_derived_jump(
+    derived_income: FloatND, tax_rate: float, tax_exemption: float
+) -> FloatND:
+    """Lump-sum tax jumping in at the exemption on the derived income.
+
+    An action entering a *jumped* schedule variable moves the published cliff
+    abscissa per branch — refused under the one-sided cliff read.
+    """
+    return jnp.where(derived_income >= tax_exemption, tax_rate * derived_income, 0.0)
+
+
 def coh(
     liquid: ContinuousState,
     tax: FloatND,
@@ -214,6 +230,56 @@ def prob_die_action(
     return 1.0 - prob_stay_alive_action(age, final_age_alive, buy_private)
 
 
+def prob_stay_alive_liquid(
+    age: int, final_age_alive: float, liquid: ContinuousState
+) -> FloatND:
+    """Survival probability switched at the declared tax-exemption cliff.
+
+    The regime transition reads the current liquid state through a level switch at
+    the declared breakpoint, so the alive-vs-dead continuation blend is constant
+    within each declared interval but differs across intervals — the case that
+    requires interval-specific continuation rows.
+    """
+    survives = 0.80 + 0.1 * (liquid >= 12.0)
+    return jnp.where(age + 1 < final_age_alive, survives, 0.0)
+
+
+def prob_die_liquid(
+    age: int, final_age_alive: float, liquid: ContinuousState
+) -> FloatND:
+    """Death probability complementary to the liquid-dependent survival."""
+    return 1.0 - prob_stay_alive_liquid(age, final_age_alive, liquid)
+
+
+def prob_stay_alive_liquid_smooth(
+    age: int, final_age_alive: float, liquid: ContinuousState
+) -> FloatND:
+    """Survival probability varying smoothly in the liquid state.
+
+    A nonzero liquid-derivative between breakpoints makes the midpoint-bound
+    continuation row wrong within an interval — the misdeclaration the
+    interval-constant continuation guard rejects.
+    """
+    survives = jnp.clip(0.6 + 0.01 * liquid, 0.0, 1.0)
+    return jnp.where(age + 1 < final_age_alive, survives, 0.0)
+
+
+def prob_die_liquid_smooth(
+    age: int, final_age_alive: float, liquid: ContinuousState
+) -> FloatND:
+    """Death probability complementary to the smooth liquid-dependent survival."""
+    return 1.0 - prob_stay_alive_liquid_smooth(age, final_age_alive, liquid)
+
+
+def discount_factor_action(buy_private: DiscreteAction) -> FloatND:
+    """Discount factor reading the discrete action — an unsupported branch channel.
+
+    The envelope evaluates the discount factor once per cell, not per branch, so an
+    action-dependent discount factor is rejected at model build.
+    """
+    return 0.90 + 0.05 * buy_private
+
+
 def utility_with_action(
     consumption: ContinuousAction, crra: float, buy_private: DiscreteAction
 ) -> FloatND:
@@ -226,7 +292,7 @@ def utility_with_action(
     return crra_utility(consumption, crra) + LEISURE_UTILITY * buy_private
 
 
-def build_model(
+def build_model(  # noqa: C901, PLR0912
     *,
     variant: str = "brute",
     n_periods: int = 4,
@@ -243,6 +309,10 @@ def build_model(
     jump_schedule: bool = False,
     costate_reads_liquid: bool = False,
     costate_smooth: bool = False,
+    transition_reads_liquid: bool = False,
+    transition_smooth: bool = False,
+    action_in_discount: bool = False,
+    branch_batch_size: int = 0,
 ) -> Model:
     """Create the (alive, dead) ride-along toy with a discrete insurance choice.
 
@@ -259,17 +329,28 @@ def build_model(
     at a threshold), or smoothly varying with `costate_smooth`. BQSEGM binds the
     liquid state to each interval's node for such a law; the smooth variant is the
     misdeclaration the interval-constant continuation guard rejects.
+
+    With `transition_reads_liquid`, the survival probability reads the current
+    liquid state through a level switch at the declared cliff, so the alive-vs-dead
+    continuation blend differs across declared intervals — interval-specific
+    continuation rows are required even though no carried-state law reads liquid.
     """
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
     tax_func = tax_jump if jump_schedule else tax
     utility_func = utility_with_action if action_in_utility else utility
     alive_functions = {"utility": utility_func, "tax": tax_func, "coh": coh}
-    if action_in_schedule_variable:
-        # The tax cliff sits on a derived income that reads the action, so its asset
-        # preimage differs per branch — each branch gets its own breakpoint partition.
+    if action_in_discount:
         alive_functions = {
             **alive_functions,
-            "tax": tax_derived,
+            "discount_factor": discount_factor_action,
+        }
+    if action_in_schedule_variable:
+        # The tax cliff sits on a derived income that reads the action, so its asset
+        # preimage differs per branch — each branch gets its own breakpoint partition
+        # (a jump cliff on the derived income when `jump_schedule` is also set).
+        alive_functions = {
+            **alive_functions,
+            "tax": tax_derived_jump if jump_schedule else tax_derived,
             "derived_income": derived_income,
         }
     extra_states: dict[str, Grid] = {"income": income_grid}
@@ -287,11 +368,15 @@ def build_model(
             "alive": tracker_law,
             "dead": tracker_law,
         }
+    solver_kwargs: dict[str, object] = {}
+    if branch_batch_size:
+        solver_kwargs["branch_batch_size"] = branch_batch_size
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         continuous_state="liquid",
         post_decision_function="savings",
+        **solver_kwargs,
     )
     if variant == "bqsegm":
         alive_functions = {**alive_functions, "savings": savings}
@@ -309,14 +394,23 @@ def build_model(
         liquid_law = next_liquid
         constraints = {"feasible": feasible}
 
-    survival_transition = (
-        {
+    if action_in_regime_transition:
+        survival_transition = {
             "alive": MarkovTransition(prob_stay_alive_action),
             "dead": MarkovTransition(prob_die_action),
         }
-        if action_in_regime_transition
-        else None
-    )
+    elif transition_reads_liquid:
+        stay, die = (
+            (prob_stay_alive_liquid_smooth, prob_die_liquid_smooth)
+            if transition_smooth
+            else (prob_stay_alive_liquid, prob_die_liquid)
+        )
+        survival_transition = {
+            "alive": MarkovTransition(stay),
+            "dead": MarkovTransition(die),
+        }
+    else:
+        survival_transition = None
     return make_alive_dead_model(
         n_periods=n_periods,
         n_liquid=n_liquid,
