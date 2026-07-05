@@ -2331,7 +2331,9 @@ class _RideAlongBQSEGMPeriodKernel:
         # A discrete action carries a leading branch axis on each cell's continuation
         # (branch `pos` reads slice `pos`); a branch-free regime keeps the plain shape.
         branch_axis: tuple[int, ...] = (
-            () if self.statics.n_action_branches == 0 else (self.statics.n_action_branches,)
+            ()
+            if self.statics.n_action_branches == 0
+            else (self.statics.n_action_branches,)
         )
         interval_axis: tuple[int, ...] = (
             (self.statics.n_intervals,) if self.statics.next_state_reads_liquid else ()
@@ -3897,8 +3899,7 @@ def _bqsegm_ride_along_statics(
         name
         for name in utility_arg_names
         if name not in state_names
-        and name != consumption_action_name
-        and name != schedule_spec.discrete_action_name
+        and name not in (consumption_action_name, schedule_spec.discrete_action_name)
     )
     utility_state_names = tuple(
         name for name in ride_names if name in utility_arg_names
@@ -4089,7 +4090,7 @@ def _cliff_savings_targets(
     )(midpoints)
 
 
-def _build_bqsegm_continuation_core(
+def _build_bqsegm_continuation_core(  # noqa: C901
     *,
     savings_grid: Float1D,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
@@ -4120,7 +4121,7 @@ def _build_bqsegm_continuation_core(
     action_name = schedule_spec.discrete_action_name
     action_codes = schedule_spec.discrete_action_codes
 
-    def continuation_core(
+    def continuation_core(  # noqa: C901
         *,
         next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
@@ -4326,7 +4327,7 @@ def _vmapped_cell_solver(
     ), (*flat_cells, cont_value_stack, cont_marginal_stack, cliff_savings_stack)
 
 
-def _build_bqsegm_envelope_core(  # noqa: C901
+def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
     *,
     savings_grid: Float1D,
     schedule_spec: _BQSEGMScheduleSpec,
@@ -4545,7 +4546,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901
             # A discrete action is enveloped over per cell: each branch solves the
             # continuous subproblem with the action bound into cash-on-hand against its
             # own continuation slice, then the discrete choice is taken by the upper
-            # envelope. When the action feeds a co-state, the continuation core carries a
+            # envelope. When the action feeds a co-state, the continuation core adds a
             # leading branch axis over `discrete_action_codes` (branch `pos` reads slice
             # `pos`); when it feeds only the budget those slices are identical. Under a
             # published jump each branch's row spans the jump-augmented query grid, so
