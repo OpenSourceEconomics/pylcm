@@ -50,6 +50,18 @@ def coh_non_additive(
     return coh_slope * liquid + subsidy
 
 
+def coh_nonlinear(
+    liquid: ContinuousState, subsidy: FloatND, curvature: float
+) -> FloatND:
+    """Cash-on-hand with genuine curvature in the liquid state, plus the subsidy.
+
+    Smooth but not affine on any interval, so the per-interval affine segment
+    recovered at the midpoint mis-tangents every other liquid point — the case the
+    build-time affinity guard rejects.
+    """
+    return liquid + curvature * liquid**2 + subsidy
+
+
 def build_model(
     *,
     variant: str = "brute",
@@ -60,14 +72,20 @@ def build_model(
     n_savings: int = 150,
     savings_max: float = 28.0,
     non_additive: bool = False,
+    nonlinear: bool = False,
 ) -> Model:
     """Create the two-regime (alive, dead) jump-schedule one-asset toy.
 
-    With `non_additive`, cash-on-hand carries a non-unit liquid slope while the
-    schedule still declares only the jump — the misdeclaration the pure-jump
-    additivity guard rejects.
+    With `non_additive`, cash-on-hand carries a non-unit (but affine) liquid slope
+    while the schedule still declares only the jump — the misdeclaration the
+    pure-jump unit-slope guard rejects. With `nonlinear`, cash-on-hand is smooth but
+    not affine in the liquid state — the case the affinity guard rejects.
     """
-    coh_func = coh_non_additive if non_additive else coh
+    coh_func = coh
+    if non_additive:
+        coh_func = coh_non_additive
+    elif nonlinear:
+        coh_func = coh_nonlinear
     alive_functions = {"utility": utility, "subsidy": subsidy, "coh": coh_func}
     alive_solver = resolve_solver(
         variant,
@@ -98,10 +116,16 @@ def build_params(
     final_age_alive: float = 3.0,
     non_additive: bool = False,
     coh_slope: float = 0.8,
+    nonlinear: bool = False,
+    curvature: float = 0.05,
 ) -> dict:
     """Get parameters for the jump-schedule one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
-    coh_params = {"coh": {"coh_slope": coh_slope}} if non_additive else {}
+    coh_params = {}
+    if non_additive:
+        coh_params = {"coh": {"coh_slope": coh_slope}}
+    elif nonlinear:
+        coh_params = {"coh": {"curvature": curvature}}
     return {
         "alive": {
             "utility": {"crra": crra},

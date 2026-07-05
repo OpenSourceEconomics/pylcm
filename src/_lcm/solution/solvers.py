@@ -3002,7 +3002,102 @@ def _ride_discrete_action(
     return name, tuple(int(code) for code in discrete_actions[name])
 
 
-def _collect_bqsegm_schedule_spec(
+def _fail_if_budget_nonaffine_in_liquid(
+    *,
+    coh_dag: Callable[..., object],
+    liquid_name: str,
+    require_unit_slope: bool,
+    regime_name: str,
+) -> None:
+    """Reject a budget that is not affine in the liquid state within an interval.
+
+    BQSEGM recovers each interval's budget from its slope and value at one interior
+    point (`interval_segment_coefficients`), exact only when the composed budget is
+    affine in the liquid state on the interval — a smooth nonlinear budget would be
+    mis-tangented at every other point. A declared jump / kink is a *selection*
+    between affine branches, so its second derivative in the liquid state stays zero
+    at interior points; a genuine nonlinearity (a square, a product of the liquid
+    state with itself, a reciprocal) shows a nonzero second derivative.
+
+    With `require_unit_slope` — the liquid-direct, non-ride, all-jump path solved by
+    the pure-jump step, which reads only per-interval intercepts — the budget must
+    additionally have unit slope in the liquid state: a non-unit affine slope
+    declared as jump-only would be solved as if `coh = liquid + intercept`.
+
+    The probe evaluates the composed budget's first and second liquid-derivatives at
+    a few interior points, with the other arguments filled by two constant sets so a
+    parameter-dependent slope is caught. An argument set the budget cannot evaluate
+    on plain scalars leaves the check to the other build-time gates.
+    """
+    import inspect  # noqa: PLC0415
+
+    arg_names = tuple(inspect.signature(coh_dag).parameters)
+    if liquid_name not in arg_names:
+        return
+
+    def _budget_of_liquid(liquid_value: FloatND, fill: float) -> FloatND:
+        kwargs = {
+            name: (liquid_value if name == liquid_name else jnp.asarray(fill))
+            for name in arg_names
+        }
+        return jnp.asarray(coh_dag(**kwargs)).reshape(())
+
+    tol = 1e-6
+
+    def _max_abs_second() -> float | None:
+        # An arg set the budget cannot evaluate on plain scalars leaves the check to
+        # the other build-time gates (return None).
+        try:
+            values = [
+                abs(
+                    float(
+                        jax.grad(jax.grad(lambda a, f=fill: _budget_of_liquid(a, f)))(
+                            jnp.asarray(sample)
+                        )
+                    )
+                )
+                for fill in (1.0, 3.0)
+                for sample in (0.37, 1.63, 2.71)
+            ]
+        except Exception:  # noqa: BLE001
+            return None
+        return max(values)
+
+    def _liquid_slopes() -> tuple[float, ...] | None:
+        try:
+            return tuple(
+                float(
+                    jax.grad(lambda a, f=fill: _budget_of_liquid(a, f))(jnp.asarray(x))
+                )
+                for fill, x in ((1.0, 1.0), (3.0, 2.0))
+            )
+        except Exception:  # noqa: BLE001
+            return None
+
+    worst_second = _max_abs_second()
+    if worst_second is not None and worst_second > tol:
+        msg = (
+            f"BQSEGM's budget must be affine in the liquid state {liquid_name!r} "
+            f"within each interval, but regime {regime_name!r} has a nonzero second "
+            "derivative there — a smooth nonlinear budget is not recovered by the "
+            "per-interval affine segment. Declare the nonsmoothness as breakpoints or "
+            "keep the budget affine per interval."
+        )
+        raise RegimeInitializationError(msg)
+
+    slopes = _liquid_slopes() if require_unit_slope else None
+    if slopes is not None and any(abs(slope - 1.0) > tol for slope in slopes):
+        msg = (
+            f"BQSEGM's all-jump path solves the budget from per-interval intercepts "
+            f"assuming unit slope in the liquid state, but regime {regime_name!r} has "
+            f"a budget slope of {slopes[0]:.4g} in {liquid_name!r}. Declare a "
+            "coincident `continuous_kink` so the non-unit affine slope routes to the "
+            "mixed step, or keep the jump-only budget additive (unit slope)."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
     *,
     context: SolverBuildContext,
     budget_target: str = "coh",
@@ -3144,6 +3239,20 @@ def _collect_bqsegm_schedule_spec(
         f"{first.output}__{bp.threshold}" for bp in first.breakpoints
     )
     breakpoint_kinds = tuple(bp.kind for bp in first.breakpoints)
+    all_kinds = tuple(bp.kind for schedule in schedules for bp in schedule.breakpoints)
+    _fail_if_budget_nonaffine_in_liquid(
+        coh_dag=coh_dag,
+        liquid_name=liquid_state_name,
+        # The pure-jump step (liquid-direct, non-ride, all-jump) reads only
+        # intercepts and assumes unit slope; every other path recovers the slope.
+        require_unit_slope=(
+            not ride_along_state_names
+            and not has_derived
+            and bool(all_kinds)
+            and all(kind == "jump" for kind in all_kinds)
+        ),
+        regime_name=context.regime_name,
+    )
     return _BQSEGMScheduleSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
