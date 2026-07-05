@@ -58,7 +58,7 @@ class EGMCarry:
     breakpoints: FloatND | None = None
     """Per-row value-jump locations in the child's liquid state, NaN-padded.
 
-    Published only by solvers whose value rows carry declared jumps (a BQSEGM
+    Published only by solvers whose value rows carry declared jumps (a NBEGM
     schedule regime); `None` for smooth-valued regimes. The jumps themselves
     ride inside `endog_grid` as duplicated abscissae holding the one-sided
     value and marginal limits, so the ordinary padded-row read is one-sided

@@ -1,10 +1,10 @@
-"""Case-boundary and formula-piece decorators for the BQSEGM solver.
+"""Case-boundary and formula-piece decorators for the NBEGM solver.
 
 A *case* is a region of the state space carved out by a Boolean predicate (e.g.
 Medicaid eligibility); a *piece* is the smooth formula a DAG output takes inside
 one side of that predicate. The decorators here only attach metadata to a user's
 existing DAG functions and return them unchanged — they never wrap or alter
-runtime behavior, so a model still solves identically under BruteForce. BQSEGM
+runtime behavior, so a model still solves identically under BruteForce. NBEGM
 reads the metadata to lower each case to a smooth per-case DAG and to apply
 open/closed endpoint eligibility at the exact boundary query.
 """
@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from lcm.exceptions import BQSEGMCaseError
+from lcm.exceptions import NBEGMCaseError
 
 type BoundaryKind = Literal["continuous_kink", "jump", "hard_constraint"]
 type EqualityOwner = Literal["when", "otherwise"]
@@ -206,7 +206,7 @@ def affine_breakpoint(
         kind: Discontinuity kind at the threshold; a bracket edge is a continuous
             kink (the schedule is continuous, only its slope changes).
         indexed_by: Name of the ride-along state indexing the threshold table. When
-            given, the threshold parameter is a table and BQSEGM reads each cell's
+            given, the threshold parameter is a table and NBEGM reads each cell's
             threshold as `threshold[cell_state, static_index]`; the bare scalar
             form (`None`) is unchanged.
         static_index: Static column index into the threshold table (e.g. a bracket
@@ -236,7 +236,7 @@ def piecewise_affine[F: Callable[..., object]](
 
     The decorated function stays an ordinary DAG node; the decorator only records
     its schedule metadata in `__lcm_piecewise_affine__`, so the model still solves
-    identically under `GridSearch`. BQSEGM reads the metadata to merge each
+    identically under `GridSearch`. NBEGM reads the metadata to merge each
     threshold into the liquid-axis interval partition and to recover the active
     affine segment per interval.
 
@@ -296,4 +296,4 @@ def _coerce_boundary(spec: BoundarySurface | tuple[str, str]) -> BoundarySurface
         f"explicitly with `lcm.boundary(variable, threshold, equality=..., "
         f"kind=...)`."
     )
-    raise BQSEGMCaseError(msg)
+    raise NBEGMCaseError(msg)

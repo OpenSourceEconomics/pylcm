@@ -23,13 +23,13 @@ import jax.numpy as jnp
 from dags import concatenate_functions
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.bqsegm import jump_moving_state_names
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import (
     interp_on_prepared_grid,
     locate_on_grid,
     prepare_padded_grid,
 )
+from _lcm.egm.nbegm import jump_moving_state_names
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
     _get_child_resources_arg_names,
@@ -383,7 +383,7 @@ def build_continuation_plan(
     period's carries to yield the expected continuation as a function of
     end-of-period savings. The post-decision function names the savings slot the
     child next-state reads consume; `stochastic_node_batch_size` splays the child
-    stochastic-node expectation. Both the DC-EGM kernel and the BQSEGM case-piece
+    stochastic-node expectation. Both the DC-EGM kernel and the NBEGM case-piece
     solver build their plan through this seam, so the continuation construction
     lives in one place.
 
@@ -1220,7 +1220,7 @@ def _build_child_reads(
             )
             for name in passive_state_names
         )
-        # A value-only child (brute `GridSearch`, the case-piece `BQSEGM`)
+        # A value-only child (brute `GridSearch`, the case-piece `NBEGM`)
         # publishes a value array already maxed over its discrete actions, so the
         # read carries no per-action rows; only a choice-retaining child (DC-EGM)
         # leaves them for the parent to aggregate.

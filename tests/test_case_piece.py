@@ -1,4 +1,4 @@
-"""Behavior of the BQSEGM case-boundary and formula-piece decorators.
+"""Behavior of the NBEGM case-boundary and formula-piece decorators.
 
 The decorators only attach metadata to a user's DAG function and return the
 same object unchanged; they never wrap or alter runtime behavior.
@@ -19,7 +19,7 @@ from lcm.case_piece import (
     piece,
     piecewise_affine,
 )
-from lcm.exceptions import BQSEGMCaseError
+from lcm.exceptions import NBEGMCaseError
 
 
 def medicaid_eligible(assets, medicaid_asset_limit):
@@ -74,7 +74,7 @@ def test_case_boundary_returns_the_same_function_object():
 
 def test_case_boundary_rejects_bare_two_tuple_without_explicit_ownership():
     """A bare `(variable, threshold)` tuple cannot declare equality ownership."""
-    with pytest.raises(BQSEGMCaseError, match=r"lcm\.boundary"):
+    with pytest.raises(NBEGMCaseError, match=r"lcm\.boundary"):
         case_boundary(("assets", "medicaid_asset_limit"))
 
 

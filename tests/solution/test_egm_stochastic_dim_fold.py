@@ -5,7 +5,7 @@ nodes cannot move the read: the child's resources map does not read its node
 value, the child's carry rows share the state grid as abscissae, and no
 per-node discrete-choice aggregation sits between interpolation and the
 expectation. All three conditions are static model topology. Value-only
-children (brute `GridSearch` terminal, the case-piece `BQSEGM`) publish
+children (brute `GridSearch` terminal, the case-piece `NBEGM`) publish
 state-space carries read through an identity resources map, so every one of
 their stochastic dims folds; endogenous-grid children (DC-EGM, NEGM) publish
 per-row abscissae and keep every dim in the node loop. The fold is a
@@ -20,7 +20,7 @@ import numpy as np
 import _lcm.egm.continuation as cont_mod
 from tests.conftest import X64_ENABLED
 from tests.solution import test_egm_process_states as dcegm_fixture
-from tests.test_models import bqsegm_stochastic_node_toy as toy
+from tests.test_models import nbegm_stochastic_node_toy as toy
 
 _TOL = 1e-9 if X64_ENABLED else 1e-4
 
@@ -49,7 +49,7 @@ def test_stochastic_dim_of_a_state_space_carry_child_is_foldable(monkeypatch):
     """A value-only child's income dim folds: its read is a state-space gather."""
     reads = _capture_child_reads(
         monkeypatch,
-        lambda: toy.build_model(variant="bqsegm").solve(
+        lambda: toy.build_model(variant="nbegm").solve(
             params=toy.build_params(), log_level="off"
         ),
     )
@@ -74,7 +74,7 @@ def test_stochastic_dim_of_an_endogenous_grid_child_is_not_foldable(monkeypatch)
 def test_fold_leaves_value_function_unchanged(monkeypatch):
     """The fold only reschedules the expectation: V matches the unfolded read."""
     params = toy.build_params()
-    folded = toy.build_model(variant="bqsegm").solve(params=params, log_level="off")
+    folded = toy.build_model(variant="nbegm").solve(params=params, log_level="off")
 
     def keep_unfolded(read):
         return dataclasses.replace(
@@ -90,7 +90,7 @@ def test_fold_leaves_value_function_unchanged(monkeypatch):
         return original(**{**kwargs, "read": keep_unfolded(kwargs["read"])})
 
     monkeypatch.setattr(cont_mod, "_get_child_carry_reader", unfolded_reader)
-    unfolded = toy.build_model(variant="bqsegm").solve(params=params, log_level="off")
+    unfolded = toy.build_model(variant="nbegm").solve(params=params, log_level="off")
 
     for period in folded:
         for regime_name in folded[period]:
@@ -125,7 +125,7 @@ def test_foldable_smooth_read_bypasses_the_node_loop(monkeypatch):
         return original(**kwargs)
 
     monkeypatch.setattr(cont_mod, "_expect_over_stochastic_nodes", spy)
-    toy.build_model(variant="bqsegm").solve(params=toy.build_params(), log_level="off")
+    toy.build_model(variant="nbegm").solve(params=toy.build_params(), log_level="off")
     smooth_calls = [names for names, has_jumps in calls if not has_jumps]
     jumped_calls = [names for names, has_jumps in calls if has_jumps]
     assert all("income" not in names for names in smooth_calls)
@@ -133,7 +133,7 @@ def test_foldable_smooth_read_bypasses_the_node_loop(monkeypatch):
 
 
 def _solve_jump_variant(**kwargs):
-    return toy.build_model(variant="bqsegm", tax_kind="jump", **kwargs).solve(
+    return toy.build_model(variant="nbegm", tax_kind="jump", **kwargs).solve(
         params=toy.build_params(tax_lump=1.5), log_level="off"
     )
 

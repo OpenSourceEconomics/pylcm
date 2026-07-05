@@ -293,7 +293,7 @@ class Solver(ABC):
         A reading parent aggregates the child's discrete choices (the DC-EGM
         logsum) only when the carry retains a row per discrete-action combo. A
         value-only solver that publishes an already-action-maxed value array
-        (brute `GridSearch`, the case-piece `BQSEGM`) sets this `False`, so the
+        (brute `GridSearch`, the case-piece `NBEGM`) sets this `False`, so the
         parent reads the maxed value directly without spurious action rows.
         """
         return True

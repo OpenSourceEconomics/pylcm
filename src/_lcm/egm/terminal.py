@@ -1,4 +1,4 @@
-"""Carry producers for regimes targeted by DC-EGM / BQSEGM regimes.
+"""Carry producers for regimes targeted by DC-EGM / NBEGM regimes.
 
 A regime an endogenous-grid regime transitions into must publish its value and
 marginal value of resources on its own state grid so the parent can interpolate

@@ -22,8 +22,8 @@ not on its type.
 
 from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
 from _lcm.solution.solvers import (
-    BQSEGM,
     DCEGM,
+    NBEGM,
     NEGM,
     GridSearch,
     OneAssetEGM,
@@ -31,8 +31,8 @@ from _lcm.solution.solvers import (
 )
 
 __all__ = [
-    "BQSEGM",
     "DCEGM",
+    "NBEGM",
     "NEGM",
     "GridSearch",
     "OneAssetEGM",

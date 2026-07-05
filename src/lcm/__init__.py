@@ -98,8 +98,8 @@ from lcm.regime import (  # noqa: E402
 )
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import (  # noqa: E402
-    BQSEGM,
     DCEGM,
+    NBEGM,
     NEGM,
     GridSearch,
     OneAssetEGM,
@@ -124,8 +124,8 @@ jax.tree_util.register_pytree_node(
 )
 
 __all__ = [
-    "BQSEGM",
     "DCEGM",
+    "NBEGM",
     "NEGM",
     "AgeGrid",
     "DiscreteGrid",

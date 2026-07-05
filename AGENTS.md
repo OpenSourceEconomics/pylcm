@@ -334,9 +334,9 @@ regime level, never both (ambiguity errors, also when the grids match). Function
 as derived categoricals must return **integer** types, not booleans — JAX cannot use
 booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
-### Case-piece solver (BQSEGM)
+### Case-piece solver (NB-EGM)
 
-`BQSEGM` (from `lcm.solvers`) is the endogenous-grid solver for a 1-D consumption-saving
+`NBEGM` (from `lcm.solvers`) is the endogenous-grid solver for a 1-D consumption-saving
 regime whose budget is split by a binary case boundary on the liquid state (e.g. a
 Medicaid asset test). The model author exposes the split with metadata-only decorators
 (`lcm.case_boundary`, `lcm.piece`, `lcm.boundary`); the solver runs EGM per case,

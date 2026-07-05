@@ -73,8 +73,8 @@ class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
 
 
-class BQSEGMCaseError(PyLCMError):
-    """Raised when a BQSEGM case-boundary or formula-piece declaration is invalid.
+class NBEGMCaseError(PyLCMError):
+    """Raised when a NBEGM case-boundary or formula-piece declaration is invalid.
 
     Covers three families of checks:
 

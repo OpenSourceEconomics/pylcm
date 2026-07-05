@@ -33,8 +33,8 @@ from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.bqsegm import BQSEGMRegistry
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.nbegm import NBEGMRegistry
 from _lcm.egm.outer_envelope import (
     finalize_outer_envelope,
     fold_outer_envelope,
@@ -1455,11 +1455,11 @@ class OneAssetEGM(Solver):
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class BQSEGM(Solver):
+class NBEGM(Solver):
     """Case-piece endogenous-grid solver for a 1-D consumption--saving regime.
 
     A regime whose budget is split by case boundaries on the liquid state (e.g. a
-    Medicaid asset test) is smooth within each case. BQSEGM solves each case by
+    Medicaid asset test) is smooth within each case. NBEGM solves each case by
     ordinary 1-D EGM, masks each case's candidates to the region where its
     predicate is consistent with the recovered state, and merges the cases on the
     liquid grid with the branch-aware upper envelope. The strict/non-strict
@@ -1615,8 +1615,8 @@ class BQSEGM(Solver):
 
         import jax.numpy as jnp  # noqa: PLC0415
 
-        from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
-        from _lcm.egm.bqsegm_validation import (  # noqa: PLC0415
+        from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
+        from _lcm.egm.nbegm_validation import (  # noqa: PLC0415
             find_ast_violations,
             find_jaxpr_violations,
             is_smooth_helper,
@@ -1626,9 +1626,9 @@ class BQSEGM(Solver):
             "Mapping[FunctionName, Callable[..., object]]",
             context.user_regimes[context.regime_name].functions,
         )
-        registry = collect_bqsegm_metadata(functions=functions)
+        registry = collect_nbegm_metadata(functions=functions)
         space = context.state_action_space
-        _validate_bqsegm_boundary_scope(
+        _validate_nbegm_boundary_scope(
             registry=registry,
             functions=functions,
             liquid_state_name=space.state_names[0],
@@ -1651,14 +1651,14 @@ class BQSEGM(Solver):
                     piece, abstract_args=abstract_args, mode="smooth_user"
                 )
         if violations:
-            from lcm.exceptions import BQSEGMCaseError  # noqa: PLC0415
+            from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
 
-            msg = "BQSEGM smoothness gate failed:\n" + "\n".join(violations)
-            raise BQSEGMCaseError(msg)
+            msg = "NBEGM smoothness gate failed:\n" + "\n".join(violations)
+            raise NBEGMCaseError(msg)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one case-piece EGM period adapter per active period."""
-        from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
+        from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
         savings_grid = self.savings_grid.to_jax()
 
@@ -1666,7 +1666,7 @@ class BQSEGM(Solver):
             "Mapping[FunctionName, Callable[..., object]]",
             context.user_regimes[context.regime_name].functions,
         )
-        registry = collect_bqsegm_metadata(functions=functions)
+        registry = collect_nbegm_metadata(functions=functions)
         has_schedule = bool(registry.piecewise_affine_schedules) and not (
             registry.piece_sets
         )
@@ -1682,7 +1682,7 @@ class BQSEGM(Solver):
         is_schedule = has_schedule and not is_schedule_discrete
         is_discrete = not has_schedule and not registry.piece_sets and has_discrete
         schedule_discrete_spec = (
-            _collect_bqsegm_schedule_discrete_spec(
+            _collect_nbegm_schedule_discrete_spec(
                 context=context,
                 budget_target=self.budget_target,
                 continuous_state=self.continuous_state,
@@ -1692,7 +1692,7 @@ class BQSEGM(Solver):
             else None
         )
         schedule_spec = (
-            _collect_bqsegm_schedule_spec(
+            _collect_nbegm_schedule_spec(
                 context=context,
                 budget_target=self.budget_target,
                 continuous_state=self.continuous_state,
@@ -1718,7 +1718,7 @@ class BQSEGM(Solver):
         )
         liquid_grid = context.grids[liquid_state_name].to_jax()
         discrete_spec = (
-            _collect_bqsegm_discrete_spec(
+            _collect_nbegm_discrete_spec(
                 context=context,
                 budget_target=self.budget_target,
                 post_decision_function=self.post_decision_function,
@@ -1727,7 +1727,7 @@ class BQSEGM(Solver):
             else None
         )
         case_spec = (
-            _collect_bqsegm_case_spec(context=context)
+            _collect_nbegm_case_spec(context=context)
             if not is_schedule and not is_discrete and schedule_discrete_spec is None
             else None
         )
@@ -1738,20 +1738,20 @@ class BQSEGM(Solver):
         for period, target in period_to_target.items():
             if target not in cores:
                 if schedule_discrete_spec is not None:
-                    core = _build_bqsegm_schedule_discrete_core(
+                    core = _build_nbegm_schedule_discrete_core(
                         savings_grid=savings_grid,
                         target=target,
                         spec=schedule_discrete_spec,
                         taste_shock_scale=0.0,
                     )
                 elif schedule_spec is not None:
-                    core = _build_bqsegm_continuous_core(
+                    core = _build_nbegm_continuous_core(
                         savings_grid=savings_grid,
                         target=target,
                         schedule_spec=schedule_spec,
                     )
                 elif discrete_spec is not None:
-                    core = _build_bqsegm_discrete_core(
+                    core = _build_nbegm_discrete_core(
                         savings_grid=savings_grid,
                         target=target,
                         discrete_spec=discrete_spec,
@@ -1759,7 +1759,7 @@ class BQSEGM(Solver):
                     )
                 else:
                     assert case_spec is not None  # noqa: S101
-                    core = _build_bqsegm_core(
+                    core = _build_nbegm_core(
                         savings_grid=savings_grid, target=target, case_spec=case_spec
                     )
                 cores[target] = jax.jit(core) if context.enable_jit else core
@@ -1777,7 +1777,7 @@ class BQSEGM(Solver):
         )
 
     def _fail_if_unsupported_ride_discrete(
-        self, *, context: SolverBuildContext, schedule_spec: _BQSEGMScheduleSpec
+        self, *, context: SolverBuildContext, schedule_spec: _NBEGMScheduleSpec
     ) -> None:
         """Reject a ride-along discrete action the envelope path cannot handle.
 
@@ -1801,7 +1801,7 @@ class BQSEGM(Solver):
         actions = context.state_action_space.discrete_actions
         if len(actions) != 1:
             msg = (
-                "BQSEGM's schedule+ride-along discrete envelope supports exactly "
+                "NBEGM's schedule+ride-along discrete envelope supports exactly "
                 f"one discrete action; the regime {context.regime_name!r} declares "
                 f"{tuple(actions)}."
             )
@@ -1816,7 +1816,7 @@ class BQSEGM(Solver):
             and action_name in inspect.signature(discount_factor_dag).parameters
         ):
             msg = (
-                "BQSEGM's schedule+ride-along discrete envelope evaluates the "
+                "NBEGM's schedule+ride-along discrete envelope evaluates the "
                 "discount factor per cell, not per discrete branch, so the action "
                 f"{action_name!r} must not enter the discount factor; regime "
                 f"{context.regime_name!r} reads it there."
@@ -1844,7 +1844,7 @@ class BQSEGM(Solver):
                 continue
             if source.kind == "jump" and self.jump_read == "one_sided":
                 msg = (
-                    "BQSEGM's schedule+ride-along discrete envelope publishes the jump "
+                    "NBEGM's schedule+ride-along discrete envelope publishes the jump "
                     f"breakpoint on a shared query grid, so the action {action_name!r} "
                     f"must not enter the jumped schedule variable {source.variable!r} "
                     "under `jump_read='one_sided'` (its cliff would sit at a different "
@@ -1881,7 +1881,7 @@ class BQSEGM(Solver):
         *,
         context: SolverBuildContext,
         savings_grid: Float1D,
-        schedule_spec: _BQSEGMScheduleSpec,
+        schedule_spec: _NBEGMScheduleSpec,
     ) -> SolutionKernels:
         """Build the case-piece kernels for a regime carrying a ride-along co-state.
 
@@ -1894,7 +1894,7 @@ class BQSEGM(Solver):
 
         if self.post_decision_function is None:
             msg = (
-                "BQSEGM with a ride-along co-state requires `post_decision_function` "
+                "NBEGM with a ride-along co-state requires `post_decision_function` "
                 "(the savings slot the continuation reader consumes); the regime "
                 f"{context.regime_name!r} leaves it unset."
             )
@@ -1921,11 +1921,11 @@ class BQSEGM(Solver):
         active_periods = sorted(context.regimes_to_active_periods[context.regime_name])
         continuation_cores: dict[tuple[RegimeName, ...], Callable] = {}
         envelope_cores: dict[tuple[RegimeName, ...], Callable] = {}
-        statics_by_key: dict[tuple[RegimeName, ...], _BQSEGMRideAlongStatics] = {}
+        statics_by_key: dict[tuple[RegimeName, ...], _NBEGMRideAlongStatics] = {}
         cliff_candidates_by_key: dict[tuple[RegimeName, ...], bool] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         for period in active_periods:
-            plan = _build_bqsegm_continuation_plan(
+            plan = _build_nbegm_continuation_plan(
                 context=context,
                 period=period,
                 reachable_targets=reachable_targets,
@@ -1939,7 +1939,7 @@ class BQSEGM(Solver):
                     liquid_name=schedule_spec.liquid_state_name,
                     regime_name=context.regime_name,
                 )
-                statics = _bqsegm_ride_along_statics(
+                statics = _nbegm_ride_along_statics(
                     savings_grid=savings_grid,
                     schedule_spec=schedule_spec,
                     continuation_plan=plan,
@@ -1956,7 +1956,7 @@ class BQSEGM(Solver):
                     statics.n_published_jumps > 0
                     and context.regime_name in plan.child_reads
                 )
-                continuation_core = _build_bqsegm_continuation_core(
+                continuation_core = _build_nbegm_continuation_core(
                     savings_grid=savings_grid,
                     continuation_plan=plan,
                     statics=statics,
@@ -1964,7 +1964,7 @@ class BQSEGM(Solver):
                     cliff_candidates=cliff_candidates,
                     schedule_spec=schedule_spec,
                 )
-                envelope_core = _build_bqsegm_envelope_core(
+                envelope_core = _build_nbegm_envelope_core(
                     savings_grid=savings_grid,
                     schedule_spec=schedule_spec,
                     statics=statics,
@@ -1979,7 +1979,7 @@ class BQSEGM(Solver):
                 )
                 statics_by_key[key] = statics
                 cliff_candidates_by_key[key] = cliff_candidates
-            period_kernels[period] = _RideAlongBQSEGMPeriodKernel(
+            period_kernels[period] = _RideAlongNBEGMPeriodKernel(
                 continuation_core=continuation_cores[key],
                 envelope_core=envelope_cores[key],
                 statics=statics_by_key[key],
@@ -2189,7 +2189,7 @@ class _OneAssetEGMPeriodKernel:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _RideAlongBQSEGMPeriodKernel:
+class _RideAlongNBEGMPeriodKernel:
     """The case-piece EGM adapter for a regime carrying a ride-along co-state.
 
     The solve splits into two independently-jitted cores so neither XLA program
@@ -2212,7 +2212,7 @@ class _RideAlongBQSEGMPeriodKernel:
     envelope_core: Callable
     """The jitted EGM/envelope half (`id`-deduped across periods)."""
 
-    statics: _BQSEGMRideAlongStatics
+    statics: _NBEGMRideAlongStatics
     """Build-time config — supplies the envelope core's placeholder stack shapes."""
 
     cliff_candidates: bool
@@ -2247,7 +2247,7 @@ class _RideAlongBQSEGMPeriodKernel:
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
-    ) -> _RideAlongBQSEGMPeriodKernel:
+    ) -> _RideAlongNBEGMPeriodKernel:
         """Bind the regime's and its carry targets' fixed params into both cores."""
         bound = _union_fixed_params(
             fixed_flat_params=fixed_flat_params,
@@ -2668,7 +2668,7 @@ def _build_two_dim_core(
 
 
 @dataclass(frozen=True, kw_only=True)
-class _BQSEGMCaseSpec:
+class _NBEGMCaseSpec:
     """Build-time statics describing one binary case split (v1 scope)."""
 
     when_callable: Callable
@@ -2692,17 +2692,17 @@ class _BQSEGMCaseSpec:
 
 
 # The only split output v1 knows how to route — an additive cash-on-hand shift.
-_BQSEGM_V1_OUTPUT = "subsidy"
+_NBEGM_V1_OUTPUT = "subsidy"
 
 
-def _validate_bqsegm_boundary_scope(
+def _validate_nbegm_boundary_scope(
     *,
-    registry: BQSEGMRegistry,
+    registry: NBEGMRegistry,
     functions: Mapping[FunctionName, Callable[..., object]],
     liquid_state_name: str,
     reserved_names: frozenset[str],
 ) -> None:
-    """Reject case-piece declarations outside the v1 BQSEGM scope.
+    """Reject case-piece declarations outside the v1 NBEGM scope.
 
     v1 implements exactly one binary split of an additive cash-on-hand `subsidy`
     across one jump boundary on the liquid state, owned by the `otherwise` side,
@@ -2713,64 +2713,64 @@ def _validate_bqsegm_boundary_scope(
     """
     import inspect  # noqa: PLC0415
 
-    from lcm.exceptions import BQSEGMCaseError  # noqa: PLC0415
+    from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
 
     for piece_set in registry.piece_sets:
-        if piece_set.output != _BQSEGM_V1_OUTPUT:
+        if piece_set.output != _NBEGM_V1_OUTPUT:
             msg = (
-                f"BQSEGM v1 only splits an additive cash-on-hand "
-                f"{_BQSEGM_V1_OUTPUT!r} output; the regime splits "
+                f"NBEGM v1 only splits an additive cash-on-hand "
+                f"{_NBEGM_V1_OUTPUT!r} output; the regime splits "
                 f"{piece_set.output!r}. Richer split outputs are deferred."
             )
-            raise BQSEGMCaseError(msg)
+            raise NBEGMCaseError(msg)
         for piece_name in (piece_set.when_func, piece_set.otherwise_func):
             params = inspect.signature(functions[piece_name]).parameters
             state_action_deps = sorted(set(params) & reserved_names)
             if state_action_deps:
                 msg = (
-                    f"BQSEGM v1 pieces read only the flat params; piece "
+                    f"NBEGM v1 pieces read only the flat params; piece "
                     f"{piece_name!r} depends on the state/action "
                     f"{state_action_deps!r}. State-dependent pieces are deferred."
                 )
-                raise BQSEGMCaseError(msg)
+                raise NBEGMCaseError(msg)
     for predicate_name, meta in registry.boundaries.items():
         for surface in meta.boundaries:
             if surface.equality_owner != "otherwise":
                 msg = (
-                    f"BQSEGM v1 only supports `equality='otherwise'` boundaries; "
+                    f"NBEGM v1 only supports `equality='otherwise'` boundaries; "
                     f"{predicate_name!r} owns equality on the "
                     f"{surface.equality_owner!r} side."
                 )
-                raise BQSEGMCaseError(msg)
+                raise NBEGMCaseError(msg)
             if surface.kind != "jump":
                 msg = (
-                    f"BQSEGM v1 only supports `kind='jump'` boundaries; "
+                    f"NBEGM v1 only supports `kind='jump'` boundaries; "
                     f"{predicate_name!r} declares {surface.kind!r}."
                 )
-                raise BQSEGMCaseError(msg)
+                raise NBEGMCaseError(msg)
             if surface.variable != liquid_state_name:
                 msg = (
-                    f"BQSEGM v1 only supports a boundary on the liquid state "
+                    f"NBEGM v1 only supports a boundary on the liquid state "
                     f"{liquid_state_name!r}; {predicate_name!r} compares "
                     f"{surface.variable!r}."
                 )
-                raise BQSEGMCaseError(msg)
+                raise NBEGMCaseError(msg)
 
 
-def _collect_bqsegm_case_spec(*, context: SolverBuildContext) -> _BQSEGMCaseSpec:
+def _collect_nbegm_case_spec(*, context: SolverBuildContext) -> _NBEGMCaseSpec:
     """Collect the single binary case split from the regime's user functions."""
     import inspect  # noqa: PLC0415
 
-    from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
+    from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
     functions = cast(
         "Mapping[FunctionName, Callable[..., object]]",
         context.user_regimes[context.regime_name].functions,
     )
-    registry = collect_bqsegm_metadata(functions=functions)
+    registry = collect_nbegm_metadata(functions=functions)
     if len(registry.piece_sets) != 1:
         msg = (
-            "BQSEGM v1 supports exactly one split output; the regime declares "
+            "NBEGM v1 supports exactly one split output; the regime declares "
             f"{len(registry.piece_sets)}."
         )
         raise RegimeInitializationError(msg)
@@ -2778,12 +2778,12 @@ def _collect_bqsegm_case_spec(*, context: SolverBuildContext) -> _BQSEGMCaseSpec
     surfaces = registry.boundaries[piece_set.predicate_name].boundaries
     if len(surfaces) != 1:
         msg = (
-            "BQSEGM v1 supports exactly one boundary surface; the predicate "
+            "NBEGM v1 supports exactly one boundary surface; the predicate "
             f"{piece_set.predicate_name!r} declares {len(surfaces)}."
         )
         raise RegimeInitializationError(msg)
     space = context.state_action_space
-    _validate_bqsegm_boundary_scope(
+    _validate_nbegm_boundary_scope(
         registry=registry,
         functions=functions,
         liquid_state_name=space.state_names[0],
@@ -2791,7 +2791,7 @@ def _collect_bqsegm_case_spec(*, context: SolverBuildContext) -> _BQSEGMCaseSpec
     )
     when_callable = functions[piece_set.when_func]
     otherwise_callable = functions[piece_set.otherwise_func]
-    return _BQSEGMCaseSpec(
+    return _NBEGMCaseSpec(
         when_callable=when_callable,
         otherwise_callable=otherwise_callable,
         when_func=piece_set.when_func,
@@ -2804,8 +2804,8 @@ def _collect_bqsegm_case_spec(*, context: SolverBuildContext) -> _BQSEGMCaseSpec
     )
 
 
-def _build_bqsegm_core(
-    *, savings_grid: Float1D, target: RegimeName, case_spec: _BQSEGMCaseSpec
+def _build_nbegm_core(
+    *, savings_grid: Float1D, target: RegimeName, case_spec: _NBEGMCaseSpec
 ) -> Callable:
     """Build the jittable case-piece EGM core closing over the case split.
 
@@ -2813,7 +2813,7 @@ def _build_bqsegm_core(
     threshold from the regime's flat params, runs the two-case EGM merge, and
     returns the value array and the marginal-value carry on the liquid grid.
     """
-    from _lcm.egm.bqsegm_step import bqsegm_one_asset_step  # noqa: PLC0415
+    from _lcm.egm.nbegm_step import nbegm_one_asset_step  # noqa: PLC0415
 
     def core(
         *,
@@ -2835,7 +2835,7 @@ def _build_bqsegm_core(
             }
         )
         asset_limit = params[f"{case_spec.predicate_name}__{case_spec.threshold_name}"]
-        value, marginal, _policy = bqsegm_one_asset_step(
+        value, marginal, _policy = nbegm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
@@ -2861,7 +2861,7 @@ def _build_bqsegm_core(
 
 
 @dataclass(frozen=True)
-class _BQSEGMSource:
+class _NBEGMSource:
     """One breakpoint of one schedule, in solver-facing form.
 
     A regime may declare several piecewise-affine schedules, each bracketing on
@@ -2898,7 +2898,7 @@ class _BQSEGMSource:
 
 
 @dataclass(frozen=True)
-class _BQSEGMScheduleSpec:
+class _NBEGMScheduleSpec:
     """Build-time statics for a continuous piecewise-affine schedule regime."""
 
     coh_of_liquid_dag: Callable
@@ -2926,7 +2926,7 @@ class _BQSEGMScheduleSpec:
     """Qualified parameter names of the schedule's thresholds."""
     breakpoint_kinds: tuple[str, ...]
     """Discontinuity kind per threshold, in the schedule's declared order."""
-    sources: tuple[_BQSEGMSource, ...] = ()
+    sources: tuple[_NBEGMSource, ...] = ()
     """Every breakpoint across all declared schedules, merged on the liquid axis.
     The ride-along core maps each source to its own per-cell asset preimage."""
     discount_factor_dag: Callable | None = None
@@ -2981,7 +2981,7 @@ def _fail_if_discrete_action_feeds_continuation(
 
     def _reject(where: str) -> None:
         msg = (
-            f"BQSEGM's discrete envelope shares one continuation across the "
+            f"NBEGM's discrete envelope shares one continuation across the "
             f"branches of {action_name!r}, so the action may shift only the "
             f"current budget and utility; regime {context.regime_name!r} reads it "
             f"in {where}. Fix the action there, or use a solver that carries a "
@@ -3063,7 +3063,7 @@ def _fail_if_budget_nonaffine_in_liquid(
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
 
-    BQSEGM recovers each interval's budget from its slope and value at one interior
+    NBEGM recovers each interval's budget from its slope and value at one interior
     point (`interval_segment_coefficients`), exact only when the composed budget is
     affine in the liquid state on the interval — a smooth nonlinear budget would be
     mis-tangented at every other point. A declared jump / kink is a *selection*
@@ -3129,7 +3129,7 @@ def _fail_if_budget_nonaffine_in_liquid(
     worst_second = _max_abs_second()
     if worst_second is not None and worst_second > tol:
         msg = (
-            f"BQSEGM's budget must be affine in the liquid state {liquid_name!r} "
+            f"NBEGM's budget must be affine in the liquid state {liquid_name!r} "
             f"within each interval, but regime {regime_name!r} has a nonzero second "
             "derivative there — a smooth nonlinear budget is not recovered by the "
             "per-interval affine segment. Declare the nonsmoothness as breakpoints or "
@@ -3140,7 +3140,7 @@ def _fail_if_budget_nonaffine_in_liquid(
     slopes = _liquid_slopes() if require_unit_slope else None
     if slopes is not None and any(abs(slope - 1.0) > tol for slope in slopes):
         msg = (
-            f"BQSEGM's all-jump path solves the budget from per-interval intercepts "
+            f"NBEGM's all-jump path solves the budget from per-interval intercepts "
             f"assuming unit slope in the liquid state, but regime {regime_name!r} has "
             f"a budget slope of {slopes[0]:.4g} in {liquid_name!r}. Declare a "
             "coincident `continuous_kink` so the non-unit affine slope routes to the "
@@ -3158,7 +3158,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     """Reject a carried-state law that varies smoothly in the liquid state.
 
     When a carried state's law of motion reads the current liquid (Euler) state,
-    BQSEGM binds the liquid state to each interval's node and reuses that
+    NBEGM binds the liquid state to each interval's node and reuses that
     continuation row across the interval — exact only when the law's liquid
     dependence is piecewise-constant (a level switched at a declared cliff, so its
     derivative in the liquid state is zero between breakpoints). A smooth (affine or
@@ -3215,7 +3215,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
         worst = _max_abs_first_derivative(next_state_func)
         if worst is not None and worst > tol:
             msg = (
-                "BQSEGM binds the liquid state to each interval's node when a carried "
+                "NBEGM binds the liquid state to each interval's node when a carried "
                 "state's law reads it, exact only if that dependence is "
                 "piecewise-constant (switched at a declared cliff). In regime "
                 f"{regime_name!r} the law of motion for {target!r} varies smoothly in "
@@ -3232,7 +3232,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     worst = _max_abs_first_derivative(continuation_plan.compute_regime_transition_probs)
     if worst is not None and worst > tol:
         msg = (
-            "BQSEGM binds the liquid state to each interval's node when the regime-"
+            "NBEGM binds the liquid state to each interval's node when the regime-"
             "transition probabilities read it, exact only if that dependence is "
             "piecewise-constant (switched at a declared cliff). In regime "
             f"{regime_name!r} the regime-transition probabilities vary smoothly in "
@@ -3244,12 +3244,12 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
         raise RegimeInitializationError(msg)
 
 
-def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
+def _collect_nbegm_schedule_spec(  # noqa: PLR0915
     *,
     context: SolverBuildContext,
     budget_target: str = "coh",
     continuous_state: StateName | None = None,
-) -> _BQSEGMScheduleSpec:
+) -> _NBEGMScheduleSpec:
     """Collect a regime's piecewise-affine schedules into one breakpoint partition.
 
     A regime may declare several schedules, each bracketing on its own monotone
@@ -3261,16 +3261,16 @@ def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
     """
     import inspect  # noqa: PLC0415
 
-    from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
+    from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
     user_functions = cast(
         "Mapping[FunctionName, Callable[..., object]]",
         context.user_regimes[context.regime_name].functions,
     )
-    registry = collect_bqsegm_metadata(functions=user_functions)
+    registry = collect_nbegm_metadata(functions=user_functions)
     schedules = registry.piecewise_affine_schedules
     if not schedules:
-        msg = "BQSEGM schedule path needs at least one piecewise-affine schedule."
+        msg = "NBEGM schedule path needs at least one piecewise-affine schedule."
         raise RegimeInitializationError(msg)
     state_names = context.state_action_space.state_names
     # The Euler axis is one continuous state, not the first state axis: the
@@ -3288,14 +3288,14 @@ def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
     if continuous_state is not None:
         if continuous_state not in continuous_states:
             msg = (
-                f"BQSEGM `continuous_state={continuous_state!r}` is not a continuous "
+                f"NBEGM `continuous_state={continuous_state!r}` is not a continuous "
                 f"state of the regime; its continuous states are {continuous_states}."
             )
             raise RegimeInitializationError(msg)
         liquid_state_name = continuous_state
     elif len(continuous_states) != 1:
         msg = (
-            "BQSEGM schedule path needs exactly one continuous (liquid) state, or "
+            "NBEGM schedule path needs exactly one continuous (liquid) state, or "
             "`continuous_state` naming the Euler axis when the regime carries a "
             f"continuous co-state; the regime has {continuous_states}."
         )
@@ -3313,7 +3313,7 @@ def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
             if schedule.variable != liquid_state_name
         )
         msg = (
-            f"BQSEGM schedule varies in the derived quantity/quantities "
+            f"NBEGM schedule varies in the derived quantity/quantities "
             f"{derived_vars} but the regime has no ride-along co-state; a derived "
             "schedule maps thresholds to per-cell asset preimages and is only "
             "wired on the ride-along path."
@@ -3346,14 +3346,14 @@ def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
             derived_dags[variable] = (dag, params, states_read)
         return derived_dags[variable]
 
-    sources: list[_BQSEGMSource] = []
+    sources: list[_NBEGMSource] = []
     for schedule in schedules:
         is_liquid_direct = schedule.variable == liquid_state_name
         dag, params, states_read = (
             (None, (), ()) if is_liquid_direct else _derived_dag(schedule.variable)
         )
         sources.extend(
-            _BQSEGMSource(
+            _NBEGMSource(
                 variable=schedule.variable,
                 threshold_param_name=f"{schedule.output}__{bracket.threshold}",
                 kind=bracket.kind,
@@ -3410,7 +3410,7 @@ def _collect_bqsegm_schedule_spec(  # noqa: PLR0915
         ),
         regime_name=context.regime_name,
     )
-    return _BQSEGMScheduleSpec(
+    return _NBEGMScheduleSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
         utility_dag=utility_dag,
@@ -3483,11 +3483,11 @@ def _solve_cliffed_budget(
     The kind flags come from `_schedule_kind_flags`. Returns this period's value,
     marginal value of liquid, and consumption policy on `liquid`.
     """
-    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
-        bqsegm_multi_interval_step,
-        bqsegm_one_asset_step,
-        bqsegm_recurring_jump_step,
-        bqsegm_unified_step,
+    from _lcm.egm.nbegm_step import (  # noqa: PLC0415
+        nbegm_multi_interval_step,
+        nbegm_one_asset_step,
+        nbegm_recurring_jump_step,
+        nbegm_unified_step,
     )
 
     gross_return = 1.0 + return_liquid
@@ -3496,7 +3496,7 @@ def _solve_cliffed_budget(
         # exactly, including its recurring jumped continuation: each interval's
         # affine segment has slope 1, so its intercept is the additive cash-on-hand
         # level on that side of the cliff.
-        return bqsegm_one_asset_step(
+        return nbegm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
@@ -3514,7 +3514,7 @@ def _solve_cliffed_budget(
         # N cliffs: each affine segment has slope 1, so its intercept is the additive
         # cash-on-hand level on that side, and the recurring step resolves every jump
         # (boundary-targeting + jump-aware continuation).
-        return bqsegm_recurring_jump_step(
+        return nbegm_recurring_jump_step(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
@@ -3531,7 +3531,7 @@ def _solve_cliffed_budget(
         # Jumps and kinks together: the unified step solves each continuous case by
         # coh inversion and masks across the jumps. The jump_mask is aligned with the
         # sorted breakpoints (the schedule declares its thresholds ascending).
-        return bqsegm_unified_step(
+        return nbegm_unified_step(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
@@ -3545,7 +3545,7 @@ def _solve_cliffed_budget(
             breakpoints=breakpoints,
             jump_mask=jump_mask,
         )
-    return bqsegm_multi_interval_step(
+    return nbegm_multi_interval_step(
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid,
@@ -3561,8 +3561,8 @@ def _solve_cliffed_budget(
     )
 
 
-def _build_bqsegm_continuous_core(
-    *, savings_grid: Float1D, target: RegimeName, schedule_spec: _BQSEGMScheduleSpec
+def _build_nbegm_continuous_core(
+    *, savings_grid: Float1D, target: RegimeName, schedule_spec: _NBEGMScheduleSpec
 ) -> Callable:
     """Build the jittable continuous-schedule EGM core for one continuation target.
 
@@ -3570,7 +3570,7 @@ def _build_bqsegm_continuous_core(
     active affine cash-on-hand segment per interval by differentiating the composed
     `coh` at each interval's representative, and runs the kind-appropriate EGM step.
     """
-    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
+    from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
         interval_midpoints,
         interval_segment_coefficients,
     )
@@ -3630,7 +3630,7 @@ def _build_bqsegm_continuous_core(
     return core
 
 
-def _build_bqsegm_continuation_plan(
+def _build_nbegm_continuation_plan(
     *,
     context: SolverBuildContext,
     period: int,
@@ -3650,7 +3650,7 @@ def _build_bqsegm_continuation_plan(
     compute_regime_transition_probs = context.compute_regime_transition_probs
     if compute_regime_transition_probs is None:
         msg = (
-            f"BQSEGM regime {context.regime_name!r} has no regime transition; the "
+            f"NBEGM regime {context.regime_name!r} has no regime transition; the "
             "case-piece solver is for non-terminal regimes only."
         )
         raise RegimeInitializationError(msg)
@@ -3703,13 +3703,13 @@ def _solve_ride_along_cell_step(
     static for a single variable, a per-cell traced tuple when several variables
     reorder per cell.
     """
-    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
-        bqsegm_multi_interval_step_savings,
-        bqsegm_unified_step_savings,
+    from _lcm.egm.nbegm_step import (  # noqa: PLC0415
+        nbegm_multi_interval_step_savings,
+        nbegm_unified_step_savings,
     )
 
     if has_jump:
-        return bqsegm_unified_step_savings(
+        return nbegm_unified_step_savings(
             cont_value=cont_value,
             cont_marginal=cont_marginal,
             liquid_grid=liquid_grid,
@@ -3724,7 +3724,7 @@ def _solve_ride_along_cell_step(
             extra_savings=extra_savings,
             extra_cont_value=extra_cont_value,
         )
-    return bqsegm_multi_interval_step_savings(
+    return nbegm_multi_interval_step_savings(
         cont_value=cont_value,
         cont_marginal=cont_marginal,
         liquid_grid=liquid_grid,
@@ -3812,7 +3812,7 @@ def _indexed_threshold_value(
 
 
 @dataclass(frozen=True)
-class _BQSEGMRideAlongStatics:
+class _NBEGMRideAlongStatics:
     """Build-time config the ride-along continuation and envelope cores share.
 
     Both cores rebuild each ride-along cell's breakpoint partition, budget schedule,
@@ -3821,7 +3821,7 @@ class _BQSEGMRideAlongStatics:
     is a Python-level static derived once from the schedule spec and continuation plan.
     """
 
-    sources: tuple[_BQSEGMSource, ...]
+    sources: tuple[_NBEGMSource, ...]
     """Every declared breakpoint, merged on the liquid axis."""
     jump_flags_arr: BoolND
     """Per-source jump indicator in declared order."""
@@ -3830,7 +3830,7 @@ class _BQSEGMRideAlongStatics:
     publish_jump_topology: bool
     """Whether the carry publishes jump preimages as duplicated row abscissae.
 
-    `False` (`BQSEGM.jump_read == "bridged"`) keeps the within-period case solve
+    `False` (`NBEGM.jump_read == "bridged"`) keeps the within-period case solve
     jump-aware but carries plain liquid-grid rows with no breakpoints, so
     parents interpolate across the cliffs and the stochastic-dim fold stays
     available.
@@ -3878,10 +3878,10 @@ class _BQSEGMRideAlongStatics:
     """Length of the post-decision savings grid."""
     envelope_segment_block_size: int
     """Block size for streaming the merged upper envelope over candidate segments;
-    `0` keeps the one-shot dense envelope (see `BQSEGM.envelope_segment_block_size`)."""
+    `0` keeps the one-shot dense envelope (see `NBEGM.envelope_segment_block_size`)."""
     cell_block_size: int
     """Block size for streaming both ride-along cores over ride cells; `0` vmaps
-    the whole flattened mesh at once (see `BQSEGM.cell_block_size`)."""
+    the whole flattened mesh at once (see `NBEGM.cell_block_size`)."""
     n_action_branches: int
     """Number of discrete-action branches the continuation carries a leading axis
     over; `0` when the regime carries no discrete action (no branch axis). A branch
@@ -3901,17 +3901,17 @@ class _BQSEGMRideAlongStatics:
         return count
 
 
-def _bqsegm_ride_along_statics(
+def _nbegm_ride_along_statics(
     *,
     savings_grid: Float1D,
-    schedule_spec: _BQSEGMScheduleSpec,
+    schedule_spec: _NBEGMScheduleSpec,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     envelope_segment_block_size: int = 0,
     cell_block_size: int = 0,
     interval_batch_size: int = 0,
     branch_batch_size: int = 0,
     publish_jump_topology: bool = True,
-) -> _BQSEGMRideAlongStatics:
+) -> _NBEGMRideAlongStatics:
     """Derive the static config the ride-along continuation and envelope cores share.
 
     Partitions the schedule's breakpoints, classifies the jump structure, and reads
@@ -3924,7 +3924,7 @@ def _bqsegm_ride_along_statics(
     kinds = tuple(source.kind for source in sources)
     if "hard_constraint" in kinds:
         msg = (
-            "BQSEGM ride-along path supports continuous-kink and jump schedules; "
+            "NBEGM ride-along path supports continuous-kink and jump schedules; "
             f"got breakpoint kinds {kinds}. A hard-constraint (floor) breakpoint "
             "with a ride-along co-state is a later slice."
         )
@@ -3996,7 +3996,7 @@ def _bqsegm_ride_along_statics(
             name for name in ride_names if name in discount_arg_names
         )
 
-    return _BQSEGMRideAlongStatics(
+    return _NBEGMRideAlongStatics(
         sources=sources,
         jump_flags_arr=jump_flags_arr,
         n_jumps=n_jumps,
@@ -4028,9 +4028,9 @@ def _bqsegm_ride_along_statics(
     )
 
 
-def _bqsegm_cell_breakpoints(
+def _nbegm_cell_breakpoints(
     *,
-    statics: _BQSEGMRideAlongStatics,
+    statics: _NBEGMRideAlongStatics,
     kwargs: Mapping[str, Any],
     cell: dict[str, Any],
     liquid_grid: Float1D,
@@ -4049,14 +4049,14 @@ def _bqsegm_cell_breakpoints(
     """
     import inspect  # noqa: PLC0415
 
-    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
+    from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
         clamp_breakpoints_to_grid,
         linear_asset_preimage,
     )
 
     liquid_name = statics.liquid_name
 
-    def cell_breakpoint(source: _BQSEGMSource) -> FloatND:
+    def cell_breakpoint(source: _NBEGMSource) -> FloatND:
         threshold_value = _indexed_threshold_value(
             table=kwargs[source.threshold_param_name],
             subkey=source.threshold_subkey,
@@ -4104,7 +4104,7 @@ def _cliff_savings_targets(
     *,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     regime_name: RegimeName,
-    statics: _BQSEGMRideAlongStatics,
+    statics: _NBEGMRideAlongStatics,
     kwargs: dict[str, Any],
     cell: dict[str, Any],
     combo_pool: dict[str, Any],
@@ -4126,7 +4126,7 @@ def _cliff_savings_targets(
     """
     read = continuation_plan.child_reads[regime_name]
     post_decision_name = continuation_plan.post_decision_name
-    breakpoints, jump_positions = _bqsegm_cell_breakpoints(
+    breakpoints, jump_positions = _nbegm_cell_breakpoints(
         statics=statics, kwargs=kwargs, cell=cell, liquid_grid=liquid_grid, dtype=dtype
     )
     jumps = jnp.stack([breakpoints[position] for position in jump_positions])
@@ -4161,14 +4161,14 @@ def _cliff_savings_targets(
     )(midpoints)
 
 
-def _build_bqsegm_continuation_core(  # noqa: C901
+def _build_nbegm_continuation_core(  # noqa: C901
     *,
     savings_grid: Float1D,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
-    statics: _BQSEGMRideAlongStatics,
+    statics: _NBEGMRideAlongStatics,
     regime_name: RegimeName,
     cliff_candidates: bool,
-    schedule_spec: _BQSEGMScheduleSpec,
+    schedule_spec: _NBEGMScheduleSpec,
 ) -> Callable:
     """Build the continuation half of the ride-along solve, jitted in isolation.
 
@@ -4183,8 +4183,8 @@ def _build_bqsegm_continuation_core(  # noqa: C901
     The heavy fan-out lives only here: this core builds no utility, cash-on-hand, or
     discount closure, so its compiled program never carries the EGM/envelope math.
     """
-    from _lcm.egm.bqsegm_breakpoints import interval_midpoints  # noqa: PLC0415
     from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
+    from _lcm.egm.nbegm_breakpoints import interval_midpoints  # noqa: PLC0415
 
     liquid_name = statics.liquid_name
     ride_names = statics.ride_names
@@ -4276,7 +4276,7 @@ def _build_bqsegm_continuation_core(  # noqa: C901
                     if action_name is not None and action_name in combo_pool
                     else {}
                 )
-                breakpoints, _ = _bqsegm_cell_breakpoints(
+                breakpoints, _ = _nbegm_cell_breakpoints(
                     statics=statics,
                     kwargs=kwargs,
                     cell=cell,
@@ -4401,11 +4401,11 @@ def _vmapped_cell_solver(
     ), (*flat_cells, cont_value_stack, cont_marginal_stack, cliff_savings_stack)
 
 
-def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
+def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     *,
     savings_grid: Float1D,
-    schedule_spec: _BQSEGMScheduleSpec,
-    statics: _BQSEGMRideAlongStatics,
+    schedule_spec: _NBEGMScheduleSpec,
+    statics: _NBEGMRideAlongStatics,
 ) -> Callable:
     """Build the EGM/envelope half of the ride-along solve, jitted in isolation.
 
@@ -4420,12 +4420,12 @@ def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
     cheap closed-form work; this core calls no continuation reader, so the heavy
     transition fan-out never enters its compiled program.
     """
-    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
+    from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
         interval_midpoints,
         interval_segment_coefficients,
     )
-    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
-        bqsegm_per_interval_continuation_step_savings,
+    from _lcm.egm.nbegm_step import (  # noqa: PLC0415
+        nbegm_per_interval_continuation_step_savings,
     )
     from _lcm.egm.numeric_inverse import (  # noqa: PLC0415
         numeric_inverse_marginal_utility,
@@ -4494,7 +4494,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
             # read skips the augmentation; each branch then partitions on its own
             # breakpoints (recomputed inside `solve_branch`) over the plain liquid grid.
             if statics.n_published_jumps:
-                breakpoints, jump_positions = _bqsegm_cell_breakpoints(
+                breakpoints, jump_positions = _nbegm_cell_breakpoints(
                     statics=statics,
                     kwargs=kwargs,
                     cell=cell,
@@ -4565,7 +4565,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
                 # interval partition and its midpoints — differ per branch. When the
                 # action does not, the binding is dropped and this matches the shared
                 # cell partition.
-                branch_breakpoints, branch_jump_positions = _bqsegm_cell_breakpoints(
+                branch_breakpoints, branch_jump_positions = _nbegm_cell_breakpoints(
                     statics=statics,
                     kwargs=kwargs,
                     cell=cell,
@@ -4584,7 +4584,7 @@ def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
                     # feasible where a partly-binding kink makes an interval's recovered
                     # affine budget extrapolate below zero.
                     coh_grid = jax.vmap(coh_of_liquid)(query_grid)
-                    return bqsegm_per_interval_continuation_step_savings(
+                    return nbegm_per_interval_continuation_step_savings(
                         cont_value=branch_cont_value,
                         cont_marginal=branch_cont_marginal,
                         liquid_grid=query_grid,
@@ -4721,11 +4721,11 @@ def _build_bqsegm_envelope_core(  # noqa: C901, PLR0915
 
 
 @dataclass(frozen=True)
-class _BQSEGMDiscreteSpec:
+class _NBEGMDiscreteSpec:
     """Build-time statics for a discrete-action regime with a smooth budget.
 
     The discrete action shifts cash-on-hand; the continuous consumption/savings
-    subproblem is solved per discrete-action value by BQSEGM and the discrete choice
+    subproblem is solved per discrete-action value by NBEGM and the discrete choice
     is taken by the upper envelope over the branch values.
     """
 
@@ -4743,19 +4743,19 @@ class _BQSEGMDiscreteSpec:
     """Integer codes of the discrete action's grid values."""
 
 
-def _collect_bqsegm_discrete_spec(
+def _collect_nbegm_discrete_spec(
     *,
     context: SolverBuildContext,
     budget_target: str = "coh",
     post_decision_function: str | None = None,
-) -> _BQSEGMDiscreteSpec:
+) -> _NBEGMDiscreteSpec:
     """Collect the single binary/multi-valued discrete action of a smooth regime."""
     import inspect  # noqa: PLC0415
 
     space = context.state_action_space
     if len(space.discrete_actions) != 1:
         msg = (
-            "BQSEGM discrete-envelope path supports exactly one discrete action; "
+            "NBEGM discrete-envelope path supports exactly one discrete action; "
             f"the regime declares {len(space.discrete_actions)}."
         )
         raise RegimeInitializationError(msg)
@@ -4776,7 +4776,7 @@ def _collect_bqsegm_discrete_spec(
         for name in coh_args
         if name not in (liquid_state_name, discrete_action_name)
     )
-    return _BQSEGMDiscreteSpec(
+    return _NBEGMDiscreteSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
         liquid_state_name=liquid_state_name,
@@ -4786,7 +4786,7 @@ def _collect_bqsegm_discrete_spec(
 
 
 @dataclass(frozen=True)
-class _BQSEGMScheduleDiscreteSpec:
+class _NBEGMScheduleDiscreteSpec:
     """Build-time statics for a discrete action over a cliffed single-liquid budget.
 
     Each discrete-action value shifts cash-on-hand and the budget also carries a
@@ -4814,22 +4814,22 @@ class _BQSEGMScheduleDiscreteSpec:
     """Discontinuity kind per threshold, in the schedule's declared order."""
 
 
-def _collect_bqsegm_schedule_discrete_spec(
+def _collect_nbegm_schedule_discrete_spec(
     *,
     context: SolverBuildContext,
     budget_target: str = "coh",
     continuous_state: StateName | None = None,
     post_decision_function: str | None = None,
-) -> _BQSEGMScheduleDiscreteSpec:
+) -> _NBEGMScheduleDiscreteSpec:
     """Collect a single discrete action layered over a single-liquid cliff schedule."""
     import inspect  # noqa: PLC0415
 
-    from _lcm.egm.bqsegm import collect_bqsegm_metadata  # noqa: PLC0415
+    from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
     space = context.state_action_space
     if len(space.discrete_actions) != 1:
         msg = (
-            "BQSEGM schedule+discrete path supports exactly one discrete action; "
+            "NBEGM schedule+discrete path supports exactly one discrete action; "
             f"the regime declares {len(space.discrete_actions)}."
         )
         raise RegimeInitializationError(msg)
@@ -4847,7 +4847,7 @@ def _collect_bqsegm_schedule_discrete_spec(
         liquid_state_name = continuous_states[0]
     else:
         msg = (
-            "BQSEGM schedule+discrete path needs exactly one continuous (liquid) "
+            "NBEGM schedule+discrete path needs exactly one continuous (liquid) "
             f"state; the regime has {continuous_states}."
         )
         raise RegimeInitializationError(msg)
@@ -4862,11 +4862,11 @@ def _collect_bqsegm_schedule_discrete_spec(
     user_functions = {
         name: func for name, func in context.functions.items() if callable(func)
     }
-    registry = collect_bqsegm_metadata(functions=user_functions)
+    registry = collect_nbegm_metadata(functions=user_functions)
     schedules = registry.piecewise_affine_schedules
     if any(schedule.variable != liquid_state_name for schedule in schedules):
         msg = (
-            "BQSEGM schedule+discrete path handles schedules on the liquid state "
+            "NBEGM schedule+discrete path handles schedules on the liquid state "
             "only; a derived-variable schedule needs the ride-along path."
         )
         raise RegimeInitializationError(msg)
@@ -4883,7 +4883,7 @@ def _collect_bqsegm_schedule_discrete_spec(
         f"{first.output}__{bp.threshold}" for bp in first.breakpoints
     )
     breakpoint_kinds = tuple(bp.kind for bp in first.breakpoints)
-    return _BQSEGMScheduleDiscreteSpec(
+    return _NBEGMScheduleDiscreteSpec(
         coh_of_liquid_action_dag=coh_dag,
         coh_param_names=coh_param_names,
         liquid_state_name=liquid_state_name,
@@ -4925,11 +4925,11 @@ def _discrete_envelope_over_branches(
     return value, marginal
 
 
-def _build_bqsegm_schedule_discrete_core(
+def _build_nbegm_schedule_discrete_core(
     *,
     savings_grid: Float1D,
     target: RegimeName,
-    spec: _BQSEGMScheduleDiscreteSpec,
+    spec: _NBEGMScheduleDiscreteSpec,
     taste_shock_scale: float,
 ) -> Callable:
     """Build the discrete-envelope core over a cliffed single-liquid budget.
@@ -4941,7 +4941,7 @@ def _build_bqsegm_schedule_discrete_core(
     envelope over the branch values — the hard maximum, or the EV1 logsum under a
     taste-shock scale.
     """
-    from _lcm.egm.bqsegm_breakpoints import (  # noqa: PLC0415
+    from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
         interval_midpoints,
         interval_segment_coefficients,
     )
@@ -5015,22 +5015,22 @@ def _build_bqsegm_schedule_discrete_core(
     return core
 
 
-def _build_bqsegm_discrete_core(
+def _build_nbegm_discrete_core(
     *,
     savings_grid: Float1D,
     target: RegimeName,
-    discrete_spec: _BQSEGMDiscreteSpec,
+    discrete_spec: _NBEGMDiscreteSpec,
     taste_shock_scale: float,
 ) -> Callable:
     """Build the jittable discrete-envelope core for one continuation target.
 
     Per discrete-action value the core recovers the smooth budget's affine cash-on-
     hand and solves the continuous subproblem with the multi-interval step, then
-    takes the discrete choice by the upper envelope (`bqsegm_discrete_envelope_step`).
+    takes the discrete choice by the upper envelope (`nbegm_discrete_envelope_step`).
     """
-    from _lcm.egm.bqsegm_breakpoints import affine_coefficients  # noqa: PLC0415
-    from _lcm.egm.bqsegm_step import (  # noqa: PLC0415
-        bqsegm_discrete_envelope_step,
+    from _lcm.egm.nbegm_breakpoints import affine_coefficients  # noqa: PLC0415
+    from _lcm.egm.nbegm_step import (  # noqa: PLC0415
+        nbegm_discrete_envelope_step,
     )
 
     def core(
@@ -5062,7 +5062,7 @@ def _build_bqsegm_discrete_core(
                     "breakpoints": empty_breakpoints,
                 }
             )
-        value, marginal, _policy, _choice = bqsegm_discrete_envelope_step(
+        value, marginal, _policy, _choice = nbegm_discrete_envelope_step(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
