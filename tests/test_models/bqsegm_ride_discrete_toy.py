@@ -90,6 +90,25 @@ def next_liquid(
     return (1.0 + return_liquid) * (coh - consumption) + INCOME_SCALE * jnp.exp(income)
 
 
+def next_liquid_with_oop(
+    coh: FloatND,
+    consumption: ContinuousAction,
+    income: ContinuousState,
+    return_liquid: float,
+    oop: FloatND,
+) -> ContinuousState:
+    """Liquid law with an off-budget out-of-pocket cost on next assets.
+
+    The brute-force twin of `next_liquid_from_savings_with_oop` (`savings` is the
+    post-decision `coh - consumption`), so both solvers model the same economics.
+    """
+    return (
+        (1.0 + return_liquid) * (coh - consumption)
+        + INCOME_SCALE * jnp.exp(income)
+        - oop
+    )
+
+
 def next_liquid_from_savings(
     savings: FloatND,
     income: ContinuousState,
@@ -212,6 +231,10 @@ def build_model(
         else:
             liquid_law = next_liquid_from_savings
         constraints = {}
+    elif action_in_liquid_law:
+        alive_functions = {**alive_functions, "oop": oop}
+        liquid_law = next_liquid_with_oop
+        constraints = {"feasible": feasible}
     else:
         liquid_law = next_liquid
         constraints = {"feasible": feasible}

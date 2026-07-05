@@ -1811,7 +1811,7 @@ class BQSEGM(Solver):
             liquid_state_name=schedule_spec.liquid_state_name,
             budget_target=self.budget_target,
             post_decision_function=self.post_decision_function,
-            allow_costate_feed=True,
+            allow_continuation_feed=True,
         )
         # A published jump shares one breakpoint partition across the branches, so
         # the action may shift cash-on-hand but not the schedule variable itself —
@@ -2918,7 +2918,7 @@ def _fail_if_discrete_action_feeds_continuation(
     liquid_state_name: str,
     budget_target: str,
     post_decision_function: str | None,
-    allow_costate_feed: bool = False,
+    allow_continuation_feed: bool = False,
 ) -> None:
     """Reject a discrete action that shifts the continuation, not just the budget.
 
@@ -2938,11 +2938,11 @@ def _fail_if_discrete_action_feeds_continuation(
     law reads `coh` directly or a post-decision `savings` — is exempt, while any
     off-budget path is still caught.
 
-    `allow_costate_feed` exempts the non-liquid state-law channel: the ride-along
-    path carries a leading branch axis on the continuation (each branch reads its own
-    next-co-state coordinate), so an action feeding a co-state's law of motion is
-    supported there. The regime-transition and off-budget-liquid channels stay
-    refused regardless.
+    `allow_continuation_feed` exempts both state-law channels: the ride-along path
+    carries a leading branch axis on the continuation (each branch reads its own
+    next-state coordinate), so an action feeding a co-state's law of motion or next
+    liquid off the budget is supported there. The regime-transition channel stays
+    refused regardless — each branch would evolve to a different target.
     """
     import inspect  # noqa: PLC0415
 
@@ -2996,9 +2996,9 @@ def _fail_if_discrete_action_feeds_continuation(
                 candidate.func if isinstance(candidate, MarkovTransition) else candidate
             )
             if callable(func) and _law_reads_action(func, cut_budget=is_liquid):
-                if allow_costate_feed and not is_liquid:
+                if allow_continuation_feed:
                     # The branch-indexed continuation reads each branch's own
-                    # next-co-state, so a co-state-law feed is supported.
+                    # next-state coordinate, so any state-law feed is supported.
                     continue
                 where = (
                     f"the law of motion for {state_name!r} off the budget channel"
