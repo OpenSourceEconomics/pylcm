@@ -18,6 +18,7 @@ import jax.numpy as jnp
 import lcm
 from _lcm.grids.base import Grid
 from lcm import DiscreteGrid, LinSpacedGrid, Model, NormalIIDProcess, categorical
+from lcm.transition import MarkovTransition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -170,6 +171,25 @@ def next_liquid_from_savings_with_oop(
     return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(income) - oop
 
 
+def prob_stay_alive_action(
+    age: int, final_age_alive: float, buy_private: DiscreteAction
+) -> FloatND:
+    """Survival probability that rises when insured (reads the action).
+
+    The regime transition depends on the discrete action, so each `buy_private`
+    branch weights the alive-vs-dead continuation differently — the case a single
+    shared continuation cannot represent.
+    """
+    return jnp.where(age + 1 < final_age_alive, 0.85 + 0.1 * buy_private, 0.0)
+
+
+def prob_die_action(
+    age: int, final_age_alive: float, buy_private: DiscreteAction
+) -> FloatND:
+    """Death probability complementary to the action-dependent survival."""
+    return 1.0 - prob_stay_alive_action(age, final_age_alive, buy_private)
+
+
 def utility_with_action(
     consumption: ContinuousAction, crra: float, buy_private: DiscreteAction
 ) -> FloatND:
@@ -194,6 +214,7 @@ def build_model(
     action_in_costate: bool = False,
     action_in_liquid_law: bool = False,
     action_in_utility: bool = False,
+    action_in_regime_transition: bool = False,
     jump_schedule: bool = False,
     costate_reads_liquid: bool = False,
     costate_smooth: bool = False,
@@ -255,6 +276,14 @@ def build_model(
         liquid_law = next_liquid
         constraints = {"feasible": feasible}
 
+    survival_transition = (
+        {
+            "alive": MarkovTransition(prob_stay_alive_action),
+            "dead": MarkovTransition(prob_die_action),
+        }
+        if action_in_regime_transition
+        else None
+    )
     return make_alive_dead_model(
         n_periods=n_periods,
         n_liquid=n_liquid,
@@ -267,6 +296,7 @@ def build_model(
         extra_states=extra_states,
         extra_state_transitions=extra_state_transitions,
         extra_actions={"buy_private": DiscreteGrid(BuyPrivate)},
+        survival_transition=survival_transition,
     )
 
 

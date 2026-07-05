@@ -133,6 +133,7 @@ def make_alive_dead_model(
     extra_actions: Mapping[str, Grid] | None = None,
     extra_states: Mapping[str, Grid] | None = None,
     extra_state_transitions: Mapping[str, Any] | None = None,
+    survival_transition: Mapping[str, Any] | None = None,
 ) -> Model:
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 
@@ -180,7 +181,9 @@ def make_alive_dead_model(
             **(dict(extra_state_transitions) if extra_state_transitions else {}),
         },
         constraints=dict(constraints),
-        transition={
+        transition=dict(survival_transition)
+        if survival_transition is not None
+        else {
             "alive": MarkovTransition(prob_stay_alive),
             "dead": MarkovTransition(prob_die),
         },

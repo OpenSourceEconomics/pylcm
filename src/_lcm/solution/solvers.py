@@ -2931,11 +2931,12 @@ def _fail_if_discrete_action_feeds_continuation(
     law reads `coh` directly or a post-decision `savings` — is exempt, while any
     off-budget path is still caught.
 
-    `allow_continuation_feed` exempts both state-law channels: the ride-along path
-    carries a leading branch axis on the continuation (each branch reads its own
-    next-state coordinate), so an action feeding a co-state's law of motion or next
-    liquid off the budget is supported there. The regime-transition channel stays
-    refused regardless — each branch would evolve to a different target.
+    `allow_continuation_feed` exempts every continuation channel on the ride-along
+    path: it carries a leading branch axis on the continuation, and `bind_continuation`
+    reads the regime-transition probabilities and every next-state from the same
+    per-branch `combo_pool`, so a co-state law, next liquid off the budget, or the
+    regime transition all become branch-dependent for free. Each branch then reads its
+    own next-state coordinate and its own alive-vs-target weighting.
     """
     import inspect  # noqa: PLC0415
 
@@ -2953,7 +2954,8 @@ def _fail_if_discrete_action_feeds_continuation(
 
     transition_probs = context.compute_regime_transition_probs
     if (
-        transition_probs is not None
+        not allow_continuation_feed
+        and transition_probs is not None
         and action_name in inspect.signature(transition_probs).parameters
     ):
         _reject("the regime transition")
