@@ -7,6 +7,7 @@ from typing import Literal, cast
 import jax
 from jax import Array
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.typing import (
@@ -596,6 +597,9 @@ class Regime:
 
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
+
+    certainty_equivalent: CertaintyEquivalent | None = None
+    """Nonlinear certainty equivalent declared by the regime, if any."""
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""

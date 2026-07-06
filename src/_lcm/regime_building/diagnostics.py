@@ -16,6 +16,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
 from _lcm.regime_building.Q_and_F import get_compute_intermediates, get_period_targets
@@ -50,6 +51,7 @@ def _build_compute_intermediates_per_period(
     grids: MappingProxyType[StateOrActionName, Grid],
     ages: AgeGrid,
     enable_jit: bool,
+    certainty_equivalent: CertaintyEquivalent | None = None,
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
@@ -78,6 +80,8 @@ def _build_compute_intermediates_per_period(
             for per-state batch sizes.
         ages: Age grid for the model.
         enable_jit: Whether to JIT-compile the fused closure.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None`.
 
     Returns:
         Immutable mapping of period index to fused closure.
@@ -113,6 +117,7 @@ def _build_compute_intermediates_per_period(
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            certainty_equivalent=certainty_equivalent,
         )
         mapped = _productmap_over_state_action_space(
             func=scalar,

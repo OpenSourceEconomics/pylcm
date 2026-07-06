@@ -12,6 +12,7 @@ from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.engine import (
     Regime,
@@ -194,6 +195,7 @@ def process_regimes(
             ages=ages,
             enable_jit=enable_jit,
             has_taste_shocks=user_regime.taste_shocks is not None,
+            certainty_equivalent=user_regime.certainty_equivalent,
             solver=user_regime.solver,
         )
 
@@ -216,6 +218,7 @@ def process_regimes(
             solve_stochastic_transition_names=solution.stochastic_transition_names,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
             has_taste_shocks=user_regime.taste_shocks is not None,
+            certainty_equivalent=user_regime.certainty_equivalent,
         )
 
         stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -233,6 +236,7 @@ def process_regimes(
             stochastic_state_transitions=stochastic_state_transitions,
             granular_param_expansions=granular_param_expansions,
             has_taste_shocks=user_regime.taste_shocks is not None,
+            certainty_equivalent=user_regime.certainty_equivalent,
         )
 
     return ensure_containers_are_immutable(canonical_regimes)
@@ -254,6 +258,7 @@ def _build_solution_phase(
     ages: AgeGrid,
     enable_jit: bool,
     has_taste_shocks: bool,
+    certainty_equivalent: CertaintyEquivalent | None,
     solver: Solver,
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
@@ -276,6 +281,8 @@ def _build_solution_phase(
         enable_jit: Whether to jit the internal functions.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None`.
         solver: The regime's solver; the engine calls `validate` then
             `build_period_kernels` on it to obtain the per-period kernels.
 
@@ -356,6 +363,7 @@ def _build_solution_phase(
             ages=ages,
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
+            certainty_equivalent=certainty_equivalent,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             flat_param_names=flat_param_names,
@@ -370,6 +378,7 @@ def _build_solution_phase(
             grids=all_grids[regime_name],
             ages=ages,
             enable_jit=enable_jit,
+            certainty_equivalent=certainty_equivalent,
         )
 
     # Dispatch the per-period kernel build polymorphically on the regime's
@@ -382,6 +391,7 @@ def _build_solution_phase(
         grids=all_grids[regime_name],
         enable_jit=enable_jit,
         has_taste_shocks=has_taste_shocks,
+        certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
     )
@@ -423,6 +433,7 @@ def _build_simulation_phase(
     solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     has_taste_shocks: bool,
+    certainty_equivalent: CertaintyEquivalent | None,
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -460,6 +471,8 @@ def _build_simulation_phase(
             function, used for Q_and_F in both phases.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None`.
 
     Returns:
         Complete simulate functions container.
@@ -546,6 +559,7 @@ def _build_simulation_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             ages=ages,
             flat_param_names=flat_param_names,
+            certainty_equivalent=certainty_equivalent,
         )
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
@@ -1669,6 +1683,7 @@ def _build_Q_and_F_per_period(
     ages: AgeGrid,
     flat_param_names: frozenset[str],
     co_map_state_names: tuple[StateName, ...] = (),
+    certainty_equivalent: CertaintyEquivalent | None = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
@@ -1691,6 +1706,8 @@ def _build_Q_and_F_per_period(
             V-interpolation info.
         ages: Age grid for the model.
         flat_param_names: Frozenset of flat parameter names for the regime.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None`.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -1719,6 +1736,7 @@ def _build_Q_and_F_per_period(
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             co_map_state_names=co_map_state_names,
+            certainty_equivalent=certainty_equivalent,
         )
 
     # Map each period to its group's function

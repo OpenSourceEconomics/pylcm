@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
 from _lcm.typing import (
@@ -50,6 +51,14 @@ class SolverBuildContext:
 
     has_taste_shocks: bool
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
+
+    certainty_equivalent: CertaintyEquivalent | None = None
+    """Nonlinear certainty equivalent declared by the regime, if any.
+
+    `GridSearch` consumes it via the compiled Q-and-F closures; solvers
+    that exploit the linear-expectation structure of the continuation
+    (e.g. Euler-inversion EGM) must reject regimes that declare one.
+    """
 
     co_map_state_names: tuple[StateName, ...] = ()
     """Fixed, distributed state names co-mapped with the continuation V.

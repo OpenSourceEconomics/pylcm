@@ -37,7 +37,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _default_H
+from lcm.temporal_aggregation import H_linear
 
 
 def test_claw_checks_lcm_simulation() -> None:
@@ -94,7 +94,7 @@ def test_claw_checks_lcm_engine() -> None:
 def test_claw_checks_lcm_regime() -> None:
     """Type-violating arguments to `lcm.regime` helpers raise."""
     with pytest.raises(BeartypeCallHintViolation):
-        _default_H(
+        H_linear(
             utility=np.array([1.0]),  # ty: ignore[invalid-argument-type]
             E_next_V=jnp.array([1.0]),
             discount_factor=jnp.array([0.95]),
