@@ -1957,7 +1957,7 @@ class NBEGM(Solver):
                     continuation_plan=plan,
                     liquid_name=schedule_spec.liquid_state_name,
                     regime_name=context.regime_name,
-                    int_arg_names=_int_probe_arg_names(context.grids),
+                    int_arg_values=_int_probe_arg_values(context.grids),
                     probe_failure=self.probe_failure,
                 )
                 statics = _nbegm_ride_along_statics(
@@ -3085,7 +3085,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     liquid_name: str,
     require_unit_slope: bool,
     regime_name: str,
-    int_arg_names: frozenset[str] = frozenset(),
+    int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
@@ -3105,7 +3105,10 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
 
     The probe evaluates the composed budget's first and second liquid-derivatives at
     a few interior points, with the other arguments filled by two constant sets so a
-    parameter-dependent slope is caught. A budget the probe cannot evaluate or
+    parameter-dependent slope is caught; each integer-coded argument is additionally
+    swept over its grid's actual codes one at a time. The probe is a finite
+    diagnostic, not a certificate — a nonlinearity whose curvature vanishes at every
+    probed point passes undetected. A budget the probe cannot evaluate or
     differentiate on plain scalars is refused: the per-interval inversion's
     affinity precondition would otherwise go unverified.
     """
@@ -3114,14 +3117,21 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     arg_names = tuple(inspect.signature(coh_dag).parameters)
     if liquid_name not in arg_names:
         return
+    int_arg_names = frozenset(int_arg_values)
 
     def _budget_of_liquid(
-        liquid_value: FloatND, fill: float, *, array_floats: bool = False
+        liquid_value: FloatND,
+        fill: float,
+        *,
+        array_floats: bool = False,
+        int_overrides: Mapping[str, int] = MappingProxyType({}),
     ) -> FloatND:
         kwargs = {
             name: (
                 liquid_value
                 if name == liquid_name
+                else jnp.asarray(int_overrides[name], dtype=jnp.int32)
+                if name in int_overrides
                 else _probe_fill(name, fill, int_arg_names, array_floats=array_floats)
             )
             for name in arg_names
@@ -3160,14 +3170,17 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
                     float(
                         jax.grad(
                             jax.grad(
-                                lambda a, f=fill: _budget_of_liquid(
-                                    a, f, array_floats=array_floats
+                                lambda a, f=fill, o=overrides: _budget_of_liquid(
+                                    a, f, array_floats=array_floats, int_overrides=o
                                 )
                             )
                         )(jnp.asarray(sample))
                     )
                 )
                 for fill in (1.0, 3.0)
+                for overrides in _int_code_sweeps(
+                    arg_names=arg_names, int_arg_values=int_arg_values
+                )
                 for sample in (0.37, 1.63, 2.71)
             ]
 
@@ -3186,12 +3199,15 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
             return tuple(
                 float(
                     jax.grad(
-                        lambda a, f=fill: _budget_of_liquid(
-                            a, f, array_floats=array_floats
+                        lambda a, f=fill, o=overrides: _budget_of_liquid(
+                            a, f, array_floats=array_floats, int_overrides=o
                         )
                     )(jnp.asarray(x))
                 )
                 for fill, x in ((1.0, 1.0), (3.0, 2.0))
+                for overrides in _int_code_sweeps(
+                    arg_names=arg_names, int_arg_values=int_arg_values
+                )
             )
 
         try:
@@ -3250,10 +3266,39 @@ def _probe_fill(
     return jnp.asarray(fill)
 
 
-def _int_probe_arg_names(grids: Mapping[StateOrActionName, Grid]) -> frozenset[str]:
-    """Names of the regime's integer-coded (discrete-grid) states and actions."""
-    return frozenset(
-        name for name, grid in grids.items() if isinstance(grid, DiscreteGrid)
+def _int_code_sweeps(
+    *,
+    arg_names: tuple[str, ...],
+    int_arg_values: Mapping[str, tuple[int, ...]],
+) -> tuple[MappingProxyType[str, int], ...]:
+    """One-at-a-time overrides sweeping each discrete argument's actual codes.
+
+    The first assignment is empty (the plain synthetic fills); each further
+    assignment pins one integer-coded argument to one of its grid codes while the
+    other arguments keep their fills.
+    """
+    assignments: list[MappingProxyType[str, int]] = [MappingProxyType({})]
+    for name in arg_names:
+        codes = int_arg_values.get(name, ())
+        assignments.extend(MappingProxyType({name: code}) for code in codes)
+    return tuple(assignments)
+
+
+def _int_probe_arg_values(
+    grids: Mapping[StateOrActionName, Grid],
+) -> MappingProxyType[str, tuple[int, ...]]:
+    """Actual grid codes of the regime's integer-coded states and actions.
+
+    The probes sweep each integer-coded argument over these codes one at a time
+    (holding the other fills fixed), so a dependence that is dead at the synthetic
+    fill values but live at another valid code is still detected.
+    """
+    return MappingProxyType(
+        {
+            name: tuple(int(code) for code in grid.to_jax())
+            for name, grid in grids.items()
+            if isinstance(grid, DiscreteGrid)
+        }
     )
 
 
@@ -3262,7 +3307,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     liquid_name: str,
     regime_name: str,
-    int_arg_names: frozenset[str] = frozenset(),
+    int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
@@ -3278,13 +3323,18 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     The probe evaluates each liquid-reading law's first liquid-derivative at a few
     interior points, with the other arguments filled by several constant and ramped
     assignments (the ramps activate monotone binary gates like an age cutoff that a
-    symmetric fill would leave on its zero branch). A law the probe cannot evaluate
-    or differentiate on plain scalars is refused: the interval path's constancy
-    precondition would otherwise go unverified.
+    symmetric fill would leave on its zero branch); each integer-coded argument is
+    additionally swept over its grid's actual codes one at a time, so a dependence
+    gated on a specific discrete cell is still sampled. The probe is a finite
+    diagnostic, not a certificate — a smooth dependence vanishing at every probed
+    point passes undetected. A law the probe cannot evaluate or differentiate on
+    plain scalars is refused: the interval path's constancy precondition would
+    otherwise go unverified.
     """
     import inspect  # noqa: PLC0415
 
     tol = 1e-6
+    int_arg_names = frozenset(int_arg_values)
 
     def _fill_assignments(n_args: int) -> tuple[tuple[float, ...], ...]:
         constant_1 = tuple(1.0 for _ in range(n_args))
@@ -3293,7 +3343,9 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
         ramp_down = tuple(reversed(ramp_up))
         return (constant_1, constant_3, ramp_up, ramp_down)
 
-    def _max_abs_first_derivative(func: Callable[..., object]) -> float | None:
+    def _max_abs_first_derivative(  # noqa: C901
+        func: Callable[..., object],
+    ) -> float | None:
         # The composed law returns the child's whole carried-state vector, so probe
         # the Jacobian in the liquid argument and take the max over all outputs.
         arg_names = tuple(inspect.signature(func).parameters)
@@ -3307,20 +3359,25 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
         def _worst(*, array_floats: bool) -> float:
             worst = 0.0
             for fills in _fill_assignments(len(arg_names)):
-                for sample in (0.37, 1.63, 2.71):
-                    args = [
-                        _probe_fill(
-                            name, fill, int_arg_names, array_floats=array_floats
+                for overrides in _int_code_sweeps(
+                    arg_names=arg_names, int_arg_values=int_arg_values
+                ):
+                    for sample in (0.37, 1.63, 2.71):
+                        args = [
+                            _probe_fill(
+                                name, fill, int_arg_names, array_floats=array_floats
+                            )
+                            if name not in overrides
+                            else jnp.asarray(overrides[name], dtype=jnp.int32)
+                            for name, fill in zip(arg_names, fills, strict=True)
+                        ]
+                        args[liquid_pos] = jnp.asarray(sample)
+                        jac = jax.jacfwd(_positional, argnums=liquid_pos)(*args)
+                        leaves = jax.tree_util.tree_leaves(jac)
+                        worst = max(
+                            worst,
+                            *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
                         )
-                        for name, fill in zip(arg_names, fills, strict=True)
-                    ]
-                    args[liquid_pos] = jnp.asarray(sample)
-                    jac = jax.jacfwd(_positional, argnums=liquid_pos)(*args)
-                    leaves = jax.tree_util.tree_leaves(jac)
-                    worst = max(
-                        worst,
-                        *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
-                    )
             return worst
 
         try:
@@ -3555,7 +3612,7 @@ def _collect_nbegm_schedule_spec(  # noqa: PLR0915
             and all(kind == "jump" for kind in all_kinds)
         ),
         regime_name=context.regime_name,
-        int_arg_names=_int_probe_arg_names(context.grids),
+        int_arg_values=_int_probe_arg_values(context.grids),
         probe_failure=probe_failure,
     )
     return _NBEGMScheduleSpec(

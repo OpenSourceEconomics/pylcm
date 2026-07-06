@@ -8,8 +8,14 @@ breakpoints is zero. A smoothly varying dependence makes the midpoint-bound row
 wrong for the interval's other liquid points, so it is refused at model build.
 """
 
+from types import SimpleNamespace
+
+import jax.numpy as jnp
 import pytest
 
+from _lcm.solution.solvers import (
+    _fail_if_liquid_reading_next_state_varies_within_interval,
+)
 from lcm.exceptions import RegimeInitializationError
 from tests.test_models import nbegm_ride_discrete_toy as ride_toy
 
@@ -108,4 +114,38 @@ def test_unprobeable_budget_builds_with_warning_under_assume_declared() -> None:
             costate_reads_liquid=True,
             costate_unprobeable=True,
             probe_failure="assume_declared",
+        )
+
+
+def test_constancy_probe_sweeps_each_discrete_arguments_actual_grid_codes():
+    """A law that is liquid-dependent only at an unswept discrete code is rejected.
+
+    The probe fills integer-coded arguments from a small set of synthetic
+    constants and ramps. A law whose liquid derivative vanishes at every one of
+    those values but is nonzero at another valid grid code is interval-varying on
+    real cells, so the probe must sweep each discrete argument over its grid's
+    actual codes to catch it.
+    """
+
+    def next_tracker(tracker, liquid, phase):
+        # d/d liquid = 0.1 * (phase-1)(phase-3)(phase-5)(phase-7): zero at every
+        # synthetic integer fill the probe's constants and ramps produce, nonzero
+        # at the valid codes 0 and 2.
+        gate = (phase - 1) * (phase - 3) * (phase - 5) * (phase - 7)
+        return tracker + 0.1 * liquid * gate
+
+    def compute_regime_transition_probs(age):
+        return jnp.asarray(age) * 0.0
+
+    plan = SimpleNamespace(
+        carry_targets=("tracker",),
+        child_reads={"tracker": SimpleNamespace(next_state_func=next_tracker)},
+        compute_regime_transition_probs=compute_regime_transition_probs,
+    )
+    with pytest.raises(RegimeInitializationError, match="varies smoothly"):
+        _fail_if_liquid_reading_next_state_varies_within_interval(
+            continuation_plan=plan,
+            liquid_name="liquid",
+            regime_name="toy",
+            int_arg_values={"phase": (0, 1, 2, 3)},
         )

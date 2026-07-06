@@ -438,19 +438,29 @@ function of savings. NB-EGM then binds the liquid state to each interval's
 representative node and evaluates one continuation row per interval, solving each
 interval as its own case against its own row. This is exact if and only if the
 liquid-dependence is *piecewise-constant on the declared partition*; a build-time
-probe differentiates every liquid-reading law at interior points and rejects smooth
-(affine or curved) dependence with an explanation. The probe evaluates the model's
-DAG on synthetic inputs — scalar fills first, retried with unit-length array fills
-for DAGs holding plain array-valued schedule parameters. A DAG it cannot evaluate
-either way (structured parameters, mixed scalar/array signatures under strict
-runtime type contracts) leaves the precondition machine-unverified, and the build
-then **refuses by default**. The model author may instead assert the precondition
-explicitly (`probe_failure="assume_declared"`, emitting a warning), shifting the
-verification burden to an independent reference — the production application takes
-this path, because its budget mixes scalar- and array-annotated tax and threshold
-parameters, and discharges the burden with the full-model brute-agreement gates of
-Section 6. The
-same fail-closed-or-assert semantics governs the affine-budget probe. This trigger
+probe differentiates every liquid-reading law at finitely many interior points —
+sweeping each integer-coded argument over its grid's actual codes one at a time —
+and rejects any detected smooth (affine or curved) dependence with an explanation.
+The probe is a **finite diagnostic, not a certificate**: by the same argument as
+Theorem 3, no finite set of black-box evaluations can prove constancy (or
+affinity) of an arbitrary smooth law — a dependence whose derivative vanishes at
+every probed point passes undetected. Exactness therefore rests on the hypothesis
+being *true*: it holds by construction for structure declared through the
+breakpoint metadata, is screened (not proven) by the probe for everything else,
+and is otherwise discharged only by independent validation. The probe evaluates
+the model's DAG on synthetic inputs — scalar fills first, retried with unit-length
+array fills for DAGs holding plain array-valued schedule parameters. A DAG it
+cannot evaluate either way (structured parameters, mixed scalar/array signatures
+under strict runtime type contracts) leaves the precondition machine-unverified,
+and the build then **refuses by default**. The model author may instead assert the
+precondition explicitly (`probe_failure="assume_declared"`, emitting a warning).
+Such runs are not probe-screened at all: every exactness claim is conditional on
+the asserted precondition actually holding, and the assertion must be discharged
+by an independent reference — the production application takes this path, because
+its budget mixes scalar- and array-annotated tax and threshold parameters, and
+discharges the burden with the full-model brute-agreement gates of Section 6. The
+same fail-closed-or-assert semantics and the same finite-diagnostic status govern
+the affine-budget probe. This trigger
 is precisely the mechanism of Theorem 2: case conditioning removes the
 current-state dependence that would otherwise force asset-row replication.
 
@@ -529,8 +539,9 @@ $\square$
 *Remark.* Part (b) rules out only single-valued shared curves. NB-EGM's per-interval
 continuation path (Section 3.6) is exactly the loophole: when $m$ enters $\Phi$ only
 through a piecewise-constant term on the declared partition, one curve *per interval*
-— $N_B + 1$ curves, not $N_X$ — restores exactness, and the build-time probe rejects
-the smooth dependence that would void it.
+— $N_B + 1$ curves, not $N_X$ — restores exactness; a build-time probe screens for
+(but, per Theorem 3, cannot certify the absence of) the smooth dependence that
+would void it.
 
 **Theorem 3 (declared breakpoints are necessary).** *No deterministic solver that
 receives only finitely many (possibly adaptively chosen) black-box evaluations of a
@@ -798,7 +809,8 @@ boundary candidates that carry exactly the economics of interest.
 **Diagnostics that must fail loudly.** A query no live segment brackets publishes
 NaN and is surfaced by the runtime NaN gate rather than patched; the smoothness gate
 (Section 3.7) and the piecewise-constancy probe (Section 3.6) reject at build time
-the model classes for which the kernels would be silently wrong.
+the model classes they detect — a finite screen for, not a proof of, the kernels'
+preconditions (Section 3.6).
 
 ---
 
@@ -929,9 +941,9 @@ disagree, the paper follows the code. The load-bearing deviations:
 9. **Per-interval continuation trigger and probe.** The document's Theorem 2
    dichotomy (shared curve or asset-row) is refined in code by a middle path: when a
    carry target's next-state law *or* the regime-transition probabilities read the
-   current liquid state, one continuation row per declared interval is used, guarded
-   by a build-time probe that rejects smooth (non-piecewise-constant) liquid
-   dependence.
+   current liquid state, one continuation row per declared interval is used,
+   screened by a build-time probe that rejects detected smooth
+   (non-piecewise-constant) liquid dependence (a finite diagnostic — Section 3.6).
 10. **Numerical guards not in the document.** A degenerate-marginal tolerance drops
     Euler candidates where the continuation is flat; a relative-span test classifies
     hard-constraint (flat) intervals; degenerate breakpoint preimages are clamped
