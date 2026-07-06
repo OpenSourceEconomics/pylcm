@@ -191,6 +191,20 @@ def next_tracker_step(
     return jnp.where(liquid >= 10.0, tracker + 1.0, 0.0)
 
 
+def next_tracker_unprobeable(
+    tracker: ContinuousState, liquid: ContinuousState
+) -> ContinuousState:
+    """Co-state law the build-time constancy probe cannot differentiate.
+
+    The Python-level branch on the liquid value raises under `jax.jacfwd`'s
+    tracer, so the probe cannot establish piecewise-constancy — the build must
+    refuse rather than assume the law is interval-constant.
+    """
+    if float(liquid) >= 10.0:
+        return tracker + 1.0
+    return tracker
+
+
 def oop(buy_private: DiscreteAction, oop_uninsured: float) -> FloatND:
     """Out-of-pocket medical cost: zero when insured, a fixed hit when not.
 
@@ -309,10 +323,12 @@ def build_model(  # noqa: C901, PLR0912
     jump_schedule: bool = False,
     costate_reads_liquid: bool = False,
     costate_smooth: bool = False,
+    costate_unprobeable: bool = False,
     transition_reads_liquid: bool = False,
     transition_smooth: bool = False,
     action_in_discount: bool = False,
     branch_batch_size: int = 0,
+    probe_failure: str = "reject",
 ) -> Model:
     """Create the (alive, dead) ride-along toy with a discrete insurance choice.
 
@@ -362,13 +378,18 @@ def build_model(  # noqa: C901, PLR0912
             "dead": next_streak,
         }
     if costate_reads_liquid:
-        tracker_law = next_tracker_smooth if costate_smooth else next_tracker_step
+        if costate_unprobeable:
+            tracker_law = next_tracker_unprobeable
+        else:
+            tracker_law = next_tracker_smooth if costate_smooth else next_tracker_step
         extra_states["tracker"] = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
         extra_state_transitions["tracker"] = {
             "alive": tracker_law,
             "dead": tracker_law,
         }
     solver_kwargs: dict[str, object] = {}
+    if probe_failure != "reject":
+        solver_kwargs["probe_failure"] = probe_failure
     if branch_batch_size:
         solver_kwargs["branch_batch_size"] = branch_batch_size
     alive_solver = resolve_solver(

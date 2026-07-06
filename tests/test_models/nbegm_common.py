@@ -134,6 +134,7 @@ def make_alive_dead_model(
     extra_states: Mapping[str, Grid] | None = None,
     extra_state_transitions: Mapping[str, Any] | None = None,
     survival_transition: Mapping[str, Any] | None = None,
+    model_states: Mapping[str, Grid] | None = None,
 ) -> Model:
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 
@@ -202,4 +203,5 @@ def make_alive_dead_model(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        states=dict(model_states) if model_states else {},
     )

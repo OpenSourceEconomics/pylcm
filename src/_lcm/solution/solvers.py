@@ -20,6 +20,7 @@ pulls in no numerical engine modules.
 
 import functools
 import math
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -41,7 +42,8 @@ from _lcm.egm.outer_envelope import (
     init_outer_envelope,
 )
 from _lcm.engine import StateActionSpace
-from _lcm.grids import ContinuousGrid
+from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.grids.base import Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import (
@@ -73,6 +75,8 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     IntND,
+    ScalarFloat,
+    ScalarInt,
     StateName,
     StateOrActionName,
 )
@@ -1579,6 +1583,20 @@ class NBEGM(Solver):
     branches (identical result, per-branch intermediates bounded by one block).
     Either way the branch body compiles once — the axis is never Python-unrolled.
     """
+    probe_failure: Literal["reject", "assume_declared"] = "reject"
+    """What to do when a build-time derivative probe cannot evaluate the model.
+
+    The affine-budget and interval-constancy probes differentiate the model's DAG
+    functions on synthetic scalar inputs. A DAG that cannot be evaluated that way
+    (e.g. array-valued schedule parameters the probe cannot synthesize) leaves the
+    precondition unverified:
+
+    - `"reject"` — refuse to build; the per-interval EGM preconditions must be
+      machine-verified.
+    - `"assume_declared"` — warn and build; the model author asserts the budget's
+      within-interval affinity and every liquid-reading law's interval-constancy,
+      to be validated empirically (e.g. full-model brute-agreement gates).
+    """
 
     @property
     def requires_continuation_carries(self) -> bool:
@@ -1696,6 +1714,7 @@ class NBEGM(Solver):
                 context=context,
                 budget_target=self.budget_target,
                 continuous_state=self.continuous_state,
+                probe_failure=self.probe_failure,
             )
             if is_schedule
             else None
@@ -1938,6 +1957,8 @@ class NBEGM(Solver):
                     continuation_plan=plan,
                     liquid_name=schedule_spec.liquid_state_name,
                     regime_name=context.regime_name,
+                    int_arg_names=_int_probe_arg_names(context.grids),
+                    probe_failure=self.probe_failure,
                 )
                 statics = _nbegm_ride_along_statics(
                     savings_grid=savings_grid,
@@ -1990,14 +2011,18 @@ class NBEGM(Solver):
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
-            continuation_template=_build_ride_along_carry_template(
-                liquid_grid=liquid_grid,
-                ride_shape=ride_shape,
-                n_breakpoints=(
-                    next(iter(statics_by_key.values())).n_published_jumps
-                    if statics_by_key
-                    else 0
+            continuation_template=_shard_ride_carry_template(
+                template=_build_ride_along_carry_template(
+                    liquid_grid=liquid_grid,
+                    ride_shape=ride_shape,
+                    n_breakpoints=(
+                        next(iter(statics_by_key.values())).n_published_jumps
+                        if statics_by_key
+                        else 0
+                    ),
                 ),
+                grids=context.grids,
+                ride_along_state_names=schedule_spec.ride_along_state_names,
             ),
         )
 
@@ -3054,12 +3079,14 @@ def _ride_discrete_action(
     return name, tuple(int(code) for code in discrete_actions[name])
 
 
-def _fail_if_budget_nonaffine_in_liquid(
+def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     *,
     coh_dag: Callable[..., object],
     liquid_name: str,
     require_unit_slope: bool,
     regime_name: str,
+    int_arg_names: frozenset[str] = frozenset(),
+    probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
 
@@ -3078,8 +3105,9 @@ def _fail_if_budget_nonaffine_in_liquid(
 
     The probe evaluates the composed budget's first and second liquid-derivatives at
     a few interior points, with the other arguments filled by two constant sets so a
-    parameter-dependent slope is caught. An argument set the budget cannot evaluate
-    on plain scalars leaves the check to the other build-time gates.
+    parameter-dependent slope is caught. A budget the probe cannot evaluate or
+    differentiate on plain scalars is refused: the per-interval inversion's
+    affinity precondition would otherwise go unverified.
     """
     import inspect  # noqa: PLC0415
 
@@ -3087,43 +3115,92 @@ def _fail_if_budget_nonaffine_in_liquid(
     if liquid_name not in arg_names:
         return
 
-    def _budget_of_liquid(liquid_value: FloatND, fill: float) -> FloatND:
+    def _budget_of_liquid(
+        liquid_value: FloatND, fill: float, *, array_floats: bool = False
+    ) -> FloatND:
         kwargs = {
-            name: (liquid_value if name == liquid_name else jnp.asarray(fill))
+            name: (
+                liquid_value
+                if name == liquid_name
+                else _probe_fill(name, fill, int_arg_names, array_floats=array_floats)
+            )
             for name in arg_names
         }
         return jnp.asarray(coh_dag(**kwargs)).reshape(())
 
     tol = 1e-6
 
+    def _fail_unprobeable(probe_error: Exception) -> None:
+        msg = (
+            f"NBEGM could not verify that regime {regime_name!r}'s budget is affine "
+            f"in the liquid state {liquid_name!r}: the build-time probe failed to "
+            "differentiate the budget on scalar inputs "
+            f"({type(probe_error).__name__}: {probe_error}). The per-interval EGM "
+            "inversion is exact only for an affine within-interval budget."
+        )
+        if probe_failure == "assume_declared":
+            warnings.warn(
+                msg + " Building anyway (`probe_failure='assume_declared'`): the "
+                "model author asserts within-interval affinity; validate the solve "
+                "against an independent reference.",
+                stacklevel=2,
+            )
+            return
+        raise RegimeInitializationError(
+            msg + " Restructure the budget so it evaluates on scalar inputs (use "
+            "`jnp.where` instead of Python branches), set "
+            "`probe_failure='assume_declared'` to assert affinity yourself, or use "
+            "the brute-force solver for this regime."
+        ) from probe_error
+
     def _max_abs_second() -> float | None:
-        # An arg set the budget cannot evaluate on plain scalars leaves the check to
-        # the other build-time gates (return None).
-        try:
-            values = [
+        def _values(*, array_floats: bool) -> list[float]:
+            return [
                 abs(
                     float(
-                        jax.grad(jax.grad(lambda a, f=fill: _budget_of_liquid(a, f)))(
-                            jnp.asarray(sample)
-                        )
+                        jax.grad(
+                            jax.grad(
+                                lambda a, f=fill: _budget_of_liquid(
+                                    a, f, array_floats=array_floats
+                                )
+                            )
+                        )(jnp.asarray(sample))
                     )
                 )
                 for fill in (1.0, 3.0)
                 for sample in (0.37, 1.63, 2.71)
             ]
-        except Exception:  # noqa: BLE001
+
+        try:
+            try:
+                values = _values(array_floats=False)
+            except Exception:  # noqa: BLE001
+                values = _values(array_floats=True)
+        except Exception as probe_error:  # noqa: BLE001
+            _fail_unprobeable(probe_error)
             return None
         return max(values)
 
     def _liquid_slopes() -> tuple[float, ...] | None:
-        try:
+        def _slopes(*, array_floats: bool) -> tuple[float, ...]:
             return tuple(
                 float(
-                    jax.grad(lambda a, f=fill: _budget_of_liquid(a, f))(jnp.asarray(x))
+                    jax.grad(
+                        lambda a, f=fill: _budget_of_liquid(
+                            a, f, array_floats=array_floats
+                        )
+                    )(jnp.asarray(x))
                 )
                 for fill, x in ((1.0, 1.0), (3.0, 2.0))
             )
-        except Exception:  # noqa: BLE001
+
+        try:
+            try:
+                return _slopes(array_floats=False)
+            except Exception:  # noqa: BLE001
+                return _slopes(array_floats=True)
+        except Exception as probe_error:  # noqa: BLE001
+            _fail_unprobeable(probe_error)
             return None
 
     worst_second = _max_abs_second()
@@ -3149,11 +3226,44 @@ def _fail_if_budget_nonaffine_in_liquid(
         raise RegimeInitializationError(msg)
 
 
+def _probe_fill(
+    name: str,
+    fill: float,
+    int_arg_names: frozenset[str],
+    *,
+    array_floats: bool = False,
+) -> ScalarFloat | ScalarInt | Float1D:
+    """Build a probe fill matching the argument's dtype contract.
+
+    Integer-coded arguments — discrete states/actions (their grids are
+    `DiscreteGrid`s) and the period index — receive an int32 scalar fill so
+    runtime type contracts accept the probe. Every other argument receives the
+    float fill: a scalar by default, or a unit-length 1-D array with
+    `array_floats` — the retry mode for DAGs holding array-valued schedule
+    parameters (JAX clamps a scalar index into a unit-length table, and
+    equal-length interpolation rows stay consistent).
+    """
+    if name in int_arg_names or name == "period":
+        return jnp.asarray(round(fill), dtype=jnp.int32)
+    if array_floats:
+        return jnp.full((1,), fill)
+    return jnp.asarray(fill)
+
+
+def _int_probe_arg_names(grids: Mapping[StateOrActionName, Grid]) -> frozenset[str]:
+    """Names of the regime's integer-coded (discrete-grid) states and actions."""
+    return frozenset(
+        name for name, grid in grids.items() if isinstance(grid, DiscreteGrid)
+    )
+
+
 def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     *,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     liquid_name: str,
     regime_name: str,
+    int_arg_names: frozenset[str] = frozenset(),
+    probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
 
@@ -3168,8 +3278,9 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     The probe evaluates each liquid-reading law's first liquid-derivative at a few
     interior points, with the other arguments filled by several constant and ramped
     assignments (the ramps activate monotone binary gates like an age cutoff that a
-    symmetric fill would leave on its zero branch). A law an argument set cannot
-    evaluate on plain scalars leaves the check to the other build-time gates.
+    symmetric fill would leave on its zero branch). A law the probe cannot evaluate
+    or differentiate on plain scalars is refused: the interval path's constancy
+    precondition would otherwise go unverified.
     """
     import inspect  # noqa: PLC0415
 
@@ -3190,14 +3301,19 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
             return None
         liquid_pos = arg_names.index(liquid_name)
 
-        def _positional(*args: FloatND) -> object:
+        def _positional(*args: ScalarFloat | ScalarInt | Float1D) -> object:
             return func(**dict(zip(arg_names, args, strict=True)))
 
-        try:
+        def _worst(*, array_floats: bool) -> float:
             worst = 0.0
             for fills in _fill_assignments(len(arg_names)):
                 for sample in (0.37, 1.63, 2.71):
-                    args = [jnp.asarray(fill) for fill in fills]
+                    args = [
+                        _probe_fill(
+                            name, fill, int_arg_names, array_floats=array_floats
+                        )
+                        for name, fill in zip(arg_names, fills, strict=True)
+                    ]
                     args[liquid_pos] = jnp.asarray(sample)
                     jac = jax.jacfwd(_positional, argnums=liquid_pos)(*args)
                     leaves = jax.tree_util.tree_leaves(jac)
@@ -3205,8 +3321,37 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
                         worst,
                         *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
                     )
-        except Exception:  # noqa: BLE001
-            return None
+            return worst
+
+        try:
+            try:
+                worst = _worst(array_floats=False)
+            except Exception:  # noqa: BLE001
+                worst = _worst(array_floats=True)
+        except Exception as probe_error:
+            msg = (
+                f"NBEGM could not verify that a liquid-reading law in regime "
+                f"{regime_name!r} is piecewise-constant in the liquid state "
+                f"{liquid_name!r}: the build-time constancy probe failed to "
+                "differentiate it on scalar inputs "
+                f"({type(probe_error).__name__}: {probe_error}). The interval "
+                "path binds one continuation row per interval, which is exact "
+                "only for an interval-constant law."
+            )
+            if probe_failure == "assume_declared":
+                warnings.warn(
+                    msg + " Building anyway (`probe_failure='assume_declared'`): "
+                    "the model author asserts interval-constancy; validate the "
+                    "solve against an independent reference.",
+                    stacklevel=2,
+                )
+                return None
+            raise RegimeInitializationError(
+                msg + " Restructure the law so it evaluates on scalar inputs "
+                "(use `jnp.where` instead of Python branches), set "
+                "`probe_failure='assume_declared'` to assert constancy yourself, "
+                "or use the brute-force solver for this regime."
+            ) from probe_error
         else:
             return worst
 
@@ -3249,6 +3394,7 @@ def _collect_nbegm_schedule_spec(  # noqa: PLR0915
     context: SolverBuildContext,
     budget_target: str = "coh",
     continuous_state: StateName | None = None,
+    probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> _NBEGMScheduleSpec:
     """Collect a regime's piecewise-affine schedules into one breakpoint partition.
 
@@ -3409,6 +3555,8 @@ def _collect_nbegm_schedule_spec(  # noqa: PLR0915
             and all(kind == "jump" for kind in all_kinds)
         ),
         regime_name=context.regime_name,
+        int_arg_names=_int_probe_arg_names(context.grids),
+        probe_failure=probe_failure,
     )
     return _NBEGMScheduleSpec(
         coh_of_liquid_dag=coh_dag,
@@ -5217,6 +5365,49 @@ def _augment_liquid_with_jump_sides(
         # entries.
         jnp.argsort(sort_order).astype(jnp.int32),
     )
+
+
+def _shard_ride_carry_template(
+    *,
+    template: EGMCarry,
+    grids: Mapping[StateOrActionName, Grid],
+    ride_along_state_names: tuple[StateName, ...],
+) -> EGMCarry:
+    """Place the carry template on the same device sharding as runtime carries.
+
+    The compiled cores accept one carry pytree layout across all periods. The
+    envelope core publishes carries whose ride axes inherit the regime's state
+    sharding, so the template — the compile-time sample and the terminal-period
+    input — must carry that sharding too; a replicated template would compile
+    the cores for replicated carries and reject every later period.
+
+    Ride axes lead each carry array in `ride_along_state_names` order; trailing
+    row axes stay unsharded. Scalars replicate across the mesh.
+    """
+    from _lcm.engine import _build_regime_sharding  # noqa: PLC0415
+
+    plan = _build_regime_sharding(
+        grids=MappingProxyType(dict(grids)), n_devices=len(jax.devices())
+    )
+    if plan is None or not any(
+        name in plan.distributed_state_names for name in ride_along_state_names
+    ):
+        return template
+    ride_spec = jax.NamedSharding(
+        plan.mesh,
+        jax.P(
+            *(
+                name if name in plan.distributed_state_names else None
+                for name in ride_along_state_names
+            )
+        ),
+    )
+    scalar_spec = jax.NamedSharding(plan.mesh, jax.P())
+
+    def _place(leaf: FloatND) -> FloatND:
+        return jax.device_put(leaf, scalar_spec if leaf.ndim == 0 else ride_spec)
+
+    return jax.tree.map(_place, template)
 
 
 def _build_ride_along_carry_template(

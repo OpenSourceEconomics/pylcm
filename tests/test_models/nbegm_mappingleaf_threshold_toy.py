@@ -114,6 +114,10 @@ def build_model(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         post_decision_function="savings",
+        # The budget reads a structured `MappingLeaf` parameter the build-time
+        # derivative probes cannot synthesize; affinity is asserted here and
+        # validated by the dense-brute agreement this toy exists to test.
+        probe_failure="assume_declared",
     )
     if variant == "nbegm":
         alive_functions = {**alive_functions, "savings": savings}

@@ -74,3 +74,38 @@ def test_transition_prob_piecewise_constant_in_liquid_builds() -> None:
         transition_reads_liquid=True,
         transition_smooth=False,
     )
+
+
+def test_costate_law_the_probe_cannot_evaluate_is_rejected_at_build() -> None:
+    """A liquid-reading co-state law the constancy probe cannot differentiate
+    fails model build — the interval path never assumes an unverifiable law is
+    piecewise-constant."""
+    with pytest.raises(RegimeInitializationError, match=r"probe|verify|constan"):
+        ride_toy.build_model(
+            variant="nbegm",
+            n_liquid=12,
+            liquid_max=30.0,
+            n_savings=20,
+            savings_max=28.0,
+            n_consumption=8,
+            costate_reads_liquid=True,
+            costate_unprobeable=True,
+        )
+
+
+def test_unprobeable_budget_builds_with_warning_under_assume_declared() -> None:
+    """`probe_failure="assume_declared"` turns an unverifiable-probe rejection
+    into a loud warning: the model builds and the warning names the asserted
+    precondition."""
+    with pytest.warns(UserWarning, match=r"assume_declared"):
+        ride_toy.build_model(
+            variant="nbegm",
+            n_liquid=12,
+            liquid_max=30.0,
+            n_savings=20,
+            savings_max=28.0,
+            n_consumption=8,
+            costate_reads_liquid=True,
+            costate_unprobeable=True,
+            probe_failure="assume_declared",
+        )

@@ -406,7 +406,9 @@ brackets with non-finite data fall back to the linear rule.
 
 A child regime's value cliffs pose the representation problem: a plain aggregate
 carry (values and marginals on a coarse grid) lets the parent's interpolation bridge
-across a cliff and overstate the continuation (Theorem 6). NB-EGM offers two modes:
+across a cliff, misstating the continuation in the cliff cell (Theorem 6 pins the
+sign for linear reads; under the implemented Hermite read the sign is empirical).
+NB-EGM offers two modes:
 
 - **`one_sided` (exact cliff reads).** Each carry row holds every jump preimage as a
   *duplicated abscissa* carrying the exact one-sided value and marginal limits: the
@@ -437,9 +439,20 @@ representative node and evaluates one continuation row per interval, solving eac
 interval as its own case against its own row. This is exact if and only if the
 liquid-dependence is *piecewise-constant on the declared partition*; a build-time
 probe differentiates every liquid-reading law at interior points and rejects smooth
-(affine or curved) dependence with an explanation. This trigger is precisely the
-mechanism of Theorem 2: case conditioning removes the current-state dependence that
-would otherwise force asset-row replication.
+(affine or curved) dependence with an explanation. The probe evaluates the model's
+DAG on synthetic inputs — scalar fills first, retried with unit-length array fills
+for DAGs holding plain array-valued schedule parameters. A DAG it cannot evaluate
+either way (structured parameters, mixed scalar/array signatures under strict
+runtime type contracts) leaves the precondition machine-unverified, and the build
+then **refuses by default**. The model author may instead assert the precondition
+explicitly (`probe_failure="assume_declared"`, emitting a warning), shifting the
+verification burden to an independent reference — the production application takes
+this path, because its budget mixes scalar- and array-annotated tax and threshold
+parameters, and discharges the burden with the full-model brute-agreement gates of
+Section 6. The
+same fail-closed-or-assert semantics governs the affine-budget probe. This trigger
+is precisely the mechanism of Theorem 2: case conditioning removes the
+current-state dependence that would otherwise force asset-row replication.
 
 ### 3.7 The smoothness gate
 
@@ -574,7 +587,7 @@ single-valued continuous row bridges it. Duplicated abscissae carrying one-sided
 limits (the `one_sided` carry) represent the cliff exactly at the level of the read's
 piecewise-linear-with-jumps interpolant.
 
-**Theorem 6 (aggregate-max interpolation bridges upward).** *Let $I$ be a positive
+**Theorem 6 (aggregate-max interpolation bridges upward under linear reads).** *Let $I$ be a positive
 linear interpolation operator (nonnegative weights on shared nodes) and $V_b$
 branch-specific values sampled at the same nodes. Then for every query $q$,*
 
@@ -586,15 +599,18 @@ $$
 the pointwise order, so $I[V_b](q) \le I[\max_j V_j](q)$ for each $b$; take the max
 over $b$. $\square$
 
-*Implications.* (i) Interpolating already-maximized values can only *overstate* the
-envelope near switches — the direction of the bridged mode's error at cliffs is
-upward at the cliff cell. (ii) The inequality is stated for positive linear $I$; the
-implementation's value read is monotone-limited cubic Hermite, which is not a linear
-operator of the node values. The Fritsch–Carlson limiter keeps the interpolant within
-the bracket's value range on monotone data, so the qualitative conclusion — bridging
-across a switch overstates the continuation, and only side-aware representation
-removes the error — carries over, but the literal inequality is proven here for the
-linear read.
+*Implications.* (i) Under a positive linear read, interpolating already-maximized
+values can only *overstate* the envelope near switches — the bridged mode's error at
+the cliff cell is upward. (ii) The inequality is proven **only** for positive linear
+$I$. The implementation's value read is monotone-limited cubic Hermite, which is not
+a linear operator of the node values, and the sign result does *not* transfer: with
+the limiter active, a three-node, two-branch monotone configuration exists where the
+Hermite read of the aggregate-max row *understates* the maximum of the per-branch
+Hermite reads (the slope assignments of the maximized row differ from either
+branch's, and the limited correction can pull the aggregate read below both). The
+bridged mode's signed cliff-cell error under the Hermite read is therefore an
+empirical quantity to be measured, not a guaranteed direction; only side-aware
+(one-sided) representation removes the error by construction.
 
 **Theorem 7 (conditional dominance over asset-row EGM).** *Let asset-row EGM and
 NB-EGM have per-period, per-cell costs*
@@ -720,34 +736,64 @@ class.
 Correctness for the discretized target (Section 4) is conditional on candidate
 completeness; validation supplies the evidence per model class.
 
-**Dense-brute oracle on toys, same convention.** For each kernel family — the binary
-Medicaid asset-test toy, multi-kink schedules, recurring multi-cliff schedules, mixed
-kink-and-jump schedules, floors, the discrete-action envelope, ride-along co-states,
-liquid-reading transitions — a brute-force oracle solves the same discretized problem
-over a *dense* savings/consumption grid under the same interpolation and envelope
-convention. Agreement is asserted in concrete values with explicit tolerances at
-machine-precision level away from cliffs and at one-sided-limit level at cliffs; the
-oracle is also probed at adversarial queries (exactly on thresholds, one ulp on
-either side) to pin the equality-owner behavior. These tests are local evidence:
-exact on the toy, per family.
+**Three evidence layers, in decreasing strength.** Validation separates what each
+layer can and cannot certify:
+
+1. **Convention-matched host oracles (exact, selection layer).** The envelope and
+   selection logic is tested against an independent host-side NumPy oracle that
+   evaluates the *exact* pointwise upper envelope of the candidate polylines under
+   the declared topology contract — no concavity, monotonicity, or scan-window
+   assumption, folds evaluated as true polylines, malformed inputs rejected. This
+   layer certifies the selection rule (endpoint ownership, tie behavior, fold
+   handling) at the candidate-record level, which a finite brute grid cannot: a
+   dense brute oracle can miss off-grid save-to-cliff actions and can share the
+   solver's own interpolation convention error in a narrow cliff band. Candidate
+   *completeness* per kernel family (Euler records, corners, point candidates,
+   save-to-cliff records) is covered per family by targeted record-level tests and
+   remains, per Theorem 1's hypothesis, an evidence claim rather than a generic
+   proof.
+
+2. **Dense-brute agreement on toys (numerical regression evidence).** For each
+   kernel family — the binary Medicaid asset-test toy, multi-kink schedules,
+   recurring multi-cliff schedules, mixed kink-and-jump schedules, floors, the
+   discrete-action envelope, ride-along co-states, liquid-reading transitions — a
+   brute-force solver solves the same discretized problem over a *dense*
+   savings/consumption grid. Agreement is asserted in concrete values with explicit
+   tolerances, with adversarial queries at thresholds and one ulp on either side.
+   These tests validate *numerical agreement on the toy*; they are regression and
+   smoke evidence, not an exact certificate of envelope selection — that is layer
+   1's job.
 
 **Property tests of the streaming knobs.** Every batching knob (Section 7) is tested
 for bit-level (or reassociation-level) equality against its dense counterpart:
 blocked envelope versus dense envelope, cell blocks versus full vmap, branch blocks
 versus a single pass, interval batches, stochastic-node batches.
 
-**Full-model gates.** On the production application — a structural retirement model
-of the Affordable Care Act with 18 regimes (working/retired × insurance and
-eligibility strata), Medicaid asset and income tests, subsidy brackets, and
-survival/eligibility transitions switched at declared thresholds — NB-EGM is gated
-against the framework's brute-force solver on the production grids: quantile
-summaries of value- and policy-space disagreement (median, upper quantiles, maximum),
-disaggregated by distance-to-nearest-cliff, plus simulation-moment deltas. Cliff-cell
-disagreement is expected and directional under `bridged` (Theorem 6: bridging
-overstates) and must collapse under `one_sided`; away from cliffs, disagreement must
-sit at interpolation-error level. Euler residuals are reported but are not the
-acceptance criterion — they are blind to the corner and boundary candidates that
-carry exactly the economics of interest.
+**Full-model gates (split cliff/non-cliff scoring).** On the production
+application — a structural retirement model of the Affordable Care Act with 18
+regimes (working/retired × insurance and eligibility strata), Medicaid asset and
+income tests, subsidy brackets, and survival/eligibility transitions switched at
+declared thresholds — NB-EGM is gated against the framework's brute-force solver on
+the production grids. A single aggregate tail quantile cannot distinguish harmless
+finite-grid cliff convention error from wrong candidate selection, because the tail
+concentrates exactly at cliff preimages (Theorem 5: no continuous interpolant
+uniformly approximates a jump on a cell containing it). The gate therefore scores
+two regions separately, with the cliff band defined as the grid cells adjacent to
+each published jump abscissa:
+
+- **outside the cliff band**, p99 *and* maximum relative disagreement must sit below
+  a tight interpolation-error threshold (with an absolute floor for near-zero
+  values), and no unexpected NaNs may appear;
+- **inside the cliff band**, disagreement is scored under the declared read
+  convention — signed tail quantiles, maxima, and explicit counts of cells breaching
+  hard caps are reported, and under `one_sided` the disagreement must collapse to
+  the finite-grid comparison error of the brute reference itself. Under `bridged`
+  the signed error is *measured*, not assumed directional (Theorem 6's sign holds
+  for linear reads; the implemented Hermite read voids the guarantee).
+
+Simulation-moment deltas complement the state-space gates. Euler residuals are
+reported but are not the acceptance criterion — they are blind to the corner and
+boundary candidates that carry exactly the economics of interest.
 
 **Diagnostics that must fail loudly.** A query no live segment brackets publishes
 NaN and is surfaced by the runtime NaN gate rather than patched; the smoothness gate
@@ -758,8 +804,15 @@ the model classes for which the kernels would be silently wrong.
 
 ## 7 Performance levers
 
-All levers are exact — by the associativity results of Theorem 4 they change peak
-memory and schedule, never the solution (up to floating-point reassociation).
+The chunking levers below are exact — by the associativity results of Theorem 4
+they change peak memory and schedule, never the solution (up to floating-point
+reassociation). One lever is *not* purely a schedule change: stochastic-dimension
+pre-folding under the Hermite value read commutes with the read only where the slope
+limiter is inactive; where the limiter binds (near jumps), the folded expectation is
+a different valid interpolant of the same data, deviating at interpolation-error
+order. The fold is accordingly gated off on jump-moving dimensions under
+`one_sided`, and its residual effect under `bridged` is part of that mode's measured
+(not guaranteed) approximation error.
 
 | Knob | Axis streamed | Peak-memory term bounded |
 |---|---|---|
@@ -778,20 +831,27 @@ target split. Second, the branch axis is never Python-unrolled: `lax.map` with a
 batch size compiles the branch body once, so adding discrete-action values does not
 grow the program.
 
-**The speed-versus-fidelity dial.** `jump_read="bridged"` is the estimation-inner-
-loop mode: plain carry rows, stochastic-dimension pre-folding available (the child's
-shock expectation folds into the carry once per cell instead of looping nodes per
-savings query), cliff error at finite-grid interpolation level with a known upward
-sign at the cliff cell. `jump_read="one_sided"` is the polish mode: duplicated
-one-sided abscissae, published jump locations, save-to-cliff candidates, fold gated
-off on jump-moving dimensions. A practical estimation protocol runs the optimizer
-under `bridged` and re-solves accepted parameter vectors under `one_sided`, using the
-full-model gates of Section 6 to certify that the switch does not move the objective
-beyond tolerance. One caveat is inherited by *both* modes: wherever the value read's
-monotone slope limiter binds (near jumps), the folded expectation is a different
-valid interpolant of the same data than the node-looped one, deviating at
-interpolation-error order — an engineering trade documented, not a silent
-approximation.
+**The speed-versus-fidelity dial.** `jump_read="bridged"` is the warm-start and
+screening mode: plain carry rows, stochastic-dimension pre-folding available (the
+child's shock expectation folds into the carry once per cell instead of looping
+nodes per savings query), cliff-cell error at finite-grid interpolation level with
+sign properties as discussed under Theorem 6 (guaranteed upward only for linear
+reads; empirical under the implemented Hermite read).
+`jump_read="one_sided"` is the exact-convention mode: duplicated one-sided abscissae,
+published jump locations, save-to-cliff candidates, fold gated off on jump-moving
+dimensions. **Estimation protocol.** Because the bridged and one-sided solves define
+*different objective surfaces* near institutional cliffs, an optimizer run under
+`bridged` can converge to a point that is not the one-sided optimum, and evaluating
+the one-sided objective once at the bridged optimum cannot detect this. `bridged` is
+therefore a warm-start and screening mode only: final estimates require either
+re-optimization under `one_sided` from the bridged optimum until the one-sided
+first-order/trust-region criteria are met, or an empirical objective-surface
+comparison over the relevant parameter region showing the two modes' minimizers
+coincide within the reported precision. One caveat is inherited by *both* modes:
+wherever the value read's monotone slope limiter binds (near jumps), the folded
+expectation is a different valid interpolant of the same data than the node-looped
+one, deviating at interpolation-error order — an engineering trade documented, not a
+silent approximation.
 
 ---
 

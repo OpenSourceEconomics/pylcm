@@ -99,6 +99,7 @@ def build_model(
     n_savings: int = 150,
     savings_max: float = 28.0,
     nbegm_overrides: Mapping[str, object] | None = None,
+    distributed_kind: bool = False,
 ) -> Model:
     """Create the (alive, dead) tax toy with a deterministic ride-along `kind`.
 
@@ -156,8 +157,13 @@ def build_model(
         liquid_law=liquid_law,
         alive_solver=alive_solver,
         constraints=constraints,
-        extra_states={"kind": DiscreteGrid(ConsumerKind)},
+        extra_states=({} if distributed_kind else {"kind": DiscreteGrid(ConsumerKind)}),
         extra_state_transitions={"kind": {"alive": lcm.fixed_transition("kind")}},
+        model_states=(
+            {"kind": DiscreteGrid(ConsumerKind, distributed=True)}
+            if distributed_kind
+            else None
+        ),
     )
 
 
