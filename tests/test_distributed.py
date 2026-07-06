@@ -1,4 +1,7 @@
+from types import MappingProxyType
+
 import jax
+import numpy as np
 import pandas as pd
 import pytest
 from jax import numpy as jnp
@@ -8,6 +11,10 @@ from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.solution.backward_induction import (
+    _build_zero_V_arr,
+    _get_regime_V_shapes_and_shardings,
+)
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm import fixed_transition
 from lcm.ages import AgeGrid
@@ -31,7 +38,9 @@ _skip_pytest_parallel = pytest.mark.skipif(
 )
 
 
-def _make_correct_distributed_model(*, n_subjects: int | None = None) -> Model:
+def _make_correct_distributed_model(
+    *, n_subjects: int | None = None, distributed: bool = True
+) -> Model:
     @categorical(ordered=False)
     class RegimeId:
         working_life: ScalarInt
@@ -81,8 +90,8 @@ def _make_correct_distributed_model(*, n_subjects: int | None = None) -> Model:
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(Type, distributed=True),
-            "type2": DiscreteGrid(Type, distributed=True),
+            "type1": DiscreteGrid(Type, distributed=distributed),
+            "type2": DiscreteGrid(Type, distributed=distributed),
         },
         state_transitions={
             "type1": fixed_transition("type1"),
@@ -169,6 +178,78 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
     )
 
     assert period_to_regime_to_V_arr[0]["working_life"].sharding.num_devices == 4
+
+
+@_skip_pytest_parallel
+def test_distributed_solve_matches_single_device_per_type():
+    """A sharded solve yields the same value function as the single-device solve.
+
+    Distributing the permanent type axes across devices changes only where the
+    continuation-value interpolation runs, never its result: every (type1, type2)
+    slice of the sharded V-array is identical to the same slice solved on one
+    device. This pins the per-type-local read of the continuation V — a wrong
+    local index would corrupt some types' values.
+    """
+    params = {"discount_factor": 0.95}
+    sharded = _make_correct_distributed_model(distributed=True).solve(
+        log_level="debug", params=params
+    )
+    single = _make_correct_distributed_model(distributed=False).solve(
+        log_level="debug", params=params
+    )
+
+    for period, regime_to_V_arr in sharded.items():
+        for regime_name, V_arr in regime_to_V_arr.items():
+            np.testing.assert_array_equal(
+                np.asarray(V_arr), np.asarray(single[period][regime_name])
+            )
+
+
+def _compiled_solve_kernel_hlo(model: Model, *, regime_name: str, period: int) -> str:
+    """Lower and compile a regime's period kernel exactly as backward induction does.
+
+    Reproduces the AOT lowering args (sharded states, sharded continuation-V
+    template, flat params) so the optimized HLO reflects the real solve, then
+    returns its text for collective inspection.
+    """
+    flat_params = model._process_params({"discount_factor": 0.95})
+    regimes = model._regimes
+    topology = _get_regime_V_shapes_and_shardings(
+        regimes=regimes, flat_params=flat_params
+    )
+    next_regime_to_V_arr = MappingProxyType(
+        {name: _build_zero_V_arr(topology=topo) for name, topo in topology.items()}
+    )
+    regime = regimes[regime_name]
+    state_action_space = regime.solution.state_action_space(
+        regime_params=flat_params[regime_name]
+    )
+    lower_args = {
+        **dict(state_action_space.states),
+        **dict(state_action_space.actions),
+        "next_regime_to_V_arr": next_regime_to_V_arr,
+        **dict(flat_params[regime_name]),
+        "period": jnp.int32(period),
+        "age": model.ages.values[period],  # noqa: PD011
+    }
+    kernel = regime.solution.max_Q_over_a[period]
+    hlo = jax.jit(kernel).lower(**lower_args).compile().as_text()
+    assert hlo is not None
+    return hlo
+
+
+@_skip_pytest_parallel
+def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
+    """The backward-induction kernel reads only its device-local continuation V.
+
+    `type1`/`type2` never transition, so a regime's continuation depends only on
+    its own type slice of the next-period V-array. Sharded on those axes, the
+    interpolation must run device-locally — the optimized kernel contains no
+    `all-gather` collective assembling the full continuation V on every device.
+    """
+    model = _make_correct_distributed_model(distributed=True)
+    hlo = _compiled_solve_kernel_hlo(model, regime_name="working_life", period=0)
+    assert "all-gather" not in hlo
 
 
 @_skip_pytest_parallel

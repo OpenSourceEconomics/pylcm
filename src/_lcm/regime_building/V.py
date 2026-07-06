@@ -68,6 +68,7 @@ def get_V_interpolator(
     v_interpolation_info: VInterpolationInfo,
     state_prefix: str,
     V_arr_name: str,
+    co_map_state_names: tuple[StateName, ...] = (),
 ) -> Callable[..., FloatND]:
     """Create a function representation of a value function array.
 
@@ -107,6 +108,11 @@ def get_V_interpolator(
         V_arr_name: The name of the argument via which the pre-calculated values, that
             have been evaluated on the state-space grid, will be passed into the
             resulting function.
+        co_map_state_names: Tuple of discrete state names whose axes the caller has
+            already sliced off `V_arr` (one device-local slice per value, via the
+            backward-induction co-map). Their coordinates are dropped from the lookup
+            so the interpolation reads the sliced array directly. These must be the
+            leading axes of `V_arr`; only fixed (never-transitioning) states qualify.
 
     Returns:
         A callable that lets you treat the result of pre-calculating a function on the
@@ -124,7 +130,7 @@ def get_V_interpolator(
     _discrete_axes = [
         state_prefix + var
         for var in v_interpolation_info.state_names
-        if var in v_interpolation_info.discrete_states
+        if var in v_interpolation_info.discrete_states and var not in co_map_state_names
     ]
 
     _out_name = "__interpolation_data__" if _need_interpolation else "__fval__"
