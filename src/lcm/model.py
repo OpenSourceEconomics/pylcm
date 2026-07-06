@@ -79,7 +79,6 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidValueFunctionError,
-    PyLCMError,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
@@ -581,9 +580,10 @@ class Model:
                 keys are drawn for the full population and sliced by global index.
                 - `0` (default): one pass over the whole (padded) population.
                 - `> 0`: chunk the subjects into passes of this size, bounding the
-                  per-period device workspace. Raises `PyLCMError` if any grid is
-                  distributed and more than one device is visible — there the
-                  subject axis is sharded across devices, not chunked.
+                  per-period device workspace. Under distributed grids each chunk
+                  is placed onto the subject mesh axis (the size is rounded up to
+                  a device multiple); the value-function arrays stay sharded
+                  throughout.
             log_level: Verbosity, and the runtime-validation policy it implies.
                 Required — pick deliberately for the situation:
                 - `"off"` — silent; initial-condition, transition-probability,
@@ -735,10 +735,12 @@ class Model:
         """Map the `subject_batch_size` knob to a concrete chunk shape.
 
         - `0` ⇒ the whole padded population (single pass).
-        - `> 0` ⇒ that size, clamped to the population. Forbidden under
-          multi-device distribution: subject-chunking is single-device, but the
-          value-function array is sharded across the devices and can't be
-          gathered onto one.
+        - `> 0` ⇒ that size, clamped to the population. Under multi-device
+          distribution the chunk is additionally rounded up to the next multiple
+          of the device count: every chunk is placed onto the subject mesh axis
+          (see `subject_array_sharding`), so its leading axis must divide evenly
+          across the devices. The value-function arrays stay sharded throughout —
+          chunking never gathers them.
 
         Also AOT-compiles (and caches) the simulate functions for the resolved
         shape when `n_subjects` matches the population.
@@ -746,21 +748,14 @@ class Model:
         aot_active = (
             self.n_subjects is not None and self.n_subjects == actual_n_subjects
         )
-        distributed_multidevice = (
-            self._distributes_subjects() and len(jax.devices()) > 1
-        )
         if subject_batch_size > 0:
-            if distributed_multidevice:
-                msg = (
-                    "subject_batch_size > 0 chunks the subject axis on a single "
-                    "device, which cannot be combined with distributed grids "
-                    f"across multiple devices ({len(jax.devices())} visible): the "
-                    "value-function array is sharded across them and cannot be "
-                    "gathered onto one. Use subject_batch_size=0 with distributed "
-                    "grids, or run on a single device."
-                )
-                raise PyLCMError(msg)
             compile_batch_size = min(subject_batch_size, padded_n_subjects)
+            if self._distributes_subjects():
+                n_devices = len(jax.devices())
+                compile_batch_size = min(
+                    -(-compile_batch_size // n_devices) * n_devices,
+                    padded_n_subjects,
+                )
         else:
             compile_batch_size = padded_n_subjects
         if aot_active:

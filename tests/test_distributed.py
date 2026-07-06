@@ -446,32 +446,41 @@ def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_m
 
 @_skip_pytest_parallel
 @pytest.mark.parametrize("subject_batch_size", [3, 4])
-def test_distributed_simulation_rejects_subject_batching(
+def test_distributed_simulation_with_subject_batching_matches_single_pass(
     correct_distributed_model,
     subject_batch_size,
 ):
-    """Subject-batching is rejected under multi-device distribution.
+    """Chunked simulate under distributed grids equals the single-pass result.
 
-    The value-function array is sharded across the devices and cannot be gathered
-    onto one, so chunking the subject axis (a single-device operation) cannot be
-    combined with distributed grids on more than one device — rejected even at a
-    batch size that divides the device count (4), not only a non-multiple (3).
+    The value-function arrays stay sharded across the devices throughout; each
+    subject chunk is placed onto the subject mesh axis before its period loop, so
+    chunking bounds the per-chunk device workspace without gathering anything onto
+    one device. A batch size that does not divide the device count (3 on 4
+    devices) is rounded up to the next device multiple.
     """
-    with pytest.raises(PyLCMError, match="distributed grids"):
-        correct_distributed_model.simulate(
-            log_level="debug",
-            params={"discount_factor": 0.95},
-            initial_conditions={
-                "age": jnp.full(8, 0),
-                "wealth": jnp.full(8, 100.0),
-                "type1": jnp.ones(8, dtype=jnp.int32),
-                "type2": jnp.ones(8, dtype=jnp.int32),
-                "regime_id": jnp.zeros(8, dtype=jnp.int32),
-            },
-            period_to_regime_to_V_arr=None,
-            seed=12345,
-            subject_batch_size=subject_batch_size,
-        )
+    initial_conditions = {
+        "age": jnp.full(8, 0),
+        "wealth": jnp.linspace(50.0, 120.0, 8),
+        "type1": jnp.ones(8, dtype=jnp.int32),
+        "type2": jnp.ones(8, dtype=jnp.int32),
+        "regime_id": jnp.zeros(8, dtype=jnp.int32),
+    }
+    single_pass = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+    chunked = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+        subject_batch_size=subject_batch_size,
+    )
+    pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
 
 
 @pytest.fixture
