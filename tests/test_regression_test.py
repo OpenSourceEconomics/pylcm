@@ -60,7 +60,7 @@ def test_regression_test():
             "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
         period_to_regime_to_V_arr=None,
-    ).to_dataframe()
+    ).to_dataframe(terminal_rows="all")
 
     # Compare solution (iterate over expected regimes — got may have additional ones)
     for period in expected_solve:
@@ -104,7 +104,7 @@ def test_regression_precautionary_savings():
         period_to_regime_to_V_arr=None,
         seed=12345,
         log_level="off",
-    ).to_dataframe()
+    ).to_dataframe(terminal_rows="all")
 
     assert_frame_equal(
         got,
@@ -137,7 +137,7 @@ def test_regression_mortality():
         period_to_regime_to_V_arr=None,
         seed=12345,
         log_level="off",
-    ).to_dataframe()
+    ).to_dataframe(terminal_rows="all")
 
     assert_frame_equal(
         got,
@@ -240,7 +240,7 @@ def test_model_with_different_grid_types(grid_type: str):
         },
         period_to_regime_to_V_arr=None,
     )
-    df = result.to_dataframe()
+    df = result.to_dataframe(terminal_rows="all")
 
     # Basic sanity checks
     assert len(df) == n_periods * 4  # 4 periods * 4 subjects

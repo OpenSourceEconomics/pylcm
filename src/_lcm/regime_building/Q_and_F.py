@@ -137,11 +137,6 @@ def get_Q_and_F(
     # the interpolator (which no longer indexes those axes).
     _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
-    # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
-    # induction co-map, so their `next_`-prefixed coordinates are not passed to
-    # the interpolator (which no longer indexes those axes).
-    _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
-
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[
             U_and_F,

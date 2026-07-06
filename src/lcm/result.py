@@ -127,6 +127,7 @@ class SimulationResult:
         additional_targets: list[str] | Literal["all"] | None = None,
         *,
         use_labels: bool = True,
+        terminal_rows: Literal["first", "all"] = "first",
     ) -> pd.DataFrame:
         """Convert simulation results to a flat pandas DataFrame.
 
@@ -143,6 +144,12 @@ class SimulationResult:
             use_labels: If True (default), discrete variables (states, actions, and
                 regime) are returned as pandas Categorical dtype with string labels.
                 If False, discrete variables are returned as integer codes.
+            terminal_rows: Which rows to emit for a subject in a terminal regime.
+                Terminal regimes are absorbing: after entry, the subject is carried
+                with frozen state through every later period the regime is active.
+                - `"first"` (default): keep only each subject's entry row — a dead
+                  subject appears once at death, like leaving a panel.
+                - `"all"`: emit every active period (the absorbing representation).
 
         Returns:
             DataFrame with simulation results.
@@ -162,6 +169,14 @@ class SimulationResult:
             ages=self._ages,
             subject_batch_size=self._subject_batch_size,
         )
+
+        if terminal_rows == "first":
+            df = _keep_first_terminal_row(
+                df=df,
+                terminal_regime_names=frozenset(
+                    name for name, regime in self._regimes.items() if regime.terminal
+                ),
+            )
 
         if use_labels:
             return _convert_to_categorical(df=df, metadata=self._metadata)
@@ -387,6 +402,24 @@ class _ArrayTreeLeaf:
 
     n_bytes: int
     """`prod(shape) * dtype.itemsize` — what orbax must stage to host."""
+
+
+def _keep_first_terminal_row(
+    *, df: pd.DataFrame, terminal_regime_names: frozenset[RegimeName]
+) -> pd.DataFrame:
+    """Drop each subject's frozen post-entry terminal-regime rows.
+
+    Terminal regimes are absorbing: a subject that enters one is carried with
+    frozen state through every later period the regime is active. Keep every
+    row up to and including the subject's first terminal-regime period;
+    subjects that never enter a terminal regime keep all rows.
+    """
+    is_terminal = df["regime_name"].isin(terminal_regime_names)
+    entry_period = df["subject_id"].map(
+        df.loc[is_terminal].groupby("subject_id")["period"].min()
+    )
+    keep = entry_period.isna() | (df["period"] <= entry_period)
+    return df.loc[keep].reset_index(drop=True)
 
 
 def _coerce_jax_scalar_for_arrow(value: object) -> object:
