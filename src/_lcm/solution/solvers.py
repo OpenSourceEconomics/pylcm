@@ -34,7 +34,7 @@ from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.carry import EGMCarry
+from _lcm.egm.carry import EGMCarry, shard_carry_template
 from _lcm.egm.nbegm import NBEGMRegistry
 from _lcm.egm.outer_envelope import (
     finalize_outer_envelope,
@@ -5373,41 +5373,12 @@ def _shard_ride_carry_template(
     grids: Mapping[StateOrActionName, Grid],
     ride_along_state_names: tuple[StateName, ...],
 ) -> EGMCarry:
-    """Place the carry template on the same device sharding as runtime carries.
-
-    The compiled cores accept one carry pytree layout across all periods. The
-    envelope core publishes carries whose ride axes inherit the regime's state
-    sharding, so the template — the compile-time sample and the terminal-period
-    input — must carry that sharding too; a replicated template would compile
-    the cores for replicated carries and reject every later period.
-
-    Ride axes lead each carry array in `ride_along_state_names` order; trailing
-    row axes stay unsharded. Scalars replicate across the mesh.
-    """
-    from _lcm.engine import _build_regime_sharding  # noqa: PLC0415
-
-    plan = _build_regime_sharding(
-        grids=MappingProxyType(dict(grids)), n_devices=len(jax.devices())
+    """Shard the ride-along carry template over its distributed ride axes."""
+    return shard_carry_template(
+        template=template,
+        grids=grids,
+        leading_axis_names=ride_along_state_names,
     )
-    if plan is None or not any(
-        name in plan.distributed_state_names for name in ride_along_state_names
-    ):
-        return template
-    ride_spec = jax.NamedSharding(
-        plan.mesh,
-        jax.P(
-            *(
-                name if name in plan.distributed_state_names else None
-                for name in ride_along_state_names
-            )
-        ),
-    )
-    scalar_spec = jax.NamedSharding(plan.mesh, jax.P())
-
-    def _place(leaf: FloatND) -> FloatND:
-        return jax.device_put(leaf, scalar_spec if leaf.ndim == 0 else ride_spec)
-
-    return jax.tree.map(_place, template)
 
 
 def _build_ride_along_carry_template(

@@ -18,7 +18,7 @@ from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     get_intrinsic_budget_constraint,
 )
-from _lcm.egm.carry import EGMCarry, build_template_egm_carry
+from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
 from _lcm.egm.negm_validation import validate_negm_regimes
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
@@ -727,9 +727,13 @@ def _build_egm_child_carry_producer(
                 int(grids[name].to_jax().shape[0])
                 for name in discrete_state_names + passive_state_names
             )
-            template = build_template_egm_carry(
-                n_rows=int(grids[euler_state_name].to_jax().shape[0]),
-                leading_shape=leading_shape,
+            template = shard_carry_template(
+                template=build_template_egm_carry(
+                    n_rows=int(grids[euler_state_name].to_jax().shape[0]),
+                    leading_shape=leading_shape,
+                ),
+                grids=grids,
+                leading_axis_names=discrete_state_names + passive_state_names,
             )
         else:
             return None, None
@@ -753,9 +757,13 @@ def _build_egm_child_carry_producer(
             int(grids[name].to_jax().shape[0])
             for name in discrete_state_names + passive_state_names
         )
-        template = build_template_egm_carry(
-            n_rows=int(grids[euler_state_name].to_jax().shape[0]),
-            leading_shape=leading_shape,
+        template = shard_carry_template(
+            template=build_template_egm_carry(
+                n_rows=int(grids[euler_state_name].to_jax().shape[0]),
+                leading_shape=leading_shape,
+            ),
+            grids=grids,
+            leading_axis_names=discrete_state_names + passive_state_names,
         )
     else:
         return None, None

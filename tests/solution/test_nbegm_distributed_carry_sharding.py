@@ -58,6 +58,24 @@ _SCRIPT = textwrap.dedent(
         ride_along_state_names=("kind",),
     )
     assert plain is template
+
+    # The engine-side templates (living-brute and terminal-wealth children)
+    # shard the same way: leading discrete + passive axes, unsharded rows.
+    from _lcm.egm.carry import build_template_egm_carry, shard_carry_template
+    from _lcm.grids import LinSpacedGrid
+
+    child = shard_carry_template(
+        template=build_template_egm_carry(n_rows=24, leading_shape=(2, 7)),
+        grids={
+            "kind": DiscreteGrid(ConsumerKind, distributed=True),
+            "aime": LinSpacedGrid(start=0.0, stop=1.0, n_points=7),
+            "liquid": LinSpacedGrid(start=0.1, stop=30.0, n_points=24),
+        },
+        leading_axis_names=("kind", "aime"),
+    )
+    assert child.value.sharding.spec == jax.P("kind", None), child.value.sharding
+    assert not child.value.sharding.is_fully_replicated
+    assert child.endog_grid.sharding.spec == jax.P("kind", None)
     print("SHARDING-OK")
     """
 )
