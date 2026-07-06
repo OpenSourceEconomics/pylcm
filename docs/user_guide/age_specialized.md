@@ -66,8 +66,8 @@ policy-date signature compiles one program per distinct policy year, not per per
 `AgeSpecialized` is accepted in `functions` and `constraints` of **non-terminal**
 regimes. Everything else is rejected at `Regime` construction, loudly:
 
-- **the regime `transition`** — periodizing the regime-transition probability path is
-  not supported;
+- **the regime `transition`**, bare or wrapped in `MarkovTransition` — periodizing the
+  regime-transition probability path is not supported;
 - **a regime transition that _reads_ an `AgeSpecialized` function**, directly or through
   plain helper functions — regime-transition probabilities are built once, so a
   policy-specialized value flowing into them would reuse one age's closure everywhere;

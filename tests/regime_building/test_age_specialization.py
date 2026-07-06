@@ -230,3 +230,29 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
 
     with pytest.raises(RegimeInitializationError):
         _validate_logical_consistency(regime)
+
+
+def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
+    binary_category_class,
+):
+    """A `MarkovTransition(AgeSpecialized(...))` regime transition must raise.
+
+    Regime-transition probabilities are built once, not per period, so a
+    policy-specialized probability law as the regime transition is just as
+    unsound as a bare `AgeSpecialized` transition and must be rejected at
+    `Regime` construction.
+    """
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        transition=MarkovTransition(
+            AgeSpecialized(
+                build=lambda age: lambda b: b,  # noqa: ARG005
+                signature=lambda age: ("regime", age),
+            )
+        ),
+        functions={"utility": lambda a, b: None},  # noqa: ARG005
+    )
+
+    with pytest.raises(RegimeInitializationError):
+        _validate_logical_consistency(regime)

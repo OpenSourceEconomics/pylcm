@@ -284,12 +284,17 @@ def _age_specialized_scope_errors(
     """
     error_messages: list[str] = []
 
-    transition_nodes = _iter_transition_nodes(transition)
-    if any(isinstance(node, AgeSpecialized) for node in transition_nodes):
+    if any(
+        isinstance(node, AgeSpecialized)
+        or (
+            isinstance(node, MarkovTransition) and isinstance(node.func, AgeSpecialized)
+        )
+        for node in _iter_transition_nodes(transition)
+    ):
         error_messages.append(
-            "A regime `transition` cannot be `AgeSpecialized`: policy-specialized "
-            "regime transitions are not supported. Specialize `functions` or "
-            "`constraints` instead.",
+            "A regime `transition` cannot be `AgeSpecialized` (bare or wrapped in "
+            "`MarkovTransition`): policy-specialized regime transitions are not "
+            "supported. Specialize `functions` or `constraints` instead.",
         )
 
     specialized_ancestor = _first_age_specialized_ancestor_of_transition(
