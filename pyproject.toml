@@ -141,12 +141,11 @@ tests = { cmd = "pytest tests -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "fa
 tests-32bit = { cmd = "pytest tests --precision=32 -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 [tool.pixi.feature.type-checking.dependencies]
+# The env ty analyzes against (`[tool.ty] environment.python`); the ty binary
+# itself is managed by the `ty` pre-commit hook (`prek run ty --all-files`).
 matplotlib = "*"
 pandas-stubs = "*"
 scipy-stubs = "*"
-ty = "*"
-[tool.pixi.feature.type-checking.tasks]
-ty = "ty check"
 [tool.pixi.pypi-dependencies]
 jax = ">=0.9"
 pdbp = "*"
@@ -296,7 +295,6 @@ expand_tables = [
   "tool.pixi.feature.tests.pypi-dependencies",
   "tool.pixi.feature.tests.tasks",
   "tool.pixi.feature.type-checking.dependencies",
-  "tool.pixi.feature.type-checking.tasks",
   "tool.pixi.pypi-dependencies",
   "tool.pixi.tasks",
   "tool.pixi.workspace",
@@ -305,6 +303,10 @@ expand_tables = [
 [tool.ty]
 src.exclude = [ "docs/**/*.ipynb" ]
 src.include = [ "src/", "tests/" ]
+# ty resolves third-party imports from this pixi env (the ty-pre-commit hook runs
+# `uv check --no-project`, so uv neither creates a `.venv` nor resolves deps). Run
+# `pixi install` once.
+environment.python = ".pixi/envs/type-checking"
 rules.ambiguous-protocol-member = "error"
 rules.deprecated = "error"
 rules.division-by-zero = "error"
