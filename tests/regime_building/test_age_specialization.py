@@ -166,3 +166,67 @@ def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
 
     with pytest.raises(RegimeInitializationError):
         _validate_logical_consistency(regime)
+
+
+def test_regime_transition_reading_age_specialized_helper_is_rejected(
+    binary_category_class,
+):
+    """A plain regime transition cannot read an `AgeSpecialized` helper function.
+
+    Regime-transition probabilities are built once, not per period, so a
+    policy-specialized value flowing into `next_regime` would silently reuse one
+    age's policy closure across all periods. It must raise instead.
+    """
+
+    def next_regime(policy_threshold):
+        return policy_threshold
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        transition=MarkovTransition(next_regime),
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "policy_threshold": AgeSpecialized(
+                build=lambda age: lambda b: age,  # noqa: ARG005
+                signature=lambda age: ("threshold", age),
+            ),
+        },
+    )
+
+    with pytest.raises(RegimeInitializationError):
+        _validate_logical_consistency(regime)
+
+
+def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
+    binary_category_class,
+):
+    """The regime-transition guard follows dependencies through plain functions.
+
+    `next_regime` reads a plain function which itself reads an `AgeSpecialized`
+    helper; the policy dependency is transitive but just as unsound, so it must
+    raise.
+    """
+
+    def eligibility(policy_threshold):
+        return policy_threshold
+
+    def next_regime(eligibility):
+        return eligibility
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        transition=MarkovTransition(next_regime),
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "eligibility": eligibility,
+            "policy_threshold": AgeSpecialized(
+                build=lambda age: lambda b: age,  # noqa: ARG005
+                signature=lambda age: ("threshold", age),
+            ),
+        },
+    )
+
+    with pytest.raises(RegimeInitializationError):
+        _validate_logical_consistency(regime)

@@ -89,7 +89,8 @@ class AgeSpecialized:
     Usable in `functions` and `constraints` of non-terminal regimes. A
     policy-dependent law of motion is expressed as a plain state transition that
     reads an `AgeSpecialized` entry of `functions`; a direct `AgeSpecialized`
-    state-transition value, a specialized regime `transition`, a
+    state-transition value, a specialized regime `transition`, a regime
+    transition whose dependency graph reads an `AgeSpecialized` function, a
     `MarkovTransition(AgeSpecialized(...))`, and any `AgeSpecialized` in a
     terminal regime are rejected at `Regime` construction. Every concrete
     function returned by `build` must expose the same call signature — only the

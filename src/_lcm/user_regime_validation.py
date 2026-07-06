@@ -182,6 +182,79 @@ def _iter_transition_nodes(value: object) -> Iterator[object]:
         yield value
 
 
+def _state_transition_marker_errors(
+    state_transitions: Mapping[str, object],
+) -> list[str]:
+    """Collect errors for `AgeSpecialized` markers inside state transitions."""
+    error_messages: list[str] = []
+    for name, value in state_transitions.items():
+        for node in _iter_transition_nodes(value):
+            if isinstance(node, MarkovTransition) and isinstance(
+                node.func, AgeSpecialized
+            ):
+                error_messages.append(
+                    f"state_transitions['{name}']: a `MarkovTransition` wrapping an "
+                    f"`AgeSpecialized` (a policy-specialized stochastic transition) "
+                    f"is not supported.",
+                )
+            elif isinstance(node, AgeSpecialized):
+                error_messages.append(
+                    f"state_transitions['{name}']: an `AgeSpecialized` cannot be a "
+                    f"state-transition value. Express the policy-dependent law of "
+                    f"motion as a plain transition function that reads an "
+                    f"`AgeSpecialized` entry of `functions` instead.",
+                )
+    return error_messages
+
+
+def _first_age_specialized_ancestor_of_transition(
+    *,
+    transition: object,
+    functions: Mapping[str, object],
+) -> str | None:
+    """Return the name of an `AgeSpecialized` function the transition reads, if any.
+
+    Walks the regime transition's parameter names transitively through plain
+    entries of `functions` (unwrapping `Phased` sides, per-target dicts, and
+    `MarkovTransition` wrappers along the way). Returns the first specialized
+    function name reached, or `None` when the transition's dependency graph is
+    policy-free.
+    """
+    specialized_names = {
+        name
+        for name, value in functions.items()
+        if any(
+            isinstance(node, AgeSpecialized) for node in _iter_transition_nodes(value)
+        )
+    }
+    if transition is None or not specialized_names:
+        return None
+
+    def arg_names_of(value: object) -> list[str]:
+        names: list[str] = []
+        for node in _iter_transition_nodes(value):
+            func = node.func if isinstance(node, MarkovTransition) else node
+            if callable(func):
+                try:
+                    names.extend(inspect.signature(func).parameters)
+                except TypeError, ValueError:
+                    continue
+        return names
+
+    seen: set[str] = set()
+    stack = arg_names_of(transition)
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        if name in specialized_names:
+            return name
+        if name in functions:
+            stack.extend(arg_names_of(functions[name]))
+    return None
+
+
 def _age_specialized_scope_errors(
     *,
     transition: object,
@@ -202,6 +275,10 @@ def _age_specialized_scope_errors(
     - an `AgeSpecialized` directly as a state-transition value — express the
       policy-dependent law of motion as a plain transition reading an
       `AgeSpecialized` helper function instead;
+    - a regime transition whose dependency graph reads an `AgeSpecialized`
+      function (directly or through plain helper functions) — regime-transition
+      probabilities are built once, not per period, so a policy-specialized
+      value flowing into them would reuse one age's policy closure everywhere;
     - any `AgeSpecialized` in a terminal regime — the terminal value program is
       built once and shared across all periods.
     """
@@ -215,23 +292,20 @@ def _age_specialized_scope_errors(
             "`constraints` instead.",
         )
 
-    for name, value in state_transitions.items():
-        for node in _iter_transition_nodes(value):
-            if isinstance(node, MarkovTransition) and isinstance(
-                node.func, AgeSpecialized
-            ):
-                error_messages.append(
-                    f"state_transitions['{name}']: a `MarkovTransition` wrapping an "
-                    f"`AgeSpecialized` (a policy-specialized stochastic transition) "
-                    f"is not supported.",
-                )
-            elif isinstance(node, AgeSpecialized):
-                error_messages.append(
-                    f"state_transitions['{name}']: an `AgeSpecialized` cannot be a "
-                    f"state-transition value. Express the policy-dependent law of "
-                    f"motion as a plain transition function that reads an "
-                    f"`AgeSpecialized` entry of `functions` instead.",
-                )
+    specialized_ancestor = _first_age_specialized_ancestor_of_transition(
+        transition=transition, functions=functions
+    )
+    if specialized_ancestor is not None:
+        error_messages.append(
+            f"The regime `transition` depends on the `AgeSpecialized` function "
+            f"'{specialized_ancestor}'. Regime-transition probabilities are built "
+            f"once, not per period, so a policy-specialized value flowing into "
+            f"them would silently reuse one age's policy closure across all "
+            f"periods. Route the policy dependency through `functions` consumed "
+            f"by utility, constraints, or state transitions instead.",
+        )
+
+    error_messages.extend(_state_transition_marker_errors(state_transitions))
 
     if terminal:
         for slot_name, slot in (("functions", functions), ("constraints", constraints)):
