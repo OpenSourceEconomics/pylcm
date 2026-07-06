@@ -52,6 +52,29 @@ def test_nbegm_matches_brute_in_every_ride_along_slice_every_age():
             )
 
 
+def test_nbegm_solve_is_invariant_to_distributing_the_ride_state():
+    """A model-level distributed ride state yields the same value as a plain one.
+
+    Marking the fixed ride-along `kind` as `distributed=True` shards it across the
+    mesh but changes no economics: the child's Euler state stays the continuous
+    liquid state (never the int-coded `kind`), so the distributed solve reproduces
+    the non-distributed value exactly.
+    """
+    plain = toy.build_model(
+        variant="nbegm", n_periods=4, n_liquid=24, n_savings=32
+    ).solve(params=toy.build_params(), log_level="off")
+    distributed = toy.build_model(
+        variant="nbegm", n_periods=4, n_liquid=24, n_savings=32, distributed_kind=True
+    ).solve(params=toy.build_params(), log_level="off")
+    for period in plain:
+        if "alive" not in plain[period]:
+            continue
+        np.testing.assert_array_equal(
+            np.asarray(distributed[period]["alive"]),
+            np.asarray(plain[period]["alive"]),
+        )
+
+
 def test_value_is_invariant_to_envelope_cell_blocking():
     """The solved value does not depend on the envelope's ride-cell block size.
 
