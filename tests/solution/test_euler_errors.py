@@ -17,6 +17,11 @@ from _lcm.egm.euler_errors import (
 )
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
 from _lcm.egm.two_asset_g2egm_step import g2egm_retiring_step, g2egm_step
+from tests.conftest import X64_ENABLED
+
+# The "essentially zero" log10 Euler residual floor is set by float eps:
+# roughly -15 at 64-bit, -7 at 32-bit; -8/-6 leave margin for rounding.
+_EXACT_RESIDUAL_LOG10_BOUND = -8.0 if X64_ENABLED else -6.0
 
 _LIQUID_GRID = jnp.linspace(0.1, 20.0, 12)
 _SAVINGS_GRID = jnp.linspace(0.0, 20.0, 40)
@@ -49,7 +54,7 @@ def test_constrained_consume_all_solution_has_an_exact_euler_residual():
         return_liquid=_RETURN,
         income=_INCOME,
     )
-    assert float(err[0]) < -8.0  # essentially zero residual
+    assert float(err[0]) < _EXACT_RESIDUAL_LOG10_BOUND  # essentially zero residual
 
 
 def _retired_median_euler_error(*, n_liquid):

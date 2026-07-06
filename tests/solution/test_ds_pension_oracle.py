@@ -10,7 +10,11 @@ retirement income) move value in the right direction.
 import numpy as np
 import pytest
 
+from tests.conftest import X64_ENABLED
 from tests.test_models.deterministic.ds_pension import get_model, get_params
+
+# The closed-form comparison is float-eps-limited at the active precision.
+_RTOL = 1e-12 if X64_ENABLED else 1e-5
 
 
 def _solve(**param_overrides):
@@ -35,7 +39,7 @@ def test_terminal_bequest_is_the_closed_form_crra_value():
     liquid_grid = np.linspace(0.1, 20.0, 12)
     # CRRA with rho = 2: u(liquid) = liquid**(-1) / (-1) = -1 / liquid.
     expected = -1.0 / liquid_grid
-    np.testing.assert_allclose(np.asarray(solution[4]["dead"]), expected, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(solution[4]["dead"]), expected, rtol=_RTOL)
 
 
 def test_working_value_increases_in_both_assets():

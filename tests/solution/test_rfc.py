@@ -39,6 +39,11 @@ from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
+from tests.conftest import X64_ENABLED
+
+# Interpolated bracket reads are float-eps-limited at the active precision.
+_BRACKET_ATOL = 1e-10 if X64_ENABLED else 1e-5
+_GRID_ATOL = 1e-12 if X64_ENABLED else 1e-5
 
 
 def _rfc_solver():
@@ -378,9 +383,13 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
         bracket.upper_policy - bracket.lower_policy
     )
 
-    np.testing.assert_allclose(float(bracket_value), float(ref_value), atol=1e-10)
-    np.testing.assert_allclose(float(bracket_policy), float(ref_policy), atol=1e-10)
+    np.testing.assert_allclose(
+        float(bracket_value), float(ref_value), atol=_BRACKET_ATOL
+    )
+    np.testing.assert_allclose(
+        float(bracket_policy), float(ref_policy), atol=_BRACKET_ATOL
+    )
     assert int(bracket.n_kept) == int(n_kept)
     np.testing.assert_allclose(
-        float(bracket.first_grid), float(refined_grid[0]), atol=1e-12
+        float(bracket.first_grid), float(refined_grid[0]), atol=_GRID_ATOL
     )

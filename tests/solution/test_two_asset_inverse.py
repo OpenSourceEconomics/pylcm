@@ -14,6 +14,11 @@ from _lcm.egm.two_asset_inverse import (
     invert_dcon_cloud,
     invert_ucon_cloud,
 )
+from tests.conftest import X64_ENABLED
+
+# Round-trip and FOC identities are float-eps-limited at the active precision.
+_ATOL = 1e-10 if X64_ENABLED else 1e-5
+_RTOL = 1e-10 if X64_ENABLED else 1e-5
 
 _DISCOUNT = 0.95
 _CRRA = 2.0
@@ -49,14 +54,14 @@ def test_inverse_recovers_liquid_post_decision_balance():
     """`m - c - d` returns the liquid post-decision balance `a`."""
     cloud, a, _b, _wa, _wb = _cloud()
     recovered = cloud.m_endog - cloud.consumption - cloud.deposit
-    np.testing.assert_allclose(np.asarray(recovered), np.asarray(a), atol=1e-10)
+    np.testing.assert_allclose(np.asarray(recovered), np.asarray(a), atol=_ATOL)
 
 
 def test_inverse_recovers_pension_post_decision_balance():
     """`n + d + chi*log(1 + d)` returns the pension post-decision balance `b`."""
     cloud, _a, b, _wa, _wb = _cloud()
     recovered = cloud.n_endog + cloud.deposit + _MATCH * jnp.log1p(cloud.deposit)
-    np.testing.assert_allclose(np.asarray(recovered), np.asarray(b), atol=1e-10)
+    np.testing.assert_allclose(np.asarray(recovered), np.asarray(b), atol=_ATOL)
 
 
 def test_inverse_satisfies_consumption_foc():
@@ -64,7 +69,7 @@ def test_inverse_satisfies_consumption_foc():
     cloud, _a, _b, w_a, _wb = _cloud()
     marginal_utility = cloud.consumption ** (-_CRRA)
     np.testing.assert_allclose(
-        np.asarray(marginal_utility), np.asarray(_DISCOUNT * w_a), rtol=1e-10
+        np.asarray(marginal_utility), np.asarray(_DISCOUNT * w_a), rtol=_RTOL
     )
 
 
@@ -72,7 +77,7 @@ def test_inverse_satisfies_deposit_foc():
     """`w_a = w_b * (1 + chi / (1 + d))` holds at the recovered deposit."""
     cloud, _a, _b, w_a, w_b = _cloud()
     rhs = w_b * (1.0 + _MATCH / (1.0 + cloud.deposit))
-    np.testing.assert_allclose(np.asarray(w_a), np.asarray(rhs), rtol=1e-10)
+    np.testing.assert_allclose(np.asarray(w_a), np.asarray(rhs), rtol=_RTOL)
 
 
 def _dcon_cloud():
@@ -109,7 +114,7 @@ def test_dcon_recovers_liquid_budget_with_zero_deposit():
     """`m - c` returns the liquid post-decision balance `a` (since `d = 0`)."""
     cloud, a, _b, _wa = _dcon_cloud()
     np.testing.assert_allclose(
-        np.asarray(cloud.m_endog - cloud.consumption), np.asarray(a), atol=1e-10
+        np.asarray(cloud.m_endog - cloud.consumption), np.asarray(a), atol=_ATOL
     )
 
 
@@ -125,7 +130,7 @@ def test_dcon_satisfies_consumption_foc():
     np.testing.assert_allclose(
         np.asarray(cloud.consumption ** (-_CRRA)),
         np.asarray(_DISCOUNT * w_a),
-        rtol=1e-10,
+        rtol=_RTOL,
     )
 
 
@@ -162,14 +167,14 @@ def test_acon_pins_liquid_post_decision_to_zero():
     """The liquid post-decision balance `m - c - d` is zero (borrowing binds)."""
     cloud, _c, _b, _wb = _acon_cloud()
     recovered = cloud.m_endog - cloud.consumption - cloud.deposit
-    np.testing.assert_allclose(np.asarray(recovered), 0.0, atol=1e-10)
+    np.testing.assert_allclose(np.asarray(recovered), 0.0, atol=_ATOL)
 
 
 def test_acon_recovers_pension_post_decision_balance():
     """`n + d + chi*log(1 + d)` returns the pension post-decision balance `b`."""
     cloud, _c, b, _wb = _acon_cloud()
     recovered = cloud.n_endog + cloud.deposit + _MATCH * jnp.log1p(cloud.deposit)
-    np.testing.assert_allclose(np.asarray(recovered), np.asarray(b), atol=1e-10)
+    np.testing.assert_allclose(np.asarray(recovered), np.asarray(b), atol=_ATOL)
 
 
 def test_acon_has_interior_deposit():
@@ -183,7 +188,7 @@ def test_acon_satisfies_deposit_foc():
     cloud, _c, _b, w_b = _acon_cloud()
     rhs = _DISCOUNT * w_b * (1.0 + _MATCH / (1.0 + cloud.deposit))
     np.testing.assert_allclose(
-        np.asarray(cloud.consumption ** (-_CRRA)), np.asarray(rhs), rtol=1e-10
+        np.asarray(cloud.consumption ** (-_CRRA)), np.asarray(rhs), rtol=_RTOL
     )
 
 

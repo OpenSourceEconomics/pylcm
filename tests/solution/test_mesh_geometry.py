@@ -19,6 +19,11 @@ from _lcm.egm.mesh_geometry import (
     is_admissible,
     triangulate_regular_grid,
 )
+from tests.conftest import X64_ENABLED
+
+# Barycentric weights come out of a solved 2x2 linear system, so their accuracy
+# is a small multiple of the float eps of the active precision.
+_ATOL = 1e-12 if X64_ENABLED else 1e-5
 
 
 def test_triangulate_one_cell_splits_into_two_triangles():
@@ -48,7 +53,7 @@ def test_barycentric_weights_at_vertex_are_one_hot():
     """The barycentric weights at a triangle vertex select that vertex."""
     triangle = jnp.array([[0.0, 0.0], [2.0, 0.0], [0.0, 2.0]])
     weights = barycentric_weights(triangle=triangle, query=triangle[1])
-    np.testing.assert_allclose(np.asarray(weights), [0.0, 1.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(weights), [0.0, 1.0, 0.0], atol=_ATOL)
 
 
 def test_barycentric_weights_at_centroid_are_uniform():
@@ -56,7 +61,7 @@ def test_barycentric_weights_at_centroid_are_uniform():
     triangle = jnp.array([[0.0, 0.0], [3.0, 0.0], [0.0, 3.0]])
     centroid = jnp.mean(triangle, axis=0)
     weights = barycentric_weights(triangle=triangle, query=centroid)
-    np.testing.assert_allclose(np.asarray(weights), [1 / 3, 1 / 3, 1 / 3], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(weights), [1 / 3, 1 / 3, 1 / 3], atol=_ATOL)
 
 
 def test_folded_quad_triangles_stay_non_degenerate():
@@ -91,7 +96,7 @@ def test_extrapolated_target_is_admissible_under_reference_threshold():
     """
     triangle = jnp.array([[0.0, 0.0], [2.0, 0.0], [0.0, 2.0]])
     weights = barycentric_weights(triangle=triangle, query=jnp.array([1.2, 1.2]))
-    np.testing.assert_allclose(np.asarray(weights), [-0.2, 0.6, 0.6], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(weights), [-0.2, 0.6, 0.6], atol=_ATOL)
     assert bool(is_admissible(weights=weights, threshold=0.25))
     assert not bool(is_admissible(weights=weights, threshold=0.1))
 
@@ -105,7 +110,7 @@ def test_weight_exactly_at_negative_threshold_is_admissible():
     """
     triangle = jnp.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
     weights = barycentric_weights(triangle=triangle, query=jnp.array([0.625, 0.625]))
-    np.testing.assert_allclose(np.asarray(weights), [-0.25, 0.625, 0.625], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(weights), [-0.25, 0.625, 0.625], atol=_ATOL)
     assert bool(is_admissible(weights=weights, threshold=0.25))
 
 
@@ -130,4 +135,4 @@ def test_interpolate_reproduces_affine_field():
     query = jnp.array([0.5, 0.5])
     weights = barycentric_weights(triangle=triangle, query=query)
     interpolated = interpolate_on_triangle(node_values=node_values, weights=weights)
-    np.testing.assert_allclose(np.asarray(interpolated), [3.5, 4.5], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(interpolated), [3.5, 4.5], atol=_ATOL)

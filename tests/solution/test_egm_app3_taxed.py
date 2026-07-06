@@ -18,11 +18,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tests.conftest import X64_ENABLED
 from tests.test_models.ds_app3_discrete_housing import (
     build_model,
     build_params,
     piecewise_capital_income_tax,
 )
+
+# The bracket-schedule comparison is float-eps-limited at the active precision.
+_TAX_ATOL = 1e-9 if X64_ENABLED else 1e-5
 
 # Construction-scale grids: a single local solve stays fast. The asset interior
 # excludes the constrained low-wealth nodes and the top edge-clamp nodes.
@@ -51,7 +55,7 @@ MIN_FRACTION_WITHIN = 0.95
 def test_piecewise_tax_matches_the_bracket_schedule(assets: float, expected: float):
     """`T(a)` returns `B + tau_a*(a - a0)` for the bracket containing `a`."""
     got = float(piecewise_capital_income_tax(jnp.asarray(assets)))
-    np.testing.assert_allclose(got, expected, atol=1e-9)
+    np.testing.assert_allclose(got, expected, atol=_TAX_ATOL)
 
 
 def test_tax_schedule_has_three_level_discontinuities():
