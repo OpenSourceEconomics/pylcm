@@ -25,6 +25,17 @@ if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
 
 import jax
 
+# JAX only writes an executable to the persistent cache when its compile time
+# exceeds `jax_persistent_cache_min_compile_time_secs` (default: 1 second). A
+# pylcm model compiles as many small per-regime/per-period programs, most of
+# which fall under that threshold — with the default, the cache stays empty and
+# every fresh process recompiles the whole model. Cache everything instead.
+# Applied via `jax.config` so it takes effect regardless of whether `jax` was
+# imported before `lcm`; users can override by setting the environment variable
+# JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS before importing jax.
+if os.environ.get("JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS") is None:
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 

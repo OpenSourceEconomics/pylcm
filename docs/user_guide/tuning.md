@@ -154,7 +154,7 @@ across devices, not from any choice of `batch_size`.
 
 ## Environment flags
 
-pylcm sets two JAX defaults at import and leaves the rest to the environment.
+pylcm sets three JAX defaults at import and leaves the rest to the environment.
 
 **Set by pylcm (override before importing `lcm`):**
 
@@ -163,6 +163,12 @@ pylcm sets two JAX defaults at import and leaves the rest to the environment.
   `nvidia-smi` and memory benchmarks reflect real usage.
 - `JAX_COMPILATION_CACHE_DIR=~/.cache/jax` — persist the JIT cache so repeated runs of a
   large (many-regime) model skip the multi-minute compile.
+- `JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0` — write every compiled program to the
+  persistent cache. JAX's default skips programs that compile in under a second, and a
+  pylcm model consists of many small per-regime/per-period programs — with the default
+  threshold the cache stays empty and every fresh process recompiles the whole model.
+  Cache hits skip XLA compilation only; tracing and lowering still run on each fresh
+  process, so re-runs get faster, not free.
 
 **Knobs you set yourself**, with the trade-off each carries:
 

@@ -92,7 +92,7 @@ smaller models.
 
 ## JAX Settings
 
-pylcm sets two JAX environment variables on import:
+pylcm sets three JAX configuration defaults on import:
 
 - **`XLA_PYTHON_CLIENT_PREALLOCATE=false`** — disables JAX's default of reserving 75% of
   GPU memory upfront. This lets `nvidia-smi` reflect actual usage and plays nicely with
@@ -100,8 +100,12 @@ pylcm sets two JAX environment variables on import:
 - **`JAX_COMPILATION_CACHE_DIR=~/.cache/jax`** — enables persistent JIT compilation
   caching. Large models (many regimes and states) can take minutes to compile on first
   run; the cache makes subsequent runs near-instant.
+- **`JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0`** — writes every compiled program to
+  the persistent cache. JAX's default only caches programs that take longer than a
+  second to compile, which excludes most of the many small programs a pylcm model
+  compiles — leaving the cache empty and every fresh process recompiling everything.
 
-Both use `os.environ.setdefault`, so they only apply if the variable is not already set.
+All three only apply if you have not already set the variable yourself.
 
 On HPC systems where the home directory is on a slow network filesystem, you may want to
 point the compilation cache at a fast local disk. Set the environment variable before
