@@ -456,6 +456,15 @@ def _simulate_regime_in_period(
         period + 1, MappingProxyType({})
     )
 
+    # COLLECTIVE-REGIMES (E4): the simulate value router lands here. Regime
+    # routing for a collective regime is not Phi(x,a): the simulator draws the
+    # candidate realizations (offer arrival, spouse attributes, all period
+    # shocks), recomputes the candidate regimes' per-stakeholder values at the
+    # realized point (this recompute-argmax path is exactly what E4 extends),
+    # evaluates the same consent/divorce gates as E3', then routes and discards
+    # the losing candidate. A between-period state-reassignment hook (child ages
+    # exiting at 19) also lives on the simulate side. See design doc §2 (E4) / §3.
+    #
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.

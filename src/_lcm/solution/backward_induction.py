@@ -213,6 +213,16 @@ def solve(
                 # implies a finished `min`/`max` too.
                 diagnostic_mean[-1].block_until_ready()
 
+        # COLLECTIVE-REGIMES (E3'): the gated edge fold lands here. All regimes
+        # of this period are now solved, so their per-node (unfolded) arrays are
+        # still live in `period_solution`. Before rolling, E3' inserts a per-
+        # inbound-edge step that folds `E_eps[ kappa*V_target + (1-kappa)*
+        # V_fallback ]` over the shared shock nodes (consent gate for the
+        # singles->married edge, divorce D flag for the married->married edge),
+        # storing W-bar on deterministic cells; parents then read W-bar in place
+        # of the raw target V via the existing next_regime_to_V_arr threading.
+        # The node fold is streamed to cap peak memory. See design doc §2 (E3')
+        # / §3.
         next_regime_to_V_arr, next_regime_to_egm_carry = _roll_continuation_inputs(
             regimes=regimes,
             period_solution=period_solution,

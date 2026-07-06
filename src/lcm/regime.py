@@ -178,6 +178,24 @@ class Regime:
     description: str = ""
     """Description of the regime."""
 
+    stakeholders: tuple[str, ...] | None = None
+    """Names of the stakeholders whose individual values this regime carries.
+
+    `None` (the default) is the singleton case: the regime has one implicit
+    stakeholder, one value function, and follows today's exact code path — no
+    behavior change. A non-`None` tuple declares a *collective regime*: a couple
+    (or other multi-party household) that solves one household argmax but reads
+    off a per-stakeholder value at that common argmax, with value-aware
+    feasibility and value-gated regime routing (consent / divorce).
+
+    This is the API surface of the "collective regimes" extension (E1-E4 +
+    shared shocks). The numerics are **not yet implemented**: constructing a
+    regime with `stakeholders is not None` currently raises
+    `NotImplementedError`. See the design doc
+    `pylcm-extension-collective-regimes.md` (v2.1) and the tracking issue
+    `pylcm-issue-collective-regimes.md`.
+    """
+
     @property
     def terminal(self) -> bool:
         """Whether this is a terminal regime (derived from transition being None)."""
@@ -199,6 +217,26 @@ class Regime:
         return isinstance(transition, MarkovTransition | Mapping)
 
     def __post_init__(self) -> None:
+        # COLLECTIVE-REGIMES (E1): `stakeholders` is the API surface of the
+        # collective-regimes extension. The numerics (per-stakeholder U/Q/V,
+        # scalarized argmax, value-aware feasibility, gated edge folds) are not
+        # yet implemented, so declaring stakeholders is rejected up front — the
+        # field is real and honest about its not-yet-implemented status. The
+        # default `None` (singleton) path never enters this branch, so today's
+        # behavior is provably untouched. See design doc
+        # `pylcm-extension-collective-regimes.md` §2 (E1) and the tracking issue.
+        if self.stakeholders is not None:
+            raise NotImplementedError(
+                "Collective (stakeholder-valued) regimes are not yet "
+                "implemented. `Regime(stakeholders=...)` declares the API "
+                "surface only; the solver/simulator numerics (E1-E4) are "
+                "forthcoming. See the design doc "
+                "`pylcm-extension-collective-regimes.md` (v2.1) and the "
+                "tracking issue `pylcm-issue-collective-regimes.md`. Omit "
+                "`stakeholders` (leave it `None`) for the current single-value "
+                "regime behavior."
+            )
+
         _validate_mapping_contents(self)
         _validate_logical_consistency(self)
 

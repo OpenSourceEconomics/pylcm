@@ -157,6 +157,12 @@ def get_max_Q_over_a(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **states_actions_params,
             )
+            # COLLECTIVE-REGIMES (E2): value-aware mask lands here. Today F_arr
+            # is built in Q_and_F (`_get_U_and_F`) before and independently of
+            # Q; the mask is applied at this `where=F_arr`. E2 needs per-
+            # stakeholder Q first, then `mask = F ∧ g(Q^s, same-period reference
+            # V)`, then the max — a reorder that genuinely spans Q_and_F.py and
+            # this file. See design doc §2 (E2) / §3.
             return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
     inner_state_names = tuple(
@@ -316,6 +322,11 @@ def get_argmax_and_max_Q_over_a(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **states_actions_params,
             )
+            # COLLECTIVE-REGIMES (E1): per-stakeholder value readout lands here.
+            # Today one Q_arr is argmaxed and its max returned. E1 argmaxes the
+            # household objective O({Q^s}) once, then gathers each stakeholder's
+            # Q^s at that common a* (`argmax_and_max` already returns the index).
+            # See design doc §2 (E1) / §3.
             return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 
     return argmax_and_max_Q_over_a

@@ -183,6 +183,13 @@ def get_Q_and_F(
         regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             compute_regime_transition_probs(**states_actions_params)
         )
+        # COLLECTIVE-REGIMES (E2): F_arr is built here, before and independently
+        # of Q (it never reads E_next_V). A value-aware mask cannot stay here:
+        # it needs per-stakeholder Q^s, so E2 splits this into (i) build the
+        # state-independent F here, (ii) compute Q^s, (iii) `mask = F ∧ g(...)`
+        # applied in max_Q_over_a. This site also returns the explicit divorce
+        # flag D = 1[mask empty], distinct from a numeric -inf. See design doc
+        # §2 (E2) / §3.
         U_arr, F_arr = U_and_F(**states_actions_params)
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in period_targets}
