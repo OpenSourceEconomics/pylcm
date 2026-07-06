@@ -76,6 +76,7 @@ from _lcm.typing import (
     EGMCarryProducer,
     FlatParams,
     FunctionName,
+    MappingLeaf,
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
@@ -83,6 +84,7 @@ from _lcm.typing import (
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    SequenceLeaf,
     StateName,
     StateOrActionName,
     TransitionFunction,
@@ -106,7 +108,7 @@ from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import (
     MarkovTransition,
 )
-from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
+from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
     RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
@@ -1974,8 +1976,8 @@ def _wrap_deterministic_regime_transition(
     @with_signature(args=annotations, return_annotation="FloatND")
     @functools.wraps(func)
     def wrapped(
-        *args: FloatND | IntND | int,
-        **kwargs: FloatND | IntND | int,
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
     ) -> FloatND:
         regime_idx = func(*args, **kwargs)
         return jax.nn.one_hot(regime_idx, n_regimes)

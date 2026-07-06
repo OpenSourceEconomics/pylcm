@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from scipy.interpolate import interp1d as scipy_interp1d
+from scipy.interpolate import make_interp_spline
 
 from lcm import (
     AgeGrid,
@@ -627,7 +627,7 @@ def _interpolate_knots(
 
     """
     knot_periods, knot_values = _age_keys_to_periods(age_keyed_dict=age_keyed_dict)
-    spline = scipy_interp1d(knot_periods, knot_values, kind="cubic")
+    spline = make_interp_spline(knot_periods, knot_values, k=3)
     values = np.asarray(spline(period_range))
     if flat_after is not None:
         values[period_range >= flat_after] = knot_values[-1]

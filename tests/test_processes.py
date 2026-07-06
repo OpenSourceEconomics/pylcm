@@ -578,10 +578,13 @@ def _lag1_autocorrelation(gridpoints, P):
 def test_iid_normal_stationary_moments(gauss_hermite):
     """IID Normal stationary mean and std match mu and sigma."""
     mu, sigma = 1.5, 0.8
-    extra = {"gauss_hermite": gauss_hermite}
-    if not gauss_hermite:
-        extra["n_std"] = 4.0
-    grid = NormalIIDProcess(n_points=21, mu=mu, sigma=sigma, **extra)
+    grid = NormalIIDProcess(
+        n_points=21,
+        mu=mu,
+        sigma=sigma,
+        gauss_hermite=gauss_hermite,
+        n_std=None if gauss_hermite else 4.0,
+    )
     got_mean, got_std = _stationary_moments(
         grid.get_gridpoints(), grid.get_transition_probs()
     )
@@ -593,10 +596,13 @@ def test_iid_normal_stationary_moments(gauss_hermite):
 def test_iid_lognormal_stationary_moments(gauss_hermite):
     """IID LogNormal stationary log-mean and log-std match mu and sigma."""
     mu, sigma = 0.5, 0.3
-    extra = {"gauss_hermite": gauss_hermite}
-    if not gauss_hermite:
-        extra["n_std"] = 4.0
-    grid = LogNormalIIDProcess(n_points=21, mu=mu, sigma=sigma, **extra)
+    grid = LogNormalIIDProcess(
+        n_points=21,
+        mu=mu,
+        sigma=sigma,
+        gauss_hermite=gauss_hermite,
+        n_std=None if gauss_hermite else 4.0,
+    )
     points = grid.get_gridpoints()
     P = grid.get_transition_probs()
     got_mean, got_std = _stationary_moments(jnp.log(points), P)
