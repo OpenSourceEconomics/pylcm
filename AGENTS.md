@@ -358,6 +358,10 @@ df = result.to_dataframe(additional_targets="all")
 # Integer codes instead of categorical labels
 df = result.to_dataframe(use_labels=False)
 
+# Keep the frozen post-entry terminal-regime rows (absorbing representation);
+# the default (terminal_rows="first") emits each subject's terminal entry row only
+df = result.to_dataframe(terminal_rows="all")
+
 # Access metadata
 result.regime_names  # list[str]
 result.state_names  # list[str]

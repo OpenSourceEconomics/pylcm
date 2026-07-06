@@ -2,9 +2,8 @@
 
 The validators and the identity transition live behind a leading underscore in
 `_lcm.user_regime_validation` and `_lcm.regime_building.transitions`. This
-module is intentionally thin: the public class definition plus the private
-default Bellman aggregator (`_default_H`), which `Regime` injects when a
-non-terminal regime supplies no `H`.
+module is intentionally thin: the public class definition. A non-terminal
+regime that supplies no `H` gets `lcm.temporal_aggregation.H_linear` at model build.
 
 """
 
@@ -28,12 +27,13 @@ from _lcm.user_regime_validation import (
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
 )
+from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import GridSearch, Solver
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import MarkovTransition
-from lcm.typing import FloatND, UserFunction
+from lcm.typing import UserFunction
 
 
 @beartype(conf=REGIME_CONF)
@@ -165,6 +165,16 @@ class Regime:
     Requires at least one discrete action.
     """
 
+    certainty_equivalent: CertaintyEquivalent | None = None
+    """Nonlinear certainty equivalent over the next-period value distribution.
+
+    When set, the solve aggregates the continuation as
+    `g⁻¹(Σ_r p_r · E_w[g(V')])` instead of the linear expectation, and the
+    transform parameters become runtime params under the pseudo-function
+    name `certainty_equivalent`. Only non-terminal regimes solved by
+    `GridSearch` support it.
+    """
+
     description: str = ""
     """Description of the regime."""
 
@@ -287,10 +297,3 @@ class Regime:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
-
-
-def _default_H(
-    utility: FloatND, E_next_V: FloatND, discount_factor: FloatND
-) -> FloatND:
-    """Default Bellman aggregator: `U + β · E[V_next]`."""
-    return utility + discount_factor * E_next_V

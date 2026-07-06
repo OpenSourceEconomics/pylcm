@@ -73,8 +73,8 @@ from _lcm.typing import (
 from lcm.exceptions import GridInitializationError, ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _default_H
 from lcm.solvers import DCEGM
+from lcm.temporal_aggregation import H_linear
 from lcm.transition import MarkovTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, UserFunction
 
@@ -325,18 +325,18 @@ def _fail_if_custom_H(*, regime_name: RegimeName, user_regime: UserRegime) -> No
     custom *solve-phase* `H` would silently change the meaning of the solution.
     A `Phased` `H` whose solve variant is the default aggregator is accepted —
     DC-EGM never reads the simulate variant, so a naive present-bias regime
-    (`H = Phased(solve=_default_H, simulate=beta_delta_H)`) is admissible: the
+    (`H = Phased(solve=H_linear, simulate=beta_delta_H)`) is admissible: the
     present bias enters only the simulate-phase re-optimization, outside the
     Euler inversion.
     """
     raw_H = user_regime.functions.get("H")
     solve_H = raw_H.solve if isinstance(raw_H, Phased) else raw_H
-    if solve_H is not _default_H:
+    if solve_H is not H_linear:
         msg = (
             f"Regime '{regime_name}' defines a custom solve-phase Bellman "
             "aggregator `H`. The DCEGM solver hard-codes the default aggregator "
             "`H = utility + discount_factor * E[V']` at solve time; remove the "
-            "custom `H` (a `Phased` `H` whose solve variant is `_default_H` is "
+            "custom `H` (a `Phased` `H` whose solve variant is `H_linear` is "
             "accepted) or use the brute-force solver."
         )
         raise ModelInitializationError(msg)

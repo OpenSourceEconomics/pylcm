@@ -257,6 +257,9 @@ per-file-ignores."tests/*" = [
   "S301",    # Use of pickle
   "SLF001",  # Private member access
 ]
+per-file-ignores."tests/test_compilation_cache.py" = [
+  "S603", # subprocess call with test-controlled input
+]
 per-file-ignores."tests/test_dtypes.py" = [
   "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
 ]

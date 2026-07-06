@@ -21,8 +21,8 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _default_H
 from lcm.solvers import GridSearch
+from lcm.temporal_aggregation import H_linear
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -271,14 +271,14 @@ def test_dcegm_phased_H_with_default_solve_variant_constructs():
     """A `Phased` H whose solve variant is the default aggregator is admitted.
 
     DC-EGM reads only the solve-phase `H`; the simulate variant is free. A naive
-    present-bias regime declares `H = Phased(solve=_default_H, simulate=...)`, so
+    present-bias regime declares `H = Phased(solve=H_linear, simulate=...)`, so
     the solve runs the exact Euler inversion and present bias enters only the
     simulate-phase re-optimization.
     """
     regime = VALID.replace(
         functions={
             **dict(VALID.functions),
-            "H": Phased(solve=_default_H, simulate=_custom_H),
+            "H": Phased(solve=H_linear, simulate=_custom_H),
         }
     )
     model = _build_model(regime)
@@ -290,7 +290,7 @@ def test_dcegm_phased_H_with_custom_solve_variant_raises():
     regime = VALID.replace(
         functions={
             **dict(VALID.functions),
-            "H": Phased(solve=_custom_H, simulate=_default_H),
+            "H": Phased(solve=_custom_H, simulate=H_linear),
         }
     )
     with pytest.raises(ModelInitializationError, match="solve-phase Bellman"):

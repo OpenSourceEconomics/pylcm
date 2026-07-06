@@ -5,6 +5,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 from dags import concatenate_functions, get_ancestors, with_signature
 
+from _lcm.certainty_equivalent import CertaintyEquivalent, resolve_certainty_equivalent
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -26,7 +27,6 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, Float1D, FloatND
 
 
@@ -41,6 +41,7 @@ def get_Q_and_F(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     co_map_state_names: tuple[StateName, ...] = (),
+    certainty_equivalent: CertaintyEquivalent | None = None,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -64,6 +65,8 @@ def get_Q_and_F(
             their axes are sliced off each `next_V_arr` leaf by the backward-induction
             co-map, so their coordinates are dropped from the interpolation. Only fixed
             (never-transitioning) distributed states qualify.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None` for the linear expectation.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -139,14 +142,8 @@ def get_Q_and_F(
     # ----------------------------------------------------------------------------------
 
     _build_H_kwargs = _get_build_H_kwargs(functions)
-
-    # The continuation operator generalizes the linear expectation E[V'] over the
-    # one-step stochastic lottery to `g_inv(E[g(V')])` — a value-transform pair
-    # (the Epstein-Zin / power-mean and entropic-risk certainty equivalents are
-    # this form). Default (no transform supplied) is the identity, so the
-    # expectation stays the plain weighted average, byte-identical.
-    value_transform, inverse_value_transform = _build_continuation_operator(
-        functions=functions
+    ce, ce_transform_flat_names, ce_inverse_flat_names = resolve_certainty_equivalent(
+        certainty_equivalent
     )
 
     # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
@@ -154,21 +151,15 @@ def get_Q_and_F(
     # the interpolator (which no longer indexes those axes).
     _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
-    operator_deps = [
-        f for f in (value_transform, inverse_value_transform) if f is not None
-    ]
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[
             U_and_F,
             compute_regime_transition_probs,
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
-            *operator_deps,
         ],
         include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
-        # `continuation_value` is the operator's internal value argument (the next
-        # value array), not a state/action/param, so it is not a Q_and_F input.
-        exclude=frozenset({"continuation_value"}),
+        exclude=frozenset(),
     )
 
     @with_signature(
@@ -197,11 +188,7 @@ def get_Q_and_F(
             {r: regime_transition_probs[r] for r in period_targets}
         )
 
-        # Accumulate the regime-mixed *transformed* continuation
-        # `sum_r p_r E_z[g(V_rz)]`, then invert once after the loop. With no operator
-        # this is the plain `E[V']`; with one it is the joint certainty equivalent
-        # `g_inv(sum_rz p_r p_z g(V_rz))`, sound across multiple target regimes.
-        E_next_V_transformed = jnp.zeros_like(U_arr)
+        E_next_V = jnp.zeros_like(U_arr)
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -229,25 +216,34 @@ def get_Q_and_F(
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
+            if ce is not None:
+                next_V_at_stochastic_states_arr = ce.transform(
+                    value=next_V_at_stochastic_states_arr,
+                    **{
+                        arg: states_actions_params[flat_name]
+                        for arg, flat_name in ce_transform_flat_names.items()
+                    },
+                )
 
-            # Transform + stochastic-average for this target (no inverse yet); the
-            # inverse is applied once over the joint lottery after the loop.
-            next_V_transformed_arr = _transform_and_average(
-                values=next_V_at_stochastic_states_arr,
+            # We then take the weighted average of the next value function at the
+            # stochastic states to get the expected next value function.
+            next_V_expected_arr = jnp.average(
+                next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
-                value_transform=value_transform,
-                params=states_actions_params,
             )
-            E_next_V_transformed = (
-                E_next_V_transformed
-                + active_regime_probs[target_regime_name] * next_V_transformed_arr
+            E_next_V = (
+                E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
             )
 
-        E_next_V = _invert_joint(
-            E_next_V_transformed,
-            inverse_value_transform=inverse_value_transform,
-            params=states_actions_params,
-        )
+        if ce is not None:
+            E_next_V = ce.inverse(
+                value=E_next_V,
+                **{
+                    arg: states_actions_params[flat_name]
+                    for arg, flat_name in ce_inverse_flat_names.items()
+                },
+            )
+
         Q_arr = functions["H"](
             utility=U_arr,
             E_next_V=E_next_V,
@@ -261,126 +257,6 @@ def get_Q_and_F(
     return Q_and_F
 
 
-def _build_continuation_operator(
-    *, functions: EconFunctionsMapping
-) -> tuple[Callable[..., FloatND] | None, Callable[..., FloatND] | None]:
-    """Build the value-transform pair `(g, g_inv)` of the continuation operator.
-
-    A regime opts into a non-linear certainty-equivalent / risk operator by
-    supplying both `value_transform` (`g`) and `inverse_value_transform` (`g_inv`)
-    in its `functions`; each is a function of `continuation_value` (the next value)
-    plus any params. With neither supplied the operator is the identity (the linear
-    expectation), and both are `None`. Supplying exactly one is a contradiction.
-
-    Timing assumption (the joint-unresolved-lottery semantics): `g_inv` is applied
-    once over the *full* next-period lottery — jointly over the reachable target
-    regimes and the stochastic nodes — so the operator is the joint certainty
-    equivalent `g_inv(sum_rz p_r p_z g(V_rz))`. This is the right form when, at the
-    current decision, neither the regime draw nor the shock draw is yet resolved.
-    It deliberately does *not* model staged resolution — a regime revealed *before*
-    the non-linear continuation risk (`sum_r p_r g_inv(E_z[g(V_rz)])`), or regime
-    probabilities that depend on the realized next shock. Supporting those would
-    need an explicit operator-scope option (`"joint"` vs `"per_target"`); the
-    joint form needs no `is_linear` capability flag for its own correctness.
-    """
-    has_g = "value_transform" in functions
-    has_g_inv = "inverse_value_transform" in functions
-    if not has_g and not has_g_inv:
-        return None, None
-    if has_g != has_g_inv:
-        missing = "inverse_value_transform" if has_g else "value_transform"
-        msg = (
-            "A continuation operator needs both `value_transform` and "
-            f"`inverse_value_transform`; `{missing}` is missing."
-        )
-        raise ModelInitializationError(msg)
-    functions_without_H = {n: f for n, f in functions.items() if n != "H"}
-    g = concatenate_functions(
-        functions_without_H, targets="value_transform", enforce_signature=False
-    )
-    g_inv = concatenate_functions(
-        functions_without_H,
-        targets="inverse_value_transform",
-        enforce_signature=False,
-    )
-    return g, g_inv
-
-
-def _transform_and_average(
-    *,
-    values: FloatND,
-    weights: FloatND,
-    value_transform: Callable[..., FloatND] | None,
-    params: Mapping[str, _ParamsLeaf],
-) -> FloatND:
-    """Average the (optionally transformed) value over one target's stochastic lottery.
-
-    Returns `E_z[V]` when no operator is supplied and `E_z[g(V)]` otherwise. The
-    inverse `g_inv` is *not* applied here — it is applied once over the joint
-    regime-and-shock lottery (see `_invert_joint` and the `Q_and_F` seam), so the
-    continuation operator is the genuine joint certainty equivalent
-    `g_inv(sum_rz p_r p_z g(V_rz))`, sound for a non-linear operator over multiple
-    target regimes, not the per-target-then-mix form (which would only equal it for
-    an affine `g`).
-    """
-    if value_transform is None:
-        return jnp.average(values, weights=weights)
-    g_params = {
-        name: params[name]
-        for name in get_union_of_args([value_transform])
-        if name != "continuation_value"
-    }
-    transformed = value_transform(continuation_value=values, **g_params)
-    return jnp.average(transformed, weights=weights)
-
-
-def _invert_joint(
-    transformed: FloatND,
-    *,
-    inverse_value_transform: Callable[..., FloatND] | None,
-    params: Mapping[str, _ParamsLeaf],
-) -> FloatND:
-    """Apply `g_inv` once to the regime-mixed transformed continuation, or identity.
-
-    The argument is `sum_r p_r E_z[g(V_rz)] = sum_rz p_r p_z g(V_rz)`, the joint
-    expectation of the transformed value; `g_inv` of it is the joint certainty
-    equivalent. Returns the argument unchanged when no operator is supplied.
-    """
-    if inverse_value_transform is None:
-        return transformed
-    g_inv_params = {
-        name: params[name]
-        for name in get_union_of_args([inverse_value_transform])
-        if name != "continuation_value"
-    }
-    return inverse_value_transform(continuation_value=transformed, **g_inv_params)
-
-
-def _apply_continuation_operator(
-    *,
-    values: FloatND,
-    weights: FloatND,
-    value_transform: Callable[..., FloatND] | None,
-    inverse_value_transform: Callable[..., FloatND] | None,
-    params: Mapping[str, _ParamsLeaf],
-) -> FloatND:
-    """The single-lottery certainty equivalent `g_inv(E[g(V)])` (or the mean).
-
-    Composes `_transform_and_average` and `_invert_joint` for the single-target
-    case — the form the joint seam reduces to when there is one reachable target.
-    """
-    return _invert_joint(
-        _transform_and_average(
-            values=values,
-            weights=weights,
-            value_transform=value_transform,
-            params=params,
-        ),
-        inverse_value_transform=inverse_value_transform,
-        params=params,
-    )
-
-
 def get_compute_intermediates(
     *,
     flat_param_names: frozenset[str],
@@ -391,6 +267,7 @@ def get_compute_intermediates(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    certainty_equivalent: CertaintyEquivalent | None = None,
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
@@ -415,6 +292,8 @@ def get_compute_intermediates(
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
             V-interpolation info.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None` for the linear expectation.
 
     Returns:
         Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
@@ -478,25 +357,19 @@ def get_compute_intermediates(
             batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
 
-    # The diagnostic intermediates must mirror the solve seam's continuation,
-    # including the continuation operator, so the reported `E_next_V`/`Q_arr` match
-    # the solved value for a model with a value-transform pair.
-    value_transform, inverse_value_transform = _build_continuation_operator(
-        functions=functions
+    ce, ce_transform_flat_names, ce_inverse_flat_names = resolve_certainty_equivalent(
+        certainty_equivalent
     )
-    operator_deps = [
-        f for f in (value_transform, inverse_value_transform) if f is not None
-    ]
+
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         deps=[
             U_and_F,
             compute_regime_transition_probs,
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
-            *operator_deps,
         ],
         include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
-        exclude=frozenset({"continuation_value"}),
+        exclude=frozenset(),
     )
 
     @with_signature(
@@ -521,7 +394,7 @@ def get_compute_intermediates(
             {r: regime_transition_probs[r] for r in period_targets}
         )
 
-        E_next_V_transformed = jnp.zeros_like(U_arr)
+        E_next_V = jnp.zeros_like(U_arr)
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -539,22 +412,25 @@ def get_compute_intermediates(
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
-            contribution = _transform_and_average(
-                values=next_V_stoch,
-                weights=joint,
-                value_transform=value_transform,
-                params=states_actions_params,
-            )
-            E_next_V_transformed = (
-                E_next_V_transformed
-                + active_regime_probs[target_regime_name] * contribution
-            )
+            if ce is not None:
+                next_V_stoch = ce.transform(
+                    value=next_V_stoch,
+                    **{
+                        arg: states_actions_params[flat_name]
+                        for arg, flat_name in ce_transform_flat_names.items()
+                    },
+                )
+            contribution = jnp.average(next_V_stoch, weights=joint)
+            E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
 
-        E_next_V = _invert_joint(
-            E_next_V_transformed,
-            inverse_value_transform=inverse_value_transform,
-            params=states_actions_params,
-        )
+        if ce is not None:
+            E_next_V = ce.inverse(
+                value=E_next_V,
+                **{
+                    arg: states_actions_params[flat_name]
+                    for arg, flat_name in ce_inverse_flat_names.items()
+                },
+            )
 
         Q_arr = functions["H"](
             utility=U_arr,

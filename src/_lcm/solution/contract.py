@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
@@ -133,6 +134,14 @@ class SolverBuildContext:
 
     has_taste_shocks: bool
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
+
+    certainty_equivalent: CertaintyEquivalent | None = None
+    """Nonlinear certainty equivalent declared by the regime, if any.
+
+    `GridSearch` consumes it via the compiled Q-and-F closures; solvers
+    that exploit the linear-expectation structure of the continuation
+    (e.g. Euler-inversion EGM) must reject regimes that declare one.
+    """
 
     co_map_state_names: tuple[StateName, ...] = ()
     """Fixed, distributed state names co-mapped with the continuation V.
