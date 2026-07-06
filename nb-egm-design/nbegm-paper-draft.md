@@ -438,9 +438,10 @@ function of savings. NB-EGM then binds the liquid state to each interval's
 representative node and evaluates one continuation row per interval, solving each
 interval as its own case against its own row. This is exact if and only if the
 liquid-dependence is *piecewise-constant on the declared partition*; a build-time
-probe differentiates every liquid-reading law at finitely many interior points —
-sweeping each integer-coded argument over its grid's actual codes one at a time —
-and rejects any detected smooth (affine or curved) dependence with an explanation.
+probe differentiates every liquid-reading law at finitely many fixed liquid values
+(absolute sample points, not per-interval representatives) — sweeping each
+integer-coded argument over its grid's actual codes one at a time — and rejects any
+detected smooth (affine or curved) dependence with an explanation.
 The probe is a **finite diagnostic, not a certificate**: by the same argument as
 Theorem 3, no finite set of black-box evaluations can prove constancy (or
 affinity) of an arbitrary smooth law — a dependence whose derivative vanishes at
@@ -548,10 +549,15 @@ receives only finitely many (possibly adaptively chosen) black-box evaluations o
 piecewise function can identify all threshold locations exactly.*
 
 *Proof.* Run the solver against $f_1(x) = \mathbf 1\{x \ge 1/2\}$ on $[0,1]$ and let
-$S = \{x_1, \dots, x_n\}$ be the realized (possibly adaptive) query set. Choose
-$\delta > 0$ with $S \cap (1/2, 1/2 + \delta) = \emptyset$ and set
-$f_2(x) = \mathbf 1\{x \ge 1/2 + \delta\}$. Then $f_2 = f_1$ on $S$; since the solver
-is deterministic and its queries depend only on previous responses, its interaction
+$S = \{x_1, \dots, x_n\}$ be the realized (possibly adaptive) query set. Since $S$
+is finite, choose $\delta > 0$ with
+$S \cap \bigl((1/2 - \delta, 1/2) \cup (1/2, 1/2 + \delta)\bigr) = \emptyset$. If
+$1/2 \notin S$, set $f_2(x) = \mathbf 1\{x \ge 1/2 + \delta\}$; every $x \in S$ with
+$x \ge 1/2$ satisfies $x \ge 1/2 + \delta$ and every $x \in S$ with $x < 1/2$
+satisfies $x < 1/2 - \delta$, so $f_2 = f_1$ on $S$. If $1/2 \in S$, shift the other
+way: $f_2(x) = \mathbf 1\{x \ge 1/2 - \delta\}$ agrees with $f_1$ at $1/2$ (both
+$1$) and, by the same disjointness, on all of $S$. In either case the solver is
+deterministic and its queries depend only on previous responses, so its interaction
 with $f_2$ realizes the same query set and the same output, while the thresholds
 differ. $\square$
 
