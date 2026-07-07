@@ -247,23 +247,15 @@ def _drop_engine_provided_args(
 ) -> None:
     """Remove a function's engine-supplied arguments from its discovered params.
 
-    Some regime functions take arguments the engine provides at solve time, not
-    the user:
-
-    - In a DC-EGM / NEGM regime the inversion function `inverse_marginal_utility`
-      receives `marginal_continuation` from the EGM kernel (in any other regime a
-      function of that name is ordinary).
-    - The continuation operator's `value_transform` / `inverse_value_transform`
-      receive `continuation_value` (the next value array).
-
-    These must not surface as user-facing params, so they are popped in place.
+    In a DC-EGM / NEGM regime the inversion function `inverse_marginal_utility`
+    receives `marginal_continuation` from the EGM kernel (in any other regime a
+    function of that name is ordinary). This must not surface as a user-facing
+    param, so it is popped in place.
     """
     if name == "inverse_marginal_utility" and isinstance(
         user_regime.solver, (DCEGM, NEGM)
     ):
         params.pop("marginal_continuation", None)
-    if name in ("value_transform", "inverse_value_transform"):
-        params.pop("continuation_value", None)
 
 
 def _regime_transition_entries(

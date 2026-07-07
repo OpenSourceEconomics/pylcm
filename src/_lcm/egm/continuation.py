@@ -293,6 +293,21 @@ def bind_continuation(
     the process node integrates over the resolved nodes.
     """
     regime_transition_probs = plan.compute_regime_transition_probs(**combo_pool)
+    # Carry rows are indexed here along their whole leading discrete axes (the
+    # carry-producing target's combo axes). A target state sharded across devices
+    # (`distributed=True`) would split those axes per device, so this index could
+    # not cross shards — and unlike the continuation V-array (co-mapped device-local
+    # via `co_mapped_in_axes` in `max_Q_over_a`), the carry channel has no such
+    # co-map, so a sharded carry into a DCEGM parent is unsupported. It is currently
+    # unreachable, not merely unhandled: a distributed state cannot reach a DCEGM
+    # regime or its carry-producing targets — regime-level `distributed` is rejected
+    # (must be model-level), a model-level sharded state pruned from a non-terminal
+    # regime is rejected, and a sharded discrete state surviving on a DCEGM regime is
+    # rejected by grid hygiene. Lifting the restriction is not infeasible: extend the
+    # continuation-V co-map to `next_regime_to_egm_carry` (map each carry's leading
+    # discrete axis device-local, as for the V-array); or gather carry rows
+    # shard-aware before indexing (an all-gather on just the carry's leading axis);
+    # or carve out sharded axes that appear in no carry via a validation check.
     child_readers = {
         target: _get_child_carry_reader(
             read=plan.child_reads[target],

@@ -204,8 +204,16 @@ class DCEGM(Solver):
     fues_jump_thresh: float = 2.0
     """Segment-switch threshold on `|ΔA / ΔR|` in the FUES scan."""
 
-    fues_n_points_to_scan: int = 10
-    """Number of points the FUES forward scan inspects after a candidate."""
+    fues_n_points_to_scan: int | None = None
+    """Number of points the FUES forward scan inspects after a candidate.
+
+    `None` (the default) scans exhaustively — every other candidate. That is the
+    only width proven correct when more than the window's worth of off-segment
+    candidates interleave between two points of one segment: a bounded window
+    then misses the segment's continuation and silently accepts the dominated
+    interlopers. A finite value keeps the cheaper bounded scan for models known
+    to stay within the window, trading that correctness guarantee for speed.
+    """
 
     fues_scan_unroll: int = 1
     """Loop-unroll factor for the FUES candidate `lax.scan`.
@@ -1348,8 +1356,9 @@ def _fail_if_n_constrained_points_too_few(n_constrained_points: int) -> None:
         raise RegimeInitializationError(msg)
 
 
-def _fail_if_fues_n_points_to_scan_too_few(fues_n_points_to_scan: int) -> None:
-    if fues_n_points_to_scan < 1:
+def _fail_if_fues_n_points_to_scan_too_few(fues_n_points_to_scan: int | None) -> None:
+    # `None` requests the exhaustive scan; only an explicit finite width is bounded.
+    if fues_n_points_to_scan is not None and fues_n_points_to_scan < 1:
         msg = (
             f"DCEGM.fues_n_points_to_scan must be at least 1, got "
             f"{fues_n_points_to_scan}. The FUES forward scan must inspect at "

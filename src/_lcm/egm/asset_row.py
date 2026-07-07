@@ -73,7 +73,7 @@ def _get_solve_one_combo_asset_rows(
     node's row, and each row publishes only its own node — exactly where
     the brute-force oracle evaluates the same decision-time functions. The
     per-combo carry row holds the per-node published points: abscissa the
-    node resources (weakly ascending by the resources monotonicity check),
+    node resources (strictly increasing by the resources monotonicity check),
     value the published V, and marginal the corrected
     $dV/dR = u'(c^*) + \\beta\\, (\\partial W/\\partial a)|_{A^*} / R'(a)$,
     NaN-padded to the carry length. The Euler-state gradient

@@ -73,6 +73,23 @@ class QueryBracket(NamedTuple):
     """Number of envelope points kept; `> n_pad` signals overflow."""
 
 
+def _resolve_n_points_to_scan(n_points_to_scan: int | None, *, n_input: int) -> int:
+    """Resolve the exhaustive-scan sentinel to a concrete window width.
+
+    `None` requests an exhaustive scan — every other candidate. That is the only
+    width proven correct when more than the window's worth of off-segment
+    candidates interleave between two points of one segment: a bounded window
+    then never reaches the segment's continuation and silently accepts the
+    interlopers. A finite value keeps the cheaper $O(\\text{width})$ scan at the
+    cost of that guarantee. `n_input` is a static shape, so the result stays a
+    Python int and the downstream `jnp.arange(n_points_to_scan)` stays
+    static-shape.
+    """
+    if n_points_to_scan is None:
+        return max(n_input - 1, 1)
+    return n_points_to_scan
+
+
 def refine_envelope(
     *,
     endog_grid: Float1D,
@@ -80,7 +97,7 @@ def refine_envelope(
     value: Float1D,
     n_refined: int,
     jump_thresh: float = 2.0,
-    n_points_to_scan: int = 10,
+    n_points_to_scan: int | None = None,
     segment_id: Float1D | None = None,
     scan_unroll: int = 1,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
@@ -110,7 +127,12 @@ def refine_envelope(
             (or pass `segment_id`).
         n_points_to_scan: Number of subsequent (or preceding) candidates the
             bounded scans inspect when searching for the next point on a given
-            segment.
+            segment. `None` (the default) scans exhaustively — every other
+            candidate — which is the only width proven correct when more than
+            the window's worth of off-segment candidates interleave between two
+            points of one segment (a bounded window silently accepts the
+            interlopers). A finite value keeps the cheaper $O(\\text{width})$
+            scan at the cost of that guarantee.
         segment_id: Optional per-candidate segment/bracket label, aligned with
             `endog_grid`. When supplied, two points lie on different segments
             iff their policy jumps (above) *or* their labels differ — the
@@ -149,6 +171,7 @@ def refine_envelope(
     policy_sorted = policy[order]
     value_sorted = value[order]
     n_input = grid_sorted.shape[0]
+    n_points_to_scan = _resolve_n_points_to_scan(n_points_to_scan, n_input=n_input)
 
     # All-zero labels reduce the segment test to a no-op (`seg != seg` is always
     # false, `seg == seg` always true), so the `segment_id is None` path is
@@ -383,7 +406,7 @@ def refine_to_bracket(
     value: Float1D,
     x_query: ScalarFloat,
     jump_thresh: float = 2.0,
-    n_points_to_scan: int = 10,
+    n_points_to_scan: int | None = None,
     segment_id: Float1D | None = None,
     scan_unroll: int = 1,
 ) -> QueryBracket:
@@ -424,7 +447,8 @@ def refine_to_bracket(
         jump_thresh: Threshold on $|\\Delta A / \\Delta R|$ above which two
             points lie on different value-function segments (see
             `refine_envelope`).
-        n_points_to_scan: Number of candidates the bounded scans inspect.
+        n_points_to_scan: Number of candidates the bounded scans inspect; `None`
+            (the default) scans exhaustively (see `refine_envelope`).
         segment_id: Optional per-candidate segment labels (see
             `refine_envelope`).
         scan_unroll: Loop-unroll factor for the sequential `jax.lax.scan` over
@@ -442,6 +466,7 @@ def refine_to_bracket(
     policy_sorted = policy[order]
     value_sorted = value[order]
     n_input = grid_sorted.shape[0]
+    n_points_to_scan = _resolve_n_points_to_scan(n_points_to_scan, n_input=n_input)
 
     duplicate = jnp.concatenate(
         [
