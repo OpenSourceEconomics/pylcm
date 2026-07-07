@@ -481,10 +481,25 @@ def _fold_stochastic_dims(
     value = carry.value
     marginal_utility = carry.marginal_utility
     breakpoints = carry.breakpoints
-    for axis in sorted(
-        (read.discrete_state_names.index(name) for name in folded_names), reverse=True
-    ):
-        name = read.discrete_state_names[axis]
+
+    def _carry_axis(name: StateName) -> int:
+        """Axis of a discrete state in the carry rows.
+
+        A co-mapped fixed distributed state is sliced off the carry's leading
+        axis before the continuation reads it, so its axis is absent from the
+        rows. The carry axis of any other state is its position in
+        `discrete_state_names` less the co-mapped states that precede it.
+        """
+        position = read.discrete_state_names.index(name)
+        co_mapped_before = sum(
+            1
+            for earlier in read.discrete_state_names[:position]
+            if earlier in read.co_map_state_names
+        )
+        return position - co_mapped_before
+
+    for name in sorted(folded_names, key=_carry_axis, reverse=True):
+        axis = _carry_axis(name)
         node_weights = weight_by_name[name]
         endog_grid = jnp.take(endog_grid, 0, axis=axis)
         value = fold_rows(value, axis, node_weights)

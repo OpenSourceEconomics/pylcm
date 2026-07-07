@@ -15,8 +15,14 @@ averages the action-aggregated next-period V over the income nodes — the dense
 import jax.numpy as jnp
 
 import lcm
-from lcm import LinSpacedGrid, Model, NormalIIDProcess
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm import DiscreteGrid, LinSpacedGrid, Model, NormalIIDProcess, categorical
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
@@ -24,6 +30,13 @@ from tests.test_models.nbegm_common import (
     savings,
     utility,
 )
+
+
+@categorical(ordered=False)
+class ConsumerKind:
+    lo: ScalarInt
+    hi: ScalarInt
+
 
 # Discretization nodes of the IID income process. Odd, as Gauss-Hermite requires.
 N_INCOME_NODES = 5
@@ -67,6 +80,13 @@ def coh(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
     return liquid + base_income - tax
 
 
+def coh_per_kind(
+    liquid: ContinuousState, tax: FloatND, base_income: FloatND, kind: DiscreteState
+) -> FloatND:
+    """Cash-on-hand whose base income is read off the ride-along `kind` code."""
+    return liquid + base_income[kind] - tax
+
+
 def next_liquid(
     coh: FloatND,
     consumption: ContinuousAction,
@@ -97,6 +117,8 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
+    with_kind: bool = False,
+    distributed_kind: bool = False,
 ) -> Model:
     """Create the (alive, dead) tax toy with a stochastic ride-along income node.
 
@@ -124,7 +146,8 @@ def build_model(
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
 
     tax_func = tax if tax_kind == "kink" else tax_cliff
-    alive_functions = {"utility": utility, "tax": tax_func, "coh": coh}
+    coh_func = coh_per_kind if with_kind else coh
+    alive_functions = {"utility": utility, "tax": tax_func, "coh": coh_func}
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -140,6 +163,16 @@ def build_model(
         liquid_law = next_liquid
         constraints = {"feasible": feasible}
 
+    extra_states: dict[str, object] = {"income": income_grid}
+    extra_state_transitions = None
+    model_states = None
+    if with_kind:
+        extra_state_transitions = {"kind": {"alive": lcm.fixed_transition("kind")}}
+        if distributed_kind:
+            model_states = {"kind": DiscreteGrid(ConsumerKind, distributed=True)}
+        else:
+            extra_states = {**extra_states, "kind": DiscreteGrid(ConsumerKind)}
+
     return make_alive_dead_model(
         n_periods=n_periods,
         n_liquid=n_liquid,
@@ -149,7 +182,9 @@ def build_model(
         liquid_law=liquid_law,
         alive_solver=alive_solver,
         constraints=constraints,
-        extra_states={"income": income_grid},
+        extra_states=extra_states,
+        extra_state_transitions=extra_state_transitions,
+        model_states=model_states,
     )
 
 
@@ -165,6 +200,8 @@ def build_params(
     tax_exemption: float = 12.0,
     tax_lump: float = 0.0,
     final_age_alive: float = 3.0,
+    with_kind: bool = False,
+    base_income_hi: float = 4.0,
 ) -> dict:
     """Get parameters for the stochastic-node tax toy.
 
@@ -178,7 +215,13 @@ def build_params(
             "H": {"discount_factor": discount_factor},
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption}
             | ({"tax_lump": tax_lump} if tax_lump else {}),
-            "coh": {"base_income": base_income},
+            "coh": {
+                "base_income": (
+                    jnp.array([base_income, base_income_hi])
+                    if with_kind
+                    else base_income
+                )
+            },
             "income": {"mu": income_mu, "sigma": income_sigma},
             "alive": {
                 "next_liquid": alive_budget,
