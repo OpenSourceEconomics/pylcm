@@ -7,6 +7,7 @@ off each stakeholder's OWN Q at that common argmax (eqs. 10-12 of Eckstein-Keane
 Lifshitz 2019). See `pylcm-extension-collective-regimes.md` §2 (E1).
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -121,6 +122,55 @@ def test_two_action_axes_are_flattened_consistently():
     )
     assert values["f"] == pytest.approx(0.0)
     assert values["m"] == pytest.approx(8.0)
+
+
+def test_terminal_e1_end_to_end_with_real_utilities():
+    """Terminal E1 milestone: real per-stakeholder utilities -> correct V^s.
+
+    Mirrors exactly what the terminal collective kernel will do (slice 1b): build one
+    Q^s per stakeholder by evaluating its utility over the action product for each
+    state, then hand the stacked Q^s to `collective_readout`. Here the "action" is a
+    binary work choice and the "state" is a wage; the wife weights leisure, the
+    husband weights household consumption. No engine mutation — proves the numerics.
+    """
+    # Two states (wages), one binary action a in {0=leisure, 1=work}.
+    wage = jnp.array([10.0, 40.0])  # state grid
+    work = jnp.array([0.0, 1.0])  # action grid
+
+    # Consumption (public good): earnings from whoever works. Wife's utility values
+    # her own leisure highly; husband's values consumption. Both see the same C.
+    def consumption(w, a):  # (state, action) -> C
+        return w * a
+
+    def u_wife(w, a):
+        return consumption(w, a) + 30.0 * (1.0 - a)  # strong leisure taste
+
+    def u_husband(w, a):
+        return 2.0 * consumption(w, a)  # values consumption, indifferent to leisure
+
+    # Evaluate each stakeholder's utility over the action product, per state:
+    # shape (n_states, n_actions).
+    q_f = jax.vmap(lambda w: jax.vmap(lambda a: u_wife(w, a))(work))(wage)
+    q_m = jax.vmap(lambda w: jax.vmap(lambda a: u_husband(w, a))(work))(wage)
+    feas = jnp.ones((2, 2), dtype=bool)
+
+    values, divorce = collective_readout(
+        stakeholder_Q={"f": q_f, "m": q_m},
+        feasibility=feas,
+        weights={"f": 0.5, "m": 0.5},
+        action_axes=(1,),
+    )
+
+    # Hand-check. O = 1/2 (u_f + u_m).
+    # wage=10: a=0 -> u_f=30, u_m=0,  O=15;  a=1 -> u_f=10, u_m=20, O=15 -> tie -> a=0.
+    #          a*=0 -> V_f=30, V_m=0.
+    # wage=40: a=0 -> u_f=30, u_m=0,  O=15;  a=1 -> u_f=40, u_m=80, O=60 -> a=1.
+    #          a*=1 -> V_f=40, V_m=80.
+    np.testing.assert_allclose(np.asarray(values["f"]), [30.0, 40.0])
+    np.testing.assert_allclose(np.asarray(values["m"]), [0.0, 80.0])
+    np.testing.assert_array_equal(np.asarray(divorce), [False, False])
+    # The household trades off: at the low wage it keeps the wife home (her leisure
+    # taste dominates the joint objective); at the high wage her work wins jointly.
 
 
 def test_mismatched_keys_raise():
