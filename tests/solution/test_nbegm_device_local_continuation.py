@@ -17,8 +17,6 @@ import sys
 import textwrap
 from pathlib import Path
 
-import pytest
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _SCRIPT = textwrap.dedent(
@@ -52,11 +50,6 @@ _SCRIPT = textwrap.dedent(
 )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="The NBEGM continuation core interpolates the full child carry; the "
-    "device-local co-map of fixed distributed ride states is not yet wired in.",
-)
 def test_nbegm_continuation_core_does_not_all_gather_child_carry(
     tmp_path: Path,
 ) -> None:

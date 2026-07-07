@@ -260,6 +260,16 @@ class _ChildRead:
     row_block_shape: tuple[int, ...]
     """Shape of the carry's row block: passive sizes, then action sizes."""
 
+    co_map_state_names: tuple[StateName, ...] = ()
+    """Fixed, distributed child states co-mapped with the carry's leading axes.
+
+    A co-mapped state's carry axis is sliced off by the caller's outer `vmap`
+    before the read runs, so it names no discrete index here: its `next_<name>`
+    coordinate is dropped from the carry indexing (the axis is gone), while the
+    resources read still binds it from the combo pool. Empty in the replicated
+    (non-co-mapped) read.
+    """
+
 
 @dataclass(frozen=True, kw_only=True)
 class ContinuationPlan:
@@ -298,6 +308,7 @@ def bind_continuation(
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
+    co_map_state_names: tuple[StateName, ...] = (),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
     """Bind a continuation plan to one combo pool and the next period's carries.
 
@@ -318,11 +329,18 @@ def bind_continuation(
     child read whose stochastic dimension is such a process substitutes that
     grid for the build-time NaN placeholder, so a resources function reading
     the process node integrates over the resolved nodes.
+
+    `co_map_state_names` names the fixed distributed child states whose carry
+    axes the caller has already sliced off each `next_regime_to_egm_carry` leaf
+    with an outer `vmap` (one device-local slice per co-mapped value). The read
+    drops those states from the carry indexing — the axis is gone — while still
+    binding them for the child resources from `combo_pool`, so the continuation
+    is read from the device-local slice and XLA inserts no all-gather.
     """
     regime_transition_probs = plan.compute_regime_transition_probs(**combo_pool)
     child_readers = {
         target: _get_child_carry_reader(
-            read=plan.child_reads[target],
+            read=_with_co_map_states(plan.child_reads[target], co_map_state_names),
             carry=next_regime_to_egm_carry[target],
             combo_pool=combo_pool,
             post_decision_name=plan.post_decision_name,
@@ -519,6 +537,23 @@ def _fold_stochastic_dims(
     )
 
 
+def _with_co_map_states(
+    read: _ChildRead, co_map_state_names: tuple[StateName, ...]
+) -> _ChildRead:
+    """Tag a child read with the co-mapped states among its discrete-state axes.
+
+    Only the co-mapped states this read carries as discrete axes are tagged; the
+    read then drops their (caller-sliced) carry axes from its deterministic index
+    while still binding them for the resources read from the combo pool.
+    """
+    present = tuple(
+        name for name in co_map_state_names if name in read.discrete_state_names
+    )
+    if not present:
+        return read
+    return replace(read, co_map_state_names=present)
+
+
 def _get_child_carry_reader(
     *,
     read: _ChildRead,
@@ -603,7 +638,7 @@ def _get_child_carry_reader(
             for name, is_stochastic in zip(
                 read.discrete_state_names, read.stochastic_flags, strict=True
             )
-            if not is_stochastic
+            if not is_stochastic and name not in read.co_map_state_names
         )
         # A passive next-state is normally produced by `next_state_func`. Under
         # NEGM the outer post-decision's transition is stripped (it is bound per
