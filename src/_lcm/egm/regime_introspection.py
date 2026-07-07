@@ -100,10 +100,14 @@ def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
     if dcegm is not None:
         return dcegm.continuous_state
     grids = get_grids(user_regime)
+    # A carried state (imputed in solve, seeded in simulate) has no solve grid, so
+    # it never appears in `grids` and is not the Euler axis; skip it. The Euler axis
+    # is a genuine grid-backed continuous state.
     continuous = tuple(
         name
         for name in user_regime.states
-        if isinstance(grids[name], ContinuousGrid)
+        if name in grids
+        and isinstance(grids[name], ContinuousGrid)
         and not isinstance(grids[name], _ContinuousStochasticProcess)
     )
     if not continuous:
