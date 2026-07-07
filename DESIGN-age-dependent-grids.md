@@ -110,3 +110,37 @@ No change to `coordinates.py` (the coordinate math already runs off
 - simulate: continuous state stays within `[a̲(age), A_MAX]`; policy sensible.
 - regression: an age-invariant `signature` reproduces the plain fixed-grid solve
   bit-for-bit (dedup collapses to one program).
+
+## Implementation status / remaining plan
+
+**Done (committed):** merge of origin/main into feat/age-specialized (conflicts
+resolved); `_AgeSpecialized` base + rename `AgeSpecialized`→`AgeSpecializedFunction`
++ new `AgeSpecializedGrid`; resolver/validator helpers in `age_specialization.py`
+(`resolve_state_grids`, `state_grids_signature`, `has_age_specialized_grid`,
+`validate_age_specialized_grids`). All 23 age-related tests green.
+
+**Key simplification confirmed:** the current-period state axis is passed to the
+Q_and_F kernel as *runtime* values (shape-invariant ⇒ same trace), so only the
+*continuation* (target) grid is a trace-time constant. Therefore:
+- state axis → resolve per period in the solve loop (runtime values, no recompile);
+- continuation interp → bake period-(t+1) grid into period-t's Q_and_F (per-period
+  kernel, grouping signature extended with target grid identity at t+1).
+
+**Remaining wiring (solve, then simulate, then tests):**
+1. `lcm/regime.py`: accept `AgeSpecializedGrid` in `states` (typing + treat as a
+   continuous state in construction validation; concrete resolution deferred).
+2. `model_processing.py`/`model.py`: call `validate_age_specialized_grids(states,
+   ages)` at Model construction.
+3. `processing.process_regimes`: build representative-resolved regimes (markers →
+   `build(representative_age)`) for the invariant machinery (from_regime, get_grids,
+   create_v_interpolation_info, create_state_action_space) so they are unchanged;
+   build `period_to_regime_to_v_interp` (resolved per period) for the continuation.
+4. `_build_Q_and_F_per_period`: extend the group signature with the target regimes'
+   `state_grids_signature` at period+1; pass the period-(t+1) VInterpolationInfo.
+5. `backward_induction`: per-period state axis (resolve age-varying states' nodes at
+   the period's age; pass as runtime values). SolutionPhase gains an optional
+   per-period grid table.
+6. `simulation`: per-period argmax axis + index→value lookup use the period's grid.
+7. Tests: solve finite-V where a fixed grid gives -inf; equivalence to the
+   free-assets reformulation; age-invariant signature reproduces the fixed-grid
+   solve bit-for-bit; shape-invariance + placement rejections.
