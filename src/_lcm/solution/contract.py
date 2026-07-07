@@ -159,6 +159,18 @@ class SolverBuildContext:
     slice it) or `None` (the state is pruned from that regime — pass the leaf through).
     """
 
+    stakeholders: tuple[str, ...] | None = None
+    """Ordered stakeholder names for a collective regime, or `None` (singleton).
+
+    COLLECTIVE-REGIMES (E1). When set, the grid-search kernel reads off each
+    stakeholder's own value at the shared household argmax of the Pareto-weighted
+    scalarization, and the regime's value-function array gains a trailing
+    stakeholder axis.
+    """
+
+    weights: Mapping[str, float] | None = None
+    """Household Pareto weights per stakeholder; set together with `stakeholders`."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class KernelResult:

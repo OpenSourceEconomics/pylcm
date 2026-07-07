@@ -662,6 +662,15 @@ class Regime:
     are user-granular or absent.
     """
 
+    stakeholders: tuple[str, ...] | None = None
+    """Ordered stakeholder names for a collective regime, or `None` (singleton).
+
+    COLLECTIVE-REGIMES (E1). When set, the regime's value-function array carries a
+    trailing length-`len(stakeholders)` axis: the backward-induction V topology
+    appends it so the zero template and the roll match the collective kernel's
+    stakeholder-valued output.
+    """
+
 
 @dataclasses.dataclass(frozen=True)
 class _RegimeSharding:

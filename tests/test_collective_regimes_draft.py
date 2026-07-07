@@ -25,6 +25,7 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import DiscreteGrid, LinSpacedGrid, categorical
+from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import (
     ContinuousAction,
@@ -107,19 +108,43 @@ def _build_married_regime() -> Regime:
 # ----------------------------------------------------------------------------------
 
 
-def test_declaring_stakeholders_raises_not_implemented():
-    """Constructing a stakeholder-valued regime raises `NotImplementedError`.
+def test_declaring_non_terminal_stakeholders_raises_not_implemented():
+    """A NON-terminal collective regime still raises `NotImplementedError`.
 
-    Pins the current honest state: the API surface is real, the numerics are
-    not. The error message must point at the design doc so a user is not left
-    guessing.
+    Slice 1b implements only the terminal case (E1). The continuation
+    (non-terminal) collective regime is slice 2, so declaring one — here via a
+    non-`None` regime transition — remains honestly rejected, with a message
+    pointing at the design doc.
     """
+
+    def _some_transition(_age: float) -> int:
+        return 0
+
     with pytest.raises(NotImplementedError, match="not yet implemented"):
+        Regime(
+            transition=_some_transition,
+            stakeholders=("f", "m"),
+            states={"wealth": _WEALTH},
+            actions={"labor_supply_f": DiscreteGrid(LaborSupply)},
+            state_transitions={"wealth": lambda wealth: wealth},
+            functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        )
+
+
+def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
+    """A terminal collective regime must carry a `utility_<s>` per stakeholder.
+
+    Terminal collective regimes are implemented (E1), so construction no longer
+    raises `NotImplementedError`; instead it validates the collective contract.
+    Supplying a single `utility` instead of `utility_f`/`utility_m` is a
+    configuration error, reported as such.
+    """
+    with pytest.raises(RegimeInitializationError, match="per-stakeholder utility"):
         Regime(
             transition=None,
             stakeholders=("f", "m"),
             states={"wealth": _WEALTH},
-            actions={"consumption": _CONSUMPTION},
+            actions={"labor_supply_f": DiscreteGrid(LaborSupply)},
             functions={"utility": _utility_f},
         )
 

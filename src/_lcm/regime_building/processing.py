@@ -56,6 +56,7 @@ from _lcm.regime_building.Q_and_F import (
     get_period_targets,
     get_Q_and_F,
     get_Q_and_F_terminal,
+    get_Q_and_F_terminal_collective,
 )
 from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
@@ -246,6 +247,13 @@ def process_regimes(
         regime_params_template = regime_to_params_template[regime_name]
         granular_param_expansions = regime_to_granular_param_expansions[regime_name]
 
+        # COLLECTIVE-REGIMES (E1): resolve the household Pareto weights once (equal
+        # weights when unspecified) and thread the stakeholder names / weights into
+        # both phase builds. `None` for the singleton default, so the existing path
+        # is byte-identical.
+        stakeholders = user_regime.stakeholders
+        weights = _resolve_stakeholder_weights(user_regime)
+
         solution = _build_solution_phase(
             spec=spec,
             regime_name=regime_name,
@@ -266,6 +274,8 @@ def process_regimes(
             solver=user_regime.solver,
             model_has_egm_regime=model_has_egm_regime,
             has_taste_shocks=user_regime.taste_shocks is not None,
+            stakeholders=stakeholders,
+            weights=weights,
         )
 
         simulation = _build_simulation_phase(
@@ -289,6 +299,7 @@ def process_regimes(
             has_taste_shocks=user_regime.taste_shocks is not None,
             solver=user_regime.solver,
             certainty_equivalent=user_regime.certainty_equivalent,
+            stakeholders=stakeholders,
         )
 
         stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -307,9 +318,30 @@ def process_regimes(
             granular_param_expansions=granular_param_expansions,
             has_taste_shocks=user_regime.taste_shocks is not None,
             certainty_equivalent=user_regime.certainty_equivalent,
+            stakeholders=stakeholders,
         )
 
     return ensure_containers_are_immutable(canonical_regimes)
+
+
+def _resolve_stakeholder_weights(
+    user_regime: UserRegime,
+) -> MappingProxyType[str, float] | None:
+    """Resolve a collective regime's household Pareto weights.
+
+    COLLECTIVE-REGIMES (E1). Returns `None` for a singleton regime (the default,
+    keeping the existing path untouched). For a collective regime, uses the
+    user's explicit `weights` when given, else equal weights `1/len(stakeholders)`
+    (validated to match the stakeholder names at regime construction).
+    """
+    stakeholders = user_regime.stakeholders
+    if stakeholders is None:
+        return None
+    if user_regime.weights is not None:
+        user_weights = user_regime.weights
+        return MappingProxyType({s: float(user_weights[s]) for s in stakeholders})
+    equal = 1.0 / len(stakeholders)
+    return MappingProxyType(dict.fromkeys(stakeholders, equal))
 
 
 def _build_solution_phase(
@@ -333,6 +365,8 @@ def _build_solution_phase(
     solver: Solver,
     model_has_egm_regime: bool,
     has_taste_shocks: bool,
+    stakeholders: tuple[str, ...] | None = None,
+    weights: Mapping[str, float] | None = None,
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -396,11 +430,22 @@ def _build_solution_phase(
 
     if spec.terminal:
         compute_regime_transition_probs = None
-        terminal_func = get_Q_and_F_terminal(
-            flat_param_names=flat_param_names,
-            functions=core.functions,
-            constraints=core.constraints,
-        )
+        if stakeholders is not None:
+            # COLLECTIVE-REGIMES (E1): the collective terminal kernel builds one
+            # `U^s`-and-`F` per stakeholder and stacks the utilities on a trailing
+            # stakeholder axis. Separate builder so the singleton path is untouched.
+            terminal_func = get_Q_and_F_terminal_collective(
+                flat_param_names=flat_param_names,
+                functions=core.functions,
+                constraints=core.constraints,
+                stakeholders=stakeholders,
+            )
+        else:
+            terminal_func = get_Q_and_F_terminal(
+                flat_param_names=flat_param_names,
+                functions=core.functions,
+                constraints=core.constraints,
+            )
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(range(ages.n_periods), terminal_func)
         )
@@ -489,6 +534,8 @@ def _build_solution_phase(
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
+        stakeholders=stakeholders,
+        weights=weights,
     )
     solver.validate(context=context)
     solver_kernels = solver.build_period_kernels(context=context)
@@ -764,6 +811,7 @@ def _build_simulation_phase(
     has_taste_shocks: bool,
     solver: Solver,
     certainty_equivalent: CertaintyEquivalent | None,
+    stakeholders: tuple[str, ...] | None = None,
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -882,16 +930,25 @@ def _build_simulation_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
+    # COLLECTIVE-REGIMES (E4): collective-regime simulation (the value router)
+    # is not implemented in this slice. A collective regime is terminal here
+    # (non-terminal collective regimes are rejected at construction), so the
+    # model still builds eagerly — the argmax kernels below are replaced by a
+    # stub that raises only if a caller actually simulates the regime.
+    collective = stakeholders is not None
     if spec.terminal:
         compute_regime_transition_probs = None
-        terminal_func = get_Q_and_F_terminal(
-            flat_param_names=flat_param_names,
-            functions=functions,
-            constraints=constraints,
-        )
-        Q_and_F_functions = MappingProxyType(
-            dict.fromkeys(range(ages.n_periods), terminal_func)
-        )
+        if collective:
+            Q_and_F_functions = MappingProxyType({})
+        else:
+            terminal_func = get_Q_and_F_terminal(
+                flat_param_names=flat_param_names,
+                functions=functions,
+                constraints=constraints,
+            )
+            Q_and_F_functions = MappingProxyType(
+                dict.fromkeys(range(ages.n_periods), terminal_func)
+            )
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=simulate_functions,
@@ -921,12 +978,17 @@ def _build_simulation_phase(
             certainty_equivalent=certainty_equivalent,
         )
 
-    argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
-        state_action_space=state_action_space,
-        Q_and_F_functions=Q_and_F_functions,
-        enable_jit=enable_jit,
-        has_taste_shocks=has_taste_shocks,
-    )
+    if collective:
+        argmax_and_max_Q_over_a = _build_collective_simulate_stub(
+            regime_name=regime_name, ages=ages
+        )
+    else:
+        argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
+            state_action_space=state_action_space,
+            Q_and_F_functions=Q_and_F_functions,
+            enable_jit=enable_jit,
+            has_taste_shocks=has_taste_shocks,
+        )
 
     next_state = _build_next_state_vmapped(
         functions=simulate_functions,
@@ -2105,6 +2167,32 @@ def _build_Q_and_F_per_period(
             result[period] = built[key]
 
     return MappingProxyType(result)
+
+
+def _build_collective_simulate_stub(
+    *, regime_name: RegimeName, ages: AgeGrid
+) -> MappingProxyType[int, ArgmaxQOverAFunction]:
+    """Per-period argmax placeholders for an as-yet-unsimulatable collective regime.
+
+    COLLECTIVE-REGIMES (E4). Collective-regime simulation (the value router) is
+    not implemented; a collective regime is solved but not simulated in this
+    slice. The model builds eagerly, so a placeholder argmax is supplied per
+    period that raises `NotImplementedError` only if `simulate` actually invokes
+    it — solve is unaffected.
+    """
+
+    def _raise(*_args: object, **_kwargs: object) -> tuple[IntND, FloatND]:
+        msg = (
+            f"Simulation of collective (stakeholder-valued) regime "
+            f"'{regime_name}' is not yet implemented (E4). The regime solves, "
+            "but its per-stakeholder value router is forthcoming; see the design "
+            "doc `pylcm-extension-collective-regimes.md` (v2.1), slice 6."
+        )
+        raise NotImplementedError(msg)
+
+    return MappingProxyType(
+        dict.fromkeys(range(ages.n_periods), cast("ArgmaxQOverAFunction", _raise))
+    )
 
 
 def _build_argmax_and_max_Q_over_a_per_period(

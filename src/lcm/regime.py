@@ -21,6 +21,7 @@ from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.typing import ActionName, ActiveFunction, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import (
+    _validate_collective_regime,
     _validate_logical_consistency,
     _validate_mapping_contents,
 )
@@ -189,11 +190,23 @@ class Regime:
     feasibility and value-gated regime routing (consent / divorce).
 
     This is the API surface of the "collective regimes" extension (E1-E4 +
-    shared shocks). The numerics are **not yet implemented**: constructing a
-    regime with `stakeholders is not None` currently raises
-    `NotImplementedError`. See the design doc
-    `pylcm-extension-collective-regimes.md` (v2.1) and the tracking issue
-    `pylcm-issue-collective-regimes.md`.
+    shared shocks). Only the **terminal** case (E1) is implemented so far: a
+    terminal collective regime carries a per-stakeholder utility
+    `functions["utility_<s>"]` for each stakeholder `<s>` and household Pareto
+    `weights`; its solve reads off each stakeholder's own value at the shared
+    household argmax (see the design doc `pylcm-extension-collective-regimes.md`
+    v2.1, §2 E1). Non-terminal (continuation) collective regimes and
+    collective-regime simulation still raise `NotImplementedError`.
+    """
+
+    weights: Mapping[str, float] | None = None
+    """Household Pareto weights `λ_s` per stakeholder for a collective regime.
+
+    Used only when `stakeholders is not None`: the collective solve maximizes the
+    household scalarization `O = Σ_s λ_s Q^s` over the feasible action set. When
+    omitted (the default), equal weights `1/len(stakeholders)` are used; supply
+    an explicit mapping to express unequal Pareto weights (e.g. EKL's λ=0.5 on
+    each partner). Ignored — and must be `None` — for a singleton regime.
     """
 
     @property
@@ -217,24 +230,20 @@ class Regime:
         return isinstance(transition, MarkovTransition | Mapping)
 
     def __post_init__(self) -> None:
-        # COLLECTIVE-REGIMES (E1): `stakeholders` is the API surface of the
-        # collective-regimes extension. The numerics (per-stakeholder U/Q/V,
-        # scalarized argmax, value-aware feasibility, gated edge folds) are not
-        # yet implemented, so declaring stakeholders is rejected up front — the
-        # field is real and honest about its not-yet-implemented status. The
-        # default `None` (singleton) path never enters this branch, so today's
-        # behavior is provably untouched. See design doc
-        # `pylcm-extension-collective-regimes.md` §2 (E1) and the tracking issue.
+        # COLLECTIVE-REGIMES (E1): only the TERMINAL case is implemented. A
+        # terminal collective regime is validated here (per-stakeholder
+        # `utility_<s>`, weights, >=1 discrete action) and then solves via the
+        # collective terminal kernel; a NON-terminal (continuation) collective
+        # regime still raises `NotImplementedError` (slice 2). The default
+        # `None` (singleton) path never enters this branch, so today's behavior
+        # is provably untouched. See `pylcm-extension-collective-regimes.md` §2.
         if self.stakeholders is not None:
-            raise NotImplementedError(
-                "Collective (stakeholder-valued) regimes are not yet "
-                "implemented. `Regime(stakeholders=...)` declares the API "
-                "surface only; the solver/simulator numerics (E1-E4) are "
-                "forthcoming. See the design doc "
-                "`pylcm-extension-collective-regimes.md` (v2.1) and the "
-                "tracking issue `pylcm-issue-collective-regimes.md`. Omit "
-                "`stakeholders` (leave it `None`) for the current single-value "
-                "regime behavior."
+            _validate_collective_regime(self)
+        elif self.weights is not None:
+            raise RegimeInitializationError(
+                "`weights` is a household Pareto-weight declaration for a "
+                "collective regime; it is only meaningful together with "
+                "`stakeholders`. Omit it for a singleton regime."
             )
 
         _validate_mapping_contents(self)

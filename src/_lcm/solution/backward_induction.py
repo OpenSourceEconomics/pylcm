@@ -771,6 +771,12 @@ def _get_regime_V_shapes_and_shardings(
         )
         state_order: tuple[StateName, ...] = tuple(state_action_space.states.keys())
         shape = tuple(len(v) for v in state_action_space.states.values())
+        # COLLECTIVE-REGIMES (E1): a collective regime's V carries a trailing
+        # stakeholder axis, so the zero template and the roll must too. Terminal
+        # collective regimes have no distributed states in this slice, so the
+        # sharding (state axes only) is unaffected.
+        if regime.stakeholders is not None:
+            shape = (*shape, len(regime.stakeholders))
         sharding_plan = _build_regime_sharding(
             grids=regime.solution.grids, n_devices=n_devices
         )

@@ -1,6 +1,6 @@
 import inspect
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -11,6 +11,7 @@ from jax import Array
 
 from _lcm.logsum import EULER_GAMMA, logsum_and_softmax
 from _lcm.regime_building.argmax import argmax_and_max
+from _lcm.regime_building.collective import collective_readout
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -37,6 +38,8 @@ def get_max_Q_over_a(
     has_taste_shocks: bool = False,
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
+    stakeholders: tuple[str, ...] | None = None,
+    weights: Mapping[str, float] | None = None,
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -83,6 +86,13 @@ def get_max_Q_over_a(
             regime name to `0` (the leaf carries that state as its current leading
             axis — slice it) or `None` (the leaf does not carry it — pass it through,
             e.g. a target regime where the state is pruned).
+        stakeholders: Ordered stakeholder names for a collective regime, or `None`
+            (the singleton default). When set, `Q_and_F` returns a stacked
+            per-stakeholder `Q` (trailing stakeholder axis) and the inner reduction
+            reads off each stakeholder's own value at the shared household argmax
+            (`collective_readout`) instead of the plain masked max.
+        weights: Household Pareto weights per stakeholder; required (and only used)
+            when `stakeholders` is set.
 
     Returns:
         V, i.e., the function that calculates the maximum of the Q-function over all
@@ -157,6 +167,25 @@ def get_max_Q_over_a(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **states_actions_params,
             )
+            if stakeholders is not None:
+                # COLLECTIVE-REGIMES (E1): Q_arr carries a trailing stakeholder
+                # axis (the action product-map keeps it last); F_arr does not.
+                # Split Q_arr per stakeholder, take the household argmax of the
+                # scalarization over the action axes, and read off each
+                # stakeholder's OWN value at that shared argmax. The returned
+                # vector re-stacks on a trailing stakeholder axis, which the
+                # outer state product-map turns into `(*states, n_stakeholders)`.
+                action_axes = tuple(range(F_arr.ndim))
+                stakeholder_Q = {
+                    name: Q_arr[..., index] for index, name in enumerate(stakeholders)
+                }
+                values, _divorce = collective_readout(
+                    stakeholder_Q=stakeholder_Q,
+                    feasibility=F_arr,
+                    weights=cast("Mapping[str, float]", weights),
+                    action_axes=action_axes,
+                )
+                return jnp.stack([values[name] for name in stakeholders], axis=-1)
             # COLLECTIVE-REGIMES (E2): value-aware mask lands here. Today F_arr
             # is built in Q_and_F (`_get_U_and_F`) before and independently of
             # Q; the mask is applied at this `where=F_arr`. E2 needs per-

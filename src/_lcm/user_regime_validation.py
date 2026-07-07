@@ -79,6 +79,58 @@ def _callable_mapping_errors(
     return error_messages
 
 
+def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
+    """Validate a collective (stakeholder-valued) regime — E1, terminal only.
+
+    A non-terminal (continuation) collective regime raises `NotImplementedError`
+    (slice 2). A terminal collective regime is checked for the invariants the
+    collective terminal kernel relies on: a per-stakeholder `utility_<s>`
+    function for every stakeholder, at least one discrete action (the household
+    argmax runs over the discrete-action product), and — if `weights` is given —
+    weight keys matching the stakeholder names.
+
+    Called from `Regime.__post_init__` only when `stakeholders is not None`, so
+    the default singleton path never reaches it.
+    """
+    stakeholders = cast("tuple[str, ...]", regime.stakeholders)
+
+    if not regime.terminal:
+        raise NotImplementedError(
+            "Non-terminal (continuation) collective regimes are not yet "
+            "implemented. Only the terminal case (E1) is available in this "
+            "slice: a collective regime must currently declare "
+            "`transition=None`. See the design doc "
+            "`pylcm-extension-collective-regimes.md` (v2.1), slice 2."
+        )
+
+    error_messages: list[str] = []
+
+    missing = [s for s in stakeholders if f"utility_{s}" not in regime.functions]
+    if missing:
+        needed = ", ".join(f"'utility_{s}'" for s in stakeholders)
+        raise RegimeInitializationError(
+            f"A collective regime with stakeholders {stakeholders} must supply "
+            f"a per-stakeholder utility for each stakeholder ({needed}) in its "
+            f"functions. Missing: {[f'utility_{s}' for s in missing]}."
+        )
+
+    if not any(isinstance(grid, DiscreteGrid) for grid in regime.actions.values()):
+        error_messages.append(
+            "A collective regime must have at least one discrete action: the "
+            "household argmax of the scalarization runs over the discrete-action "
+            "product."
+        )
+
+    if regime.weights is not None and set(regime.weights) != set(stakeholders):
+        error_messages.append(
+            f"`weights` keys {sorted(regime.weights)} must match the "
+            f"stakeholders {sorted(stakeholders)}."
+        )
+
+    if error_messages:
+        raise RegimeInitializationError(format_messages(error_messages))
+
+
 def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
     """Exhaustively check key/value types of `regime`'s mapping fields.
 
@@ -225,7 +277,20 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
     """
     error_messages: list[str] = []
 
-    if "utility" not in regime.functions:
+    if regime.stakeholders is not None:
+        # A collective regime supplies a per-stakeholder `utility_<s>` instead
+        # of a single `utility` (validated in full by `_validate_collective_regime`
+        # at construction); require each here so a finalized regime stays complete.
+        missing = [
+            s for s in regime.stakeholders if f"utility_{s}" not in regime.functions
+        ]
+        if missing:
+            error_messages.append(
+                "A collective regime must provide a per-stakeholder utility "
+                f"function for each stakeholder. Missing: "
+                f"{[f'utility_{s}' for s in missing]}.",
+            )
+    elif "utility" not in regime.functions:
         error_messages.append(
             "A 'utility' function must be provided in the functions dictionary.",
         )

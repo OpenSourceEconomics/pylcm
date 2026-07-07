@@ -292,8 +292,16 @@ def _validate_all_variables_used(
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
 
+        # A collective regime carries a per-stakeholder `utility_<s>` in place
+        # of a single `utility`; a state/action used only through those
+        # per-stakeholder utilities must still count as "used".
+        utility_targets = (
+            [f"utility_{s}" for s in user_regime.stakeholders]
+            if user_regime.stakeholders is not None
+            else ["utility"]
+        )
         targets = [
-            "utility",
+            *utility_targets,
             *list(user_regime.constraints),
             *(
                 name

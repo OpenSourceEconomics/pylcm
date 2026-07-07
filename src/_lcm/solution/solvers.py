@@ -108,6 +108,8 @@ class GridSearch(Solver):
                     has_taste_shocks=context.has_taste_shocks,
                     co_map_state_names=context.co_map_state_names,
                     co_map_v_arr_in_axes=context.co_map_v_arr_in_axes,
+                    stakeholders=context.stakeholders,
+                    weights=context.weights,
                 )
                 built[q_id] = jax.jit(func) if context.enable_jit else func
             result[period] = _GridSearchPeriodKernel(

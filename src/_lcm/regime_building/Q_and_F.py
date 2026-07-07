@@ -507,6 +507,86 @@ def get_Q_and_F_terminal(
     return Q_and_F
 
 
+def get_Q_and_F_terminal_collective(
+    *,
+    flat_param_names: frozenset[str],
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    stakeholders: tuple[str, ...],
+) -> QAndFFunction:
+    """Terminal (Q, F) for a collective regime — stacked per-stakeholder U + shared F.
+
+    COLLECTIVE-REGIMES (E1). Separate from `get_Q_and_F_terminal` so the singleton
+    terminal path (shared with the simulate / compute-intermediates machinery) is
+    byte-identical; this builder is used only at the collective solve site.
+
+    Builds one `U^s`-and-`F` closure per stakeholder from its own `utility_<s>`
+    DAG target (feasibility is regime-level, so it is identical across
+    stakeholders — the first one is kept). The returned `Q_and_F` stacks the
+    per-stakeholder utilities on a trailing stakeholder axis: for a scalar
+    (state, action) cell it returns `U` of shape `(n_stakeholders,)` and a scalar
+    `F`. After the action product-map in `get_max_Q_over_a`, `U` has shape
+    `(*action_axes, n_stakeholders)` and `F` `(*action_axes,)`; the stakeholder
+    branch there splits `U` by stakeholder and calls `collective_readout`.
+
+    Args:
+        flat_param_names: Frozenset of flat parameter names for the regime.
+        functions: Immutable mapping of function names to internal user functions;
+            carries `utility_<s>` for each stakeholder in place of `utility`.
+        constraints: Immutable mapping of constraint names to internal user functions.
+        stakeholders: Ordered stakeholder names; fixes the trailing-axis order.
+
+    Returns:
+        A function computing the stacked per-stakeholder utilities (Q) and the
+        shared feasibility mask (F) for a terminal collective period.
+
+    """
+    U_and_F_by_stakeholder = {
+        stakeholder: _get_U_and_F(
+            functions=functions,
+            constraints=constraints,
+            utility_name=f"utility_{stakeholder}",
+        )
+        for stakeholder in stakeholders
+    }
+
+    arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
+        deps=list(U_and_F_by_stakeholder.values()),
+        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        exclude=frozenset(),
+    )
+
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    )
+    def Q_and_F(
+        next_regime_to_V_arr: FloatND,  # noqa: ARG001
+        **states_actions_params: _ParamsLeaf,
+    ) -> tuple[FloatND, BoolND]:
+        """Stacked per-stakeholder utilities and the shared feasibility mask.
+
+        Args:
+            next_regime_to_V_arr: Unused in a terminal period; accepted so solve
+                treats all periods uniformly.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            A tuple of the stacked per-stakeholder utility array (trailing
+            stakeholder axis) and the shared feasibility mask.
+
+        """
+        U_arrays: list[FloatND] = []
+        F_arr: BoolND | None = None
+        for u_and_f in U_and_F_by_stakeholder.values():
+            U_s, F_arr = u_and_f(**states_actions_params)
+            U_arrays.append(jnp.asarray(U_s))
+        U_stack = jnp.stack(U_arrays, axis=-1)
+        return U_stack, jnp.asarray(F_arr)
+
+    return Q_and_F
+
+
 def get_period_targets(
     *,
     period: int,
@@ -649,6 +729,7 @@ def _get_U_and_F(
     conflicting_deterministic_transition_names: frozenset[
         TransitionFunctionName
     ] = frozenset(),
+    utility_name: str = "utility",
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -671,6 +752,10 @@ def _get_U_and_F(
             rejected if any of them is read by the within-period decision (utility
             or feasibility), because the merged law would disagree with the
             simulate state-update.
+        utility_name: DAG target name of the felicity function. `"utility"` (the
+            default) is the singleton case; a collective regime passes a
+            per-stakeholder `"utility_<s>"` so this builder returns that
+            stakeholder's own `U^s` alongside the shared feasibility.
 
     Returns:
         The instantaneous utility and feasibility function.
@@ -687,14 +772,14 @@ def _get_U_and_F(
     }
     _fail_if_conflicting_transition_is_read(
         combined=combined,
-        targets=["utility", "feasibility"],
+        targets=[utility_name, "feasibility"],
         conflicting_deterministic_transition_names=(
             conflicting_deterministic_transition_names
         ),
     )
     return concatenate_functions(
         functions=combined,
-        targets=["utility", "feasibility"],
+        targets=[utility_name, "feasibility"],
         enforce_signature=False,
         set_annotations=True,
     )
