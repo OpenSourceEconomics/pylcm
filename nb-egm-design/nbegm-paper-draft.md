@@ -246,8 +246,18 @@ A boundary declared on a derived variable $z$ with threshold $\bar z$ becomes a
 breakpoint on the liquid axis at the preimage $a^\ast = (\bar z - \gamma)/\alpha$,
 where the slope $\alpha$ and intercept $\gamma$ of the affine map $z(a)$ are read by
 automatic differentiation of the composed model DAG at $a = 0$, with the cell's other
-states and the parameters bound. Monotonicity of $z$ in $a$ (nonzero, single-signed
-slope) makes the preimage unique. A boundary whose variable has (near-)zero slope in
+states and the parameters bound. Reading the slope and intercept from the tangent at
+a single point and inverting globally is exact only when $z$ is **affine** in the
+liquid state across the reachable span — not merely monotone: a monotone-but-curved
+$z(a)$ (a threshold variable bending within the cell) would place $a^\ast$ at the
+wrong liquid value. Monotonicity (nonzero, single-signed slope) then only guarantees
+the preimage is *unique*, not that the affine formula locates it correctly. This
+affine precondition on each schedule variable is the same one the budget must satisfy
+for the interval segment recovery (Section 3.6); unlike the budget, whose affinity in
+the liquid state is screened by the finite affine-budget probe, a schedule variable's
+affinity is a precondition discharged by the model's structure (income and MAGI maps
+that are linear in assets through capital income) and the brute-agreement gates of
+Section 6, not by a dedicated probe. A boundary whose variable has (near-)zero slope in
 the cell — the threshold is never crossed within reach — has a non-finite preimage; it
 is clamped to a margin just outside the grid span, collapsing to an empty edge
 interval rather than poisoning a live interval's affine segment.
@@ -349,9 +359,13 @@ $$
 the maximum of the linear interpolants of all bracketing live links; the policy and
 marginal are the winning link's. A query no live link brackets yields NaN in all
 channels (surfaced by runtime diagnostics rather than silently patched). Ties within
-an absolute tolerance are broken *right-continuously*: among near-maximal bracketing
+a fixed absolute tolerance (scale-independent, not relative to the value magnitude)
+are broken *right-continuously*: among near-maximal bracketing
 links, the one with the largest value slope — higher just to the right of $q$ —
-carries the policy and marginal.
+carries the policy and marginal. The envelope value is unaffected by the tolerance;
+it governs only which link supplies the policy and marginal at a near-tie, so at
+value magnitudes where the fixed tolerance falls below the floating-point ULP the
+selection degrades gracefully to the first argmax.
 
 The evaluation is a fixed-shape bracket-and-reduce over $(N_Q, N_{\mathrm{seg}})$: no
 sequential scan, branch-parallel, reduction-heavy — the shape an accelerator runs
@@ -406,9 +420,13 @@ brackets with non-finite data fall back to the linear rule.
 
 A child regime's value cliffs pose the representation problem: a plain aggregate
 carry (values and marginals on a coarse grid) lets the parent's interpolation bridge
-across a cliff, misstating the continuation in the cliff cell (Theorem 6 pins the
-sign for linear reads; under the implemented Hermite read the sign is empirical).
-NB-EGM offers two modes:
+across a cliff, misstating the continuation in the cliff cell. The cliff is a *jump*
+in a single continuation (Theorem 5), not a discrete-branch aggregate max, so no
+single-signed error guarantee applies: the parent's linear read across the straddling
+cell is **mixed-sign** — understating just below the jump preimage and overstating
+just above — and the implemented Hermite read is likewise sign-empirical. Only the
+side-aware `one_sided` carry removes the error by construction. NB-EGM offers two
+modes:
 
 - **`one_sided` (exact cliff reads).** Each carry row holds every jump preimage as a
   *duplicated abscissa* carrying the exact one-sided value and marginal limits: the
@@ -551,7 +569,9 @@ piecewise function can identify all threshold locations exactly.*
 *Proof.* Run the solver against $f_1(x) = \mathbf 1\{x \ge 1/2\}$ on $[0,1]$ and let
 $S = \{x_1, \dots, x_n\}$ be the realized (possibly adaptive) query set. Since $S$
 is finite, choose $\delta > 0$ with
-$S \cap \bigl((1/2 - \delta, 1/2) \cup (1/2, 1/2 + \delta)\bigr) = \emptyset$. If
+$S \cap \bigl([1/2 - \delta, 1/2) \cup (1/2, 1/2 + \delta]\bigr) = \emptyset$ — the
+closed outer endpoints exclude $1/2 \pm \delta$ from $S$, and only finitely many
+$\delta$ are thereby ruled out. If
 $1/2 \notin S$, set $f_2(x) = \mathbf 1\{x \ge 1/2 + \delta\}$; every $x \in S$ with
 $x \ge 1/2$ satisfies $x \ge 1/2 + \delta$ and every $x \in S$ with $x < 1/2$
 satisfies $x < 1/2 - \delta$, so $f_2 = f_1$ on $S$. If $1/2 \in S$, shift the other
@@ -617,8 +637,13 @@ the pointwise order, so $I[V_b](q) \le I[\max_j V_j](q)$ for each $b$; take the 
 over $b$. $\square$
 
 *Implications.* (i) Under a positive linear read, interpolating already-maximized
-values can only *overstate* the envelope near switches — the bridged mode's error at
-the cliff cell is upward. (ii) The inequality is proven **only** for positive linear
+branch values can only *overstate* the envelope near a **discrete-choice switch** —
+the continuous aggregate max is kinked there, and the maximized row lies weakly above
+each branch's interpolant. This governs the discrete-branch envelope of Section 3.5.
+It does **not** cover an institutional *cliff*: a jump in a single continuation
+(Theorem 5) is not an aggregate max over branches — the max ranges over one element
+and the inequality collapses to $I[V] \le I[V]$ — so the bridged cliff-cell error is
+mixed-sign (Section 3.6), not upward. (ii) The inequality is proven **only** for positive linear
 $I$. The implementation's value read is monotone-limited cubic Hermite, which is not
 a linear operator of the node values, and the sign result does *not* transfer: with
 the limiter active, a three-node, two-branch monotone configuration exists where the
@@ -805,8 +830,9 @@ each published jump abscissa:
   convention — signed tail quantiles, maxima, and explicit counts of cells breaching
   hard caps are reported, and under `one_sided` the disagreement must collapse to
   the finite-grid comparison error of the brute reference itself. Under `bridged`
-  the signed error is *measured*, not assumed directional (Theorem 6's sign holds
-  for linear reads; the implemented Hermite read voids the guarantee).
+  the signed error is *measured*, not assumed directional: the cliff is a jump
+  (Theorem 5), where even the linear read across the straddling cell is mixed-sign,
+  and the implemented Hermite read carries no directional guarantee either.
 
 Simulation-moment deltas complement the state-space gates. Euler residuals are
 reported but are not the acceptance criterion — they are blind to the corner and
@@ -852,9 +878,9 @@ grow the program.
 **The speed-versus-fidelity dial.** `jump_read="bridged"` is the warm-start and
 screening mode: plain carry rows, stochastic-dimension pre-folding available (the
 child's shock expectation folds into the carry once per cell instead of looping
-nodes per savings query), cliff-cell error at finite-grid interpolation level with
-sign properties as discussed under Theorem 6 (guaranteed upward only for linear
-reads; empirical under the implemented Hermite read).
+nodes per savings query), cliff-cell error at finite-grid interpolation level,
+mixed-sign across the straddling cell under a linear read (Theorem 5) and
+sign-empirical under the implemented Hermite read.
 `jump_read="one_sided"` is the exact-convention mode: duplicated one-sided abscissae,
 published jump locations, save-to-cliff candidates, fold gated off on jump-moving
 dimensions. **Estimation protocol.** Because the bridged and one-sided solves define
@@ -934,7 +960,9 @@ disagree, the paper follows the code. The load-bearing deviations:
    abscissae with exact one-sided limits) plus the jump locations — closer to the
    document's "switch-refined aggregate grid" option. The `bridged` mode deliberately
    ships the plain aggregate carry the document calls insufficient in general, as an
-   explicitly approximate fast mode with a known error sign at cliffs (Theorem 6).
+   explicitly approximate fast mode whose cliff-cell error is a finite-grid
+   interpolation error across a jump (Theorem 5) — mixed-sign under a linear read,
+   sign-empirical under the Hermite read.
 7. **Value reads are monotone cubic Hermite, not linear.** Theorem 6 is proven for
    positive linear interpolation; the implementation's Hermite read (marginal row as
    exact node slopes, Fritsch–Carlson limited) is outside its literal hypothesis, and
