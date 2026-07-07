@@ -1,4 +1,5 @@
-"""User-facing vocabulary: `fixed_transition`, `MarkovTransition`, `AgeSpecialized`.
+"""User-facing vocabulary: `fixed_transition`, `MarkovTransition`,
+`AgeSpecializedFunction`, `AgeSpecializedGrid`.
 
 A thin leaf module with no dependency on `Regime`, the validators, or the
 regime-building code. Keeping the vocabulary here lets the user-facing
@@ -14,6 +15,7 @@ from typing import Any
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.typing import StateName
 from lcm.typing import FloatND, UserFunction
@@ -74,9 +76,40 @@ class MarkovTransition:
         return self.func(*args, **kwargs)
 
 
+@dataclass(frozen=True)
+class _AgeSpecialized:
+    """Base for the age-specialized build-time markers.
+
+    An age-specialized marker binds a per-age object (a function or a grid) at model
+    build: pylcm calls `build(age)` for each period's age to obtain that period's
+    concrete object, and uses `signature(age)` as a dedup key so ages resolving to
+    the same object share a single compiled program. `signature` is a **correctness
+    precondition**, not a performance hint: equal signature must imply identical
+    resolved object.
+
+    The two concrete markers are `AgeSpecializedFunction` (a function whose closure
+    varies with age) and `AgeSpecializedGrid` (a continuous-state grid whose
+    bounds/nodes vary with age at a fixed `n_points`). A marker is resolved before
+    it is used, so calling it directly is a loud error.
+    """
+
+    build: Callable[[float], Any]
+    """Factory returning the concrete object (function or grid) for a given age."""
+
+    signature: Callable[[float], Hashable]
+    """Returns a hashable identity of the age's object; used as the dedup key."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+        msg = (
+            f"{type(self).__name__} is a build-time marker and must be resolved to a "
+            "concrete object via build(age) before it is used."
+        )
+        raise TypeError(msg)
+
+
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
-class AgeSpecialized:
+class AgeSpecializedFunction(_AgeSpecialized):
     """Wrapper marking a function whose closure is bound per age at build time.
 
     Wrap a function *factory* to indicate that its closure depends on the agent's
@@ -88,15 +121,15 @@ class AgeSpecialized:
 
     Usable in `functions` and `constraints` of non-terminal regimes. A
     policy-dependent law of motion is expressed as a plain state transition that
-    reads an `AgeSpecialized` entry of `functions`; a direct `AgeSpecialized`
-    state-transition value, a specialized regime `transition`, a regime
-    transition whose dependency graph reads an `AgeSpecialized` function, a
-    `MarkovTransition(AgeSpecialized(...))`, and any `AgeSpecialized` in a
-    terminal regime are rejected at `Regime` construction. Every concrete
-    function returned by `build` must expose the same call signature — only the
-    constants it closes over may differ across ages.
+    reads an `AgeSpecializedFunction` entry of `functions`; a direct
+    `AgeSpecializedFunction` state-transition value, a specialized regime
+    `transition`, a regime transition whose dependency graph reads an
+    `AgeSpecializedFunction`, a `MarkovTransition(AgeSpecializedFunction(...))`, and
+    any `AgeSpecializedFunction` in a terminal regime are rejected at `Regime`
+    construction. Every concrete function returned by `build` must expose the same
+    call signature — only the constants it closes over may differ across ages.
 
-        functions={"tax": AgeSpecialized(build=make_tax, signature=policy_key)}
+        functions={"tax": AgeSpecializedFunction(build=make_tax, signature=policy_key)}
 
     `signature` is a **correctness precondition**, not a performance hint: ages
     with equal signatures share one compiled program, so an equal signature must
@@ -104,9 +137,10 @@ class AgeSpecialized:
     every other closed-over constant). An incomplete signature silently shares a
     wrong program across ages.
 
-    A bare callable (without the wrapper) is age-invariant, as before. `AgeSpecialized`
-    is a build-time marker: it is resolved to a concrete function via `build(age)`
-    before the DAG is traced, so calling it directly is an error.
+    A bare callable (without the wrapper) is age-invariant, as before.
+    `AgeSpecializedFunction` is a build-time marker: it is resolved to a concrete
+    function via `build(age)` before the DAG is traced, so calling it directly is an
+    error.
     """
 
     build: Callable[[float], UserFunction]
@@ -115,9 +149,35 @@ class AgeSpecialized:
     signature: Callable[[float], Hashable]
     """Returns a hashable identity of the age's closure; used as the dedup key."""
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
-        msg = (
-            "AgeSpecialized is a build-time marker and must be resolved to a concrete "
-            "function via build(age) before it is called."
-        )
-        raise TypeError(msg)
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True)
+class AgeSpecializedGrid(_AgeSpecialized):
+    """Wrapper marking a continuous-state grid whose bounds vary per age.
+
+    Wrap a grid *factory* to indicate that the grid's bounds/nodes depend on the
+    agent's age — the canonical case is an asset state with an age-dependent
+    borrowing floor `a̲(age)`. At build time pylcm calls `build(age)` for each
+    period's age to obtain that period's concrete `ContinuousGrid`, and uses
+    `signature(age)` as a dedup key so ages resolving to the same grid share a single
+    compiled program.
+
+        states={"assets": AgeSpecializedGrid(
+            build=lambda age: LinSpacedGrid(start=floor(age), stop=A_MAX, n_points=40),
+            signature=lambda age: floor(age))}
+
+    **Shape-invariance contract (validated at construction):** every `build(age)`
+    must return the *same grid class* and the *same `n_points`* — only the bounds
+    (start/stop) or node values may vary with age. This keeps every period's value
+    array the same shape. Allowed only for continuous states (not actions, discrete
+    states, or process states in this version).
+
+    `signature` is a correctness precondition exactly as for
+    `AgeSpecializedFunction`: equal signature must imply an identical grid.
+    """
+
+    build: Callable[[float], ContinuousGrid]
+    """Factory returning the concrete continuous grid for a given age."""
+
+    signature: Callable[[float], Hashable]
+    """Returns a hashable identity of the age's grid; used as the dedup key."""

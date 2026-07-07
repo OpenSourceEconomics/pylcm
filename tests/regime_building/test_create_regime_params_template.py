@@ -4,7 +4,7 @@ from _lcm.params.regime_template import (
 )
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm import Phased, fixed_transition
-from lcm.transition import AgeSpecialized
+from lcm.transition import AgeSpecializedFunction
 from tests.mock_regime import MockRegime
 
 
@@ -32,7 +32,7 @@ def test_create_params_without_processes(binary_category_class):
 
 
 def test_create_params_resolves_age_specialized_function(binary_category_class):
-    """An `AgeSpecialized` function contributes its concrete function's params.
+    """An `AgeSpecializedFunction` function contributes its concrete function's params.
 
     The wrapper's own call signature is `(*args, **kwargs)`; the template must be
     read off the concrete function `build(representative_age)` returns, so a real
@@ -52,7 +52,7 @@ def test_create_params_resolves_age_specialized_function(binary_category_class):
         transition=lambda: 0,
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
-            "net_income": AgeSpecialized(build=build, signature=lambda age: age),
+            "net_income": AgeSpecializedFunction(build=build, signature=lambda age: age),
         },
     )
     got = create_regime_params_template(regime, representative_age=60.0)
@@ -60,7 +60,7 @@ def test_create_params_resolves_age_specialized_function(binary_category_class):
 
 
 def test_create_params_resolves_phased_age_specialized_function(binary_category_class):
-    """A `Phased(AgeSpecialized, AgeSpecialized)` function contributes its params.
+    """A `Phased(AgeSpecializedFunction, AgeSpecializedFunction)` function contributes its params.
 
     Representative resolution must descend into both `Phased` sides so a real
     estimated parameter of a phase-split, age-specialized function surfaces in
@@ -74,8 +74,8 @@ def test_create_params_resolves_phased_age_specialized_function(binary_category_
         return net_income
 
     phased_specialized = Phased(
-        solve=AgeSpecialized(build=build, signature=lambda age: age),
-        simulate=AgeSpecialized(build=build, signature=lambda age: age),
+        solve=AgeSpecializedFunction(build=build, signature=lambda age: age),
+        simulate=AgeSpecializedFunction(build=build, signature=lambda age: age),
     )
     regime = MockRegime(
         actions={"a": DiscreteGrid(binary_category_class)},

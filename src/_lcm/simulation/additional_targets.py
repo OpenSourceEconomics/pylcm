@@ -161,7 +161,7 @@ def _fail_if_targets_depend_on_age_specialized(
     functions_pool: dict[str, UserFunction],
     regime: Regime,
 ) -> None:
-    """Reject targets whose DAG reads a policy-specialized (`AgeSpecialized`) function.
+    """Reject targets whose DAG reads a policy-specialized (`AgeSpecializedFunction`) function.
 
     The published simulation functions hold each specialized function resolved at
     the regime's representative age only; computing a period-specific target from
@@ -177,7 +177,7 @@ def _fail_if_targets_depend_on_age_specialized(
     if consumed:
         raise InvalidAdditionalTargetsError(
             f"Targets {sorted(set(targets))} depend on the policy-specialized "
-            f"(`AgeSpecialized`) function(s) {sorted(consumed)}. Published "
+            f"(`AgeSpecializedFunction`) function(s) {sorted(consumed)}. Published "
             f"simulation functions hold one representative-age closure, so a "
             f"period-specific value computed from them would use the wrong age's "
             f"policy. Compute such quantities inside the model (as a state or a "

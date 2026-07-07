@@ -98,7 +98,7 @@ def _build_compute_intermediates_per_period(
     }
 
     # Group by (target configuration, per-age policy signature), mirroring
-    # `_build_Q_and_F_per_period`: with no `AgeSpecialized` node the signature is
+    # `_build_Q_and_F_per_period`: with no `AgeSpecializedFunction` node the signature is
     # constant and the grouping collapses to the target configuration.
     configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
     for period in range(ages.n_periods):

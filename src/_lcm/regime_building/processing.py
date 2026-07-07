@@ -87,7 +87,7 @@ from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import Solver
 from lcm.transition import (
-    AgeSpecialized,
+    AgeSpecializedFunction,
     MarkovTransition,
 )
 from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
@@ -412,7 +412,7 @@ def _build_solution_phase(
     max_Q_over_a = solver_kernels.max_Q_over_a
 
     # The published function set is consumed unresolved by feasibility checks and
-    # additional-target computation, so resolve any `AgeSpecialized` marker to its
+    # additional-target computation, so resolve any `AgeSpecializedFunction` marker to its
     # representative-age concrete function here (the per-period Q_and_F build keeps
     # resolving the marker-bearing `core.functions` per age).
     solution_active_periods = regimes_to_active_periods[regime_name]
@@ -996,15 +996,15 @@ def _process_one_function(
     param_key: str,
     names_key: str | None = None,
 ) -> EconFunction:
-    """Rename a function's params to qnames, or wrap an `AgeSpecialized` as a marker.
+    """Rename a function's params to qnames, or wrap an `AgeSpecializedFunction` as a marker.
 
-    A plain function is renamed once. An `AgeSpecialized` becomes a
+    A plain function is renamed once. An `AgeSpecializedFunction` becomes a
     `_SpecializedEconFunction` whose `build(age)` renames the concrete function
     the wrapper produces for that age under the **same** `param_key` / `names_key`,
     so every age carries identical qnames — sound because the wrapper's call
     signature is age-invariant by contract.
     """
-    if isinstance(func, AgeSpecialized):
+    if isinstance(func, AgeSpecializedFunction):
         concrete_build = func.build
 
         def build(age: float) -> EconFunction:
@@ -1801,7 +1801,7 @@ def _build_Q_and_F_per_period(
 
     """
     # Group periods by (target configuration, per-age policy signature). The
-    # signature separates ages whose `AgeSpecialized` functions/constraints resolve
+    # signature separates ages whose `AgeSpecializedFunction` functions/constraints resolve
     # to different closures, so they never false-share a compiled `Q_and_F`; with no
     # specialized node every age yields the same (all-`INVARIANT`) signature and the
     # grouping collapses to the target configuration exactly as an age-invariant model.
@@ -1906,7 +1906,7 @@ def _build_next_state_vmapped(
     A law of motion can read a specialized function (e.g. `next_wealth` reading
     `net_income`), so next-state is resolved per age just like `Q_and_F`. Periods
     whose functions resolve to the same closures share one compiled function; with
-    no `AgeSpecialized` node every period shares a single function, exactly as an
+    no `AgeSpecializedFunction` node every period shares a single function, exactly as an
     age-invariant model.
     """
     configs: dict[Hashable, list[int]] = {}

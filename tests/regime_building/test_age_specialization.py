@@ -1,4 +1,4 @@
-"""Behavior of the `AgeSpecialized` period-specialization wiring.
+"""Behavior of the `AgeSpecializedFunction` period-specialization wiring.
 
 Two contracts, promoted from the Pro-review counterexample RT1:
 
@@ -19,7 +19,7 @@ from _lcm.regime_building.age_specialization import (
 )
 from _lcm.user_regime_validation import _validate_logical_consistency
 from lcm.exceptions import RegimeInitializationError
-from lcm.transition import AgeSpecialized, MarkovTransition
+from lcm.transition import AgeSpecializedFunction, MarkovTransition
 from tests.mock_regime import MockRegime
 
 
@@ -34,8 +34,8 @@ def test_node_signature_of_a_plain_callable_is_invariant():
 
 
 def test_node_signature_of_age_specialized_varies_with_age():
-    """An `AgeSpecialized` node's signature separates ages with different closures."""
-    node = AgeSpecialized(
+    """An `AgeSpecializedFunction` node's signature separates ages with different closures."""
+    node = AgeSpecializedFunction(
         build=_feasible_below_age, signature=lambda age: ("limit", age)
     )
 
@@ -49,7 +49,7 @@ def test_tree_signature_separates_a_constraint_that_changes_by_age():
     false-share a compiled `Q_and_F`.
     """
     constraints = {
-        "eligibility": AgeSpecialized(
+        "eligibility": AgeSpecializedFunction(
             build=_feasible_below_age, signature=lambda age: ("limit", age)
         )
     }
@@ -63,11 +63,11 @@ def test_tree_signature_recurses_into_the_nested_transition_mapping():
     """Processed transitions are nested `{target_regime: {name: fn}}`.
 
     A signature taken over top-level values sees the inner mapping and misses the
-    `AgeSpecialized` node inside; the tree signature must descend and separate ages.
+    `AgeSpecializedFunction` node inside; the tree signature must descend and separate ages.
     """
     transitions = {
         "retired": {
-            "next_points": AgeSpecialized(
+            "next_points": AgeSpecializedFunction(
                 build=lambda age: lambda points: points + age,
                 signature=lambda age: ("policy", age),
             )
@@ -85,7 +85,7 @@ def test_age_specialized_regime_transition_is_rejected(binary_category_class):
         actions={"a": DiscreteGrid(binary_category_class)},
         states={"b": DiscreteGrid(binary_category_class)},
         state_transitions={"b": lambda b: b},
-        transition=AgeSpecialized(
+        transition=AgeSpecializedFunction(
             build=lambda age: lambda b: b,  # noqa: ARG005
             signature=lambda age: ("regime", age),
         ),
@@ -99,14 +99,14 @@ def test_age_specialized_regime_transition_is_rejected(binary_category_class):
 def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_class):
     """A stochastic transition whose probability law is policy-specialized.
 
-    `MarkovTransition(AgeSpecialized(...))` is out of scope for v1 and must raise.
+    `MarkovTransition(AgeSpecializedFunction(...))` is out of scope for v1 and must raise.
     """
     regime = MockRegime(
         actions={"a": DiscreteGrid(binary_category_class)},
         states={"b": DiscreteGrid(binary_category_class)},
         state_transitions={
             "b": MarkovTransition(
-                AgeSpecialized(
+                AgeSpecializedFunction(
                     build=lambda age: lambda b: b,  # noqa: ARG005
                     signature=lambda age: ("stochastic", age),
                 )
@@ -123,17 +123,17 @@ def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_
 def test_age_specialized_deterministic_state_transition_is_rejected(
     binary_category_class,
 ):
-    """A deterministic state transition cannot itself be `AgeSpecialized`.
+    """A deterministic state transition cannot itself be `AgeSpecializedFunction`.
 
     Policy-dependent laws of motion are expressed as a plain transition reading an
-    `AgeSpecialized` helper function; a direct marker in `state_transitions` must
+    `AgeSpecializedFunction` helper function; a direct marker in `state_transitions` must
     raise before any program is built.
     """
     regime = MockRegime(
         actions={"a": DiscreteGrid(binary_category_class)},
         states={"b": DiscreteGrid(binary_category_class)},
         state_transitions={
-            "b": AgeSpecialized(
+            "b": AgeSpecializedFunction(
                 build=lambda age: lambda b: b,  # noqa: ARG005
                 signature=lambda age: ("deterministic", age),
             )
@@ -147,7 +147,7 @@ def test_age_specialized_deterministic_state_transition_is_rejected(
 
 
 def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
-    """A terminal regime cannot contain `AgeSpecialized` functions or constraints.
+    """A terminal regime cannot contain `AgeSpecializedFunction` functions or constraints.
 
     The terminal value program is built once and shared across all periods, so a
     policy-specialized terminal function must raise instead of silently using one
@@ -157,7 +157,7 @@ def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
         states={"b": DiscreteGrid(binary_category_class)},
         transition=None,
         functions={
-            "utility": AgeSpecialized(
+            "utility": AgeSpecializedFunction(
                 build=lambda age: lambda b: b,  # noqa: ARG005
                 signature=lambda age: ("terminal", age),
             )
@@ -171,7 +171,7 @@ def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
 def test_regime_transition_reading_age_specialized_helper_is_rejected(
     binary_category_class,
 ):
-    """A plain regime transition cannot read an `AgeSpecialized` helper function.
+    """A plain regime transition cannot read an `AgeSpecializedFunction` helper function.
 
     Regime-transition probabilities are built once, not per period, so a
     policy-specialized value flowing into `next_regime` would silently reuse one
@@ -187,7 +187,7 @@ def test_regime_transition_reading_age_specialized_helper_is_rejected(
         transition=MarkovTransition(next_regime),
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
-            "policy_threshold": AgeSpecialized(
+            "policy_threshold": AgeSpecializedFunction(
                 build=lambda age: lambda b: age,  # noqa: ARG005
                 signature=lambda age: ("threshold", age),
             ),
@@ -203,7 +203,7 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
 ):
     """The regime-transition guard follows dependencies through plain functions.
 
-    `next_regime` reads a plain function which itself reads an `AgeSpecialized`
+    `next_regime` reads a plain function which itself reads an `AgeSpecializedFunction`
     helper; the policy dependency is transitive but just as unsound, so it must
     raise.
     """
@@ -221,7 +221,7 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "eligibility": eligibility,
-            "policy_threshold": AgeSpecialized(
+            "policy_threshold": AgeSpecializedFunction(
                 build=lambda age: lambda b: age,  # noqa: ARG005
                 signature=lambda age: ("threshold", age),
             ),
@@ -235,18 +235,18 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
 def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
     binary_category_class,
 ):
-    """A `MarkovTransition(AgeSpecialized(...))` regime transition must raise.
+    """A `MarkovTransition(AgeSpecializedFunction(...))` regime transition must raise.
 
     Regime-transition probabilities are built once, not per period, so a
     policy-specialized probability law as the regime transition is just as
-    unsound as a bare `AgeSpecialized` transition and must be rejected at
+    unsound as a bare `AgeSpecializedFunction` transition and must be rejected at
     `Regime` construction.
     """
     regime = MockRegime(
         actions={"a": DiscreteGrid(binary_category_class)},
         states={"b": DiscreteGrid(binary_category_class)},
         transition=MarkovTransition(
-            AgeSpecialized(
+            AgeSpecializedFunction(
                 build=lambda age: lambda b: b,  # noqa: ARG005
                 signature=lambda age: ("regime", age),
             )

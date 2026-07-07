@@ -1,7 +1,7 @@
-"""Solving a model with an `AgeSpecialized` function reflects the per-age closure.
+"""Solving a model with an `AgeSpecializedFunction` function reflects the per-age closure.
 
 The driving end-to-end contract for period specialization: a function wrapped in
-`AgeSpecialized` is resolved to its concrete per-age closure at build time. Binding
+`AgeSpecializedFunction` is resolved to its concrete per-age closure at build time. Binding
 a bonus to `age` at build time must therefore produce the exact same value function
 as the age-invariant baseline that reads pylcm's runtime `age` argument directly.
 """
@@ -22,7 +22,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecialized
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import ScalarInt
 
 
@@ -131,13 +131,13 @@ def test_age_specialized_next_state_matches_runtime_age_baseline():
 
     baseline = _simulated_wealth(lambda age: age)
     specialized = _simulated_wealth(
-        AgeSpecialized(build=_bonus_of_age, signature=lambda age: age)
+        AgeSpecializedFunction(build=_bonus_of_age, signature=lambda age: age)
     )
     np.testing.assert_allclose(specialized, baseline, atol=1e-6)
 
 
 def test_age_specialized_bonus_matches_runtime_age_baseline():
-    """An `AgeSpecialized` bonus bound to `age` equals the runtime-`age` baseline.
+    """An `AgeSpecializedFunction` bonus bound to `age` equals the runtime-`age` baseline.
 
     Both regimes give `policy_bonus == age`: the baseline reads pylcm's runtime
     `age`; the specialized model binds it per period at build time. The two value
@@ -146,7 +146,7 @@ def test_age_specialized_bonus_matches_runtime_age_baseline():
     params = {"discount_factor": 0.95}
     baseline = _make_model(lambda age: age).solve(params=params, log_level="debug")
     specialized = _make_model(
-        AgeSpecialized(build=_bonus_of_age, signature=lambda age: age)
+        AgeSpecializedFunction(build=_bonus_of_age, signature=lambda age: age)
     ).solve(params=params, log_level="debug")
 
     assert baseline.keys() == specialized.keys()
@@ -163,12 +163,12 @@ def test_additional_target_depending_on_age_specialized_function_is_rejected():
     """`to_dataframe(additional_targets=[...])` rejects policy-specialized targets.
 
     Published simulation functions hold one representative-age closure, so a
-    period-specific additional target that reads an `AgeSpecialized` function
+    period-specific additional target that reads an `AgeSpecializedFunction` function
     (directly or through the DAG) would silently be computed under the wrong
     age's policy. It must raise instead.
     """
     model = _make_next_state_model(
-        AgeSpecialized(build=_bonus_of_age, signature=lambda age: age)
+        AgeSpecializedFunction(build=_bonus_of_age, signature=lambda age: age)
     )
     result = model.simulate(
         params={"discount_factor": 0.95},

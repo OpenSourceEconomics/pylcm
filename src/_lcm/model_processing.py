@@ -174,7 +174,7 @@ def validate_model_inputs(
     function with their declared types. This function focuses on value and
     cross-field rules.
 
-    `ages` lets the used-variable check resolve `AgeSpecialized` functions at
+    `ages` lets the used-variable check resolve `AgeSpecializedFunction` functions at
     each regime's representative age, so a state read only by a policy-specialized
     function still counts as used.
     """
@@ -289,7 +289,7 @@ def _validate_all_variables_used(
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
         if ages is not None:
-            # Resolve any `AgeSpecialized` marker to its concrete function at a
+            # Resolve any `AgeSpecializedFunction` marker to its concrete function at a
             # representative active age so `get_ancestors` sees the real argument
             # dependencies. The dependency structure is age-invariant, so any active
             # age serves; the resolved build is memoized and reused by the engine.

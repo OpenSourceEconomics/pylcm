@@ -23,7 +23,7 @@ from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import DCEGM
-from lcm.transition import AgeSpecialized, MarkovTransition
+from lcm.transition import AgeSpecializedFunction, MarkovTransition
 
 if TYPE_CHECKING:
     import lcm.regime
@@ -185,24 +185,24 @@ def _iter_transition_nodes(value: object) -> Iterator[object]:
 def _state_transition_marker_errors(
     state_transitions: Mapping[str, object],
 ) -> list[str]:
-    """Collect errors for `AgeSpecialized` markers inside state transitions."""
+    """Collect errors for `AgeSpecializedFunction` markers inside state transitions."""
     error_messages: list[str] = []
     for name, value in state_transitions.items():
         for node in _iter_transition_nodes(value):
             if isinstance(node, MarkovTransition) and isinstance(
-                node.func, AgeSpecialized
+                node.func, AgeSpecializedFunction
             ):
                 error_messages.append(
                     f"state_transitions['{name}']: a `MarkovTransition` wrapping an "
-                    f"`AgeSpecialized` (a policy-specialized stochastic transition) "
+                    f"`AgeSpecializedFunction` (a policy-specialized stochastic transition) "
                     f"is not supported.",
                 )
-            elif isinstance(node, AgeSpecialized):
+            elif isinstance(node, AgeSpecializedFunction):
                 error_messages.append(
-                    f"state_transitions['{name}']: an `AgeSpecialized` cannot be a "
+                    f"state_transitions['{name}']: an `AgeSpecializedFunction` cannot be a "
                     f"state-transition value. Express the policy-dependent law of "
                     f"motion as a plain transition function that reads an "
-                    f"`AgeSpecialized` entry of `functions` instead.",
+                    f"`AgeSpecializedFunction` entry of `functions` instead.",
                 )
     return error_messages
 
@@ -212,7 +212,7 @@ def _first_age_specialized_ancestor_of_transition(
     transition: object,
     functions: Mapping[str, object],
 ) -> str | None:
-    """Return the name of an `AgeSpecialized` function the transition reads, if any.
+    """Return the name of an `AgeSpecializedFunction` function the transition reads, if any.
 
     Walks the regime transition's parameter names transitively through plain
     entries of `functions` (unwrapping `Phased` sides, per-target dicts, and
@@ -224,7 +224,7 @@ def _first_age_specialized_ancestor_of_transition(
         name
         for name, value in functions.items()
         if any(
-            isinstance(node, AgeSpecialized) for node in _iter_transition_nodes(value)
+            isinstance(node, AgeSpecializedFunction) for node in _iter_transition_nodes(value)
         )
     }
     if transition is None or not specialized_names:
@@ -263,36 +263,36 @@ def _age_specialized_scope_errors(
     constraints: Mapping[str, object],
     terminal: bool,
 ) -> list[str]:
-    """Reject the `AgeSpecialized` compositions that are out of scope.
+    """Reject the `AgeSpecializedFunction` compositions that are out of scope.
 
-    `AgeSpecialized` is supported in `functions` and `constraints` of non-terminal
+    `AgeSpecializedFunction` is supported in `functions` and `constraints` of non-terminal
     regimes only. Rejected — loudly, before any per-period program is built:
 
-    - a regime `transition` that is (or contains) an `AgeSpecialized` — a
+    - a regime `transition` that is (or contains) an `AgeSpecializedFunction` — a
       policy-specialized *regime* transition;
-    - a `MarkovTransition` wrapping an `AgeSpecialized` in a state transition — a
+    - a `MarkovTransition` wrapping an `AgeSpecializedFunction` in a state transition — a
       policy-specialized *stochastic* transition;
-    - an `AgeSpecialized` directly as a state-transition value — express the
+    - an `AgeSpecializedFunction` directly as a state-transition value — express the
       policy-dependent law of motion as a plain transition reading an
-      `AgeSpecialized` helper function instead;
-    - a regime transition whose dependency graph reads an `AgeSpecialized`
+      `AgeSpecializedFunction` helper function instead;
+    - a regime transition whose dependency graph reads an `AgeSpecializedFunction`
       function (directly or through plain helper functions) — regime-transition
       probabilities are built once, not per period, so a policy-specialized
       value flowing into them would reuse one age's policy closure everywhere;
-    - any `AgeSpecialized` in a terminal regime — the terminal value program is
+    - any `AgeSpecializedFunction` in a terminal regime — the terminal value program is
       built once and shared across all periods.
     """
     error_messages: list[str] = []
 
     if any(
-        isinstance(node, AgeSpecialized)
+        isinstance(node, AgeSpecializedFunction)
         or (
-            isinstance(node, MarkovTransition) and isinstance(node.func, AgeSpecialized)
+            isinstance(node, MarkovTransition) and isinstance(node.func, AgeSpecializedFunction)
         )
         for node in _iter_transition_nodes(transition)
     ):
         error_messages.append(
-            "A regime `transition` cannot be `AgeSpecialized` (bare or wrapped in "
+            "A regime `transition` cannot be `AgeSpecializedFunction` (bare or wrapped in "
             "`MarkovTransition`): policy-specialized regime transitions are not "
             "supported. Specialize `functions` or `constraints` instead.",
         )
@@ -302,7 +302,7 @@ def _age_specialized_scope_errors(
     )
     if specialized_ancestor is not None:
         error_messages.append(
-            f"The regime `transition` depends on the `AgeSpecialized` function "
+            f"The regime `transition` depends on the `AgeSpecializedFunction` function "
             f"'{specialized_ancestor}'. Regime-transition probabilities are built "
             f"once, not per period, so a policy-specialized value flowing into "
             f"them would silently reuse one age's policy closure across all "
@@ -316,11 +316,11 @@ def _age_specialized_scope_errors(
         for slot_name, slot in (("functions", functions), ("constraints", constraints)):
             for name, value in slot.items():
                 if any(
-                    isinstance(node, AgeSpecialized)
+                    isinstance(node, AgeSpecializedFunction)
                     for node in _iter_transition_nodes(value)
                 ):
                     error_messages.append(
-                        f"{slot_name}['{name}']: `AgeSpecialized` is not supported "
+                        f"{slot_name}['{name}']: `AgeSpecializedFunction` is not supported "
                         f"in a terminal regime — the terminal value program is "
                         f"built once and shared across all periods.",
                     )

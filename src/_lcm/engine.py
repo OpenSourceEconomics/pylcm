@@ -489,7 +489,7 @@ class SimulationPhase:
     """Immutable mapping of period to next-period-state functions."""
 
     age_specialized_function_names: frozenset[FunctionName] = frozenset()
-    """Function names that were `AgeSpecialized` in the user regime.
+    """Function names that were `AgeSpecializedFunction` in the user regime.
 
     The published `functions` hold these resolved at the regime's representative
     age only — the per-period programs (`argmax_and_max_Q_over_a`, `next_state`)
