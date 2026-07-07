@@ -27,6 +27,7 @@ from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.ages import AgeGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
+from lcm.transition import AgeSpecializedGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import Float1D, FloatND, Int1D
 
@@ -843,7 +844,7 @@ def _collect_state_names(
 
 
 def _state_grids_with_carried_domains(
-    states: Mapping[StateName, Grid | Phased | None],
+    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
 ) -> dict[StateName, Grid]:
     """Replace each carried-state declaration by its simulate-phase grid.
 

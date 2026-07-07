@@ -135,6 +135,13 @@ def has_age_specialized_grid(states: Mapping[str, object]) -> bool:
     return any(isinstance(spec, AgeSpecializedGrid) for spec in states.values())
 
 
+def age_specialized_grid_names(states: Mapping[str, object]) -> frozenset[str]:
+    """Names of the states that are `AgeSpecializedGrid` markers."""
+    return frozenset(
+        name for name, spec in states.items() if isinstance(spec, AgeSpecializedGrid)
+    )
+
+
 def resolve_grid(spec: object, age: float) -> object:
     """Resolve an `AgeSpecializedGrid` to its concrete grid at `age`; else identity."""
     if isinstance(spec, AgeSpecializedGrid):

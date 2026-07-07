@@ -333,6 +333,17 @@ class SolutionPhase:
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 
+    period_state_axes: (
+        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+    ) = None
+    """Per-period node arrays for age-varying (`AgeSpecializedGrid`) states.
+
+    `{period: {state_name: nodes}}` — the current period's grid nodes for each
+    age-varying continuous state, used by backward induction to override the
+    (representative) base axis so period `t`'s value function is tabulated on
+    period `t`'s grid. `None` for age-invariant regimes (the base axis is used
+    unchanged)."""
+
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
         """Solve-phase state names in canonical (productmap) order."""

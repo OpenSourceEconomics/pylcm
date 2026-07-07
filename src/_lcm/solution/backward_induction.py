@@ -152,13 +152,27 @@ def solve(
         for regime_name in active_regimes:
             state_action_space = base_state_action_spaces[regime_name]
 
+            # Age-varying (`AgeSpecializedGrid`) states: override the representative
+            # base axis with this period's grid nodes, so period-t's value function
+            # is tabulated on period-t's grid (consistent with the continuation
+            # interpolation, which reads V_{t+1} on period-(t+1)'s grid). Same shape
+            # as the base, so the shared compiled kernel is not retraced.
+            period_state_axes = getattr(
+                active_regimes[regime_name].solution, "period_state_axes", None
+            )
+            period_states = (
+                {**state_action_space.states, **period_state_axes[period]}
+                if period_state_axes is not None and period in period_state_axes
+                else state_action_space.states
+            )
+
             # evaluate Q-function on states and actions, and maximize over
             # actions (the compiled function is the period's max_Q_over_a).
             # Pass period/age as JAX arrays (not Python scalars) so the shared
             # jax.jit function is traced once with abstract shapes, not
             # recompiled for every distinct (period, age) pair.
             V_arr = compiled_functions[(regime_name, period)](
-                **state_action_space.states,
+                **period_states,
                 **state_action_space.actions,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **flat_params[regime_name],

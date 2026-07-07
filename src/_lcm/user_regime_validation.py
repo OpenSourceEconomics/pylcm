@@ -23,18 +23,30 @@ from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import DCEGM
-from lcm.transition import AgeSpecializedFunction, MarkovTransition
+from lcm.transition import (
+    AgeSpecializedFunction,
+    AgeSpecializedGrid,
+    MarkovTransition,
+)
 
 if TYPE_CHECKING:
     import lcm.regime
 
 
 def _grid_mapping_errors(
-    *, attr_name: str, mapping: Mapping[str, object], allow_phase_variants: bool
+    *,
+    attr_name: str,
+    mapping: Mapping[str, object],
+    allow_phase_variants: bool,
+    allow_age_specialized_grid: bool = False,
 ) -> list[str]:
     """Collect key/value type errors for a grid-valued mapping (states/actions)."""
-    allowed = Grid | Phased if allow_phase_variants else Grid
+    allowed: object = Grid | Phased if allow_phase_variants else Grid
     suffix = " or Phased" if allow_phase_variants else ""
+    if allow_age_specialized_grid:
+        # An age-varying continuous-state grid is a valid state (states only).
+        allowed = allowed | AgeSpecializedGrid  # type: ignore[operator]
+        suffix += " or AgeSpecializedGrid"
     error_messages: list[str] = []
     for k, v in mapping.items():
         if not isinstance(k, str):
@@ -92,7 +104,10 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
     """
     error_messages = [
         *_grid_mapping_errors(
-            attr_name="states", mapping=regime.states, allow_phase_variants=True
+            attr_name="states",
+            mapping=regime.states,
+            allow_phase_variants=True,
+            allow_age_specialized_grid=True,
         ),
         *_grid_mapping_errors(
             attr_name="actions", mapping=regime.actions, allow_phase_variants=False

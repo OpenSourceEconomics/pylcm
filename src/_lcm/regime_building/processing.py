@@ -29,8 +29,12 @@ from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.age_specialization import (
     _SpecializedEconFunction,
+    has_age_specialized_grid,
     resolve_specialized_nodes,
+    resolve_state_grids,
+    state_grids_signature,
     tree_signature,
+    validate_age_specialized_grids,
 )
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
@@ -97,6 +101,62 @@ type _TransitionBundles = dict[
 ]
 
 
+def _resolve_age_specialized_state_grids(
+    *,
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    ages: AgeGrid,
+) -> tuple[
+    MappingProxyType[RegimeName, FinalizedUserRegime],
+    MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None,
+]:
+    """Resolve `AgeSpecializedGrid` states to representative + per-period grids.
+
+    Returns:
+        - `representative_user_regimes`: each regime with its `AgeSpecializedGrid`
+          states replaced by the concrete grid at the regime's first active age
+          (used by all age-invariant machinery). Unchanged when a regime has no
+          age-varying grid.
+        - `period_to_regime_v_interp`: `{period: {regime: VInterpolationInfo}}`
+          with each regime's grids resolved at that period's age — used by the
+          per-period Q-and-F so the continuation `V_{t+1}` interpolates on the
+          *next* period's grid. `None` when no state anywhere is age-varying, so an
+          age-invariant model builds exactly as before.
+    """
+    any_age_varying = any(
+        has_age_specialized_grid(regime.states) for regime in user_regimes.values()
+    )
+
+    representative: dict[RegimeName, FinalizedUserRegime] = {}
+    for name, regime in user_regimes.items():
+        active = ages.get_periods_where(regime.active)
+        if active and has_age_specialized_grid(regime.states):
+            validate_age_specialized_grids(regime.states, ages)
+            rep_age = ages.period_to_age(active[0])
+            representative[name] = regime.replace(
+                states=dict(resolve_state_grids(regime.states, rep_age))
+            )
+        else:
+            representative[name] = regime
+
+    if not any_age_varying:
+        return MappingProxyType(representative), None
+
+    period_map: dict[int, MappingProxyType[RegimeName, VInterpolationInfo]] = {}
+    for period in range(ages.n_periods):
+        age = ages.period_to_age(period)
+        period_map[period] = MappingProxyType(
+            {
+                name: create_v_interpolation_info(
+                    regime.replace(states=dict(resolve_state_grids(regime.states, age)))
+                    if has_age_specialized_grid(regime.states)
+                    else representative[name]
+                )
+                for name, regime in user_regimes.items()
+            }
+        )
+    return MappingProxyType(representative), MappingProxyType(period_map)
+
+
 def process_regimes(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
@@ -121,12 +181,22 @@ def process_regimes(
         The processed canonical regimes.
 
     """
+    # Age-varying continuous-state grids (`AgeSpecializedGrid`) are resolved to a
+    # representative-age concrete grid for all age-invariant machinery (specs,
+    # variables, grids, template, base state-action space), and to a per-period
+    # grid for the continuation interpolation (`period_to_regime_v_interp`) and the
+    # solve axis. `representative_user_regimes` equals `user_regimes` when no state
+    # is age-varying, so an age-invariant model builds byte-identically.
+    representative_user_regimes, period_to_regime_v_interp = (
+        _resolve_age_specialized_state_grids(user_regimes=user_regimes, ages=ages)
+    )
+
     # The canonical specs hold every law in target-granular form, resolved per
     # phase: the simulate slice additionally holds every carried-only state
     # and its law of motion, so the canonical mapping carries the law toward
     # each reachable target that carries the state — including targets reached
     # through nothing but the carried state.
-    specs = canonicalize_regimes(user_regimes=user_regimes)
+    specs = canonicalize_regimes(user_regimes=representative_user_regimes)
     solve_nested_transitions = {
         regime_name: _extract_phase_transitions(phase_slice=spec.solution)
         for regime_name, spec in specs.items()
@@ -135,18 +205,18 @@ def process_regimes(
         regime_name: _extract_phase_transitions(phase_slice=spec.simulation)
         for regime_name, spec in specs.items()
     }
-    _validate_categoricals(user_regimes)
+    _validate_categoricals(representative_user_regimes)
 
     regime_to_variables = MappingProxyType(
         {
             regime_name: from_regime(user_regime)
-            for regime_name, user_regime in user_regimes.items()
+            for regime_name, user_regime in representative_user_regimes.items()
         }
     )
     all_grids = MappingProxyType(
         {
             regime_name: get_grids(user_regime)
-            for regime_name, user_regime in user_regimes.items()
+            for regime_name, user_regime in representative_user_regimes.items()
         }
     )
 
@@ -155,7 +225,7 @@ def process_regimes(
     regime_to_v_interpolation_info = MappingProxyType(
         {
             regime_name: create_v_interpolation_info(user_regime)
-            for regime_name, user_regime in user_regimes.items()
+            for regime_name, user_regime in representative_user_regimes.items()
         }
     )
     state_action_spaces = MappingProxyType(
@@ -175,7 +245,10 @@ def process_regimes(
     )
 
     canonical_regimes: dict[RegimeName, Regime] = {}
-    for regime_name, user_regime in user_regimes.items():
+    # Iterate the representative-resolved regimes: identical to the user regimes
+    # except that any `AgeSpecializedGrid` state is a concrete representative-age
+    # grid, so every grid-derived call below is age-invariant.
+    for regime_name, user_regime in representative_user_regimes.items():
         spec = specs[regime_name]
         active_periods = regimes_to_active_periods[regime_name]
         representative_age = (
@@ -203,6 +276,7 @@ def process_regimes(
             variables=regime_to_variables[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
@@ -235,7 +309,7 @@ def process_regimes(
 
         stochastic_state_transitions = collect_stochastic_state_transitions(
             user_regime=user_regime,
-            user_regimes=user_regimes,
+            user_regimes=representative_user_regimes,
         )
 
         canonical_regimes[regime_name] = Regime(
@@ -266,6 +340,9 @@ def _build_solution_phase(
     variables: Variables,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
@@ -376,6 +453,7 @@ def _build_solution_phase(
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
+            period_to_regime_v_interp=period_to_regime_v_interp,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             flat_param_names=flat_param_names,
@@ -428,6 +506,12 @@ def _build_solution_phase(
         else core.functions
     )
 
+    period_state_axes = _build_period_state_axes(
+        regime_name=regime_name,
+        period_to_regime_v_interp=period_to_regime_v_interp,
+        active_periods=regimes_to_active_periods[regime_name],
+    )
+
     return SolutionPhase(
         _variables=variables,
         grids=all_grids[regime_name],
@@ -439,6 +523,7 @@ def _build_solution_phase(
         max_Q_over_a=max_Q_over_a,
         compute_intermediates=compute_intermediates,
         _base_state_action_space=state_action_space,
+        period_state_axes=period_state_axes,
     )
 
 
@@ -1758,6 +1843,69 @@ def _co_map_state_names(
     return tuple(co_map)
 
 
+def _grid_identity(grid: object) -> Hashable:
+    """A hashable identity of a continuous grid's nodes (for dedup signatures)."""
+    name = type(grid).__name__
+    start = getattr(grid, "start", None)
+    if start is not None and hasattr(grid, "stop"):
+        return (name, float(grid.start), float(grid.stop), int(grid.n_points))  # ty: ignore[possibly-unbound-attribute]
+    points = getattr(grid, "points", None)
+    if points is not None:
+        return (name, tuple(float(p) for p in points))
+    return (name, int(getattr(grid, "n_points", 0)))
+
+
+def _continuation_grid_signature(
+    regime_to_v_interp: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> Hashable:
+    """Fingerprint the continuous-state grids of every target regime's V info."""
+    pairs: list[tuple[RegimeName, StateName, Hashable]] = []
+    for rname in sorted(regime_to_v_interp):
+        info = regime_to_v_interp[rname]
+        for sname in sorted(info.continuous_states):
+            pairs.append((rname, sname, _grid_identity(info.continuous_states[sname])))
+    return tuple(pairs)
+
+
+def _build_period_state_axes(
+    *,
+    regime_name: RegimeName,
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ),
+    active_periods: tuple[int, ...],
+) -> MappingProxyType[int, MappingProxyType[StateOrActionName, Float1D]] | None:
+    """Per-period node arrays for this regime's age-varying continuous states.
+
+    A continuous state is age-varying iff its resolved grid identity differs across
+    the regime's active periods. Returns `{period: {state: nodes}}` for those states
+    (the current period's grid nodes, so V is tabulated on the current grid), or
+    `None` when nothing is age-varying (age-invariant regimes are unchanged).
+    """
+    if period_to_regime_v_interp is None or not active_periods:
+        return None
+    per_period_states = {
+        period: period_to_regime_v_interp[period][regime_name].continuous_states
+        for period in active_periods
+    }
+    first = per_period_states[active_periods[0]]
+    varying = [
+        name
+        for name in first
+        if len({_grid_identity(per_period_states[p][name]) for p in active_periods}) > 1
+    ]
+    if not varying:
+        return None
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {name: per_period_states[period][name].to_jax() for name in varying}
+            )
+            for period in active_periods
+        }
+    )
+
+
 def _build_Q_and_F_per_period(
     *,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
@@ -1771,12 +1919,22 @@ def _build_Q_and_F_per_period(
     flat_param_names: frozenset[str],
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
     Periods sharing the same target-regime configuration reuse a single
     closure, reducing the number of distinct JIT compilations. The caller
     is responsible for handling terminal regimes.
+
+    When `period_to_regime_v_interp` is given (a model has `AgeSpecializedGrid`
+    states), period `t`'s continuation `V_{t+1}` is interpolated on the target
+    regimes' grids **at period `t+1`**, and the group signature folds in those
+    grids' identities so periods with different continuation grids do not
+    false-share a compiled `Q_and_F`. `None` reproduces the age-invariant build
+    exactly.
 
     Args:
         regimes_to_active_periods: Immutable mapping of regime names to
@@ -1805,6 +1963,16 @@ def _build_Q_and_F_per_period(
     # to different closures, so they never false-share a compiled `Q_and_F`; with no
     # specialized node every age yields the same (all-`INVARIANT`) signature and the
     # grouping collapses to the target configuration exactly as an age-invariant model.
+    def continuation_info(period: int) -> MappingProxyType[RegimeName, VInterpolationInfo]:
+        """Target-regime interpolation info for period `t`'s continuation V_{t+1}."""
+        if period_to_regime_v_interp is None:
+            return regime_to_v_interpolation_info
+        # V_{t+1} lives on period t+1's grids; the last period's continuation is the
+        # zero template (no next period), so any info is fine there.
+        return period_to_regime_v_interp.get(
+            period + 1, regime_to_v_interpolation_info
+        )
+
     configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
     for period in range(ages.n_periods):
         complete = get_period_targets(
@@ -1813,7 +1981,14 @@ def _build_Q_and_F_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
         )
         age = ages.period_to_age(period)
-        signature = (tree_signature(functions, age), tree_signature(constraints, age))
+        # Fold the continuation grids' identities (at period+1) into the signature so
+        # periods with different age-varying continuation grids get distinct kernels.
+        continuation_sig = _continuation_grid_signature(continuation_info(period))
+        signature = (
+            tree_signature(functions, age),
+            tree_signature(constraints, age),
+            continuation_sig,
+        )
         configs.setdefault((complete, signature), []).append(period)
 
     # Build one Q_and_F per distinct group, resolving specialized functions and
@@ -1836,7 +2011,7 @@ def _build_Q_and_F_per_period(
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            regime_to_v_interpolation_info=continuation_info(periods[0]),
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
         )

@@ -22,7 +22,7 @@ from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import MarkovTransition
+from lcm.transition import AgeSpecializedGrid, MarkovTransition
 from lcm.typing import UserFunction
 
 if TYPE_CHECKING:
@@ -123,7 +123,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     def _phase_spec(
         *,
         functions: dict[FunctionName, UserFunction],
-        grid_states: dict[StateName, Grid],
+        grid_states: dict[StateName, Grid | AgeSpecializedGrid],
         state_transitions: dict[StateName, _PhaseStateTransition],
         regime_transition: _PhaseRegimeTransition,
     ) -> RegimePhaseSpec:
@@ -204,7 +204,7 @@ class RegimePhaseSpec:
     constraints: MappingProxyType[FunctionName, UserFunction]
     """Constraint functions (phase-invariant by the slot grammar)."""
 
-    grid_states: MappingProxyType[StateName, Grid]
+    grid_states: MappingProxyType[StateName, Grid | AgeSpecializedGrid]
     """States that are genuine grid states in this phase."""
 
     state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
@@ -263,8 +263,8 @@ def _split_functions(
 def _split_states(
     *, user_regime: lcm.regime.Regime
 ) -> tuple[
-    dict[StateName, Grid],
-    dict[StateName, Grid],
+    dict[StateName, Grid | AgeSpecializedGrid],
+    dict[StateName, Grid | AgeSpecializedGrid],
     dict[StateName, UserFunction],
     list[str],
 ]:
@@ -275,8 +275,8 @@ def _split_states(
     regular `state_transitions` entry), and the grammar violations found
     along the way.
     """
-    solve_grid_states: dict[StateName, Grid] = {}
-    simulate_grid_states: dict[StateName, Grid] = {}
+    solve_grid_states: dict[StateName, Grid | AgeSpecializedGrid] = {}
+    simulate_grid_states: dict[StateName, Grid | AgeSpecializedGrid] = {}
     carried_imputations: dict[StateName, UserFunction] = {}
     errors: list[str] = []
     for name, spec in user_regime.states.items():
@@ -288,9 +288,13 @@ def _split_states(
             if imputation is not None and carried_grid is not None:
                 carried_imputations[name] = imputation
                 simulate_grid_states[name] = carried_grid
-        elif isinstance(spec, Grid):
-            solve_grid_states[name] = spec
-            simulate_grid_states[name] = spec
+        elif isinstance(spec, Grid | AgeSpecializedGrid):
+            # A plain grid or an age-varying continuous-state grid: a genuine grid
+            # state in both phases. The marker is resolved to a concrete grid per
+            # period (representative age for the invariant machinery) during model
+            # processing; here it just occupies the state's axis slot.
+            solve_grid_states[name] = spec  # ty: ignore[invalid-assignment]
+            simulate_grid_states[name] = spec  # ty: ignore[invalid-assignment]
         elif spec is not None:
             # `None` masks a model-level entry; bound at model build.
             errors.append(
