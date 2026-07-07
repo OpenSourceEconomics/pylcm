@@ -845,13 +845,15 @@ def _collect_state_names(
 
 def _state_grids_with_carried_domains(
     states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
-) -> dict[StateName, Grid]:
+) -> dict[StateName, Grid | AgeSpecializedGrid]:
     """Replace each carried-state declaration by its simulate-phase grid.
 
     A carried value (declared via `Phased(solve=..., simulate=Grid)`) is a
     genuine state in simulation input and output, so label/code discovery
     must see the inner grid like any other state grid. `None` masks are
-    resolved before the consumers here run; the filter narrows the type.
+    resolved before the consumers here run; the filter narrows the type. An
+    `AgeSpecializedGrid` is passed through unchanged — it is a continuous state,
+    so every consumer (all of which filter for `DiscreteGrid`) skips it.
     """
     return {
         name: cast("Grid", spec.simulate) if isinstance(spec, Phased) else spec
