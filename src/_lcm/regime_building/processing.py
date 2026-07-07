@@ -297,6 +297,7 @@ def process_regimes(
             simulation_variables=simulate_variables_from_regime(user_regime),
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
@@ -540,6 +541,9 @@ def _build_simulation_phase(
     simulation_variables: Variables,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
@@ -674,6 +678,7 @@ def _build_simulation_phase(
             ages=ages,
             flat_param_names=flat_param_names,
             certainty_equivalent=certainty_equivalent,
+            period_to_regime_v_interp=period_to_regime_v_interp,
         )
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
