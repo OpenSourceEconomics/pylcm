@@ -89,11 +89,12 @@ def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
     """Name of a carry target's continuous (Euler) state.
 
     For a DC-EGM or NEGM target this is its configured (inner) Euler state; for a
-    terminal target it is its unique non-process continuous state. A model-level
-    distributed state (e.g. a permanent type sharded across devices) is broadcast
-    into the terminal regime as an extra discrete axis, so the terminal regime's
-    `states` need not be a singleton — the Euler state is the continuous one, not
-    whichever state iterates first.
+    terminal target it is the first non-process continuous state, matching the
+    carry's Euler axis (passive continuous states, e.g. a ride-along wage, follow
+    it). A model-level distributed state (e.g. a permanent type sharded across
+    devices) is broadcast into the terminal regime as an extra discrete axis, so
+    the Euler state is the first continuous state, never an int-coded discrete
+    state that happens to iterate first.
     """
     dcegm = _as_dcegm(user_regime)
     if dcegm is not None:
@@ -105,11 +106,11 @@ def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
         if isinstance(grids[name], ContinuousGrid)
         and not isinstance(grids[name], _ContinuousStochasticProcess)
     )
-    if len(continuous) != 1:
+    if not continuous:
         msg = (
-            f"A terminal carry target must have exactly one continuous (Euler) "
-            f"state; regime states {tuple(user_regime.states)} resolve to "
-            f"continuous states {continuous}."
+            f"A terminal carry target must have at least one continuous (Euler) "
+            f"state; regime states {tuple(user_regime.states)} resolve to no "
+            f"continuous states."
         )
         raise ValueError(msg)
     return continuous[0]
