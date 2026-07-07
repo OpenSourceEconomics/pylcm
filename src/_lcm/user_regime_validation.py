@@ -209,13 +209,13 @@ def _state_transition_marker_errors(
             ):
                 error_messages.append(
                     f"state_transitions['{name}']: a `MarkovTransition` wrapping an "
-                    f"`AgeSpecializedFunction` (a policy-specialized stochastic transition) "
-                    f"is not supported.",
+                    f"`AgeSpecializedFunction` (a policy-specialized stochastic "
+                    f"transition) is not supported.",
                 )
             elif isinstance(node, AgeSpecializedFunction):
                 error_messages.append(
-                    f"state_transitions['{name}']: an `AgeSpecializedFunction` cannot be a "
-                    f"state-transition value. Express the policy-dependent law of "
+                    f"state_transitions['{name}']: an `AgeSpecializedFunction` cannot "
+                    f"be a state-transition value. Express the policy-dependent law of "
                     f"motion as a plain transition function that reads an "
                     f"`AgeSpecializedFunction` entry of `functions` instead.",
                 )
@@ -227,7 +227,7 @@ def _first_age_specialized_ancestor_of_transition(
     transition: object,
     functions: Mapping[str, object],
 ) -> str | None:
-    """Return the name of an `AgeSpecializedFunction` function the transition reads, if any.
+    """Return the name of an `AgeSpecializedFunction` the transition reads, if any.
 
     Walks the regime transition's parameter names transitively through plain
     entries of `functions` (unwrapping `Phased` sides, per-target dicts, and
@@ -239,7 +239,8 @@ def _first_age_specialized_ancestor_of_transition(
         name
         for name, value in functions.items()
         if any(
-            isinstance(node, AgeSpecializedFunction) for node in _iter_transition_nodes(value)
+            isinstance(node, AgeSpecializedFunction)
+            for node in _iter_transition_nodes(value)
         )
     }
     if transition is None or not specialized_names:
@@ -280,13 +281,14 @@ def _age_specialized_scope_errors(
 ) -> list[str]:
     """Reject the `AgeSpecializedFunction` compositions that are out of scope.
 
-    `AgeSpecializedFunction` is supported in `functions` and `constraints` of non-terminal
-    regimes only. Rejected — loudly, before any per-period program is built:
+    `AgeSpecializedFunction` is supported in `functions` and `constraints` of
+    non-terminal regimes only. Rejected — loudly, before any per-period program
+    is built:
 
     - a regime `transition` that is (or contains) an `AgeSpecializedFunction` — a
       policy-specialized *regime* transition;
-    - a `MarkovTransition` wrapping an `AgeSpecializedFunction` in a state transition — a
-      policy-specialized *stochastic* transition;
+    - a `MarkovTransition` wrapping an `AgeSpecializedFunction` in a state
+      transition — a policy-specialized *stochastic* transition;
     - an `AgeSpecializedFunction` directly as a state-transition value — express the
       policy-dependent law of motion as a plain transition reading an
       `AgeSpecializedFunction` helper function instead;
@@ -302,13 +304,15 @@ def _age_specialized_scope_errors(
     if any(
         isinstance(node, AgeSpecializedFunction)
         or (
-            isinstance(node, MarkovTransition) and isinstance(node.func, AgeSpecializedFunction)
+            isinstance(node, MarkovTransition)
+            and isinstance(node.func, AgeSpecializedFunction)
         )
         for node in _iter_transition_nodes(transition)
     ):
         error_messages.append(
-            "A regime `transition` cannot be `AgeSpecializedFunction` (bare or wrapped in "
-            "`MarkovTransition`): policy-specialized regime transitions are not "
+            "A regime `transition` cannot be `AgeSpecializedFunction` (bare or "
+            "wrapped in `MarkovTransition`): policy-specialized regime transitions "
+            "are not "
             "supported. Specialize `functions` or `constraints` instead.",
         )
 
@@ -335,9 +339,9 @@ def _age_specialized_scope_errors(
                     for node in _iter_transition_nodes(value)
                 ):
                     error_messages.append(
-                        f"{slot_name}['{name}']: `AgeSpecializedFunction` is not supported "
-                        f"in a terminal regime — the terminal value program is "
-                        f"built once and shared across all periods.",
+                        f"{slot_name}['{name}']: `AgeSpecializedFunction` is not "
+                        f"supported in a terminal regime — the terminal value "
+                        f"program is built once and shared across all periods.",
                     )
 
     return error_messages

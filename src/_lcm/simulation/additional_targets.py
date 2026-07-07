@@ -161,7 +161,9 @@ def _fail_if_targets_depend_on_age_specialized(
     functions_pool: dict[str, UserFunction],
     regime: Regime,
 ) -> None:
-    """Reject targets whose DAG reads a policy-specialized (`AgeSpecializedFunction`) function.
+    """Reject targets whose DAG reads a policy-specialized function.
+
+    The rejected functions are those specialized via `AgeSpecializedFunction`.
 
     The published simulation functions hold each specialized function resolved at
     the regime's representative age only; computing a period-specific target from

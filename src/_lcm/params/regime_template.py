@@ -32,10 +32,10 @@ def create_regime_params_template(
 
     `AgeSpecializedFunction` nodes carry a `(*args, **kwargs)` wrapper signature, so the
     template is read off a **representative** concrete resolution `build(age)` at
-    `representative_age` (the first active age). The `AgeSpecializedFunction` contract makes
-    the call signature age-invariant, so the representative's template is every
-    age's template. `representative_age` is required whenever the regime contains
-    an `AgeSpecializedFunction` node.
+    `representative_age` (the first active age). The `AgeSpecializedFunction`
+    contract makes the call signature age-invariant, so the representative's
+    template is every age's template. `representative_age` is required whenever
+    the regime contains an `AgeSpecializedFunction` node.
 
     For `Phased` entries, the template contains the **union** of both
     variants' parameters so the user can provide a single flat params dict
@@ -276,8 +276,9 @@ def _resolve_age_specialized(
         return collected
     if representative_age is None:
         raise ValueError(
-            "The regime contains an `AgeSpecializedFunction` node, so `representative_age` "
-            "is required to read its concrete function's parameters."
+            "The regime contains an `AgeSpecializedFunction` node, so "
+            "`representative_age` is required to read its concrete function's "
+            "parameters."
         )
 
     def _resolve(value: UserFunction | Phased) -> UserFunction | Phased:

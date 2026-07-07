@@ -1,7 +1,8 @@
-"""Solving a model with an `AgeSpecializedFunction` function reflects the per-age closure.
+"""Solving a model with an `AgeSpecializedFunction` reflects the per-age closure.
 
 The driving end-to-end contract for period specialization: a function wrapped in
-`AgeSpecializedFunction` is resolved to its concrete per-age closure at build time. Binding
+`AgeSpecializedFunction` is resolved to its concrete per-age closure at build
+time. Binding
 a bonus to `age` at build time must therefore produce the exact same value function
 as the age-invariant baseline that reads pylcm's runtime `age` argument directly.
 """
@@ -137,7 +138,7 @@ def test_age_specialized_next_state_matches_runtime_age_baseline():
 
 
 def test_age_specialized_bonus_matches_runtime_age_baseline():
-    """An `AgeSpecializedFunction` bonus bound to `age` equals the runtime-`age` baseline.
+    """An `AgeSpecializedFunction` bonus bound to `age` equals the runtime baseline.
 
     Both regimes give `policy_bonus == age`: the baseline reads pylcm's runtime
     `age`; the specialized model binds it per period at build time. The two value

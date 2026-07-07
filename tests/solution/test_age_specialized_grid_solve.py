@@ -86,7 +86,7 @@ def test_age_invariant_grid_reproduces_plain_solve():
     grid = LinSpacedGrid(start=0.5, stop=25.0, n_points=15)
     v_plain = _model(grid).solve(params=_PARAMS, log_level="off")
     v_asg = _model(
-        AgeSpecializedGrid(build=lambda age: grid, signature=lambda age: 0)
+        AgeSpecializedGrid(build=lambda _age: grid, signature=lambda _age: 0)
     ).solve(params=_PARAMS, log_level="off")
     for period in range(_N):
         if "alive" not in v_plain[period]:
@@ -107,7 +107,7 @@ def _moving_floor_grid():
 
     return AgeSpecializedGrid(
         build=lambda age: LinSpacedGrid(start=floor(age), stop=20.0, n_points=12),
-        signature=lambda age: floor(age),
+        signature=floor,
     )
 
 
@@ -141,7 +141,9 @@ def test_moving_floor_value_monotone_in_wealth():
         # so `-inf - -inf = NaN` does not spuriously fail the monotonicity diff.
         arr = np.nan_to_num(np.asarray(v[period]["alive"]), neginf=-1e30)
         diffs = np.diff(arr, axis=0)  # axis 0 is the wealth grid
-        assert (diffs >= -1e-6).all(), f"V not nondecreasing in wealth at period {period}"
+        assert (diffs >= -1e-6).all(), (
+            f"V not nondecreasing in wealth at period {period}"
+        )
 
 
 def test_moving_floor_simulates_positive_consumption():
@@ -171,7 +173,7 @@ def test_non_shape_invariant_grid_is_rejected():
     """Varying `n_points` across ages raises at model construction."""
     bad = AgeSpecializedGrid(
         build=lambda age: LinSpacedGrid(start=0.5, stop=25.0, n_points=int(age) - 5),
-        signature=lambda age: int(age),
+        signature=int,
     )
     with pytest.raises(RegimeInitializationError, match="shape-invariant"):
         _model(bad).solve(params=_PARAMS, log_level="off")

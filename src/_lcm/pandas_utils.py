@@ -27,8 +27,8 @@ from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.ages import AgeGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
-from lcm.transition import AgeSpecializedGrid
 from lcm.regime import Regime as UserRegime
+from lcm.transition import AgeSpecializedGrid
 from lcm.typing import Float1D, FloatND, Int1D
 
 

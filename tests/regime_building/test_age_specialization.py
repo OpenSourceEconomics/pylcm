@@ -34,7 +34,7 @@ def test_node_signature_of_a_plain_callable_is_invariant():
 
 
 def test_node_signature_of_age_specialized_varies_with_age():
-    """An `AgeSpecializedFunction` node's signature separates ages with different closures."""
+    """An `AgeSpecializedFunction` node's signature separates ages by closure."""
     node = AgeSpecializedFunction(
         build=_feasible_below_age, signature=lambda age: ("limit", age)
     )
@@ -63,7 +63,8 @@ def test_tree_signature_recurses_into_the_nested_transition_mapping():
     """Processed transitions are nested `{target_regime: {name: fn}}`.
 
     A signature taken over top-level values sees the inner mapping and misses the
-    `AgeSpecializedFunction` node inside; the tree signature must descend and separate ages.
+    `AgeSpecializedFunction` node inside; the tree signature must descend and
+    separate ages.
     """
     transitions = {
         "retired": {
@@ -99,7 +100,8 @@ def test_age_specialized_regime_transition_is_rejected(binary_category_class):
 def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_class):
     """A stochastic transition whose probability law is policy-specialized.
 
-    `MarkovTransition(AgeSpecializedFunction(...))` is out of scope for v1 and must raise.
+    `MarkovTransition(AgeSpecializedFunction(...))` is out of scope for v1 and
+    must raise.
     """
     regime = MockRegime(
         actions={"a": DiscreteGrid(binary_category_class)},
@@ -126,8 +128,8 @@ def test_age_specialized_deterministic_state_transition_is_rejected(
     """A deterministic state transition cannot itself be `AgeSpecializedFunction`.
 
     Policy-dependent laws of motion are expressed as a plain transition reading an
-    `AgeSpecializedFunction` helper function; a direct marker in `state_transitions` must
-    raise before any program is built.
+    `AgeSpecializedFunction` helper function; a direct marker in
+    `state_transitions` must raise before any program is built.
     """
     regime = MockRegime(
         actions={"a": DiscreteGrid(binary_category_class)},
@@ -147,7 +149,7 @@ def test_age_specialized_deterministic_state_transition_is_rejected(
 
 
 def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
-    """A terminal regime cannot contain `AgeSpecializedFunction` functions or constraints.
+    """A terminal regime cannot contain `AgeSpecializedFunction` functions/constraints.
 
     The terminal value program is built once and shared across all periods, so a
     policy-specialized terminal function must raise instead of silently using one
@@ -171,7 +173,7 @@ def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
 def test_regime_transition_reading_age_specialized_helper_is_rejected(
     binary_category_class,
 ):
-    """A plain regime transition cannot read an `AgeSpecializedFunction` helper function.
+    """A plain regime transition cannot read an `AgeSpecializedFunction` helper.
 
     Regime-transition probabilities are built once, not per period, so a
     policy-specialized value flowing into `next_regime` would silently reuse one

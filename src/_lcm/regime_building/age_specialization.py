@@ -18,6 +18,7 @@ from typing import Any, Final, cast
 
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.typing import EconFunction
+from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
 
@@ -99,7 +100,10 @@ def resolve_specialized_nodes(
 
 
 def resolve_tree(tree: Mapping[str, object], age: float) -> Mapping[str, object]:
-    """Resolve every `AgeSpecializedFunction` leaf of a (possibly nested) mapping at `age`."""
+    """Resolve every `AgeSpecializedFunction` leaf of a (possibly nested) mapping.
+
+    Resolution happens at `age`.
+    """
     resolved: dict[str, object] = {}
     for key, value in tree.items():
         if isinstance(value, Mapping):
@@ -149,7 +153,9 @@ def resolve_grid(spec: object, age: float) -> object:
     return spec
 
 
-def resolve_state_grids(states: Mapping[str, object], age: float) -> Mapping[str, object]:
+def resolve_state_grids(
+    states: Mapping[str, object], age: float
+) -> Mapping[str, object]:
     """Resolve every `AgeSpecializedGrid` in a states mapping at `age`.
 
     Returns the input unchanged when it holds no age-specialized grid, so an
@@ -188,7 +194,7 @@ def state_grids_signature(states: Mapping[str, object], age: float) -> Hashable:
 
 
 def validate_age_specialized_grids(
-    states: Mapping[str, object], ages: object
+    states: Mapping[str, object], ages: AgeGrid
 ) -> None:
     """Validate the shape-invariance contract of every `AgeSpecializedGrid`.
 
@@ -215,7 +221,7 @@ def validate_age_specialized_grids(
                     f"ContinuousGrid; got {type(grid).__name__} at period {period}."
                 )
                 break
-            npoints = int(grid.n_points)
+            npoints = int(getattr(grid, "n_points", 0))
             if cls0 is None:
                 cls0, npoints0 = type(grid), npoints
             elif type(grid) is not cls0 or npoints != npoints0:

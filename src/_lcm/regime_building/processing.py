@@ -32,7 +32,6 @@ from _lcm.regime_building.age_specialization import (
     has_age_specialized_grid,
     resolve_specialized_nodes,
     resolve_state_grids,
-    state_grids_signature,
     tree_signature,
     validate_age_specialized_grids,
 )
@@ -491,8 +490,9 @@ def _build_solution_phase(
     max_Q_over_a = solver_kernels.max_Q_over_a
 
     # The published function set is consumed unresolved by feasibility checks and
-    # additional-target computation, so resolve any `AgeSpecializedFunction` marker to its
-    # representative-age concrete function here (the per-period Q_and_F build keeps
+    # additional-target computation, so resolve any `AgeSpecializedFunction`
+    # marker to its representative-age concrete function here (the per-period
+    # Q_and_F build keeps
     # resolving the marker-bearing `core.functions` per age).
     solution_active_periods = regimes_to_active_periods[regime_name]
     published_solution_functions = (
@@ -1086,7 +1086,9 @@ def _process_one_function(
     param_key: str,
     names_key: str | None = None,
 ) -> EconFunction:
-    """Rename a function's params to qnames, or wrap an `AgeSpecializedFunction` as a marker.
+    """Rename a function's params to qnames, or wrap an `AgeSpecializedFunction`.
+
+    An `AgeSpecializedFunction` is wrapped as a marker.
 
     A plain function is renamed once. An `AgeSpecializedFunction` becomes a
     `_SpecializedEconFunction` whose `build(age)` renames the concrete function
@@ -1851,25 +1853,30 @@ def _co_map_state_names(
 def _grid_identity(grid: object) -> Hashable:
     """A hashable identity of a continuous grid's nodes (for dedup signatures)."""
     name = type(grid).__name__
-    start = getattr(grid, "start", None)
-    if start is not None and hasattr(grid, "stop"):
-        return (name, float(grid.start), float(grid.stop), int(grid.n_points))  # ty: ignore[possibly-unbound-attribute]
-    points = getattr(grid, "points", None)
+    start: Any = getattr(grid, "start", None)
+    stop: Any = getattr(grid, "stop", None)
+    n_points: Any = getattr(grid, "n_points", None)
+    if start is not None and stop is not None and n_points is not None:
+        return (name, float(start), float(stop), int(n_points))
+    points: Any = getattr(grid, "points", None)
     if points is not None:
         return (name, tuple(float(p) for p in points))
-    return (name, int(getattr(grid, "n_points", 0)))
+    return (name, 0 if n_points is None else int(n_points))
 
 
 def _continuation_grid_signature(
     regime_to_v_interp: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> Hashable:
     """Fingerprint the continuous-state grids of every target regime's V info."""
-    pairs: list[tuple[RegimeName, StateName, Hashable]] = []
-    for rname in sorted(regime_to_v_interp):
-        info = regime_to_v_interp[rname]
-        for sname in sorted(info.continuous_states):
-            pairs.append((rname, sname, _grid_identity(info.continuous_states[sname])))
-    return tuple(pairs)
+    return tuple(
+        (
+            rname,
+            sname,
+            _grid_identity(regime_to_v_interp[rname].continuous_states[sname]),
+        )
+        for rname in sorted(regime_to_v_interp)
+        for sname in sorted(regime_to_v_interp[rname].continuous_states)
+    )
 
 
 def _build_period_state_axes(
@@ -1963,20 +1970,22 @@ def _build_Q_and_F_per_period(
         Immutable mapping of period index to the per-period Q-and-F closure.
 
     """
+
     # Group periods by (target configuration, per-age policy signature). The
-    # signature separates ages whose `AgeSpecializedFunction` functions/constraints resolve
-    # to different closures, so they never false-share a compiled `Q_and_F`; with no
+    # signature separates ages whose `AgeSpecializedFunction` functions/constraints
+    # resolve to different closures, so they never false-share a compiled
+    # `Q_and_F`; with no
     # specialized node every age yields the same (all-`INVARIANT`) signature and the
     # grouping collapses to the target configuration exactly as an age-invariant model.
-    def continuation_info(period: int) -> MappingProxyType[RegimeName, VInterpolationInfo]:
+    def continuation_info(
+        period: int,
+    ) -> MappingProxyType[RegimeName, VInterpolationInfo]:
         """Target-regime interpolation info for period `t`'s continuation V_{t+1}."""
         if period_to_regime_v_interp is None:
             return regime_to_v_interpolation_info
         # V_{t+1} lives on period t+1's grids; the last period's continuation is the
         # zero template (no next period), so any info is fine there.
-        return period_to_regime_v_interp.get(
-            period + 1, regime_to_v_interpolation_info
-        )
+        return period_to_regime_v_interp.get(period + 1, regime_to_v_interpolation_info)
 
     configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
     for period in range(ages.n_periods):
@@ -2086,8 +2095,8 @@ def _build_next_state_vmapped(
     A law of motion can read a specialized function (e.g. `next_wealth` reading
     `net_income`), so next-state is resolved per age just like `Q_and_F`. Periods
     whose functions resolve to the same closures share one compiled function; with
-    no `AgeSpecializedFunction` node every period shares a single function, exactly as an
-    age-invariant model.
+    no `AgeSpecializedFunction` node every period shares a single function, exactly
+    as an age-invariant model.
     """
     configs: dict[Hashable, list[int]] = {}
     for period in range(ages.n_periods):

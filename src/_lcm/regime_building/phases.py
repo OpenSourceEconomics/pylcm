@@ -293,8 +293,8 @@ def _split_states(
             # state in both phases. The marker is resolved to a concrete grid per
             # period (representative age for the invariant machinery) during model
             # processing; here it just occupies the state's axis slot.
-            solve_grid_states[name] = spec  # ty: ignore[invalid-assignment]
-            simulate_grid_states[name] = spec  # ty: ignore[invalid-assignment]
+            solve_grid_states[name] = spec
+            simulate_grid_states[name] = spec
         elif spec is not None:
             # `None` masks a model-level entry; bound at model build.
             errors.append(

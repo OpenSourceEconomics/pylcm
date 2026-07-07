@@ -52,7 +52,9 @@ def test_create_params_resolves_age_specialized_function(binary_category_class):
         transition=lambda: 0,
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
-            "net_income": AgeSpecializedFunction(build=build, signature=lambda age: age),
+            "net_income": AgeSpecializedFunction(
+                build=build, signature=lambda age: age
+            ),
         },
     )
     got = create_regime_params_template(regime, representative_age=60.0)
@@ -60,7 +62,7 @@ def test_create_params_resolves_age_specialized_function(binary_category_class):
 
 
 def test_create_params_resolves_phased_age_specialized_function(binary_category_class):
-    """A `Phased(AgeSpecializedFunction, AgeSpecializedFunction)` function contributes its params.
+    """`Phased(AgeSpecializedFunction, AgeSpecializedFunction)` contributes its params.
 
     Representative resolution must descend into both `Phased` sides so a real
     estimated parameter of a phase-split, age-specialized function surfaces in
