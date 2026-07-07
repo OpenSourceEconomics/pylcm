@@ -22,6 +22,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
+from lcm.solvers import DCEGM
 from lcm.transition import MarkovTransition
 
 if TYPE_CHECKING:
@@ -232,6 +233,7 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
     error_messages.extend(_state_transition_coverage_errors(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
+    error_messages.extend(_certainty_equivalent_errors(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -264,6 +266,30 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
         "to the corresponding state grid. Offending actions: "
         f"{offending_actions}.",
     ]
+
+
+def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Collect errors for a regime's `certainty_equivalent` declaration.
+
+    - terminal regimes have no continuation value to aggregate
+    - only `GridSearch` supports a nonlinear certainty equivalent (the
+      Euler inversion in DC-EGM assumes expected utility)
+    """
+    if regime.certainty_equivalent is None:
+        return []
+    error_messages: list[str] = []
+    if regime.terminal:
+        error_messages.append(
+            "A terminal regime cannot declare `certainty_equivalent`: there "
+            "is no continuation value to aggregate."
+        )
+    if isinstance(regime.solver, DCEGM):
+        error_messages.append(
+            "The DCEGM solver does not support a nonlinear "
+            "`certainty_equivalent`: the Euler inversion assumes expected "
+            "utility. Use GridSearch() for this regime."
+        )
+    return error_messages
 
 
 def _validate_function_output_grid_indexing(

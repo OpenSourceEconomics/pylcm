@@ -25,7 +25,12 @@ import pytest
 from lcm import NEGM, LinSpacedGrid, Model
 from lcm.exceptions import ModelInitializationError
 from lcm.solvers import DCEGM
+from tests.conftest import X64_ENABLED
 from tests.test_models import ds_app2_housing
+
+# The closed-form cost comparisons are float-eps-limited at the active precision.
+_COST_ATOL = 1e-12 if X64_ENABLED else 1e-5
+_COST_RTOL = 1e-12 if X64_ENABLED else 1e-5
 
 
 def test_model_builds_at_small_grid_without_solving():
@@ -127,7 +132,7 @@ def test_keeping_the_house_is_free():
         return_housing=0.03,
         tau=0.07,
     )
-    np.testing.assert_allclose(float(cost), 0.0, atol=1e-12)
+    np.testing.assert_allclose(float(cost), 0.0, atol=_COST_ATOL)
 
 
 @pytest.mark.parametrize("next_housing", [6.0, 2.5])
@@ -147,7 +152,7 @@ def test_adjusting_pays_the_eq12_round_trip_cost(next_housing: float):
         tau=tau,
     )
     expected = (1.0 + tau) * next_housing - (1.0 + return_housing) * housing
-    np.testing.assert_allclose(float(cost), expected, rtol=1e-12)
+    np.testing.assert_allclose(float(cost), expected, rtol=_COST_RTOL)
 
 
 def test_round_trip_cost_creates_an_inaction_wedge():

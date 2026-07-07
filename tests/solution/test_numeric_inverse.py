@@ -14,6 +14,14 @@ import numpy as np
 import pytest
 
 from _lcm.egm.numeric_inverse import numeric_inverse_marginal_utility
+from tests.conftest import X64_ENABLED
+
+# Root-finding accuracy scales with the float eps of the active precision:
+# central finite differences, Newton-iterate residuals, and to-machine-precision
+# matches all lose roughly half the mantissa at 32-bit.
+_FD_RTOL = 1e-3 if X64_ENABLED else 1e-2
+_RESIDUAL_BOUND = 1e-7 if X64_ENABLED else 1e-6
+_NEWTON_RTOL = 1e-9 if X64_ENABLED else 1e-7
 
 
 def _crra_marginal(crra):
@@ -60,7 +68,7 @@ def test_numeric_inverse_derivative_matches_crra_analytic(crra, m):
     finite_diff = float(
         (invert(jnp.asarray(m + 1e-4)) - invert(jnp.asarray(m - 1e-4))) / 2e-4
     )
-    np.testing.assert_allclose(grad, finite_diff, rtol=1e-3)
+    np.testing.assert_allclose(grad, finite_diff, rtol=_FD_RTOL)
 
 
 def test_numeric_inverse_converges_for_non_closed_form_utility():
@@ -85,7 +93,7 @@ def test_numeric_inverse_converges_for_non_closed_form_utility():
     )
     roots = solve(targets)
     residual = marginal(roots) - targets
-    assert float(jnp.max(jnp.abs(residual))) < 1e-7
+    assert float(jnp.max(jnp.abs(residual))) < _RESIDUAL_BOUND
 
 
 def test_numeric_inverse_clamps_unbracketed_target_with_zero_gradient():
@@ -129,7 +137,7 @@ def test_numeric_inverse_converges_in_few_iterations_on_a_wide_bracket(crra):
         n_iter=15,
     )
     analytic = m ** (-1.0 / crra)
-    np.testing.assert_allclose(float(c), analytic, rtol=1e-9)
+    np.testing.assert_allclose(float(c), analytic, rtol=_NEWTON_RTOL)
 
 
 def test_numeric_inverse_fails_loud_on_nonpositive_target():
@@ -159,6 +167,26 @@ def test_numeric_inverse_fails_loud_when_marginal_turns_nonpositive():
         marginal_continuation=jnp.asarray(0.25),
         marginal_utility=lambda c: 1.0 - c,
         c_lower=jnp.asarray(0.5),
+        c_upper=jnp.asarray(2.0),
+    )
+    assert bool(jnp.isnan(c))
+
+
+def test_numeric_inverse_fails_loud_when_bracket_marginal_overflows():
+    """A bracket marginal that overflows to `+inf` violates the precondition → NaN.
+
+    A power-law `u'(c) = c^{-crra}` with a steep `crra` and a near-zero `c_lower`
+    makes `u'(c_lower)` overflow to `+inf`. That endpoint is `> 0` but not finite,
+    so the log-consumption solve cannot proceed on it; the inverter must fail loud
+    (NaN, caught by the kernel's NaN diagnostics) rather than run the log path on a
+    non-finite bracket endpoint and return a silently clamped bound. The upper
+    endpoint stays finite and positive (`2^{-60} > 0`), so only the overflow —
+    not a non-positive marginal — can gate this call.
+    """
+    c = numeric_inverse_marginal_utility(
+        marginal_continuation=jnp.asarray(1.0),
+        marginal_utility=_crra_marginal(60.0),
+        c_lower=jnp.asarray(1e-8),
         c_upper=jnp.asarray(2.0),
     )
     assert bool(jnp.isnan(c))

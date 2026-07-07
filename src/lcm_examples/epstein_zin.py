@@ -1,0 +1,237 @@
+"""Epstein-Zin lifecycle savings model with health-dependent mortality.
+
+An example consumer block in the spirit of Atal, Fang, Karlsson &
+Ziebarth (2025, JPE 133(6), doi:10.1086/734781) - savings, a two-state
+health Markov chain, and health-dependent survival into a terminal `dead`
+regime - with the recursion swapped to Epstein-Zin:
+
+- `V = ((1 - b) * c^r + b * CE^r)^(1/r)` via `lcm.temporal_aggregation.H_epstein_zin`,
+- `CE = (E[V'^(1-g)])^(1/(1-g))` via `PowerMean`.
+
+Utility is consumption itself, so values stay in (positive) consumption
+units and the power transform is well-defined. The `dead` bequest value
+`bequest_scale * sqrt(wealth)` is strictly positive at every reachable
+wealth. At default parameters next wealth `w - c + income` stays inside the
+wealth grids (`income` equals the consumption-grid lower bound, `health_cost`
+is zero, and the clip in `next_wealth` never binds), so linear interpolation
+never extrapolates and an in-test numpy backward induction on the same
+grids reproduces the solve exactly.
+
+Three optional parameters give the model economic content beyond the
+default test configuration:
+
+- `income` above the consumption floor makes saving possible.
+- `health_cost` is an out-of-pocket expense while in bad health — the
+  uninsurable expense risk (in the spirit of the paper's medical spending)
+  that gives risk aversion a precautionary-saving channel.
+- `bequest_scale` prices the bequest in consumption-equivalent units.
+  `H_epstein_zin` is a weighted power *mean*, so the alive value sits at
+  the scale of per-period consumption; an unscaled `sqrt(wealth)` exceeds
+  it at moderate wealth, making death the good branch of the certainty
+  equivalent. Scale the bequest below the alive value to keep death bad.
+
+See docs/examples/epstein_zin.ipynb for a full exposition of the model,
+its recursion, and usage examples.
+"""
+
+import jax.numpy as jnp
+
+from lcm import (
+    AgeGrid,
+    CertaintyEquivalent,
+    DiscreteGrid,
+    H_epstein_zin,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    categorical,
+)
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    Float1D,
+    FloatND,
+    Period,
+    ScalarInt,
+)
+
+WEALTH_GRID = LinSpacedGrid(start=0.5, stop=12.0, n_points=6)
+DEAD_WEALTH_GRID = LinSpacedGrid(start=0.0, stop=12.0, n_points=25)
+CONSUMPTION_GRID = LinSpacedGrid(start=0.5, stop=5.0, n_points=7)
+
+INCOME = 0.5
+SURVIVAL_PROBS = (0.95, 0.85, 0.0)
+BAD_HEALTH_SURVIVAL_FACTOR = 0.9
+HEALTH_TRANSITION = ((0.8, 0.2), (0.1, 0.9))  # rows: bad, good
+
+
+@categorical(ordered=False)
+class EZRegimeId:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=True)
+class HealthStatus:
+    bad: ScalarInt
+    good: ScalarInt
+
+
+def utility_alive(consumption: ContinuousAction) -> FloatND:
+    return consumption
+
+
+def utility_dead(wealth: ContinuousState, bequest_scale: FloatND) -> FloatND:
+    return bequest_scale * jnp.sqrt(wealth)
+
+
+def next_wealth(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    income: FloatND,
+    health_cost: FloatND,
+    health: DiscreteState,
+) -> ContinuousState:
+    out_of_pocket = jnp.where(health == HealthStatus.bad, health_cost, 0.0)
+    return jnp.clip(
+        wealth - consumption + income - out_of_pocket,
+        WEALTH_GRID.start,
+        WEALTH_GRID.stop,
+    )
+
+
+def health_probs(health: DiscreteState) -> FloatND:
+    return jnp.where(
+        health == HealthStatus.good,
+        jnp.array(HEALTH_TRANSITION[1]),
+        jnp.array(HEALTH_TRANSITION[0]),
+    )
+
+
+def next_regime(
+    health: DiscreteState, period: Period, survival_probs: Float1D
+) -> FloatND:
+    sp = survival_probs[period] * jnp.where(
+        health == HealthStatus.good, 1.0, BAD_HEALTH_SURVIVAL_FACTOR
+    )
+    return jnp.array([sp, 1.0 - sp])
+
+
+def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+    return consumption <= wealth
+
+
+def get_model(
+    *,
+    certainty_equivalent: CertaintyEquivalent | None,
+    n_periods: int = 4,
+    n_wealth_points: int = 6,
+    n_consumption_points: int = 7,
+    n_dead_wealth_points: int = 25,
+) -> Model:
+    """Create the Epstein-Zin lifecycle model with health-dependent mortality.
+
+    Args:
+        certainty_equivalent: Certainty equivalent specification for the expectation.
+            Pass `None` to use the linear-expectation (expected-utility) recursion.
+        n_periods: Number of annual lifecycle periods, starting at age 25 (so
+            `n_periods` annual steps reach age `25 + n_periods - 1`).
+        n_wealth_points: Number of points in the alive wealth grid.
+        n_consumption_points: Number of points in the consumption grid.
+        n_dead_wealth_points: Number of points in the dead (bequest) wealth grid.
+
+    Returns:
+        A configured Model instance.
+
+    """
+    last_age = 25 + n_periods - 1
+    wealth_grid = LinSpacedGrid(
+        start=WEALTH_GRID.start, stop=WEALTH_GRID.stop, n_points=n_wealth_points
+    )
+    dead_wealth_grid = LinSpacedGrid(
+        start=DEAD_WEALTH_GRID.start,
+        stop=DEAD_WEALTH_GRID.stop,
+        n_points=n_dead_wealth_points,
+    )
+    consumption_grid = LinSpacedGrid(
+        start=CONSUMPTION_GRID.start,
+        stop=CONSUMPTION_GRID.stop,
+        n_points=n_consumption_points,
+    )
+    alive = Regime(
+        transition=MarkovTransition(next_regime),
+        states={
+            "wealth": wealth_grid,
+            "health": DiscreteGrid(HealthStatus),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "health": {"alive": MarkovTransition(health_probs)},
+        },
+        actions={"consumption": consumption_grid},
+        constraints={"budget_constraint": budget_constraint},
+        functions={"utility": utility_alive, "H": H_epstein_zin},
+        certainty_equivalent=certainty_equivalent,
+        active=lambda age, la=last_age: age < la,
+    )
+    dead = Regime(
+        transition=None,
+        states={"wealth": dead_wealth_grid},
+        functions={"utility": utility_dead},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=25, stop=last_age, step="Y"),
+        regime_id_class=EZRegimeId,
+    )
+
+
+def get_params(
+    *,
+    risk_aversion: float | None,
+    discount_factor: float = 0.9,
+    intertemporal_elasticity_of_substitution: float = 2.0,
+    survival_probs: tuple[float, ...] = SURVIVAL_PROBS,
+    income: float = INCOME,
+    health_cost: float = 0.0,
+    bequest_scale: float = 1.0,
+) -> dict:
+    """Get parameters for the Epstein-Zin lifecycle model.
+
+    Args:
+        risk_aversion: Coefficient of relative risk aversion (gamma) for the certainty
+            equivalent. Pass `None` when solving without a certainty equivalent.
+        discount_factor: Time discount factor (beta).
+        intertemporal_elasticity_of_substitution: IES (psi); the aggregator
+            curvature is `rho = 1 - 1/psi`.
+        survival_probs: Per-period survival probabilities (last entry must be 0.0);
+            its length is `n_periods - 1`.
+        income: Per-period income while alive. Above the consumption-grid lower
+            bound, saving is possible.
+        health_cost: Out-of-pocket expense per period while in bad health.
+        bequest_scale: Scale of the `dead` bequest value
+            `bequest_scale * sqrt(wealth)` in consumption-equivalent units.
+
+    Returns:
+        Parameter dict ready for `model.solve()`.
+
+    """
+    params: dict = {
+        "alive": {
+            "H": {
+                "discount_factor": discount_factor,
+                "intertemporal_elasticity_of_substitution": (
+                    intertemporal_elasticity_of_substitution
+                ),
+            },
+            "next_wealth": {"income": income, "health_cost": health_cost},
+            "next_regime": {"survival_probs": jnp.array(survival_probs)},
+        },
+        "dead": {"utility": {"bequest_scale": bequest_scale}},
+    }
+    if risk_aversion is not None:
+        params["alive"]["certainty_equivalent"] = {"risk_aversion": risk_aversion}
+    return params

@@ -19,7 +19,7 @@ from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _default_H
+from lcm.temporal_aggregation import H_linear
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
 # `lcm.regime.Regime`; internal signatures use this alias to mark values
@@ -66,7 +66,7 @@ def finalize_regimes(
         functions = dict(user_regime.functions)
         # Terminal regimes don't need H since Q = U directly (no E_next_V).
         if user_regime.transition is not None and "H" not in functions:
-            functions["H"] = _default_H
+            functions["H"] = H_linear
         finalized = user_regime.replace(
             functions=functions, derived_categoricals=merged
         )

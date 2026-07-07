@@ -101,6 +101,8 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
             )
         function_params["taste_shocks"] = {"scale": "float"}
 
+    _add_certainty_equivalent_params(function_params, user_regime)
+
     top_level_collisions = set(function_params) & set(per_target_params)
     if top_level_collisions:
         raise InvalidNameError(
@@ -119,6 +121,30 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
                 for target_regime_name, target_params in per_target_params.items()
             },
         }
+    )
+
+
+def _add_certainty_equivalent_params(
+    function_params: dict[FunctionName, dict[str, str]],
+    user_regime: UserRegime,
+) -> None:
+    """Add the certainty equivalent's params under its pseudo-function name in place.
+
+    The transform parameters surface in the template under the reserved
+    key `certainty_equivalent`; a regime function of that name collides
+    and is rejected.
+    """
+    if user_regime.certainty_equivalent is None:
+        return
+    if "certainty_equivalent" in function_params:
+        raise InvalidNameError(
+            "The regime declares `certainty_equivalent`, whose parameters "
+            "live under the pseudo-function name 'certainty_equivalent' in "
+            "the params — this conflicts with a regime function of the "
+            "same name."
+        )
+    function_params["certainty_equivalent"] = dict.fromkeys(
+        sorted(user_regime.certainty_equivalent.param_names), "float"
     )
 
 
@@ -221,23 +247,15 @@ def _drop_engine_provided_args(
 ) -> None:
     """Remove a function's engine-supplied arguments from its discovered params.
 
-    Some regime functions take arguments the engine provides at solve time, not
-    the user:
-
-    - In a DC-EGM / NEGM regime the inversion function `inverse_marginal_utility`
-      receives `marginal_continuation` from the EGM kernel (in any other regime a
-      function of that name is ordinary).
-    - The continuation operator's `value_transform` / `inverse_value_transform`
-      receive `continuation_value` (the next value array).
-
-    These must not surface as user-facing params, so they are popped in place.
+    In a DC-EGM / NEGM regime the inversion function `inverse_marginal_utility`
+    receives `marginal_continuation` from the EGM kernel (in any other regime a
+    function of that name is ordinary). This must not surface as a user-facing
+    param, so it is popped in place.
     """
     if name == "inverse_marginal_utility" and isinstance(
         user_regime.solver, (DCEGM, NEGM)
     ):
         params.pop("marginal_continuation", None)
-    if name in ("value_transform", "inverse_value_transform"):
-        params.pop("continuation_value", None)
 
 
 def _regime_transition_entries(

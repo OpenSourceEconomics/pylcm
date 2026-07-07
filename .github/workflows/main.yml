@@ -29,11 +29,17 @@ jobs:
           - windows-latest
         python-version:
           - '3.14'
+        # The small macOS runner can't host four parallel JAX AOT compiles of the
+        # DC-EGM solve/oracle battery (it swap-thrashes for hours). Drop the `slow`
+        # set there; the platform-independent kernel stays covered on Linux + GPU.
+        include:
+          - os: macos-latest
+            pytest_extra: -m "not slow"
     steps:
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.72.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -41,15 +47,28 @@ jobs:
           frozen: true
       - name: Run pytest
         shell: bash {0}
-        run: pixi run -e tests-cpu tests
+        run: pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}
-        run: pixi run -e tests-cpu tests-with-cov
+        # Phased: JAX compile caches make a pytest process's resident memory
+        # grow with every distinct compiled program it has run, and the DC-EGM
+        # solve/oracle battery (`slow`) compiles enough programs that one
+        # full-suite pass exhausts the 16 GB runner (the agent receives a
+        # shutdown signal mid-suite). Sequential invocations release each
+        # phase's memory before the next starts; coverage is appended across
+        # them.
+        run: |
+          pixi run -e tests-cpu pytest tests -m "not slow" \
+            --cov=./ --cov-report= -n 4 \
+          && pixi run -e tests-cpu pytest tests/solution -m slow \
+            --cov=./ --cov-append --cov-report= -n 2 \
+          && pixi run -e tests-cpu pytest tests --ignore=tests/solution -m slow \
+            --cov=./ --cov-append --cov-report=xml -n 2
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
-        uses: codecov/codecov-action@v6.0.1
+        uses: codecov/codecov-action@v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
   run-ty:
@@ -61,17 +80,19 @@ jobs:
         python-version:
           - '3.14'
     steps:
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.72.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: type-checking
           frozen: true
       - name: Run ty
         shell: bash {0}
-        run: pixi run ty
+        # The prek `ty` hook is skipped on pre-commit.ci (no pixi envs there);
+        # this job runs it against the `type-checking` env instead.
+        run: pixi run -e type-checking prek run ty --all-files
   run-tests-gpu:
     name: Run tests on GPU
     # Config:
@@ -84,17 +105,29 @@ jobs:
         run: |
           nvidia-smi
           nvcc --version || echo "nvcc not found"
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.72.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
           frozen: false
       - name: Run pytest on GPU
         shell: bash {0}
-        run: pixi run -e tests-cuda12 tests
+        # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
+        # starved of host CPU/memory by parallel JAX AOT compiles. CPU jobs keep -n 4.
+        #
+        # The GPU-scale Mahler & Yum module runs first, in its own process: its
+        # solve kernels only fit the device when XLA fully fuses the
+        # max-over-actions reduction, and compiling them late in a long-lived
+        # process that has run the whole DC-EGM battery has produced an
+        # unfused executable whose scratch arena (half the state-action product)
+        # exceeds device memory. A fresh process pins the fused compile.
+        run: |
+          pixi run -e tests-cuda12 pytest tests/test_mahler_yum_2024.py -n0 \
+          && pixi run -e tests-cuda12 pytest tests -n0 \
+            --ignore=tests/test_mahler_yum_2024.py
   run-tests-gpu-32bit:
     name: Run tests on GPU (32-bit precision)
     runs-on: ubuntu-latest-gpu
@@ -103,25 +136,27 @@ jobs:
         run: |
           nvidia-smi
           nvcc --version || echo "nvcc not found"
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.72.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
           frozen: false
       - name: Run pytest on GPU with 32-bit precision
         shell: bash {0}
-        run: pixi run -e tests-cuda12 tests-32bit
+        # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
+        # starved of host CPU/memory by parallel JAX AOT compiles. CPU jobs keep -n 4.
+        run: pixi run -e tests-cuda12 tests-32bit -n0
   run-explanation-notebooks:
     name: Run explanation notebooks on Python 3.14
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.6
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.72.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: docs

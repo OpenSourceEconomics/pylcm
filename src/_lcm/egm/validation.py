@@ -11,9 +11,10 @@ offending piece. The rules, in the order they are checked:
   with a transition whose DAG ancestors include neither the continuous
   action, the resources function, nor the post-decision function (the
   current Euler state is allowed — see the savings-node-stage rule below),
-  and a grid that is neither batched nor distributed
-- the post-decision function, the resources function, and
-  `inverse_marginal_utility` exist in `Regime.functions`
+  and a grid that is not distributed (`batch_size` is honored)
+- the post-decision function and the resources function exist in
+  `Regime.functions` (`inverse_marginal_utility` is optional — when omitted,
+  the iEGM path derives a numerical inverse from `utility`)
 - the regime uses the default Bellman aggregator `H`
 - the post-decision function consumes the continuous action and the
   resources function (not the continuous state directly)
@@ -38,8 +39,8 @@ offending piece. The rules, in the order they are checked:
   candidate families, while a jump in the other savings-stage functions
   breaks the smoothness-at-node-resolution assumption the per-node solve
   relies on)
-- grid hygiene: the Euler grid is neither batched nor distributed, and the
-  savings grid covers the Euler grid's upper region
+- grid hygiene: the Euler grid is not distributed (`batch_size` is honored),
+  and the savings grid covers the Euler grid's upper region
 - every declared-reachable non-terminal target regime also uses DC-EGM with
   the same Euler state (reachability is read off the regime transition: a
   granular per-target mapping declares its key set, any coarse form reaches
@@ -73,8 +74,8 @@ from _lcm.typing import (
 from lcm.exceptions import GridInitializationError, ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _default_H
 from lcm.solvers import DCEGM
+from lcm.temporal_aggregation import H_linear
 from lcm.transition import MarkovTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, UserFunction
 
@@ -325,18 +326,18 @@ def _fail_if_custom_H(*, regime_name: RegimeName, user_regime: UserRegime) -> No
     custom *solve-phase* `H` would silently change the meaning of the solution.
     A `Phased` `H` whose solve variant is the default aggregator is accepted —
     DC-EGM never reads the simulate variant, so a naive present-bias regime
-    (`H = Phased(solve=_default_H, simulate=beta_delta_H)`) is admissible: the
+    (`H = Phased(solve=H_linear, simulate=beta_delta_H)`) is admissible: the
     present bias enters only the simulate-phase re-optimization, outside the
     Euler inversion.
     """
     raw_H = user_regime.functions.get("H")
     solve_H = raw_H.solve if isinstance(raw_H, Phased) else raw_H
-    if solve_H is not _default_H:
+    if solve_H is not H_linear:
         msg = (
             f"Regime '{regime_name}' defines a custom solve-phase Bellman "
             "aggregator `H`. The DCEGM solver hard-codes the default aggregator "
             "`H = utility + discount_factor * E[V']` at solve time; remove the "
-            "custom `H` (a `Phased` `H` whose solve variant is `_default_H` is "
+            "custom `H` (a `Phased` `H` whose solve variant is `H_linear` is "
             "accepted) or use the brute-force solver."
         )
         raise ModelInitializationError(msg)
@@ -465,8 +466,9 @@ def _fail_if_passive_state_invalid(
       allowed ancestor: the kernel then solves per exogenous asset node,
       where the state's value is known (the read must be continuous at node
       resolution — checked by the savings-stage continuity spot check),
-    - a grid that is neither batched nor distributed (the kernel enumerates
-      its nodes as discrete combos).
+    - a grid that is not distributed; `batch_size` is honored (it splays the
+      passive state's combo axis via productmap to shed memory), while a
+      continuous axis cannot be sharded.
     """
     passive_names = [
         name
@@ -744,7 +746,13 @@ def _fail_if_grid_hygiene_violated(
     user_regime: UserRegime,
     solver: DCEGM,
 ) -> None:
-    """No runtime/batched/distributed grids; savings grid covers the Euler grid."""
+    """Reject runtime-supplied points and distributed grids; savings grid covers
+    the Euler grid.
+
+    `batch_size` is honored on the Euler, savings, and discrete-state grids (it
+    only splays combo/node axes to shed memory); it is rejected on discrete
+    actions, whose logsum aggregation needs every action value at once.
+    """
     # Rule 1 has already established that the Euler state's grid is a
     # (non-process) continuous grid.
     euler_grid = cast("ContinuousGrid", user_regime.states[solver.continuous_state])

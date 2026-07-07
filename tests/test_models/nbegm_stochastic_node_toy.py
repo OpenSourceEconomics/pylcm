@@ -15,6 +15,7 @@ averages the action-aggregated next-period V over the income nodes — the dense
 import jax.numpy as jnp
 
 import lcm
+from _lcm.grids.base import Grid
 from lcm import DiscreteGrid, LinSpacedGrid, Model, NormalIIDProcess, categorical
 from lcm.typing import (
     ContinuousAction,
@@ -163,7 +164,7 @@ def build_model(
         liquid_law = next_liquid
         constraints = {"feasible": feasible}
 
-    extra_states: dict[str, object] = {"income": income_grid}
+    extra_states: dict[str, Grid] = {"income": income_grid}
     extra_state_transitions = None
     model_states = None
     if with_kind:

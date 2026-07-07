@@ -535,4 +535,9 @@ def _publish_V_and_carry_rows(
     # finite envelope nodes above the true envelope wherever the closed-form
     # constrained value exceeds them, overstating the parent's continuation.
     value_row = jnp.where(overflowed, jnp.nan, refined_value).astype(dtype)
-    return V_row, value_row, marginal_utility.astype(dtype)
+    # The carry marginal-utility row is the parent's Hermite slope. On overflow
+    # the backend still returns a finite truncated prefix, so — like the value
+    # rows — it must be NaN-poisoned too, or an overflowed period would feed the
+    # parent a wrong-but-finite slope past the NaN diagnostics.
+    marginal_row = jnp.where(overflowed, jnp.nan, marginal_utility).astype(dtype)
+    return V_row, value_row, marginal_row

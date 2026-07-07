@@ -1,21 +1,21 @@
 """Regression locks for the external FUES correctness audit (findings F1 to F4).
 
-The duplicate-abscissae collapse (audit F1, originally F3) and the `segment_id`
-switch hook (audit F2) are fixed here, so their tests assert the corrected
-behavior directly. The bounded-scan finding (the prior audit's F4, issue #387)
-remains open and is held as `xfail(strict=True)`: it asserts the *correct*
-envelope and fails on the current kernel, so a fix flips it to XPASS, which
-strict mode reports as a failure until the marker is removed.
+Each test asserts the corrected behavior directly: the duplicate-abscissae
+collapse (audit F1), the `segment_id` switch hook (audit F2), and the
+interleaved-segments case (audit F4) — where the default scan is exhaustive, so
+however many off-segment candidates interleave between two points of one
+segment, the scan still reaches the segment's continuation and rejects the
+dominated interlopers. A narrower explicit `n_points_to_scan` is an opt-in speed
+knob that gives up that guarantee.
 
 Ground truth is the interpolated envelope *function*: the refined rows exist to
 be read by `interp_on_padded_grid` downstream, so correctness is judged there,
-not on which raw points survive. See `FUES_AUDIT_VERIFICATION_RESULTS.md`.
+not on which raw points survive.
 """
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.step_core import _publish_V_and_carry_rows
@@ -132,17 +132,13 @@ def _interleaved_segments():
     return endog_grid, policy, value
 
 
-@pytest.mark.xfail(
-    reason="F4: with >n_points_to_scan interleaved off-segment candidates the "
-    "bounded scan (`_find_same_segment_point` in fues.py) misses the "
-    "same-segment witness and accepts a "
-    "run of dominated points. Confirmed bug at the shipped default "
-    "n_points_to_scan=10; remove this marker when the scan is made exhaustive "
-    "in a correctness mode or keyed on a segment id.",
-    strict=True,
-)
 def test_f4_interleaved_segments_give_analytic_envelope_at_default_scan():
-    """The refined envelope equals the upper line A(x)=x at the default scan."""
+    """The refined envelope equals the upper line A(x)=x at the default scan.
+
+    The default scan is exhaustive, so it reaches segment A's continuation at
+    `x=12` however many off-segment candidates interleave before it, and rejects
+    every dominated point.
+    """
     endog_grid, policy, value = _interleaved_segments()
     grid, _, refined_value, _ = refine_envelope(
         endog_grid=endog_grid, policy=policy, value=value, n_refined=64
@@ -150,6 +146,29 @@ def test_f4_interleaved_segments_give_analytic_envelope_at_default_scan():
     x_query = jnp.linspace(0.0, 12.0, 13)
     got = interp_on_padded_grid(x_query=x_query, xp=grid, fp=refined_value)
     np.testing.assert_allclose(np.asarray(got), np.asarray(x_query), atol=1e-6)
+
+
+def test_f4_bounded_scan_underscans_when_window_too_small():
+    """An explicit finite scan narrower than the interleave accepts the interlopers.
+
+    The exhaustive default is the correctness guarantee; the finite window is an
+    opt-in speed knob. On this fixture — 11 off-segment points between segment A's
+    two anchors — a window of 10 cannot reach A's continuation, so it keeps the
+    dominated points and the interpolated envelope sits a uniform 0.5 below the
+    true line A(x)=x. This pins the documented tradeoff of the bounded mode.
+    """
+    endog_grid, policy, value = _interleaved_segments()
+    grid, _, refined_value, _ = refine_envelope(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=64,
+        n_points_to_scan=10,
+    )
+    x_query = jnp.linspace(0.0, 12.0, 13)
+    got = interp_on_padded_grid(x_query=x_query, xp=grid, fp=refined_value)
+    max_deviation = float(np.max(np.abs(np.asarray(got) - np.asarray(x_query))))
+    np.testing.assert_allclose(max_deviation, 0.5, atol=1e-6)
 
 
 def test_segment_id_label_forces_a_switch_a_flat_policy_notch_misses():

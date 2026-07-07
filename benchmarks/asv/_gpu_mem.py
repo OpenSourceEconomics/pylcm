@@ -33,8 +33,10 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-# Project root: the directory containing the benchmarks/ package.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# Project root: the directory containing the benchmarks/ package. This file lives
+# at benchmarks/asv/_gpu_mem.py, so the repo root is three parents up — the cwd the
+# `python -m benchmarks.asv._gpu_mem` subprocess needs for `benchmarks` to import.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Marks the peak-memory line on the subprocess's stdout. The subprocess imports
 # lcm, whose beartype claw can emit diagnostics to stdout, so the parent locates

@@ -19,8 +19,10 @@ automation. Python 3.14+ is required.
 - `pixi run tests-with-cov` - Run tests with coverage reporting
 - `pytest tests/test_specific_module.py` - Run specific test file
 - `pytest tests/test_specific_module.py::test_function_name` - Run specific test
-- `pixi run ty` - Type checking with ty
-- `prek run --all-files` - Run all pre-commit hooks
+- `prek run ty --all-files` - Type checking with ty (a pre-commit hook; resolves
+  third-party imports from the pixi env named in `[tool.ty] environment.python`, so run
+  `pixi install` once)
+- `prek run --all-files` - Run all pre-commit hooks (includes the `ty` hook)
 - `pixi run -e docs build-docs` - Build documentation
 - `pixi run -e docs view-docs` - Live preview documentation
 - `pixi install` - Install dependencies
@@ -402,6 +404,10 @@ df = result.to_dataframe(additional_targets="all")
 # Integer codes instead of categorical labels
 df = result.to_dataframe(use_labels=False)
 
+# Keep the frozen post-entry terminal-regime rows (absorbing representation);
+# the default (terminal_rows="first") emits each subject's terminal entry row only
+df = result.to_dataframe(terminal_rows="all")
+
 # Access metadata
 result.regime_names  # list[str]
 result.state_names  # list[str]
@@ -612,7 +618,7 @@ prose hides cases.
 
 - Extensive use of typing with custom types: user-facing aliases in `src/lcm/typing.py`,
   engine-side aliases and protocols in `src/_lcm/typing.py`
-- Type checking with ty (pixi run ty)
+- Type checking with ty (`prek run ty --all-files`)
 - Use `# ty: ignore[error-code]` for type suppression, never `# type: ignore`
 - JAX typing integration via jaxtyping
 

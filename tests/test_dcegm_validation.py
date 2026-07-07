@@ -13,16 +13,19 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     Phased,
+    categorical,
+    fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _default_H
 from lcm.solvers import GridSearch
+from lcm.temporal_aggregation import H_linear
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -118,15 +121,93 @@ def _without_function(regime: UserRegime, name: str) -> UserRegime:
     return regime.replace(functions=functions)
 
 
+@categorical(ordered=False)
+class _ShardedKind:
+    a: ScalarInt
+    b: ScalarInt
+
+
+def _utility_reading_kind(consumption: ContinuousAction, kind: ScalarInt) -> FloatND:
+    return jnp.log(consumption) + 0.0 * kind
+
+
+def _build_with_model_level_sharded_pruned() -> Model:
+    """The DCEGM regime never reads the sharded state, so it is pruned there."""
+    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    return Model(
+        regimes={"retirement": VALID, "dead": dead},
+        states={"kind": DiscreteGrid(_ShardedKind, distributed=True)},
+        ages=ages,
+        regime_id_class=retirement_only.RetirementOnlyRegimeId,
+    )
+
+
+def _build_with_model_level_sharded_used() -> Model:
+    """The DCEGM regime reads the sharded state, so it survives onto the regime."""
+    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    retirement = VALID.replace(
+        functions={**dict(VALID.functions), "utility": _utility_reading_kind},
+        state_transitions={
+            **dict(VALID.state_transitions),
+            "kind": fixed_transition("kind"),
+        },
+    )
+    return Model(
+        regimes={"retirement": retirement, "dead": dead},
+        states={"kind": DiscreteGrid(_ShardedKind, distributed=True)},
+        ages=ages,
+        regime_id_class=retirement_only.RetirementOnlyRegimeId,
+    )
+
+
+def _build_with_regime_level_sharded_terminal() -> Model:
+    """A distributed state is declared regime-level on the terminal target."""
+    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    return Model(
+        regimes={
+            "retirement": VALID,
+            "dead": dead.replace(
+                states={"kind": DiscreteGrid(_ShardedKind, distributed=True)}
+            ),
+        },
+        ages=ages,
+        regime_id_class=retirement_only.RetirementOnlyRegimeId,
+    )
+
+
+@pytest.mark.parametrize(
+    ("build", "match"),
+    [
+        (_build_with_model_level_sharded_pruned, "pruned from non-terminal"),
+        (_build_with_model_level_sharded_used, "must not be distributed in a DCEGM"),
+        (
+            _build_with_regime_level_sharded_terminal,
+            "sharding is declared at the model level",
+        ),
+    ],
+)
+def test_sharded_state_cannot_feed_a_dcegm_carry(build, match):
+    """No sharded state can reach a carry consumed by a DCEGM parent.
+
+    A DCEGM parent reads its carry rows by integer indexing along whole discrete
+    axes; a device-sharded axis would break that index, and the carry channel is
+    not co-mapped device-local the way the continuation value array is. Three
+    independent rules already make every route to such a configuration
+    unconstructible — a model-level sharded state pruned from a non-terminal
+    regime, a sharded discrete state surviving onto a DCEGM regime, and a
+    regime-level `distributed` declaration are each rejected — so no dedicated
+    carry guard is needed. Relaxing any one rule must keep the carry case
+    rejected (or add carry co-mapping).
+    """
+    with pytest.raises(ModelInitializationError, match=match):
+        build()
+
+
 # A regime satisfying the full DC-EGM contract; every case below breaks one rule.
 VALID = dcegm_variants.dcegm_retirement
 
 
 CASES = {
-    "missing_inverse_marginal_utility": (
-        lambda: _without_function(VALID, "inverse_marginal_utility"),
-        "inverse_marginal_utility",
-    ),
     "missing_resources_function": (
         lambda: _without_function(VALID, "resources"),
         "resources",
@@ -275,14 +356,14 @@ def test_dcegm_phased_H_with_default_solve_variant_constructs():
     """A `Phased` H whose solve variant is the default aggregator is admitted.
 
     DC-EGM reads only the solve-phase `H`; the simulate variant is free. A naive
-    present-bias regime declares `H = Phased(solve=_default_H, simulate=...)`, so
+    present-bias regime declares `H = Phased(solve=H_linear, simulate=...)`, so
     the solve runs the exact Euler inversion and present bias enters only the
     simulate-phase re-optimization.
     """
     regime = VALID.replace(
         functions={
             **dict(VALID.functions),
-            "H": Phased(solve=_default_H, simulate=_custom_H),
+            "H": Phased(solve=H_linear, simulate=_custom_H),
         }
     )
     model = _build_model(regime)
@@ -294,7 +375,7 @@ def test_dcegm_phased_H_with_custom_solve_variant_raises():
     regime = VALID.replace(
         functions={
             **dict(VALID.functions),
-            "H": Phased(solve=_custom_H, simulate=_default_H),
+            "H": Phased(solve=_custom_H, simulate=H_linear),
         }
     )
     with pytest.raises(ModelInitializationError, match="solve-phase Bellman"):

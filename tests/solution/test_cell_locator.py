@@ -28,6 +28,11 @@ from _lcm.egm.cell_locator import (
     validate_quad_mesh,
 )
 from lcm.exceptions import PyLCMError
+from tests.conftest import X64_ENABLED
+
+# Bilinear reads solve a per-cell 2x2 system, so their accuracy is a small
+# multiple of the float eps of the active precision.
+_ATOL = 1e-9 if X64_ENABLED else 1e-5
 
 
 def _affine_image(a, b, matrix, shift=(0.0, 0.0)):
@@ -122,7 +127,7 @@ def test_locate_affine_recovers_exact_cell_and_coords(
     np.testing.assert_allclose(
         np.array([located.xi[0], located.eta[0]]),
         np.array(expected_xi_eta),
-        atol=1e-9,
+        atol=_ATOL,
     )
 
 
@@ -147,7 +152,7 @@ def test_locate_shear_picks_coupled_cell_not_marginal_cell():
     np.testing.assert_allclose(
         np.array([located.xi[0], located.eta[0]]),
         np.array([0.8, 0.6]),
-        atol=1e-9,
+        atol=_ATOL,
     )
 
 

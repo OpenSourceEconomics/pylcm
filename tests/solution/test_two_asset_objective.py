@@ -11,6 +11,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.two_asset_objective import build_two_asset_objective
+from tests.conftest import X64_ENABLED
+
+# The analytic comparisons are float-eps-limited at the active precision.
+_RTOL = 1e-10 if X64_ENABLED else 1e-5
 
 _DISCOUNT = 0.95
 _CRRA = 2.0
@@ -37,7 +41,7 @@ def test_objective_is_exact_for_an_affine_post_decision_value():
         match_rate=_MATCH,
     )
     value, feasible = objective(jnp.array([5.0, 2.0]), jnp.array([1.0, 0.5]))
-    np.testing.assert_allclose(float(value), 14.8805755576, rtol=1e-10)
+    np.testing.assert_allclose(float(value), 14.8805755576, rtol=_RTOL)
     assert bool(feasible)
 
 
@@ -58,7 +62,7 @@ def test_objective_reads_the_audit_post_decision_value_at_a_grid_node():
         match_rate=_MATCH,
     )
     value, feasible = objective(jnp.array([4.0, 2.0]), jnp.array([1.0, 0.0]))
-    np.testing.assert_allclose(float(value), -0.05, rtol=1e-10)
+    np.testing.assert_allclose(float(value), -0.05, rtol=_RTOL)
     assert bool(feasible)
 
 

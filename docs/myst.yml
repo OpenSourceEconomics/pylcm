@@ -66,6 +66,7 @@ project:
       children:
         - file: examples/tiny.md
         - file: examples/mortality.md
+        - file: examples/epstein_zin.ipynb
         - file: examples/iskhakov_et_al_2017.md
         - file: examples/precautionary_savings.md
         - file: examples/precautionary_savings_health.md

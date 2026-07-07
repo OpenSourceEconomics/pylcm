@@ -46,14 +46,14 @@ This will install the development environment and run the tests. You can run
 [ty](https://docs.astral.sh/ty) using
 
 ```console
-$ pixi run ty
+$ prek run ty --all-files
 ```
 
 Before committing, install the pre-commit hooks using
 
 ```console
-$ pixi global install pre-commit
-$ pre-commit install
+$ pixi global install prek
+$ prek install
 ```
 
 ## Questions

@@ -3,7 +3,7 @@ from typing import Literal, cast
 
 from _lcm.grids import Grid
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _default_H
+from lcm.temporal_aggregation import H_linear
 from lcm.typing import UserFunction
 
 
@@ -56,7 +56,7 @@ class MockRegime(UserRegime):
         # `finalize_regimes` injects the default `H` for non-terminal
         # regimes; mirror that here.
         if not self.terminal and "H" not in self.functions:
-            object.__setattr__(self, "functions", {**self.functions, "H": _default_H})
+            object.__setattr__(self, "functions", {**self.functions, "H": H_linear})
 
     @property
     def terminal(self) -> bool:

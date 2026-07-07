@@ -8,7 +8,11 @@ comparative statics (a costlier house trade, a richer income) move value the rig
 
 import numpy as np
 
+from tests.conftest import X64_ENABLED
 from tests.test_models.deterministic.housing import get_model, get_params
+
+# The closed-form comparison is float-eps-limited at the active precision.
+_RTOL = 1e-12 if X64_ENABLED else 1e-5
 
 
 def _solve(**param_overrides):
@@ -33,7 +37,7 @@ def test_terminal_bequest_is_the_closed_form_crra_value():
     liquid = np.linspace(0.01, 50.0, 12)[:, None]
     housing = np.linspace(0.01, 50.0, 8)[None, :]
     expected = (liquid + housing) ** (1.0 - crra) / (1.0 - crra)
-    np.testing.assert_allclose(np.asarray(solution[3]["dead"]), expected, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(solution[3]["dead"]), expected, rtol=_RTOL)
 
 
 def test_working_value_increases_in_both_assets():
