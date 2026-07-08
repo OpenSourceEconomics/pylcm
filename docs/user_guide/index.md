@@ -20,5 +20,6 @@ philosophy. The remaining pages cover individual topics in depth.
 - [Parameters](parameters.md)
 - [Working with DataFrames and Series](pandas_interop.md)
 - [Solving and Simulating](solving_and_simulating.md)
+- [The case-piece solver (NB-EGM)](case_piece_solver.md)
 - [Performance and Memory Tuning](tuning.md)
 - [Debugging](debugging.md)
