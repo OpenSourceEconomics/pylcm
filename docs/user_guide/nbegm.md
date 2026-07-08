@@ -215,13 +215,12 @@ NB-EGM sits alongside pylcm's other endogenous-grid solvers rather than replacin
 ## Validating an NB-EGM regime
 
 `GridSearch` is a **diagnostic, not the correctness oracle**. Brute force evaluates the
-combined (`jnp.where`) budget on a finite action grid; unless that grid is statically
-aligned to the breakpoints ([`PiecewiseLinSpacedGrid`](grids.md#piecewiselinspacedgrid))
-it places no candidate at a cliff and *smooths across every breakpoint*. Aligning a node
-*onto* the threshold does not rescue it either: the optimal policy is often to save to
-just *below* an eligibility cliff (to keep the benefit), so the optimum sits one step
-inside the eligible side — a point on the strict-inequality side that the on-threshold
-node is not, and that no finite grid holds. Asserting exact agreement with brute is
+combined (`jnp.where`) budget on a finite action grid, so it *smooths across every
+breakpoint*. The optimal policy is often to save to just *below* an eligibility cliff
+(to keep the benefit), so the optimum sits one step inside the eligible side — a point
+no finite grid holds *exactly*, though a
+[`PiecewiseLinSpacedGrid`](grids.md#piecewiselinspacedgrid) aligned to the breakpoint
+may come close enough for practical purposes. Asserting *exact* agreement with brute is
 therefore the wrong acceptance test.
 
 - **Correctness oracle (selection).** A host-side reimplementation of NB-EGM's own
