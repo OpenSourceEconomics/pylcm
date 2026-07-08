@@ -1,24 +1,23 @@
 ---
-title: The case-piece solver (NB-EGM)
+title: The NB-EGM solver
 ---
 
-# The case-piece solver (NB-EGM)
+# The NB-EGM solver
 
 `NBEGM` is an endogenous-grid solver for a one-dimensional consumption–saving regime
 whose budget is split by **declared institutional breakpoints** — asset tests, subsidy
-brackets, benefit notches, consumption floors. Within each piece of the budget the
-problem is smooth, so `NBEGM` runs EGM per piece and merges the pieces on the liquid
-grid with a branch-aware upper envelope, resolving the kinks and jumps exactly at their
-declared locations instead of blurring them across a finite action grid.
+brackets, benefit notches, consumption floors. The model author exposes each boundary as
+metadata (a *case piece*); within each piece the budget is smooth, so `NBEGM` runs EGM
+per piece and merges the pieces on the liquid grid with a branch-aware upper envelope,
+resolving the kinks and jumps exactly at their declared locations.
 
-The default solver, `GridSearch`, evaluates the continuous action on a dense grid. It is
-exact to that grid, trivially parallel, and remains the right default for most regimes.
-Reach for `NBEGM` when a regime carries institutional discontinuities that a brute grid
-can only approximate near the cliff, and keep `GridSearch` as the agreement oracle you
-validate against.
-
-The method, its correctness results, and the conditions under which it beats brute force
-are described in the NB-EGM methods paper; this page is the how-to.
+Reach for `NBEGM` when a regime carries institutional discontinuities. A dense brute
+grid (`GridSearch`) can only *approximate* the optimum near a cliff — it places no
+candidate exactly at the threshold and averages across it — so brute force is a
+diagnostic here, not the correctness reference (see
+[Validating an NB-EGM regime](#validating-an-nb-egm-regime)). For the full theory,
+correctness results, and the conditions under which NB-EGM beats brute force, see the
+NB-EGM methods paper; this page is the how-to.
 
 ## When it applies
 
@@ -34,7 +33,7 @@ are described in the NB-EGM methods paper; this page is the how-to.
 
 ## Declaring breakpoints
 
-Institutional boundaries are **declared, not discovered** — the solver cannot recover a
+Institutional boundaries are **declared, not discovered** — no solver can recover a
 threshold's exact location from finitely many black-box evaluations, so the model author
 exposes each boundary as metadata. The decorators only attach metadata and return the
 function unchanged, so the same model still solves identically under `GridSearch`.
@@ -114,7 +113,8 @@ alive_regime = Regime(
 `NBEGM` requires a `savings_grid` (the post-decision savings nodes). Key optional
 arguments:
 
-- `budget_target` (default `"coh"`) — the DAG output the solver treats as cash-on-hand.
+- `budget_target` (default `"coh"`) — the DAG output the solver inverts against (the
+  consumption budget), mirroring `DCEGM`'s `resources=`.
 - `continuous_state` / `post_decision_function` — name the ride-along co-state and its
   off-budget liquid law when the regime carries one.
 - `jump_read` — the cliff-read mode (below).
@@ -138,7 +138,7 @@ A child regime's value cliffs cannot be represented by a single continuous inter
 ```{warning}
 The bridged and one-sided solves define **different objective surfaces** near
 institutional cliffs. Use `"bridged"` as a warm-start / screening mode only: final
-estimates require re-optimizing under `"one_sided"` from the bridged optimum (or an
+estimates should re-optimize under `"one_sided"` from the bridged optimum (or an
 explicit objective-surface comparison showing the two minimizers coincide within
 the reported precision). Evaluating the one-sided objective once at the bridged
 optimum does not detect the difference.
@@ -167,8 +167,7 @@ piecewise-constant on the declared partition. A build-time probe screens for it 
 **refuses by default** (`probe_failure="reject"`) when it detects smooth dependence or
 cannot evaluate the model's DAG. Passing `probe_failure="assume_declared"` asserts the
 precondition explicitly (emitting a warning); every exactness claim is then conditional
-on that assertion, which must be discharged by independent validation (e.g. brute-force
-agreement).
+on that assertion, which must be discharged by independent validation.
 
 The probe is a finite diagnostic, not a certificate — a dependence whose derivative
 vanishes at every probed point passes undetected.
@@ -189,12 +188,45 @@ the result (up to floating-point reassociation):
 All default to `0` (the whole axis in one vectorized pass). Raise a knob when the
 corresponding buffer is the memory wall.
 
-## Validating a case-piece regime
+## Relation to other EGM methods
 
-Keep the `GridSearch` variant of the same regime as the agreement oracle: solve both on
-the same grids and assert concrete-value agreement, with adversarial queries at each
-threshold and one ulp on either side. Outside the cliff band the two should agree to
-interpolation-error tolerance; inside it, under `"one_sided"`, disagreement collapses to
-the brute reference's own finite-grid error. Euler residuals are a useful report but not
-the acceptance criterion — they are blind to the corner and boundary candidates that
-carry the economics of interest.
+NB-EGM sits alongside pylcm's other endogenous-grid solvers rather than replacing them
+(see [Choosing a solver](choosing_a_solver.md) for the full map):
+
+- **`DCEGM`** is the discrete–continuous EGM of Iskhakov, Jørgensen, Rust & Schjerning
+  (2017): a discrete choice (work vs. retire) makes the value function non-concave, and
+  DC-EGM resolves the resulting *secondary kinks* with an upper-envelope scan. It is
+  pylcm's direct reproduction of that method (see the
+  [IJRS example](../examples/iskhakov_et_al_2017.md)) and the right tool for a
+  discrete–continuous problem with no declared institutional breakpoints.
+- **`NEGM`** nests a 1-D `DCEGM` consumption solve inside an outer deterministic search
+  over a durable/illiquid margin (Druedahl 2021).
+- **`NBEGM`** keeps that discrete–continuous capability without nesting `DCEGM`: it
+  solves one continuous subproblem per discrete-action value and merges them with its
+  own discrete upper envelope, and it splits the Euler path at folds to resolve the same
+  secondary kinks a kinked continuation induces. So an IJRS-style retirement kink is
+  within its reach. What NB-EGM *adds* is the exact treatment of **declared
+  institutional breakpoints** — which DC-EGM's black-box envelope cannot locate exactly
+  — and a query-side (map-reduce) upper envelope that parallelises better on a GPU than
+  a topology-discovering scan.
+
+## Validating an NB-EGM regime
+
+`GridSearch` is a **diagnostic, not the correctness oracle**. Brute force evaluates the
+combined (`jnp.where`) budget on a finite action grid, so it *smooths across every
+breakpoint* — it never places a candidate exactly at a cliff. Asserting exact agreement
+with brute is therefore the wrong acceptance test.
+
+- **Correctness oracle (selection).** A host-side reimplementation of NB-EGM's own
+  convention — the same per-case EGM, candidate set, masking, endpoint ownership, and
+  upper envelope, evaluated on the same grids — is the exact reference for the envelope
+  and selection logic.
+- **Brute agreement (diagnostic).** Solve the `GridSearch` variant of the same regime on
+  a dense grid and compare, scoring two regions separately: *outside* the cliff band the
+  two should agree to interpolation-error tolerance; *inside* the cliff band (cells
+  adjacent to a jump preimage) the disagreement is expected — the brute reference has
+  its own finite-grid error there, and under `"one_sided"` the gap collapses to that
+  error.
+
+Euler residuals are a useful report but not the acceptance criterion — they are blind to
+the corner and boundary candidates that carry the economics of interest.

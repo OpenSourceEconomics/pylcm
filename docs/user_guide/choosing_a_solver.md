@@ -13,32 +13,49 @@ it is often the right answer.** On a GPU it is a dense map-reduce with static sh
 perfect chunkability, and it is exact to its action grid. An endogenous-grid method has
 lower arithmetic complexity, but that only pays off if it does not materialize large
 transients, carry long sequential scans, or compile many shape variants. So the rule is:
-**adopt a structure-specific solver only after a matched-accuracy benchmark against
-`GridSearch` on your target hardware shows it wins** on peak memory, compile time, or
-wall-time. See [Performance and Memory Tuning](tuning.md) and
+**adopt a structure-specific solver only after benchmarking it against `GridSearch` on
+your target hardware** — on peak memory, compile time, and wall-time. (Near
+institutional cliffs, `GridSearch` smooths across the discontinuity, so there it is a
+speed baseline and a diagnostic, not the accuracy reference — see
+[the NB-EGM solver](nbegm.md).) See [Performance and Memory Tuning](tuning.md) and
 [Benchmarking](benchmarking.md).
 
 ## Decision tree
 
 ```{mermaid}
 flowchart TD
-    start(["How many continuous states carry an Euler equation?"])
-    start -->|"None — choices are discrete, or no first-order condition"| gs0["GridSearch"]
-    start -->|"Two"| q2d{"Genuinely coupled 2-D first-order-condition system?"}
-    start -->|"One"| qbp{"Declared institutional breakpoints? (asset tests, subsidy brackets, notches, floors)"}
+    q0(["How many continuous states carry an Euler equation?"])
+    q0 -->|"None"| gs0["GridSearch"]
+    q0 -->|"1"| qbp{"Declared institutional breakpoints? (asset tests, brackets, notches, floors)"}
+    q0 -->|"2"| q2d{"Genuinely coupled 2-D first-order-condition system?"}
 
     q2d -->|"Yes"| twodim["TwoDimEGM (G2EGM)"]
-    q2d -->|"No — clean inner nest (one liquid + one durable/illiquid)"| negm["NEGM"]
+    q2d -->|"No — clean inner nest (liquid + durable/illiquid)"| negm["NEGM"]
 
     qbp -->|"Yes"| nbegm["NBEGM"]
     qbp -->|"No"| qdc{"Discrete choice induces non-concavity (secondary kinks)?"}
 
-    qdc -->|"Yes"| dcegm["DCEGM"]
-    qdc -->|"No — smooth and concave"| qgrid{"Modest action grid, GPU?"}
-
-    qgrid -->|"Yes"| gs1["GridSearch (often wins here)"]
-    qgrid -->|"No — a fine action grid would be needed"| egm["OneAssetEGM"]
+    qdc -->|"Yes"| dcegm["DCEGM (or NBEGM — see below)"]
+    qdc -->|"No — smooth and concave"| egm["OneAssetEGM or GridSearch"]
 ```
+
+## Reading the tree
+
+The tree branches on problem **structure**, which fixes the set of solvers that are
+*correct*. Two things then decide which correct solver is *fastest*:
+
+- **Hardware is a second axis over every leaf.** A GPU favours dense, static-shape
+  map-reduces — `GridSearch`, and the query-side upper envelope used by `NBEGM` (and
+  available to `DCEGM`). A CPU tolerates the sequential, topology-discovering envelope
+  scans (`DCEGM`'s default FUES backend) that a GPU runs poorly. On a GPU with a modest
+  action grid, `GridSearch` frequently wins outright, so benchmark against it whatever
+  the leaf.
+- **`DCEGM` vs. `NBEGM` at the secondary-kink leaf.** Both resolve the non-concavity a
+  discrete choice induces. `DCEGM` is the natural choice for a plain discrete–continuous
+  problem with no institutional breakpoints, and its FUES envelope is competitive on
+  CPU. `NBEGM` handles the same secondary kinks (via its discrete-branch envelope and
+  Euler-path fold-splitting) with a GPU-parallel query-side envelope, and is the choice
+  once the model *also* carries declared cliffs. See [the NB-EGM solver](nbegm.md).
 
 ## Solvers at a glance
 
@@ -49,7 +66,7 @@ flowchart TD
 | `DCEGM`       | One liquid asset with a discrete choice that makes the value function non-concave (secondary kinks).                                                  | `continuous_state`, `continuous_action`, `resources`, `savings_grid`, `upper_envelope` |
 | `NEGM`        | Two continuous choices with a clean nest: an inner 1-D EGM consumption solve inside an outer deterministic search over a durable/illiquid post-state. | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                           |
 | `TwoDimEGM`   | Two continuous assets whose first-order conditions are genuinely coupled (the G2EGM setting).                                                         | `a_grid`, `b_grid`, `consumption_grid`, `threshold`                                    |
-| `NBEGM`       | One liquid asset with **declared** institutional kinks and cliffs. See [the case-piece solver](case_piece_solver.md).                                 | `savings_grid`, `jump_read`                                                            |
+| `NBEGM`       | One liquid asset with **declared** institutional kinks and cliffs. See [the NB-EGM solver](nbegm.md).                                                 | `savings_grid`, `jump_read`                                                            |
 
 `DCEGM`'s upper-envelope backend is selectable via `upper_envelope=` (`"fues"`, `"rfc"`,
 `"ltm"`, `"mss"`). `"fues"` is a topology-discovering scan; the others trade off
