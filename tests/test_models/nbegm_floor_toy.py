@@ -1,12 +1,13 @@
 """One-asset toy with a cash-on-hand floor declared as a hard-constraint schedule.
 
-A means-tested transfer lifts effective wealth to a floor: `coh = max(liquid,
-floor_asset) + base_income`. The schedule declares `floor_asset` (the liquid level
-below which the transfer binds) as a hard-constraint breakpoint, so cash-on-hand is
-flat below it and the value is constant where the floor binds. The NBEGM schedule
-path passes the slope-0 interval to the multi-interval step's floor handling and
-must reproduce the dense `GridSearch` value, every age — including the recurring
-flat continuation, where the Euler inversion is degenerate.
+A means-tested transfer lifts effective wealth to a floor: `resources =
+max(liquid, floor_asset) + base_income`. The schedule declares `floor_asset`
+(the liquid level below which the transfer binds) as a hard-constraint
+breakpoint, so cash-on-hand is flat below it and the value is constant where
+the floor binds. The NBEGM schedule path passes the slope-0 interval to the
+multi-interval step's floor handling and must reproduce the dense `GridSearch`
+value, every age — including the recurring flat continuation, where the Euler
+inversion is degenerate.
 """
 
 import jax.numpy as jnp
@@ -33,7 +34,9 @@ def coh_floor(liquid: ContinuousState, floor_asset: float) -> FloatND:
     return jnp.maximum(liquid, floor_asset) - liquid
 
 
-def coh(liquid: ContinuousState, coh_floor: FloatND, base_income: float) -> FloatND:
+def resources(
+    liquid: ContinuousState, coh_floor: FloatND, base_income: float
+) -> FloatND:
     """Cash-on-hand: `max(liquid, floor_asset) + base_income`."""
     return liquid + coh_floor + base_income
 
@@ -49,7 +52,11 @@ def build_model(
     savings_max: float = 28.0,
 ) -> Model:
     """Create the two-regime (alive, dead) floor one-asset toy."""
-    alive_functions = {"utility": utility, "coh_floor": coh_floor, "coh": coh}
+    alive_functions = {
+        "utility": utility,
+        "coh_floor": coh_floor,
+        "resources": resources,
+    }
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -88,7 +95,7 @@ def build_params(
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
             "coh_floor": {"floor_asset": floor_asset},
-            "coh": {"base_income": base_income},
+            "resources": {"base_income": base_income},
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

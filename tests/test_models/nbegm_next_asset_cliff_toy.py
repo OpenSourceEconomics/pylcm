@@ -41,7 +41,9 @@ class ConsumerKind:
     hi: ScalarInt
 
 
-def coh(liquid: ContinuousState, kind: DiscreteState, base_income: FloatND) -> FloatND:
+def resources(
+    liquid: ContinuousState, kind: DiscreteState, base_income: FloatND
+) -> FloatND:
     """Cash-on-hand: liquid plus the kind's base income (no in-period cliff)."""
     return liquid + base_income[kind]
 
@@ -63,14 +65,16 @@ def medicaid_transfer(
 
 
 def next_liquid(
-    coh: FloatND,
+    resources: FloatND,
     consumption: ContinuousAction,
     medicaid_transfer: FloatND,
     return_liquid: float,
     income: float,
 ) -> ContinuousState:
     """Liquid law of motion with the current-asset Medicaid transfer."""
-    return (1.0 + return_liquid) * (coh - consumption) + income + medicaid_transfer
+    return (
+        (1.0 + return_liquid) * (resources - consumption) + income + medicaid_transfer
+    )
 
 
 def next_liquid_from_savings(
@@ -97,7 +101,7 @@ def build_model(
     """Create the (alive, dead) toy whose next-asset law jumps at a liquid cliff."""
     alive_functions = {
         "utility": utility,
-        "coh": coh,
+        "resources": resources,
         "medicaid_transfer": medicaid_transfer,
     }
     alive_solver = resolve_solver(
@@ -149,7 +153,7 @@ def build_params(
         "alive": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
-            "coh": {"base_income": base_income},
+            "resources": {"base_income": base_income},
             "medicaid_transfer": transfer,
             "alive": {
                 "next_liquid": alive_budget,

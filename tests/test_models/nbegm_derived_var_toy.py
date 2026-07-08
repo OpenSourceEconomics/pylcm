@@ -62,7 +62,7 @@ def tax(gross_income: FloatND, tax_rate: float, tax_kink: float) -> FloatND:
     return tax_rate * jnp.maximum(gross_income - tax_kink, 0.0)
 
 
-def coh(gross_income: FloatND, tax: FloatND) -> FloatND:
+def resources(gross_income: FloatND, tax: FloatND) -> FloatND:
     """Cash-on-hand: pre-tax income net of the tax."""
     return gross_income - tax
 
@@ -98,7 +98,7 @@ def build_model(
         "utility": utility,
         "gross_income": gross_income,
         "tax": tax,
-        "coh": coh,
+        "resources": resources,
     }
     alive_solver = resolve_solver(
         variant,

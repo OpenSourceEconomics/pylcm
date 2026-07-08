@@ -33,7 +33,7 @@ def subsidy(
     return jnp.where(liquid < cliff, subsidy_high, subsidy_low)
 
 
-def coh(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: liquid wealth plus the cliff-contingent subsidy."""
     return liquid + subsidy
 
@@ -81,12 +81,16 @@ def build_model(
     pure-jump unit-slope guard rejects. With `nonlinear`, cash-on-hand is smooth but
     not affine in the liquid state — the case the affinity guard rejects.
     """
-    coh_func = coh
+    resources_func = resources
     if non_additive:
-        coh_func = coh_non_additive
+        resources_func = coh_non_additive
     elif nonlinear:
-        coh_func = coh_nonlinear
-    alive_functions = {"utility": utility, "subsidy": subsidy, "coh": coh_func}
+        resources_func = coh_nonlinear
+    alive_functions = {
+        "utility": utility,
+        "subsidy": subsidy,
+        "resources": resources_func,
+    }
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -121,16 +125,16 @@ def build_params(
 ) -> dict:
     """Get parameters for the jump-schedule one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
-    coh_params = {}
+    resources_params = {}
     if non_additive:
-        coh_params = {"coh": {"coh_slope": coh_slope}}
+        resources_params = {"resources": {"coh_slope": coh_slope}}
     elif nonlinear:
-        coh_params = {"coh": {"curvature": curvature}}
+        resources_params = {"resources": {"curvature": curvature}}
     return {
         "alive": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
-            **coh_params,
+            **resources_params,
             "subsidy": {
                 "subsidy_low": subsidy_low,
                 "subsidy_high": subsidy_high,

@@ -69,7 +69,7 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
-def coh(
+def resources(
     liquid: ContinuousState,
     kind: DiscreteState,
     tax: FloatND,
@@ -132,7 +132,7 @@ def build_model(
     consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
     kind_grid = DiscreteGrid(ConsumerKind)
 
-    young_functions = {"utility": utility, "tax": tax, "coh": coh}
+    young_functions = {"utility": utility, "tax": tax, "resources": resources}
     young_solver = resolve_solver(
         young_variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -163,10 +163,10 @@ def build_model(
         solver=young_solver,
     )
     old_actions = {"consumption": consumption_grid}
-    old_functions = {"utility": utility, "tax": tax, "coh": coh}
+    old_functions = {"utility": utility, "tax": tax, "resources": resources}
     if old_discrete_action:
         old_actions = {"work": DiscreteGrid(WorkChoice), **old_actions}
-        old_functions = {**old_functions, "coh": coh_with_work}
+        old_functions = {**old_functions, "resources": coh_with_work}
     old = Regime(
         actions=old_actions,
         states={"liquid": liquid_grid, "kind": kind_grid},
@@ -217,15 +217,15 @@ def build_params(
     base_income = jnp.array([base_income_lo, base_income_hi])
     budget = {"return_liquid": return_liquid, "income": income}
     tax_params = {"tax_rate": tax_rate, "tax_exemption": tax_exemption}
-    old_coh = {"base_income": base_income}
+    old_resources = {"base_income": base_income}
     if old_discrete_action:
-        old_coh = {"base_income": base_income, "wage": wage}
+        old_resources = {"base_income": base_income, "wage": wage}
     return {
         "young": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
             "tax": tax_params,
-            "coh": {"base_income": base_income},
+            "resources": {"base_income": base_income},
             "old": {"next_liquid": budget},
             "dead": {"next_liquid": budget},
         },
@@ -233,7 +233,7 @@ def build_params(
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
             "tax": tax_params,
-            "coh": old_coh,
+            "resources": old_resources,
             "dead": {"next_liquid": budget},
         },
         "dead": {"utility": {"crra": crra}},

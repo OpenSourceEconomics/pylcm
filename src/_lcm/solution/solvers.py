@@ -1498,13 +1498,12 @@ class NBEGM(Solver):
 
     savings_grid: ContinuousGrid
     """Exogenous post-decision savings grid `s = coh - consumption` (>= 0)."""
-    budget_target: str = "coh"
+    budget_target: str = "resources"
     """DAG node carrying the consumption budget (cash-on-hand).
 
     Names the model node the continuous EGM inverts against, mirroring `DCEGM`'s
-    `resources=`. The default `"coh"` matches the solver's convention; a model
-    that names its budget node differently (`resources`, `cash_on_hand`) selects
-    it here.
+    `resources=`. A model that names its budget node differently
+    (`cash_on_hand`, `coh`) selects it here.
     """
     post_decision_function: FunctionName | None = None
     """Name of the post-decision savings function (the `savings = coh - c` slot).
@@ -3459,7 +3458,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
 def _collect_nbegm_schedule_spec(  # noqa: PLR0915
     *,
     context: SolverBuildContext,
-    budget_target: str = "coh",
+    budget_target: str = "resources",
     continuous_state: StateName | None = None,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> _NBEGMScheduleSpec:
@@ -5066,7 +5065,7 @@ class _NBEGMDiscreteSpec:
 def _collect_nbegm_discrete_spec(
     *,
     context: SolverBuildContext,
-    budget_target: str = "coh",
+    budget_target: str = "resources",
     post_decision_function: str | None = None,
 ) -> _NBEGMDiscreteSpec:
     """Collect the single binary/multi-valued discrete action of a smooth regime."""
@@ -5137,7 +5136,7 @@ class _NBEGMScheduleDiscreteSpec:
 def _collect_nbegm_schedule_discrete_spec(
     *,
     context: SolverBuildContext,
-    budget_target: str = "coh",
+    budget_target: str = "resources",
     continuous_state: StateName | None = None,
     post_decision_function: str | None = None,
 ) -> _NBEGMScheduleDiscreteSpec:

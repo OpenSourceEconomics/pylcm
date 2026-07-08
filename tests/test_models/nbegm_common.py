@@ -7,15 +7,15 @@ that are identical across the toys live here:
 - `RegimeId` — the alive/dead regime categorical.
 - `crra_utility` / `utility` / `bequest` — the CRRA utility trio.
 - `prob_stay_alive` / `prob_die` — the deterministic (0/1) survival transition.
-- `feasible` — the borrowing constraint `consumption <= coh`.
+- `feasible` — the borrowing constraint `consumption <= resources`.
 - `next_liquid` / `savings` / `next_liquid_from_savings` — the liquid law of
   motion in cash-on-hand form (brute) and post-decision savings form (NBEGM).
 - `resolve_solver` — the `"brute"` / `"nbegm"` variant dispatch.
 - `make_alive_dead_model` — the two-regime (alive, dead) model assembler.
 
 A toy re-exports the names it uses (module-level import from here), keeps its
-own budget DAG (`coh` and friends), and toys with genuinely different regime
-structure keep their own assembly.
+own budget DAG (`resources` and friends), and toys with genuinely different
+regime structure keep their own assembly.
 """
 
 from collections.abc import Callable, Mapping
@@ -63,24 +63,24 @@ def bequest(liquid: ContinuousState, crra: float) -> FloatND:
     return crra_utility(liquid, crra)
 
 
-def feasible(coh: FloatND, consumption: ContinuousAction) -> BoolND:
+def feasible(resources: FloatND, consumption: ContinuousAction) -> BoolND:
     """Borrowing constraint: consumption cannot exceed cash-on-hand."""
-    return consumption <= coh
+    return consumption <= resources
 
 
 def next_liquid(
-    coh: FloatND,
+    resources: FloatND,
     consumption: ContinuousAction,
     return_liquid: float,
     income: float,
 ) -> ContinuousState:
     """Liquid law of motion: saved cash earns the liquid return, plus income."""
-    return (1.0 + return_liquid) * (coh - consumption) + income
+    return (1.0 + return_liquid) * (resources - consumption) + income
 
 
-def savings(coh: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Post-decision savings: cash-on-hand net of consumption."""
-    return coh - consumption
+    return resources - consumption
 
 
 def next_liquid_from_savings(

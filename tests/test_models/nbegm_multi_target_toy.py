@@ -63,7 +63,7 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
-def coh(
+def resources(
     liquid: ContinuousState,
     kind: DiscreteState,
     tax: FloatND,
@@ -99,7 +99,7 @@ def _build_living_regime(
     final_age: float,
 ) -> Regime:
     """Assemble one living regime transitioning to both living regimes and dead."""
-    functions = {"utility": utility, "tax": tax, "coh": coh}
+    functions = {"utility": utility, "tax": tax, "resources": resources}
     solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -228,7 +228,7 @@ def build_params(
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
-            "coh": {"base_income": base_income},
+            "resources": {"base_income": base_income},
             "alive_a": {"next_liquid": budget, **regime_age},
             "alive_b": {"next_liquid": budget, **regime_age},
             "dead": {"next_liquid": budget, **regime_age},

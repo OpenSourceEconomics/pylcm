@@ -64,7 +64,7 @@ def subsidy(
     return jnp.where(medicaid_eligible, subsidy_medicaid, subsidy_private)
 
 
-def coh(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: liquid wealth plus the Medicaid-contingent subsidy."""
     return liquid + subsidy
 
@@ -106,7 +106,7 @@ def build_model(
             "subsidy_medicaid": subsidy_medicaid,
             "subsidy_private": subsidy_private,
             "subsidy": subsidy,
-            "coh": coh,
+            "resources": resources,
         },
         liquid_law=next_liquid,
         alive_solver=resolve_solver(

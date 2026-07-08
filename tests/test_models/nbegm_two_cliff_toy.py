@@ -44,7 +44,7 @@ def subsidy(
     )
 
 
-def coh(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: liquid wealth plus the cliff-contingent subsidy."""
     return liquid + subsidy
 
@@ -60,7 +60,7 @@ def build_model(
     savings_max: float = 28.0,
 ) -> Model:
     """Create the two-regime (alive, dead) two-cliff one-asset toy."""
-    alive_functions = {"utility": utility, "subsidy": subsidy, "coh": coh}
+    alive_functions = {"utility": utility, "subsidy": subsidy, "resources": resources}
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),

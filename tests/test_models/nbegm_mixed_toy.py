@@ -44,7 +44,7 @@ def net_transfer(
     return subsidy - tax
 
 
-def coh(liquid: ContinuousState, net_transfer: FloatND) -> FloatND:
+def resources(liquid: ContinuousState, net_transfer: FloatND) -> FloatND:
     """Cash-on-hand: liquid wealth plus the net transfer."""
     return liquid + net_transfer
 
@@ -60,7 +60,11 @@ def build_model(
     savings_max: float = 28.0,
 ) -> Model:
     """Create the two-regime (alive, dead) mixed jump-and-kink one-asset toy."""
-    alive_functions = {"utility": utility, "net_transfer": net_transfer, "coh": coh}
+    alive_functions = {
+        "utility": utility,
+        "net_transfer": net_transfer,
+        "resources": resources,
+    }
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),

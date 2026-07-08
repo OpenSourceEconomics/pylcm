@@ -80,7 +80,7 @@ def tax_mixed(
     return lump + bracket
 
 
-def coh(
+def resources(
     liquid: ContinuousState,
     tax: FloatND,
     buy_private: DiscreteAction,
@@ -108,7 +108,7 @@ def build_model(
     save-to-cliff candidate must scale its marginal by the bracket case's slope.
     """
     tax_func = tax_mixed if mixed_schedule else tax_cliff
-    alive_functions = {"utility": utility, "tax": tax_func, "coh": coh}
+    alive_functions = {"utility": utility, "tax": tax_func, "resources": resources}
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -151,7 +151,7 @@ def build_params(
         "alive": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
-            "coh": {"premium": premium},
+            "resources": {"premium": premium},
             "tax": tax_params,
             "alive": {
                 "next_liquid": alive_budget,

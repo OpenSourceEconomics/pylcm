@@ -72,7 +72,7 @@ def tax_b(income_b: FloatND, rate_b: float, kink_b: float) -> FloatND:
     return rate_b * jnp.maximum(income_b - kink_b, 0.0)
 
 
-def coh(income_a: FloatND, tax_a: FloatND, tax_b: FloatND) -> FloatND:
+def resources(income_a: FloatND, tax_a: FloatND, tax_b: FloatND) -> FloatND:
     """Cash-on-hand: the first income concept net of both taxes."""
     return income_a - tax_a - tax_b
 
@@ -110,7 +110,7 @@ def build_model(
         "income_b": income_b,
         "tax_a": tax_a,
         "tax_b": tax_b,
-        "coh": coh,
+        "resources": resources,
     }
     alive_solver = resolve_solver(
         variant,

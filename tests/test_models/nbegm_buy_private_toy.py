@@ -29,7 +29,7 @@ class BuyPrivate:
     yes: ScalarInt
 
 
-def coh(
+def resources(
     liquid: ContinuousState, buy_private: DiscreteAction, premium: float
 ) -> FloatND:
     """Cash-on-hand: liquid plus base income, less the premium when buying."""
@@ -47,7 +47,7 @@ def build_model(
     savings_max: float = 28.0,
 ) -> Model:
     """Create the two-regime (alive, dead) buy-private one-asset toy."""
-    alive_functions = {"utility": utility, "coh": coh}
+    alive_functions = {"utility": utility, "resources": resources}
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -81,7 +81,7 @@ def build_params(
         "alive": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
-            "coh": {"premium": premium},
+            "resources": {"premium": premium},
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

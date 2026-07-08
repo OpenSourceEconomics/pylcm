@@ -3,7 +3,7 @@
 A minimal model exercising the continuous-budget NBEGM path: a single liquid
 asset, a single consumption action, and a piecewise-affine tax that bends
 cash-on-hand at an exemption threshold. Below the exemption the tax is zero, above
-it the marginal tax `tax_rate` applies, so `coh(liquid)` is continuous with a
+it the marginal tax `tax_rate` applies, so `resources(liquid)` is continuous with a
 single downward kink — no jump. The brute variant evaluates the schedule on a
 dense grid and is the agreement oracle; the NBEGM variant reads the declared
 schedule and solves each affine segment by EGM.
@@ -34,7 +34,7 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
-def coh(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
+def resources(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
     """Cash-on-hand: liquid wealth plus base income, net of the tax."""
     return liquid + base_income - tax
 
@@ -48,7 +48,7 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
-    budget_name: str = "coh",
+    budget_name: str = "resources",
 ) -> Model:
     """Create the two-regime (alive, dead) tax-bracket one-asset toy.
 
@@ -61,19 +61,21 @@ def build_model(
         liquid_max: Upper bound of the liquid grid.
         n_savings: Post-decision savings grid size (NBEGM only).
         savings_max: Upper bound of the savings grid (NBEGM only).
-        budget_name: DAG node name carrying cash-on-hand. The default `"coh"`
-            matches the solver convention; any other name exercises the solver's
-            `budget_target` selection, with the budget's consumers rewired to read
-            it.
+        budget_name: DAG node name carrying cash-on-hand. The default
+            `"resources"` matches the solver convention; any other name
+            exercises the solver's `budget_target` selection, with the budget's
+            consumers rewired to read it.
 
     Returns:
         The assembled `Model`.
 
     """
     next_liquid_func, feasible_func = next_liquid, feasible
-    if budget_name != "coh":
-        next_liquid_func = rename_arguments(next_liquid, mapper={"coh": budget_name})
-        feasible_func = rename_arguments(feasible, mapper={"coh": budget_name})
+    if budget_name != "resources":
+        next_liquid_func = rename_arguments(
+            next_liquid, mapper={"resources": budget_name}
+        )
+        feasible_func = rename_arguments(feasible, mapper={"resources": budget_name})
     return make_alive_dead_model(
         n_periods=n_periods,
         n_liquid=n_liquid,
@@ -82,7 +84,7 @@ def build_model(
         alive_functions={
             "utility": utility,
             "tax": tax,
-            budget_name: coh,
+            budget_name: resources,
         },
         liquid_law=next_liquid_func,
         alive_solver=resolve_solver(
@@ -104,7 +106,7 @@ def build_params(
     tax_rate: float = 0.3,
     tax_exemption: float = 12.0,
     final_age_alive: float = 3.0,
-    budget_name: str = "coh",
+    budget_name: str = "resources",
 ) -> dict:
     """Get parameters for the tax-bracket one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}

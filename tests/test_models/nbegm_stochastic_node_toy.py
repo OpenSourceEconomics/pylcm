@@ -76,7 +76,7 @@ def tax_cliff(
     )
 
 
-def coh(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
+def resources(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
     """Cash-on-hand: liquid plus a flat base income, net of the tax."""
     return liquid + base_income - tax
 
@@ -89,13 +89,15 @@ def coh_per_kind(
 
 
 def next_liquid(
-    coh: FloatND,
+    resources: FloatND,
     consumption: ContinuousAction,
     income: ContinuousState,
     return_liquid: float,
 ) -> ContinuousState:
     """Liquid law: saved cash earns the return, plus the realized income draw."""
-    return (1.0 + return_liquid) * (coh - consumption) + INCOME_SCALE * jnp.exp(income)
+    return (1.0 + return_liquid) * (resources - consumption) + INCOME_SCALE * jnp.exp(
+        income
+    )
 
 
 def next_liquid_from_savings(
@@ -147,8 +149,12 @@ def build_model(
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
 
     tax_func = tax if tax_kind == "kink" else tax_cliff
-    coh_func = coh_per_kind if with_kind else coh
-    alive_functions = {"utility": utility, "tax": tax_func, "coh": coh_func}
+    resources_func = coh_per_kind if with_kind else resources
+    alive_functions = {
+        "utility": utility,
+        "tax": tax_func,
+        "resources": resources_func,
+    }
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -216,7 +222,7 @@ def build_params(
             "H": {"discount_factor": discount_factor},
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption}
             | ({"tax_lump": tax_lump} if tax_lump else {}),
-            "coh": {
+            "resources": {
                 "base_income": (
                     jnp.array([base_income, base_income_hi])
                     if with_kind

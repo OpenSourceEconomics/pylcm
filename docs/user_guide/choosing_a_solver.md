@@ -6,7 +6,9 @@ title: Choosing a solver
 
 pylcm ships several solvers for the continuous part of a regime's period problem. They
 are not interchangeable: each is fastest — or only correct — for a particular problem
-structure. This page helps you pick one.
+structure. Pick one in two passes. The **feasibility** tree narrows to the solvers that
+are *correct* for your problem's structure; the **hardware / speed** tree picks the
+fastest among those on your machine.
 
 The guiding principle is conservative. **`GridSearch` (brute force) is the default, and
 it is often the right answer.** On a GPU it is a dense map-reduce with static shapes and
@@ -20,7 +22,9 @@ speed baseline and a diagnostic, not the accuracy reference — see
 [the NB-EGM solver](nbegm.md).) See [Performance and Memory Tuning](tuning.md) and
 [Benchmarking](benchmarking.md).
 
-## Decision tree
+## Decision tree by feasibility
+
+Which solvers are *correct* for your problem's structure.
 
 ```{mermaid}
 flowchart TD
@@ -35,27 +39,46 @@ flowchart TD
     qbp -->|"Yes"| nbegm["NBEGM"]
     qbp -->|"No"| qdc{"Discrete choice induces non-concavity (secondary kinks)?"}
 
-    qdc -->|"Yes"| dcegm["DCEGM (or NBEGM — see below)"]
+    qdc -->|"Yes"| dcegm["DCEGM (or NBEGM — see hardware tree)"]
     qdc -->|"No — smooth and concave"| egm["OneAssetEGM or GridSearch"]
 ```
 
-## Reading the tree
+At the secondary-kink leaf, both `DCEGM` and `NBEGM` are correct. `DCEGM` is the natural
+choice for a plain discrete–continuous problem with no institutional breakpoints;
+`NBEGM` handles the same secondary kinks (via its discrete-branch envelope and
+Euler-path fold-splitting) and is the choice once the model *also* carries declared
+cliffs. Which is faster is a hardware question — the next tree.
 
-The tree branches on problem **structure**, which fixes the set of solvers that are
-*correct*. Two things then decide which correct solver is *fastest*:
+## Decision tree by hardware and speed
 
-- **Hardware is a second axis over every leaf.** A GPU favours dense, static-shape
-  map-reduces — `GridSearch`, and the query-side upper envelope used by `NBEGM` (and
-  available to `DCEGM`). A CPU tolerates the sequential, topology-discovering envelope
-  scans (`DCEGM`'s default FUES backend) that a GPU runs poorly. On a GPU with a modest
-  action grid, `GridSearch` frequently wins outright, so benchmark against it whatever
-  the leaf.
-- **`DCEGM` vs. `NBEGM` at the secondary-kink leaf.** Both resolve the non-concavity a
-  discrete choice induces. `DCEGM` is the natural choice for a plain discrete–continuous
-  problem with no institutional breakpoints, and its FUES envelope is competitive on
-  CPU. `NBEGM` handles the same secondary kinks (via its discrete-branch envelope and
-  Euler-path fold-splitting) with a GPU-parallel query-side envelope, and is the choice
-  once the model *also* carries declared cliffs. See [the NB-EGM solver](nbegm.md).
+Among the feasible solvers, which is fastest.
+
+```{mermaid}
+flowchart TD
+    h0(["Target hardware?"])
+    h0 -->|"GPU"| g1{"Action grid modest for the required accuracy?"}
+    h0 -->|"CPU"| c1{"Branchy discrete–continuous envelope?"}
+
+    g1 -->|"Yes"| gs["GridSearch — dense map-reduce usually wins"]
+    g1 -->|"No — fine grid, or cliffs"| g2{"Full-row envelope is the memory wall?"}
+    g2 -->|"Yes"| gq["Query-side segmented envelope: NBEGM, or DCEGM(upper_envelope='ltm')"]
+    g2 -->|"No"| ge["EGM-family: OneAssetEGM / NEGM / TwoDimEGM / NBEGM"]
+
+    c1 -->|"Yes"| cd["DCEGM — FUES / RFC / LTM / MSS all viable on CPU"]
+    c1 -->|"No — smooth"| ce["OneAssetEGM, or GridSearch"]
+```
+
+Two cross-cutting factors:
+
+- **GPU parallelism.** A GPU favours dense, static-shape map-reduces — `GridSearch`, and
+  the query-side upper envelope used by `NBEGM` (and available to `DCEGM` via
+  `upper_envelope="ltm"`). A CPU tolerates the sequential, topology-discovering envelope
+  scans (`DCEGM`'s default FUES backend) that a GPU runs poorly. So at the
+  secondary-kink leaf, prefer `NBEGM`'s query-side envelope on a GPU and `DCEGM`'s FUES
+  on a CPU.
+- **Compile-shape explosion.** Many static shapes — long age grids, per-period target
+  splits, branch axes — multiply compiled programs. When that dominates, fall back to
+  `GridSearch` or a simple EGM.
 
 ## Solvers at a glance
 
@@ -69,32 +92,8 @@ The tree branches on problem **structure**, which fixes the set of solvers that 
 | `NBEGM`       | One liquid asset with **declared** institutional kinks and cliffs. See [the NB-EGM solver](nbegm.md).                                                 | `savings_grid`, `jump_read`                                                            |
 
 `DCEGM`'s upper-envelope backend is selectable via `upper_envelope=` (`"fues"`, `"rfc"`,
-`"ltm"`, `"mss"`). `"fues"` is a topology-discovering scan; the others trade off
-differently on GPU versus CPU. The default is a reasonable starting point — switch only
-under a benchmark.
-
-## By model feature
-
-| Feature                                                          | Recommended solver                               |
-| ---------------------------------------------------------------- | ------------------------------------------------ |
-| Smooth one-asset problem                                         | `OneAssetEGM`, or `GridSearch` after a benchmark |
-| Smooth one-asset problem with a modest action grid               | `GridSearch` (often wins on GPU)                 |
-| One-asset discrete–continuous non-concavity                      | `DCEGM`                                          |
-| Finite institutional thresholds (kinks, cliffs, notches, floors) | `NBEGM`                                          |
-| Current-state dependence survives all case conditioning          | `GridSearch`, or `DCEGM` asset-row mode          |
-| Two continuous choices with a clean inner nest                   | `NEGM`                                           |
-| Genuinely coupled 2-D first-order-condition system               | `TwoDimEGM`                                      |
-| Dense, regular, low-dimensional action grid                      | `GridSearch`                                     |
-
-## By hardware
-
-| Hardware condition                              | Solver tendency                                                                     |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------- |
-| GPU, high bandwidth, moderate action grid       | `GridSearch`                                                                        |
-| GPU, memory-bound full-row envelopes            | Query-side segmented EGM (`DCEGM` / `NBEGM`)                                        |
-| GPU, high action resolution needed for accuracy | EGM-family (`OneAssetEGM` / `NEGM` / `TwoDimEGM` / `NBEGM`) if the topology streams |
-| CPU, small rows, branchy envelopes              | `DCEGM` envelope backends are all viable                                            |
-| Many static shapes / age variants               | `GridSearch` or a simple EGM, to avoid compile-shape explosion                      |
+`"ltm"`, `"mss"`). `"fues"` is a topology-discovering scan (CPU-friendly); `"ltm"` is a
+query-side segment evaluator (GPU-friendly). Switch only under a benchmark.
 
 ## A note on current-state dependence
 

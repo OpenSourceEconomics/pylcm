@@ -77,7 +77,7 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
-def coh(
+def resources(
     liquid: ContinuousState,
     kind: DiscreteState,
     tax: FloatND,
@@ -118,7 +118,7 @@ def build_model(
         The assembled `Model`.
 
     """
-    alive_functions = {"utility": utility, "tax": tax, "coh": coh}
+    alive_functions = {"utility": utility, "tax": tax, "resources": resources}
     if per_kind_crra:
         # Route the utility curvature through a DAG node indexed by the
         # ride-along `kind`, exercising per-cell utility parameters.
@@ -215,7 +215,7 @@ def build_params(
             **utility_slot,
             **discount_slot,
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
-            "coh": {"base_income": base_income},
+            "resources": {"base_income": base_income},
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

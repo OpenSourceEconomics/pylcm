@@ -12,9 +12,11 @@ per piece and merges the pieces on the liquid grid with a branch-aware upper env
 resolving the kinks and jumps exactly at their declared locations.
 
 Reach for `NBEGM` when a regime carries institutional discontinuities. A dense brute
-grid (`GridSearch`) can only *approximate* the optimum near a cliff — it places no
-candidate exactly at the threshold and averages across it — so brute force is a
-diagnostic here, not the correctness reference (see
+grid (`GridSearch`) can only *approximate* the optimum near a cliff — unless you can
+specify your grid statically as described in
+[`PiecewiseLinSpacedGrid`](grids.md#piecewiselinspacedgrid), it places no candidate
+exactly at the threshold and averages across it — so brute force is a diagnostic here,
+not the correctness reference (see
 [Validating an NB-EGM regime](#validating-an-nb-egm-regime)). For the full theory,
 correctness results, and the conditions under which NB-EGM beats brute force, see the
 NB-EGM methods paper; this page is the how-to.
@@ -24,7 +26,7 @@ NB-EGM methods paper; this page is the how-to.
 `NBEGM` solves the sub-class where:
 
 - one continuous state — the **liquid** (Euler) state — carries the Euler equation, with
-  post-decision savings `savings = coh − consumption ≥ 0`;
+  post-decision savings `savings = resources − consumption ≥ 0`;
 - one continuous action (consumption) solves it;
 - at most one discrete action enters the period problem;
 - every other state (a continuous co-state, discrete type, or stochastic process) *rides
@@ -66,23 +68,23 @@ def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> B
 
 @lcm.piece("subsidy", when=medicaid_eligible)
 def subsidy_medicaid(subsidy_high: float) -> FloatND:
-    """Subsidy into cash-on-hand for the Medicaid-eligible (low-asset) case."""
+    """Subsidy into market resources for the Medicaid-eligible (low-asset) case."""
     return jnp.asarray(subsidy_high)
 
 
 @lcm.piece("subsidy", otherwise=medicaid_eligible)
 def subsidy_private(subsidy_low: float) -> FloatND:
-    """Subsidy into cash-on-hand for the private (high-asset) case."""
+    """Subsidy into market resources for the private (high-asset) case."""
     return jnp.asarray(subsidy_low)
 
 
-def coh(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
-    """Cash-on-hand: liquid wealth plus the Medicaid-contingent subsidy."""
+def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """Market resources: liquid wealth plus the Medicaid-contingent subsidy."""
     return liquid + subsidy
 ```
 
-The Medicaid-eligible subsidy exceeds the private one, so cash-on-hand — and hence the
-value function — jumps down as liquid wealth crosses the limit upward.
+The Medicaid-eligible subsidy exceeds the private one, so market resources — and hence
+the value function — jump down as liquid wealth crosses the limit upward.
 
 ## Selecting the solver
 
@@ -103,7 +105,7 @@ alive_regime = Regime(
         "medicaid_eligible": medicaid_eligible,
         "subsidy_medicaid": subsidy_medicaid,
         "subsidy_private": subsidy_private,
-        "coh": coh,
+        "resources": resources,
     },
     constraints={"feasible": feasible},
     solver=NBEGM(savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=100)),
@@ -113,8 +115,8 @@ alive_regime = Regime(
 `NBEGM` requires a `savings_grid` (the post-decision savings nodes). Key optional
 arguments:
 
-- `budget_target` (default `"coh"`) — the DAG output the solver inverts against (the
-  consumption budget), mirroring `DCEGM`'s `resources=`.
+- `budget_target` (default `"resources"`) — the DAG output the solver inverts against
+  (the consumption budget), the same node `DCEGM` names via `resources=`.
 - `continuous_state` / `post_decision_function` — name the ride-along co-state and its
   off-budget liquid law when the regime carries one.
 - `jump_read` — the cliff-read mode (below).
@@ -213,9 +215,14 @@ NB-EGM sits alongside pylcm's other endogenous-grid solvers rather than replacin
 ## Validating an NB-EGM regime
 
 `GridSearch` is a **diagnostic, not the correctness oracle**. Brute force evaluates the
-combined (`jnp.where`) budget on a finite action grid, so it *smooths across every
-breakpoint* — it never places a candidate exactly at a cliff. Asserting exact agreement
-with brute is therefore the wrong acceptance test.
+combined (`jnp.where`) budget on a finite action grid; unless that grid is statically
+aligned to the breakpoints ([`PiecewiseLinSpacedGrid`](grids.md#piecewiselinspacedgrid))
+it places no candidate at a cliff and *smooths across every breakpoint*. Aligning a node
+*onto* the threshold does not rescue it either: the optimal policy is often to save to
+just *below* an eligibility cliff (to keep the benefit), so the optimum sits one step
+inside the eligible side — a point on the strict-inequality side that the on-threshold
+node is not, and that no finite grid holds. Asserting exact agreement with brute is
+therefore the wrong acceptance test.
 
 - **Correctness oracle (selection).** A host-side reimplementation of NB-EGM's own
   convention — the same per-case EGM, candidate set, masking, endpoint ownership, and

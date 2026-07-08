@@ -112,7 +112,7 @@ def tax_derived_jump(
     return jnp.where(derived_income >= tax_exemption, tax_rate * derived_income, 0.0)
 
 
-def coh(
+def resources(
     liquid: ContinuousState,
     tax: FloatND,
     buy_private: DiscreteAction,
@@ -124,17 +124,19 @@ def coh(
 
 
 def next_liquid(
-    coh: FloatND,
+    resources: FloatND,
     consumption: ContinuousAction,
     income: ContinuousState,
     return_liquid: float,
 ) -> ContinuousState:
     """Liquid law: saved cash earns the return, plus the realized income draw."""
-    return (1.0 + return_liquid) * (coh - consumption) + INCOME_SCALE * jnp.exp(income)
+    return (1.0 + return_liquid) * (resources - consumption) + INCOME_SCALE * jnp.exp(
+        income
+    )
 
 
 def next_liquid_with_oop(
-    coh: FloatND,
+    resources: FloatND,
     consumption: ContinuousAction,
     income: ContinuousState,
     return_liquid: float,
@@ -143,10 +145,11 @@ def next_liquid_with_oop(
     """Liquid law with an off-budget out-of-pocket cost on next assets.
 
     The brute-force twin of `next_liquid_from_savings_with_oop` (`savings` is the
-    post-decision `coh - consumption`), so both solvers model the same economics.
+    post-decision `resources - consumption`), so both solvers model the same
+    economics.
     """
     return (
-        (1.0 + return_liquid) * (coh - consumption)
+        (1.0 + return_liquid) * (resources - consumption)
         + INCOME_SCALE * jnp.exp(income)
         - oop
     )
@@ -354,7 +357,7 @@ def build_model(  # noqa: C901, PLR0912
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
     tax_func = tax_jump if jump_schedule else tax
     utility_func = utility_with_action if action_in_utility else utility
-    alive_functions = {"utility": utility_func, "tax": tax_func, "coh": coh}
+    alive_functions = {"utility": utility_func, "tax": tax_func, "resources": resources}
     if action_in_discount:
         alive_functions = {
             **alive_functions,
@@ -484,7 +487,7 @@ def build_params(
         "alive": {
             "utility": {"crra": crra},
             "H": {"discount_factor": discount_factor},
-            "coh": {"base_income": base_income, "premium": premium},
+            "resources": {"base_income": base_income, "premium": premium},
             "income": {"mu": 0.0, "sigma": 1.0},
             "tax": tax_params,
             **oop_params,

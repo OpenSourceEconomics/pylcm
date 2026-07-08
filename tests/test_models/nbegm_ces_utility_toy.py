@@ -98,7 +98,7 @@ def subsidy_kink(
     )
 
 
-def coh(gross_income: FloatND, subsidy: FloatND) -> FloatND:
+def resources(gross_income: FloatND, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: pre-tax income plus the cliff-contingent subsidy."""
     return gross_income + subsidy
 
@@ -150,7 +150,7 @@ def build_model(
         "leisure": leisure,
         "gross_income": gross_income,
         "subsidy": schedule,
-        "coh": coh,
+        "resources": resources,
     }
     alive_solver = resolve_solver(
         variant,

@@ -157,7 +157,7 @@ def _build_model(*, predicate, subsidy_when, subsidy_otherwise) -> Model:
             "predicate": predicate,
             "subsidy_when": subsidy_when,
             "subsidy_otherwise": subsidy_otherwise,
-            "coh": toy.coh,
+            "resources": toy.resources,
         },
         active=lambda age: age < 1.0,
         solver=NBEGM(savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=40)),

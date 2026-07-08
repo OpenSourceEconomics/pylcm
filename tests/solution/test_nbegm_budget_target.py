@@ -1,12 +1,12 @@
-"""NBEGM solves against a budget node named other than the convention `coh`.
+"""NBEGM solves against a budget node named other than the solver's convention.
 
 The continuous-budget EGM path composes the regime's budget from the model DAG.
-A real model names that node for its own domain (`resources`, `cash_on_hand`),
-not the solver's convention `coh`. The `budget_target` field selects which DAG
-node is the consumption budget, mirroring how `DCEGM` takes `resources=`. Solving
-the tax toy with its budget node renamed to `resources` and
-`NBEGM(budget_target="resources")` must reproduce the dense-grid `GridSearch`
-value across the asset interior and through the bracket kink.
+A real model may name that node for its own domain (`cash_on_hand`, `coh`), not
+the solver's convention `resources`. The `budget_target` field selects which
+DAG node is the consumption budget, mirroring how `DCEGM` takes `resources=`.
+Solving the tax toy with its budget node renamed to a non-default name and
+`NBEGM(budget_target=...)` set accordingly must reproduce the dense-grid
+`GridSearch` value across the asset interior and through the bracket kink.
 """
 
 from collections.abc import Mapping
@@ -36,7 +36,7 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
 
 
 def test_nbegm_with_renamed_budget_target_matches_brute_every_age():
-    """A non-`coh` budget node solved by NBEGM equals brute at every working age."""
+    """An explicitly named budget node solved by NBEGM equals brute at every age."""
     nbegm = _solve("nbegm")
     brute = _solve("brute", n_consumption=1500)
     for period in brute:

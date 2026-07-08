@@ -74,7 +74,7 @@ def subsidy_b(
     return jnp.where(income_b < cliff_b, subsidy_high, subsidy_low)
 
 
-def coh(income_a: FloatND, tax_a: FloatND, subsidy_b: FloatND) -> FloatND:
+def resources(income_a: FloatND, tax_a: FloatND, subsidy_b: FloatND) -> FloatND:
     """Cash-on-hand: income net of the tax plus the cliff-contingent subsidy."""
     return income_a - tax_a + subsidy_b
 
@@ -113,7 +113,7 @@ def build_model(
         "income_b": income_b,
         "tax_a": tax_a,
         "subsidy_b": subsidy_b,
-        "coh": coh,
+        "resources": resources,
     }
     alive_solver = resolve_solver(
         variant,
