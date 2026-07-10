@@ -10,9 +10,9 @@ cohort ages through calendar time, the law that applies to it changes, so the fu
 computing net income at age 58 is a *different closure* from the one at age 63, not the
 same closure with a different `age` argument.
 
-`AgeSpecializedFunction` marks such a function. At model build, pylcm resolves the marker **per
-period**: each period's age gets its own concrete function, compiled into that period's
-programs. There is no runtime dispatch on age or calendar year.
+`AgeSpecializedFunction` marks such a function. At model build, pylcm resolves the
+marker **per period**: each period's age gets its own concrete function, compiled into
+that period's programs. There is no runtime dispatch on age or calendar year.
 
 ```python
 from lcm import AgeSpecializedFunction
@@ -41,8 +41,8 @@ functions = {
 
 ## The two contracts
 
-`AgeSpecializedFunction(build, signature)` places two obligations on the user; pylcm cannot
-verify either automatically.
+`AgeSpecializedFunction(build, signature)` places two obligations on the user; pylcm
+cannot verify either automatically.
 
 1. **Invariant call signature.** Every concrete function `build(age)` returns must
    expose the *same* argument list at every age. Only the constants the closure binds
@@ -63,13 +63,13 @@ policy-date signature compiles one program per distinct policy year, not per per
 
 ## Where it is allowed
 
-`AgeSpecializedFunction` is accepted in `functions` and `constraints` of **non-terminal**
-regimes. Everything else is rejected at `Regime` construction, loudly:
+`AgeSpecializedFunction` is accepted in `functions` and `constraints` of
+**non-terminal** regimes. Everything else is rejected at `Regime` construction, loudly:
 
 - **the regime `transition`**, bare or wrapped in `MarkovTransition` — periodizing the
   regime-transition probability path is not supported;
-- **a regime transition that _reads_ an `AgeSpecializedFunction` function**, directly or through
-  plain helper functions — regime-transition probabilities are built once, so a
+- **a regime transition that _reads_ an `AgeSpecializedFunction` function**, directly or
+  through plain helper functions — regime-transition probabilities are built once, so a
   policy-specialized value flowing into them would reuse one age's closure everywhere;
 - **`MarkovTransition(AgeSpecializedFunction(...))`** — policy-specialized stochastic
   transitions are not supported;
