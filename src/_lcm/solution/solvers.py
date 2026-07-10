@@ -2384,7 +2384,12 @@ class _RideAlongNBEGMPeriodKernel:
 
         The interval regime reads one continuation row per declared interval, so the
         stacks carry an interval axis between the ride-cell and savings axes; the
-        non-interval regime reads a single row over the savings grid.
+        non-interval regime reads a single row over the savings grid. With co-mapped
+        (distributed) ride states, the placeholders are committed to the ride-cell
+        sharding the continuation core's runtime stacks arrive with — an uncommitted
+        placeholder would leave the compiled-for input sharding to backend-specific
+        propagation, which can compile the core for replicated stacks and reject
+        every runtime call.
         """
         n_ride_cells = self.statics.n_ride_cells(states=states)
         n_extra = 2 * self.statics.n_published_jumps if self.cliff_candidates else 0
@@ -2401,9 +2406,11 @@ class _RideAlongNBEGMPeriodKernel:
             if self.statics.continuation_reads_liquid
             else ()
         )
+        sharding = self._co_map_stack_sharding(states=states)
         zeros = jnp.zeros(
             (n_ride_cells, *branch_axis, *interval_axis, n_savings),
             dtype=canonical_float_dtype(),
+            device=sharding,
         )
         placeholders: dict[str, object] = {
             "cont_value_stack": zeros,
@@ -2413,8 +2420,32 @@ class _RideAlongNBEGMPeriodKernel:
             placeholders["cliff_savings_stack"] = jnp.zeros(
                 (n_ride_cells, *branch_axis, *interval_axis, n_extra),
                 dtype=canonical_float_dtype(),
+                device=sharding,
             )
         return placeholders
+
+    def _co_map_stack_sharding(
+        self, *, states: Mapping[str, object]
+    ) -> jax.NamedSharding | None:
+        """Sharding for the envelope core's continuation-stack placeholders.
+
+        The co-mapped ride states are a leading prefix of the ride axes, so the
+        runtime stacks arrive sharded along the flattened leading ride-cell axis
+        (one block per device). Returns `None` when no ride state is distributed,
+        keeping the placeholders on the default device.
+        """
+        co_map_state_names = self.statics.co_map_state_names
+        if not co_map_state_names:
+            return None
+        leading_sharding = getattr(states[co_map_state_names[0]], "sharding", None)
+        if not isinstance(leading_sharding, jax.NamedSharding):
+            return None
+        axes: str | tuple[str, ...] = (
+            co_map_state_names[0]
+            if len(co_map_state_names) == 1
+            else co_map_state_names
+        )
+        return jax.NamedSharding(mesh=leading_sharding.mesh, spec=jax.P(axes))
 
     def _kernel_params(self, *, flat_params: FlatParams) -> dict[str, object]:
         """Flat params fed into the cores: the regime's plus its targets'."""
