@@ -629,10 +629,13 @@ def _build_simulation_phase(
         )
     else:
         simulate_functions = core.functions
+    # Carried states are `Phased(simulate=Grid)` by the phase grammar, so the
+    # isinstance check is a no-op at runtime; it narrows the type (an
+    # `AgeSpecializedGrid` can never be carried-only).
     carried_grids = {
         name: grid
         for name, grid in spec.simulation.grid_states.items()
-        if name in carried_only
+        if name in carried_only and isinstance(grid, Grid)
     }
     simulate_grids = MappingProxyType({**all_grids[regime_name], **carried_grids})
 

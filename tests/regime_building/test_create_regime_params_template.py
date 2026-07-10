@@ -182,7 +182,7 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
     regime = MockRegime(
         actions={"a": None},
         states={"b": None},
-        functions={  # ty: ignore[invalid-argument-type]
+        functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "H": Phased(solve=exponential_h, simulate=beta_delta_h),
         },

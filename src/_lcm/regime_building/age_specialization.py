@@ -193,9 +193,7 @@ def state_grids_signature(states: Mapping[str, object], age: float) -> Hashable:
     return tuple(pairs)
 
 
-def validate_age_specialized_grids(
-    states: Mapping[str, object], ages: AgeGrid
-) -> None:
+def validate_age_specialized_grids(states: Mapping[str, object], ages: AgeGrid) -> None:
     """Validate the shape-invariance contract of every `AgeSpecializedGrid`.
 
     Across every period's age, each marker's `build(age)` must return the **same

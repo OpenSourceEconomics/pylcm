@@ -24,7 +24,7 @@ from lcm import (
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarInt, UserFunction
 
 
 @categorical(ordered=True)
@@ -44,7 +44,7 @@ def _next_regime(period: int) -> ScalarInt:
     return jnp.where(period >= 4, RegimeId.dead, RegimeId.working_life)
 
 
-def _make_model(policy_bonus: object) -> Model:
+def _make_model(policy_bonus: UserFunction) -> Model:
     working_life = UserRegime(
         transition=_next_regime,
         active=lambda age: age < 75,
@@ -84,7 +84,7 @@ def _bonus_of_age(age: float) -> Callable[[], float]:
     return policy_bonus
 
 
-def _make_next_state_model(policy_bonus: object) -> Model:
+def _make_next_state_model(policy_bonus: UserFunction) -> Model:
     """A model whose law of motion `next_wealth = wealth + policy_bonus` reads a fn."""
     working_life = UserRegime(
         transition=_next_regime,
@@ -121,7 +121,7 @@ def test_age_specialized_next_state_matches_runtime_age_baseline():
         "regime_id": jnp.full(3, RegimeId.working_life),
     }
 
-    def _simulated_wealth(policy_bonus: object) -> np.ndarray:
+    def _simulated_wealth(policy_bonus: UserFunction) -> np.ndarray:
         result = _make_next_state_model(policy_bonus).simulate(
             params=params,
             initial_conditions=initial_conditions,
