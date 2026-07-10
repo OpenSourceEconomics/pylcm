@@ -587,6 +587,289 @@ def get_Q_and_F_terminal_collective(
     return Q_and_F
 
 
+def get_Q_and_F_collective(
+    *,
+    flat_param_names: frozenset[str],
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    period_targets: tuple[RegimeName, ...],
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
+    compute_regime_transition_probs: RegimeTransitionFunction,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    stakeholders: tuple[str, ...],
+    co_map_state_names: tuple[StateName, ...] = (),
+) -> QAndFFunction:
+    """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
+
+    COLLECTIVE-REGIMES (E1, slice 2). Separate from `get_Q_and_F` so the
+    singleton path is byte-identical; this builder is used only at the
+    collective solve site.
+
+    Per stakeholder `s`, computes `Q^s = H(u^s, E[V'^s])` with the shared
+    Bellman aggregator `H` (the default `H_linear` applies `u + beta * E[V']`
+    elementwise, so every stakeholder is discounted with the SAME beta). Each
+    transition target must itself be a collective regime with the identical
+    `stakeholders` tuple (validated at model processing), so its
+    `next_V_arr` leaf carries the trailing stakeholder axis. The continuation
+    interpolates the target's V over STATE axes only: the interpolator is
+    evaluated once per stakeholder on the leaf's slice `next_V_arr[..., s]` and
+    the results are re-stacked on a trailing axis, so the stakeholder axis
+    provably rides through the stochastic-node product-map (which stacks its
+    mapped axes at the front) as the last axis. For a scalar (state, action)
+    cell the returned `Q` has shape `(n_stakeholders,)` while `F` is scalar;
+    after the action product-map in `get_max_Q_over_a`, `Q` is
+    `(*action_axes, n_stakeholders)` and `F` `(*action_axes,)` — exactly what
+    the stakeholder branch there (`collective_readout`) consumes.
+
+    No taste shocks and no nonlinear certainty equivalent: both are rejected at
+    regime construction for collective regimes.
+
+    Args:
+        flat_param_names: Frozenset of flat parameter names for the regime.
+        functions: Immutable mapping of function names to internal user
+            functions; carries `utility_<s>` for each stakeholder in place of
+            `utility`, plus the shared `H`.
+        constraints: Immutable mapping of constraint names to internal user
+            functions.
+        period_targets: Target regimes whose continuation enters E[V^s] this
+            period (all collective with the identical stakeholder tuple).
+        transitions: Immutable mapping of transition names to transition
+            functions.
+        stochastic_transition_names: Frozenset of stochastic transition function
+            names.
+        compute_regime_transition_probs: Regime transition probability function
+            for solve (stakeholder-independent — per-stakeholder gates are E3').
+        regime_to_v_interpolation_info: Mapping of regime names to
+            V-interpolation info (state axes only; the stakeholder axis is not
+            an interpolation axis).
+        stakeholders: Ordered stakeholder names; fixes the trailing-axis order.
+        co_map_state_names: Tuple of state names co-mapped with the continuation
+            V (see `get_Q_and_F`).
+
+    Returns:
+        A function computing the stacked per-stakeholder state-action values
+        (trailing stakeholder axis) and the shared feasibility mask for a
+        non-terminal collective period.
+
+    """
+    deterministic_transitions, conflicting_deterministic_transition_names = (
+        _get_deterministic_transitions(
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+        )
+    )
+    U_and_F_by_stakeholder = {
+        stakeholder: _get_U_and_F(
+            functions=functions,
+            constraints=constraints,
+            deterministic_transitions=deterministic_transitions,
+            conflicting_deterministic_transition_names=(
+                conflicting_deterministic_transition_names
+            ),
+            utility_name=f"utility_{stakeholder}",
+        )
+        for stakeholder in stakeholders
+    }
+    n_stakeholders = len(stakeholders)
+
+    state_transitions = {}
+    next_stochastic_states_weights = {}
+    joint_weights_from_marginals = {}
+    next_V = {}
+
+    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
+
+    for target_regime_name in period_targets:
+        bundle = transitions[target_regime_name]
+        state_transitions[target_regime_name] = get_next_state_function_for_solution(
+            functions=functions,
+            transitions=bundle,
+        )
+        next_stochastic_states_weights[target_regime_name] = (
+            get_next_stochastic_weights_function(
+                functions=functions,
+                transitions=bundle,
+                stochastic_transition_names=stochastic_transition_names,
+                regime_name=target_regime_name,
+            )
+        )
+        joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
+            transitions=bundle,
+            stochastic_transition_names=stochastic_transition_names,
+            regime_name=target_regime_name,
+        )
+        V_arr_name = "next_V_arr"
+        next_V_interpolator = get_V_interpolator(
+            v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
+            state_prefix="next_",
+            V_arr_name=V_arr_name,
+            co_map_state_names=co_map_state_names,
+        )
+        next_V_extra_param_names[target_regime_name] = frozenset(
+            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
+        )
+        stochastic_variables = tuple(
+            key for key in bundle if key in stochastic_transition_names
+        )
+        next_V[target_regime_name] = productmap(
+            func=_get_stakeholder_sliced_interpolator(
+                base_interpolator=next_V_interpolator,
+                V_arr_name=V_arr_name,
+                n_stakeholders=n_stakeholders,
+            ),
+            variables=stochastic_variables,
+            batch_sizes=dict.fromkeys(stochastic_variables, 0),
+        )
+
+    _build_H_kwargs = _get_build_H_kwargs(functions)
+    _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
+
+    arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
+        deps=[
+            *list(U_and_F_by_stakeholder.values()),
+            compute_regime_transition_probs,
+            *list(state_transitions.values()),
+            *list(next_stochastic_states_weights.values()),
+        ],
+        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        exclude=frozenset(),
+    )
+
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    )
+    def Q_and_F(
+        next_regime_to_V_arr: FloatND,
+        **states_actions_params: _ParamsLeaf,
+    ) -> tuple[FloatND, BoolND]:
+        """Per-stakeholder state-action values and the shared feasibility mask.
+
+        Args:
+            next_regime_to_V_arr: The next period's value function arrays, each
+                target leaf carrying a trailing stakeholder axis.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            A tuple of the stacked per-stakeholder state-action value array
+            (trailing stakeholder axis) and the shared feasibility mask.
+
+        """
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
+            compute_regime_transition_probs(**states_actions_params)
+        )
+        U_arrays: list[FloatND] = []
+        F_arr: BoolND | None = None
+        for u_and_f in U_and_F_by_stakeholder.values():
+            U_s, F_arr = u_and_f(**states_actions_params)
+            U_arrays.append(jnp.asarray(U_s))
+        U_stack = jnp.stack(U_arrays, axis=-1)
+        active_regime_probs = MappingProxyType(
+            {r: regime_transition_probs[r] for r in period_targets}
+        )
+
+        E_next_V = jnp.zeros_like(U_stack)
+        for target_regime_name in period_targets:
+            next_states = state_transitions[target_regime_name](
+                **states_actions_params,
+            )
+            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
+                target_regime_name
+            ](**states_actions_params)
+            joint_next_stochastic_states_weights = joint_weights_from_marginals[
+                target_regime_name
+            ](**marginal_next_stochastic_states_weights)
+
+            extra_kw = {
+                k: states_actions_params[k]
+                for k in next_V_extra_param_names[target_regime_name]
+            }
+            # Shape (*stochastic_axes, n_stakeholders): the product-map stacks
+            # the stochastic-node axes at the front, the stakeholder axis stays
+            # trailing.
+            next_V_at_stochastic_states_arr = next_V[target_regime_name](
+                **{
+                    name: val
+                    for name, val in next_states.items()
+                    if name not in _co_map_next_names
+                },
+                next_V_arr=next_regime_to_V_arr[target_regime_name],
+                **extra_kw,
+            )
+
+            # Per-stakeholder weighted average over the stochastic nodes only —
+            # never over the trailing stakeholder axis.
+            next_V_expected_arr = jnp.average(
+                next_V_at_stochastic_states_arr.reshape(-1, n_stakeholders),
+                axis=0,
+                weights=jnp.asarray(joint_next_stochastic_states_weights).reshape(-1),
+            )
+            E_next_V = (
+                E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
+            )
+
+        # H applied on the stacked arrays is H per stakeholder: `utility` and
+        # `E_next_V` share the trailing stakeholder axis and H's parameters
+        # (e.g. the default `H_linear`'s discount factor) are shared across
+        # stakeholders, so the elementwise aggregation is exactly
+        # Q^s = H(u^s, E[V'^s], beta) with the same beta for every s.
+        Q_arr = functions["H"](
+            utility=U_stack,
+            E_next_V=E_next_V,
+            **_build_H_kwargs(states_actions_params),
+        )
+
+        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
+
+    return Q_and_F
+
+
+def _get_stakeholder_sliced_interpolator(
+    *,
+    base_interpolator: Callable[..., FloatND],
+    V_arr_name: str,
+    n_stakeholders: int,
+) -> Callable[..., FloatND]:
+    """Evaluate a V-interpolator per stakeholder slice of a stacked V array.
+
+    COLLECTIVE-REGIMES (E1, slice 2). The target regime's `next_V_arr` leaf has
+    shape `(*target_state_axes, n_stakeholders)`; the base interpolator
+    interpolates over the state axes of a plain `(*target_state_axes,)` array.
+    Calling it once per stakeholder on the slice `next_V_arr[..., s]` and
+    re-stacking on a trailing axis keeps the interpolation semantics untouched
+    and puts the stakeholder axis last by construction — no axis bookkeeping
+    can reorder it. The wrapper carries the base interpolator's exact argument
+    names so the stochastic-variable product-map and the extra-param discovery
+    treat it like the singleton interpolator.
+
+    Args:
+        base_interpolator: The singleton V-interpolator from
+            `get_V_interpolator` (state axes only).
+        V_arr_name: Name of the interpolator's value-array argument.
+        n_stakeholders: Number of stakeholder slices on the trailing axis.
+
+    Returns:
+        A callable with the base interpolator's signature returning the
+        per-stakeholder interpolated values, stakeholder axis trailing.
+
+    """
+    arg_names = tuple(get_union_of_args([base_interpolator]))
+
+    @with_signature(args=arg_names, return_annotation="FloatND")
+    def next_V_per_stakeholder(**kwargs: _ParamsLeaf) -> FloatND:
+        stacked_V_arr = cast("FloatND", kwargs.pop(V_arr_name))
+        return jnp.stack(
+            [
+                base_interpolator(**kwargs, **{V_arr_name: stacked_V_arr[..., s]})
+                for s in range(n_stakeholders)
+            ],
+            axis=-1,
+        )
+
+    return next_V_per_stakeholder
+
+
 def get_period_targets(
     *,
     period: int,

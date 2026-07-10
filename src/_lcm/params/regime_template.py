@@ -53,6 +53,13 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         "age",
         "E_next_V",
     }
+    if user_regime.stakeholders is not None:
+        # COLLECTIVE-REGIMES (E1): a collective regime carries per-stakeholder
+        # `utility_<s>` functions instead of a singleton `utility`, but the
+        # Bellman aggregator H still takes a `utility` argument — engine-wired
+        # (the stacked per-stakeholder utilities), exactly like `E_next_V` —
+        # so the name must not surface as a user-facing param.
+        variables.add("utility")
 
     function_params: dict[FunctionName, dict[str, str]] = {}
     per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}

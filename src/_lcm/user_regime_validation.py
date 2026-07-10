@@ -22,7 +22,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, GridSearch
 from lcm.transition import MarkovTransition
 
 if TYPE_CHECKING:
@@ -80,27 +80,46 @@ def _callable_mapping_errors(
 
 
 def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
-    """Validate a collective (stakeholder-valued) regime — E1, terminal only.
+    """Validate a collective (stakeholder-valued) regime — E1.
 
-    A non-terminal (continuation) collective regime raises `NotImplementedError`
-    (slice 2). A terminal collective regime is checked for the invariants the
-    collective terminal kernel relies on: a per-stakeholder `utility_<s>`
-    function for every stakeholder, at least one discrete action (the household
-    argmax runs over the discrete-action product), and — if `weights` is given —
-    weight keys matching the stakeholder names.
+    Both the terminal (slice 1b) and non-terminal continuation (slice 2) cases
+    are implemented; a regime is checked for the invariants the collective
+    kernels rely on: a per-stakeholder `utility_<s>` function for every
+    stakeholder, at least one discrete action (the household argmax runs over
+    the discrete-action product), and — if `weights` is given — weight keys
+    matching the stakeholder names.
+
+    Features outside the E1 scope raise `NotImplementedError`: EV1 taste shocks
+    (the collective argmax is the hard household maximum), a nonlinear
+    certainty equivalent (the per-stakeholder continuation is the linear
+    expectation), and any solver other than `GridSearch`.
 
     Called from `Regime.__post_init__` only when `stakeholders is not None`, so
     the default singleton path never reaches it.
     """
     stakeholders = cast("tuple[str, ...]", regime.stakeholders)
 
-    if not regime.terminal:
+    if regime.taste_shocks is not None:
         raise NotImplementedError(
-            "Non-terminal (continuation) collective regimes are not yet "
-            "implemented. Only the terminal case (E1) is available in this "
-            "slice: a collective regime must currently declare "
-            "`transition=None`. See the design doc "
-            "`pylcm-extension-collective-regimes.md` (v2.1), slice 2."
+            "EV1 taste shocks on a collective (stakeholder-valued) regime are "
+            "not yet implemented: the collective solve takes the hard household "
+            "argmax of the Pareto-weighted objective, not a smoothed maximum. "
+            "See the design doc `pylcm-extension-collective-regimes.md` (v2.1)."
+        )
+    if regime.certainty_equivalent is not None:
+        raise NotImplementedError(
+            "A nonlinear certainty equivalent on a collective "
+            "(stakeholder-valued) regime is not yet implemented: the "
+            "per-stakeholder continuation is the linear expectation "
+            "E[V'^s]. See the design doc "
+            "`pylcm-extension-collective-regimes.md` (v2.1)."
+        )
+    if not isinstance(regime.solver, GridSearch):
+        raise NotImplementedError(
+            "Collective (stakeholder-valued) regimes are only implemented for "
+            "the GridSearch solver: the household argmax and per-stakeholder "
+            "value readout run over the full action product. Use "
+            "`solver=GridSearch()` for this regime."
         )
 
     error_messages: list[str] = []

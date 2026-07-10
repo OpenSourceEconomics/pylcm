@@ -7,16 +7,18 @@ working feature: the numerics (E1-E4) are not implemented. The tests split into
 two groups:
 
 * Pinning tests (PASS today) — they nail down the current honest state: the
-  `Regime.stakeholders` API surface exists, declaring it raises
-  `NotImplementedError`, and the default singleton (`stakeholders=None`) path is
+  `Regime.stakeholders` API surface exists, the E1 solve (terminal + non-terminal
+  continuation) is implemented, everything beyond it (gates, routing, simulation)
+  is honestly rejected, and the default singleton (`stakeholders=None`) path is
   untouched.
 
 * Target-behavior tests (`xfail`, `strict=False`) — they encode what a
   collective regime must do once E1-E4 land. Written against the real
-  construction API, they fail today (construction rejects a stakeholder-valued
-  regime) and will start passing, one by one, as the follow-up PRs implement the
-  numerics. `strict=False` so an implemented-but-not-yet-un-xfailed test does not
-  turn the suite red.
+  construction API, they fail today (the sketched result APIs — per-stakeholder
+  result objects, consent gates, the value router — do not exist yet) and will
+  start passing, one by one, as the follow-up PRs implement the numerics.
+  `strict=False` so an implemented-but-not-yet-un-xfailed test does not turn
+  the suite red.
 
 Design-doc section references are on each target-behavior test.
 """
@@ -108,27 +110,31 @@ def _build_married_regime() -> Regime:
 # ----------------------------------------------------------------------------------
 
 
-def test_declaring_non_terminal_stakeholders_raises_not_implemented():
-    """A NON-terminal collective regime still raises `NotImplementedError`.
+def test_declaring_non_terminal_stakeholders_constructs():
+    """A NON-terminal collective regime now constructs (slice 2, E1).
 
-    Slice 1b implements only the terminal case (E1). The continuation
-    (non-terminal) collective regime is slice 2, so declaring one — here via a
-    non-`None` regime transition — remains honestly rejected, with a message
-    pointing at the design doc.
+    The continuation (non-terminal) collective regime is implemented: the
+    per-stakeholder contract is validated at construction instead of raising
+    `NotImplementedError`. The remaining honest boundaries are elsewhere:
+    routing to targets with a different `stakeholders` tuple is rejected at
+    model processing (slice 4, E3'), and collective-regime simulation still
+    raises (slice 6, E4) — see
+    `tests/regime_building/test_nonterminal_collective_solve.py`.
     """
 
     def _some_transition(_age: float) -> int:
         return 0
 
-    with pytest.raises(NotImplementedError, match="not yet implemented"):
-        Regime(
-            transition=_some_transition,
-            stakeholders=("f", "m"),
-            states={"wealth": _WEALTH},
-            actions={"labor_supply_f": DiscreteGrid(LaborSupply)},
-            state_transitions={"wealth": lambda wealth: wealth},
-            functions={"utility_f": _utility_f, "utility_m": _utility_m},
-        )
+    regime = Regime(
+        transition=_some_transition,
+        stakeholders=("f", "m"),
+        states={"wealth": _WEALTH},
+        actions={"labor_supply_f": DiscreteGrid(LaborSupply)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+    )
+    assert regime.stakeholders == ("f", "m")
+    assert not regime.terminal
 
 
 def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():

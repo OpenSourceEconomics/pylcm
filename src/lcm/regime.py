@@ -190,13 +190,18 @@ class Regime:
     feasibility and value-gated regime routing (consent / divorce).
 
     This is the API surface of the "collective regimes" extension (E1-E4 +
-    shared shocks). Only the **terminal** case (E1) is implemented so far: a
-    terminal collective regime carries a per-stakeholder utility
+    shared shocks). The **E1 solve** is implemented for terminal and
+    non-terminal regimes: a collective regime carries a per-stakeholder utility
     `functions["utility_<s>"]` for each stakeholder `<s>` and household Pareto
     `weights`; its solve reads off each stakeholder's own value at the shared
-    household argmax (see the design doc `pylcm-extension-collective-regimes.md`
-    v2.1, §2 E1). Non-terminal (continuation) collective regimes and
-    collective-regime simulation still raise `NotImplementedError`.
+    household argmax, and a non-terminal collective regime aggregates the
+    per-stakeholder continuation `Q^s = H(u^s, E[V'^s])` (see the design doc
+    `pylcm-extension-collective-regimes.md` v2.1, §2 E1). A non-terminal
+    collective regime's transition targets must all be collective regimes with
+    the identical `stakeholders` tuple — per-stakeholder routing to different
+    regimes (value gates, divorce) is E3'. Collective-regime simulation, EV1
+    taste shocks, nonlinear certainty equivalents, and non-GridSearch solvers
+    on a collective regime still raise `NotImplementedError`.
     """
 
     weights: Mapping[str, float] | None = None
@@ -230,13 +235,14 @@ class Regime:
         return isinstance(transition, MarkovTransition | Mapping)
 
     def __post_init__(self) -> None:
-        # COLLECTIVE-REGIMES (E1): only the TERMINAL case is implemented. A
-        # terminal collective regime is validated here (per-stakeholder
-        # `utility_<s>`, weights, >=1 discrete action) and then solves via the
-        # collective terminal kernel; a NON-terminal (continuation) collective
-        # regime still raises `NotImplementedError` (slice 2). The default
-        # `None` (singleton) path never enters this branch, so today's behavior
-        # is provably untouched. See `pylcm-extension-collective-regimes.md` §2.
+        # COLLECTIVE-REGIMES (E1): the solve is implemented for terminal and
+        # non-terminal collective regimes. A collective regime is validated
+        # here (per-stakeholder `utility_<s>`, weights, >=1 discrete action;
+        # out-of-scope features — taste shocks, certainty equivalents,
+        # non-GridSearch solvers — are rejected) and then solves via the
+        # collective kernels. The default `None` (singleton) path never enters
+        # this branch, so today's behavior is provably untouched. See
+        # `pylcm-extension-collective-regimes.md` §2.
         if self.stakeholders is not None:
             _validate_collective_regime(self)
         elif self.weights is not None:

@@ -55,6 +55,7 @@ from _lcm.regime_building.phases import (
 from _lcm.regime_building.Q_and_F import (
     get_period_targets,
     get_Q_and_F,
+    get_Q_and_F_collective,
     get_Q_and_F_terminal,
     get_Q_and_F_terminal_collective,
 )
@@ -161,6 +162,10 @@ def process_regimes(
         regime_name: _extract_phase_transitions(phase_slice=spec.simulation)
         for regime_name, spec in specs.items()
     }
+    _fail_if_collective_regime_targets_unsupported(
+        user_regimes=user_regimes,
+        nested_transitions_by_regime=solve_nested_transitions,
+    )
     _validate_categoricals(user_regimes)
 
     regime_to_variables = MappingProxyType(
@@ -344,6 +349,59 @@ def _resolve_stakeholder_weights(
     return MappingProxyType(dict.fromkeys(stakeholders, equal))
 
 
+def _fail_if_collective_regime_targets_unsupported(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    nested_transitions_by_regime: Mapping[RegimeName, _TransitionBundles],
+) -> None:
+    """Reject regime transitions mixing collective and mismatched stakeholders.
+
+    COLLECTIVE-REGIMES (E1, slice 2). The E1 continuation reads each target's
+    `next_V_arr` with the SOURCE regime's stakeholder layout: a collective
+    source expects every target leaf to carry the identical trailing
+    stakeholder axis, and a singleton source expects none. Per-stakeholder
+    routing across stakeholder layouts (divorce into `single_f`/`single_m`,
+    marriage formation) is the gated-edge machinery (E3', slice 4), so any
+    non-terminal regime whose reachable target declares a different
+    `stakeholders` tuple is rejected here. Both-`None` (the singleton default)
+    never enters the comparison, so today's path is untouched.
+
+    Args:
+        user_regimes: Mapping of regime names to finalized user regimes.
+        nested_transitions_by_regime: Per-regime solve-phase transition
+            bundles; their keys are the regime's reachable targets.
+
+    Raises:
+        NotImplementedError: If a non-terminal regime's reachable target
+            declares a different `stakeholders` tuple.
+
+    """
+    for regime_name, user_regime in user_regimes.items():
+        if user_regime.terminal:
+            continue
+        for target_regime_name in nested_transitions_by_regime.get(regime_name, {}):
+            target_regime = user_regimes.get(target_regime_name)
+            if target_regime is None:
+                continue
+            if user_regime.stakeholders is None and target_regime.stakeholders is None:
+                continue
+            if user_regime.stakeholders != target_regime.stakeholders:
+                msg = (
+                    f"Regime '{regime_name}' (stakeholders="
+                    f"{user_regime.stakeholders}) can reach regime "
+                    f"'{target_regime_name}' (stakeholders="
+                    f"{target_regime.stakeholders}), but every transition "
+                    "target of a collective regime must be a collective regime "
+                    "with the identical `stakeholders` tuple (and a singleton "
+                    "regime cannot target a collective one). Per-stakeholder "
+                    "routing to different regimes (e.g. divorce into "
+                    "single-person regimes) is the gated-edge machinery (E3', "
+                    "slice 4) and is not yet implemented. See the design doc "
+                    "`pylcm-extension-collective-regimes.md` (v2.1)."
+                )
+                raise NotImplementedError(msg)
+
+
 def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
@@ -492,22 +550,30 @@ def _build_solution_phase(
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
+            stakeholders=stakeholders,
         )
-        compute_intermediates = _build_compute_intermediates_per_period(
-            flat_param_names=flat_param_names,
-            regimes_to_active_periods=regimes_to_active_periods,
-            functions=core.functions,
-            constraints=core.constraints,
-            transitions=core.transitions,
-            stochastic_transition_names=core.stochastic_transition_names,
-            compute_regime_transition_probs=compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-            state_action_space=state_action_space,
-            grids=all_grids[regime_name],
-            ages=ages,
-            enable_jit=enable_jit,
-            certainty_equivalent=certainty_equivalent,
-        )
+        if stakeholders is not None:
+            # COLLECTIVE-REGIMES (E1): the NaN-diagnostics intermediates mirror
+            # the singleton Q evaluation (one `utility` target), which a
+            # collective regime does not carry. The failure path handles a
+            # missing closure gracefully (no U/F/E/Q breakdown).
+            compute_intermediates = MappingProxyType({})
+        else:
+            compute_intermediates = _build_compute_intermediates_per_period(
+                flat_param_names=flat_param_names,
+                regimes_to_active_periods=regimes_to_active_periods,
+                functions=core.functions,
+                constraints=core.constraints,
+                transitions=core.transitions,
+                stochastic_transition_names=core.stochastic_transition_names,
+                compute_regime_transition_probs=compute_regime_transition_probs,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                state_action_space=state_action_space,
+                grids=all_grids[regime_name],
+                ages=ages,
+                enable_jit=enable_jit,
+                certainty_equivalent=certainty_equivalent,
+            )
 
     # Dispatch the per-period kernel build polymorphically on the regime's
     # solver: `validate` rejects out-of-scope configurations at build time,
@@ -931,10 +997,10 @@ def _build_simulation_phase(
     )
 
     # COLLECTIVE-REGIMES (E4): collective-regime simulation (the value router)
-    # is not implemented in this slice. A collective regime is terminal here
-    # (non-terminal collective regimes are rejected at construction), so the
-    # model still builds eagerly — the argmax kernels below are replaced by a
-    # stub that raises only if a caller actually simulates the regime.
+    # is not implemented in this slice. A collective regime solves but does
+    # not simulate, and the model builds eagerly — so the simulate-phase
+    # decision functions are skipped and the argmax kernels below are replaced
+    # by a stub that raises only if a caller actually simulates the regime.
     collective = stakeholders is not None
     if spec.terminal:
         compute_regime_transition_probs = None
@@ -961,22 +1027,25 @@ def _build_simulation_phase(
             phase="simulate",
             next_regime_cells=core.next_regime_cells,
         )
-        # Q_and_F uses the solve (non-vmapped) regime transition probs since
-        # it evaluates on the Cartesian grid, not per-subject. The solve
-        # phase built that function unconditionally for non-terminal regimes.
-        assert solve_compute_regime_transition_probs is not None  # noqa: S101
-        Q_and_F_functions = _build_Q_and_F_per_period(
-            regimes_to_active_periods=regimes_to_active_periods,
-            functions=functions,
-            constraints=constraints,
-            transitions=solve_transitions,
-            stochastic_transition_names=solve_stochastic_transition_names,
-            compute_regime_transition_probs=solve_compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-            ages=ages,
-            flat_param_names=flat_param_names,
-            certainty_equivalent=certainty_equivalent,
-        )
+        if collective:
+            Q_and_F_functions = MappingProxyType({})
+        else:
+            # Q_and_F uses the solve (non-vmapped) regime transition probs since
+            # it evaluates on the Cartesian grid, not per-subject. The solve
+            # phase built that function unconditionally for non-terminal regimes.
+            assert solve_compute_regime_transition_probs is not None  # noqa: S101
+            Q_and_F_functions = _build_Q_and_F_per_period(
+                regimes_to_active_periods=regimes_to_active_periods,
+                functions=functions,
+                constraints=constraints,
+                transitions=solve_transitions,
+                stochastic_transition_names=solve_stochastic_transition_names,
+                compute_regime_transition_probs=solve_compute_regime_transition_probs,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                ages=ages,
+                flat_param_names=flat_param_names,
+                certainty_equivalent=certainty_equivalent,
+            )
 
     if collective:
         argmax_and_max_Q_over_a = _build_collective_simulate_stub(
@@ -2105,6 +2174,7 @@ def _build_Q_and_F_per_period(
     flat_param_names: frozenset[str],
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
+    stakeholders: tuple[str, ...] | None = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
@@ -2129,6 +2199,10 @@ def _build_Q_and_F_per_period(
         flat_param_names: Frozenset of flat parameter names for the regime.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
+        stakeholders: Ordered stakeholder names for a collective regime, or
+            `None` (the singleton default). When set, the per-period closures
+            come from `get_Q_and_F_collective` (per-stakeholder continuation,
+            trailing stakeholder axis on Q); only the solve site passes this.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -2147,6 +2221,23 @@ def _build_Q_and_F_per_period(
     # Build one Q_and_F per distinct configuration
     built: dict[tuple[RegimeName, ...], QAndFFunction] = {}
     for period_targets in configs:
+        if stakeholders is not None:
+            # COLLECTIVE-REGIMES (E1): separate builder so the singleton path
+            # is byte-identical. No certainty equivalent — rejected at regime
+            # construction for collective regimes.
+            built[period_targets] = get_Q_and_F_collective(
+                flat_param_names=flat_param_names,
+                functions=functions,
+                constraints=constraints,
+                period_targets=period_targets,
+                transitions=transitions,
+                stochastic_transition_names=stochastic_transition_names,
+                compute_regime_transition_probs=compute_regime_transition_probs,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                stakeholders=stakeholders,
+                co_map_state_names=co_map_state_names,
+            )
+            continue
         built[period_targets] = get_Q_and_F(
             flat_param_names=flat_param_names,
             functions=functions,
