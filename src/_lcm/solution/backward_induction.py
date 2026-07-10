@@ -173,6 +173,16 @@ def solve(
                 period_egm_carries=period_egm_carries,
                 period_sim_policies=period_sim_policies,
             )
+            # The published V mapping is the calling convention for every
+            # downstream consumer — the parents' cores and the AOT-lowered
+            # simulate programs are both compiled against the per-regime V
+            # topology — so a kernel output arriving with a different
+            # sharding (the compiled program's output sharding is the
+            # backend's choice) is placed back on the template's mesh here.
+            V_arr = _match_leaf_template_sharding(
+                leaf=V_arr,
+                template_leaf=next_regime_to_V_arr[regime_name],
+            )
             # Async reductions: gated on log level. `"off"` skips
             # everything — no kernel launches, no host syncs, no
             # NaN fail-fast. `"warning"` / `"progress"` folds two
@@ -442,10 +452,11 @@ def _match_carry_template_sharding(*, carry: EGMCarry, template: EGMCarry) -> EG
 def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
     """Place one solved array on its template's device sharding (no-op on match).
 
-    Applied to the rolled value arrays for the same reason as the carries: a
-    solver core that assembles its value array outside the co-mapped path
-    (the NB-EGM envelope core's per-cell vmap) can emit it replicated, while
-    the templates the parents' cores were lowered against are sharded.
+    Applied where a solved value array is published and where the continuation
+    mappings roll forward, for the same reason as the carries: a compiled
+    kernel's output sharding is the backend's choice, so a value array can
+    arrive replicated while the templates every consumer (parent cores and the
+    AOT-lowered simulate programs) was lowered against are sharded.
     """
     if leaf.sharding == template_leaf.sharding:
         return leaf

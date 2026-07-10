@@ -11,6 +11,7 @@ from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -259,6 +260,46 @@ def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
     model = _make_correct_distributed_model(distributed=True)
     hlo = _compiled_solve_kernel_hlo(model, regime_name="working_life", period=0)
     assert "all-gather" not in hlo
+
+
+@_skip_pytest_parallel
+def test_solve_returns_template_sharded_V_even_when_kernel_output_is_replicated(
+    correct_distributed_model, monkeypatch
+):
+    """`solve()` publishes V arrays carrying the distributed template sharding.
+
+    The simulate programs are AOT-lowered against the per-regime V topology, so
+    the V mapping `solve()` returns must carry that sharding regardless of the
+    output sharding the period kernel's compiled program happens to emit — a
+    replicated kernel output must be placed back on the template's mesh before
+    it is published.
+    """
+    original_solve_regime_period = backward_induction._solve_regime_period
+    replicated_outputs: list[str] = []
+
+    def emit_replicated_V(**kwargs):
+        V_arr = original_solve_regime_period(**kwargs)
+        if isinstance(V_arr.sharding, NamedSharding):
+            replicated_outputs.append(kwargs["regime_name"])
+            return jax.device_put(
+                V_arr, NamedSharding(V_arr.sharding.mesh, PartitionSpec())
+            )
+        return V_arr
+
+    monkeypatch.setattr(backward_induction, "_solve_regime_period", emit_replicated_V)
+
+    period_to_regime_to_V_arr = correct_distributed_model.solve(
+        log_level="off",
+        params={"discount_factor": 0.95},
+    )
+
+    assert replicated_outputs, "no kernel output was replicated; test is inert"
+    for regime_to_V_arr in period_to_regime_to_V_arr.values():
+        for regime_name, V_arr in regime_to_V_arr.items():
+            if regime_name in replicated_outputs:
+                assert not V_arr.sharding.is_fully_replicated, (
+                    f"{regime_name}: published V is replicated, not template-sharded"
+                )
 
 
 @_skip_pytest_parallel
