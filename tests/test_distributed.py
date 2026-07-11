@@ -524,6 +524,43 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
     pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
 
 
+@_skip_pytest_parallel
+def test_distributed_aot_simulation_pads_subjects_to_a_chunk_multiple():
+    """A chunk size that does not divide the subject count simulates cleanly.
+
+    Under distributed grids the chunk size is rounded up to a device multiple
+    and every chunk must match the AOT-compiled shape, so the subject axis is
+    padded up to a chunk multiple (duplicating the last subject) and the pad
+    rows are trimmed back out — the result holds exactly the real subjects and
+    equals the single-pass result.
+    """
+    model = _make_correct_distributed_model(n_subjects=12)
+    initial_conditions = {
+        "age": jnp.full(12, 0),
+        "wealth": jnp.linspace(50.0, 120.0, 12),
+        "type1": jnp.ones(12, dtype=jnp.int32),
+        "type2": jnp.ones(12, dtype=jnp.int32),
+        "regime_id": jnp.zeros(12, dtype=jnp.int32),
+    }
+    single_pass = model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+    chunked = model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+        subject_batch_size=8,
+    )
+    assert chunked.n_subjects == 12
+    pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
+
+
 @pytest.fixture
 def partially_distributed_model():
     """Model where one regime has distributed grids and the other does not."""

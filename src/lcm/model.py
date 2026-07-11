@@ -621,19 +621,23 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
         )
-        # Align the subject axis to the block size the simulate path needs: the
-        # device count when grids are distributed (sharding must divide it
-        # evenly), or the chunk size when chunking on a single device (every chunk
-        # must match the AOT-compiled shape). The two are mutually exclusive —
-        # chunking under multi-device distribution is rejected in
-        # `_resolve_compile_batch_size`. Pad rows duplicate the last real subject
-        # and are trimmed inside `simulate`; a multiple of 1 (single pass) is a
-        # no-op.
-        if self._distributes_subjects() and len(jax.devices()) > 1:
-            alignment = len(jax.devices())
-        elif subject_batch_size > 0:
+        # Align the subject axis to the block size the simulate path needs.
+        # Every chunk must match the AOT-compiled shape, and under distributed
+        # grids each chunk is additionally placed onto the subject mesh axis,
+        # so the chunk itself is rounded up to a device multiple (mirroring
+        # `_resolve_compile_batch_size`) before the subject axis is padded to
+        # a multiple of it. Without chunking, distribution alone needs a
+        # device multiple. Pad rows duplicate the last real subject and are
+        # trimmed inside `simulate`; a multiple of 1 (single pass) is a no-op.
+        distributes = self._distributes_subjects() and len(jax.devices()) > 1
+        if subject_batch_size > 0:
             raw_n_subjects = len(next(iter(initial_conditions.values())))
             alignment = min(subject_batch_size, raw_n_subjects)
+            if distributes:
+                n_devices = len(jax.devices())
+                alignment = -(-alignment // n_devices) * n_devices
+        elif distributes:
+            alignment = len(jax.devices())
         else:
             alignment = 1
         initial_conditions, original_n_subjects = pad_initial_conditions_to_multiple(
