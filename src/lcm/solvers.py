@@ -12,6 +12,9 @@ backward induction:
   consumption-savings problem conditional on that margin (Druedahl 2021,
   Computational Economics 58(3), 747-775,
   [doi:10.1007/s10614-020-10045-x](https://doi.org/10.1007/s10614-020-10045-x)).
+- `NestedNBEGM(...)`: the same outer keeper/adjuster search with an inner
+  `NBEGM` solve, so declared liquid kinks, jumps, and hard constraints keep
+  their exact NB-EGM treatment inside every outer candidate.
 
 The solvers are defined engine-side in `_lcm.solution.solvers`; this module is a
 thin re-export so user code (and `lcm.regime`) can name them, and the `Solver`
@@ -26,6 +29,7 @@ from _lcm.solution.solvers import (
     NBEGM,
     NEGM,
     GridSearch,
+    NestedNBEGM,
     OneAssetEGM,
     TwoDimEGM,
 )
@@ -35,6 +39,7 @@ __all__ = [
     "NBEGM",
     "NEGM",
     "GridSearch",
+    "NestedNBEGM",
     "OneAssetEGM",
     "SolutionKernels",
     "Solver",

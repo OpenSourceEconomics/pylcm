@@ -118,6 +118,7 @@ from lcm.solvers import (  # noqa: E402
     NBEGM,
     NEGM,
     GridSearch,
+    NestedNBEGM,
     OneAssetEGM,
     TwoDimEGM,
 )
@@ -157,6 +158,7 @@ __all__ = [
     "LogSpacedGrid",
     "MarkovTransition",
     "Model",
+    "NestedNBEGM",
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
     "OneAssetEGM",

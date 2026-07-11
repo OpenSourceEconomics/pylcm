@@ -85,4 +85,4 @@ def test_nbegm_inner_spec_requires_explicit_post_decision_function() -> None:
 def test_non_egm_inner_is_rejected_with_the_offending_type() -> None:
     """A non-1-D-EGM inner raises `TypeError` naming the offending type."""
     with pytest.raises(TypeError, match="GridSearch"):
-        get_nested_inner_spec(inner=GridSearch())  # ty: ignore[invalid-argument-type]
+        get_nested_inner_spec(inner=GridSearch())
