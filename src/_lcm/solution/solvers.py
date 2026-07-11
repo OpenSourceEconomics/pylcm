@@ -1693,10 +1693,15 @@ class NBEGM(Solver):
             context.user_regimes[context.regime_name].functions,
         )
         registry = collect_nbegm_metadata(functions=functions)
-        has_schedule = bool(registry.piecewise_affine_schedules) and not (
-            registry.piece_sets
-        )
         has_discrete = bool(context.state_action_space.discrete_actions)
+        # No declared case pieces routes to the schedule path. With no declared
+        # piecewise-affine schedules either, the partition is empty — a single
+        # interval covering the whole liquid axis, solved as plain EGM — so a
+        # declaration-free budget is in scope. A declaration-free regime with a
+        # discrete action keeps the dedicated discrete path below.
+        has_schedule = not registry.piece_sets and (
+            bool(registry.piecewise_affine_schedules) or not has_discrete
+        )
         # A discrete action over a cliffed single-liquid budget composes the
         # discrete upper envelope with the schedule's per-branch intervals. A
         # discrete action alongside a ride-along schedule stays rejected below.
@@ -3511,10 +3516,9 @@ def _collect_nbegm_schedule_spec(  # noqa: PLR0915
         context.user_regimes[context.regime_name].functions,
     )
     registry = collect_nbegm_metadata(functions=user_functions)
+    # Zero declared schedules produce an empty breakpoint partition: one
+    # interval covering the whole liquid axis, solved as plain EGM.
     schedules = registry.piecewise_affine_schedules
-    if not schedules:
-        msg = "NBEGM schedule path needs at least one piecewise-affine schedule."
-        raise RegimeInitializationError(msg)
     state_names = context.state_action_space.state_names
     # The Euler axis is one continuous state, not the first state axis: the
     # canonical order leads with discrete states, so a ride-along co-state sorts
@@ -3633,12 +3637,13 @@ def _collect_nbegm_schedule_spec(  # noqa: PLR0915
     consumption_action_name = next(iter(context.state_action_space.continuous_actions))
     # `threshold_param_names` / `breakpoint_kinds` mirror the first schedule and
     # drive the non-ride-along continuous core, which is reached only for a
-    # regime with no ride-along axis (a single liquid-direct schedule).
-    first = schedules[0]
+    # regime with no ride-along axis (a single liquid-direct schedule). With no
+    # declared schedules both are empty — the partition is one interval.
+    first_breakpoints = schedules[0].breakpoints if schedules else ()
     threshold_param_names = tuple(
-        f"{first.output}__{bp.threshold}" for bp in first.breakpoints
+        f"{schedules[0].output}__{bp.threshold}" for bp in first_breakpoints
     )
-    breakpoint_kinds = tuple(bp.kind for bp in first.breakpoints)
+    breakpoint_kinds = tuple(bp.kind for bp in first_breakpoints)
     all_kinds = tuple(bp.kind for schedule in schedules for bp in schedule.breakpoints)
     _fail_if_budget_nonaffine_in_liquid(
         coh_dag=coh_dag,
@@ -3839,8 +3844,16 @@ def _build_nbegm_continuous_core(
                 **{schedule_spec.liquid_state_name: scalar_liquid}, **coh_params
             )
 
-        breakpoints = jnp.sort(
-            jnp.stack([params[name] for name in schedule_spec.threshold_param_names])
+        # Zero declared breakpoints ⇒ an empty partition: one interval covering
+        # the whole liquid axis, solved as plain EGM.
+        breakpoints = (
+            jnp.sort(
+                jnp.stack(
+                    [params[name] for name in schedule_spec.threshold_param_names]
+                )
+            )
+            if schedule_spec.threshold_param_names
+            else jnp.zeros((0,), dtype=canonical_float_dtype())
         )
         midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
         coh_slopes, coh_intercepts = interval_segment_coefficients(
@@ -4000,7 +4013,8 @@ def _ride_along_jump_config(
     )
     dynamic_jumps = n_variables > 1 and 0 < n_jumps < len(kinds)
     return (
-        jnp.asarray(jump_flags),
+        # dtype pinned so the zero-breakpoint (empty) case stays boolean.
+        jnp.asarray(jump_flags, dtype=bool),
         n_jumps,
         n_jumps > 0,
         static_jump_positions,
@@ -4354,9 +4368,16 @@ def _nbegm_cell_breakpoints(
 
         return linear_asset_preimage(derived_of_liquid, threshold=threshold)
 
-    preimages = clamp_breakpoints_to_grid(
-        breakpoints=jnp.stack([cell_breakpoint(source) for source in statics.sources]),
-        liquid_grid=liquid_grid,
+    # Zero declared breakpoints ⇒ an empty partition (one interval per cell).
+    preimages = (
+        clamp_breakpoints_to_grid(
+            breakpoints=jnp.stack(
+                [cell_breakpoint(source) for source in statics.sources]
+            ),
+            liquid_grid=liquid_grid,
+        )
+        if statics.sources
+        else jnp.zeros((0,), dtype=dtype)
     )
     return _partition_jumps(
         preimages,
