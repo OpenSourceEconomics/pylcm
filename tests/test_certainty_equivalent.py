@@ -39,6 +39,57 @@ def test_power_certainty_equivalent_param_names():
     assert PowerMean().param_names == frozenset({"risk_aversion"})
 
 
+def test_power_mean_aggregate_stays_finite_for_small_values_high_risk_aversion():
+    """`aggregate` returns the finite power mean where naive transform overflows.
+
+    With `risk_aversion > 1` and continuation values near the borrowing
+    constraint, the elementwise transform `v^(1 - risk_aversion)` overflows to
+    infinity and the naive `inverse(mean(transform))` collapses the certainty
+    equivalent to zero; the fused aggregation evaluates it in the log domain and
+    returns the true finite value.
+    """
+    ce = PowerMean()
+    values = jnp.array([1e-40, 2e-40])
+    weights = jnp.array([0.5, 0.5])
+    aggregated = ce.aggregate(
+        values=values, weights=weights, risk_aversion=jnp.asarray(10.0)
+    )
+    # Log-domain reference for (0.5·v1^-9 + 0.5·v2^-9)^(-1/9).
+    exponent = 1.0 - 10.0
+    logs = exponent * np.log(np.asarray(values))
+    shift = logs.max()
+    log_ce = (shift + np.log(np.sum(0.5 * np.exp(logs - shift)))) / exponent
+    np.testing.assert_allclose(np.asarray(aggregated), np.exp(log_ce), rtol=1e-10)
+    assert np.isfinite(np.asarray(aggregated))
+    assert np.asarray(aggregated) > 0.0
+
+
+def test_power_mean_aggregate_matches_naive_form_on_well_scaled_values():
+    """On well-scaled values the fused aggregation equals `g⁻¹(Σ w·g(v))`."""
+    ce = PowerMean()
+    values = jnp.array([0.5, 1.0, 2.0, 4.0])
+    weights = jnp.array([0.1, 0.2, 0.3, 0.4])
+    ra = jnp.asarray(3.0)
+    aggregated = ce.aggregate(values=values, weights=weights, risk_aversion=ra)
+    naive = ce.inverse(
+        value=jnp.sum(weights * ce.transform(value=values, risk_aversion=ra)),
+        risk_aversion=ra,
+    )
+    np.testing.assert_allclose(np.asarray(aggregated), np.asarray(naive), rtol=1e-10)
+
+
+def test_power_mean_aggregate_log_limit_is_geometric_mean():
+    """At `risk_aversion = 1` the aggregation is the weighted geometric mean."""
+    ce = PowerMean()
+    values = jnp.array([1.0, 2.0, 4.0])
+    weights = jnp.array([0.25, 0.25, 0.5])
+    aggregated = ce.aggregate(
+        values=values, weights=weights, risk_aversion=jnp.asarray(1.0)
+    )
+    geometric = np.exp(np.sum(np.asarray(weights) * np.log(np.asarray(values))))
+    np.testing.assert_allclose(np.asarray(aggregated), geometric, rtol=1e-10)
+
+
 def test_quasi_arithmetic_mean_param_names_union_over_both_callables():
     """`param_names` is the union of transform and inverse args minus `value`."""
 

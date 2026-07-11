@@ -12,6 +12,7 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 from beartype import beartype
+from jax.scipy.special import logsumexp
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.utils.functools import get_union_of_args
@@ -115,6 +116,41 @@ class PowerMean(QuasiArithmeticMean):
 
     transform: Callable[..., FloatND] = power_transform
     inverse: Callable[..., FloatND] = power_inverse
+
+    def aggregate(
+        self, *, values: FloatND, weights: FloatND, risk_aversion: FloatND
+    ) -> FloatND:
+        """Return the weighted power mean `(E[v^(1-ra)])^(1/(1-ra))`, stably.
+
+        `ra` is `risk_aversion`. The naive `inverse(sum(w · transform(v)))`
+        overflows when `risk_aversion > 1` and `v` is near the borrowing
+        constraint: the intermediate `v^(1-ra)` exceeds the dtype's range and the
+        certainty equivalent collapses to zero or infinity. Evaluating the
+        aggregation in the log domain —
+        `log CE = logsumexp(log w + (1-ra)·log v) / (1-ra)` — keeps it finite
+        wherever the mathematical value is. `risk_aversion = 1` is the weighted
+        geometric mean `exp(E[log v])`.
+
+        Args:
+            values: Strictly positive continuation values along the last axis.
+            weights: Nonnegative probabilities over `values` (need not be
+                normalized; zero-weight entries drop out).
+            risk_aversion: The Epstein-Zin risk-aversion coefficient.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+        log_v = jnp.log(values)
+        log_w = jnp.log(weights)
+        exponent = 1.0 - risk_aversion
+        # The `risk_aversion == 1` power branch must not divide by zero.
+        safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
+        log_ce_power = logsumexp(log_w + exponent * log_v, axis=-1) / safe_exponent
+        log_ce_geometric = jnp.sum(
+            jnp.where(weights > 0.0, weights * log_v, 0.0), axis=-1
+        )
+        return jnp.exp(jnp.where(exponent == 0.0, log_ce_geometric, log_ce_power))
 
 
 def resolve_certainty_equivalent(
