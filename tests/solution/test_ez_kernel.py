@@ -13,6 +13,7 @@ import numpy as np
 
 from _lcm.egm.ez_kernel import (
     ez_consumption_from_euler,
+    ez_continuation,
     ez_period_value,
 )
 
@@ -93,3 +94,62 @@ def test_period_value_is_strictly_positive_for_positive_inputs() -> None:
         inverse_eis=3.0,
     )
     assert float(value) > 0.0
+
+
+def test_continuation_nu_is_the_power_mean_of_child_values() -> None:
+    """`nu = (E[V'^(1-gamma)])^(1/(1-gamma))` over the continuation lottery."""
+    gamma = 4.0
+    child_values = jnp.array([[1.0, 2.0]])
+    child_marginals = jnp.array([[0.5, 0.25]])
+    weights = jnp.array([0.5, 0.5])
+    nu, _ = ez_continuation(
+        child_values=child_values,
+        child_marginals=child_marginals,
+        weights=weights,
+        risk_aversion=jnp.asarray(gamma),
+    )
+    reference = (0.5 * 1.0 ** (1.0 - gamma) + 0.5 * 2.0 ** (1.0 - gamma)) ** (
+        1.0 / (1.0 - gamma)
+    )
+    np.testing.assert_allclose(np.asarray(nu)[0], reference, rtol=1e-10)
+
+
+def test_continuation_marginal_is_the_risk_reweighted_covariation() -> None:
+    """`dnu/ds = nu^gamma * E[V'^(-gamma) * dV'/ds]` for exogenous probabilities.
+
+    The certainty equivalent's savings derivative reweights each child's marginal
+    by its risk-transformed value share, so a high-value state contributes less to
+    the marginal incentive than a linear expectation would credit it.
+    """
+    gamma = 4.0
+    child_values = jnp.array([[1.0, 2.0]])
+    child_marginals = jnp.array([[0.5, 0.25]])
+    weights = jnp.array([0.5, 0.5])
+    nu, dnu_ds = ez_continuation(
+        child_values=child_values,
+        child_marginals=child_marginals,
+        weights=weights,
+        risk_aversion=jnp.asarray(gamma),
+    )
+    nu_val = float(np.asarray(nu)[0])
+    reference = nu_val**gamma * (
+        0.5 * 1.0 ** (-gamma) * 0.5 + 0.5 * 2.0 ** (-gamma) * 0.25
+    )
+    np.testing.assert_allclose(np.asarray(dnu_ds)[0], reference, rtol=1e-9)
+
+
+def test_continuation_reduces_to_linear_expectation_at_zero_risk_aversion() -> None:
+    """At `risk_aversion = 0` the pair is the plain `(E[V'], E[dV'/ds])`."""
+    child_values = jnp.array([[1.0, 3.0]])
+    child_marginals = jnp.array([[0.4, 0.2]])
+    weights = jnp.array([0.25, 0.75])
+    nu, dnu_ds = ez_continuation(
+        child_values=child_values,
+        child_marginals=child_marginals,
+        weights=weights,
+        risk_aversion=jnp.asarray(0.0),
+    )
+    np.testing.assert_allclose(np.asarray(nu)[0], 0.25 * 1.0 + 0.75 * 3.0, rtol=1e-10)
+    np.testing.assert_allclose(
+        np.asarray(dnu_ds)[0], 0.25 * 0.4 + 0.75 * 0.2, rtol=1e-10
+    )

@@ -18,7 +18,58 @@ Reference: Alan Lujan, "The Endogenous Grid Method for Epstein-Zin Preferences,"
 arXiv:2601.04438 (2026), direct route (his Section 2.2).
 """
 
+import jax.numpy as jnp
+from jax.scipy.special import logsumexp
+
 from lcm.typing import FloatND, ScalarFloat
+
+
+def ez_continuation(
+    *,
+    child_values: FloatND,
+    child_marginals: FloatND,
+    weights: FloatND,
+    risk_aversion: ScalarFloat | float,
+) -> tuple[FloatND, FloatND]:
+    """Aggregate the continuation certainty equivalent and its savings derivative.
+
+    Reduces over the last axis (the continuation lottery — the joint stochastic
+    node and target regime). The certainty equivalent is the power mean
+    `nu = (E[V'^(1-gamma)])^(1/(1-gamma))`, evaluated in the log domain so it stays
+    finite near the borrowing constraint. Its savings derivative reweights each
+    child's marginal by the child's risk-transformed value share,
+    `dnu/ds = sum_j w_j (nu/V_j')^gamma * dV_j'/ds = nu^gamma * E[V'^(-gamma) dV'/ds]`,
+    computed through the value ratio to keep the powers near one.
+
+    This is the exogenous-probability form: the transition weights do not depend
+    on end-of-period savings (`dP/ds = 0`), which holds whenever next-period
+    uncertainty is an exogenous shock or regime lottery. `risk_aversion = 0`
+    recovers the linear pair `(E[V'], E[dV'/ds])`.
+
+    Args:
+        child_values: Strictly positive next-period values on the continuation
+            lottery, reduced over the last axis.
+        child_marginals: The next-period value derivatives `dV'/ds` on the same
+            lottery axis.
+        weights: Nonnegative lottery probabilities over the last axis.
+        risk_aversion: The Epstein-Zin risk-aversion coefficient.
+
+    Returns:
+        Tuple of the certainty equivalent `nu` and its savings derivative
+        `dnu/ds`, each reduced over the last axis.
+
+    """
+    log_v = jnp.log(child_values)
+    exponent = 1.0 - risk_aversion
+    safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
+    log_nu_power = logsumexp(jnp.log(weights) + exponent * log_v, axis=-1) / (
+        safe_exponent
+    )
+    log_nu_geometric = jnp.sum(jnp.where(weights > 0.0, weights * log_v, 0.0), axis=-1)
+    nu = jnp.exp(jnp.where(exponent == 0.0, log_nu_geometric, log_nu_power))
+    value_share = (nu[..., None] / child_values) ** risk_aversion
+    dnu_ds = jnp.sum(weights * value_share * child_marginals, axis=-1)
+    return nu, dnu_ds
 
 
 def ez_consumption_from_euler(
