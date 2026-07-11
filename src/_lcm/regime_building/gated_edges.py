@@ -456,7 +456,7 @@ def _assemble_gate_kwargs(
                     "`Model.simulate()` does not yet surface it."
                 )
                 raise NotImplementedError(msg)
-            gate_kwargs[arg] = cast("FloatND", d_value) > _D_THRESHOLD
+            gate_kwargs[arg] = d_value > _D_THRESHOLD
         elif arg in gate_ref_values:
             gate_kwargs[arg] = gate_ref_values[arg]
         elif arg in state_mesh:

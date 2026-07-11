@@ -66,6 +66,7 @@ layer.
 from collections.abc import Callable, Mapping
 from inspect import signature
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 
@@ -188,7 +189,10 @@ def route_gated_edges(
 
         projectors = regime.gated_edge_leg_projectors[target_name]
         for leg, projector in zip(legs, projectors, strict=True):
-            fallback_states = _call_with_accepted_kwargs(projector, target_kwargs)
+            fallback_states = cast(
+                "Mapping[str, FloatND]",
+                _call_with_accepted_kwargs(projector, target_kwargs),
+            )
             states = _advance_states_for_subjects(
                 states_per_regime=states,
                 next_states_per_regime=MappingProxyType(
