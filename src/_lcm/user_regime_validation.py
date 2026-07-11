@@ -219,6 +219,104 @@ def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
     return error_messages
 
 
+def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
+    """Validate a regime's `gated_edges` declarations — E3' (regime-local part).
+
+    COLLECTIVE-REGIMES (E3'). Checks the properties knowable without the other
+    regimes: the gate is a plain boolean callable (a stochastic `kappa` gate —
+    a `MarkovTransition` — is out of scope for this slice); every declared edge
+    targets one of the regime's reachable transition targets; the legs cover the
+    SOURCE's stakeholder structure (exactly one leg for a singleton source, one
+    per stakeholder for a collective source). Cross-regime properties — the
+    target and fallback regimes exist, the stakeholder names resolve, the
+    projections cover the reference states — are validated at model processing.
+
+    A gated-edge SOURCE is restricted to the `GridSearch` solver with no taste
+    shocks or certainty equivalent: the source reads the folded ``Wbar`` through
+    the grid-search continuation machinery, and edges touching DC-EGM /
+    taste-shock / certainty-equivalent regimes are out of scope for this slice.
+
+    Called from `Regime.__post_init__` only when `gated_edges` is non-empty, so
+    the default path never reaches it.
+    """
+    _fail_if_gated_edge_source_out_of_scope(regime)
+
+    error_messages: list[str] = []
+    transition_targets = _regime_transition_target_names(regime.transition)
+    source_stakeholders = regime.stakeholders
+
+    for target_name, edge in regime.gated_edges.items():
+        prefix = f"gated_edges['{target_name}']: "
+        if isinstance(edge.gate, MarkovTransition):
+            error_messages.append(
+                f"{prefix}the gate must be a plain boolean function. A "
+                "`MarkovTransition` (stochastic / probabilistic gate) is out of "
+                "scope for this slice — E3' gates are boolean."
+            )
+        elif not callable(edge.gate):
+            error_messages.append(f"{prefix}the gate must be a callable.")
+        if transition_targets is not None and target_name not in transition_targets:
+            error_messages.append(
+                f"{prefix}a gated edge must target one of the regime's reachable "
+                f"transition targets {sorted(transition_targets)}; declare the "
+                f"transition into '{target_name}' as well."
+            )
+        if not edge.legs:
+            error_messages.append(f"{prefix}must declare at least one leg.")
+        elif source_stakeholders is None:
+            if len(edge.legs) != 1:
+                error_messages.append(
+                    f"{prefix}a singleton source regime must declare exactly one "
+                    f"leg (got {sorted(edge.legs)})."
+                )
+        elif set(edge.legs) != set(source_stakeholders):
+            error_messages.append(
+                f"{prefix}the legs must be keyed by exactly the source "
+                f"stakeholders {sorted(source_stakeholders)}; got "
+                f"{sorted(edge.legs)}."
+            )
+
+    if error_messages:
+        raise RegimeInitializationError(format_messages(error_messages))
+
+
+def _fail_if_gated_edge_source_out_of_scope(regime: lcm.regime.Regime) -> None:
+    """Reject a gated-edge source outside the GridSearch / no-shock scope (E3')."""
+    if not isinstance(regime.solver, GridSearch):
+        raise NotImplementedError(
+            "Gated edges (E3') are only implemented for GridSearch source "
+            "regimes: the source reads the folded continuation through the "
+            "grid-search machinery. Edges touching DC-EGM regimes are out of "
+            "scope for this slice. Use `solver=GridSearch()`."
+        )
+    if regime.taste_shocks is not None:
+        raise NotImplementedError(
+            "Gated edges (E3') on a taste-shock source regime are out of scope "
+            "for this slice."
+        )
+    if regime.certainty_equivalent is not None:
+        raise NotImplementedError(
+            "Gated edges (E3') on a certainty-equivalent source regime are out "
+            "of scope for this slice."
+        )
+
+
+def _regime_transition_target_names(transition: object) -> set[str] | None:
+    """Return the reachable target regime names of a regime transition, if known.
+
+    A per-target dict names them directly; a bare callable or `MarkovTransition`
+    resolves its target only at runtime, so returns `None` (skip the membership
+    check). `Phased` uses its solve variant.
+    """
+    from lcm.phased import Phased  # noqa: PLC0415
+
+    if isinstance(transition, Phased):
+        transition = transition.solve
+    if isinstance(transition, Mapping):
+        return {str(key) for key in cast("Mapping[str, object]", transition)}
+    return None
+
+
 def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
     """Exhaustively check key/value types of `regime`'s mapping fields.
 

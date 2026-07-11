@@ -1,9 +1,10 @@
 import functools
 import gc
+import inspect
 import logging
 import os
 import time
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Hashable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -14,6 +15,10 @@ import jax.numpy as jnp
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
+from _lcm.regime_building.gated_edges import (
+    build_same_period_mapping_for_fold,
+)
+from _lcm.regime_building.Q_and_F import SAME_PERIOD_V_ARG
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.logging import (
@@ -72,8 +77,8 @@ def solve(
         third element).
 
     """
-    next_regime_to_V_arr, next_regime_to_egm_carry = _build_continuation_templates(
-        regimes=regimes, flat_params=flat_params
+    next_regime_to_V_arr, next_regime_to_egm_carry, next_edge_to_V_arr = (
+        _build_continuation_templates(regimes=regimes, flat_params=flat_params)
     )
 
     # AOT-compile all unique solve kernels in parallel.
@@ -83,6 +88,7 @@ def solve(
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_egm_carry=next_regime_to_egm_carry,
+        next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
@@ -186,6 +192,7 @@ def solve(
                 ages=ages,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
+                next_edge_to_V_arr=next_edge_to_V_arr,
                 period_egm_carries=period_egm_carries,
                 period_sim_policies=period_sim_policies,
                 period_solution=period_solution,
@@ -241,6 +248,18 @@ def solve(
         # of the raw target V via the existing next_regime_to_V_arr threading.
         # The node fold is streamed to cap peak memory. See design doc §2 (E3')
         # / §3.
+        # COLLECTIVE-REGIMES (E3'): fold each declared gated edge whose target was
+        # solved this period onto the target grid, and roll the resulting Wbar
+        # into the edge continuation the source reads next period. Reads only the
+        # still-live period-t arrays (`period_solution`, `period_divorce_flags`).
+        next_edge_to_V_arr = _roll_gated_edges(
+            regimes=regimes,
+            period_solution=period_solution,
+            period_divorce_flags=period_divorce_flags,
+            base_state_action_spaces=base_state_action_spaces,
+            flat_params=flat_params,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+        )
         next_regime_to_V_arr, next_regime_to_egm_carry = _roll_continuation_inputs(
             regimes=regimes,
             period_solution=period_solution,
@@ -398,6 +417,7 @@ def _solve_regime_period(
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     period_egm_carries: dict[RegimeName, EGMCarry],
     period_sim_policies: dict[RegimeName, EGMSimPolicy],
     period_solution: Mapping[RegimeName, FloatND],
@@ -443,6 +463,16 @@ def _solve_regime_period(
             {
                 ref_regime_name: period_solution[ref_regime_name]
                 for ref_regime_name in regime.same_period_ref_regimes
+            }
+        )
+    if regime.gated_edges:
+        # COLLECTIVE-REGIMES (E3'): hand the source its own rolled Wbar arrays,
+        # keyed by target regime name; the grid-search kernel substitutes them
+        # for the raw target V in `next_regime_to_V_arr`.
+        same_period_kwargs["edge_regime_to_V_arr"] = MappingProxyType(
+            {
+                target_name: next_edge_to_V_arr[(regime_name, target_name)]
+                for target_name in regime.gated_edges
             }
         )
     result = period_kernel(
@@ -541,23 +571,102 @@ def _roll_continuation_inputs(
     return rolled_V_arr, rolled_egm_carry
 
 
+# COLLECTIVE-REGIMES (E3'): a gated edge's continuation slot is keyed by the
+# (source regime, target regime) pair — a source has at most one edge per target,
+# and the same target is read raw by other regimes, so the edge cannot share the
+# plain regime-keyed V slot.
+type _EdgeKey = tuple[RegimeName, RegimeName]
+
+
+def _roll_gated_edges(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    period_solution: dict[RegimeName, FloatND],
+    period_divorce_flags: dict[RegimeName, BoolND],
+    base_state_action_spaces: dict[RegimeName, StateActionSpace],
+    flat_params: FlatParams,
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+) -> MappingProxyType[_EdgeKey, FloatND]:
+    """Fold every gated edge whose target was solved this period; roll the rest.
+
+    COLLECTIVE-REGIMES (E3'). For each declared edge whose target regime (and
+    every reference regime it reads) was solved in the period just completed,
+    evaluate its ``Wbar`` producer on the still-live period-``t`` arrays and
+    store it; edges whose target is inactive this period keep their previous
+    ``Wbar`` (the roll semantics of `next_regime_to_V_arr`). Keeps the full key
+    set so the pytree structure stays JIT-stable.
+    """
+    if not next_edge_to_V_arr:
+        return next_edge_to_V_arr
+    rolled: dict[_EdgeKey, FloatND] = dict(next_edge_to_V_arr)
+    for source_name, source in regimes.items():
+        for target_name, edge in source.gated_edges.items():
+            if target_name not in period_solution:
+                continue
+            if any(ref not in period_solution for ref in edge.reference_regimes):
+                continue
+            fold = source.gated_edge_folds[target_name]
+            same_period_mapping = build_same_period_mapping_for_fold(
+                edge=edge,
+                period_solution=period_solution,
+                period_divorce_flags=period_divorce_flags,
+            )
+            rolled[(source_name, target_name)] = _evaluate_edge_fold(
+                fold=fold,
+                target_states=base_state_action_spaces[target_name].states,
+                same_period_mapping=same_period_mapping,
+                source_flat_params=flat_params[source_name],
+            )
+    return MappingProxyType(rolled)
+
+
+def _evaluate_edge_fold(
+    *,
+    fold: Callable,
+    target_states: Mapping[str, FloatND],
+    same_period_mapping: Mapping[RegimeName, FloatND],
+    source_flat_params: Mapping[str, object],
+) -> FloatND:
+    """Call one edge's fold with exactly the arguments its signature declares."""
+    sig_params = set(inspect.signature(fold).parameters)
+    kwargs: dict[str, object] = {
+        name: arr for name, arr in target_states.items() if name in sig_params
+    }
+    kwargs[SAME_PERIOD_V_ARG] = same_period_mapping
+    kwargs.update(
+        {
+            name: value
+            for name, value in source_flat_params.items()
+            if name in sig_params
+        }
+    )
+    return fold(**kwargs)
+
+
 def _build_continuation_templates(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
 ) -> tuple[
-    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EGMCarry]
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, EGMCarry],
+    MappingProxyType[_EdgeKey, FloatND],
 ]:
     """Build the period-invariant continuation-input templates.
 
-    Both mappings keep the same pytree structure (keys and shapes) across all
+    All mappings keep the same pytree structure (keys and shapes) across all
     periods, avoiding JIT re-compilation from pytree mismatches:
 
     - the V template holds a zero array per regime, shaped (and sharded) like
       the regime's V array;
     - the EGM-carry template holds entries only for carry-producing regimes
       (DC-EGM regimes and, in models with one, terminal regimes), in the key
-      order reused every period.
+      order reused every period;
+    - the gated-edge (E3') template holds a zero ``Wbar`` per declared edge,
+      shaped like the target regime's V state grid plus the source regime's
+      stakeholder axis (a singleton source: the target grid alone). Empty for
+      models without gated edges, so the default path only gains an empty third
+      mapping.
     """
     regime_V_topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
@@ -576,7 +685,54 @@ def _build_continuation_templates(
             if regime.solution.continuation_template is not None
         }
     )
-    return next_regime_to_V_arr, next_regime_to_egm_carry
+    next_edge_to_V_arr = MappingProxyType(
+        {
+            (source_name, target_name): jnp.zeros(shape)
+            for source_name, target_name, shape in _iter_edge_shapes(
+                regimes=regimes, flat_params=flat_params
+            )
+        }
+    )
+    return next_regime_to_V_arr, next_regime_to_egm_carry, next_edge_to_V_arr
+
+
+def _edge_lower_kwargs(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+) -> dict[str, object]:
+    """Lowering kwargs for a source kernel's gated-edge Wbar templates (E3')."""
+    if not regime.gated_edges:
+        return {}
+    return {
+        "edge_regime_to_V_arr": MappingProxyType(
+            {
+                target_name: next_edge_to_V_arr[(regime_name, target_name)]
+                for target_name in regime.gated_edges
+            }
+        )
+    }
+
+
+def _iter_edge_shapes(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+) -> Iterator[tuple[RegimeName, RegimeName, tuple[int, ...]]]:
+    """Yield ``(source, target, Wbar_shape)`` for every declared gated edge (E3')."""
+    for source_name, source in regimes.items():
+        if not source.gated_edges:
+            continue
+        for target_name in source.gated_edges:
+            target = regimes[target_name]
+            target_states = target.solution.state_action_space(
+                regime_params=flat_params[target_name]
+            ).states
+            shape = tuple(len(v) for v in target_states.values())
+            if source.stakeholders is not None:
+                shape = (*shape, len(source.stakeholders))
+            yield source_name, target_name, shape
 
 
 def _build_base_state_action_spaces(
@@ -623,6 +779,7 @@ def _compile_all_functions(
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     enable_jit: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
@@ -705,6 +862,11 @@ def _compile_all_functions(
         unique.items(), 1
     ):
         regime = regimes[regime_name]
+        edge_kwargs = _edge_lower_kwargs(
+            regime=regime,
+            regime_name=regime_name,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+        )
         lower_args = regime.solution.period_kernels[period].build_lower_args(
             core_key=core_key,
             state_action_space=regime.solution.state_action_space(
@@ -715,6 +877,7 @@ def _compile_all_functions(
             flat_params=flat_params,
             period=period,
             ages=ages,
+            **edge_kwargs,
         )
         label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
         labels[func_id] = label

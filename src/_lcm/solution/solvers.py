@@ -117,6 +117,7 @@ class GridSearch(Solver):
                 regime_name=context.regime_name,
                 collective=context.stakeholders is not None,
                 same_period_ref_regimes=context.same_period_ref_regimes,
+                edge_target_regimes=context.edge_target_regimes,
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
 
@@ -547,6 +548,44 @@ class _GridSearchPeriodKernel:
     same-period lowering shape).
     """
 
+    edge_target_regimes: tuple[RegimeName, ...] = ()
+    """Target regimes reached through a gated edge (E3'), or empty.
+
+    COLLECTIVE-REGIMES (E3'). When non-empty, `build_lower_args` and `__call__`
+    replace each such target's entry in `next_regime_to_V_arr` with the gated
+    continuation object ``Wbar`` supplied under `edge_regime_to_V_arr` (a
+    per-source template at lowering, the freshly folded array at run time), so
+    the source's continuation reads ``Wbar`` in place of the raw target V with no
+    change to the compiled core. Empty keeps every other kernel byte-identical.
+    """
+
+    def _with_edge_substitution(
+        self,
+        *,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
+    ) -> Mapping[RegimeName, FloatND]:
+        """Replace edge targets' raw V with their gated ``Wbar`` (E3')."""
+        if not self.edge_target_regimes:
+            return next_regime_to_V_arr
+        if edge_regime_to_V_arr is None:
+            msg = (
+                f"Regime '{self.regime_name}' declares gated edges into "
+                f"{self.edge_target_regimes} but the solve loop passed no edge "
+                "continuation arrays."
+            )
+            raise RuntimeError(msg)
+        return MappingProxyType(
+            {
+                name: (
+                    edge_regime_to_V_arr[name]
+                    if name in self.edge_target_regimes
+                    else arr
+                )
+                for name, arr in next_regime_to_V_arr.items()
+            }
+        )
+
     def cores(self) -> Mapping[str, Callable]:
         """Return the single max-Q-over-a core under the `"main"` key."""
         return MappingProxyType({"main": self.core})
@@ -577,14 +616,22 @@ class _GridSearchPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> Mapping[str, object]:
         """Build the core's lowering arguments: the full state-action product.
 
         For an E2 regime (`same_period_ref_regimes` non-empty) the same-period
         reference V arrays are lowered with the zero templates already built for
         `next_regime_to_V_arr` — the same-period array of a reference regime has
-        exactly its (period-invariant) V shape and sharding.
+        exactly its (period-invariant) V shape and sharding. For an E3' source
+        (`edge_target_regimes` non-empty) each edge target's continuation is
+        lowered with its ``Wbar`` template (target grid + source stakeholder
+        axis), substituted for the raw target V.
         """
+        next_regime_to_V_arr = self._with_edge_substitution(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            edge_regime_to_V_arr=edge_regime_to_V_arr,
+        )
         lower_args: dict[str, object] = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
@@ -613,13 +660,20 @@ class _GridSearchPeriodKernel:
         period: int,
         ages: AgeGrid,
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
+        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelResult:
         """Evaluate the grid search and assemble the `KernelResult`.
 
         `same_period_regime_to_V_arr` is passed by the solve loop only for a
-        regime declaring `same_period_refs` (E2); every other kernel keeps the
-        uniform `PeriodKernel` call signature.
+        regime declaring `same_period_refs` (E2); `edge_regime_to_V_arr` only for
+        a regime declaring `gated_edges` (E3', substituted into
+        `next_regime_to_V_arr` before the core call). Every other kernel keeps
+        the uniform `PeriodKernel` call signature.
         """
+        next_regime_to_V_arr = self._with_edge_substitution(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            edge_regime_to_V_arr=edge_regime_to_V_arr,
+        )
         extra_kwargs: dict[str, object] = {}
         if self.same_period_ref_regimes:
             if same_period_regime_to_V_arr is None:

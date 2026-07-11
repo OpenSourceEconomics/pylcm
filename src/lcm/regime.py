@@ -22,6 +22,7 @@ from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.typing import ActionName, ActiveFunction, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import (
     _validate_collective_regime,
+    _validate_gated_edges,
     _validate_logical_consistency,
     _validate_mapping_contents,
 )
@@ -91,6 +92,94 @@ class SamePeriodRef:
             self,
             "projection",
             ensure_containers_are_immutable(self.projection),
+        )
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class EdgeLeg:
+    """One source-stakeholder leg of a gated edge (E3').
+
+    A gated edge carries one leg per SOURCE stakeholder (a singleton source
+    declares exactly one leg; a collective source one per stakeholder). Each leg
+    says, for that source stakeholder's continuation object ``Wbar^s`` on the
+    target regime's grid:
+
+    - ``target_stakeholder`` — which component of the target regime's value the
+      OPEN (gate-True) branch takes. For a collective target it names one of the
+      target's stakeholders; for a singleton target it is ``None``.
+    - ``fallback`` — a `SamePeriodRef` giving the value the CLOSED (gate-False)
+      branch takes: a same-period reference regime's V at a projection from the
+      TARGET regime's grid coordinates (EKL: the source stakeholder's own single
+      regime, at the projection back to its single state). The mixture is the
+      strict ``jnp.where(gate, V_target, V_fallback)`` — NEVER a linear
+      ``gate*V_target + (1-gate)*V_fallback`` (the target value is ``-inf`` in a
+      divorce cell, and ``0 * -inf = NaN``).
+    """
+
+    fallback: SamePeriodRef
+    """The gate-closed branch: a reference regime's same-period V at a projection."""
+
+    target_stakeholder: str | None = None
+    """The gate-open branch's target-value component, or `None` for a singleton
+    target."""
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class GatedEdge:
+    """A gated edge routing a source regime's continuation into a target (E3').
+
+    The design-doc §2 E3' construct that unlocks MIXED singleton/collective
+    regime topologies: a singleton regime may reach a collective regime (mutual
+    consent marriage) and a collective regime may route per-stakeholder to
+    singleton regimes (divorce) — but only THROUGH a declared gated edge. Direct
+    raw transitions between different-stakeholder regimes stay rejected.
+
+    A source regime declares ``gated_edges`` as a mapping of TARGET regime name
+    to `GatedEdge`. At the end of each period's solve, the engine folds, for
+    each declared edge and each source stakeholder ``s``, a gated continuation
+    object on the target regime's grid::
+
+        Wbar^s(x) = jnp.where(gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)))
+
+    The source's continuation then reads ``Wbar`` in place of the raw target V,
+    threaded through the ordinary transition machinery.
+
+    - ``gate`` — a BOOLEAN user function evaluated pointwise on the target
+      regime's grid. It may read the target regime's per-stakeholder value
+      components under the names ``V_target_<s>`` (one per target stakeholder),
+      the target's divorce flag ``D_target`` (a collective target only), each
+      key of ``gate_refs`` (a same-period reference value at its projection), and
+      ordinary target states / params. EKL consent (eq. 27):
+      ``gate = (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)``
+      — strict, unanimous. EKL no-divorce (eqs. 9/12): ``gate = ~D_target``.
+      Stochastic (``kappa`` in ``(0, 1)``) gates are out of scope for this
+      slice.
+    - ``legs`` — one `EdgeLeg` per SOURCE stakeholder (keyed by source
+      stakeholder name; a singleton source declares exactly one leg under any
+      key).
+    - ``gate_refs`` — extra same-period reference values the ``gate`` reads,
+      exactly like a regime's `same_period_refs` but projected from the TARGET
+      regime's grid.
+    """
+
+    gate: UserFunction
+    """Boolean gate function on the target grid (see the class docstring)."""
+
+    legs: Mapping[str, EdgeLeg]
+    """One `EdgeLeg` per source stakeholder (single leg for a singleton source)."""
+
+    gate_refs: Mapping[str, SamePeriodRef] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Same-period reference values the ``gate`` reads (projected from the target
+    grid)."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "legs", ensure_containers_are_immutable(self.legs))
+        object.__setattr__(
+            self, "gate_refs", ensure_containers_are_immutable(self.gate_refs)
         )
 
 
@@ -300,6 +389,25 @@ class Regime:
     Only non-terminal collective regimes may declare value constraints.
     """
 
+    gated_edges: Mapping[RegimeName, GatedEdge] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Gated edges routing this regime's continuation into a target regime (E3').
+
+    Maps a TARGET regime name to a `GatedEdge`. A gated edge lets this regime
+    reach a target of a DIFFERENT stakeholder layout (a singleton regime into a
+    collective one for mutual-consent marriage, or a collective regime into
+    singleton regimes for divorce) — the only way to cross the mixed-topology
+    fence. When declared, the engine folds a gated continuation object
+    ``Wbar^s = jnp.where(gate, V_target, V_fallback)`` on the target regime's
+    grid at each period's end, and this regime's continuation reads ``Wbar`` in
+    place of the raw target V. See `GatedEdge` and the design doc
+    `pylcm-extension-collective-regimes.md` §2 E3'. Only meaningful together
+    with the corresponding `transition` / `state_transitions` into the target's
+    state space; a target reached by a gated edge is exempt from the mixed-
+    stakeholder rejection.
+    """
+
     same_period_refs: Mapping[str, SamePeriodRef] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -343,6 +451,8 @@ class Regime:
         # collective kernels. The default `None` (singleton) path never enters
         # this branch, so today's behavior is provably untouched. See
         # `pylcm-extension-collective-regimes.md` §2.
+        if self.gated_edges:
+            _validate_gated_edges(self)
         if self.stakeholders is not None:
             _validate_collective_regime(self)
         elif self.weights is not None:
@@ -383,6 +493,7 @@ class Regime:
         make_immutable("constraints")
         make_immutable("derived_categoricals")
         make_immutable("value_constraints")
+        make_immutable("gated_edges")
         make_immutable("same_period_refs")
 
         # The phase grammar (states matrix, carried laws, regime-transition

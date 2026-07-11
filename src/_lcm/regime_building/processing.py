@@ -43,6 +43,11 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
+from _lcm.regime_building.gated_edges import (
+    ResolvedEdgeLeg,
+    ResolvedGatedEdge,
+    get_edge_fold,
+)
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
 )
@@ -54,6 +59,7 @@ from _lcm.regime_building.phases import (
 )
 from _lcm.regime_building.Q_and_F import (
     ResolvedSamePeriodRef,
+    _get_deterministic_transitions,
     get_period_targets,
     get_Q_and_F,
     get_Q_and_F_collective,
@@ -217,6 +223,14 @@ def process_regimes(
     )
     _fail_if_same_period_ref_cycle(user_regimes=user_regimes)
 
+    # COLLECTIVE-REGIMES (E3'): gated-edge declarations are a cross-regime
+    # contract — validate endpoints, stakeholder layout, and projection coverage
+    # before any kernel is built.
+    _fail_if_gated_edges_invalid(
+        user_regimes=user_regimes,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+    )
+
     model_has_egm_regime = any(
         user_regime.solver.requires_continuation_carries
         for user_regime in user_regimes.values()
@@ -300,6 +314,7 @@ def process_regimes(
             stakeholders=stakeholders,
             weights=weights,
             same_period_ref_regimes=same_period_ref_regimes,
+            edge_target_regimes=tuple(user_regime.gated_edges),
         )
 
         simulation = _build_simulation_phase(
@@ -346,7 +361,143 @@ def process_regimes(
             same_period_ref_regimes=same_period_ref_regimes,
         )
 
+    # COLLECTIVE-REGIMES (E3'): build the gated-edge folds in a second pass, now
+    # that every regime's grid and processed functions are known. Each edge's
+    # fold lands on its TARGET regime's grid and reads the target's functions, so
+    # it can only be built after all regimes exist.
+    canonical_regimes = _attach_gated_edge_folds(
+        canonical_regimes=canonical_regimes,
+        user_regimes=user_regimes,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        enable_jit=enable_jit,
+    )
+
     return ensure_containers_are_immutable(canonical_regimes)
+
+
+def _attach_gated_edge_folds(
+    *,
+    canonical_regimes: dict[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    enable_jit: bool,
+) -> dict[RegimeName, Regime]:
+    """Resolve and compile each source regime's gated-edge folds (E3').
+
+    For every source regime declaring `gated_edges`, resolve each user
+    `GatedEdge` to its engine form and build the ``Wbar`` producer on the target
+    regime's grid (reading the target's processed functions). The resolved edges
+    and folds are stored back on the source's canonical regime.
+    """
+    for source_name, user_regime in user_regimes.items():
+        if not user_regime.gated_edges:
+            continue
+        resolved: dict[RegimeName, ResolvedGatedEdge] = {}
+        folds: dict[RegimeName, Callable] = {}
+        for target_name, edge in user_regime.gated_edges.items():
+            resolved_edge = _resolve_gated_edge(
+                source_name=source_name,
+                target_name=target_name,
+                edge=edge,
+                user_regimes=user_regimes,
+            )
+            resolved[target_name] = resolved_edge
+            target_solution = canonical_regimes[target_name].solution
+            target_deterministic_transitions, _ = _get_deterministic_transitions(
+                transitions=target_solution.transitions,
+                stochastic_transition_names=(
+                    target_solution.stochastic_transition_names
+                ),
+            )
+            fold = get_edge_fold(
+                edge=resolved_edge,
+                target_v_info=regime_to_v_interpolation_info[target_name],
+                target_functions=target_solution.functions,
+                target_deterministic_transitions=target_deterministic_transitions,
+                reference_v_info=regime_to_v_interpolation_info,
+                target_stakeholders=user_regimes[target_name].stakeholders,
+            )
+            folds[target_name] = jax.jit(fold) if enable_jit else fold
+        canonical_regimes[source_name] = dataclass_replace(
+            canonical_regimes[source_name],
+            gated_edges=MappingProxyType(resolved),
+            gated_edge_folds=MappingProxyType(folds),
+        )
+    return canonical_regimes
+
+
+def _resolve_gated_edge(
+    *,
+    source_name: RegimeName,
+    target_name: RegimeName,
+    edge: object,
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> ResolvedGatedEdge:
+    """Resolve one user `GatedEdge` to its engine form (E3').
+
+    Validated already by `_fail_if_gated_edges_invalid`, so every named regime
+    and stakeholder exists. Legs are ordered by the SOURCE's stakeholder tuple
+    (a singleton source has one leg with `source_stakeholder=None`); each leg's
+    OPEN-branch target component and its fallback stakeholder become trailing-
+    axis indices.
+    """
+    edge = cast("Any", edge)
+    target_stakeholders = user_regimes[target_name].stakeholders
+    source_stakeholders = user_regimes[source_name].stakeholders
+
+    def _stakeholder_index(
+        regime_name: RegimeName, stakeholder: str | None
+    ) -> int | None:
+        regime_stakeholders = user_regimes[regime_name].stakeholders
+        if regime_stakeholders is None:
+            return None
+        return regime_stakeholders.index(cast("str", stakeholder))
+
+    def _resolve_ref(ref: object) -> ResolvedSamePeriodRef:
+        ref = cast("Any", ref)
+        return ResolvedSamePeriodRef(
+            regime=ref.regime,
+            projection=ref.projection,
+            stakeholder_index=_stakeholder_index(ref.regime, ref.stakeholder),
+        )
+
+    # A collective source's legs are iterated in its stakeholder order so
+    # ``Wbar``'s trailing axis matches the source's stakeholder axis; a singleton
+    # source has exactly one leg (keyed arbitrarily), stored with source
+    # stakeholder `None`.
+    if source_stakeholders is None:
+        leg_order: list[tuple[str, str | None]] = [(next(iter(edge.legs)), None)]
+    else:
+        leg_order = [(s, s) for s in source_stakeholders]
+
+    legs: list[ResolvedEdgeLeg] = []
+    for leg_key, source_stakeholder in leg_order:
+        leg = edge.legs[leg_key]
+        legs.append(
+            ResolvedEdgeLeg(
+                source_stakeholder=source_stakeholder,
+                target_component_index=(
+                    None
+                    if target_stakeholders is None
+                    else target_stakeholders.index(cast("str", leg.target_stakeholder))
+                ),
+                fallback=_resolve_ref(leg.fallback),
+            )
+        )
+    gate_refs = {name: _resolve_ref(ref) for name, ref in edge.gate_refs.items()}
+    reference_regimes = tuple(
+        dict.fromkeys(
+            [leg.fallback.regime for leg in legs]
+            + [ref.regime for ref in gate_refs.values()]
+        )
+    )
+    return ResolvedGatedEdge(
+        target=target_name,
+        gate=edge.gate,
+        gate_refs=MappingProxyType(gate_refs),
+        legs=tuple(legs),
+        reference_regimes=reference_regimes,
+    )
 
 
 def _resolve_stakeholder_weights(
@@ -404,6 +555,11 @@ def _fail_if_collective_regime_targets_unsupported(
             if target_regime is None:
                 continue
             if user_regime.stakeholders is None and target_regime.stakeholders is None:
+                continue
+            # COLLECTIVE-REGIMES (E3'): a target reached through a DECLARED gated
+            # edge is exempt — the edge folds a gated continuation object matching
+            # the SOURCE's stakeholder layout, so the mixed-topology read is safe.
+            if target_regime_name in user_regime.gated_edges:
                 continue
             if user_regime.stakeholders != target_regime.stakeholders:
                 msg = (
@@ -533,6 +689,132 @@ def _fail_if_same_period_refs_invalid(
                 raise ModelInitializationError(msg)
 
 
+def _fail_if_gated_edges_invalid(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> None:
+    """Validate every `gated_edges` declaration against the other regimes (E3').
+
+    COLLECTIVE-REGIMES (E3'). Checks, per edge: the target regime exists; each
+    leg's OPEN-branch target component names a target stakeholder (or is `None`
+    for a singleton target); each fallback and gate reference names an existing
+    regime, with a stakeholder iff that regime is collective, and a projection
+    covering exactly that regime's states.
+
+    Raises:
+        ModelInitializationError: On the first violated declaration.
+    """
+    for regime_name, user_regime in user_regimes.items():
+        for target_name, edge in user_regime.gated_edges.items():
+            prefix = f"Regime '{regime_name}', gated_edges['{target_name}']: "
+            target = user_regimes.get(target_name)
+            if target is None:
+                msg = (
+                    f"{prefix}the target regime is not part of the model. "
+                    f"Known regimes: {sorted(user_regimes)}."
+                )
+                raise ModelInitializationError(msg)
+            for leg_key, leg in edge.legs.items():
+                leg_prefix = f"{prefix}leg '{leg_key}': "
+                _fail_if_target_stakeholder_invalid(
+                    leg_prefix=leg_prefix,
+                    target=target,
+                    target_name=target_name,
+                    target_stakeholder=leg.target_stakeholder,
+                )
+                _fail_if_ref_invalid(
+                    prefix=f"{leg_prefix}fallback ",
+                    ref=leg.fallback,
+                    user_regimes=user_regimes,
+                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                )
+            for ref_name, ref in edge.gate_refs.items():
+                _fail_if_ref_invalid(
+                    prefix=f"{prefix}gate_refs['{ref_name}'] ",
+                    ref=ref,
+                    user_regimes=user_regimes,
+                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                )
+
+
+def _fail_if_target_stakeholder_invalid(
+    *,
+    leg_prefix: str,
+    target: UserRegime,
+    target_name: RegimeName,
+    target_stakeholder: str | None,
+) -> None:
+    """Reject an edge leg whose OPEN-branch target component is inconsistent."""
+    if target.stakeholders is None:
+        if target_stakeholder is not None:
+            msg = (
+                f"{leg_prefix}names target_stakeholder "
+                f"'{target_stakeholder}', but the target regime "
+                f"'{target_name}' is a singleton — drop it."
+            )
+            raise ModelInitializationError(msg)
+    elif target_stakeholder is None:
+        msg = (
+            f"{leg_prefix}the target regime '{target_name}' is collective "
+            f"(stakeholders={target.stakeholders}); the leg must name which "
+            "component the gate-open branch takes via `target_stakeholder=...`."
+        )
+        raise ModelInitializationError(msg)
+    elif target_stakeholder not in target.stakeholders:
+        msg = (
+            f"{leg_prefix}names target_stakeholder '{target_stakeholder}', "
+            f"which is not one of the target's stakeholders {target.stakeholders}."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _fail_if_ref_invalid(
+    *,
+    prefix: str,
+    ref: object,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> None:
+    """Reject an edge fallback / gate reference with an invalid endpoint (E3')."""
+    ref = cast("Any", ref)
+    reference = user_regimes.get(ref.regime)
+    if reference is None:
+        msg = (
+            f"{prefix}reference regime '{ref.regime}' is not part of the model. "
+            f"Known regimes: {sorted(user_regimes)}."
+        )
+        raise ModelInitializationError(msg)
+    if reference.stakeholders is None:
+        if ref.stakeholder is not None:
+            msg = (
+                f"{prefix}names stakeholder '{ref.stakeholder}', but the "
+                f"reference regime '{ref.regime}' is a singleton. Drop it."
+            )
+            raise ModelInitializationError(msg)
+    elif ref.stakeholder is None:
+        msg = (
+            f"{prefix}the reference regime '{ref.regime}' is collective "
+            f"(stakeholders={reference.stakeholders}); name whose value to read "
+            "via `stakeholder=...`."
+        )
+        raise ModelInitializationError(msg)
+    elif ref.stakeholder not in reference.stakeholders:
+        msg = (
+            f"{prefix}names stakeholder '{ref.stakeholder}', not one of the "
+            f"reference regime's stakeholders {reference.stakeholders}."
+        )
+        raise ModelInitializationError(msg)
+    expected_states = set(regime_to_v_interpolation_info[ref.regime].state_names)
+    if set(ref.projection) != expected_states:
+        msg = (
+            f"{prefix}the projection must supply exactly one coordinate function "
+            f"per state of the reference regime ({sorted(expected_states)}); got "
+            f"{sorted(ref.projection)}."
+        )
+        raise ModelInitializationError(msg)
+
+
 def _fail_if_same_period_ref_cycle(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -602,6 +884,7 @@ def _build_solution_phase(
     stakeholders: tuple[str, ...] | None = None,
     weights: Mapping[str, float] | None = None,
     same_period_ref_regimes: tuple[RegimeName, ...] = (),
+    edge_target_regimes: tuple[RegimeName, ...] = (),
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -801,6 +1084,7 @@ def _build_solution_phase(
         stakeholders=stakeholders,
         weights=weights,
         same_period_ref_regimes=same_period_ref_regimes,
+        edge_target_regimes=edge_target_regimes,
     )
     solver.validate(context=context)
     solver_kernels = solver.build_period_kernels(context=context)

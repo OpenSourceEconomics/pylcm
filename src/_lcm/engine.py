@@ -50,6 +50,7 @@ from lcm.typing import (
 type ContinuationPayload = EGMCarry
 
 if TYPE_CHECKING:
+    from _lcm.regime_building.gated_edges import ResolvedGatedEdge
     from _lcm.solution.contract import PeriodKernel
 
     # The contract module imports this one at runtime, so `PeriodKernel` is
@@ -679,6 +680,24 @@ class Regime:
     regimes topologically by these edges (references solved first) and passes
     the referenced regimes' freshly solved V arrays into this regime's kernel
     call. Empty for every other regime — the default path is unchanged.
+    """
+
+    gated_edges: MappingProxyType[RegimeName, ResolvedGatedEdge] = MappingProxyType({})
+    """This regime's gated edges keyed by TARGET regime name, or empty (E3').
+
+    COLLECTIVE-REGIMES (E3'). Non-empty only for a source regime declaring
+    `gated_edges`: each entry folds a gated continuation object ``Wbar`` on the
+    target regime's grid at each period's end, which this regime's continuation
+    reads in place of the raw target V. Empty for every other regime.
+    """
+
+    gated_edge_folds: MappingProxyType[RegimeName, Callable] = MappingProxyType({})
+    """Compiled ``Wbar`` producers per gated-edge target regime, or empty (E3').
+
+    Built once at model processing (a second pass, once every regime's grid and
+    functions are known); the backward-induction loop evaluates each at the end
+    of the period the target was solved in, storing ``Wbar`` in the rolled edge
+    continuation mapping this regime's kernel reads.
     """
 
 

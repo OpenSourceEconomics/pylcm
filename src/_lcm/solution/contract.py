@@ -171,6 +171,16 @@ class SolverBuildContext:
     weights: Mapping[str, float] | None = None
     """Household Pareto weights per stakeholder; set together with `stakeholders`."""
 
+    edge_target_regimes: tuple[RegimeName, ...] = ()
+    """Target regimes this regime reaches through a gated edge, or empty (E3').
+
+    COLLECTIVE-REGIMES (E3'). Non-empty only for a source regime declaring
+    `gated_edges`. The grid-search kernel then substitutes each such target's
+    gated continuation object ``Wbar`` (supplied by the solve loop under
+    ``edge_regime_to_V_arr``) for the raw target V in the ``next_regime_to_V_arr``
+    mapping it reads and lowers against. Empty for every other regime.
+    """
+
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     """Reference regimes whose SAME-period V this regime's kernels read (E2).
 
