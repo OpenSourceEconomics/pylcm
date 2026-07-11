@@ -33,7 +33,7 @@ from _lcm.utils.logging import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 
 
 def solve(
@@ -623,11 +623,24 @@ def _roll_gated_edges(
 def _evaluate_edge_fold(
     *,
     fold: Callable,
-    target_states: Mapping[str, FloatND],
+    target_states: Mapping[str, ContinuousState | DiscreteState],
     same_period_mapping: Mapping[RegimeName, FloatND],
     source_flat_params: Mapping[str, object],
 ) -> FloatND:
-    """Call one edge's fold with exactly the arguments its signature declares."""
+    """Call one edge's fold with exactly the arguments its signature declares.
+
+    COLLECTIVE-REGIMES (E3', slice 5): the target regime's grid may carry
+    DISCRETE state axes (e.g. EKL's encoded spouse-type categorical, or any
+    other `DiscreteGrid` state) alongside continuous ones — `target_states`
+    is `base_state_action_spaces[target_name].states`, whose value type is
+    `ContinuousState | DiscreteState` at the source (`_lcm.engine.
+    StateActionSpace.states`), not float-only. Slices 1-4's gated-edge tests
+    never exercised a discrete target-grid axis, so this signature under-
+    typed the mapping to `FloatND` only; discrete states hit a
+    `BeartypeCallHintParamViolation` at the `int32`-vs-float check inside
+    `fold` (`get_edge_fold`'s `jnp.meshgrid` state broadcast tolerates either
+    dtype — the guard was purely a stale type hint).
+    """
     sig_params = set(inspect.signature(fold).parameters)
     kwargs: dict[str, object] = {
         name: arr for name, arr in target_states.items() if name in sig_params

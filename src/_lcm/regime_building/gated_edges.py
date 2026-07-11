@@ -53,7 +53,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 
 # Suffix under which a target regime's divorce flag `D` (cast to float) is passed
 # in the same-period value mapping the fold consumes. Never a real regime name.
@@ -97,6 +97,30 @@ class ResolvedGatedEdge:
     reference_regimes: tuple[RegimeName, ...]
     """Deduplicated real regimes whose same-period V the fold reads (fallbacks +
     gate refs), excluding the target itself."""
+
+
+def _pad_reader_to_state_names(
+    reader: Callable[..., FloatND],
+    *,
+    state_names: tuple[str, ...],
+) -> Callable[..., FloatND]:
+    """Widen a reader's exposed signature to every one of ``state_names``.
+
+    ``reader``'s own args are kept (states it genuinely reads, plus any extra
+    runtime params, e.g. grid points for an irregular-grid projection); any
+    ``state_names`` entry missing from that set is added as an ignored
+    keyword-only argument, so `_grid_reader`'s downstream `productmap` (which
+    always maps over the FULL `state_names`) sees every axis in the wrapped
+    function's own signature and does not drop it.
+    """
+    own_args = tuple(get_union_of_args([reader]))
+    padded_args = tuple(dict.fromkeys((*own_args, *state_names)))
+
+    @with_signature(args=padded_args, return_annotation="FloatND")
+    def padded(**kwargs: _ParamsLeaf) -> FloatND:
+        return reader(**{name: kwargs[name] for name in own_args})
+
+    return padded
 
 
 def get_edge_fold(
@@ -144,9 +168,26 @@ def get_edge_fold(
     state_names = target_v_info.state_names
 
     def _grid_reader(reader: Callable[..., FloatND]) -> Callable[..., FloatND]:
-        """Product-map an off-grid reference reader over the target grid."""
+        """Product-map an off-grid reference reader over the target grid.
+
+        COLLECTIVE-REGIMES (E3', slice 5): `productmap` derives its OWN
+        outward-facing signature from the wrapped function's own parameters
+        (`_lcm.utils.dispatchers.productmap` -> `allow_only_kwargs`), and
+        silently DROPS any caller-supplied kwarg not in that signature. A
+        same-period-ref projection frequently reads only a STRICT SUBSET of
+        the target's `state_names` (e.g. a gate ref projected from a single
+        newly-drawn state, ignoring a carried-along one) — but `_grid_reader`
+        always maps over the FULL `state_names` (every target-grid axis), and
+        `batched_vmap`'s internal closure unconditionally needs every one of
+        them present in its call kwargs. Left alone, the unused axes get
+        dropped by the signature filter before `batched_vmap` ever sees them,
+        raising a `KeyError` on the first unused axis. Padding the reader's
+        exposed signature to the full `state_names` (ignoring the padding
+        args internally) fixes the mismatch without touching `productmap`
+        itself, which is shared far beyond gated edges.
+        """
         return productmap(
-            func=reader,
+            func=_pad_reader_to_state_names(reader, state_names=state_names),
             variables=state_names,
             batch_sizes=dict.fromkeys(state_names, 0),
         )
@@ -173,6 +214,11 @@ def get_edge_fold(
         )
         for leg in edge.legs
     ]
+    # `get_union_of_args` reflects each reader's EXPOSED signature, which —
+    # thanks to `_pad_reader_to_state_names` inside `_grid_reader` — already
+    # spans the full `state_names` plus any genuine extra params (e.g.
+    # runtime grid points for an irregular-grid projection); no separate
+    # union with `state_names` is needed here.
     gate_ref_args = {
         name: tuple(get_union_of_args([reader]))
         for name, reader in gate_ref_readers.items()
@@ -281,7 +327,7 @@ def _assemble_gate_kwargs(
     target_components: Mapping[str, FloatND],
     d_value: FloatND | None,
     gate_ref_values: Mapping[str, FloatND],
-    state_mesh: Mapping[str, FloatND],
+    state_mesh: Mapping[str, ContinuousState | DiscreteState],
     cell_kwargs: Mapping[str, object],
 ) -> dict[str, object]:
     """Bind each gate argument to its grid array (E3').
@@ -289,6 +335,13 @@ def _assemble_gate_kwargs(
     Resolves the gate's declared arguments against the target's own value
     components (``V_target_<s>``), its boolean divorce flag (``D_target``), the
     gate references, the broadcast target-state grids, and remaining cell kwargs.
+
+    COLLECTIVE-REGIMES (E3', slice 5): ``state_mesh`` carries the target
+    regime's own state grids broadcast to the full mesh (`jnp.meshgrid`),
+    which may include DISCRETE (int-typed) axes — e.g. EKL's encoded
+    spouse-type categorical — not just continuous ones; narrowing this to
+    `FloatND` was a stale type hint (see the identical fix on
+    `_evaluate_edge_fold`'s ``target_states`` in `backward_induction.py`).
     """
     gate_kwargs: dict[str, object] = {}
     for arg in gate_arg_names:
