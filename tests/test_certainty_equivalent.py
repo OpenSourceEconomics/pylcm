@@ -18,7 +18,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import InvalidNameError, RegimeInitializationError
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, NBEGM
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.epstein_zin import get_model, get_params
 
@@ -205,6 +205,27 @@ def test_dcegm_rejects_certainty_equivalent():
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
                 "solver": dcegm,
+            },
+            dead_kwargs={},
+        )
+
+
+def test_nbegm_rejects_certainty_equivalent():
+    """Every EGM-family solver rejects a nonlinear CE until EZ support lands.
+
+    An NBEGM regime with a certainty equivalent must error rather than silently
+    solve the expected-utility problem and ignore the declared preference.
+    """
+    nbegm = NBEGM(
+        post_decision_function="savings",
+        budget_target="resources",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    with pytest.raises(RegimeInitializationError, match="GridSearch"):
+        _make_model(
+            alive_kwargs={
+                "certainty_equivalent": PowerMean(),
+                "solver": nbegm,
             },
             dead_kwargs={},
         )
