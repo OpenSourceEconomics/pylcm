@@ -62,6 +62,13 @@ D_KEY_SUFFIX = "__gated_edge_D__"
 # The float divorce flag is 0.0 / 1.0 at grid points; threshold back to boolean.
 _D_THRESHOLD = 0.5
 
+# COLLECTIVE-REGIMES (E4). `V_arr_name` under which a fold's grid-level `gate`
+# array (cast to float) is bound when interpolated at a simulate-side
+# candidate target-state draw (`get_V_interpolator`); the resulting float is
+# thresholded the same way as `D_target` above.
+GATE_ARR_NAME = "__gate_arr__"
+GATE_THRESHOLD = 0.5
+
 
 @dataclass(frozen=True, kw_only=True)
 class ResolvedEdgeLeg:
@@ -133,15 +140,26 @@ def get_edge_fold(
     ],
     reference_v_info: Mapping[RegimeName, VInterpolationInfo],
     target_stakeholders: tuple[str, ...] | None,
-) -> Callable[..., FloatND]:
-    """Build one edge's fold: a jittable ``Wbar`` producer on the target grid.
+) -> Callable[..., tuple[FloatND, BoolND]]:
+    """Build one edge's fold: a jittable ``(Wbar, gate)`` producer on the target grid.
 
     Returns a callable whose keyword arguments are the target regime's state
     grids, the same-period value mapping (under `SAME_PERIOD_V_ARG` — the target
     V, its float divorce flag, and every reference regime's V) and the gate's
-    flat params. It returns ``Wbar`` of shape ``(*target_state_axes,
+    flat params. It returns a pair: ``Wbar`` of shape ``(*target_state_axes,
     n_source_components)`` for a collective source, or ``(*target_state_axes,)``
-    for a singleton source (a single leg with no trailing axis).
+    for a singleton source (a single leg with no trailing axis); and the raw
+    boolean ``gate`` array of shape ``(*target_state_axes,)`` (grid-level,
+    shared across every leg — the same predicate value that decided each
+    ``jnp.where`` branch of ``Wbar``).
+
+    COLLECTIVE-REGIMES (E4). The solve-side roll (`_roll_gated_edges` in
+    `backward_induction.py`) only ever consumed ``Wbar``; the simulate-side
+    value router additionally needs the raw ``gate`` to decide REGIME
+    ROUTING for a realized subject (`_lcm/simulation/gated_routing.py`) — the
+    grid-level array here is interpolated at the subject's candidate
+    target-state draw, exactly like any other solved array simulate reads.
+    Returning both from one fold avoids evaluating `gate_evaluator` twice.
 
     **Numerics.** The target regime's OWN value components and divorce flag are
     read by DIRECT array indexing off the same-period mapping — never by
@@ -163,7 +181,7 @@ def get_edge_fold(
         target_stakeholders: The target regime's stakeholders, or `None`.
 
     Returns:
-        The fold callable producing ``Wbar`` on the target grid.
+        The fold callable producing ``(Wbar, gate)`` on the target grid.
     """
     state_names = target_v_info.state_names
 
@@ -260,8 +278,8 @@ def get_edge_fold(
 
     singleton_source = all(leg.source_stakeholder is None for leg in edge.legs)
 
-    @with_signature(args=outer_arg_names, return_annotation="FloatND")
-    def fold(**kwargs: _ParamsLeaf) -> FloatND:
+    @with_signature(args=outer_arg_names, return_annotation="tuple[FloatND, BoolND]")
+    def fold(**kwargs: _ParamsLeaf) -> tuple[FloatND, BoolND]:
         same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
         # Direct (un-interpolated) reads of the target's own value and flag, so a
         # `-inf` divorce cell never poisons a neighbour through interpolation.
@@ -314,11 +332,83 @@ def get_edge_fold(
             # STRICT where — never `gate*V + (1-gate)*fallback` (`0*-inf = NaN`).
             component_values.append(jnp.where(gate, open_branch, fallback))
 
-        if singleton_source:
-            return component_values[0]
-        return jnp.stack(component_values, axis=-1)
+        wbar = (
+            component_values[0]
+            if singleton_source
+            else jnp.stack(component_values, axis=-1)
+        )
+        return wbar, gate
 
     return fold
+
+
+_FALLBACK_PROJECTION_TARGET_PREFIX = "__fallback_state__"
+
+
+def build_fallback_state_projector(
+    *,
+    ref: ResolvedSamePeriodRef,
+    fallback_v_info: VInterpolationInfo,
+    target_functions: EconFunctionsMapping,
+    target_deterministic_transitions: Mapping[
+        TransitionFunctionName, TransitionFunction
+    ],
+) -> Callable[..., Mapping[str, FloatND]]:
+    """Project a target-grid point onto one edge leg's FALLBACK state coordinates.
+
+    COLLECTIVE-REGIMES (E4). Companion to `_build_same_period_ref_reader`
+    (which reads the fallback regime's V at these same projected
+    coordinates, for the solve-side fold): the simulate-side value router
+    does not need the fallback's VALUE (Wbar already folds that in) but does
+    need the fallback's own STATE coordinates, to write the divorced/rejected
+    stakeholder's next-period row into `states[fallback.regime]`. Reuses the
+    identical projection-function construction (same `dag_pool`, same
+    `concatenate_functions` targets) so the coordinates are guaranteed
+    consistent with whatever the fold read.
+
+    Args:
+        ref: The leg's resolved fallback reference (`ResolvedEdgeLeg.fallback`).
+        fallback_v_info: V-interpolation info of the FALLBACK regime (`ref.regime`),
+            fixing which state names to project.
+        target_functions: The target regime's processed functions (projections
+            are expressed in terms of the target's own states/helpers).
+        target_deterministic_transitions: The target regime's merged
+            deterministic `next_<state>` laws.
+
+    Returns:
+        A callable, keyed by (a subset of) the target's state names plus any
+        extra params the projections need, returning a dict of the fallback
+        regime's own state-coordinate arrays.
+    """
+    dag_pool = {
+        **dict(target_deterministic_transitions),
+        **{k: v for k, v in target_functions.items() if k != "H"},
+    }
+    projection_funcs: dict[str, Callable[..., FloatND]] = {}
+    projection_args: dict[str, tuple[str, ...]] = {}
+    for state_name in fallback_v_info.state_names:
+        target = f"{_FALLBACK_PROJECTION_TARGET_PREFIX}{state_name}"
+        projection_funcs[state_name] = concatenate_functions(
+            functions={**dag_pool, target: ref.projection[state_name]},
+            targets=target,
+            enforce_signature=False,
+            set_annotations=True,
+        )
+        projection_args[state_name] = tuple(
+            get_union_of_args([projection_funcs[state_name]])
+        )
+    arg_names = sorted({arg for args in projection_args.values() for arg in args})
+
+    @with_signature(args=arg_names, return_annotation="Mapping[str, FloatND]")
+    def project(**kwargs: _ParamsLeaf) -> Mapping[str, FloatND]:
+        return {
+            state_name: projection_funcs[state_name](
+                **{arg: kwargs[arg] for arg in projection_args[state_name]}
+            )
+            for state_name in fallback_v_info.state_names
+        }
+
+    return project
 
 
 def _assemble_gate_kwargs(
@@ -348,6 +438,24 @@ def _assemble_gate_kwargs(
         if arg in target_components:
             gate_kwargs[arg] = target_components[arg]
         elif arg == "D_target":
+            if d_value is None:
+                # COLLECTIVE-REGIMES (E4). Solve always publishes a divorce
+                # flag for every active collective regime, so this branch is
+                # unreachable there; it fires only when a SIMULATE caller
+                # invoked the internal `simulate()` without threading
+                # `period_to_regime_to_divorce_flags` (e.g. the public
+                # `Model.simulate()`, which does not yet surface it — see
+                # `pylcm-extension-collective-regimes.md` v2.1, slice 6). Fail
+                # clearly instead of `None > 0.5`.
+                msg = (
+                    "This gate reads 'D_target', but no divorce-flag array "
+                    "was supplied for the target regime at this period. "
+                    "Forward simulation needs `period_to_regime_to_divorce_flags` "
+                    "(the third element `backward_induction.solve` returns) "
+                    "threaded through to `simulate()`; the public "
+                    "`Model.simulate()` does not yet surface it."
+                )
+                raise NotImplementedError(msg)
             gate_kwargs[arg] = cast("FloatND", d_value) > _D_THRESHOLD
         elif arg in gate_ref_values:
             gate_kwargs[arg] = gate_ref_values[arg]

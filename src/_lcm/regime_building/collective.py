@@ -30,6 +30,57 @@ from _lcm.regime_building.argmax import (
 from lcm.typing import BoolND, FloatND, IntND
 
 
+def collective_argmax_and_readout(
+    *,
+    stakeholder_Q: Mapping[str, FloatND],
+    feasibility: BoolND,
+    weights: Mapping[str, FloatND | float],
+    action_axes: tuple[int, ...],
+) -> tuple[IntND, dict[str, FloatND], BoolND]:
+    r"""Like `collective_readout`, but also returns the household argmax index.
+
+    COLLECTIVE-REGIMES (E4). The solve-side readout (`collective_readout`)
+    only needs the per-stakeholder VALUES at the shared argmax; the simulate-
+    side value router additionally needs the argmax INDEX itself, so the
+    engine can look up which action was actually taken (mirroring the
+    singleton `argmax_and_max_Q_over_a`, whose flat index feeds
+    `_lookup_values_from_indices`). Factored out so `collective_readout`
+    (still the solve entry point) stays byte-identical.
+
+    Returns:
+        Tuple ``(argmax_flat, V, D)`` — the flat argmax index (in the same
+        flattened-action layout `argmax_and_max` produces, directly
+        compatible with the singleton simulate lookup), the per-stakeholder
+        value mapping, and the divorce flag.
+    """
+    if not stakeholder_Q:
+        msg = "collective_argmax_and_readout requires at least one stakeholder."
+        raise ValueError(msg)
+    if set(stakeholder_Q) != set(weights):
+        msg = (
+            "stakeholder_Q and weights must have identical keys; got "
+            f"{sorted(stakeholder_Q)} vs {sorted(weights)}."
+        )
+        raise ValueError(msg)
+
+    objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)
+    argmax_flat, _ = argmax_and_max(
+        objective, axis=action_axes, initial=-jnp.inf, where=feasibility
+    )
+    divorce = ~jnp.any(feasibility, axis=action_axes)
+    values = {
+        name: jnp.where(
+            divorce,
+            -jnp.inf,
+            _gather_along_actions(
+                q=q, argmax_flat=argmax_flat, action_axes=action_axes
+            ),
+        )
+        for name, q in stakeholder_Q.items()
+    }
+    return argmax_flat, values, divorce
+
+
 def collective_readout(
     *,
     stakeholder_Q: Mapping[str, FloatND],
@@ -71,45 +122,12 @@ def collective_readout(
         shape ``(*state_axes,)`` (the action axes reduced away), and ``D`` is the
         boolean all-infeasible flag of shape ``(*state_axes,)``.
     """
-    if not stakeholder_Q:
-        msg = "collective_readout requires at least one stakeholder."
-        raise ValueError(msg)
-    if set(stakeholder_Q) != set(weights):
-        msg = (
-            "stakeholder_Q and weights must have identical keys; got "
-            f"{sorted(stakeholder_Q)} vs {sorted(weights)}."
-        )
-        raise ValueError(msg)
-
-    # Household scalarization O = Σ_s λ_s Q^s over the common action grid.
-    objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)
-
-    # Joint argmax over the feasible action axes (first maximizer on ties). The max
-    # value of O itself is discarded — E1 reads each stakeholder's OWN Q at a*.
-    argmax_flat, _ = argmax_and_max(
-        objective, axis=action_axes, initial=-jnp.inf, where=feasibility
+    _argmax_flat, values, divorce = collective_argmax_and_readout(
+        stakeholder_Q=stakeholder_Q,
+        feasibility=feasibility,
+        weights=weights,
+        action_axes=action_axes,
     )
-
-    # Divorce / empty-feasible-set flag: no feasible action anywhere over the action
-    # axes for this state cell. Distinct from a numeric -inf value.
-    divorce = ~jnp.any(feasibility, axis=action_axes)
-
-    # Gather each stakeholder's Q at the shared argmax, using the same flatten order
-    # `argmax_and_max` used to produce the index. In an all-infeasible cell the
-    # masked argmax is arbitrary (every masked value ties at -inf), so the gathered
-    # Q^s would be an infeasible action's value — overwrite it with the -inf
-    # sentinel; D is the only faithful marker there.
-    values = {
-        name: jnp.where(
-            divorce,
-            -jnp.inf,
-            _gather_along_actions(
-                q=q, argmax_flat=argmax_flat, action_axes=action_axes
-            ),
-        )
-        for name, q in stakeholder_Q.items()
-    }
-
     return values, divorce
 
 

@@ -11,7 +11,10 @@ from jax import Array
 
 from _lcm.logsum import EULER_GAMMA, logsum_and_softmax
 from _lcm.regime_building.argmax import argmax_and_max
-from _lcm.regime_building.collective import collective_readout
+from _lcm.regime_building.collective import (
+    collective_argmax_and_readout,
+    collective_readout,
+)
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -241,6 +244,8 @@ def get_argmax_and_max_Q_over_a(
     state_names: tuple[StateName, ...],
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
+    stakeholders: tuple[str, ...] | None = None,
+    weights: Mapping[str, float] | None = None,
 ) -> ArgmaxQOverAFunction:
     r"""Get the function returning the arguments maximizing Q over all actions.
 
@@ -276,6 +281,18 @@ def get_argmax_and_max_Q_over_a(
             combination mean-zero `scale * (Gumbel(0, 1) - EULER_GAMMA)` noise
             is added to the masked maxima over the continuous axes before the
             discrete argmax — exactly logit-consistent with the smoothed solve.
+        stakeholders: Ordered stakeholder names for a collective regime, or
+            `None` (the singleton default). COLLECTIVE-REGIMES (E4): when
+            set, `Q_and_F` returns a stacked per-stakeholder `Q` (trailing
+            stakeholder axis); the household argmax of the weighted
+            scalarization is computed once (`collective_argmax_and_readout`)
+            and each stakeholder's own value is gathered at that shared
+            index — mirrors the solve-side `get_max_Q_over_a` collective
+            branch so simulate recomputes the identical argmax. Mutually
+            exclusive with `has_taste_shocks` (rejected at regime
+            construction for collective regimes).
+        weights: Household Pareto weights per stakeholder; required (and only
+            used) when `stakeholders` is set.
 
     Returns:
         Function that calculates the argument maximizing Q over the feasible continuous
@@ -359,11 +376,28 @@ def get_argmax_and_max_Q_over_a(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **states_actions_params,
             )
-            # COLLECTIVE-REGIMES (E1): per-stakeholder value readout lands here.
-            # Today one Q_arr is argmaxed and its max returned. E1 argmaxes the
-            # household objective O({Q^s}) once, then gathers each stakeholder's
-            # Q^s at that common a* (`argmax_and_max` already returns the index).
-            # See design doc §2 (E1) / §3.
+            if stakeholders is not None:
+                # COLLECTIVE-REGIMES (E4): mirrors the solve-side collective
+                # branch in `get_max_Q_over_a` — split the stacked Q by
+                # stakeholder, argmax the household scalarization once over
+                # the (value-masked, per E2) feasible action set, and gather
+                # each stakeholder's OWN value at that shared index. The
+                # simulate-only addition vs. the solve readout
+                # (`collective_readout`) is the argmax index itself, needed
+                # to look up which JOINT action both stakeholders actually
+                # took (`_lookup_values_from_indices` in `simulate.py`).
+                action_axes = tuple(range(F_arr.ndim))
+                stakeholder_Q = {
+                    name: Q_arr[..., index] for index, name in enumerate(stakeholders)
+                }
+                argmax_flat, values, _divorce = collective_argmax_and_readout(
+                    stakeholder_Q=stakeholder_Q,
+                    feasibility=F_arr,
+                    weights=cast("Mapping[str, float]", weights),
+                    action_axes=action_axes,
+                )
+                V_stacked = jnp.stack([values[name] for name in stakeholders], axis=-1)
+                return argmax_flat, V_stacked
             return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 
     return argmax_and_max_Q_over_a

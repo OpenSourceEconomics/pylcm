@@ -44,8 +44,10 @@ from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.gated_edges import (
+    GATE_ARR_NAME,
     ResolvedEdgeLeg,
     ResolvedGatedEdge,
+    build_fallback_state_projector,
     get_edge_fold,
 )
 from _lcm.regime_building.max_Q_over_a import (
@@ -69,7 +71,11 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
-from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
+from _lcm.regime_building.V import (
+    VInterpolationInfo,
+    create_v_interpolation_info,
+    get_V_interpolator,
+)
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
@@ -320,6 +326,7 @@ def process_regimes(
         simulation = _build_simulation_phase(
             spec=spec,
             regime_name=regime_name,
+            user_regimes=user_regimes,
             nested_transitions=simulate_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
@@ -339,6 +346,7 @@ def process_regimes(
             solver=user_regime.solver,
             certainty_equivalent=user_regime.certainty_equivalent,
             stakeholders=stakeholders,
+            weights=weights,
         )
 
         stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -385,15 +393,19 @@ def _attach_gated_edge_folds(
     """Resolve and compile each source regime's gated-edge folds (E3').
 
     For every source regime declaring `gated_edges`, resolve each user
-    `GatedEdge` to its engine form and build the ``Wbar`` producer on the target
-    regime's grid (reading the target's processed functions). The resolved edges
-    and folds are stored back on the source's canonical regime.
+    `GatedEdge` to its engine form and build the ``(Wbar, gate)`` producer on the
+    target regime's grid (reading the target's processed functions), plus one
+    per-leg FALLBACK state projector and a gate interpolator (E4 simulate
+    routing — see `build_fallback_state_projector`). The resolved edges,
+    folds, and projectors are stored back on the source's canonical regime.
     """
     for source_name, user_regime in user_regimes.items():
         if not user_regime.gated_edges:
             continue
         resolved: dict[RegimeName, ResolvedGatedEdge] = {}
         folds: dict[RegimeName, Callable] = {}
+        leg_projectors: dict[RegimeName, tuple[Callable, ...]] = {}
+        gate_interpolators: dict[RegimeName, Callable] = {}
         for target_name, edge in user_regime.gated_edges.items():
             resolved_edge = _resolve_gated_edge(
                 source_name=source_name,
@@ -418,10 +430,33 @@ def _attach_gated_edge_folds(
                 target_stakeholders=user_regimes[target_name].stakeholders,
             )
             folds[target_name] = jax.jit(fold) if enable_jit else fold
+            # COLLECTIVE-REGIMES (E4): the fold's `gate` output lives on the
+            # target's full grid; the simulate-side router reads it at a
+            # REALIZED (candidate target-state) point via ordinary
+            # V-interpolation — the same machinery every other solved array
+            # is read through, so an exactly-on-grid discrete draw (E4's own
+            # test topologies) is read exactly and a genuinely off-grid
+            # continuous state degrades gracefully to linear interpolation.
+            gate_interpolators[target_name] = get_V_interpolator(
+                v_interpolation_info=regime_to_v_interpolation_info[target_name],
+                state_prefix="",
+                V_arr_name=GATE_ARR_NAME,
+            )
+            leg_projectors[target_name] = tuple(
+                build_fallback_state_projector(
+                    ref=leg.fallback,
+                    fallback_v_info=regime_to_v_interpolation_info[leg.fallback.regime],
+                    target_functions=target_solution.functions,
+                    target_deterministic_transitions=target_deterministic_transitions,
+                )
+                for leg in resolved_edge.legs
+            )
         canonical_regimes[source_name] = dataclass_replace(
             canonical_regimes[source_name],
             gated_edges=MappingProxyType(resolved),
             gated_edge_folds=MappingProxyType(folds),
+            gated_edge_leg_projectors=MappingProxyType(leg_projectors),
+            gated_edge_gate_interpolators=MappingProxyType(gate_interpolators),
         )
     return canonical_regimes
 
@@ -1345,6 +1380,7 @@ def _build_simulation_phase(
     *,
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
+    user_regimes: Mapping[RegimeName, UserRegime],
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
@@ -1364,6 +1400,7 @@ def _build_simulation_phase(
     solver: Solver,
     certainty_equivalent: CertaintyEquivalent | None,
     stakeholders: tuple[str, ...] | None = None,
+    weights: Mapping[str, float] | None = None,
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -1386,6 +1423,13 @@ def _build_simulation_phase(
     Args:
         spec: The regime's per-phase specification.
         regime_name: The name of the regime.
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances. COLLECTIVE-REGIMES (E4): only consulted for a
+            collective regime, to resolve its `value_constraints` (E2) and
+            `same_period_refs` (E2) exactly as the solve phase does — the
+            simulate-phase Q_and_F must apply the identical value-aware
+            feasibility mask so the simulated argmax never picks an action
+            the solved value function excluded.
         nested_transitions: Per-target transition bundles for internal
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
@@ -1412,6 +1456,11 @@ def _build_simulation_phase(
             gets the synthesized intrinsic budget constraint.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
+        stakeholders: Ordered stakeholder names for a collective regime, or
+            `None` (the singleton default).
+        weights: Household Pareto weights per stakeholder; required (and only
+            used) when `stakeholders` is set — feeds the simulate-side
+            argmax's household scalarization (E4).
 
     Returns:
         Complete simulate functions container.
@@ -1482,25 +1531,34 @@ def _build_simulation_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
-    # COLLECTIVE-REGIMES (E4): collective-regime simulation (the value router)
-    # is not implemented in this slice. A collective regime solves but does
-    # not simulate, and the model builds eagerly — so the simulate-phase
-    # decision functions are skipped and the argmax kernels below are replaced
-    # by a stub that raises only if a caller actually simulates the regime.
+    # COLLECTIVE-REGIMES (E4): forward simulation of a collective regime
+    # reuses the SAME Q_and_F builders the solve phase uses (E1/E2's
+    # `get_Q_and_F_terminal_collective` / `get_Q_and_F_collective`,
+    # value-masked exactly like solve), so the simulated argmax never picks
+    # an action the solved value function excluded. Only the ARGMAX step
+    # differs from the singleton path — `get_argmax_and_max_Q_over_a`'s
+    # collective branch (below) recomputes the household argmax and gathers
+    # each stakeholder's own value at it.
     collective = stakeholders is not None
+    user_regime = user_regimes[regime_name] if collective else None
     if spec.terminal:
         compute_regime_transition_probs = None
         if collective:
-            Q_and_F_functions = MappingProxyType({})
+            terminal_func = get_Q_and_F_terminal_collective(
+                flat_param_names=flat_param_names,
+                functions=functions,
+                constraints=constraints,
+                stakeholders=stakeholders,
+            )
         else:
             terminal_func = get_Q_and_F_terminal(
                 flat_param_names=flat_param_names,
                 functions=functions,
                 constraints=constraints,
             )
-            Q_and_F_functions = MappingProxyType(
-                dict.fromkeys(range(ages.n_periods), terminal_func)
-            )
+        Q_and_F_functions = MappingProxyType(
+            dict.fromkeys(range(ages.n_periods), terminal_func)
+        )
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=simulate_functions,
@@ -1513,37 +1571,56 @@ def _build_simulation_phase(
             phase="simulate",
             next_regime_cells=core.next_regime_cells,
         )
+        # Q_and_F uses the solve (non-vmapped) regime transition probs since
+        # it evaluates on the Cartesian grid, not per-subject. The solve
+        # phase built that function unconditionally for non-terminal regimes.
+        assert solve_compute_regime_transition_probs is not None  # noqa: S101
         if collective:
-            Q_and_F_functions = MappingProxyType({})
-        else:
-            # Q_and_F uses the solve (non-vmapped) regime transition probs since
-            # it evaluates on the Cartesian grid, not per-subject. The solve
-            # phase built that function unconditionally for non-terminal regimes.
-            assert solve_compute_regime_transition_probs is not None  # noqa: S101
-            Q_and_F_functions = _build_Q_and_F_per_period(
-                regimes_to_active_periods=regimes_to_active_periods,
-                functions=functions,
-                constraints=constraints,
-                transitions=solve_transitions,
-                stochastic_transition_names=solve_stochastic_transition_names,
-                compute_regime_transition_probs=solve_compute_regime_transition_probs,
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                ages=ages,
-                flat_param_names=flat_param_names,
-                certainty_equivalent=certainty_equivalent,
+            # COLLECTIVE-REGIMES (E2): resolve the same value_constraints /
+            # same_period_refs the solve phase reads, so simulate applies the
+            # identical value-aware feasibility mask (E2's `Q_<s>`-conditioned
+            # IR predicates, and same-period reference reads).
+            assert user_regime is not None  # noqa: S101
+            value_constraints = MappingProxyType(
+                {
+                    name: _rename_params_to_qnames(
+                        func=func,
+                        regime_params_template=regime_params_template,
+                        param_key=name,
+                    )
+                    for name, func in user_regime.value_constraints.items()
+                }
             )
+            same_period_refs = _resolve_same_period_refs(
+                user_regime=user_regime, user_regimes=user_regimes
+            )
+        else:
+            value_constraints = MappingProxyType({})
+            same_period_refs = MappingProxyType({})
+        Q_and_F_functions = _build_Q_and_F_per_period(
+            regimes_to_active_periods=regimes_to_active_periods,
+            functions=functions,
+            constraints=constraints,
+            transitions=solve_transitions,
+            stochastic_transition_names=solve_stochastic_transition_names,
+            compute_regime_transition_probs=solve_compute_regime_transition_probs,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            ages=ages,
+            flat_param_names=flat_param_names,
+            certainty_equivalent=certainty_equivalent,
+            stakeholders=stakeholders,
+            value_constraints=value_constraints,
+            same_period_refs=same_period_refs,
+        )
 
-    if collective:
-        argmax_and_max_Q_over_a = _build_collective_simulate_stub(
-            regime_name=regime_name, ages=ages
-        )
-    else:
-        argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
-            state_action_space=state_action_space,
-            Q_and_F_functions=Q_and_F_functions,
-            enable_jit=enable_jit,
-            has_taste_shocks=has_taste_shocks,
-        )
+    argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
+        state_action_space=state_action_space,
+        Q_and_F_functions=Q_and_F_functions,
+        enable_jit=enable_jit,
+        has_taste_shocks=has_taste_shocks,
+        stakeholders=stakeholders,
+        weights=weights,
+    )
 
     next_state = _build_next_state_vmapped(
         functions=simulate_functions,
@@ -2756,44 +2833,25 @@ def _build_Q_and_F_per_period(
     return MappingProxyType(result)
 
 
-def _build_collective_simulate_stub(
-    *, regime_name: RegimeName, ages: AgeGrid
-) -> MappingProxyType[int, ArgmaxQOverAFunction]:
-    """Per-period argmax placeholders for an as-yet-unsimulatable collective regime.
-
-    COLLECTIVE-REGIMES (E4). Collective-regime simulation (the value router) is
-    not implemented; a collective regime is solved but not simulated in this
-    slice. The model builds eagerly, so a placeholder argmax is supplied per
-    period that raises `NotImplementedError` only if `simulate` actually invokes
-    it — solve is unaffected.
-    """
-
-    def _raise(*_args: object, **_kwargs: object) -> tuple[IntND, FloatND]:
-        msg = (
-            f"Simulation of collective (stakeholder-valued) regime "
-            f"'{regime_name}' is not yet implemented (E4). The regime solves, "
-            "but its per-stakeholder value router is forthcoming; see the design "
-            "doc `pylcm-extension-collective-regimes.md` (v2.1), slice 6."
-        )
-        raise NotImplementedError(msg)
-
-    return MappingProxyType(
-        dict.fromkeys(range(ages.n_periods), cast("ArgmaxQOverAFunction", _raise))
-    )
-
-
 def _build_argmax_and_max_Q_over_a_per_period(
     *,
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
     has_taste_shocks: bool = False,
+    stakeholders: tuple[str, ...] | None = None,
+    weights: Mapping[str, float] | None = None,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
     """Build argmax-and-max-Q-over-a closures for each period.
 
     Periods sharing the same Q_and_F object reuse a single compiled function.
     With taste shocks, the per-subject Gumbel key is vmapped alongside the
     simulated states.
+
+    COLLECTIVE-REGIMES (E4): `stakeholders`/`weights`, when set, thread into
+    `get_argmax_and_max_Q_over_a`'s collective branch — the returned V carries
+    a trailing stakeholder axis, which `simulation_spacemap` below preserves
+    (it only maps over `state_names`, never the trailing axis).
     """
     spacemapped_names = tuple(state_action_space.states)
     if has_taste_shocks:
@@ -2810,6 +2868,8 @@ def _build_argmax_and_max_Q_over_a_per_period(
                 state_names=state_action_space.state_names,
                 n_discrete_action_axes=len(state_action_space.discrete_actions),
                 has_taste_shocks=has_taste_shocks,
+                stakeholders=stakeholders,
+                weights=weights,
             )
             if enable_jit:
                 func = jax.jit(func)

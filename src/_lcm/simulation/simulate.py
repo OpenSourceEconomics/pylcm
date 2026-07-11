@@ -13,6 +13,10 @@ from _lcm.engine import (
     Regime,
     StateActionSpace,
 )
+from _lcm.simulation.gated_routing import (
+    route_gated_edges,
+    substitute_gated_edge_continuations,
+)
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
@@ -48,7 +52,7 @@ from _lcm.utils.logging import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.result import SimulationResult
-from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
+from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
 
 
 def simulate(
@@ -66,6 +70,9 @@ def simulate(
     seed: int | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
+    period_to_regime_to_divorce_flags: MappingProxyType[
+        int, MappingProxyType[RegimeName, BoolND]
+    ] = MappingProxyType({}),
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -99,6 +106,13 @@ def simulate(
             by `pad_initial_conditions_to_multiple`. When set, RNG keys are sized to it
             and the trailing pad rows are trimmed from the results before they are
             returned. `None` means no padding was applied.
+        period_to_regime_to_divorce_flags: Immutable mapping of periods to each
+            COLLECTIVE regime's divorce flag `D` (E2/E4), as returned by
+            `backward_induction.solve`'s third element. Empty (the default)
+            for models without gated edges reading `D_target`, or when the
+            caller does not have it at hand — not yet surfaced through the
+            public `Model.solve`/`Model.simulate` API (mirrors solve's own
+            internal-only status; a public accessor is a follow-up).
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -158,6 +172,7 @@ def simulate(
             regime_names_to_ids=regime_names_to_ids,
             regime_ids_to_names=regime_ids_to_names,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_divorce_flags=period_to_regime_to_divorce_flags,
             flat_params=flat_params,
             ages=ages,
             seed=seed,
@@ -227,6 +242,9 @@ def _simulate_subject_chunk(
     regime_ids_to_names: RegimeIdsToNames,
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
+    ],
+    period_to_regime_to_divorce_flags: MappingProxyType[
+        int, MappingProxyType[RegimeName, BoolND]
     ],
     flat_params: FlatParams,
     ages: AgeGrid,
@@ -303,6 +321,8 @@ def _simulate_subject_chunk(
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                    period_to_regime_to_divorce_flags=period_to_regime_to_divorce_flags,
+                    base_state_action_spaces=base_state_action_spaces,
                     flat_params=flat_params,
                     regime_names_to_ids=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
@@ -319,11 +339,21 @@ def _simulate_subject_chunk(
             # Out-of-regime subjects carry placeholder entries (possibly -inf,
             # when their state is infeasible under this regime's problem);
             # validate only the subjects simulated in this regime.
+            #
+            # COLLECTIVE-REGIMES (E4): a collective regime's `V_arr` carries a
+            # trailing stakeholder axis (`(n_subjects, n_stakeholders)`), so
+            # `in_regime` (always `(n_subjects,)`) needs trailing singleton
+            # axes to broadcast against it; a singleton regime's `V_arr` is
+            # already `(n_subjects,)` and this is a no-op reshape.
+            in_regime_broadcast = result.in_regime.reshape(
+                result.in_regime.shape
+                + (1,) * (result.V_arr.ndim - result.in_regime.ndim)
+            )
             log_nan_in_V(
                 logger=logger,
                 regime_name=regime_name,
                 age=age,
-                V_arr=jnp.where(result.in_regime, result.V_arr, 0.0),
+                V_arr=jnp.where(in_regime_broadcast, result.V_arr, 0.0),
             )
 
         subject_regime_ids = new_subject_regime_ids
@@ -388,6 +418,7 @@ def _simulate_regime_in_period(
     regime_name: RegimeName,
     regime: Regime,
     base_state_action_space: StateActionSpace,
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     period: int,
     age: ScalarInt | ScalarFloat,
     states: StatesPerRegime,
@@ -395,6 +426,9 @@ def _simulate_regime_in_period(
     new_subject_regime_ids: Int1D,
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
+    ],
+    period_to_regime_to_divorce_flags: MappingProxyType[
+        int, MappingProxyType[RegimeName, BoolND]
     ],
     flat_params: FlatParams,
     regime_names_to_ids: RegimeNamesToIds,
@@ -415,6 +449,10 @@ def _simulate_regime_in_period(
         regime: Internal representation of the regime.
         base_state_action_space: The regime's params-completed state-action
             space, built once per simulate call.
+        base_state_action_spaces: Every regime's params-completed state-action
+            space (COLLECTIVE-REGIMES E4: a gated edge's value/gate fold
+            needs its TARGET regime's own state grids, not just this
+            regime's).
         period: Current period (0-indexed).
         age: Age corresponding to current period.
         states: Carrier of current-period state arrays for every regime and
@@ -422,6 +460,8 @@ def _simulate_regime_in_period(
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
+        period_to_regime_to_divorce_flags: Each COLLECTIVE regime's divorce
+            flag `D` per period (E2/E4); empty for models without one.
         flat_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         active_regimes_next_period: Tuple of active regime names in the next period.
@@ -456,19 +496,43 @@ def _simulate_regime_in_period(
         period + 1, MappingProxyType({})
     )
 
-    # COLLECTIVE-REGIMES (E4): the simulate value router lands here. Regime
-    # routing for a collective regime is not Phi(x,a): the simulator draws the
-    # candidate realizations (offer arrival, spouse attributes, all period
-    # shocks), recomputes the candidate regimes' per-stakeholder values at the
-    # realized point (this recompute-argmax path is exactly what E4 extends),
-    # evaluates the same consent/divorce gates as E3', then routes and discards
-    # the losing candidate. A between-period state-reassignment hook (child ages
-    # exiting at 19) also lives on the simulate side. See design doc §2 (E4) / §3.
-    #
+    # COLLECTIVE-REGIMES (E4): the simulate value router. A regime declaring
+    # `gated_edges` must have its OWN action choice informed by the gated
+    # continuation `Wbar`, not the target's raw (ungated) value — substitute
+    # it into `next_regime_to_V_arr` exactly like the solve-side kernel does
+    # (`_with_edge_substitution`), computed here from the already-solved
+    # next-period arrays. `gate_arrays` (the fold's raw boolean gate, per
+    # target) feeds the REGIME-ROUTING step below, after the action and
+    # candidate next-states are known. No-op (returns the inputs unchanged)
+    # for a regime without `gated_edges`. See design doc §2 (E4) / §3.
+    next_regime_to_V_arr, gate_arrays = substitute_gated_edge_continuations(
+        regime=regime,
+        regime_name=regime_name,
+        period=period,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        base_state_action_spaces=base_state_action_spaces,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        period_to_regime_to_divorce_flags=period_to_regime_to_divorce_flags,
+        flat_params=flat_params,
+    )
+
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.
     argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
+
+    # COLLECTIVE-REGIMES (E2, simulate side): a regime declaring
+    # `same_period_refs` reads other regimes' THIS-period V (not the
+    # next-period continuation) inside its value-aware feasibility mask —
+    # exactly like the solve kernel's `same_period_regime_to_V_arr`, sourced
+    # here from the already-solved solution instead of the live backward-
+    # induction loop. Empty for every regime without same-period references.
+    same_period_kwargs: dict[str, object] = {}
+    if regime.same_period_ref_regimes:
+        this_period_V = period_to_regime_to_V_arr.get(period, MappingProxyType({}))
+        same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
+            {ref: this_period_V[ref] for ref in regime.same_period_ref_regimes}
+        )
 
     taste_shock_kwargs = {}
     if regime.has_taste_shocks:
@@ -490,6 +554,7 @@ def _simulate_regime_in_period(
         **state_action_space.continuous_actions,
         **taste_shock_kwargs,
         next_regime_to_V_arr=next_regime_to_V_arr,
+        **same_period_kwargs,
         **flat_params[regime_name],
         period=jnp.int32(period),
         age=age,
@@ -499,8 +564,16 @@ def _simulate_regime_in_period(
             # Out-of-regime subjects carry placeholder entries (their state is
             # meaningless under this regime's problem); validate only the
             # subjects simulated in this regime.
+            #
+            # COLLECTIVE-REGIMES (E4): `V_arr` carries a trailing stakeholder
+            # axis for a collective regime; broadcast the mask the same way
+            # as the diagnostic logger below.
+            in_regime_mask = subject_ids_in_regime.reshape(
+                subject_ids_in_regime.shape
+                + (1,) * (V_arr.ndim - subject_ids_in_regime.ndim)
+            )
             validate_V(
-                V_arr=jnp.where(subject_ids_in_regime, V_arr, 0.0),
+                V_arr=jnp.where(in_regime_mask, V_arr, 0.0),
                 age=age,
                 regime_name=regime_name,
             )
@@ -562,6 +635,24 @@ def _simulate_regime_in_period(
             n_subjects=n_subjects,
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
+        )
+        # COLLECTIVE-REGIMES (E4): the value router's routing half. A gated
+        # edge's target is always ALSO an ordinary declared transition
+        # target, so `calculate_next_states` already computed candidate
+        # target states above and `calculate_next_regime_membership` already
+        # drew a (gate-blind) next regime id; `route_gated_edges` now
+        # interpolates the realized gate at those candidate states and
+        # OVERRIDES both — the target when open, a leg's fallback (with its
+        # own projected states) when closed — for every subject in this
+        # regime. No-op for a regime without `gated_edges`.
+        next_states, new_subject_regime_ids = route_gated_edges(
+            regime=regime,
+            gate_arrays=gate_arrays,
+            next_states=next_states,
+            regime_names_to_ids=regime_names_to_ids,
+            new_subject_regime_ids=new_subject_regime_ids,
+            subjects_in_regime=subject_ids_in_regime,
+            flat_params=flat_params,
         )
         states = next_states
 

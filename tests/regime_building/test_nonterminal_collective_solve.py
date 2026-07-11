@@ -285,26 +285,38 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     np.testing.assert_allclose(np.asarray(V_0), expected_period_0, rtol=1e-6)
 
 
-def test_collective_model_simulate_raises_e4_stub():
-    """Simulation of a collective regime stays a raising stub (E4, slice 6)."""
+def test_collective_model_simulates_end_to_end_via_public_model_api():
+    """Simulation of a collective regime is no longer a raising stub (E4, slice 6).
+
+    The full recomputed-argmax mechanics (both stakeholders tracked, values
+    matching the hand computation above) are covered in depth by
+    `tests/regime_building/test_collective_regime_simulate.py`; this pin just
+    confirms the PUBLIC `Model.simulate()` path — auto-solving, then
+    simulating — runs end to end instead of raising, for a collective regime
+    with no gated edges (so `period_to_regime_to_V_arr`/divorce flags need no
+    special threading).
+    """
     ages = AgeGrid(start=0, stop=2, step="Y")
     model = Model(
         regimes=_make_couple_regimes(),
         ages=ages,
         regime_id_class=RegimeId,
     )
-    with pytest.raises(NotImplementedError, match="not yet implemented \\(E4\\)"):
-        model.simulate(
-            params={"discount_factor": 0.95},
-            initial_conditions={
-                "wage": jnp.array([8.0, 40.0]),
-                "age": jnp.array([0.0, 0.0]),
-                "regime_id": jnp.array([0, 0]),
-            },
-            period_to_regime_to_V_arr=None,
-            log_level="off",
-            seed=0,
-        )
+    result = model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "wage": jnp.array([8.0, 40.0]),
+            "age": jnp.array([0.0, 0.0]),
+            "regime_id": jnp.array([0, 0], dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+        seed=0,
+    )
+    period_0 = result.raw_results["couple"][0]
+    np.testing.assert_allclose(
+        np.asarray(period_0.V_arr), _EXPECTED_V_PERIOD_0, rtol=1e-6
+    )
 
 
 def test_nonterminal_collective_regime_with_singleton_target_is_rejected():

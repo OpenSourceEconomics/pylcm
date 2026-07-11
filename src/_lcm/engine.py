@@ -36,7 +36,6 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
-    Float1D,
     FloatND,
     IntND,
     ScalarFloat,
@@ -692,12 +691,40 @@ class Regime:
     """
 
     gated_edge_folds: MappingProxyType[RegimeName, Callable] = MappingProxyType({})
-    """Compiled ``Wbar`` producers per gated-edge target regime, or empty (E3').
+    """Compiled ``(Wbar, gate)`` producers per gated-edge target regime, or empty
+    (E3', gate added E4).
 
     Built once at model processing (a second pass, once every regime's grid and
     functions are known); the backward-induction loop evaluates each at the end
     of the period the target was solved in, storing ``Wbar`` in the rolled edge
-    continuation mapping this regime's kernel reads.
+    continuation mapping this regime's kernel reads. Forward simulation (E4)
+    evaluates the same fold once per period from the solved solution and
+    interpolates both outputs — `Wbar` substitutes into the source's own
+    continuation, `gate` decides simulated regime routing.
+    """
+
+    gated_edge_leg_projectors: MappingProxyType[RegimeName, tuple[Callable, ...]] = (
+        MappingProxyType({})
+    )
+    """Per-leg FALLBACK state projectors per gated-edge target regime (E4).
+
+    One callable per `ResolvedGatedEdge.legs` entry (same order), mapping a
+    target-grid-coordinate point to the leg's fallback regime's own state
+    coordinates (`build_fallback_state_projector`). Used only by forward
+    simulation's value router to compute the states a routed-away stakeholder
+    carries into its fallback regime; the solve-side fold never needs the
+    fallback's raw coordinates, only its (interpolated) value.
+    """
+
+    gated_edge_gate_interpolators: MappingProxyType[RegimeName, Callable] = (
+        MappingProxyType({})
+    )
+    """Per gated-edge target regime, an interpolator for the fold's `gate` array (E4).
+
+    Reads the boolean `gate` grid-level array `gated_edge_folds` produces
+    (cast to float) at an off-grid or on-grid candidate target-state point,
+    the same `get_V_interpolator` machinery used for every other solved
+    array; forward simulation thresholds the result to decide routing.
     """
 
 
@@ -836,8 +863,14 @@ def _distribute_states_to_devices(
 class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
 
-    V_arr: Float1D
-    """Value function array for all subjects at this period."""
+    V_arr: FloatND
+    """Value function array for all subjects at this period.
+
+    Shape `(n_subjects,)` for a singleton regime; `(n_subjects,
+    n_stakeholders)` for a collective regime (E4) — each stakeholder's own
+    value at the household's shared argmax, mirroring the solve-side V's
+    trailing stakeholder axis.
+    """
 
     actions: MappingProxyType[ActionName, FloatND | IntND]
     """Immutable mapping of action names to optimal action arrays for all subjects."""
