@@ -3491,7 +3491,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
         raise RegimeInitializationError(msg)
 
 
-def _collect_nbegm_schedule_spec(  # noqa: PLR0915
+def _collect_nbegm_schedule_spec(
     *,
     context: SolverBuildContext,
     budget_target: str = "resources",
