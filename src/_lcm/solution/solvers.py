@@ -734,6 +734,86 @@ class _DCEGMPeriodKernel:
 
 
 @dataclass(frozen=True, kw_only=True)
+class NestedInnerSpec:
+    """Normalized view of a 1-D inner EGM solver config for nested outer search.
+
+    A nested outer-search solver wraps a one-dimensional inner EGM solver and
+    needs its Euler-state slots under one vocabulary. The two inner families
+    name the budget node differently and NBEGM leaves two slots inferable
+    standalone; the spec makes every slot explicit so outer kernel code never
+    dispatches on the inner type.
+    """
+
+    solver: Solver
+    """The inner solver config itself."""
+    continuous_state: StateName
+    """The inner Euler (liquid) state."""
+    post_decision_function: FunctionName
+    """The inner post-decision (savings) node."""
+    budget_target: FunctionName
+    """The inner budget node (DCEGM `resources`, NBEGM `budget_target`)."""
+    savings_grid: ContinuousGrid
+    """The inner exogenous post-decision grid."""
+
+
+def get_nested_inner_spec(*, inner: DCEGM | NBEGM) -> NestedInnerSpec:
+    """Normalize an inner EGM solver config into a `NestedInnerSpec`.
+
+    Inside a nested solver the regime carries two continuous states, so the
+    single-continuous-state inference NBEGM applies standalone is ambiguous —
+    both `continuous_state` and `post_decision_function` must be explicit.
+
+    Args:
+        inner: The inner 1-D EGM solver config (`DCEGM` or `NBEGM`).
+
+    Returns:
+        The normalized spec.
+
+    Raises:
+        RegimeInitializationError: If an NBEGM inner leaves `continuous_state`
+            or `post_decision_function` to inference.
+        TypeError: If `inner` is not a 1-D EGM solver config.
+
+    """
+    match inner:
+        case DCEGM():
+            return NestedInnerSpec(
+                solver=inner,
+                continuous_state=inner.continuous_state,
+                post_decision_function=inner.post_decision_function,
+                budget_target=inner.resources,
+                savings_grid=inner.savings_grid,
+            )
+        case NBEGM():
+            if inner.continuous_state is None:
+                msg = (
+                    "A nested NBEGM inner requires an explicit "
+                    "`continuous_state`: the regime carries two continuous "
+                    "states, so the single-state inference is ambiguous."
+                )
+                raise RegimeInitializationError(msg)
+            if inner.post_decision_function is None:
+                msg = (
+                    "A nested NBEGM inner requires an explicit "
+                    "`post_decision_function` naming the inner savings node."
+                )
+                raise RegimeInitializationError(msg)
+            return NestedInnerSpec(
+                solver=inner,
+                continuous_state=inner.continuous_state,
+                post_decision_function=inner.post_decision_function,
+                budget_target=inner.budget_target,
+                savings_grid=inner.savings_grid,
+            )
+        case _:
+            msg = (
+                "A nested inner solver must be DCEGM or NBEGM, got "
+                f"{type(inner).__name__}."
+            )
+            raise TypeError(msg)
+
+
+@dataclass(frozen=True, kw_only=True)
 class _NEGMPeriodKernel:
     """The NEGM period adapter — a keeper plus an adjuster outer search.
 
