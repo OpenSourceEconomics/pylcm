@@ -121,8 +121,18 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
             "value readout run over the full action product. Use "
             "`solver=GridSearch()` for this regime."
         )
+    if regime.terminal and (regime.value_constraints or regime.same_period_refs):
+        raise NotImplementedError(
+            "`value_constraints` / `same_period_refs` on a TERMINAL collective "
+            "regime are not implemented: value-aware feasibility (E2) masks a "
+            "within-period household decision; the terminal kernel carries no "
+            "such mask. Declare them on the non-terminal regime whose decision "
+            "they constrain. See the design doc "
+            "`pylcm-extension-collective-regimes.md` (v2.1), §2 E2."
+        )
 
     error_messages: list[str] = []
+    error_messages.extend(_collective_value_constraint_errors(regime))
 
     missing = [s for s in stakeholders if f"utility_{s}" not in regime.functions]
     if missing:
@@ -148,6 +158,65 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
 
     if error_messages:
         raise RegimeInitializationError(format_messages(error_messages))
+
+
+def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Collect the regime-local errors of `value_constraints` / `same_period_refs`.
+
+    COLLECTIVE-REGIMES (E2). Cross-regime properties — the reference regime's
+    existence, its stakeholder layout, projection coverage, co-activity, and
+    reference cycles — are validated at model processing, where the other
+    regimes are known.
+    """
+    stakeholders = cast("tuple[str, ...]", regime.stakeholders)
+    error_messages: list[str] = []
+
+    if regime.same_period_refs and not regime.value_constraints:
+        error_messages.append(
+            "`same_period_refs` without `value_constraints` has no consumer: "
+            "the reference values are only readable by value-constraint "
+            "predicates. Declare the predicates, or drop the references."
+        )
+
+    invalid_names = [
+        name
+        for name in [*regime.value_constraints, *regime.same_period_refs]
+        if QNAME_DELIMITER in name
+    ]
+    if invalid_names:
+        error_messages.append(
+            f"Value-constraint and reference-value names cannot contain the "
+            f"reserved separator '{QNAME_DELIMITER}': {invalid_names}."
+        )
+
+    taken = (
+        set(regime.functions)
+        | set(regime.constraints)
+        | set(regime.states)
+        | set(regime.actions)
+    )
+    colliding = sorted(
+        (set(regime.value_constraints) | set(regime.same_period_refs)) & taken
+    )
+    if colliding:
+        error_messages.append(
+            f"Value-constraint / reference-value name(s) {colliding} collide "
+            "with a function, constraint, state, or action of the regime. "
+            "Reference values enter the predicates as named arguments, so the "
+            "names must be unambiguous."
+        )
+
+    if regime.value_constraints:
+        shadowed_q = sorted({f"Q_{s}" for s in stakeholders} & taken)
+        if shadowed_q:
+            error_messages.append(
+                f"Name(s) {shadowed_q} are reserved for the per-stakeholder "
+                "action values that `value_constraints` predicates read; the "
+                "regime declares a function, constraint, state, or action of "
+                "the same name. Rename it."
+            )
+
+    return error_messages
 
 
 def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:

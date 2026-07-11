@@ -232,7 +232,9 @@ class MaxQOverAFunction(Protocol):
     """The function that maximizes Q over all actions.
 
     Q is the state-action value function. The MaxQOverCFunction returns the maximum of Q
-    over all actions.
+    over all actions. COLLECTIVE-REGIMES (E1/E2): for a collective regime the
+    core returns the pair `(V, D)` — the stakeholder-axis value array plus the
+    boolean divorce flag — instead of the plain V array.
 
     Used for both type checking and beartype runtime checks.
 
@@ -242,7 +244,7 @@ class MaxQOverAFunction(Protocol):
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: Any,  # noqa: ANN401
-    ) -> FloatND: ...
+    ) -> FloatND | tuple[FloatND, BoolND]: ...
 
 
 @runtime_checkable

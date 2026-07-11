@@ -292,6 +292,22 @@ def _validate_all_variables_used(
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
 
+        # COLLECTIVE-REGIMES (E2): value-constraint predicates and same-period
+        # projection functions are decision inputs too — a state or action read
+        # only by them (e.g. one that only shifts the divorcee's projected
+        # state) must count as "used". Added under reserved names to this
+        # local DAG copy only; `get_all_functions` itself is unchanged.
+        value_decision_targets: list[str] = []
+        for name, predicate in user_regime.value_constraints.items():
+            key = f"__value_constraint__{name}"
+            user_functions[key] = predicate
+            value_decision_targets.append(key)
+        for ref_name, ref in user_regime.same_period_refs.items():
+            for state_name, projection_func in ref.projection.items():
+                key = f"__same_period_ref__{ref_name}__{state_name}"
+                user_functions[key] = projection_func
+                value_decision_targets.append(key)
+
         # A collective regime carries a per-stakeholder `utility_<s>` in place
         # of a single `utility`; a state/action used only through those
         # per-stakeholder utilities must still count as "used".
@@ -302,6 +318,7 @@ def _validate_all_variables_used(
         )
         targets = [
             *utility_targets,
+            *value_decision_targets,
             *list(user_regime.constraints),
             *(
                 name

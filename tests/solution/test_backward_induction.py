@@ -153,7 +153,7 @@ def test_backward_induction():
         active_periods=[0, 1],
     )
 
-    solution, _sim_policies = solve(
+    solution, _sim_policies, _divorce_flags = solve(
         flat_params=MappingProxyType({"default": flat_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
@@ -217,7 +217,7 @@ def test_backward_induction_single_period_Qc_arr():
         active_periods=[0, 1],
     )
 
-    got, _sim_policies = solve(
+    got, _sim_policies, _divorce_flags = solve(
         flat_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),

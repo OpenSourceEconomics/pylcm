@@ -466,7 +466,12 @@ class Model:
         `log_keep_n_latest`.
         """
         try:
-            period_to_regime_to_V_arr, period_to_regime_to_sim_policy = solve(
+            # COLLECTIVE-REGIMES (E2): the third element is the per-period
+            # divorce-flag mapping (empty for models without collective
+            # regimes). Not yet surfaced through the public Model API — the
+            # E3' gates (slice 4) consume it inside the solve; a public
+            # accessor lands with the routing machinery.
+            period_to_regime_to_V_arr, period_to_regime_to_sim_policy, _ = solve(
                 flat_params=flat_params,
                 ages=self.ages,
                 regimes=self._regimes,

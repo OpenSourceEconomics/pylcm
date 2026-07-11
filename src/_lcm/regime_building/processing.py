@@ -53,6 +53,7 @@ from _lcm.regime_building.phases import (
     RegimePhaseSpec,
 )
 from _lcm.regime_building.Q_and_F import (
+    ResolvedSamePeriodRef,
     get_period_targets,
     get_Q_and_F,
     get_Q_and_F_collective,
@@ -205,6 +206,17 @@ def process_regimes(
         }
     )
 
+    # COLLECTIVE-REGIMES (E2): same-period reference declarations are a
+    # cross-regime contract — validate it (existence, stakeholder layout,
+    # projection coverage, co-activity) and reject reference cycles before any
+    # kernel is built.
+    _fail_if_same_period_refs_invalid(
+        user_regimes=user_regimes,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        regimes_to_active_periods=regimes_to_active_periods,
+    )
+    _fail_if_same_period_ref_cycle(user_regimes=user_regimes)
+
     model_has_egm_regime = any(
         user_regime.solver.requires_continuation_carries
         for user_regime in user_regimes.values()
@@ -258,6 +270,12 @@ def process_regimes(
         # is byte-identical.
         stakeholders = user_regime.stakeholders
         weights = _resolve_stakeholder_weights(user_regime)
+        # COLLECTIVE-REGIMES (E2): the (deduplicated, order-preserving) regimes
+        # whose same-period V this regime reads; drives the within-period
+        # topological solve order and the kernel's same-period V threading.
+        same_period_ref_regimes = tuple(
+            dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
+        )
 
         solution = _build_solution_phase(
             spec=spec,
@@ -281,6 +299,7 @@ def process_regimes(
             has_taste_shocks=user_regime.taste_shocks is not None,
             stakeholders=stakeholders,
             weights=weights,
+            same_period_ref_regimes=same_period_ref_regimes,
         )
 
         simulation = _build_simulation_phase(
@@ -324,6 +343,7 @@ def process_regimes(
             has_taste_shocks=user_regime.taste_shocks is not None,
             certainty_equivalent=user_regime.certainty_equivalent,
             stakeholders=stakeholders,
+            same_period_ref_regimes=same_period_ref_regimes,
         )
 
     return ensure_containers_are_immutable(canonical_regimes)
@@ -402,6 +422,162 @@ def _fail_if_collective_regime_targets_unsupported(
                 raise NotImplementedError(msg)
 
 
+def _resolve_same_period_refs(
+    *,
+    user_regime: UserRegime,
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> MappingProxyType[str, ResolvedSamePeriodRef]:
+    """Resolve a regime's user `SamePeriodRef` declarations to the engine form.
+
+    COLLECTIVE-REGIMES (E2). The declarations were validated by
+    `_fail_if_same_period_refs_invalid`, so the reference regime exists and its
+    stakeholder naming is consistent; here the named stakeholder becomes the
+    index on the reference V's trailing stakeholder axis (`None` for a
+    singleton reference).
+    """
+    resolved: dict[str, ResolvedSamePeriodRef] = {}
+    for ref_name, ref in user_regime.same_period_refs.items():
+        ref_stakeholders = user_regimes[ref.regime].stakeholders
+        stakeholder_index = (
+            None
+            if ref_stakeholders is None
+            else ref_stakeholders.index(cast("str", ref.stakeholder))
+        )
+        resolved[ref_name] = ResolvedSamePeriodRef(
+            regime=ref.regime,
+            projection=ref.projection,
+            stakeholder_index=stakeholder_index,
+        )
+    return MappingProxyType(resolved)
+
+
+def _fail_if_same_period_refs_invalid(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+) -> None:
+    """Validate every `same_period_refs` declaration against the other regimes.
+
+    COLLECTIVE-REGIMES (E2). Checks, per reference: the reference regime
+    exists; a collective reference names one of its stakeholders while a
+    singleton reference names none; the projection covers exactly the reference
+    regime's solve states (the coordinates its V is interpolated over); and the
+    reference regime is active in every period the declaring regime is active
+    (its same-period V must exist whenever the reader solves).
+
+    Raises:
+        ModelInitializationError: On the first violated declaration, naming the
+            regime, the reference, and the violated property.
+
+    """
+    for regime_name, user_regime in user_regimes.items():
+        for ref_name, ref in user_regime.same_period_refs.items():
+            prefix = (
+                f"Regime '{regime_name}', same_period_refs['{ref_name}'] "
+                f"(reference regime '{ref.regime}'): "
+            )
+            target_regime = user_regimes.get(ref.regime)
+            if target_regime is None:
+                msg = (
+                    f"{prefix}the reference regime is not part of the model. "
+                    f"Known regimes: {sorted(user_regimes)}."
+                )
+                raise ModelInitializationError(msg)
+            if target_regime.stakeholders is None:
+                if ref.stakeholder is not None:
+                    msg = (
+                        f"{prefix}names stakeholder '{ref.stakeholder}', but "
+                        "the reference regime is a singleton — its V carries "
+                        "no stakeholder axis. Drop the `stakeholder`."
+                    )
+                    raise ModelInitializationError(msg)
+            elif ref.stakeholder is None:
+                msg = (
+                    f"{prefix}the reference regime is collective "
+                    f"(stakeholders={target_regime.stakeholders}), so the "
+                    "reference must name WHOSE value to read via "
+                    "`stakeholder=...`."
+                )
+                raise ModelInitializationError(msg)
+            elif ref.stakeholder not in target_regime.stakeholders:
+                msg = (
+                    f"{prefix}names stakeholder '{ref.stakeholder}', which is "
+                    "not one of the reference regime's stakeholders "
+                    f"{target_regime.stakeholders}."
+                )
+                raise ModelInitializationError(msg)
+            expected_states = set(
+                regime_to_v_interpolation_info[ref.regime].state_names
+            )
+            if set(ref.projection) != expected_states:
+                msg = (
+                    f"{prefix}the projection must supply exactly one coordinate "
+                    "function per state of the reference regime "
+                    f"({sorted(expected_states)}); got "
+                    f"{sorted(ref.projection)}."
+                )
+                raise ModelInitializationError(msg)
+            missing_periods = sorted(
+                set(regimes_to_active_periods[regime_name])
+                - set(regimes_to_active_periods[ref.regime])
+            )
+            if missing_periods:
+                msg = (
+                    f"{prefix}the reference regime must be active (and hence "
+                    "solved) in every period the declaring regime is active, "
+                    "but it is not active in period(s) "
+                    f"{missing_periods}. A same-period reference V that was "
+                    "never solved cannot be read."
+                )
+                raise ModelInitializationError(msg)
+
+
+def _fail_if_same_period_ref_cycle(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> None:
+    """Reject cyclic `same_period_refs` declarations at model build.
+
+    COLLECTIVE-REGIMES (E2). Within one period, a regime's value constraints
+    read reference regimes solved EARLIER in that period, so the reference
+    graph must be acyclic (a self-reference is a one-node cycle). Depth-first
+    three-color search; the error names one offending cycle.
+    """
+    graph = {
+        regime_name: tuple(
+            dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
+        )
+        for regime_name, user_regime in user_regimes.items()
+    }
+    visiting: set[RegimeName] = set()
+    done: set[RegimeName] = set()
+    stack: list[RegimeName] = []
+
+    def visit(node: RegimeName) -> None:
+        if node in done or node not in graph:
+            return
+        if node in visiting:
+            cycle = [*stack[stack.index(node) :], node]
+            msg = (
+                "`same_period_refs` declarations form a cycle: "
+                f"{' -> '.join(cycle)}. Within a period, a reference regime "
+                "must be solved before the regime that reads its value, so "
+                "the reference graph must be acyclic."
+            )
+            raise ModelInitializationError(msg)
+        visiting.add(node)
+        stack.append(node)
+        for successor in graph[node]:
+            visit(successor)
+        stack.pop()
+        visiting.discard(node)
+        done.add(node)
+
+    for regime_name in graph:
+        visit(regime_name)
+
+
 def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
@@ -425,6 +601,7 @@ def _build_solution_phase(
     has_taste_shocks: bool,
     stakeholders: tuple[str, ...] | None = None,
     weights: Mapping[str, float] | None = None,
+    same_period_ref_regimes: tuple[RegimeName, ...] = (),
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -538,6 +715,25 @@ def _build_solution_phase(
             )
             for state in co_map_state_names
         )
+        # COLLECTIVE-REGIMES (E2): value-constraint predicates carry user params
+        # exactly like ordinary constraints — rename them to their qnames; the
+        # user's same-period reference declarations are resolved to the
+        # engine-side form (the stakeholder name becomes the index on the
+        # reference V's trailing stakeholder axis).
+        user_regime = user_regimes[regime_name]
+        value_constraints = MappingProxyType(
+            {
+                name: _rename_params_to_qnames(
+                    func=func,
+                    regime_params_template=regime_params_template,
+                    param_key=name,
+                )
+                for name, func in user_regime.value_constraints.items()
+            }
+        )
+        same_period_refs = _resolve_same_period_refs(
+            user_regime=user_regime, user_regimes=user_regimes
+        )
         Q_and_F_functions = _build_Q_and_F_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
             functions=core.functions,
@@ -551,6 +747,8 @@ def _build_solution_phase(
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
+            value_constraints=value_constraints,
+            same_period_refs=same_period_refs,
         )
         if stakeholders is not None:
             # COLLECTIVE-REGIMES (E1): the NaN-diagnostics intermediates mirror
@@ -602,6 +800,7 @@ def _build_solution_phase(
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
         stakeholders=stakeholders,
         weights=weights,
+        same_period_ref_regimes=same_period_ref_regimes,
     )
     solver.validate(context=context)
     solver_kernels = solver.build_period_kernels(context=context)
@@ -771,7 +970,10 @@ class _TerminalCarryPeriodKernel:
             period=jnp.int32(period),
             age=ages.values[period],
         )
-        return KernelResult(V_arr=result.V_arr, carry=carry)
+        # `divorce` (E2) rides through unchanged — unreachable today (collective
+        # terminals carry actions, so no closed-form carry producer wraps them),
+        # but the decorator must not silently drop a base kernel's output.
+        return KernelResult(V_arr=result.V_arr, carry=carry, divorce=result.divorce)
 
 
 def _build_terminal_carry_producer(
@@ -2175,6 +2377,10 @@ def _build_Q_and_F_per_period(
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
     stakeholders: tuple[str, ...] | None = None,
+    value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
+    same_period_refs: MappingProxyType[str, ResolvedSamePeriodRef] = (
+        MappingProxyType({})
+    ),
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
@@ -2203,6 +2409,10 @@ def _build_Q_and_F_per_period(
             `None` (the singleton default). When set, the per-period closures
             come from `get_Q_and_F_collective` (per-stakeholder continuation,
             trailing stakeholder axis on Q); only the solve site passes this.
+        value_constraints: Value-aware feasibility predicates (E2), params
+            already renamed; only used for collective regimes.
+        same_period_refs: Resolved same-period reference declarations (E2);
+            only used for collective regimes.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -2236,6 +2446,8 @@ def _build_Q_and_F_per_period(
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 stakeholders=stakeholders,
                 co_map_state_names=co_map_state_names,
+                value_constraints=value_constraints,
+                same_period_refs=same_period_refs,
             )
             continue
         built[period_targets] = get_Q_and_F(

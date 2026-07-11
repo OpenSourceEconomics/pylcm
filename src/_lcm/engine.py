@@ -671,6 +671,16 @@ class Regime:
     stakeholder-valued output.
     """
 
+    same_period_ref_regimes: tuple[RegimeName, ...] = ()
+    """Regimes whose SAME-period V this regime's solve kernel reads, or empty.
+
+    COLLECTIVE-REGIMES (E2). Non-empty only for a collective regime declaring
+    `same_period_refs`. The backward-induction loop orders each period's active
+    regimes topologically by these edges (references solved first) and passes
+    the referenced regimes' freshly solved V arrays into this regime's kernel
+    call. Empty for every other regime — the default path is unchanged.
+    """
+
 
 @dataclasses.dataclass(frozen=True)
 class _RegimeSharding:

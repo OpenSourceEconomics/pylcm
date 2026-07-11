@@ -128,7 +128,7 @@ def test_nonterminal_collective_regime_solves_with_continuation():
         enable_jit=False,
     )
 
-    solution, _sim_policies = solve(
+    solution, _sim_policies, _divorce_flags = solve(
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
@@ -249,7 +249,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
         enable_jit=False,
     )
 
-    solution, _sim_policies = solve(
+    solution, _sim_policies, _divorce_flags = solve(
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),

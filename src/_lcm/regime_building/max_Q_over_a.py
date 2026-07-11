@@ -90,13 +90,16 @@ def get_max_Q_over_a(
             (the singleton default). When set, `Q_and_F` returns a stacked
             per-stakeholder `Q` (trailing stakeholder axis) and the inner reduction
             reads off each stakeholder's own value at the shared household argmax
-            (`collective_readout`) instead of the plain masked max.
+            (`collective_readout`) instead of the plain masked max; the returned
+            function then yields the pair `(V, D)` — the stakeholder-axis value
+            array plus the boolean divorce flag `D = 1[mask empty]` on the state
+            axes (E2; distinct from a numeric `-inf`, which occurs on-path).
         weights: Household Pareto weights per stakeholder; required (and only used)
             when `stakeholders` is set.
 
     Returns:
         V, i.e., the function that calculates the maximum of the Q-function over all
-        feasible actions.
+        feasible actions — or, for a collective regime, the pair `(V, D)`.
 
     """
     _fail_if_co_map_states_not_leading(
@@ -156,42 +159,47 @@ def get_max_Q_over_a(
                 *state_names,
                 *extra_param_names,
             ],
-            return_annotation="FloatND",
+            return_annotation=(
+                "tuple[FloatND, BoolND]" if stakeholders is not None else "FloatND"
+            ),
             enforce=False,
         )
         def max_Q_over_a(
             next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
             **states_actions_params: _ParamsLeaf,
-        ) -> FloatND:
+        ) -> FloatND | tuple[FloatND, BoolND]:
             Q_arr, F_arr = Q_and_F(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **states_actions_params,
             )
             if stakeholders is not None:
-                # COLLECTIVE-REGIMES (E1): Q_arr carries a trailing stakeholder
-                # axis (the action product-map keeps it last); F_arr does not.
-                # Split Q_arr per stakeholder, take the household argmax of the
-                # scalarization over the action axes, and read off each
-                # stakeholder's OWN value at that shared argmax. The returned
-                # vector re-stacks on a trailing stakeholder axis, which the
-                # outer state product-map turns into `(*states, n_stakeholders)`.
+                # COLLECTIVE-REGIMES (E1 + E2): Q_arr carries a trailing
+                # stakeholder axis (the action product-map keeps it last);
+                # F_arr does not — for an E2 regime it already includes the
+                # value constraints, which Q_and_F ANDed in AFTER computing
+                # Q^s. Split Q_arr per stakeholder, take the household argmax
+                # of the scalarization over the masked action axes, and read
+                # off each stakeholder's OWN value at that shared argmax. The
+                # returned pair is the stakeholder value vector (re-stacked on
+                # a trailing axis, which the outer state product-map turns
+                # into `(*states, n_stakeholders)`) plus the divorce flag D —
+                # `True` where NO action is feasible (empty mask), published
+                # alongside V and never conflated with a numeric -inf value
+                # (which occurs on-path).
                 action_axes = tuple(range(F_arr.ndim))
                 stakeholder_Q = {
                     name: Q_arr[..., index] for index, name in enumerate(stakeholders)
                 }
-                values, _divorce = collective_readout(
+                values, divorce = collective_readout(
                     stakeholder_Q=stakeholder_Q,
                     feasibility=F_arr,
                     weights=cast("Mapping[str, float]", weights),
                     action_axes=action_axes,
                 )
-                return jnp.stack([values[name] for name in stakeholders], axis=-1)
-            # COLLECTIVE-REGIMES (E2): value-aware mask lands here. Today F_arr
-            # is built in Q_and_F (`_get_U_and_F`) before and independently of
-            # Q; the mask is applied at this `where=F_arr`. E2 needs per-
-            # stakeholder Q first, then `mask = F ∧ g(Q^s, same-period reference
-            # V)`, then the max — a reorder that genuinely spans Q_and_F.py and
-            # this file. See design doc §2 (E2) / §3.
+                return (
+                    jnp.stack([values[name] for name in stakeholders], axis=-1),
+                    divorce,
+                )
             return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
     inner_state_names = tuple(

@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -587,6 +588,116 @@ def get_Q_and_F_terminal_collective(
     return Q_and_F
 
 
+# COLLECTIVE-REGIMES (E2): the name under which the mapping of same-period
+# reference regimes to their current-period V arrays enters the kernel
+# signature. Only regimes declaring `same_period_refs` carry it.
+SAME_PERIOD_V_ARG = "same_period_regime_to_V_arr"
+
+# Internal argument names of the same-period reference interpolation; never
+# surfaced in the kernel signature.
+_REF_STATE_PREFIX = "__same_period_ref__"
+_REF_V_ARR_NAME = "__same_period_ref_V_arr__"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResolvedSamePeriodRef:
+    """Engine-side form of a user `SamePeriodRef`, resolved at model processing.
+
+    COLLECTIVE-REGIMES (E2). The user declaration names a stakeholder; the
+    engine resolves it to the index on the reference regime's trailing
+    stakeholder axis (`None` for a singleton reference, whose V has no such
+    axis).
+    """
+
+    regime: RegimeName
+    """Name of the reference regime whose same-period V is read."""
+
+    projection: Mapping[StateName, Callable[..., Any]]
+    """Per-reference-state projection functions (user vocabulary, DAG-resolved)."""
+
+    stakeholder_index: int | None
+    """Index into the reference V's trailing stakeholder axis, or `None`."""
+
+
+def _build_same_period_ref_reader(
+    *,
+    ref: ResolvedSamePeriodRef,
+    v_interpolation_info: VInterpolationInfo,
+    functions: EconFunctionsMapping,
+    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction],
+) -> Callable[..., FloatND]:
+    """Build the reader of one same-period reference value at a (state, action) cell.
+
+    COLLECTIVE-REGIMES (E2). Each projection entry is concatenated with the
+    regime's function DAG (so it may read states, actions, helper functions,
+    and the merged deterministic `next_<state>` laws), producing one coordinate
+    per reference state; the reference regime's CURRENT-period V array — passed
+    per solve step under `SAME_PERIOD_V_ARG` — is then interpolated at those
+    coordinates with the ordinary V-interpolation machinery
+    (`get_V_interpolator`), sliced to the named stakeholder first when the
+    reference is collective. The returned callable's signature carries only
+    user-level names (states / actions / params reached by the projections,
+    plus `SAME_PERIOD_V_ARG`), so the kernel signature stays clean.
+    """
+    interpolator = get_V_interpolator(
+        v_interpolation_info=v_interpolation_info,
+        state_prefix=_REF_STATE_PREFIX,
+        V_arr_name=_REF_V_ARR_NAME,
+    )
+    dag_pool = {
+        **dict(deterministic_transitions),
+        **{k: v for k, v in functions.items() if k != "H"},
+    }
+    projection_funcs: dict[StateName, Callable[..., FloatND]] = {}
+    projection_args: dict[StateName, tuple[str, ...]] = {}
+    for state_name in v_interpolation_info.state_names:
+        target = f"{_REF_STATE_PREFIX}{state_name}"
+        projection_funcs[state_name] = concatenate_functions(
+            functions={**dag_pool, target: ref.projection[state_name]},
+            targets=target,
+            enforce_signature=False,
+            set_annotations=True,
+        )
+        projection_args[state_name] = tuple(
+            get_union_of_args([projection_funcs[state_name]])
+        )
+    coordinate_names = {
+        f"{_REF_STATE_PREFIX}{state}" for state in v_interpolation_info.state_names
+    }
+    # Extra interpolator inputs beyond the coordinates and the V array (e.g.
+    # runtime-supplied irregular-grid points) pass through from the cell kwargs.
+    interpolator_extra = tuple(
+        get_union_of_args([interpolator]) - coordinate_names - {_REF_V_ARR_NAME}
+    )
+    arg_names = sorted(
+        {arg for args in projection_args.values() for arg in args}
+        | set(interpolator_extra)
+        | {SAME_PERIOD_V_ARG}
+    )
+
+    @with_signature(args=arg_names, return_annotation="FloatND")
+    def read_reference_value(**kwargs: _ParamsLeaf) -> FloatND:
+        same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
+        V_ref = same_period_V[ref.regime]
+        if ref.stakeholder_index is not None:
+            # A collective reference V carries a trailing stakeholder axis;
+            # read the declared stakeholder's slice (state axes only remain).
+            V_ref = V_ref[..., ref.stakeholder_index]
+        coordinates = {
+            f"{_REF_STATE_PREFIX}{state}": projection_funcs[state](
+                **{arg: kwargs[arg] for arg in projection_args[state]}
+            )
+            for state in v_interpolation_info.state_names
+        }
+        return interpolator(
+            **coordinates,
+            **{arg: kwargs[arg] for arg in interpolator_extra},
+            **{_REF_V_ARR_NAME: V_ref},
+        )
+
+    return read_reference_value
+
+
 def get_Q_and_F_collective(
     *,
     flat_param_names: frozenset[str],
@@ -599,6 +710,8 @@ def get_Q_and_F_collective(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     stakeholders: tuple[str, ...],
     co_map_state_names: tuple[StateName, ...] = (),
+    value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
+    same_period_refs: Mapping[str, ResolvedSamePeriodRef] = MappingProxyType({}),
 ) -> QAndFFunction:
     """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
 
@@ -646,6 +759,20 @@ def get_Q_and_F_collective(
         stakeholders: Ordered stakeholder names; fixes the trailing-axis order.
         co_map_state_names: Tuple of state names co-mapped with the continuation
             V (see `get_Q_and_F`).
+        value_constraints: Immutable mapping of value-constraint names to
+            predicates (params already renamed to qnames). COLLECTIVE-REGIMES
+            (E2): evaluated AFTER the per-stakeholder `Q^s`, each predicate may
+            read `Q_<s>` per stakeholder, the `same_period_refs` reference
+            values, and ordinary states / actions / functions / params via the
+            DAG; the results are ANDed into the feasibility mask, so the
+            household argmax runs over `F ∧ g(Q^s, V_ref, ...)` and an
+            all-infeasible cell publishes the divorce flag `D` downstream.
+        same_period_refs: Immutable mapping of reference-value names to resolved
+            same-period reference declarations. When non-empty, the returned
+            `Q_and_F` carries the extra argument `SAME_PERIOD_V_ARG` — the
+            mapping of reference regime names to their CURRENT-period V arrays,
+            supplied per period by the solve loop (which orders the period's
+            regimes so references are solved first).
 
     Returns:
         A function computing the stacked per-stakeholder state-action values
@@ -725,15 +852,30 @@ def get_Q_and_F_collective(
     _build_H_kwargs = _get_build_H_kwargs(functions)
     _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
+    # COLLECTIVE-REGIMES (E2): build the same-period reference readers and the
+    # value-constraint evaluators once; their engine-supplied arguments —
+    # `Q_<s>` and the reference-value names — are excluded from the kernel
+    # signature and bound per (state, action) cell inside `Q_and_F`.
+    value_constraint_machinery = _build_value_constraint_machinery(
+        value_constraints=value_constraints,
+        same_period_refs=same_period_refs,
+        stakeholders=stakeholders,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        functions=functions,
+        deterministic_transitions=deterministic_transitions,
+    )
+
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[
             *list(U_and_F_by_stakeholder.values()),
             compute_regime_transition_probs,
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
+            *list(value_constraint_machinery.evaluators.values()),
+            *list(value_constraint_machinery.reference_readers.values()),
         ],
         include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
-        exclude=frozenset(),
+        exclude=value_constraint_machinery.engine_supplied_names,
     )
 
     @with_signature(
@@ -820,9 +962,145 @@ def get_Q_and_F_collective(
             **_build_H_kwargs(states_actions_params),
         )
 
+        # COLLECTIVE-REGIMES (E2): value-aware feasibility. Evaluated AFTER
+        # Q^s — this is the reorder the singleton path never needs (there,
+        # F is built before and independently of Q). Interpolate each declared
+        # same-period reference value at the projected coordinates, then AND
+        # every predicate — reading its own `Q_<s>` gathers, the reference
+        # values, and ordinary cell kwargs — into the mask. The household
+        # argmax downstream runs over the masked set; an all-infeasible cell
+        # sets the divorce flag D there (`collective_readout`).
+        if value_constraint_machinery.evaluators:
+            F_arr = _apply_value_constraints(
+                machinery=value_constraint_machinery,
+                Q_arr=jnp.asarray(Q_arr),
+                # A constraint-less regime's F is the Python `True` scalar.
+                F_arr=jnp.asarray(F_arr),
+                states_actions_params=states_actions_params,
+            )
+
         return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
     return Q_and_F
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ValueConstraintMachinery:
+    """Prebuilt E2 evaluation machinery closed over by a collective `Q_and_F`."""
+
+    reference_readers: Mapping[str, Callable[..., FloatND]]
+    """Per reference-value name, the same-period reference reader."""
+
+    reference_reader_args: Mapping[str, tuple[str, ...]]
+    """Each reader's argument names (fetched off the cell kwargs)."""
+
+    evaluators: Mapping[str, Callable[..., BoolND]]
+    """Per value-constraint name, the DAG-concatenated predicate."""
+
+    evaluator_args: Mapping[str, tuple[str, ...]]
+    """Each evaluator's argument names (split engine-supplied vs cell kwargs)."""
+
+    q_value_index: Mapping[str, int]
+    """`Q_<s>` argument name -> index on the trailing stakeholder axis."""
+
+    engine_supplied_names: frozenset[str]
+    """Names bound by the engine per cell — excluded from the kernel signature."""
+
+
+def _build_value_constraint_machinery(
+    *,
+    value_constraints: ConstraintFunctionsMapping,
+    same_period_refs: Mapping[str, ResolvedSamePeriodRef],
+    stakeholders: tuple[str, ...],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    functions: EconFunctionsMapping,
+    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction],
+) -> _ValueConstraintMachinery:
+    """Build the E2 reference readers and value-constraint evaluators once.
+
+    COLLECTIVE-REGIMES (E2). Each evaluator is the predicate concatenated with
+    the regime's function DAG (so it may read helper functions and the merged
+    deterministic `next_<state>` laws, exactly like ordinary constraints); its
+    engine-supplied arguments — `Q_<s>` and the reference-value names — are
+    bound per (state, action) cell by `_apply_value_constraints`.
+    """
+    reference_readers: dict[str, Callable[..., FloatND]] = {}
+    reference_reader_args: dict[str, tuple[str, ...]] = {}
+    for ref_name, ref in same_period_refs.items():
+        reader = _build_same_period_ref_reader(
+            ref=ref,
+            v_interpolation_info=regime_to_v_interpolation_info[ref.regime],
+            functions=functions,
+            deterministic_transitions=deterministic_transitions,
+        )
+        reference_readers[ref_name] = reader
+        reference_reader_args[ref_name] = tuple(get_union_of_args([reader]))
+
+    dag_pool = {
+        **dict(deterministic_transitions),
+        **{k: v for k, v in functions.items() if k != "H"},
+    }
+    evaluators: dict[str, Callable[..., BoolND]] = {}
+    evaluator_args: dict[str, tuple[str, ...]] = {}
+    for constraint_name, predicate in value_constraints.items():
+        evaluator = concatenate_functions(
+            functions={**dag_pool, constraint_name: predicate},
+            targets=constraint_name,
+            enforce_signature=False,
+            set_annotations=True,
+        )
+        evaluators[constraint_name] = evaluator
+        evaluator_args[constraint_name] = tuple(get_union_of_args([evaluator]))
+
+    q_value_index = {f"Q_{s}": index for index, s in enumerate(stakeholders)}
+    return _ValueConstraintMachinery(
+        reference_readers=MappingProxyType(reference_readers),
+        reference_reader_args=MappingProxyType(reference_reader_args),
+        evaluators=MappingProxyType(evaluators),
+        evaluator_args=MappingProxyType(evaluator_args),
+        q_value_index=MappingProxyType(q_value_index),
+        engine_supplied_names=(frozenset(q_value_index) | frozenset(reference_readers)),
+    )
+
+
+def _apply_value_constraints(
+    *,
+    machinery: _ValueConstraintMachinery,
+    Q_arr: FloatND,
+    F_arr: BoolND,
+    # `object` values: besides ordinary `_ParamsLeaf` leaves, the cell kwargs
+    # carry the same-period V mapping under `SAME_PERIOD_V_ARG`.
+    states_actions_params: Mapping[str, object],
+) -> BoolND:
+    """AND every value constraint into the feasibility of one (state, action) cell.
+
+    COLLECTIVE-REGIMES (E2). Reads each declared same-period reference value at
+    the projected coordinates (the readers pull the current-period reference V
+    arrays off `states_actions_params[SAME_PERIOD_V_ARG]`), then evaluates each
+    predicate with its `Q_<s>` arguments gathered from the trailing stakeholder
+    axis of `Q_arr`, its reference-value arguments, and its remaining arguments
+    from the cell kwargs.
+    """
+    reference_values = {
+        ref_name: reader(
+            **{
+                arg: states_actions_params[arg]
+                for arg in machinery.reference_reader_args[ref_name]
+            }
+        )
+        for ref_name, reader in machinery.reference_readers.items()
+    }
+    for constraint_name, evaluate in machinery.evaluators.items():
+        predicate_kwargs: dict[str, object] = {}
+        for arg in machinery.evaluator_args[constraint_name]:
+            if arg in machinery.q_value_index:
+                predicate_kwargs[arg] = Q_arr[..., machinery.q_value_index[arg]]
+            elif arg in reference_values:
+                predicate_kwargs[arg] = reference_values[arg]
+            else:
+                predicate_kwargs[arg] = states_actions_params[arg]
+        F_arr = jnp.logical_and(F_arr, evaluate(**predicate_kwargs))
+    return F_arr
 
 
 def _get_stakeholder_sliced_interpolator(

@@ -49,9 +49,10 @@ def collective_readout(
     ties are broken identically for every stakeholder — ``argmax_and_max`` selects
     the first maximizer, and the gather uses that same flattened index for each
     ``Q^s``. A cell with no feasible action yields ``D = True`` (the divorce /
-    empty-``F`` marker); the returned ``V^s`` in such a cell is the ``argmax_and_max``
-    ``initial`` (``-inf``) and must be routed by the caller through the divorce
-    fallback, never read as a value.
+    empty-``F`` marker); the returned ``V^s`` in such a cell is overwritten with the
+    ``-inf`` sentinel — the masked argmax is arbitrary there, so the gathered
+    ``Q^s`` would otherwise be an infeasible action's value — and must be routed
+    by the caller through the divorce fallback, never read as a value.
 
     Args:
         stakeholder_Q: Mapping stakeholder name -> its action-value array, each of
@@ -89,18 +90,25 @@ def collective_readout(
         objective, axis=action_axes, initial=-jnp.inf, where=feasibility
     )
 
-    # Gather each stakeholder's Q at the shared argmax, using the same flatten order
-    # `argmax_and_max` used to produce the index.
-    values = {
-        name: _gather_along_actions(
-            q=q, argmax_flat=argmax_flat, action_axes=action_axes
-        )
-        for name, q in stakeholder_Q.items()
-    }
-
     # Divorce / empty-feasible-set flag: no feasible action anywhere over the action
     # axes for this state cell. Distinct from a numeric -inf value.
     divorce = ~jnp.any(feasibility, axis=action_axes)
+
+    # Gather each stakeholder's Q at the shared argmax, using the same flatten order
+    # `argmax_and_max` used to produce the index. In an all-infeasible cell the
+    # masked argmax is arbitrary (every masked value ties at -inf), so the gathered
+    # Q^s would be an infeasible action's value — overwrite it with the -inf
+    # sentinel; D is the only faithful marker there.
+    values = {
+        name: jnp.where(
+            divorce,
+            -jnp.inf,
+            _gather_along_actions(
+                q=q, argmax_flat=argmax_flat, action_axes=action_axes
+            ),
+        )
+        for name, q in stakeholder_Q.items()
+    }
 
     return values, divorce
 

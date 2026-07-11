@@ -113,7 +113,10 @@ class GridSearch(Solver):
                 )
                 built[q_id] = jax.jit(func) if context.enable_jit else func
             result[period] = _GridSearchPeriodKernel(
-                core=built[q_id], regime_name=context.regime_name
+                core=built[q_id],
+                regime_name=context.regime_name,
+                collective=context.stakeholders is not None,
+                same_period_ref_regimes=context.same_period_ref_regimes,
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
 
@@ -524,6 +527,26 @@ class _GridSearchPeriodKernel:
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
 
+    collective: bool = False
+    """Whether the core is a collective (stakeholder-valued) reduction.
+
+    COLLECTIVE-REGIMES (E1/E2). A collective core returns the pair `(V, D)` —
+    the stakeholder-axis value array plus the boolean divorce flag — instead of
+    the plain V array; the adapter unpacks it into the `KernelResult`. `False`
+    keeps the singleton default byte-identical.
+    """
+
+    same_period_ref_regimes: tuple[RegimeName, ...] = ()
+    """Reference regimes whose same-period V the core reads (E2), or empty.
+
+    When non-empty, `__call__` forwards the solve loop's
+    `same_period_regime_to_V_arr` mapping into the core, and
+    `build_lower_args` supplies matching zero templates (reusing the
+    period-invariant `next_regime_to_V_arr` templates — a regime's V shape does
+    not change across periods, so the next-period template is also the correct
+    same-period lowering shape).
+    """
+
     def cores(self) -> Mapping[str, Callable]:
         """Return the single max-Q-over-a core under the `"main"` key."""
         return MappingProxyType({"main": self.core})
@@ -555,8 +578,14 @@ class _GridSearchPeriodKernel:
         period: int,
         ages: AgeGrid,
     ) -> Mapping[str, object]:
-        """Build the core's lowering arguments: the full state-action product."""
-        return {
+        """Build the core's lowering arguments: the full state-action product.
+
+        For an E2 regime (`same_period_ref_regimes` non-empty) the same-period
+        reference V arrays are lowered with the zero templates already built for
+        `next_regime_to_V_arr` — the same-period array of a reference regime has
+        exactly its (period-invariant) V shape and sharding.
+        """
+        lower_args: dict[str, object] = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
             "next_regime_to_V_arr": next_regime_to_V_arr,
@@ -564,6 +593,14 @@ class _GridSearchPeriodKernel:
             "period": jnp.int32(period),
             "age": ages.values[period],
         }
+        if self.same_period_ref_regimes:
+            lower_args["same_period_regime_to_V_arr"] = MappingProxyType(
+                {
+                    regime_name: next_regime_to_V_arr[regime_name]
+                    for regime_name in self.same_period_ref_regimes
+                }
+            )
+        return lower_args
 
     def __call__(
         self,
@@ -575,17 +612,39 @@ class _GridSearchPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelResult:
-        """Evaluate the grid search and assemble the `KernelResult`."""
-        V_arr = compiled_cores["main"](
+        """Evaluate the grid search and assemble the `KernelResult`.
+
+        `same_period_regime_to_V_arr` is passed by the solve loop only for a
+        regime declaring `same_period_refs` (E2); every other kernel keeps the
+        uniform `PeriodKernel` call signature.
+        """
+        extra_kwargs: dict[str, object] = {}
+        if self.same_period_ref_regimes:
+            if same_period_regime_to_V_arr is None:
+                msg = (
+                    f"Regime '{self.regime_name}' declares same_period_refs on "
+                    f"{self.same_period_ref_regimes} but the solve loop passed "
+                    "no same-period V arrays."
+                )
+                raise RuntimeError(msg)
+            extra_kwargs["same_period_regime_to_V_arr"] = same_period_regime_to_V_arr
+        out = compiled_cores["main"](
             **state_action_space.states,
             **state_action_space.actions,
             next_regime_to_V_arr=next_regime_to_V_arr,
             **flat_params[self.regime_name],
             period=jnp.int32(period),
             age=ages.values[period],
+            **extra_kwargs,
         )
-        return KernelResult(V_arr=V_arr)
+        if self.collective:
+            # COLLECTIVE-REGIMES (E1/E2): the collective core returns the pair
+            # (stakeholder-axis V, divorce flag D).
+            V_arr, divorce = out
+            return KernelResult(V_arr=V_arr, divorce=divorce)
+        return KernelResult(V_arr=out)
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -50,7 +50,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
-from lcm.typing import FloatND
+from lcm.typing import BoolND, FloatND
 
 # The cross-period continuation channel a DC-EGM parent interpolates. Named
 # solver-agnostically on the seam so the engine threads it without knowing it is
@@ -171,6 +171,18 @@ class SolverBuildContext:
     weights: Mapping[str, float] | None = None
     """Household Pareto weights per stakeholder; set together with `stakeholders`."""
 
+    same_period_ref_regimes: tuple[RegimeName, ...] = ()
+    """Reference regimes whose SAME-period V this regime's kernels read (E2).
+
+    COLLECTIVE-REGIMES (E2). Non-empty only for a collective regime declaring
+    `same_period_refs`. The grid-search kernel then accepts the extra call
+    argument `same_period_regime_to_V_arr` (the mapping of these regimes to
+    their current-period V arrays, supplied by the solve loop after solving
+    them earlier in the same period) and includes matching zero templates in
+    its lowering arguments. Empty for every other regime, whose kernel
+    signatures are unchanged.
+    """
+
 
 @dataclass(frozen=True, kw_only=True)
 class KernelResult:
@@ -193,6 +205,17 @@ class KernelResult:
 
     sim_policy: EGMSimPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
+
+    divorce: BoolND | None = None
+    """The divorce / empty-feasible-set flag `D` on the state axes, or `None`.
+
+    COLLECTIVE-REGIMES (E2). Published by every collective regime's kernel:
+    `True` exactly where NO action satisfies the combined (ordinary AND value)
+    constraints, so the household argmax was taken over an empty set. Distinct
+    from a numeric `-inf` value, which occurs on-path; gates must consume this
+    flag, never test `V == -inf`. `None` for singleton regimes (the default
+    path is unchanged).
+    """
 
 
 @runtime_checkable

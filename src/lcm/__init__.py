@@ -103,6 +103,7 @@ from lcm.processes import (  # noqa: E402
 from lcm.regime import (  # noqa: E402
     MarkovTransition,
     Regime,
+    SamePeriodRef,
 )
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import (  # noqa: E402
@@ -158,6 +159,7 @@ __all__ = [
     "QuasiArithmeticMean",
     "Regime",
     "RouwenhorstAR1Process",
+    "SamePeriodRef",
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",

@@ -39,6 +39,63 @@ from lcm.typing import UserFunction
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
+class SamePeriodRef:
+    """Declaration of a same-period cross-regime reference value (E2).
+
+    A collective regime's `same_period_refs` maps a *reference-value name* (the
+    named argument under which the interpolated value enters the regime's
+    `value_constraints` predicates) to one of these declarations: WHICH other
+    regime's same-period value function is read, HOW the reading regime's state
+    cell maps into the reference regime's state coordinates, and — when the
+    reference regime is itself collective — WHOSE stakeholder value is read.
+
+    The reference regime is solved earlier in the same period (the solver
+    orders each period's active regimes topologically by these declarations),
+    and its value function is linearly interpolated at the projected
+    coordinates with the same machinery the continuation uses — but with the
+    CURRENT period's arrays (design doc `pylcm-extension-collective-regimes.md`
+    §2 E2; EKL 2019 eq. 11 reads the singles' period-t values from inside the
+    married period-t problem).
+    """
+
+    regime: RegimeName
+    """Name of the reference regime whose same-period V is read.
+
+    Must be another regime of the model, active in every period the declaring
+    regime is active. No transition edge between the two regimes is required —
+    same-period reference reads work across otherwise unconnected regime
+    "islands" (that is the point of E2).
+    """
+
+    projection: Mapping[StateName, UserFunction]
+    """How the declaring regime's state cell maps to the reference coordinates.
+
+    One entry per state of the *reference* regime: `state name -> function`
+    returning that coordinate. Each function resolves through the declaring
+    regime's DAG, so it may read the declaring regime's states, actions, and
+    functions (plus `period` / `age`); it may not introduce new free
+    parameters. The reference V is interpolated at the resulting coordinates
+    (linear on continuous axes, lookup on discrete axes).
+    """
+
+    stakeholder: str | None = None
+    """Which stakeholder's value to read from a collective reference regime.
+
+    Required when the reference regime is collective (its V carries a
+    stakeholder axis); must be `None` when the reference regime is a singleton
+    (its V has no stakeholder axis).
+    """
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "projection",
+            ensure_containers_are_immutable(self.projection),
+        )
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
 class Regime:
     """User-facing regime definition.
 
@@ -214,6 +271,49 @@ class Regime:
     each partner). Ignored — and must be `None` — for a singleton regime.
     """
 
+    value_constraints: Mapping[FunctionName, UserFunction] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Value-aware feasibility predicates for a non-terminal collective regime (E2).
+
+    Each entry maps a constraint name to a predicate returning `True` where the
+    (state, action) combination is feasible. Unlike ordinary `constraints`
+    (which are evaluated before and independently of `Q`), a value constraint
+    is evaluated AFTER the per-stakeholder action values and may read, as named
+    arguments:
+
+    - `Q_<s>` for each stakeholder `<s>` — that stakeholder's own action value
+      `Q^s(x, a)` (felicity plus discounted continuation) at the cell;
+    - each key of `same_period_refs` — the reference regime's same-period value
+      interpolated at the projected state (e.g. the divorcee's single value);
+    - ordinary states, actions, regime functions, and parameters via the DAG
+      (a predicate parameter such as EKL's `Delta_j` surfaces in the params
+      template under the constraint's name).
+
+    The final action mask is the AND of ordinary constraints and all value
+    constraints; the household argmax runs over the masked set, and a state
+    cell whose mask is empty publishes the divorce flag `D = True` (returned by
+    the solve alongside V — never conflated with a numeric `-inf` value, which
+    can occur on-path). EKL 2019 eq. 11 is exactly
+    `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each stakeholder `j`.
+
+    Only non-terminal collective regimes may declare value constraints.
+    """
+
+    same_period_refs: Mapping[str, SamePeriodRef] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Same-period cross-regime reference values read by `value_constraints` (E2).
+
+    Maps each reference-value name (the argument name under which the
+    interpolated value enters the predicates) to a `SamePeriodRef` declaring
+    the reference regime, the state projection, and — for a collective
+    reference — the stakeholder. Reference regimes are solved earlier within
+    the same period (topological order; cycles are rejected at model build).
+    Only collective regimes that also declare `value_constraints` may declare
+    references.
+    """
+
     @property
     def terminal(self) -> bool:
         """Whether this is a terminal regime (derived from transition being None)."""
@@ -251,6 +351,20 @@ class Regime:
                 "collective regime; it is only meaningful together with "
                 "`stakeholders`. Omit it for a singleton regime."
             )
+        elif self.value_constraints:
+            raise RegimeInitializationError(
+                "`value_constraints` are value-aware feasibility predicates for "
+                "a collective regime (E2); they read the per-stakeholder action "
+                "values `Q_<s>`, which only exist when `stakeholders` is set. "
+                "Use ordinary `constraints` for a singleton regime."
+            )
+        elif self.same_period_refs:
+            raise RegimeInitializationError(
+                "`same_period_refs` declares same-period reference values for a "
+                "collective regime's `value_constraints` (E2); it is only "
+                "meaningful together with `stakeholders`. Omit it for a "
+                "singleton regime."
+            )
 
         _validate_mapping_contents(self)
         _validate_logical_consistency(self)
@@ -268,6 +382,8 @@ class Regime:
         make_immutable("actions")
         make_immutable("constraints")
         make_immutable("derived_categoricals")
+        make_immutable("value_constraints")
+        make_immutable("same_period_refs")
 
         # The phase grammar (states matrix, carried laws, regime-transition
         # variants) is validated by the normalizer; the per-phase spec it

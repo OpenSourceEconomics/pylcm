@@ -3,7 +3,7 @@ import gc
 import logging
 import os
 import time
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -42,6 +42,7 @@ def solve(
 ) -> tuple[
     MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     MappingProxyType[int, MappingProxyType[RegimeName, EGMSimPolicy]],
+    MappingProxyType[int, MappingProxyType[RegimeName, BoolND]],
 ]:
     """Solve a model using grid search.
 
@@ -63,7 +64,12 @@ def solve(
         Tuple of (the immutable mapping of periods to regime value-function
         arrays, the immutable mapping of periods to each DC-EGM regime's
         published `EGMSimPolicy` — the off-grid consumption function simulation
-        interpolates; empty for periods/regimes with no DC-EGM kernel).
+        interpolates; empty for periods/regimes with no DC-EGM kernel, the
+        immutable mapping of periods to each COLLECTIVE regime's divorce flag
+        `D` — `True` on the state cells whose action mask is empty (E2),
+        distinct from a numeric `-inf` value; empty inner mappings for models
+        without collective regimes, so the default path only gains an empty
+        third element).
 
     """
     next_regime_to_V_arr, next_regime_to_egm_carry = _build_continuation_templates(
@@ -84,6 +90,7 @@ def solve(
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     sim_policies: dict[int, MappingProxyType[RegimeName, EGMSimPolicy]] = {}
+    divorce_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -146,6 +153,7 @@ def solve(
         period_solution: dict[RegimeName, FloatND] = {}
         period_egm_carries: dict[RegimeName, EGMCarry] = {}
         period_sim_policies: dict[RegimeName, EGMSimPolicy] = {}
+        period_divorce_flags: dict[RegimeName, BoolND] = {}
 
         active_regimes = {
             regime_name: regime
@@ -159,7 +167,15 @@ def solve(
             n_active_regimes=len(active_regimes),
         )
 
-        for regime_name, regime in active_regimes.items():
+        # COLLECTIVE-REGIMES (E2): regimes declaring `same_period_refs` read
+        # other regimes' V of THIS period, so those references must be solved
+        # first — order the period's active regimes topologically by the
+        # reference edges (stable: dict order among independent regimes).
+        # Models without references keep the plain dict order.
+        for regime_name in _order_regime_names_by_same_period_refs(
+            active_regimes=active_regimes
+        ):
+            regime = active_regimes[regime_name]
             V_arr = _solve_regime_period(
                 regime=regime,
                 regime_name=regime_name,
@@ -172,6 +188,8 @@ def solve(
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
                 period_egm_carries=period_egm_carries,
                 period_sim_policies=period_sim_policies,
+                period_solution=period_solution,
+                period_divorce_flags=period_divorce_flags,
             )
             # Async reductions: gated on log level. `"off"` skips
             # everything — no kernel launches, no host syncs, no
@@ -182,18 +200,18 @@ def solve(
             # the default keeps it to two reductions per (regime,
             # period).
             if diagnostics_enabled:
-                if stats_enabled:
-                    diagnostic_min.append(jnp.min(V_arr))
-                    diagnostic_max.append(jnp.max(V_arr))
-                    diagnostic_mean.append(jnp.mean(V_arr))
-                running_any_nan = running_any_nan | v_array_has_nan(V_arr)
-                running_any_inf = running_any_inf | v_array_has_inf(V_arr)
-                diagnostic_rows.append(
-                    _DiagnosticRow(
-                        regime_name=regime_name,
-                        period=period,
-                        age=float(ages.values[period]),
-                    )
+                running_any_nan, running_any_inf = _accumulate_diagnostics(
+                    V_arr=V_arr,
+                    regime_name=regime_name,
+                    period=period,
+                    age=float(ages.values[period]),
+                    stats_enabled=stats_enabled,
+                    diagnostic_rows=diagnostic_rows,
+                    diagnostic_min=diagnostic_min,
+                    diagnostic_max=diagnostic_max,
+                    diagnostic_mean=diagnostic_mean,
+                    running_any_nan=running_any_nan,
+                    running_any_inf=running_any_inf,
                 )
 
             period_solution[regime_name] = V_arr
@@ -231,6 +249,12 @@ def solve(
             next_regime_to_egm_carry=next_regime_to_egm_carry,
         )
         solution[period] = MappingProxyType(period_solution)
+        # COLLECTIVE-REGIMES (E2): publish each collective regime's divorce
+        # flag D alongside V. Kept as a plain per-period mapping (not rolled
+        # like `next_regime_to_V_arr`): nothing consumes a NEXT-period D yet —
+        # the E3' gates (slice 4) will read the still-live per-period flags at
+        # each period's end, before the roll.
+        divorce_flags[period] = MappingProxyType(period_divorce_flags)
         sim_policies[period] = MappingProxyType(
             {
                 regime_name: jax.block_until_ready(
@@ -276,12 +300,16 @@ def solve(
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
-    _drain_V_arr_shards(solution=solution)
+    _drain_V_arr_shards(solution=solution, divorce_flags=divorce_flags)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
-    return MappingProxyType(solution), MappingProxyType(sim_policies)
+    return (
+        MappingProxyType(solution),
+        MappingProxyType(sim_policies),
+        MappingProxyType(divorce_flags),
+    )
 
 
 def _collect_rolled_carries(*, period_egm_carries: dict[RegimeName, EGMCarry]) -> None:
@@ -302,6 +330,38 @@ def _collect_rolled_carries(*, period_egm_carries: dict[RegimeName, EGMCarry]) -
     """
     if period_egm_carries:
         gc.collect()
+
+
+def _accumulate_diagnostics(
+    *,
+    V_arr: FloatND,
+    regime_name: RegimeName,
+    period: int,
+    age: float,
+    stats_enabled: bool,
+    diagnostic_rows: list[_DiagnosticRow],
+    diagnostic_min: list[FloatND],
+    diagnostic_max: list[FloatND],
+    diagnostic_mean: list[FloatND],
+    running_any_nan: BoolND,
+    running_any_inf: BoolND,
+) -> tuple[BoolND, BoolND]:
+    """Fold one regime-period V into the async diagnostics accumulators.
+
+    Appends the per-row metadata (and, at debug, the min/max/mean trio) in
+    place and returns the updated running NaN/Inf flag scalars.
+    """
+    if stats_enabled:
+        diagnostic_min.append(jnp.min(V_arr))
+        diagnostic_max.append(jnp.max(V_arr))
+        diagnostic_mean.append(jnp.mean(V_arr))
+    diagnostic_rows.append(
+        _DiagnosticRow(regime_name=regime_name, period=period, age=age)
+    )
+    return (
+        running_any_nan | v_array_has_nan(V_arr),
+        running_any_inf | v_array_has_inf(V_arr),
+    )
 
 
 def _init_diagnostic_accumulators() -> tuple[
@@ -340,6 +400,8 @@ def _solve_regime_period(
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     period_egm_carries: dict[RegimeName, EGMCarry],
     period_sim_policies: dict[RegimeName, EGMSimPolicy],
+    period_solution: Mapping[RegimeName, FloatND],
+    period_divorce_flags: dict[RegimeName, BoolND],
 ) -> FloatND:
     """Invoke one regime's period adapter for one period.
 
@@ -348,11 +410,19 @@ def _solve_regime_period(
     AOT-compiled as `compiled_cores`), calls them with the solver's own argument
     layout, and returns a `KernelResult`. The only branches here are on the
     optional generic outputs — `carry` (the continuation a DC-EGM parent
-    interpolates) and `sim_policy` (the off-grid simulation policy) — which a
-    grid-search regime with no continuation simply leaves `None`.
+    interpolates), `sim_policy` (the off-grid simulation policy), and `divorce`
+    (a collective regime's empty-mask flag D) — which a grid-search regime with
+    no continuation simply leaves `None`.
 
-    Produced carries and sim-policies are stored in `period_egm_carries` /
-    `period_sim_policies` in place.
+    Produced carries, sim-policies, and divorce flags are stored in
+    `period_egm_carries` / `period_sim_policies` / `period_divorce_flags` in
+    place.
+
+    COLLECTIVE-REGIMES (E2): a regime declaring `same_period_refs` additionally
+    receives the referenced regimes' V arrays of THIS period, read off
+    `period_solution` — the within-period topological order guarantees they
+    were solved earlier in this period's loop. Every other regime's adapter is
+    called with the unchanged uniform signature.
 
     `period`/`age` are passed as JAX arrays (not Python scalars) so a shared
     `jax.jit` function is traced once with abstract shapes, not recompiled
@@ -367,6 +437,14 @@ def _solve_regime_period(
 
     """
     period_kernel = regime.solution.period_kernels[period]
+    same_period_kwargs: dict[str, object] = {}
+    if regime.same_period_ref_regimes:
+        same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
+            {
+                ref_regime_name: period_solution[ref_regime_name]
+                for ref_regime_name in regime.same_period_ref_regimes
+            }
+        )
     result = period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
@@ -375,12 +453,53 @@ def _solve_regime_period(
         flat_params=flat_params,
         period=period,
         ages=ages,
+        **same_period_kwargs,
     )
     if result.carry is not None:
         period_egm_carries[regime_name] = result.carry
     if result.sim_policy is not None:
         period_sim_policies[regime_name] = result.sim_policy
+    if result.divorce is not None:
+        period_divorce_flags[regime_name] = result.divorce
     return result.V_arr
+
+
+def _order_regime_names_by_same_period_refs(
+    *,
+    active_regimes: dict[RegimeName, Regime],
+) -> tuple[RegimeName, ...]:
+    """Topologically order one period's active regimes by `same_period_refs`.
+
+    COLLECTIVE-REGIMES (E2). A regime reading another regime's same-period V
+    must be solved after it. Stable Kahn ordering: at each step the first (in
+    dict order) not-yet-placed regime whose active references are all placed is
+    emitted, so models without references keep the plain dict order exactly. A
+    cycle is rejected at model build (`_fail_if_same_period_ref_cycle`); the
+    raise here is a defensive backstop for direct engine callers.
+    """
+    if not any(regime.same_period_ref_regimes for regime in active_regimes.values()):
+        return tuple(active_regimes)
+    placed: dict[RegimeName, None] = {}
+    remaining = dict(active_regimes)
+    while remaining:
+        ready = next(
+            (
+                regime_name
+                for regime_name, regime in remaining.items()
+                if all(ref not in remaining for ref in regime.same_period_ref_regimes)
+            ),
+            None,
+        )
+        if ready is None:
+            msg = (
+                "same_period_refs form a cycle among the period's active "
+                f"regimes: {sorted(remaining)}. This should have been "
+                "rejected at model build."
+            )
+            raise RuntimeError(msg)
+        placed[ready] = None
+        del remaining[ready]
+    return tuple(placed)
 
 
 def _roll_continuation_inputs(
@@ -482,17 +601,19 @@ def _build_base_state_action_spaces(
 def _drain_V_arr_shards(
     *,
     solution: dict[int, MappingProxyType[RegimeName, FloatND]],
+    divorce_flags: dict[int, MappingProxyType[RegimeName, BoolND]] | None = None,
 ) -> None:
-    """Block until every V_arr shard is materialised on its device.
+    """Block until every V_arr (and divorce-flag) shard is materialised.
 
     Solve → simulate barrier: backward induction returns sharded V_arrs,
     but the simulate phase must consume materialised arrays rather than
     in-flight kernels. `jax.block_until_ready` walks the pytree of V_arrs
     and blocks per-shard (no host transfer, no cross-device collective);
     free when kernels are already done, the minimum necessary sync when
-    they are not. V stays sharded across devices.
+    they are not. V stays sharded across devices. The collective divorce
+    flags (E2) ride along in the same barrier.
     """
-    jax.block_until_ready(solution)
+    jax.block_until_ready((solution, divorce_flags))
 
 
 def _compile_all_functions(
