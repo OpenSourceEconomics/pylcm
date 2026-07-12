@@ -22,7 +22,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import NBEGM, GridSearch
+from lcm.solvers import NBEGM, GridSearch, NestedNBEGM
 from lcm.transition import MarkovTransition
 
 if TYPE_CHECKING:
@@ -288,11 +288,12 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if not isinstance(regime.solver, (GridSearch, NBEGM)):
+    if not isinstance(regime.solver, (GridSearch, NBEGM, NestedNBEGM)):
         error_messages.append(
             f"The {type(regime.solver).__name__} solver does not support a "
             "nonlinear `certainty_equivalent`: its Euler inversion assumes "
-            "expected utility. Use GridSearch() or NBEGM() for this regime."
+            "expected utility. Use GridSearch(), NBEGM(), or NestedNBEGM() for "
+            "this regime."
         )
     if regime.taste_shocks is not None:
         error_messages.append(
