@@ -51,6 +51,7 @@ from lcm.typing import (
     BoolND,
     ContinuousState,
     DiscreteAction,
+    DiscreteState,
     FloatND,
     ScalarInt,
 )
@@ -797,3 +798,218 @@ def test_gate_reading_d_target_without_divorce_flags_raises_clearly():
             simulation_output_dtypes={},
             seed=0,
         )
+
+
+# ----------------------------------------------------------------------------------
+# Test 6: regression — a gated edge's TARGET has a discrete state axis (in
+# addition to a continuous one). `route_gated_edges` interpolates the fold's
+# `gate` array at each subject's candidate target-state draw
+# (`_lcm.simulation.gated_routing._call_vmapped_with_accepted_kwargs`); before
+# that call was `vmap`-ped over subjects, a discrete target axis broke
+# `jax.scipy.ndimage.map_coordinates`'s `len(coordinates) == input.ndim`
+# invariant (advanced indexing on whole-population `(n_subjects,)` discrete
+# indices collapses the discrete axes into a leading batch dimension while
+# leaving the continuous axis trailing) — every OTHER gated-edge simulate test
+# above uses a continuous-only target, where a `(n_subjects,)` coordinate
+# array happens to broadcast correctly through `map_coordinates` by
+# coincidence, so this gap went untested. Adapted from
+# `_make_consent_regimes` (Test 2 above) by adding a discrete `educ` state,
+# carried as-is (`fixed_transition`) and contributing 0 to every utility, so
+# the gate arithmetic and expected routing/values are IDENTICAL to
+# `test_consent_routing_simulate_matches_gate_exactly`.
+# ----------------------------------------------------------------------------------
+
+
+@categorical(ordered=True)
+class Educ:
+    low: ScalarInt  # code 0
+    high: ScalarInt  # code 1
+
+
+def _identity_educ(educ: DiscreteState) -> DiscreteState:
+    return educ
+
+
+def _u_single_f_educ(
+    wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
+) -> FloatND:
+    return wage * work + 0.0 * educ
+
+
+def _u_single_f_terminal_educ(wage: ContinuousState, educ: DiscreteState) -> FloatND:
+    return 1.5 * wage + 0.0 * educ  # {1.5, 3.0}
+
+
+def _u_married_f_educ(
+    wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
+) -> FloatND:
+    return 2.0 * wage + 0.0 * work + 0.0 * educ  # {2, 4}
+
+
+def _u_married_m_educ(
+    wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
+) -> FloatND:
+    return wage + 0.0 * work + 0.0 * educ  # {1, 2}
+
+
+def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
+    single_f = Regime(
+        transition={"married_terminal": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        # ONLY difference vs. `_make_consent_regimes`: an added discrete
+        # "educ" state, carried as-is (`fixed_transition`), on the source and
+        # every regime the gated edge's fold/gate/fallback touch.
+        states={"wage": _WAGE_2, "educ": DiscreteGrid(Educ)},
+        state_transitions={
+            "wage": fixed_transition("wage"),
+            "educ": fixed_transition("educ"),
+        },
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_single_f_educ},
+        gated_edges={
+            "married_terminal": GatedEdge(
+                gate=_consent_gate,
+                legs={
+                    "f": EdgeLeg(
+                        target_stakeholder="f",
+                        fallback=SamePeriodRef(
+                            regime="single_f_terminal",
+                            projection={"wage": _identity_wage, "educ": _identity_educ},
+                        ),
+                    )
+                },
+                gate_refs={
+                    "V_single_f_ref": SamePeriodRef(
+                        regime="single_f_terminal",
+                        projection={"wage": _identity_wage, "educ": _identity_educ},
+                    ),
+                    "V_single_m_ref": SamePeriodRef(
+                        regime="single_m_terminal",
+                        projection={"wage": _identity_wage},
+                    ),
+                },
+            )
+        },
+    )
+    single_f_terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wage": _WAGE_2, "educ": DiscreteGrid(Educ)},
+        functions={"utility": _u_single_f_terminal_educ},
+    )
+    single_m_terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wage": _WAGE_2},
+        functions={"utility": _u_single_m_terminal},
+    )
+    married_terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        stakeholders=("f", "m"),
+        states={"wage": _WAGE_2, "educ": DiscreteGrid(Educ)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility_f": _u_married_f_educ, "utility_m": _u_married_m_educ},
+    )
+    return {
+        "single_f": single_f,
+        "single_f_terminal": single_f_terminal,
+        "single_m_terminal": single_m_terminal,
+        "married_terminal": married_terminal,
+    }
+
+
+def _solve_consent_discrete_axis():
+    ages = AgeGrid(start=0, stop=2, step="Y")
+    regimes_dict = _make_consent_regimes_with_discrete_target_axis()
+    regimes, regime_names_to_ids = _solve_and_process(
+        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+    )
+    flat_params = MappingProxyType(
+        {
+            "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_f_terminal": MappingProxyType({}),
+            "single_m_terminal": MappingProxyType({}),
+            "married_terminal": MappingProxyType({}),
+        }
+    )
+    solution, _sim_policies, divorce_flags = solve(
+        flat_params=flat_params,
+        ages=ages,
+        regimes=regimes,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    )
+    return ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags
+
+
+def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
+    """Regression pin for the discrete-target-axis gate-interpolation crash.
+
+    Four subjects cross wage in {1, 2} with educ in {low, high}, so the
+    `vmap`-ped gate interpolator (`gated_routing._call_vmapped_with_accepted_kwargs`)
+    is exercised at BOTH discrete indices, not just one — a discrete-axis
+    lookup that silently read the wrong subject's index would flip a
+    subject's routing here. Wage=1 clears mutual consent (marries)
+    regardless of educ; wage=2 does not (stays single) regardless of educ —
+    `educ` contributes 0.0 to every utility, so its exact numeric routing and
+    values are identical to `test_consent_routing_simulate_matches_gate_exactly`.
+    """
+    ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags = (
+        _solve_consent_discrete_axis()
+    )
+    initial_conditions = MappingProxyType(
+        {
+            "wage": jnp.array([1.0, 1.0, 2.0, 2.0]),
+            "educ": jnp.array([0, 1, 0, 1], dtype=jnp.int32),
+            "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
+            "regime_id": jnp.array(
+                [regime_names_to_ids["single_f"]] * 4, dtype=jnp.int32
+            ),
+        }
+    )
+
+    # Pre-fix, this raised: `ValueError: coordinates must be a sequence of
+    # length input.ndim, but 1 != 2` (the un-vmapped gate interpolator).
+    result = simulate(
+        flat_params=flat_params,
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        logger=get_logger(log_level="off"),
+        period_to_regime_to_V_arr=solution,
+        period_to_regime_to_divorce_flags=divorce_flags,
+        ages=ages,
+        simulation_output_dtypes={},
+        seed=0,
+    )
+
+    # wage=1 (subjects 0, 1) -> married_terminal (gate open), regardless of
+    # educ; wage=2 (subjects 2, 3) -> single_f_terminal (gate closed).
+    married = result.raw_results["married_terminal"][1]
+    single_f_term = result.raw_results["single_f_terminal"][1]
+    np.testing.assert_array_equal(
+        np.asarray(married.in_regime), [True, True, False, False]
+    )
+    np.testing.assert_array_equal(
+        np.asarray(single_f_term.in_regime), [False, False, True, True]
+    )
+
+    # Every recorded value is finite (no stray -inf/NaN from a mis-shaped
+    # interpolation), and the routed branches match the hand-computed values
+    # exactly, unaffected by educ.
+    married_V = np.asarray(married.V_arr)
+    single_f_term_V = np.asarray(single_f_term.V_arr)
+    assert np.all(np.isfinite(married_V[[0, 1]]))
+    assert np.all(np.isfinite(single_f_term_V[[2, 3]]))
+    np.testing.assert_allclose(married_V[0], [2.0, 1.0], rtol=1e-6)
+    np.testing.assert_allclose(married_V[1], [2.0, 1.0], rtol=1e-6)
+    np.testing.assert_allclose(single_f_term_V[2], 3.0, rtol=1e-6)
+    np.testing.assert_allclose(single_f_term_V[3], 3.0, rtol=1e-6)
+
+    # The discrete "educ" state itself was carried correctly into the routed
+    # regime's own state slot (fixed_transition identity), for both branches.
+    np.testing.assert_array_equal(np.asarray(married.states["educ"])[[0, 1]], [0, 1])
+    np.testing.assert_array_equal(
+        np.asarray(single_f_term.states["educ"])[[2, 3]], [0, 1]
+    )

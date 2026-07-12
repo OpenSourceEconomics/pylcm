@@ -74,6 +74,7 @@ from inspect import signature
 from types import MappingProxyType
 from typing import cast
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace
@@ -141,6 +142,50 @@ def _call_with_accepted_kwargs(func: Callable, kwargs: Mapping[str, object]) -> 
     """Call `func` with only the keyword arguments its signature declares."""
     accepted = set(signature(func).parameters)
     return func(**{name: value for name, value in kwargs.items() if name in accepted})
+
+
+def _call_vmapped_with_accepted_kwargs(
+    func: Callable,
+    *,
+    batched_kwargs: Mapping[str, object],
+    static_kwargs: Mapping[str, object],
+) -> object:
+    """Call a per-subject-scalar `func` over a whole population via `vmap`.
+
+    `func` here is always a `_lcm.regime_building.V.get_V_interpolator`
+    product (discrete-index lookup + `map_coordinates` interpolation): it is
+    written to be evaluated at a single subject's SCALAR discrete indices and
+    continuous coordinates, then `vmap`-ped or `productmap`-ped by its
+    caller — the same idiom `_lcm.simulation.transitions
+    .calculate_next_states` uses for `regime.simulation.next_state`. Calling
+    it directly on whole-population `(n_subjects,)` arrays only happens to
+    work when the target has zero discrete state axes (`map_coordinates`
+    natively batches over query points when `len(coordinates) ==
+    input.ndim`); the moment the target has >=1 discrete axis, the discrete
+    lookup's fancy indexing collapses those axes into a leading batch
+    dimension while leaving the continuous axes trailing, which breaks that
+    invariant. `vmap`-ing here makes every call genuinely scalar-per-subject
+    for both discrete and continuous axes, which is correct in both cases.
+
+    `batched_kwargs` (mapped over subject axis 0 — e.g. the candidate target
+    states) and `static_kwargs` (held fixed across subjects — e.g. regime
+    params and the raw grid-level array being read) are filtered down to the
+    names `func` accepts, exactly like `_call_with_accepted_kwargs`; on a name
+    collision, `static_kwargs` wins, mirroring the original
+    `{**states, **params}` merge precedence.
+    """
+    accepted = set(signature(func).parameters)
+    static = {name: value for name, value in static_kwargs.items() if name in accepted}
+    batched = {
+        name: value
+        for name, value in batched_kwargs.items()
+        if name in accepted and name not in static
+    }
+
+    def _call_one_subject(one_subject_kwargs: Mapping[str, object]) -> object:
+        return func(**one_subject_kwargs, **static)
+
+    return jax.vmap(_call_one_subject)(batched)
 
 
 def _select_own_leg(
@@ -211,10 +256,11 @@ def route_gated_edges(
         target_kwargs = {**candidate_target_states, **flat_params[target_name]}
 
         gate_interpolator = regime.gated_edge_gate_interpolators[target_name]
-        gate_float = _call_with_accepted_kwargs(
+        gate_float = _call_vmapped_with_accepted_kwargs(
             gate_interpolator,
-            {
-                **target_kwargs,
+            batched_kwargs=candidate_target_states,
+            static_kwargs={
+                **flat_params[target_name],
                 GATE_ARR_NAME: jnp.asarray(gate_arrays[target_name], dtype=float),
             },
         )
