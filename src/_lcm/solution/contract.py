@@ -181,6 +181,15 @@ class SolverBuildContext:
     mapping it reads and lowers against. Empty for every other regime.
     """
 
+    fold_state_names: tuple[StateName, ...] = ()
+    """IID-process states declared `fold=True`, or empty (the default).
+
+    Only `GridSearch` consumes this: the grid-search kernel weighted-averages
+    each named state's axis out of the stored value immediately after the
+    max-over-actions / collective readout, using the process's own
+    quadrature weights. Empty keeps the default path byte-identical.
+    """
+
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     """Reference regimes whose SAME-period V this regime's kernels read (E2).
 

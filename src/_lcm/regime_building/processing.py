@@ -39,7 +39,7 @@ from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import create_regime_params_template
-from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -296,6 +296,13 @@ def process_regimes(
         same_period_ref_regimes = tuple(
             dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
         )
+        # Folded IID-process states — collected purely from this regime's own
+        # states and grids, so (unlike `co_map_state_names`) the caller can
+        # compute it before `_build_solution_phase` builds `core.transitions`.
+        fold_state_names = _fold_state_names(
+            state_names=state_action_spaces[regime_name].state_names,
+            grids=all_grids[regime_name],
+        )
 
         solution = _build_solution_phase(
             spec=spec,
@@ -321,6 +328,7 @@ def process_regimes(
             weights=weights,
             same_period_ref_regimes=same_period_ref_regimes,
             edge_target_regimes=tuple(user_regime.gated_edges),
+            fold_state_names=fold_state_names,
         )
 
         simulation = _build_simulation_phase(
@@ -367,7 +375,10 @@ def process_regimes(
             certainty_equivalent=user_regime.certainty_equivalent,
             stakeholders=stakeholders,
             same_period_ref_regimes=same_period_ref_regimes,
+            fold_state_names=fold_state_names,
         )
+
+    _fail_if_folded_state_persists(canonical_regimes=canonical_regimes)
 
     # COLLECTIVE-REGIMES (E3'): build the gated-edge folds in a second pass, now
     # that every regime's grid and processed functions are known. Each edge's
@@ -920,6 +931,7 @@ def _build_solution_phase(
     weights: Mapping[str, float] | None = None,
     same_period_ref_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
+    fold_state_names: tuple[StateName, ...] = (),
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -1120,6 +1132,7 @@ def _build_solution_phase(
         weights=weights,
         same_period_ref_regimes=same_period_ref_regimes,
         edge_target_regimes=edge_target_regimes,
+        fold_state_names=fold_state_names,
     )
     solver.validate(context=context)
     solver_kernels = solver.build_period_kernels(context=context)
@@ -2722,6 +2735,81 @@ def _co_map_state_names(
         ):
             co_map.append(name)
     return tuple(co_map)
+
+
+def _fold_state_names(
+    *,
+    state_names: tuple[StateName, ...],
+    grids: MappingProxyType[StateOrActionName, Grid],
+) -> tuple[StateName, ...]:
+    """Return the IID-process states declared `fold=True`, in state-axis order.
+
+    A folded state is integrated out of the stored value by quadrature
+    immediately after the period's max-over-actions / collective readout — a
+    state-topology property collected the same way `_co_map_state_names`
+    collects distributed states, not a per-node computation.
+    """
+    return tuple(
+        name
+        for name in state_names
+        if isinstance(grid := grids.get(name), _IIDProcess) and grid.fold
+    )
+
+
+def _fail_if_folded_state_persists(
+    *, canonical_regimes: Mapping[RegimeName, Regime]
+) -> None:
+    """Reject a folded state that structurally persists past its own period.
+
+    A fold weighted-averages a state's axis out of the stored value: the
+    stored `V` of the regime that declares `fold=True` on it has no such
+    axis (`_get_regime_V_shapes_and_shardings`). If ANY regime's transitions
+    — including the declaring regime's own, via a self-transition — still
+    carry an intrinsic `next_<name>` continuation for that state (i.e. the
+    state is ALSO declared, hence auto-wired with its own weight/index
+    functions, in some regime reachable from another), the continuation
+    machinery would try to interpolate a `next_<name>` axis that the target's
+    stored `V` no longer has — a shape mismatch, or worse, a silent wrong
+    read. This is a cross-regime property (every regime's `solution.transitions`
+    must be known), so it is checked once here, after every regime is built —
+    not in the regime-local `_validate_fold_declarations`.
+
+    Folding is therefore restricted, for now, to states that do not persist:
+    declared in exactly the one regime that folds them, and not redeclared
+    (directly or via a self-transition) in any regime any transition reaches.
+    A genuinely persistent IID shock (redrawn every period a regime is
+    active) needs the fold to also be recognized by the *continuation* side
+    (`regime_to_v_interpolation_info` / `stochastic_transition_names`) of
+    every regime that reads into it — out of scope for this slice.
+    """
+    error_messages: list[str] = []
+    for regime_name, regime in canonical_regimes.items():
+        if not regime.fold_state_names:
+            continue
+        for fold_name in regime.fold_state_names:
+            next_key = f"next_{fold_name}"
+            offending = [
+                (source_name, target_name)
+                for source_name, source_regime in canonical_regimes.items()
+                for target_name, bundle in source_regime.solution.transitions.items()
+                if target_name == regime_name and next_key in bundle
+            ]
+            if offending:
+                sources = sorted({source for source, _ in offending})
+                error_messages.append(
+                    f"fold=True on regime '{regime_name}' state '{fold_name}' "
+                    f"is not supported: '{fold_name}' is also declared as a "
+                    f"state reachable via a next-period continuation from "
+                    f"{sources} into '{regime_name}' — i.e. it structurally "
+                    f"persists. A folded state's stored value has no "
+                    f"'{fold_name}' axis, so that continuation could no "
+                    f"longer interpolate over it. Folding is only supported "
+                    f"for a state that does not persist past the period that "
+                    f"folds it (not redeclared, directly or via a "
+                    f"self-transition, in any reachable regime)."
+                )
+    if error_messages:
+        raise ModelInitializationError(format_messages(error_messages))
 
 
 def _build_Q_and_F_per_period(

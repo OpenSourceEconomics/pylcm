@@ -43,6 +43,8 @@ def get_max_Q_over_a(
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
     stakeholders: tuple[str, ...] | None = None,
     weights: Mapping[str, float] | None = None,
+    fold_state_names: tuple[StateName, ...] = (),
+    fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -99,6 +101,17 @@ def get_max_Q_over_a(
             axes (E2; distinct from a numeric `-inf`, which occurs on-path).
         weights: Household Pareto weights per stakeholder; required (and only used)
             when `stakeholders` is set.
+        fold_state_names: IID-process states declared `fold=True`, or empty (the
+            default). Each is still an ordinary inner (non-co-mapped) productmap
+            axis THROUGH the max-over-actions / collective readout — every node is
+            evaluated exactly as today — but its axis is then weighted-averaged
+            away (`jnp.average(..., weights=fold_weights[name])`) before the
+            result is returned, so the caller never sees it. A collective
+            regime's divorce flag `D` is folded by `jnp.any` instead (stays
+            strictly boolean; see `_wrap_with_fold_reduction`).
+        fold_weights: Quadrature weights per name in `fold_state_names` (each a
+            1-D array matching that state's node count, summing to 1). Ignored
+            when `fold_state_names` is empty.
 
     Returns:
         V, i.e., the function that calculates the maximum of the Q-function over all
@@ -213,6 +226,19 @@ def get_max_Q_over_a(
         variables=inner_state_names,
         batch_sizes={name: batch_sizes[name] for name in inner_state_names},
     )
+
+    if fold_state_names:
+        mapped = _wrap_with_fold_reduction(
+            mapped,
+            fold_state_names=fold_state_names,
+            fold_weights=fold_weights,
+            inner_state_names=inner_state_names,
+            action_names=action_names,
+            state_names=state_names,
+            extra_param_names=extra_param_names,
+            stakeholders=stakeholders,
+        )
+
     if not co_map_state_names:
         return mapped
 
@@ -235,6 +261,71 @@ def get_max_Q_over_a(
             callable_with="only_args",
         )
     return cast("MaxQOverAFunction", allow_only_kwargs(mapped, enforce=False))
+
+
+def _wrap_with_fold_reduction(
+    mapped: Callable[..., FloatND | tuple[FloatND, BoolND]],
+    *,
+    fold_state_names: tuple[StateName, ...],
+    fold_weights: Mapping[StateName, FloatND],
+    inner_state_names: tuple[StateName, ...],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
+    extra_param_names: list[str],
+    stakeholders: tuple[str, ...] | None,
+) -> Callable[..., FloatND | tuple[FloatND, BoolND]]:
+    """Wrap the (still fold-axis-carrying) inner productmap with the fold average.
+
+    `mapped`'s output axes are exactly `inner_state_names`, in order (the
+    `productmap`'s `variables` order) — this runs BEFORE any co-map wrapping,
+    so no co-map axis is present yet. A collective `mapped` additionally
+    carries a TRAILING stakeholder axis on `V` only (not on `D`); since it is
+    trailing, it never shifts a fold axis's position. Fold axes are reduced
+    from the highest inner-position down, so removing one axis never shifts
+    the position of a not-yet-reduced one. The wrapper re-declares EXACTLY
+    `mapped`'s own call signature (`with_signature`, matching
+    `max_Q_over_a`'s pre-productmap signature, which `productmap` preserves)
+    so it composes transparently with the co-map `vmap_1d` wrapping that may
+    follow.
+
+    The divorce flag `D` (collective only) stays strictly boolean — reduced
+    by `jnp.any` ("divorced at any folded node"), not a weighted average — so
+    it keeps its `BoolND` contract for every downstream reader (the gated-edge
+    fold, `KernelResult.divorce`). This is a conservative, not an exact,
+    reduction; `_validate_fold_declarations` already rejects a fold state a
+    same-period gate reads DIRECTLY, but a gate reading `D` itself (of a
+    regime that happens to also fold an UNRELATED state) is not caught — out
+    of scope for this slice.
+    """
+    fold_axis_positions = sorted(
+        ((name, inner_state_names.index(name)) for name in fold_state_names),
+        key=lambda item: -item[1],
+    )
+
+    @with_signature(
+        args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
+        return_annotation=(
+            "tuple[FloatND, BoolND]" if stakeholders is not None else "FloatND"
+        ),
+        enforce=False,
+    )
+    def folded(
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: _ParamsLeaf,
+    ) -> FloatND | tuple[FloatND, BoolND]:
+        out = mapped(next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params)
+        if stakeholders is not None:
+            V_arr, divorce = cast("tuple[FloatND, BoolND]", out)
+            for name, axis in fold_axis_positions:
+                V_arr = jnp.average(V_arr, axis=axis, weights=fold_weights[name])
+                divorce = jnp.any(divorce, axis=axis)
+            return V_arr, divorce
+        V_arr = cast("FloatND", out)
+        for name, axis in fold_axis_positions:
+            V_arr = jnp.average(V_arr, axis=axis, weights=fold_weights[name])
+        return V_arr
+
+    return folded
 
 
 def get_argmax_and_max_Q_over_a(

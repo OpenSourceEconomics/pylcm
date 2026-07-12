@@ -22,6 +22,7 @@ from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.typing import ActionName, ActiveFunction, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import (
     _validate_collective_regime,
+    _validate_fold_declarations,
     _validate_gated_edges,
     _validate_logical_consistency,
     _validate_mapping_contents,
@@ -478,6 +479,7 @@ class Regime:
 
         _validate_mapping_contents(self)
         _validate_logical_consistency(self)
+        _validate_fold_declarations(self)
 
         def make_immutable(name: str) -> None:
             value = ensure_containers_are_immutable(getattr(self, name))

@@ -18,6 +18,7 @@ from dags.tree import QNAME_DELIMITER
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.processes.iid import _IIDProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
@@ -832,6 +833,251 @@ def _state_transition_variants(value: object) -> tuple[tuple[object, str], ...]:
     if isinstance(value, Phased):
         return ((value.solve, " solve variant"), (value.simulate, " simulate variant"))
     return ((value, ""),)
+
+
+def _fold_state_names(regime: lcm.regime.Regime) -> tuple[StateName, ...]:
+    """Return the regime's IID-process states declared `fold=True`."""
+    return tuple(name for name, grid in regime.states.items() if _is_folded(grid))
+
+
+def _is_folded(grid: object) -> bool:
+    """Whether a state's grid is an IID process declaring `fold=True`."""
+    return isinstance(grid, _IIDProcess) and grid.fold
+
+
+def _flatten_transition_callables(value: object) -> list[Callable]:
+    """Return every callable reachable from a `state_transitions` / `transition` entry.
+
+    Unwraps `Phased` (both variants) and per-target `Mapping`s; `MarkovTransition`
+    and `_IdentityTransition` are themselves callables with an introspectable
+    signature (`MarkovTransition` sets `__wrapped__`; `_IdentityTransition` sets
+    `__signature__`), so `inspect.signature` resolves them correctly downstream.
+    """
+    if value is None:
+        return []
+    if isinstance(value, Phased):
+        return _flatten_transition_callables(
+            value.solve
+        ) + _flatten_transition_callables(value.simulate)
+    if isinstance(value, Mapping):
+        out: list[Callable] = []
+        for entry in value.values():
+            out.extend(_flatten_transition_callables(entry))
+        return out
+    if callable(value):
+        return [cast("Callable", value)]
+    return []
+
+
+def _fold_dependency_closure(
+    *, roots: tuple[Callable, ...], resolution_table: Mapping[str, Callable | Phased]
+) -> set[str]:
+    """Return every argument name in the transitive DAG ancestry of `roots`.
+
+    Walks argument names of each root; whenever a name matches an entry of
+    `resolution_table` (an ordinary regime function or constraint), its
+    variants' argument names are pulled in too, recursively. Leaf names
+    (states, actions, params, `period`/`age`) terminate the walk. This is the
+    same "does X depend on Y" question `_find_function_output_grid_indexing`
+    answers by AST-walking; here a signature walk suffices because the
+    question is about *argument names*, not source text.
+    """
+    seen_names: set[str] = set()
+    stack: list[Callable] = list(roots)
+    visited_ids: set[int] = set()
+    while stack:
+        func = stack.pop()
+        if id(func) in visited_ids:
+            continue
+        visited_ids.add(id(func))
+        try:
+            params = inspect.signature(func).parameters
+        except ValueError, TypeError:
+            continue
+        for name in params:
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            entry = resolution_table.get(name)
+            if entry is not None:
+                stack.extend(_function_variants(entry))
+    return seen_names
+
+
+def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
+    """Reject `fold=True` IID-process declarations the fold machinery can't support.
+
+    A fold integrates a shock's node axis into the stored value by quadrature
+    immediately after the period's max-over-actions / collective readout, so
+    nothing may condition on which node was realized beyond that point:
+
+    - a same-period gate / value-constraint predicate (E2/E3') that reads the
+      shock's realized value — these read live per-node values to decide a
+      within-period household choice or a divorce/consent gate, which the
+      fold has already averaged away by the time any *other* regime's
+      same-period logic runs;
+    - a next-period transition (state or regime) that reads the shock's
+      realized value — a folded shock is integrated out, so no downstream
+      state may depend on which node was realized;
+    - EV1 `taste_shocks` on the same regime — the taste-shock reduction is a
+      separate closed-form max over discrete actions; the two reductions are
+      not composed;
+    - any solver other than `GridSearch` — the fold reduction is implemented
+      only in the grid-search max-Q-over-a kernel;
+    - a process with runtime-supplied distribution params — the fold weights
+      are computed once at kernel-build time from the process's own
+      (fully-specified) `compute_transition_probs`.
+
+    A persistent (non-IID) process has no `fold` field at all, so `fold=True`
+    on one is rejected by the type system before this validator ever runs.
+
+    Whether the folded state structurally PERSISTS (is redeclared, with an
+    intrinsic `next_<name>` continuation, in any regime reachable from this
+    one — including itself) is a cross-regime property, checked once every
+    regime's transitions are built (`_fail_if_folded_state_persists` in
+    `regime_building/processing.py`), not here.
+    """
+    fold_names = _fold_state_names(regime)
+    if not fold_names:
+        return
+
+    error_messages = [
+        *_fold_scope_errors(regime, fold_names),
+        *_fold_same_period_read_errors(regime, fold_names),
+        *_fold_transition_read_errors(regime, fold_names),
+    ]
+    if error_messages:
+        raise RegimeInitializationError(format_messages(error_messages))
+
+
+def _fold_scope_errors(
+    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+) -> list[str]:
+    """Collect the regime-wide (not DAG-dependency) fold restrictions."""
+    error_messages: list[str] = []
+    runtime_params = [
+        name
+        for name in fold_names
+        if cast("_IIDProcess", regime.states[name]).params_to_pass_at_runtime
+    ]
+    if runtime_params:
+        error_messages.append(
+            f"fold=True on state(s) {sorted(runtime_params)} is not yet "
+            "supported together with runtime-supplied distribution params: "
+            "the fold weights are computed once, at kernel-build time, from "
+            "the process's own (fully-specified) `compute_transition_probs`. "
+            "Supply the distribution params directly on the process, or drop "
+            "`fold=True`."
+        )
+    if regime.taste_shocks is not None:
+        error_messages.append(
+            f"fold=True on state(s) {sorted(fold_names)} is not supported "
+            "together with EV1 `taste_shocks` on the same regime: the "
+            "taste-shock reduction is a closed-form max over discrete "
+            "actions, and folding an IID state is a separate quadrature "
+            "reduction over a state axis — the two reductions are not "
+            "composed."
+        )
+    if not isinstance(regime.solver, GridSearch):
+        error_messages.append(
+            f"fold=True on state(s) {sorted(fold_names)} is only implemented "
+            "for the `GridSearch` solver: the fold reduction runs inside the "
+            "grid-search max-Q-over-a kernel. Use `solver=GridSearch()`, or "
+            "drop `fold=True`."
+        )
+    return error_messages
+
+
+def _fold_resolution_table(regime: lcm.regime.Regime) -> dict[str, Callable | Phased]:
+    """Regime functions/constraints usable as DAG-ancestor resolution targets."""
+    return {
+        **{k: v for k, v in regime.constraints.items() if v is not None},
+        **{k: v for k, v in regime.functions.items() if v is not None},
+    }
+
+
+def _fold_same_period_roots(regime: lcm.regime.Regime) -> list[tuple[str, Callable]]:
+    """Named same-period gate / value-constraint / reference-projection roots."""
+    roots: list[tuple[str, Callable]] = []
+    for name, predicate in regime.value_constraints.items():
+        roots.extend(
+            (f"value_constraints['{name}']", variant)
+            for variant in _function_variants(predicate)
+        )
+    for target_name, edge in regime.gated_edges.items():
+        roots.extend(
+            (f"gated_edges['{target_name}'].gate", variant)
+            for variant in _function_variants(edge.gate)
+        )
+        for ref_name, ref in edge.gate_refs.items():
+            roots.extend(
+                (f"gated_edges['{target_name}'].gate_refs['{ref_name}']", func)
+                for func in ref.projection.values()
+            )
+    for ref_name, ref in regime.same_period_refs.items():
+        roots.extend(
+            (f"same_period_refs['{ref_name}']", func)
+            for func in ref.projection.values()
+        )
+    return roots
+
+
+def _fold_same_period_read_errors(
+    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+) -> list[str]:
+    """Reject a fold name read by a same-period gate / value-constraint (E2/E3')."""
+    resolution_table = _fold_resolution_table(regime)
+    error_messages: list[str] = []
+    for label, func in _fold_same_period_roots(regime):
+        hit = _fold_names_ordered_intersection(
+            fold_names,
+            _fold_dependency_closure(roots=(func,), resolution_table=resolution_table),
+        )
+        if hit:
+            error_messages.append(
+                f"fold=True on state(s) {hit} conflicts with {label}, which "
+                "reads the shock's realized value: a same-period gate / "
+                "value-constraint / reference projection needs the unfolded "
+                "per-node value (E2/E3'), but a folded state's node axis is "
+                "averaged away before the period's value is published. Drop "
+                "`fold=True` on the shock, or stop reading it there."
+            )
+    return error_messages
+
+
+def _fold_transition_read_errors(
+    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+) -> list[str]:
+    """Reject a fold name read by a next-period state / regime transition."""
+    transition_roots: list[Callable] = []
+    for value in regime.state_transitions.values():
+        transition_roots.extend(_flatten_transition_callables(value))
+    transition_roots.extend(_flatten_transition_callables(regime.transition))
+
+    resolution_table = _fold_resolution_table(regime)
+    transition_hit: set[str] = set()
+    for func in transition_roots:
+        transition_hit |= _fold_dependency_closure(
+            roots=(func,), resolution_table=resolution_table
+        )
+    transition_hit &= set(fold_names)
+    if not transition_hit:
+        return []
+    return [
+        f"fold=True on state(s) {sorted(transition_hit)} conflicts with a "
+        "next-period transition that reads the shock's realized value: a "
+        "folded shock is integrated out at solve time, so no downstream "
+        "state or regime transition may condition on which node was "
+        "realized. Drop `fold=True`, or stop conditioning the transition "
+        "on it."
+    ]
+
+
+def _fold_names_ordered_intersection(
+    fold_names: tuple[StateName, ...], other: set[str]
+) -> list[StateName]:
+    """Return `fold_names` filtered to `other`, preserving `fold_names`' order."""
+    return [name for name in fold_names if name in other]
 
 
 def _validate_per_target_dict(

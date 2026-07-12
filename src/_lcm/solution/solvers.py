@@ -90,6 +90,18 @@ class GridSearch(Solver):
 
         built: dict[int, MaxQOverAFunction] = {}
         result: dict[int, PeriodKernel] = {}
+        # Fold weights are the folded process's own marginal distribution
+        # (`compute_transition_probs` returns an (n_points, n_points) matrix
+        # whose every row is that marginal — the "IID" part — so row 0 is it).
+        # `_validate_fold_declarations` rejects a runtime-parameterized
+        # process, so this is a plain constant computed once here, at
+        # kernel-build time — never inside the traced core.
+        fold_weights = {
+            name: cast(
+                "_ContinuousStochasticProcess", context.grids[name]
+            ).get_transition_probs()[0]
+            for name in context.fold_state_names
+        }
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
             if q_id not in built:
@@ -110,6 +122,8 @@ class GridSearch(Solver):
                     co_map_v_arr_in_axes=context.co_map_v_arr_in_axes,
                     stakeholders=context.stakeholders,
                     weights=context.weights,
+                    fold_state_names=context.fold_state_names,
+                    fold_weights=fold_weights,
                 )
                 built[q_id] = jax.jit(func) if context.enable_jit else func
             result[period] = _GridSearchPeriodKernel(
