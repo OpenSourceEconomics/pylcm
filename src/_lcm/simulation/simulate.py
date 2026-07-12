@@ -73,6 +73,7 @@ def simulate(
     period_to_regime_to_divorce_flags: MappingProxyType[
         int, MappingProxyType[RegimeName, BoolND]
     ] = MappingProxyType({}),
+    own_stakeholder: str | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -113,6 +114,16 @@ def simulate(
             caller does not have it at hand — not yet surfaced through the
             public `Model.solve`/`Model.simulate` API (mirrors solve's own
             internal-only status; a public accessor is a follow-up).
+        own_stakeholder: ROW-SPLIT (synthetic mode). This simulate() call's
+            fixed own-role for divorce routing on a COLLECTIVE source's
+            gated edge — e.g. "f" for an all-women population tracking
+            synthetic male partners, "m" for an all-men population. A
+            single value for the WHOLE call, not a per-subject array (see
+            `_lcm.simulation.gated_routing._select_own_leg`). `None`
+            (default) preserves the original "first declared leg" routing
+            convention exactly — byte-identical for any caller that does
+            not pass it (e.g. the public `Model.simulate()`, not yet
+            surfaced here either).
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -177,6 +188,7 @@ def simulate(
             ages=ages,
             seed=seed,
             logger=logger,
+            own_stakeholder=own_stakeholder,
         )
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
@@ -250,6 +262,7 @@ def _simulate_subject_chunk(
     ages: AgeGrid,
     seed: int,
     logger: logging.Logger,
+    own_stakeholder: str | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -258,6 +271,7 @@ def _simulate_subject_chunk(
     chunk's position in the full population so RNG keys stay full-population and are
     sliced by global index. The key stream is re-derived from `seed` here so the
     per-period carry is identical across chunks (it is subject-count-independent).
+    `own_stakeholder`: see `simulate()`'s docstring (ROW-SPLIT synthetic mode).
 
     Returns the per-(regime, period) results for this chunk's subjects.
     """
@@ -331,6 +345,7 @@ def _simulate_subject_chunk(
                     n_subjects=n_subjects,
                     subject_slice=subject_slice,
                     original_n_subjects=original_n_subjects,
+                    own_stakeholder=own_stakeholder,
                 )
             )
             states = new_states
@@ -438,6 +453,7 @@ def _simulate_regime_in_period(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
+    own_stakeholder: str | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -469,6 +485,8 @@ def _simulate_regime_in_period(
         n_subjects: Total number of subjects (the full population), used to keep RNG
             key generation independent of how subjects are chunked.
         subject_slice: Global-index slice of the subjects in this chunk.
+        own_stakeholder: See `simulate()`'s docstring (ROW-SPLIT synthetic mode);
+            threaded down to `route_gated_edges`.
 
     Returns:
         Tuple containing:
@@ -653,6 +671,7 @@ def _simulate_regime_in_period(
             new_subject_regime_ids=new_subject_regime_ids,
             subjects_in_regime=subject_ids_in_regime,
             flat_params=flat_params,
+            own_stakeholder=own_stakeholder,
         )
         states = next_states
 
