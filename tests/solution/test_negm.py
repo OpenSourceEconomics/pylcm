@@ -11,13 +11,18 @@ budget constraint. Nothing here solves a model.
 """
 
 import dataclasses
+import inspect
 
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.grids import ContinuousGrid
+from _lcm.solution.solvers import _durable_keeper_transition
 from lcm import DCEGM, NEGM, LinSpacedGrid, NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
+from lcm.typing import ContinuousState, FloatND
 from tests.test_models import negm_kinked_toy
 
 _INNER = DCEGM(
@@ -107,3 +112,27 @@ def test_negm_simulate_phase_synthesizes_inner_budget_constraint():
     alive = model._regimes["alive"]
     assert DCEGM_BUDGET_CONSTRAINT_NAME in alive.simulation.constraints
     assert DCEGM_BUDGET_CONSTRAINT_NAME not in alive.solution.constraints
+
+
+def test_keeper_no_adjustment_map_threads_every_declared_argument() -> None:
+    """A keeper no-adjustment map threads every argument it declares, not just the durable.
+
+    A permanent-income deflator `keep(car, growth) = 0.9 * car / growth` reads the
+    durable stock and a growth node; the keeper transition carries both arguments
+    (copying the map's own annotations) and applies the map, so a stored-value
+    normalization can divide the kept stock by the current growth factor.
+    """
+
+    def keep(car: ContinuousState, growth: FloatND) -> ContinuousState:
+        return car * 0.9 / growth
+
+    transition = _durable_keeper_transition(
+        no_adjustment_func=keep,
+        durable_state="car",
+        outer_post_decision="next_car",
+    )
+
+    assert set(inspect.signature(transition).parameters) == {"car", "growth"}
+    assert transition.__name__ == "next_car"
+    result = transition(car=jnp.asarray(100.0), growth=jnp.asarray(1.02))
+    np.testing.assert_allclose(np.asarray(result), 100.0 * 0.9 / 1.02, rtol=1e-10)

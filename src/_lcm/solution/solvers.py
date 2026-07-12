@@ -1222,18 +1222,26 @@ def _durable_keeper_transition(
 ) -> TransitionFunction:
     """Wrap the no-adjustment map as the keeper's durable transition.
 
-    The map reads the durable state alone and returns the kept next stock, so it
-    is a decision-independent passive law `next_<durable> = keep(<durable>)`. The
-    wrapper carries the `next_<durable>` name and a `ContinuousState` signature so
-    the engine's transition collector classifies it like any passive durable law.
+    The map returns the kept next stock and may depend on more than the durable
+    stock itself: the wrapper threads every argument the map declares (the
+    durable state and any further states, params, or DAG-computed function nodes
+    it reads), copying each argument's annotation from the map's own signature.
+    A permanent-income deflator `keep(car, growth) = (1 - vs*delta) car / growth`,
+    for instance, reads the durable and a growth node. It stays a
+    decision-independent passive law `next_<durable> = keep(...)`; the wrapper
+    carries the `next_<durable>` name and a `ContinuousState` return so the
+    engine's transition collector classifies it like any passive durable law and
+    resolves the declared arguments from the regime's DAG.
     """
+    annotations = ensure_annotations_are_strings(get_annotations(no_adjustment_func))
+    arg_names = tuple(name for name in annotations if name != "return")
 
     @with_signature(
-        args={durable_state: "ContinuousState"},
+        args={name: annotations[name] for name in arg_names},
         return_annotation="ContinuousState",
     )
     def keeper_transition(**kwargs: ContinuousState) -> ContinuousState:
-        return no_adjustment_func(**{durable_state: kwargs[durable_state]})
+        return no_adjustment_func(**{name: kwargs[name] for name in arg_names})
 
     keeper_transition.__name__ = outer_post_decision
     return cast("TransitionFunction", keeper_transition)
