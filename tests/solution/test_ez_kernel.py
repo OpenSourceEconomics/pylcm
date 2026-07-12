@@ -114,7 +114,7 @@ def test_marginal_of_resource_matches_the_foc_substituted_continuation_form() ->
         inverse_eis=rho,
     )
     marginal = ez_marginal_of_resource(
-        flow=consumption,
+        flow_marginal=consumption ** (-rho),
         value=value,
         discount_factor=beta,
         inverse_eis=rho,

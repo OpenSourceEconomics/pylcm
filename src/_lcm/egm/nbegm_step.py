@@ -295,6 +295,35 @@ def _invert_euler_over_savings(
     return jax.vmap(invert_one)(cont_marginal)
 
 
+def _ez_flow_power_structure(
+    *,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    inverse_eis: ScalarFloat,
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Euler-inversion coefficients for a single-power period flow.
+
+    The Epstein-Zin closed-form Euler inversion needs the flow's marginal as a
+    single power of consumption, `q^(-rho) q_c = flow_coefficient * c^flow_exponent`.
+    For any constant-elasticity flow `q(c) = A c^phi` — the basic good `q = c`, and
+    the fixed-service Cobb-Douglas `q = c^phi s^(1-phi)` with `s` the outer durable
+    fixed per outer node — read `A = q(1)` and the elasticity `phi = q'(1) / A` from
+    the regime's own flow, then `flow_coefficient = A^(1-rho) phi` and
+    `flow_exponent = phi (1-rho) - 1`. Reduces to `(1, -rho)` for the basic flow
+    (`A = phi = 1`).
+
+    Valid only for a flow with a constant consumption elasticity (a single power of
+    `c`); a flow whose elasticity varies with `c` (e.g. a nested CES) needs a
+    numeric inverse instead.
+    """
+    one = jnp.asarray(1.0)
+    flow_scale = utility_of_action(one)
+    flow_power = jax.grad(utility_of_action)(one) / flow_scale
+    one_minus_rho = 1.0 - inverse_eis
+    flow_coefficient = flow_scale**one_minus_rho * flow_power
+    flow_exponent = flow_power * one_minus_rho - 1.0
+    return flow_coefficient, flow_exponent
+
+
 def nbegm_multi_interval_step_savings(
     *,
     cont_value: Float1D,
@@ -366,13 +395,16 @@ def nbegm_multi_interval_step_savings(
     # the additive `u + beta E[V']` form.
     marginal_utility = jax.grad(utility_of_action)
     if inverse_eis is not None:
+        flow_coefficient, flow_exponent = _ez_flow_power_structure(
+            utility_of_action=utility_of_action, inverse_eis=inverse_eis
+        )
         consumption = ez_consumption_from_euler(
             nu=cont_value,
             dnu_ds=cont_marginal,
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
-            flow_coefficient=1.0,
-            flow_exponent=-inverse_eis,
+            flow_coefficient=flow_coefficient,
+            flow_exponent=flow_exponent,
         )
     else:
         consumption = _invert_euler_over_savings(
@@ -388,13 +420,13 @@ def nbegm_multi_interval_step_savings(
     slope_endog = coh_slopes[endog_interval]
     if inverse_eis is not None:
         value_endog = ez_period_value(
-            flow=consumption,
+            flow=jax.vmap(utility_of_action)(consumption),
             nu=cont_value,
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
         )
         marginal_endog = slope_endog * ez_marginal_of_resource(
-            flow=consumption,
+            flow_marginal=flow_coefficient * consumption**flow_exponent,
             value=value_endog,
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
@@ -423,13 +455,13 @@ def nbegm_multi_interval_step_savings(
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     if inverse_eis is not None:
         node_value_safe = ez_period_value(
-            flow=node_consumption_safe,
+            flow=jax.vmap(jax.vmap(utility_of_action))(node_consumption_safe),
             nu=cont_value[:, None],
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
         )
         node_marginal_safe = ez_marginal_of_resource(
-            flow=node_consumption_safe,
+            flow_marginal=flow_coefficient * node_consumption_safe**flow_exponent,
             value=node_value_safe,
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
