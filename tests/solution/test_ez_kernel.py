@@ -14,8 +14,11 @@ import numpy as np
 from _lcm.egm.ez_kernel import (
     ez_consumption_from_euler,
     ez_continuation,
+    ez_invert_partials,
     ez_marginal_of_resource,
     ez_period_value,
+    ez_transform_partials,
+    ez_transform_scalar,
 )
 
 
@@ -190,4 +193,105 @@ def test_continuation_reduces_to_linear_expectation_at_zero_risk_aversion() -> N
     np.testing.assert_allclose(np.asarray(nu)[0], 0.25 * 1.0 + 0.75 * 3.0, rtol=1e-10)
     np.testing.assert_allclose(
         np.asarray(dnu_ds)[0], 0.25 * 0.4 + 0.75 * 0.2, rtol=1e-10
+    )
+
+
+def test_transform_partials_are_the_generator_weighted_sums() -> None:
+    """`S = sum_j w_j V_j^(1-gamma)` and `T = sum_j w_j V_j^(-gamma) dV_j/ds`."""
+    gamma = 4.0
+    child_values = jnp.array([[1.0, 2.0]])
+    child_marginals = jnp.array([[0.5, 0.25]])
+    weights = jnp.array([0.5, 0.5])
+    transformed_value, transformed_marginal = ez_transform_partials(
+        child_values=child_values,
+        child_marginals=child_marginals,
+        weights=weights,
+        risk_aversion=jnp.asarray(gamma),
+    )
+    exp_value = 0.5 * 1.0 ** (1.0 - gamma) + 0.5 * 2.0 ** (1.0 - gamma)
+    exp_marginal = 0.5 * 1.0 ** (-gamma) * 0.5 + 0.5 * 2.0 ** (-gamma) * 0.25
+    np.testing.assert_allclose(np.asarray(transformed_value)[0], exp_value, rtol=1e-10)
+    np.testing.assert_allclose(
+        np.asarray(transformed_marginal)[0], exp_marginal, rtol=1e-10
+    )
+
+
+def test_transform_scalar_applies_the_generator() -> None:
+    """`g(V) = V^(1-gamma)` for a certain continuation value."""
+    gamma = 4.0
+    value = jnp.asarray(2.0)
+    np.testing.assert_allclose(
+        np.asarray(ez_transform_scalar(value=value, risk_aversion=jnp.asarray(gamma))),
+        2.0 ** (1.0 - gamma),
+        rtol=1e-10,
+    )
+
+
+def test_transform_scalar_is_the_log_generator_at_unit_risk_aversion() -> None:
+    """At `gamma = 1` the generator degenerates to `log V`."""
+    value = jnp.asarray(3.0)
+    np.testing.assert_allclose(
+        np.asarray(ez_transform_scalar(value=value, risk_aversion=jnp.asarray(1.0))),
+        np.log(3.0),
+        rtol=1e-10,
+    )
+
+
+def test_invert_partials_recovers_the_continuation_certainty_equivalent() -> None:
+    """`ez_invert_partials(ez_transform_partials(.)) == ez_continuation(.)`.
+
+    The single-regime certainty equivalent is the transform partials inverted
+    with no intervening regime blend, so the two must agree exactly.
+    """
+    gamma = 4.0
+    child_values = jnp.array([[1.0, 2.0]])
+    child_marginals = jnp.array([[0.5, 0.25]])
+    weights = jnp.array([0.5, 0.5])
+    transformed_value, transformed_marginal = ez_transform_partials(
+        child_values=child_values,
+        child_marginals=child_marginals,
+        weights=weights,
+        risk_aversion=jnp.asarray(gamma),
+    )
+    nu, dnu_ds = ez_invert_partials(
+        transformed_value=transformed_value,
+        transformed_marginal=transformed_marginal,
+        risk_aversion=jnp.asarray(gamma),
+    )
+    ref_nu, ref_dnu_ds = ez_continuation(
+        child_values=child_values,
+        child_marginals=child_marginals,
+        weights=weights,
+        risk_aversion=jnp.asarray(gamma),
+    )
+    np.testing.assert_allclose(np.asarray(nu), np.asarray(ref_nu), rtol=1e-10)
+    np.testing.assert_allclose(np.asarray(dnu_ds), np.asarray(ref_dnu_ds), rtol=1e-10)
+
+
+def test_single_node_transform_partial_matches_the_deterministic_inline_form() -> None:
+    """A one-node lottery transforms to the deterministic-target inline partial.
+
+    The continuation reader transforms a child with no own shock lottery inline as
+    `(g(V), V^(-gamma) dV/ds)`; `ez_transform_partials` on a single unit-weight node
+    must produce exactly that, so the two continuation paths carry identical
+    transform-space partials into the regime blend.
+    """
+    gamma = 4.0
+    value = jnp.asarray(2.0)
+    marginal = jnp.asarray(0.25)
+    transformed_value, transformed_marginal = ez_transform_partials(
+        child_values=value[None],
+        child_marginals=marginal[None],
+        weights=jnp.array([1.0]),
+        risk_aversion=jnp.asarray(gamma),
+    )
+    np.testing.assert_allclose(
+        np.asarray(transformed_value),
+        np.asarray(ez_transform_scalar(value=value, risk_aversion=jnp.asarray(gamma))),
+        rtol=1e-10,
+    )
+    np.testing.assert_allclose(
+        np.asarray(transformed_marginal),
+        np.asarray(value ** (-gamma) * marginal),
+        rtol=1e-10,
     )

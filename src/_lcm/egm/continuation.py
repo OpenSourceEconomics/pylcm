@@ -777,9 +777,12 @@ def _get_child_carry_reader(
                 row_gradients=gradients,
             )
             if risk_aversion is not None:
-                # A deterministic target (a bequest-style value function with no
-                # own shock lottery) contributes its Epstein-Zin transformed
-                # partial `(g(V), V^-gamma * dV/ds)` to the joint regime blend.
+                # A target whose continuation carries no shock lottery at this
+                # seam — a stateless terminal value, or one whose stochastic
+                # states are ride-along co-states integrated in the outer
+                # envelope — contributes its Epstein-Zin transformed partial
+                # `(g(V), V^-gamma * dV/ds)` to the joint regime blend. This is
+                # `ez_transform_partials` on a single unit-weight node.
                 return (
                     ez_transform_scalar(value=value, risk_aversion=risk_aversion),
                     value ** (-risk_aversion) * marginal,
