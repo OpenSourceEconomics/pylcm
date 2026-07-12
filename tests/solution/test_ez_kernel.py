@@ -14,6 +14,7 @@ import numpy as np
 from _lcm.egm.ez_kernel import (
     ez_consumption_from_euler,
     ez_continuation,
+    ez_marginal_of_resource,
     ez_period_value,
 )
 
@@ -83,6 +84,43 @@ def test_period_value_is_the_epstein_zin_aggregator() -> None:
         1.0 / (1.0 - rho)
     )
     np.testing.assert_allclose(np.asarray(value), reference, rtol=1e-10)
+
+
+def test_marginal_of_resource_matches_the_foc_substituted_continuation_form() -> None:
+    """`dV/dm = (1-beta) V^rho c^-rho` equals `V^rho beta nu^-rho dnu_ds` at optimum.
+
+    The envelope marginal of the resource and the continuation form of the same
+    derivative agree once the interior Euler equation
+    `(1-beta) c^-rho = beta nu^-rho dnu_ds` holds, so the consumption recovered
+    from the Euler inversion and the value it induces produce a consistent
+    marginal value of liquid.
+    """
+    rho = 2.0
+    beta = 0.95
+    nu = 3.0
+    dnu_ds = 0.4
+    consumption = ez_consumption_from_euler(
+        nu=jnp.asarray(nu),
+        dnu_ds=jnp.asarray(dnu_ds),
+        discount_factor=beta,
+        inverse_eis=rho,
+        flow_coefficient=1.0,
+        flow_exponent=-rho,
+    )
+    value = ez_period_value(
+        flow=consumption,
+        nu=jnp.asarray(nu),
+        discount_factor=beta,
+        inverse_eis=rho,
+    )
+    marginal = ez_marginal_of_resource(
+        flow=consumption,
+        value=value,
+        discount_factor=beta,
+        inverse_eis=rho,
+    )
+    foc_form = float(value) ** rho * beta * nu ** (-rho) * dnu_ds
+    np.testing.assert_allclose(np.asarray(marginal), foc_form, rtol=1e-9)
 
 
 def test_period_value_is_strictly_positive_for_positive_inputs() -> None:

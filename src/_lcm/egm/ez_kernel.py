@@ -110,6 +110,37 @@ def ez_consumption_from_euler(
     return (target_marginal / flow_coefficient) ** (1.0 / flow_exponent)
 
 
+def ez_marginal_of_resource(
+    *,
+    flow: FloatND,
+    value: FloatND,
+    discount_factor: ScalarFloat | float,
+    inverse_eis: ScalarFloat | float,
+) -> FloatND:
+    """Return the envelope marginal value of the resource at an interior optimum.
+
+    By the envelope theorem the derivative of the recursive value with respect to
+    the Euler state (cash-on-hand `m`) is `dV/dm = (1-beta) V^rho flow^(-rho)`,
+    where `flow` is the period consumption good (`q = c` in the basic single-good
+    case) and `rho` the inverse elasticity of intertemporal substitution.
+    Substituting the interior Euler equation `(1-beta) flow^(-rho) = beta
+    nu^(-rho) dnu/ds` recovers the equivalent continuation form
+    `V^rho beta nu^(-rho) dnu/ds`, so the marginal is consistent with the
+    consumption the Euler inversion returns.
+
+    Args:
+        flow: The period flow at the optimum (consumption in the basic case).
+        value: The recursive value index `V` at the state.
+        discount_factor: The discount factor `beta`.
+        inverse_eis: The inverse elasticity of intertemporal substitution `rho`.
+
+    Returns:
+        The marginal value of the resource `dV/dm`.
+
+    """
+    return (1.0 - discount_factor) * value**inverse_eis * flow ** (-inverse_eis)
+
+
 def ez_period_value(
     *,
     flow: FloatND,
