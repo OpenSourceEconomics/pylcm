@@ -19,6 +19,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidNameError, RegimeInitializationError
 from lcm.solvers import DCEGM, NBEGM
+from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.epstein_zin import get_model, get_params
 
@@ -210,22 +211,24 @@ def test_dcegm_rejects_certainty_equivalent():
         )
 
 
-def test_nbegm_rejects_certainty_equivalent():
-    """Every EGM-family solver rejects a nonlinear CE until EZ support lands.
+def test_nbegm_with_taste_shocks_rejects_certainty_equivalent():
+    """Epstein-Zin and extreme-value taste shocks do not compose.
 
-    An NBEGM regime with a certainty equivalent must error rather than silently
-    solve the expected-utility problem and ignore the declared preference.
+    The taste-shock logsum is not invariant under the certainty-equivalent
+    transform, so a regime declaring both must error rather than silently mix an
+    expected-utility smoothing with a recursive aggregator.
     """
     nbegm = NBEGM(
         post_decision_function="savings",
         budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
-    with pytest.raises(RegimeInitializationError, match="GridSearch"):
+    with pytest.raises(RegimeInitializationError, match="taste_shocks"):
         _make_model(
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
                 "solver": nbegm,
+                "taste_shocks": ExtremeValueTasteShocks(),
             },
             dead_kwargs={},
         )

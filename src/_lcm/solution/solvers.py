@@ -2003,6 +2003,7 @@ class NBEGM(Solver):
                     savings_grid=savings_grid,
                     schedule_spec=schedule_spec,
                     statics=statics,
+                    is_epstein_zin=context.certainty_equivalent is not None,
                 )
                 continuation_cores[key] = (
                     jax.jit(continuation_core)
@@ -3919,6 +3920,15 @@ def _build_nbegm_continuation_plan(
         regimes_to_active_periods=context.regimes_to_active_periods,
         regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
     )
+    # A nonlinear certainty equivalent switches the child stochastic-node
+    # expectation to the Epstein-Zin power mean. Its risk-aversion coefficient is
+    # the flat param `certainty_equivalent__risk_aversion` (the only nonlinear CE,
+    # `PowerMean`, takes that single argument); `None` keeps the linear read.
+    risk_aversion_param_name = (
+        "certainty_equivalent__risk_aversion"
+        if context.certainty_equivalent is not None
+        else None
+    )
     return build_continuation_plan(
         user_regimes=context.user_regimes,
         functions=context.functions,
@@ -3930,6 +3940,7 @@ def _build_nbegm_continuation_plan(
         post_decision_name=post_decision_name,
         stochastic_node_batch_size=stochastic_node_batch_size,
         regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
+        risk_aversion_param_name=risk_aversion_param_name,
     )
 
 
@@ -3949,6 +3960,7 @@ def _solve_ride_along_cell_step(
     breakpoints: Float1D,
     extra_savings: Float1D | None = None,
     extra_cont_value: Float1D | None = None,
+    inverse_eis: FloatND | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Run one ride-along cell's 1-D case-piece step against savings continuation.
 
@@ -3967,6 +3979,13 @@ def _solve_ride_along_cell_step(
     )
 
     if has_jump:
+        if inverse_eis is not None:
+            msg = (
+                "Epstein-Zin NBEGM does not yet support jump breakpoints; the "
+                "unified jump-and-kink step still assumes the additive aggregator. "
+                "Use a kink-only schedule (or GridSearch) for this regime."
+            )
+            raise NotImplementedError(msg)
         return nbegm_unified_step_savings(
             cont_value=cont_value,
             cont_marginal=cont_marginal,
@@ -3993,6 +4012,7 @@ def _solve_ride_along_cell_step(
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
+        inverse_eis=inverse_eis,
     )
 
 
@@ -4777,6 +4797,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     savings_grid: Float1D,
     schedule_spec: _NBEGMScheduleSpec,
     statics: _NBEGMRideAlongStatics,
+    is_epstein_zin: bool = False,
 ) -> Callable:
     """Build the EGM/envelope half of the ride-along solve, jitted in isolation.
 
@@ -4821,7 +4842,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         inspect.signature(schedule_spec.utility_dag).parameters
     )
 
-    def envelope_core(  # noqa: C901
+    def envelope_core(  # noqa: C901, PLR0915
         *,
         cont_value_stack: FloatND,
         cont_marginal_stack: FloatND,
@@ -4833,6 +4854,15 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
         utility_params = {name: kwargs[name] for name in statics.utility_param_names}
         discount_params = {name: kwargs[name] for name in statics.discount_param_names}
+        # Epstein-Zin: the aggregator curvature is `rho = 1/psi` where `psi` is the
+        # H param `intertemporal_elasticity_of_substitution`. The step reads the
+        # continuation pair as `(nu, dnu/ds)` and inverts the recursive Euler
+        # equation; `None` keeps the additive expected-utility step.
+        inverse_eis = (
+            1.0 / kwargs["H__intertemporal_elasticity_of_substitution"]
+            if is_epstein_zin
+            else None
+        )
 
         def solve_one_cell(  # noqa: C901
             ride_values: tuple[Any, ...],
@@ -4986,6 +5016,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     coh_slopes=coh_slopes,
                     coh_intercepts=coh_intercepts,
                     breakpoints=branch_breakpoints,
+                    inverse_eis=inverse_eis,
                 )
 
             # A discrete action is enveloped over per cell: each branch solves the

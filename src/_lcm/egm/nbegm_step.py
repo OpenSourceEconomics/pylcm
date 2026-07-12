@@ -45,6 +45,11 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.euler import invert_euler
+from _lcm.egm.ez_kernel import (
+    ez_consumption_from_euler,
+    ez_marginal_of_resource,
+    ez_period_value,
+)
 from _lcm.egm.nbegm_segments import mask_dead_candidates, segment_ids_from_folds
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
@@ -302,6 +307,7 @@ def nbegm_multi_interval_step_savings(
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
+    inverse_eis: ScalarFloat | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a continuous piecewise-affine regime against savings-space continuation.
 
@@ -355,22 +361,49 @@ def nbegm_multi_interval_step_savings(
 
     # The expected marginal is already in savings space (it carries `dR/ds`), so
     # the Euler inversion reads it directly — no explicit gross-return factor.
+    # Under Epstein-Zin the continuation pair is `(nu, dnu/ds)` and the inversion,
+    # period value, and envelope marginal read the recursive aggregator instead of
+    # the additive `u + beta E[V']` form.
     marginal_utility = jax.grad(utility_of_action)
-    consumption = _invert_euler_over_savings(
-        cont_marginal=cont_marginal,
-        discount_factor=discount_factor,
-        inverse_marginal_utility=inverse_marginal_utility,
-    )
+    if inverse_eis is not None:
+        consumption = ez_consumption_from_euler(
+            nu=cont_value,
+            dnu_ds=cont_marginal,
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+            flow_coefficient=1.0,
+            flow_exponent=-inverse_eis,
+        )
+    else:
+        consumption = _invert_euler_over_savings(
+            cont_marginal=cont_marginal,
+            discount_factor=discount_factor,
+            inverse_marginal_utility=inverse_marginal_utility,
+        )
     coh_endog = consumption + savings_grid
     liquid_endog = _invert_coh_with_linear_extension(
         coh_endog=coh_endog, coh_case_grid=coh_grid, liquid_grid=liquid_grid
     )
     endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
     slope_endog = coh_slopes[endog_interval]
-    value_endog = (
-        jax.vmap(utility_of_action)(consumption) + discount_factor * cont_value
-    )
-    marginal_endog = slope_endog * jax.vmap(marginal_utility)(consumption)
+    if inverse_eis is not None:
+        value_endog = ez_period_value(
+            flow=consumption,
+            nu=cont_value,
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+        )
+        marginal_endog = slope_endog * ez_marginal_of_resource(
+            flow=consumption,
+            value=value_endog,
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+        )
+    else:
+        value_endog = (
+            jax.vmap(utility_of_action)(consumption) + discount_factor * cont_value
+        )
+        marginal_endog = slope_endog * jax.vmap(marginal_utility)(consumption)
 
     # Where the continuation is flat (zero marginal value of liquid), the Euler
     # inversion diverges; drop those interior candidates.
@@ -388,20 +421,32 @@ def nbegm_multi_interval_step_savings(
     node_consumption = coh_grid[None, :] - savings_grid[:, None]
     node_feasible = node_consumption > 0.0
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
-    node_utility = jax.vmap(jax.vmap(utility_of_action))(node_consumption_safe)
-    node_value = jnp.where(
-        node_feasible,
-        node_utility + discount_factor * cont_value[:, None],
-        jnp.nan,
-    )
+    if inverse_eis is not None:
+        node_value_safe = ez_period_value(
+            flow=node_consumption_safe,
+            nu=cont_value[:, None],
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+        )
+        node_marginal_safe = ez_marginal_of_resource(
+            flow=node_consumption_safe,
+            value=node_value_safe,
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+        )
+    else:
+        node_value_safe = (
+            jax.vmap(jax.vmap(utility_of_action))(node_consumption_safe)
+            + discount_factor * cont_value[:, None]
+        )
+        node_marginal_safe = jax.vmap(jax.vmap(marginal_utility))(node_consumption_safe)
+    node_value = jnp.where(node_feasible, node_value_safe, jnp.nan)
     node_endog = jnp.where(
         node_feasible,
         jnp.broadcast_to(liquid_grid, node_consumption.shape),
         jnp.nan,
     )
-    node_marginal = coh_slopes[interval_of_grid][None, :] * jax.vmap(
-        jax.vmap(marginal_utility)
-    )(node_consumption_safe)
+    node_marginal = coh_slopes[interval_of_grid][None, :] * node_marginal_safe
     node_segment = jnp.broadcast_to(
         next_segment
         + jnp.arange(savings_grid.shape[0], dtype=liquid_grid.dtype)[:, None],

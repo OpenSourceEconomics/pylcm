@@ -14,7 +14,6 @@ arXiv:2601.04438 (2026).
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from lcm import (
     NBEGM,
@@ -61,6 +60,11 @@ def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
+def _feasible(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+    """Borrowing constraint: consumption cannot exceed cash-on-hand."""
+    return consumption <= resources
+
+
 def _next_liquid(savings: FloatND, income: ContinuousState) -> ContinuousState:
     return (1.0 + _RETURN) * savings + _INCOME_SCALE * jnp.exp(income)
 
@@ -87,6 +91,7 @@ def _build_model(*, solver: Solver) -> Model:
             "savings": _savings,
             "H": H_epstein_zin,
         },
+        constraints={"feasible": _feasible},
         certainty_equivalent=PowerMean(),
         solver=solver,
     )
@@ -118,14 +123,6 @@ _PARAMS = {
 }
 
 
-@pytest.mark.xfail(
-    reason="EZ-EGM continuation+step wiring pending: the (nu, dnu/ds) aggregation "
-    "(ez_kernel.ez_continuation) must replace the linear expectation at "
-    "continuation.py:947-949, the step must dispatch to ez_kernel, and the "
-    "certainty-equivalent / custom-H gates must open for the breakpoint-free "
-    "NBEGM path. Math foundation is committed and verified.",
-    strict=True,
-)
 def test_nbegm_epstein_zin_matches_brute_force() -> None:
     """NBEGM reproduces the dense grid-search value under Epstein-Zin preferences."""
     nbegm = _build_model(
@@ -133,6 +130,7 @@ def test_nbegm_epstein_zin_matches_brute_force() -> None:
             post_decision_function="savings",
             budget_target="resources",
             savings_grid=_SAVINGS_GRID,
+            continuous_state="liquid",
         )
     ).solve(params=_PARAMS, log_level="off")
     brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="off")

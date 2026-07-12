@@ -22,7 +22,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import GridSearch
+from lcm.solvers import NBEGM, GridSearch
 from lcm.transition import MarkovTransition
 
 if TYPE_CHECKING:
@@ -272,10 +272,13 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
     - terminal regimes have no continuation value to aggregate
-    - only `GridSearch` supports a nonlinear certainty equivalent; every
-      endogenous-grid solver's Euler inversion assumes expected utility, so a
-      declared certainty equivalent must be rejected rather than silently
-      ignored (Epstein-Zin EGM support is a separate feature)
+    - `GridSearch` and `NBEGM` support a nonlinear certainty equivalent (the
+      Epstein-Zin recursion); the other endogenous-grid solvers' Euler inversion
+      assumes expected utility, so a declared certainty equivalent must be
+      rejected rather than silently ignored
+    - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
+      logsum is not invariant under the certainty-equivalent transform, so the
+      combination is rejected
     """
     if regime.certainty_equivalent is None:
         return []
@@ -285,11 +288,18 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if not isinstance(regime.solver, GridSearch):
+    if not isinstance(regime.solver, (GridSearch, NBEGM)):
         error_messages.append(
             f"The {type(regime.solver).__name__} solver does not support a "
             "nonlinear `certainty_equivalent`: its Euler inversion assumes "
-            "expected utility. Use GridSearch() for this regime."
+            "expected utility. Use GridSearch() or NBEGM() for this regime."
+        )
+    if regime.taste_shocks is not None:
+        error_messages.append(
+            "A regime cannot combine `certainty_equivalent` with "
+            "`taste_shocks`: the extreme-value logsum is not invariant under "
+            "the certainty-equivalent transform, so the Epstein-Zin recursion "
+            "and taste shocks do not compose."
         )
     return error_messages
 

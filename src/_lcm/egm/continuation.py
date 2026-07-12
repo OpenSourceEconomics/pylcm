@@ -24,6 +24,7 @@ from dags import concatenate_functions
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.ez_kernel import ez_continuation
 from _lcm.egm.interp import (
     interp_on_prepared_grid,
     locate_on_grid,
@@ -300,6 +301,15 @@ class ContinuationPlan:
     stochastic_node_batch_size: int
     """Block size for splaying the child stochastic-node expectation (0 = fused)."""
 
+    risk_aversion_param_name: str | None = None
+    """Flat-param name of the certainty equivalent's risk-aversion coefficient.
+
+    `None` for the linear (expected-utility) continuation. When set, the child
+    stochastic-node expectation is the Epstein-Zin power mean of the next-period
+    value and its risk-reweighted savings derivative rather than the plain
+    weighted sum.
+    """
+
 
 def bind_continuation(
     *,
@@ -353,6 +363,14 @@ def bind_continuation(
     # discrete axis device-local, as for the V-array); or gather carry rows
     # shard-aware before indexing (an all-gather on just the carry's leading axis);
     # or carve out sharded axes that appear in no carry via a validation check.
+    # The Epstein-Zin continuation reweights the child expectation by risk; its
+    # coefficient is a flat param resolved from the pool here (runtime), keyed by
+    # the plan's build-time name. `None` keeps the linear expected-utility read.
+    risk_aversion = (
+        combo_pool[plan.risk_aversion_param_name]
+        if plan.risk_aversion_param_name is not None
+        else None
+    )
     child_readers = {
         target: _get_child_carry_reader(
             read=_with_co_map_states(plan.child_reads[target], co_map_state_names),
@@ -361,6 +379,7 @@ def bind_continuation(
             post_decision_name=plan.post_decision_name,
             stochastic_node_batch_size=plan.stochastic_node_batch_size,
             resolved_process_grids=resolved_process_grids,
+            risk_aversion=risk_aversion,
         )
         for target in plan.carry_targets
     }
@@ -409,6 +428,7 @@ def build_continuation_plan(
     post_decision_name: FunctionName,
     stochastic_node_batch_size: int,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    risk_aversion_param_name: str | None = None,
 ) -> ContinuationPlan:
     """Assemble a `ContinuationPlan` from the regime's continuation statics.
 
@@ -440,6 +460,7 @@ def build_continuation_plan(
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
         stochastic_node_batch_size=stochastic_node_batch_size,
+        risk_aversion_param_name=risk_aversion_param_name,
     )
 
 
@@ -592,6 +613,7 @@ def _get_child_carry_reader(
     post_decision_name: FunctionName,
     stochastic_node_batch_size: int,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
+    risk_aversion: FloatND | None = None,
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
     """Build the per-savings-node carry read of one target for one combo.
 
@@ -740,6 +762,7 @@ def _get_child_carry_reader(
             queries_and_gradients=queries_and_gradients,
             resources_reads_stochastic=resources_reads_stochastic,
             stochastic_node_batch_size=stochastic_node_batch_size,
+            risk_aversion=risk_aversion,
         )
 
     return read_child
@@ -830,6 +853,7 @@ def _expect_over_stochastic_nodes(
     ],
     resources_reads_stochastic: bool,
     stochastic_node_batch_size: int,
+    risk_aversion: FloatND | None = None,
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Weight the carry read over the child's stochastic-node combos.
 
@@ -910,6 +934,14 @@ def _expect_over_stochastic_nodes(
     # value function matches the fused solve to numerical tolerance (the block
     # reduction reorders the floating-point adds).
     n_nodes = flat_node_indices[0].shape[0]
+    if risk_aversion is not None and 0 < stochastic_node_batch_size < n_nodes:
+        msg = (
+            "Epstein-Zin continuation does not support a positive "
+            "`stochastic_node_batch_size`: the power-mean certainty equivalent is "
+            "not additively separable across node blocks, so the block-scan "
+            "accumulation is invalid. Use the fused expectation (batch size 0)."
+        )
+        raise NotImplementedError(msg)
     if 0 < stochastic_node_batch_size < n_nodes:
         n_blocks = -(-n_nodes // stochastic_node_batch_size)
         pad = n_blocks * stochastic_node_batch_size - n_nodes
@@ -945,6 +977,17 @@ def _expect_over_stochastic_nodes(
         return smoothed_value, smoothed_marginal
 
     node_values, node_marginals = jax.vmap(read_at_nodes)(flat_node_indices)
+    if risk_aversion is not None:
+        # Epstein-Zin: the child expectation is the power-mean certainty
+        # equivalent of the next-period value and its risk-reweighted savings
+        # derivative, both reduced over the node axis. Reduces to the linear pair
+        # at `risk_aversion == 0`.
+        return ez_continuation(
+            child_values=node_values,
+            child_marginals=node_marginals,
+            weights=joint_weights,
+            risk_aversion=risk_aversion,
+        )
     smoothed_value = _weighted_node_sum(node_values, joint_weights)
     smoothed_marginal = _weighted_node_sum(node_marginals, joint_weights)
     return smoothed_value, smoothed_marginal
