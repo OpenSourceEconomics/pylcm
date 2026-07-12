@@ -30,7 +30,7 @@ class CertaintyEquivalent(ABC):
     engine dispatches on the concrete subclass; `QuasiArithmeticMean` is
     the shipped implementation. When the field is `None` (the default), the
     continuation is aggregated as the linear expectation `E[V']`.
-    `GridSearch`, `NBEGM`, and `NestedNBEGM` support a nonlinear
+    `GridSearch`, `NBEGM`, and `NNBEGM` support a nonlinear
     certainty equivalent.
     """
 

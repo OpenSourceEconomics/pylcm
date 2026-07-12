@@ -8,7 +8,7 @@ keeper/adjuster wrapper from the inner solver's kink machinery:
 
 - `"brute"` — dense two-action grid search, the finite-grid oracle;
 - `"negm"` — `NEGM(inner=DCEGM(...))`, the smooth nested baseline;
-- `"nested_nbegm"` — `NestedNBEGM(inner=NBEGM(...))`, the target method.
+- `"n_nbegm"` — `NNBEGM(inner=NBEGM(...))`, the target method.
 
 The nested solvers fix the outer post-decision `next_illiquid` per outer-grid
 node; the inner consumption-saving problem is then a 1-D solve on `wealth` with
@@ -26,7 +26,7 @@ from lcm import (
     GridSearch,
     LinSpacedGrid,
     Model,
-    NestedNBEGM,
+    NNBEGM,
     Regime,
     categorical,
 )
@@ -133,7 +133,7 @@ SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=35.0, n_points=60)
 
 
 def illiquid_feasible(next_illiquid: ContinuousState) -> FloatND:
-    """Brute-only constraint pinning `s'` to the nested solvers' outer range."""
+    """Brute-only constraint pinning `s'` to the N-NB-EGM outer range."""
     return (next_illiquid >= OUTER_GRID.start) & (next_illiquid <= OUTER_GRID.stop)
 
 
@@ -161,8 +161,8 @@ def build_solver(*, variant: str, outer_batch_size: int = 0) -> Solver:
             outer_no_adjustment_candidate="keep_illiquid",
             outer_batch_size=outer_batch_size,
         )
-    if variant == "nested_nbegm":
-        return NestedNBEGM(
+    if variant == "n_nbegm":
+        return NNBEGM(
             inner=NBEGM(
                 continuous_state="wealth",
                 post_decision_function="liquid_savings",

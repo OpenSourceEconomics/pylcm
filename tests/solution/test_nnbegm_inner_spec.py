@@ -1,15 +1,15 @@
 """The nested-inner adapter normalizes 1-D EGM solver configs.
 
-Nested outer-search solvers wrap a one-dimensional inner EGM solver (DCEGM or
+Outer-search solvers wrap a one-dimensional inner EGM solver (DCEGM or
 NBEGM). The two inner configs name the same concepts differently (`resources`
 vs `budget_target`) and NBEGM leaves two slots inferable (`continuous_state`,
-`post_decision_function`); `get_nested_inner_spec` maps either config onto one
+`post_decision_function`); `get_nnbegm_inner_spec` maps either config onto one
 explicit spec so the outer kernel code never dispatches on the inner type.
 """
 
 import pytest
 
-from _lcm.solution.solvers import get_nested_inner_spec
+from _lcm.solution.solvers import get_nnbegm_inner_spec
 from lcm import LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import DCEGM, NBEGM, GridSearch
@@ -40,13 +40,13 @@ def _nbegm(**overrides: object) -> NBEGM:
 
 def test_dcegm_inner_spec_maps_resources_to_budget_target() -> None:
     """A DCEGM inner's `resources` slot fills the spec's `budget_target`."""
-    spec = get_nested_inner_spec(inner=_dcegm())
+    spec = get_nnbegm_inner_spec(inner=_dcegm())
     assert spec.budget_target == "cash_on_hand"
 
 
 def test_dcegm_inner_spec_carries_state_post_decision_and_grid() -> None:
     """The spec mirrors the DCEGM config's Euler-state slots verbatim."""
-    spec = get_nested_inner_spec(inner=_dcegm())
+    spec = get_nnbegm_inner_spec(inner=_dcegm())
     assert (spec.continuous_state, spec.post_decision_function) == (
         "liquid",
         "liquid_savings",
@@ -57,7 +57,7 @@ def test_dcegm_inner_spec_carries_state_post_decision_and_grid() -> None:
 def test_nbegm_inner_spec_carries_explicit_slots() -> None:
     """An NBEGM inner with explicit slots maps onto the spec verbatim."""
     inner = _nbegm()
-    spec = get_nested_inner_spec(inner=inner)
+    spec = get_nnbegm_inner_spec(inner=inner)
     assert (
         spec.continuous_state,
         spec.post_decision_function,
@@ -73,16 +73,16 @@ def test_nbegm_inner_spec_requires_explicit_continuous_state() -> None:
     single-continuous-state inference NBEGM applies standalone is ambiguous.
     """
     with pytest.raises(RegimeInitializationError, match="continuous_state"):
-        get_nested_inner_spec(inner=_nbegm(continuous_state=None))
+        get_nnbegm_inner_spec(inner=_nbegm(continuous_state=None))
 
 
 def test_nbegm_inner_spec_requires_explicit_post_decision_function() -> None:
     """An NBEGM inner without `post_decision_function` is rejected."""
     with pytest.raises(RegimeInitializationError, match="post_decision_function"):
-        get_nested_inner_spec(inner=_nbegm(post_decision_function=None))
+        get_nnbegm_inner_spec(inner=_nbegm(post_decision_function=None))
 
 
 def test_non_egm_inner_is_rejected_with_the_offending_type() -> None:
     """A non-1-D-EGM inner raises `TypeError` naming the offending type."""
     with pytest.raises(TypeError, match="GridSearch"):
-        get_nested_inner_spec(inner=GridSearch())
+        get_nnbegm_inner_spec(inner=GridSearch())

@@ -2043,7 +2043,7 @@ class NBEGM(Solver):
 
 
 @dataclass(frozen=True, kw_only=True)
-class NestedInnerSpec:
+class NNBEGMInnerSpec:
     """Normalized view of a 1-D inner EGM solver config for nested outer search.
 
     A nested outer-search solver wraps a one-dimensional inner EGM solver and
@@ -2065,8 +2065,8 @@ class NestedInnerSpec:
     """The inner exogenous post-decision grid."""
 
 
-def get_nested_inner_spec(*, inner: Solver) -> NestedInnerSpec:
-    """Normalize an inner EGM solver config into a `NestedInnerSpec`.
+def get_nnbegm_inner_spec(*, inner: Solver) -> NNBEGMInnerSpec:
+    """Normalize an inner EGM solver config into a `NNBEGMInnerSpec`.
 
     Inside a nested solver the regime carries two continuous states, so the
     single-continuous-state inference NBEGM applies standalone is ambiguous —
@@ -2086,7 +2086,7 @@ def get_nested_inner_spec(*, inner: Solver) -> NestedInnerSpec:
     """
     match inner:
         case DCEGM():
-            return NestedInnerSpec(
+            return NNBEGMInnerSpec(
                 solver=inner,
                 continuous_state=inner.continuous_state,
                 post_decision_function=inner.post_decision_function,
@@ -2096,18 +2096,18 @@ def get_nested_inner_spec(*, inner: Solver) -> NestedInnerSpec:
         case NBEGM():
             if inner.continuous_state is None:
                 msg = (
-                    "A nested NBEGM inner requires an explicit "
+                    "An NNBEGM inner requires an explicit "
                     "`continuous_state`: the regime carries two continuous "
                     "states, so the single-state inference is ambiguous."
                 )
                 raise RegimeInitializationError(msg)
             if inner.post_decision_function is None:
                 msg = (
-                    "A nested NBEGM inner requires an explicit "
+                    "An NNBEGM inner requires an explicit "
                     "`post_decision_function` naming the inner savings node."
                 )
                 raise RegimeInitializationError(msg)
-            return NestedInnerSpec(
+            return NNBEGMInnerSpec(
                 solver=inner,
                 continuous_state=inner.continuous_state,
                 post_decision_function=inner.post_decision_function,
@@ -2124,8 +2124,8 @@ def get_nested_inner_spec(*, inner: Solver) -> NestedInnerSpec:
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class NestedNBEGM(Solver):
-    """Nested NB-EGM — an outer durable grid search over inner 1-D NB-EGM solves.
+class NNBEGM(Solver):
+    """N-NB-EGM — an outer durable grid search over inner 1-D NB-EGM solves.
 
     The regime carries two continuous margins. The outer post-decision margin
     (a durable/illiquid stock) is selected by a finite search: a *keeper* holds
@@ -2179,9 +2179,9 @@ class NestedNBEGM(Solver):
     value-invariant."""
 
     def __post_init__(self) -> None:
-        spec = get_nested_inner_spec(inner=self.inner)
+        spec = get_nnbegm_inner_spec(inner=self.inner)
         _fail_if_outer_grid_is_stochastic(self.outer_grid)
-        _fail_if_nested_outer_post_decision_is_inner(
+        _fail_if_nnbegm_outer_post_decision_is_inner(
             outer_post_decision=self.outer_post_decision,
             inner_post_decision=spec.post_decision_function,
         )
@@ -2189,7 +2189,7 @@ class NestedNBEGM(Solver):
 
     @property
     def requires_continuation_carries(self) -> bool:
-        """NestedNBEGM nests an NB-EGM solve that inverts the Euler equation."""
+        """NNBEGM runs an inner NB-EGM solve that inverts the Euler equation."""
         return True
 
     @property
@@ -2242,11 +2242,11 @@ class NestedNBEGM(Solver):
         )
         keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
         template = keeper_kernels.continuation_template
-        _fail_if_nested_carry_publishes_topology_rows(template=template)
+        _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
         outer_grid_values = self.outer_grid.to_jax()
         period_kernels = MappingProxyType(
             {
-                period: _NestedNBEGMPeriodKernel(
+                period: _NNBEGMPeriodKernel(
                     keeper_kernel=keeper_kernels.period_kernels[period],
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
@@ -2267,8 +2267,8 @@ class NestedNBEGM(Solver):
 
 
 @dataclass(frozen=True, kw_only=True)
-class _NestedNBEGMPeriodKernel:
-    """The NestedNBEGM period adapter — a keeper plus an adjuster outer sweep.
+class _NNBEGMPeriodKernel:
+    """The NNBEGM period adapter — a keeper plus an adjuster outer sweep.
 
     Holds two inner NB-EGM period adapters and the exogenous outer grid. Each
     inner adapter can expose several independently-traced cores (the ride-along
@@ -2330,7 +2330,7 @@ class _NestedNBEGMPeriodKernel:
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
-    ) -> _NestedNBEGMPeriodKernel:
+    ) -> _NNBEGMPeriodKernel:
         """Bind the regime's fixed params into both inner kernels."""
         return replace(
             self,
@@ -2497,12 +2497,12 @@ def _fold_bridged_outer_carry(*, running: EGMCarry, candidate: EGMCarry) -> EGMC
     )
 
 
-def _fail_if_nested_outer_post_decision_is_inner(
+def _fail_if_nnbegm_outer_post_decision_is_inner(
     *, outer_post_decision: FunctionName, inner_post_decision: FunctionName
 ) -> None:
     if outer_post_decision == inner_post_decision:
         msg = (
-            f"NestedNBEGM.outer_post_decision '{outer_post_decision}' coincides "
+            f"NNBEGM.outer_post_decision '{outer_post_decision}' coincides "
             f"with the inner NB-EGM post-decision function "
             f"'{inner_post_decision}'. The outer post-decision (the next-period "
             "durable stock) and the inner post-decision (the liquid savings) "
@@ -2511,12 +2511,12 @@ def _fail_if_nested_outer_post_decision_is_inner(
         raise RegimeInitializationError(msg)
 
 
-def _fail_if_nested_carry_publishes_topology_rows(
+def _fail_if_nnbegm_carry_publishes_topology_rows(
     *, template: ContinuationPayload | None
 ) -> None:
     if isinstance(template, EGMCarry) and template.breakpoints is not None:
         msg = (
-            "NestedNBEGM publishes a bridged (pointwise, finite-grid) outer "
+            "NNBEGM publishes a bridged (pointwise, finite-grid) outer "
             "envelope, which cannot represent the inner config's jump-topology "
             "rows. Use `jump_read='bridged'` on the inner NBEGM or remove the "
             "declared jump breakpoints."

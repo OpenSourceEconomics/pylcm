@@ -1,4 +1,4 @@
-"""NestedNBEGM solves a two-asset Epstein-Zin model, matching the brute oracle.
+"""NNBEGM solves a two-asset Epstein-Zin model, matching the brute oracle.
 
 A Kaplan-Violante-style two-asset problem: a liquid Euler margin `wealth`, an
 illiquid durable `illiquid` chosen each period (outer grid search over
@@ -9,7 +9,7 @@ the fixed outer durable node the inner consumption-saving problem is a 1-D NB-EG
 solve whose flow is a single power `A c^phi` — so the inner Euler inversion reads
 the composite flow's power structure, the regime-level survival split takes the
 joint certainty equivalent, and the outer durable choice is a plain max. The
-NestedNBEGM value weakly dominates the dense two-action `GridSearch` value
+NNBEGM value weakly dominates the dense two-action `GridSearch` value
 everywhere — its off-grid policy is at least as good as brute's grid-quantized one
 (the point of endogenous grids for durable choice) — and tracks it to under a
 percent on average.
@@ -26,7 +26,7 @@ from lcm import (
     LinSpacedGrid,
     MarkovTransition,
     Model,
-    NestedNBEGM,
+    NNBEGM,
     PowerMean,
     Regime,
     categorical,
@@ -123,7 +123,7 @@ def _consumption_feasible(resources: FloatND, consumption: ContinuousAction) -> 
 def _build_solver(*, variant: str) -> Solver:
     if variant == "brute":
         return GridSearch()
-    return NestedNBEGM(
+    return NNBEGM(
         inner=NBEGM(
             continuous_state="wealth",
             post_decision_function="liquid_savings",
@@ -198,14 +198,14 @@ _PARAMS = {
 }
 
 
-def test_nested_nbegm_epstein_zin_weakly_dominates_and_tracks_brute() -> None:
-    """NestedNBEGM weakly beats and closely tracks dense grid search under EZ.
+def test_n_nbegm_epstein_zin_weakly_dominates_and_tracks_brute() -> None:
+    """NNBEGM weakly beats and closely tracks dense grid search under EZ.
 
     On a two-asset Epstein-Zin problem the nested value is never materially below
     the dense grid-search value (its off-grid policy is at least as good) and the
     mean relative gap is under a percent.
     """
-    nested = _build_model(variant="nested_nbegm").solve(params=_PARAMS, log_level="off")
+    nested = _build_model(variant="n_nbegm").solve(params=_PARAMS, log_level="off")
     brute = _build_model(variant="brute").solve(params=_PARAMS, log_level="off")
     for period in (0, 1):
         nested_V = np.asarray(nested[period]["alive"])
