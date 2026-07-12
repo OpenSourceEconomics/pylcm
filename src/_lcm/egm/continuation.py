@@ -24,7 +24,11 @@ from dags import concatenate_functions
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.ez_kernel import ez_continuation
+from _lcm.egm.ez_kernel import (
+    ez_invert_partials,
+    ez_transform_partials,
+    ez_transform_scalar,
+)
 from _lcm.egm.interp import (
     interp_on_prepared_grid,
     locate_on_grid,
@@ -387,31 +391,54 @@ def bind_continuation(
     def continuation(
         savings_value: ScalarFloat,
     ) -> tuple[ScalarFloat, ScalarFloat]:
-        """Expected continuation value and marginal at one savings node."""
-        expected_marginal = jnp.asarray(0.0, dtype=dtype)
-        expected_value = jnp.asarray(0.0, dtype=dtype)
+        """Blend the reachable targets' continuations at one savings node.
+
+        Linear (expected-utility) mode returns the regime-probability-weighted
+        expected value and marginal. Epstein-Zin mode blends each target's
+        transform-space partials `(S_r, T_r)` with the regime probabilities and
+        inverts once, so the certainty equivalent spans the joint (regime x shock)
+        lottery — the regime split (e.g. survival) is inside the CE, not a linear
+        average of per-regime certainty equivalents.
+        """
+        blended_marginal = jnp.asarray(0.0, dtype=dtype)
+        blended_value = jnp.asarray(0.0, dtype=dtype)
         for target in plan.carry_targets:
-            # The smoothed marginal is already in savings space: the composed
-            # gradient factor is applied per carry row inside the read.
-            smoothed_value, smoothed_marginal = child_readers[target](savings_value)
+            # In linear mode the reader returns the target's expected value and
+            # (savings-space) marginal; in Epstein-Zin mode its transform-space
+            # partials. Either way the regime blend is the same linear sum — the
+            # CE transform/inverse wraps it.
+            target_value, target_marginal = child_readers[target](savings_value)
             prob = regime_transition_probs[target]
             # Zero unreachable-target contributions on the results, never by
             # multiplying into a possibly non-finite value. The else branch is
             # `prob * 0.0` (not `0.0`) so a NaN probability poisons the sum
             # instead of vanishing.
-            expected_marginal = expected_marginal + jnp.where(
-                prob > 0.0, prob * smoothed_marginal, prob * 0.0
+            blended_marginal = blended_marginal + jnp.where(
+                prob > 0.0, prob * target_marginal, prob * 0.0
             )
-            expected_value = expected_value + jnp.where(
-                prob > 0.0, prob * smoothed_value, prob * 0.0
+            blended_value = blended_value + jnp.where(
+                prob > 0.0, prob * target_value, prob * 0.0
             )
         for target in plan.scalar_targets:
             prob = regime_transition_probs[target]
             constant_value = next_regime_to_egm_carry[target].value[0]
-            expected_value = expected_value + jnp.where(
-                prob > 0.0, prob * constant_value, prob * 0.0
+            # A stateless target (a constant bequest) contributes only to the
+            # value channel; under Epstein-Zin its constant enters transform space.
+            target_value = (
+                ez_transform_scalar(value=constant_value, risk_aversion=risk_aversion)
+                if risk_aversion is not None
+                else constant_value
             )
-        return expected_value, expected_marginal
+            blended_value = blended_value + jnp.where(
+                prob > 0.0, prob * target_value, prob * 0.0
+            )
+        if risk_aversion is not None:
+            return ez_invert_partials(
+                transformed_value=blended_value,
+                transformed_marginal=blended_marginal,
+                risk_aversion=risk_aversion,
+            )
+        return blended_value, blended_marginal
 
     return continuation
 
@@ -738,7 +765,7 @@ def _get_child_carry_reader(
 
         if not read.stochastic_state_names:
             queries, gradients = queries_and_gradients(())
-            return _aggregate_child_choices(
+            value, marginal = _aggregate_child_choices(
                 carry=carry,
                 prepared_search_grid=prepared_search_grid,
                 prepared_valid_length=prepared_valid_length,
@@ -749,6 +776,15 @@ def _get_child_carry_reader(
                 row_queries=queries,
                 row_gradients=gradients,
             )
+            if risk_aversion is not None:
+                # A deterministic target (a bequest-style value function with no
+                # own shock lottery) contributes its Epstein-Zin transformed
+                # partial `(g(V), V^-gamma * dV/ds)` to the joint regime blend.
+                return (
+                    ez_transform_scalar(value=value, risk_aversion=risk_aversion),
+                    value ** (-risk_aversion) * marginal,
+                )
+            return value, marginal
 
         return _expect_over_stochastic_nodes(
             read=read,
@@ -978,11 +1014,14 @@ def _expect_over_stochastic_nodes(
 
     node_values, node_marginals = jax.vmap(read_at_nodes)(flat_node_indices)
     if risk_aversion is not None:
-        # Epstein-Zin: the child expectation is the power-mean certainty
-        # equivalent of the next-period value and its risk-reweighted savings
-        # derivative, both reduced over the node axis. Reduces to the linear pair
-        # at `risk_aversion == 0`.
-        return ez_continuation(
+        # Epstein-Zin: reduce this target's shock lottery into the certainty
+        # equivalent's transform space — the transformed value and marginal
+        # partials `(S, T)`, NOT the inverted `(nu, dnu/ds)`. The regime blend sums
+        # these per-target partials with the regime probabilities and inverts once
+        # (`ez_invert_partials`), so the joint certainty equivalent spans the full
+        # (regime x shock) lottery. A single reachable target recovers M1's
+        # per-regime power mean.
+        return ez_transform_partials(
             child_values=node_values,
             child_marginals=node_marginals,
             weights=joint_weights,

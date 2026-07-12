@@ -19,7 +19,6 @@ arXiv:2601.04438 (2026), direct route (his Section 2.2).
 """
 
 import jax.numpy as jnp
-from jax.scipy.special import logsumexp
 
 from lcm.typing import FloatND, ScalarFloat
 
@@ -59,17 +58,108 @@ def ez_continuation(
         `dnu/ds`, each reduced over the last axis.
 
     """
+    transformed_value, transformed_marginal = ez_transform_partials(
+        child_values=child_values,
+        child_marginals=child_marginals,
+        weights=weights,
+        risk_aversion=risk_aversion,
+    )
+    return ez_invert_partials(
+        transformed_value=transformed_value,
+        transformed_marginal=transformed_marginal,
+        risk_aversion=risk_aversion,
+    )
+
+
+def ez_transform_partials(
+    *,
+    child_values: FloatND,
+    child_marginals: FloatND,
+    weights: FloatND,
+    risk_aversion: ScalarFloat | float,
+) -> tuple[FloatND, FloatND]:
+    """Reduce one continuation lottery to Epstein-Zin transformed partial sums.
+
+    Reduces over the last axis (a continuation lottery — the stochastic node combo
+    of one target regime) into the certainty-equivalent generator's transform space:
+
+    - transformed value `S = sum_j w_j g(V_j)`, generator `g(V) = V^(1-gamma)` (or
+      `g(V) = log V` at `gamma = 1`);
+    - transformed marginal `T = sum_j w_j V_j^(-gamma) dV_j/ds`.
+
+    These partials sum linearly across a regime lottery, so the joint certainty
+    equivalent over the `(regime x shock)` lottery is `ez_invert_partials` applied
+    to the regime-probability-weighted sum of the per-regime `(S, T)`. The generator
+    and its weighting match the brute-force joint-lottery operator.
+
+    Args:
+        child_values: Strictly positive next-period values on the lottery axis.
+        child_marginals: The next-period value derivatives `dV'/ds` on that axis.
+        weights: Nonnegative lottery probabilities over the last axis.
+        risk_aversion: The Epstein-Zin risk-aversion coefficient.
+
+    Returns:
+        Tuple of the transformed value partial `S` and marginal partial `T`, each
+        reduced over the last axis.
+
+    """
+    exponent = 1.0 - risk_aversion
     log_v = jnp.log(child_values)
+    geometric = jnp.where(weights > 0.0, weights * log_v, 0.0)
+    power = weights * child_values**exponent
+    transformed_value = jnp.sum(jnp.where(exponent == 0.0, geometric, power), axis=-1)
+    transformed_marginal = jnp.sum(
+        weights * child_values ** (-risk_aversion) * child_marginals, axis=-1
+    )
+    return transformed_value, transformed_marginal
+
+
+def ez_invert_partials(
+    *,
+    transformed_value: FloatND,
+    transformed_marginal: FloatND,
+    risk_aversion: ScalarFloat | float,
+) -> tuple[FloatND, FloatND]:
+    """Invert Epstein-Zin transformed partial sums to `(nu, dnu/ds)`.
+
+    The inverse of `ez_transform_partials`, applied after the regime-probability
+    weighted sum of the per-regime partials: `nu = g^-1(S)` with
+    `g^-1(x) = x^(1/(1-gamma))` (or `exp(x)` at `gamma = 1`), and the certainty
+    equivalent's savings derivative `dnu/ds = nu^gamma * T`.
+
+    Args:
+        transformed_value: The transform-space value `S`, summed over the joint
+            (regime x shock) lottery.
+        transformed_marginal: The transform-space marginal `T`, summed over the
+            same joint lottery.
+        risk_aversion: The Epstein-Zin risk-aversion coefficient.
+
+    Returns:
+        Tuple of the certainty equivalent `nu` and its savings derivative `dnu/ds`.
+
+    """
     exponent = 1.0 - risk_aversion
     safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
-    log_nu_power = logsumexp(jnp.log(weights) + exponent * log_v, axis=-1) / (
-        safe_exponent
+    nu = jnp.where(
+        exponent == 0.0,
+        jnp.exp(transformed_value),
+        transformed_value ** (1.0 / safe_exponent),
     )
-    log_nu_geometric = jnp.sum(jnp.where(weights > 0.0, weights * log_v, 0.0), axis=-1)
-    nu = jnp.exp(jnp.where(exponent == 0.0, log_nu_geometric, log_nu_power))
-    value_share = (nu[..., None] / child_values) ** risk_aversion
-    dnu_ds = jnp.sum(weights * value_share * child_marginals, axis=-1)
+    dnu_ds = nu**risk_aversion * transformed_marginal
     return nu, dnu_ds
+
+
+def ez_transform_scalar(
+    *, value: FloatND, risk_aversion: ScalarFloat | float
+) -> FloatND:
+    """Apply the Epstein-Zin generator `g` to a single certain continuation value.
+
+    `g(V) = V^(1-gamma)` (or `log V` at `gamma = 1`). A stateless target regime — a
+    terminal bequest constant with no savings derivative — contributes
+    `p_r * g(const_r)` to the joint transformed value and nothing to the marginal.
+    """
+    exponent = 1.0 - risk_aversion
+    return jnp.where(exponent == 0.0, jnp.log(value), value**exponent)
 
 
 def ez_consumption_from_euler(
