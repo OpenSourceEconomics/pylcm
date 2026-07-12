@@ -9,7 +9,7 @@ gated continuation object on the target regime's grid (design doc
 
 The source's continuation reads ``Wbar`` in place of the raw target V. Two edges
 matter for EKL: the singles->married CONSENT edge (a singleton source reaches a
-collective target only by mutual consent, eq. 27) and the married self DIVORCE
+collective target only by mutual consent, eq. 27) and the married self DISSOLUTION
 edge (a collective source routes per-stakeholder to the single regimes when the
 IR mask empties, ``D=True``). The mixture is the strict ``jnp.where`` — never a
 linear ``kappa*V + (1-kappa)*V`` — so a ``-inf`` target cell never leaks NaN.
@@ -198,21 +198,21 @@ def test_consent_gate_routes_marriage_value_and_fallback():
     Wbar = [2, 3]; V_single_f(period 0) = wage + beta*Wbar(wage):
         wage=1: 1 + 0.95*2 = 2.9;  wage=2: 2 + 0.95*3 = 4.85.
     """
-    solution, _sim, _divorce = _solve_consent()
+    solution, _sim, _dissolution = _solve_consent()
     V_single_f = np.asarray(solution[0]["single_f"])
     np.testing.assert_allclose(V_single_f, np.array([2.9, 4.85]), rtol=1e-6)
 
 
 def test_consent_gate_matches_under_jit():
     """The public (jitted) path folds the same edge."""
-    solution, _sim, _divorce = _solve_consent(enable_jit=True)
+    solution, _sim, _dissolution = _solve_consent(enable_jit=True)
     np.testing.assert_allclose(
         np.asarray(solution[0]["single_f"]), np.array([2.9, 4.85]), rtol=1e-6
     )
 
 
 # --------------------------------------------------------------------------------------
-# Divorce edge: married (collective) -> married_ir (collective), ~D gate, per-
+# Dissolution edge: married (collective) -> married_ir (collective), ~D gate, per-
 # stakeholder fallback to single_f / single_m (reusing the slice-3 IR miniature)
 # --------------------------------------------------------------------------------------
 
@@ -252,11 +252,11 @@ def _ir_m(Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
     return Q_m >= V_single_m_ref - delta_m
 
 
-def _no_divorce_gate(D_target: BoolND) -> BoolND:
+def _no_dissolution_gate(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _make_divorce_regimes() -> dict[str, Regime]:
+def _make_dissolution_regimes() -> dict[str, Regime]:
     married = Regime(
         transition={"married_ir": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
@@ -270,7 +270,7 @@ def _make_divorce_regimes() -> dict[str, Regime]:
         },
         gated_edges={
             "married_ir": GatedEdge(
-                gate=_no_divorce_gate,
+                gate=_no_dissolution_gate,
                 legs={
                     "f": EdgeLeg(
                         target_stakeholder="f",
@@ -344,12 +344,12 @@ def _make_divorce_regimes() -> dict[str, Regime]:
     }
 
 
-def _solve_divorce(*, enable_jit: bool = False):
+def _solve_dissolution(*, enable_jit: bool = False):
     ages = AgeGrid(start=0, stop=3, step="Y")
-    names = list(_make_divorce_regimes())
+    names = list(_make_dissolution_regimes())
     regimes = process_regimes(
         user_regimes=finalize_regimes(
-            user_regimes=_make_divorce_regimes(), derived_categoricals={}
+            user_regimes=_make_dissolution_regimes(), derived_categoricals={}
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -392,27 +392,27 @@ _EXPECTED_WBAR = np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]])
 _EXPECTED_V_MARRIED_0 = _BETA * _EXPECTED_WBAR
 
 
-def test_divorce_edge_routes_each_stakeholder_to_own_fallback_no_nan():
+def test_dissolution_edge_routes_each_stakeholder_to_own_fallback_no_nan():
     """D=True cell: each stakeholder's continuation reads its OWN single fallback.
 
-    The two components differ at the divorce cell (wife 5.225 vs husband 0.9025),
+    The two components differ at the dissolution cell (wife 5.225 vs husband 0.9025),
     and NOTHING is NaN despite the target being -inf there (the -inf/where guard).
     """
-    solution, _sim, divorce_flags = _solve_divorce()
+    solution, _sim, dissolution_flags = _solve_dissolution()
     V_married_0 = np.asarray(solution[0]["married"])
     assert V_married_0.shape == (3, 2)
     assert not np.any(np.isnan(V_married_0))
     np.testing.assert_allclose(V_married_0, _EXPECTED_V_MARRIED_0, rtol=1e-6)
-    # The divorce cell's two stakeholder continuations differ (own fallbacks).
+    # The dissolution cell's two stakeholder continuations differ (own fallbacks).
     assert not np.isclose(V_married_0[1, 0], V_married_0[1, 1])
     # The source couple itself has no value constraints -> D all False.
     np.testing.assert_array_equal(
-        np.asarray(divorce_flags[0]["married"]), np.array([False, False, False])
+        np.asarray(dissolution_flags[0]["married"]), np.array([False, False, False])
     )
 
 
-def test_divorce_edge_matches_under_jit():
-    solution, _sim, _divorce = _solve_divorce(enable_jit=True)
+def test_dissolution_edge_matches_under_jit():
+    solution, _sim, _dissolution = _solve_dissolution(enable_jit=True)
     np.testing.assert_allclose(
         np.asarray(solution[0]["married"]), _EXPECTED_V_MARRIED_0, rtol=1e-6
     )
@@ -638,7 +638,7 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         },
         gated_edges={
             "married_terminal": GatedEdge(
-                gate=_no_divorce_gate,
+                gate=_no_dissolution_gate,
                 legs={
                     "f": EdgeLeg(
                         target_stakeholder="f",
@@ -686,10 +686,10 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
 
 
 def test_full_ekl_topology_via_public_model_api():
-    """single_f/single_m + married with consent edge + divorce edge + IR, one model.
+    """single_f/single_m + married with consent edge + dissolution edge + IR, one model.
 
-    married (period 1) is the slice-3 IR miniature (divorce cell at wage=2). Its
-    divorce edge routes into the (zero-valued) terminal couple — gate ~D is open
+    married (period 1) is the slice-3 IR miniature (dissolution cell at wage=2). Its
+    dissolution edge routes into the (zero-valued) terminal couple — gate ~D is open
     there, so its continuation is zero and its V equals the felicity readout.
     single_f (period 0) reaches married through the CONSENT edge:
 
@@ -709,7 +709,7 @@ def test_full_ekl_topology_via_public_model_api():
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
         log_level="off",
     )
-    # married period-1: the slice-3 IR miniature (continuation zero via divorce edge).
+    # married period-1: slice-3 IR miniature (continuation zero via dissolution edge).
     np.testing.assert_allclose(
         np.asarray(solution[1]["married"]),
         np.array([[2.0, 1.0], [-np.inf, -np.inf], [6.0, 3.0]]),

@@ -11,7 +11,7 @@ choice).
 
 This module is a pure, engine-topology-free building block: it takes already-computed
 per-stakeholder ``Q`` arrays and the feasibility mask and returns the per-stakeholder
-``V`` plus the all-infeasible flag ``D`` (the divorce / empty-feasible-set marker,
+``V`` plus the all-infeasible flag ``D`` (the dissolution / empty-feasible-set marker,
 kept distinct from a numeric ``-inf`` that can arise on-path). The terminal and
 non-terminal solve kernels call it after building their ``Q^s``; wiring it into the
 kernels and threading the stakeholder axis through the V-array topology is the
@@ -51,7 +51,7 @@ def collective_argmax_and_readout(
         Tuple ``(argmax_flat, V, D)`` — the flat argmax index (in the same
         flattened-action layout `argmax_and_max` produces, directly
         compatible with the singleton simulate lookup), the per-stakeholder
-        value mapping, and the divorce flag.
+        value mapping, and the dissolution flag.
     """
     if not stakeholder_Q:
         msg = "collective_argmax_and_readout requires at least one stakeholder."
@@ -67,10 +67,10 @@ def collective_argmax_and_readout(
     argmax_flat, _ = argmax_and_max(
         objective, axis=action_axes, initial=-jnp.inf, where=feasibility
     )
-    divorce = ~jnp.any(feasibility, axis=action_axes)
+    dissolution = ~jnp.any(feasibility, axis=action_axes)
     values = {
         name: jnp.where(
-            divorce,
+            dissolution,
             -jnp.inf,
             _gather_along_actions(
                 q=q, argmax_flat=argmax_flat, action_axes=action_axes
@@ -78,7 +78,7 @@ def collective_argmax_and_readout(
         )
         for name, q in stakeholder_Q.items()
     }
-    return argmax_flat, values, divorce
+    return argmax_flat, values, dissolution
 
 
 def collective_readout(
@@ -99,11 +99,11 @@ def collective_readout(
     All stakeholders share the same argmax ``a*`` (the joint household choice), so
     ties are broken identically for every stakeholder — ``argmax_and_max`` selects
     the first maximizer, and the gather uses that same flattened index for each
-    ``Q^s``. A cell with no feasible action yields ``D = True`` (the divorce /
+    ``Q^s``. A cell with no feasible action yields ``D = True`` (the dissolution /
     empty-``F`` marker); the returned ``V^s`` in such a cell is overwritten with the
     ``-inf`` sentinel — the masked argmax is arbitrary there, so the gathered
     ``Q^s`` would otherwise be an infeasible action's value — and must be routed
-    by the caller through the divorce fallback, never read as a value.
+    by the caller through the dissolution fallback, never read as a value.
 
     Args:
         stakeholder_Q: Mapping stakeholder name -> its action-value array, each of
@@ -122,13 +122,13 @@ def collective_readout(
         shape ``(*state_axes,)`` (the action axes reduced away), and ``D`` is the
         boolean all-infeasible flag of shape ``(*state_axes,)``.
     """
-    _argmax_flat, values, divorce = collective_argmax_and_readout(
+    _argmax_flat, values, dissolution = collective_argmax_and_readout(
         stakeholder_Q=stakeholder_Q,
         feasibility=feasibility,
         weights=weights,
         action_axes=action_axes,
     )
-    return values, divorce
+    return values, dissolution
 
 
 def _weighted_sum(

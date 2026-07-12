@@ -546,7 +546,7 @@ class _GridSearchPeriodKernel:
     """Whether the core is a collective (stakeholder-valued) reduction.
 
     COLLECTIVE-REGIMES (E1/E2). A collective core returns the pair `(V, D)` —
-    the stakeholder-axis value array plus the boolean divorce flag — instead of
+    the stakeholder-axis value array plus the boolean dissolution flag — instead of
     the plain V array; the adapter unpacks it into the `KernelResult`. `False`
     keeps the singleton default byte-identical.
     """
@@ -709,9 +709,9 @@ class _GridSearchPeriodKernel:
         )
         if self.collective:
             # COLLECTIVE-REGIMES (E1/E2): the collective core returns the pair
-            # (stakeholder-axis V, divorce flag D).
-            V_arr, divorce = out
-            return KernelResult(V_arr=V_arr, divorce=divorce)
+            # (stakeholder-axis V, dissolution flag D).
+            V_arr, dissolution = out
+            return KernelResult(V_arr=V_arr, dissolution=dissolution)
         return KernelResult(V_arr=out)
 
 

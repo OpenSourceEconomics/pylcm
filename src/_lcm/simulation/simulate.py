@@ -70,7 +70,7 @@ def simulate(
     seed: int | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
-    period_to_regime_to_divorce_flags: MappingProxyType[
+    period_to_regime_to_dissolution_flags: MappingProxyType[
         int, MappingProxyType[RegimeName, BoolND]
     ] = MappingProxyType({}),
     own_stakeholder: str | None = None,
@@ -107,15 +107,15 @@ def simulate(
             by `pad_initial_conditions_to_multiple`. When set, RNG keys are sized to it
             and the trailing pad rows are trimmed from the results before they are
             returned. `None` means no padding was applied.
-        period_to_regime_to_divorce_flags: Immutable mapping of periods to each
-            COLLECTIVE regime's divorce flag `D` (E2/E4), as returned by
+        period_to_regime_to_dissolution_flags: Immutable mapping of periods to each
+            COLLECTIVE regime's dissolution flag `D` (E2/E4), as returned by
             `backward_induction.solve`'s third element. Empty (the default)
             for models without gated edges reading `D_target`, or when the
             caller does not have it at hand — not yet surfaced through the
             public `Model.solve`/`Model.simulate` API (mirrors solve's own
             internal-only status; a public accessor is a follow-up).
         own_stakeholder: ROW-SPLIT (synthetic mode). This simulate() call's
-            fixed own-role for divorce routing on a COLLECTIVE source's
+            fixed own-role for dissolution routing on a COLLECTIVE source's
             gated edge — e.g. "f" for an all-women population tracking
             synthetic male partners, "m" for an all-men population. A
             single value for the WHOLE call, not a per-subject array (see
@@ -183,7 +183,7 @@ def simulate(
             regime_names_to_ids=regime_names_to_ids,
             regime_ids_to_names=regime_ids_to_names,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            period_to_regime_to_divorce_flags=period_to_regime_to_divorce_flags,
+            period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
             flat_params=flat_params,
             ages=ages,
             seed=seed,
@@ -255,7 +255,7 @@ def _simulate_subject_chunk(
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
-    period_to_regime_to_divorce_flags: MappingProxyType[
+    period_to_regime_to_dissolution_flags: MappingProxyType[
         int, MappingProxyType[RegimeName, BoolND]
     ],
     flat_params: FlatParams,
@@ -335,7 +335,7 @@ def _simulate_subject_chunk(
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                    period_to_regime_to_divorce_flags=period_to_regime_to_divorce_flags,
+                    period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
                     base_state_action_spaces=base_state_action_spaces,
                     flat_params=flat_params,
                     regime_names_to_ids=regime_names_to_ids,
@@ -442,7 +442,7 @@ def _simulate_regime_in_period(
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
-    period_to_regime_to_divorce_flags: MappingProxyType[
+    period_to_regime_to_dissolution_flags: MappingProxyType[
         int, MappingProxyType[RegimeName, BoolND]
     ],
     flat_params: FlatParams,
@@ -476,7 +476,7 @@ def _simulate_regime_in_period(
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
-        period_to_regime_to_divorce_flags: Each COLLECTIVE regime's divorce
+        period_to_regime_to_dissolution_flags: Each COLLECTIVE regime's dissolution
             flag `D` per period (E2/E4); empty for models without one.
         flat_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
@@ -530,7 +530,7 @@ def _simulate_regime_in_period(
         next_regime_to_V_arr=next_regime_to_V_arr,
         base_state_action_spaces=base_state_action_spaces,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-        period_to_regime_to_divorce_flags=period_to_regime_to_divorce_flags,
+        period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
         flat_params=flat_params,
     )
 

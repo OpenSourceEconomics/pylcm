@@ -577,7 +577,7 @@ def _fail_if_collective_regime_targets_unsupported(
     `next_V_arr` with the SOURCE regime's stakeholder layout: a collective
     source expects every target leaf to carry the identical trailing
     stakeholder axis, and a singleton source expects none. Per-stakeholder
-    routing across stakeholder layouts (divorce into `single_f`/`single_m`,
+    routing across stakeholder layouts (dissolution into `single_f`/`single_m`,
     marriage formation) is the gated-edge machinery (E3', slice 4), so any
     non-terminal regime whose reachable target declares a different
     `stakeholders` tuple is rejected here. Both-`None` (the singleton default)
@@ -616,7 +616,7 @@ def _fail_if_collective_regime_targets_unsupported(
                     "target of a collective regime must be a collective regime "
                     "with the identical `stakeholders` tuple (and a singleton "
                     "regime cannot target a collective one). Per-stakeholder "
-                    "routing to different regimes (e.g. divorce into "
+                    "routing to different regimes (e.g. dissolution into "
                     "single-person regimes) is the gated-edge machinery (E3', "
                     "slice 4) and is not yet implemented. See the design doc "
                     "`pylcm-extension-collective-regimes.md` (v2.1)."
@@ -1302,10 +1302,12 @@ class _TerminalCarryPeriodKernel:
             period=jnp.int32(period),
             age=ages.values[period],
         )
-        # `divorce` (E2) rides through unchanged — unreachable today (collective
+        # `dissolution` (E2) rides through unchanged — unreachable today (collective
         # terminals carry actions, so no closed-form carry producer wraps them),
         # but the decorator must not silently drop a base kernel's output.
-        return KernelResult(V_arr=result.V_arr, carry=carry, divorce=result.divorce)
+        return KernelResult(
+            V_arr=result.V_arr, carry=carry, dissolution=result.dissolution
+        )
 
 
 def _build_terminal_carry_producer(

@@ -70,7 +70,7 @@ def solve(
         arrays, the immutable mapping of periods to each DC-EGM regime's
         published `EGMSimPolicy` — the off-grid consumption function simulation
         interpolates; empty for periods/regimes with no DC-EGM kernel, the
-        immutable mapping of periods to each COLLECTIVE regime's divorce flag
+        immutable mapping of periods to each COLLECTIVE regime's dissolution flag
         `D` — `True` on the state cells whose action mask is empty (E2),
         distinct from a numeric `-inf` value; empty inner mappings for models
         without collective regimes, so the default path only gains an empty
@@ -96,7 +96,7 @@ def solve(
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     sim_policies: dict[int, MappingProxyType[RegimeName, EGMSimPolicy]] = {}
-    divorce_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
+    dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -159,7 +159,7 @@ def solve(
         period_solution: dict[RegimeName, FloatND] = {}
         period_egm_carries: dict[RegimeName, EGMCarry] = {}
         period_sim_policies: dict[RegimeName, EGMSimPolicy] = {}
-        period_divorce_flags: dict[RegimeName, BoolND] = {}
+        period_dissolution_flags: dict[RegimeName, BoolND] = {}
 
         active_regimes = {
             regime_name: regime
@@ -196,7 +196,7 @@ def solve(
                 period_egm_carries=period_egm_carries,
                 period_sim_policies=period_sim_policies,
                 period_solution=period_solution,
-                period_divorce_flags=period_divorce_flags,
+                period_dissolution_flags=period_dissolution_flags,
             )
             # Async reductions: gated on log level. `"off"` skips
             # everything — no kernel launches, no host syncs, no
@@ -243,7 +243,7 @@ def solve(
         # still live in `period_solution`. Before rolling, E3' inserts a per-
         # inbound-edge step that folds `E_eps[ kappa*V_target + (1-kappa)*
         # V_fallback ]` over the shared shock nodes (consent gate for the
-        # singles->married edge, divorce D flag for the married->married edge),
+        # singles->married edge, dissolution D flag for the married->married edge),
         # storing W-bar on deterministic cells; parents then read W-bar in place
         # of the raw target V via the existing next_regime_to_V_arr threading.
         # The node fold is streamed to cap peak memory. See design doc §2 (E3')
@@ -251,11 +251,11 @@ def solve(
         # COLLECTIVE-REGIMES (E3'): fold each declared gated edge whose target was
         # solved this period onto the target grid, and roll the resulting Wbar
         # into the edge continuation the source reads next period. Reads only the
-        # still-live period-t arrays (`period_solution`, `period_divorce_flags`).
+        # still-live period-t arrays (`period_solution`, `period_dissolution_flags`).
         next_edge_to_V_arr = _roll_gated_edges(
             regimes=regimes,
             period_solution=period_solution,
-            period_divorce_flags=period_divorce_flags,
+            period_dissolution_flags=period_dissolution_flags,
             base_state_action_spaces=base_state_action_spaces,
             flat_params=flat_params,
             next_edge_to_V_arr=next_edge_to_V_arr,
@@ -268,12 +268,12 @@ def solve(
             next_regime_to_egm_carry=next_regime_to_egm_carry,
         )
         solution[period] = MappingProxyType(period_solution)
-        # COLLECTIVE-REGIMES (E2): publish each collective regime's divorce
+        # COLLECTIVE-REGIMES (E2): publish each collective regime's dissolution
         # flag D alongside V. Kept as a plain per-period mapping (not rolled
         # like `next_regime_to_V_arr`): nothing consumes a NEXT-period D yet —
         # the E3' gates (slice 4) will read the still-live per-period flags at
         # each period's end, before the roll.
-        divorce_flags[period] = MappingProxyType(period_divorce_flags)
+        dissolution_flags[period] = MappingProxyType(period_dissolution_flags)
         sim_policies[period] = MappingProxyType(
             {
                 regime_name: jax.block_until_ready(
@@ -319,7 +319,7 @@ def solve(
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
-    _drain_V_arr_shards(solution=solution, divorce_flags=divorce_flags)
+    _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
@@ -327,7 +327,7 @@ def solve(
     return (
         MappingProxyType(solution),
         MappingProxyType(sim_policies),
-        MappingProxyType(divorce_flags),
+        MappingProxyType(dissolution_flags),
     )
 
 
@@ -421,7 +421,7 @@ def _solve_regime_period(
     period_egm_carries: dict[RegimeName, EGMCarry],
     period_sim_policies: dict[RegimeName, EGMSimPolicy],
     period_solution: Mapping[RegimeName, FloatND],
-    period_divorce_flags: dict[RegimeName, BoolND],
+    period_dissolution_flags: dict[RegimeName, BoolND],
 ) -> FloatND:
     """Invoke one regime's period adapter for one period.
 
@@ -430,12 +430,12 @@ def _solve_regime_period(
     AOT-compiled as `compiled_cores`), calls them with the solver's own argument
     layout, and returns a `KernelResult`. The only branches here are on the
     optional generic outputs — `carry` (the continuation a DC-EGM parent
-    interpolates), `sim_policy` (the off-grid simulation policy), and `divorce`
+    interpolates), `sim_policy` (the off-grid simulation policy), and `dissolution`
     (a collective regime's empty-mask flag D) — which a grid-search regime with
     no continuation simply leaves `None`.
 
-    Produced carries, sim-policies, and divorce flags are stored in
-    `period_egm_carries` / `period_sim_policies` / `period_divorce_flags` in
+    Produced carries, sim-policies, and dissolution flags are stored in
+    `period_egm_carries` / `period_sim_policies` / `period_dissolution_flags` in
     place.
 
     COLLECTIVE-REGIMES (E2): a regime declaring `same_period_refs` additionally
@@ -489,8 +489,8 @@ def _solve_regime_period(
         period_egm_carries[regime_name] = result.carry
     if result.sim_policy is not None:
         period_sim_policies[regime_name] = result.sim_policy
-    if result.divorce is not None:
-        period_divorce_flags[regime_name] = result.divorce
+    if result.dissolution is not None:
+        period_dissolution_flags[regime_name] = result.dissolution
     return result.V_arr
 
 
@@ -582,7 +582,7 @@ def _roll_gated_edges(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     period_solution: dict[RegimeName, FloatND],
-    period_divorce_flags: dict[RegimeName, BoolND],
+    period_dissolution_flags: dict[RegimeName, BoolND],
     base_state_action_spaces: dict[RegimeName, StateActionSpace],
     flat_params: FlatParams,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
@@ -609,7 +609,7 @@ def _roll_gated_edges(
             same_period_mapping = build_same_period_mapping_for_fold(
                 edge=edge,
                 period_solution=period_solution,
-                period_divorce_flags=period_divorce_flags,
+                period_dissolution_flags=period_dissolution_flags,
             )
             # COLLECTIVE-REGIMES (E4): the fold now also returns the raw
             # grid-level `gate` array (simulate's value router interpolates
@@ -775,19 +775,19 @@ def _build_base_state_action_spaces(
 def _drain_V_arr_shards(
     *,
     solution: dict[int, MappingProxyType[RegimeName, FloatND]],
-    divorce_flags: dict[int, MappingProxyType[RegimeName, BoolND]] | None = None,
+    dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] | None = None,
 ) -> None:
-    """Block until every V_arr (and divorce-flag) shard is materialised.
+    """Block until every V_arr (and dissolution-flag) shard is materialised.
 
     Solve → simulate barrier: backward induction returns sharded V_arrs,
     but the simulate phase must consume materialised arrays rather than
     in-flight kernels. `jax.block_until_ready` walks the pytree of V_arrs
     and blocks per-shard (no host transfer, no cross-device collective);
     free when kernels are already done, the minimum necessary sync when
-    they are not. V stays sharded across devices. The collective divorce
+    they are not. V stays sharded across devices. The collective dissolution
     flags (E2) ride along in the same barrier.
     """
-    jax.block_until_ready((solution, divorce_flags))
+    jax.block_until_ready((solution, dissolution_flags))
 
 
 def _compile_all_functions(

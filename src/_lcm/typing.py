@@ -106,6 +106,15 @@ type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, F
 type PeriodToRegimeToSimPolicy = MappingProxyType[
     int, MappingProxyType[RegimeName, EGMSimPolicy]
 ]
+# Sparse over regimes: the inner mapping carries an entry only for COLLECTIVE
+# regimes (E2/E4). `True` on the state cells whose action mask is empty
+# (distinct from a numeric `-inf` value); empty inner mappings for models
+# without collective regimes. Returned as `backward_induction.solve`'s third
+# element and consumed by `simulate` to route a dissolution-gated edge whose gate
+# reads `D_target`.
+type PeriodToRegimeToDissolutionFlags = MappingProxyType[
+    int, MappingProxyType[RegimeName, BoolND]
+]
 
 
 @runtime_checkable
@@ -234,7 +243,7 @@ class MaxQOverAFunction(Protocol):
     Q is the state-action value function. The MaxQOverCFunction returns the maximum of Q
     over all actions. COLLECTIVE-REGIMES (E1/E2): for a collective regime the
     core returns the pair `(V, D)` — the stakeholder-axis value array plus the
-    boolean divorce flag — instead of the plain V array.
+    boolean dissolution flag — instead of the plain V array.
 
     Used for both type checking and beartype runtime checks.
 

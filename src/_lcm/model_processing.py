@@ -294,7 +294,7 @@ def _validate_all_variables_used(
 
         # COLLECTIVE-REGIMES (E2): value-constraint predicates and same-period
         # projection functions are decision inputs too — a state or action read
-        # only by them (e.g. one that only shifts the divorcee's projected
+        # only by them (e.g. one that only shifts the dissolutione's projected
         # state) must count as "used". Added under reserved names to this
         # local DAG copy only; `get_all_functions` itself is unchanged.
         value_decision_targets: list[str] = []

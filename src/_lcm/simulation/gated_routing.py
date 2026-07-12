@@ -25,18 +25,18 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
    the implementation plan ("discard the non-taken branch's coordinates").
 
 **Scope fence (documented, not silently dropped).** A COLLECTIVE source's
-gated edge (e.g. a married couple's divorce edge) declares one leg per
+gated edge (e.g. a married couple's dissolution edge) declares one leg per
 stakeholder, each with its OWN fallback regime (wife -> her own single
 regime, husband -> his). pylcm's forward simulation is a single fixed-size
 population pass: one subject ROW cannot occupy two regimes at once, so a
 genuine second forward-simulated row per additional stakeholder — LINKED
-subject population reallocation on divorce, where both partners are
+subject population reallocation on dissolution, where both partners are
 independently tracked rows that unlink — is NOT implemented here; it is a
 follow-up engine feature (row-split PLAN, "linked mode"). What IS
 implemented, faithfully and tested (row-split PLAN, "synthetic mode"): the
 router recomputes the gate at the realized state, computes EVERY leg's own
 fallback state coordinates via `Regime.gated_edge_leg_projectors` and writes
-each into its OWN fallback regime's per-subject state slot (so a divorced
+each into its OWN fallback regime's per-subject state slot (so a dissolutiond
 household's row-level record of "what regime and state would each partner
 have started at" is complete and correct for every stakeholder), and then
 picks ONE of them as the row's OWN continuing regime membership: the leg
@@ -50,7 +50,7 @@ exactly as before. `own_stakeholder` is a single value for the whole
 mode (EKL Appendix F's two independent, single-gender cohorts), which needs
 no cross-row linkage. A genuinely mixed population where individual rows
 have DIFFERING own-roles, or two TRACKED (linked) rows that must unlink into
-each other's rows on divorce, remains the deferred "linked mode".
+each other's rows on dissolution, remains the deferred "linked mode".
 
 **Deferred: the generic between-period state-reassignment hook.** The
 design doc (§2 E4) and EKL's App. E.2 additionally motivate a callback that
@@ -98,7 +98,7 @@ def substitute_gated_edge_continuations(
     next_regime_to_V_arr: Mapping[RegimeName, FloatND],
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
-    period_to_regime_to_divorce_flags: Mapping[int, Mapping[RegimeName, BoolND]],
+    period_to_regime_to_dissolution_flags: Mapping[int, Mapping[RegimeName, BoolND]],
     flat_params: FlatParams,
 ) -> tuple[MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, BoolND]]:
     """Substitute each declared edge's ``Wbar`` for the raw target V (E4).
@@ -116,7 +116,7 @@ def substitute_gated_edge_continuations(
     if not regime.gated_edges:
         return MappingProxyType(dict(next_regime_to_V_arr)), MappingProxyType({})
     next_period_V = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
-    next_period_D = period_to_regime_to_divorce_flags.get(
+    next_period_D = period_to_regime_to_dissolution_flags.get(
         period + 1, MappingProxyType({})
     )
     substituted = dict(next_regime_to_V_arr)
@@ -125,7 +125,7 @@ def substitute_gated_edge_continuations(
         same_period_mapping = build_same_period_mapping_for_fold(
             edge=edge,
             period_solution=next_period_V,
-            period_divorce_flags=next_period_D,
+            period_dissolution_flags=next_period_D,
         )
         wbar, gate = _evaluate_edge_fold(
             fold=regime.gated_edge_folds[target_name],
@@ -197,7 +197,7 @@ def _select_own_leg(
     stakeholder (`leg.source_stakeholder`); `own_stakeholder` is this
     `simulate()` call's fixed own-role (e.g. "f" for an all-women
     population), so the matching leg's fallback is the row's own single
-    regime on divorce — not unconditionally the first declared leg. Falls
+    regime on dissolution — not unconditionally the first declared leg. Falls
     back to the first declared leg when `own_stakeholder` is `None` (a
     singleton source has exactly one leg anyway) or matches no leg (a
     caller-error-tolerant default, not a silent per-edge mismatch: singleton

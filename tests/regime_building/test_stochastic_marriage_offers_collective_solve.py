@@ -289,7 +289,7 @@ def test_stochastic_marriage_offer_forms_couple_via_kernel():
     probability-weighted mixture over the two drawn spouse types of the
     consent-gated marriage value vs. the single fallback.
     """
-    solution, _sim, _divorce_flags = _solve_offer_regimes()
+    solution, _sim, _dissolution_flags = _solve_offer_regimes()
     V_single_f = np.asarray(solution[0]["single_f"])
     np.testing.assert_allclose(V_single_f, _EXPECTED_V_SINGLE_F_PERIOD_0, rtol=1e-6)
 
@@ -320,7 +320,7 @@ def test_stochastic_marriage_offer_matches_public_model_api():
 
 def test_stochastic_marriage_offer_matches_under_jit():
     """The jitted kernel path folds and averages the same offer draw."""
-    solution, _sim, _divorce = _solve_offer_regimes(enable_jit=True)
+    solution, _sim, _dissolution = _solve_offer_regimes(enable_jit=True)
     np.testing.assert_allclose(
         np.asarray(solution[0]["single_f"]),
         _EXPECTED_V_SINGLE_F_PERIOD_0,

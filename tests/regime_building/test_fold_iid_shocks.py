@@ -110,7 +110,7 @@ def _solve(regimes: dict[str, Regime]) -> MappingProxyType:
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         enable_jit=False,
     )
-    solution, _sim_policies, _divorce_flags = solve(
+    solution, _sim_policies, _dissolution_flags = solve(
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
@@ -232,7 +232,7 @@ def test_fold_collective_composition_matches_unfolded_then_averaged():
             regime_names_to_ids=MappingProxyType({"couple": jnp.int32(0)}),
             enable_jit=False,
         )
-        solution, _sim_policies, _divorce_flags = solve(
+        solution, _sim_policies, _dissolution_flags = solve(
             flat_params=MappingProxyType({"couple": MappingProxyType({})}),
             ages=_AGES,
             regimes=processed,

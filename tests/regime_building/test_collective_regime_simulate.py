@@ -22,7 +22,7 @@ V rather than storing policies (design doc `pylcm-extension-collective-regimes.m
    collective-agnostic) `calculate_next_states` machinery; nothing
    gated-edge-specific is needed for the draw itself.
 
-Divorce (a COLLECTIVE source's multi-leg gated edge) is a documented SCOPE
+Dissolution (a COLLECTIVE source's multi-leg gated edge) is a documented SCOPE
 FENCE: forward simulation is a fixed-size population pass, so one row cannot
 literally become two independently-tracked future rows. What this slice
 delivers — and what is tested here — is that EVERY leg's own fallback
@@ -43,7 +43,7 @@ from _lcm.regime_building.processing import process_regimes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import DiscreteGrid, LinSpacedGrid, categorical, fixed_transition
+from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
@@ -168,7 +168,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
             "couple_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, divorce_flags = solve(
+    solution, _sim_policies, dissolution_flags = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -190,7 +190,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_divorce_flags=divorce_flags,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -233,7 +233,7 @@ def test_couple_simulate_with_runtime_validation_enabled():
             "couple_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, divorce_flags = solve(
+    solution, _sim_policies, dissolution_flags = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -254,7 +254,7 @@ def test_couple_simulate_with_runtime_validation_enabled():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_divorce_flags=divorce_flags,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -379,14 +379,14 @@ def _solve_consent():
             "married_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, divorce_flags = solve(
+    solution, _sim_policies, dissolution_flags = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
-    return ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags
+    return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 
 def test_consent_routing_simulate_matches_gate_exactly():
@@ -396,7 +396,7 @@ def test_consent_routing_simulate_matches_gate_exactly():
     V_single_m_ref=0.5) -> OPEN. Gate at wage=2: (4 > 3) & (2 > 3) -> the
     husband's outside option beats marriage -> CLOSED (unanimity).
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags = (
+    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_consent()
     )
     initial_conditions = MappingProxyType(
@@ -415,7 +415,7 @@ def test_consent_routing_simulate_matches_gate_exactly():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_divorce_flags=divorce_flags,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -444,7 +444,7 @@ def test_consent_routing_simulate_matches_gate_exactly():
 
 def test_consent_routing_never_populates_the_non_routed_target():
     """single_m_terminal has no source edge in this topology, so it stays empty."""
-    ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags = (
+    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_consent()
     )
     initial_conditions = MappingProxyType(
@@ -463,7 +463,7 @@ def test_consent_routing_never_populates_the_non_routed_target():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_divorce_flags=divorce_flags,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -473,9 +473,9 @@ def test_consent_routing_never_populates_the_non_routed_target():
 
 
 # ----------------------------------------------------------------------------------
-# Test 3: divorce routing — a married cohort where slice-3 IR empties the mask
-# at wage=2; reuses the divorce-edge miniature from
-# test_gated_edges_collective_solve.py::_make_divorce_regimes.
+# Test 3: dissolution routing — a married cohort where slice-3 IR empties the mask
+# at wage=2; reuses the dissolution-edge miniature from
+# test_gated_edges_collective_solve.py::_make_dissolution_regimes.
 # ----------------------------------------------------------------------------------
 
 _WAGE_3 = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)  # {1, 2, 3}
@@ -514,11 +514,11 @@ def _ir_m(Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
     return Q_m >= V_single_m_ref - delta_m
 
 
-def _no_divorce_gate(D_target: BoolND) -> BoolND:
+def _no_dissolution_gate(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _make_divorce_regimes() -> dict[str, Regime]:
+def _make_dissolution_regimes() -> dict[str, Regime]:
     married = Regime(
         transition={"married_ir": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
@@ -529,7 +529,7 @@ def _make_divorce_regimes() -> dict[str, Regime]:
         functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
         gated_edges={
             "married_ir": GatedEdge(
-                gate=_no_divorce_gate,
+                gate=_no_dissolution_gate,
                 legs={
                     "f": EdgeLeg(
                         target_stakeholder="f",
@@ -603,9 +603,9 @@ def _make_divorce_regimes() -> dict[str, Regime]:
     }
 
 
-def _solve_divorce():
+def _solve_dissolution():
     ages = AgeGrid(start=0, stop=3, step="Y")
-    regimes_dict = _make_divorce_regimes()
+    regimes_dict = _make_dissolution_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
@@ -626,17 +626,17 @@ def _solve_divorce():
             "single_m_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, divorce_flags = solve(
+    solution, _sim_policies, dissolution_flags = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
-    return ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags
+    return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 
-def test_divorce_edge_routes_primary_leg_to_own_single_regime():
+def test_dissolution_edge_routes_primary_leg_to_own_single_regime():
     """D=True at wage=2 (slice-3 IR empties the mask there, see solve test).
 
     The married household's row is routed to the FIRST declared leg's
@@ -644,11 +644,11 @@ def test_divorce_edge_routes_primary_leg_to_own_single_regime():
     membership change, not merely a value-side fold. wage=1 and wage=3 stay
     married (`married_ir`, D=False there).
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags = (
-        _solve_divorce()
+    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
+        _solve_dissolution()
     )
     np.testing.assert_array_equal(
-        np.asarray(divorce_flags[1]["married_ir"]), [False, True, False]
+        np.asarray(dissolution_flags[1]["married_ir"]), [False, True, False]
     )
 
     initial_conditions = MappingProxyType(
@@ -667,7 +667,7 @@ def test_divorce_edge_routes_primary_leg_to_own_single_regime():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_divorce_flags=divorce_flags,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -682,7 +682,7 @@ def test_divorce_edge_routes_primary_leg_to_own_single_regime():
     # documented scope fence (primary-leg convention); see module docstring.
     np.testing.assert_array_equal(np.asarray(single_m.in_regime), [False, False, False])
 
-    # The divorced household's (wage=2) value under its routed regime matches
+    # The dissolutiond household's (wage=2) value under its routed regime matches
     # the IR miniature's single fallback exactly (hand-computed in
     # test_gated_edges_collective_solve.py): V_single_f(wage=2) = 5.5.
     np.testing.assert_allclose(np.asarray(single_f.V_arr)[1], 5.5, rtol=1e-6)
@@ -691,7 +691,7 @@ def test_divorce_edge_routes_primary_leg_to_own_single_regime():
     np.testing.assert_allclose(np.asarray(married_ir.V_arr)[2], [6.0, 3.0], rtol=1e-6)
 
 
-def test_divorce_edge_leg_projector_computes_the_non_primary_states_too():
+def test_dissolution_edge_leg_projector_computes_the_non_primary_states_too():
     """Unit-level: the SECOND leg's ("m") own fallback projector is correct.
 
     Not exercised by the end-to-end assertion above (the primary-leg
@@ -701,7 +701,7 @@ def test_divorce_edge_leg_projector_computes_the_non_primary_states_too():
     target-grid wage coordinate onto `single_m`'s own state coordinate
     exactly like the fallback the solve-side fold reads for the SAME leg.
     """
-    _ages, regimes, _ids, _params, _solution, _divorce = _solve_divorce()
+    _ages, regimes, _ids, _params, _solution, _dissolution = _solve_dissolution()
     married = regimes["married"]
     edge = married.gated_edges["married_ir"]
     leg_names = [leg.source_stakeholder for leg in edge.legs]
@@ -713,7 +713,7 @@ def test_divorce_edge_leg_projector_computes_the_non_primary_states_too():
 
 # ----------------------------------------------------------------------------------
 # Test 4: value-masked simulate — the simulated argmax never selects an action
-# excluded by a slice-3 value constraint (reuses the divorce miniature's IR
+# excluded by a slice-3 value constraint (reuses the dissolution miniature's IR
 # mask: married_ir's mask is empty at wage=2).
 # ----------------------------------------------------------------------------------
 
@@ -727,10 +727,10 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
     (E2) the solve phase used: the argmax's `V_arr` reports the same `-inf`
     sentinel `solution[1]["married_ir"]` carries at wage=2 (the empty mask;
     the household's real-world routing away from this cell is E3'/E4's
-    separate concern, covered by the divorce test above).
+    separate concern, covered by the dissolution test above).
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags = (
-        _solve_divorce()
+    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
+        _solve_dissolution()
     )
     np.testing.assert_allclose(
         np.asarray(solution[1]["married_ir"])[1], [-np.inf, -np.inf]
@@ -752,7 +752,7 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_divorce_flags=divorce_flags,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -767,16 +767,16 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
 # ----------------------------------------------------------------------------------
 # Test 5: pin — a still-unsupported simulate construct raises clearly rather
 # than crashing obscurely. `Model.simulate()` does not yet surface
-# `period_to_regime_to_divorce_flags` through its public API (documented gap,
+# `period_to_regime_to_dissolution_flags` through its public API (documented gap,
 # see `simulate()`'s own docstring); calling the internal `simulate()` the
-# same way (omitting it) for a divorce-gated model must fail with a clear
+# same way (omitting it) for a dissolution-gated model must fail with a clear
 # message, not a bare `None > 0.5` TypeError.
 # ----------------------------------------------------------------------------------
 
 
-def test_gate_reading_d_target_without_divorce_flags_raises_clearly():
-    ages, regimes, regime_names_to_ids, flat_params, solution, _divorce_flags = (
-        _solve_divorce()
+def test_gate_reading_d_target_without_dissolution_flags_raises_clearly():
+    ages, regimes, regime_names_to_ids, flat_params, solution, _dissolution_flags = (
+        _solve_dissolution()
     )
     initial_conditions = MappingProxyType(
         {
@@ -793,7 +793,7 @@ def test_gate_reading_d_target_without_divorce_flags_raises_clearly():
             regime_names_to_ids=regime_names_to_ids,
             logger=get_logger(log_level="off"),
             period_to_regime_to_V_arr=solution,
-            # period_to_regime_to_divorce_flags omitted (defaults to empty).
+            # period_to_regime_to_dissolution_flags omitted (defaults to empty).
             ages=ages,
             simulation_output_dtypes={},
             seed=0,
@@ -933,14 +933,14 @@ def _solve_consent_discrete_axis():
             "married_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, divorce_flags = solve(
+    solution, _sim_policies, dissolution_flags = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
-    return ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags
+    return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 
 def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
@@ -955,7 +955,7 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
     `educ` contributes 0.0 to every utility, so its exact numeric routing and
     values are identical to `test_consent_routing_simulate_matches_gate_exactly`.
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags = (
+    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_consent_discrete_axis()
     )
     initial_conditions = MappingProxyType(
@@ -978,7 +978,7 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_divorce_flags=divorce_flags,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -1013,3 +1013,158 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
     np.testing.assert_array_equal(
         np.asarray(single_f_term.states["educ"])[[2, 3]], [0, 1]
     )
+
+
+# ----------------------------------------------------------------------------------
+# Test 7: public `Model.solve`/`Model.simulate` API — closes the gap Test 5 pins
+# at the INTERNAL `simulate()` level. `Model.solve(return_dissolution_flags=True)`
+# must surface the dissolution-flag mapping `backward_induction.solve` already
+# computes (previously discarded), and `Model.simulate(...)` must accept it via
+# `period_to_regime_to_dissolution_flags` and thread it down to the same dissolution
+# routing exercised by Test 3 (`_make_dissolution_regimes`), reusing that fixture
+# through the public API instead of the internal `process_regimes` harness.
+# ----------------------------------------------------------------------------------
+
+
+@categorical(ordered=False)
+class DissolutionRegimeId:
+    married: ScalarInt
+    married_ir: ScalarInt
+    married_terminal: ScalarInt
+    single_f: ScalarInt
+    single_f_terminal: ScalarInt
+    single_m: ScalarInt
+    single_m_terminal: ScalarInt
+
+
+def _make_dissolution_model() -> Model:
+    ages = AgeGrid(start=0, stop=3, step="Y")
+    return Model(
+        regimes=_make_dissolution_regimes(),
+        ages=ages,
+        regime_id_class=DissolutionRegimeId,
+    )
+
+
+_DISSOLUTION_PARAMS = {
+    "discount_factor": _BETA,
+    "delta_f": 0.5,
+    "delta_m": 0.2,
+}
+
+
+def test_public_model_solve_return_dissolution_flags_matches_internal_solve():
+    """`Model.solve(return_dissolution_flags=True)` surfaces the same `D` array.
+
+    Same hand-computed cell as the internal-harness test
+    (`test_dissolution_edge_routes_primary_leg_to_own_single_regime`): D=True only
+    at wage=2 for `married_ir` in period 1.
+    """
+    model = _make_dissolution_model()
+    solution, dissolution_flags = model.solve(
+        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
+    )
+    np.testing.assert_array_equal(
+        np.asarray(dissolution_flags[1]["married_ir"]), [False, True, False]
+    )
+    np.testing.assert_allclose(
+        np.asarray(solution[1]["married_ir"])[1], [-np.inf, -np.inf]
+    )
+
+
+def test_public_model_solve_return_both_returns_three_tuple():
+    """`return_simulation_policy=True` and `return_dissolution_flags=True` combine."""
+    model = _make_dissolution_model()
+    solution, sim_policy, dissolution_flags = model.solve(
+        params=_DISSOLUTION_PARAMS,
+        log_level="off",
+        return_simulation_policy=True,
+        return_dissolution_flags=True,
+    )
+    assert isinstance(solution, MappingProxyType)
+    assert isinstance(sim_policy, MappingProxyType)
+    np.testing.assert_array_equal(
+        np.asarray(dissolution_flags[1]["married_ir"]), [False, True, False]
+    )
+
+
+def test_public_model_solve_default_return_shape_is_byte_identical():
+    """Without either flag, `solve` still returns the bare value-function mapping."""
+    model = _make_dissolution_model()
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
+    assert isinstance(solution, MappingProxyType)
+    assert set(solution) == {0, 1, 2, 3}
+
+
+def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
+    """End-to-end: a dissolution `GatedEdge` whose gate reads `D_target` simulates.
+
+    Reproduces `test_dissolution_edge_routes_primary_leg_to_own_single_regime`
+    through the public `Model` API: wage=2 (D=True) is routed to `single_f`
+    (the first declared leg's fallback) instead of `married_ir`; wage=1 and
+    wage=3 (D=False) stay married.
+    """
+    model = _make_dissolution_model()
+    solution, dissolution_flags = model.solve(
+        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
+    )
+    initial_conditions = MappingProxyType(
+        {
+            "wage": jnp.array([1.0, 2.0, 3.0]),
+            "age": jnp.array([0.0, 0.0, 0.0]),
+            "regime_id": jnp.array(
+                [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
+            ),
+        }
+    )
+    result = model.simulate(
+        params=_DISSOLUTION_PARAMS,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=solution,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
+        log_level="off",
+        seed=0,
+    )
+
+    married_ir = result.raw_results["married_ir"][1]
+    single_f = result.raw_results["single_f"][1]
+    single_m = result.raw_results["single_m"][1]
+    np.testing.assert_array_equal(np.asarray(married_ir.in_regime), [True, False, True])
+    np.testing.assert_array_equal(np.asarray(single_f.in_regime), [False, True, False])
+    np.testing.assert_array_equal(np.asarray(single_m.in_regime), [False, False, False])
+
+    np.testing.assert_allclose(np.asarray(single_f.V_arr)[1], 5.5, rtol=1e-6)
+    np.testing.assert_allclose(np.asarray(married_ir.V_arr)[0], [2.0, 1.0], rtol=1e-6)
+    np.testing.assert_allclose(np.asarray(married_ir.V_arr)[2], [6.0, 3.0], rtol=1e-6)
+    assert np.all(np.isfinite(np.asarray(single_f.V_arr)[[0, 1, 2]]))
+    assert np.all(np.isfinite(np.asarray(married_ir.V_arr)[[0, 2]]))
+
+
+def test_public_model_simulate_without_dissolution_flags_raises_clearly():
+    """Omitting `period_to_regime_to_dissolution_flags` for a dissolution-gated model.
+
+    `period_to_regime_to_dissolution_flags` defaults to `None`; the public
+    `Model.simulate()` must surface the SAME clear `NotImplementedError` the
+    internal `simulate()` raises (Test 5 above), not a bare `None`-arithmetic
+    crash — confirming the default path change is opt-in only.
+    """
+    model = _make_dissolution_model()
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
+    initial_conditions = MappingProxyType(
+        {
+            "wage": jnp.array([2.0]),
+            "age": jnp.array([0.0]),
+            "regime_id": jnp.array(
+                [model.regime_names_to_ids["married"]], dtype=jnp.int32
+            ),
+        }
+    )
+    with pytest.raises(NotImplementedError, match="D_target"):
+        model.simulate(
+            params=_DISSOLUTION_PARAMS,
+            initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=solution,
+            # period_to_regime_to_dissolution_flags omitted (defaults to None).
+            log_level="off",
+            seed=0,
+        )

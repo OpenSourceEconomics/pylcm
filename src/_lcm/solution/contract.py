@@ -225,8 +225,8 @@ class KernelResult:
     sim_policy: EGMSimPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
 
-    divorce: BoolND | None = None
-    """The divorce / empty-feasible-set flag `D` on the state axes, or `None`.
+    dissolution: BoolND | None = None
+    """The dissolution / empty-feasible-set flag `D` on the state axes, or `None`.
 
     COLLECTIVE-REGIMES (E2). Published by every collective regime's kernel:
     `True` exactly where NO action satisfies the combined (ordinary AND value)

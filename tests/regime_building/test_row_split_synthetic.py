@@ -1,8 +1,8 @@
-"""Tests for the divorce row-split, synthetic mode (row-split PLAN, commit 1).
+"""Tests for the dissolution row-split, synthetic mode (row-split PLAN, commit 1).
 
 pylcm's forward simulation tracks INDIVIDUALS, not households: a married
 individual's row carries its own state plus a DRAWN (synthetic) partner
-block (slice-5/6 machinery). On divorce (`~gate`), the row must revert to
+block (slice-5/6 machinery). On dissolution (`~gate`), the row must revert to
 `single_<own role>` with its OWN projected state — the leg whose
 `source_stakeholder` matches the row's own role — not unconditionally the
 FIRST declared leg (`_lcm.simulation.gated_routing.route_gated_edges`'s
@@ -10,14 +10,14 @@ prior "primary leg" convention, still the `own_stakeholder=None` default).
 
 This is EKL Appendix F's design: two independent, single-gender cohorts
 (all-women, all-men), each simulated with a synthetic opposite-gender
-partner, each correctly reverting to ITS OWN single regime on divorce. No
+partner, each correctly reverting to ITS OWN single regime on dissolution. No
 cross-row linkage, no matcher, no new per-subject array — `own_stakeholder`
 is a single value for the whole `simulate()` call (see
 `_lcm.simulation.gated_routing._select_own_leg`).
 
-Reuses the divorce miniature from `test_collective_regime_simulate.py`
-(`_make_divorce_regimes` / `_solve_divorce`): a collective `married` regime
-with stakeholders `("f", "m")`, a divorce edge with two legs (`"f" ->
+Reuses the dissolution miniature from `test_collective_regime_simulate.py`
+(`_make_dissolution_regimes` / `_solve_dissolution`): a collective `married` regime
+with stakeholders `("f", "m")`, a dissolution edge with two legs (`"f" ->
 single_f`, `"m" -> single_m`), and a slice-3 IR mask that empties (`D=True`)
 at `wage=2` on the `WAGE_3 = {1, 2, 3}` grid.
 """
@@ -29,13 +29,13 @@ import numpy as np
 
 from _lcm.simulation.simulate import simulate
 from _lcm.utils.logging import get_logger
-from tests.regime_building.test_collective_regime_simulate import _solve_divorce
+from tests.regime_building.test_collective_regime_simulate import _solve_dissolution
 
 
-def _simulate_divorce_cohort(*, own_stakeholder: str | None):
-    """Simulate the 3-subject divorce miniature with a fixed own-role."""
-    ages, regimes, regime_names_to_ids, flat_params, solution, divorce_flags = (
-        _solve_divorce()
+def _simulate_dissolution_cohort(*, own_stakeholder: str | None):
+    """Simulate the 3-subject dissolution miniature with a fixed own-role."""
+    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
+        _solve_dissolution()
     )
     initial_conditions = MappingProxyType(
         {
@@ -53,7 +53,7 @@ def _simulate_divorce_cohort(*, own_stakeholder: str | None):
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_divorce_flags=divorce_flags,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -67,21 +67,21 @@ def _simulate_divorce_cohort(*, own_stakeholder: str | None):
 # ----------------------------------------------------------------------------------
 
 
-def test_synthetic_divorce_reverts_to_own_role_single_regime_for_m():
-    """`own_stakeholder="m"` routes the divorced row to `single_m`, not `single_f`.
+def test_synthetic_dissolution_reverts_to_own_role_single_regime_for_m():
+    """`own_stakeholder="m"` routes the dissolutiond row to `single_m`, not `single_f`.
 
     D=True only at wage=2 (hand-verified in `test_gated_edges_collective_solve.py`
-    / `test_collective_regime_simulate.py`'s divorce test). Under the PRIOR
+    / `test_collective_regime_simulate.py`'s dissolution test). Under the PRIOR
     "first declared leg" convention this row would incorrectly become
     `single_f`; the row's own role here is "m".
     """
-    result, solution = _simulate_divorce_cohort(own_stakeholder="m")
+    result, solution = _simulate_dissolution_cohort(own_stakeholder="m")
 
     married_ir = result.raw_results["married_ir"][1]
     single_f = result.raw_results["single_f"][1]
     single_m = result.raw_results["single_m"][1]
 
-    # The divorce DECISION itself (the gate) does not depend on own_stakeholder.
+    # The dissolution DECISION itself (the gate) does not depend on own_stakeholder.
     np.testing.assert_array_equal(np.asarray(married_ir.in_regime), [True, False, True])
     # But the ROUTING does: the row's own continuing membership is single_m now.
     np.testing.assert_array_equal(np.asarray(single_m.in_regime), [False, True, False])
@@ -100,16 +100,16 @@ def test_synthetic_divorce_reverts_to_own_role_single_regime_for_m():
     )
 
 
-def test_synthetic_divorce_default_still_takes_first_declared_leg():
+def test_synthetic_dissolution_default_still_takes_first_declared_leg():
     """`own_stakeholder=None` (the default) is byte-identical to the prior behavior.
 
-    Regression pin: omitting `own_stakeholder` must keep routing the divorced
+    Regression pin: omitting `own_stakeholder` must keep routing the dissolutiond
     row to the FIRST declared leg's fallback (`single_f`, since `married`'s
     legs are declared in stakeholder order `("f", "m")`) -- exactly the
     pre-row-split convention `test_collective_regime_simulate.py`'s
-    `test_divorce_edge_routes_primary_leg_to_own_single_regime` pins.
+    `test_dissolution_edge_routes_primary_leg_to_own_single_regime` pins.
     """
-    result, _solution = _simulate_divorce_cohort(own_stakeholder=None)
+    result, _solution = _simulate_dissolution_cohort(own_stakeholder=None)
 
     single_f = result.raw_results["single_f"][1]
     single_m = result.raw_results["single_m"][1]
@@ -119,25 +119,25 @@ def test_synthetic_divorce_default_still_takes_first_declared_leg():
 
 # ----------------------------------------------------------------------------------
 # Test (b): two independent populations (EKL Appendix F) -- an all-women cohort
-# and an all-men cohort, each correctly reverting on divorce, with no
+# and an all-men cohort, each correctly reverting on dissolution, with no
 # cross-population coupling.
 # ----------------------------------------------------------------------------------
 
 
 def test_two_independent_synthetic_populations_each_revert_correctly():
-    """A women-role run and a men-role run each divorce-revert to their own single.
+    """A women-role run and a men-role run each dissolution-revert to their own single.
 
     Both runs share the identical input population (same wages, same solved
     value functions) and differ ONLY in `own_stakeholder`; their outputs
-    differ ONLY in which single regime the divorced row (wage=2) lands in --
+    differ ONLY in which single regime the dissolutiond row (wage=2) lands in --
     everything else (the gate decision, the still-married rows' values) is
     identical, confirming the two populations are independent (no
     cross-population state leakage through shared solved arrays).
     """
-    women_result, _ = _simulate_divorce_cohort(own_stakeholder="f")
-    men_result, _ = _simulate_divorce_cohort(own_stakeholder="m")
+    women_result, _ = _simulate_dissolution_cohort(own_stakeholder="f")
+    men_result, _ = _simulate_dissolution_cohort(own_stakeholder="m")
 
-    # Women cohort: divorced row (index 1) becomes single_f, not single_m.
+    # Women cohort: dissolutiond row (index 1) becomes single_f, not single_m.
     np.testing.assert_array_equal(
         np.asarray(women_result.raw_results["single_f"][1].in_regime),
         [False, True, False],
@@ -147,7 +147,7 @@ def test_two_independent_synthetic_populations_each_revert_correctly():
         [False, False, False],
     )
 
-    # Men cohort: divorced row becomes single_m, not single_f.
+    # Men cohort: dissolutiond row becomes single_m, not single_f.
     np.testing.assert_array_equal(
         np.asarray(men_result.raw_results["single_m"][1].in_regime),
         [False, True, False],
@@ -157,7 +157,7 @@ def test_two_independent_synthetic_populations_each_revert_correctly():
         [False, False, False],
     )
 
-    # The divorce decision and the still-married rows' recorded values are
+    # The dissolution decision and the still-married rows' recorded values are
     # identical across the two cohorts (own_stakeholder never touches them).
     np.testing.assert_array_equal(
         np.asarray(women_result.raw_results["married_ir"][1].in_regime),
@@ -171,7 +171,7 @@ def test_two_independent_synthetic_populations_each_revert_correctly():
 
     # Re-running the women cohort is deterministic and unaffected by having
     # just run the men cohort (pure functions, no shared mutable state).
-    women_result_again, _ = _simulate_divorce_cohort(own_stakeholder="f")
+    women_result_again, _ = _simulate_dissolution_cohort(own_stakeholder="f")
     np.testing.assert_array_equal(
         np.asarray(women_result.raw_results["single_f"][1].in_regime),
         np.asarray(women_result_again.raw_results["single_f"][1].in_regime),

@@ -188,7 +188,7 @@ def get_Q_and_F(
         # of Q (it never reads E_next_V). A value-aware mask cannot stay here:
         # it needs per-stakeholder Q^s, so E2 splits this into (i) build the
         # state-independent F here, (ii) compute Q^s, (iii) `mask = F ∧ g(...)`
-        # applied in max_Q_over_a. This site also returns the explicit divorce
+        # applied in max_Q_over_a. This site also returns the explicit dissolution
         # flag D = 1[mask empty], distinct from a numeric -inf. See design doc
         # §2 (E2) / §3.
         U_arr, F_arr = U_and_F(**states_actions_params)
@@ -766,7 +766,7 @@ def get_Q_and_F_collective(
             values, and ordinary states / actions / functions / params via the
             DAG; the results are ANDed into the feasibility mask, so the
             household argmax runs over `F ∧ g(Q^s, V_ref, ...)` and an
-            all-infeasible cell publishes the divorce flag `D` downstream.
+            all-infeasible cell publishes the dissolution flag `D` downstream.
         same_period_refs: Immutable mapping of reference-value names to resolved
             same-period reference declarations. When non-empty, the returned
             `Q_and_F` carries the extra argument `SAME_PERIOD_V_ARG` — the
@@ -969,7 +969,7 @@ def get_Q_and_F_collective(
         # every predicate — reading its own `Q_<s>` gathers, the reference
         # values, and ordinary cell kwargs — into the mask. The household
         # argmax downstream runs over the masked set; an all-infeasible cell
-        # sets the divorce flag D there (`collective_readout`).
+        # sets the dissolution flag D there (`collective_readout`).
         if value_constraint_machinery.evaluators:
             F_arr = _apply_value_constraints(
                 machinery=value_constraint_machinery,

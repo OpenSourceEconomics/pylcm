@@ -1,16 +1,16 @@
-"""Gated edge objects (E3'): mutual-consent marriage / divorce routing.
+"""Gated edge objects (E3'): mutual-consent marriage / dissolution routing.
 
 The design-doc §2 E3' construct that unlocks MIXED singleton/collective regime
 topologies. A source regime declares, per target regime, a `GatedEdge`. At the
 END of each period ``t``'s solve — after every period-``t`` regime is solved, so
-their value arrays and divorce flags are still live — the engine folds, for each
+their value arrays and dissolution flags are still live — the engine folds, for each
 declared edge and each source stakeholder ``s``, a gated continuation object on
 the TARGET regime's period-``t`` grid::
 
     Wbar^s(x) = jnp.where( gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)) )
 
 with ``gate`` a boolean user function on the target grid (EKL consent eq. 27 /
-no-divorce eqs. 9/12) and ``V_fallback^s`` a same-period reference regime's value
+no-dissolution eqs. 9/12) and ``V_fallback^s`` a same-period reference regime's value
 at a projection (EKL: the source stakeholder's own single regime). The source's
 period ``t-1`` continuation then reads ``Wbar`` in place of the raw target V,
 threaded through the ordinary transition machinery (`next_regime_to_V_arr`).
@@ -18,12 +18,12 @@ threaded through the ordinary transition machinery (`next_regime_to_V_arr`).
 **Numerics (non-negotiable).** The mixture is the strict
 ``jnp.where(gate, V_target, V_fallback)``, never a linear
 ``gate*V_target + (1-gate)*V_fallback``: the target value carries the slice-3
-``-inf`` sentinel in divorce cells, and ``0 * -inf = NaN``. Every read that
+``-inf`` sentinel in dissolution cells, and ``0 * -inf = NaN``. Every read that
 lands the target value — including the gate's own ``V_target_<s>`` reads — is an
 on-grid identity-projection interpolation, so it is exact.
 
 The whole fold reuses the slice-3 same-period reference-reader machinery
-(`_build_same_period_ref_reader`): the target's own value components and divorce
+(`_build_same_period_ref_reader`): the target's own value components and dissolution
 flag are read as identity-projection references of the target regime, and the
 gate refs / leg fallbacks as ordinary projected references. The per-cell fold is
 product-mapped over the target regime's state grid.
@@ -55,11 +55,11 @@ from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 
-# Suffix under which a target regime's divorce flag `D` (cast to float) is passed
+# Suffix under which a target regime's dissolution flag `D` (cast to float) is passed
 # in the same-period value mapping the fold consumes. Never a real regime name.
 D_KEY_SUFFIX = "__gated_edge_D__"
 
-# The float divorce flag is 0.0 / 1.0 at grid points; threshold back to boolean.
+# The float dissolution flag is 0.0 / 1.0 at grid points; threshold back to boolean.
 _D_THRESHOLD = 0.5
 
 # COLLECTIVE-REGIMES (E4). `V_arr_name` under which a fold's grid-level `gate`
@@ -145,7 +145,7 @@ def get_edge_fold(
 
     Returns a callable whose keyword arguments are the target regime's state
     grids, the same-period value mapping (under `SAME_PERIOD_V_ARG` — the target
-    V, its float divorce flag, and every reference regime's V) and the gate's
+    V, its float dissolution flag, and every reference regime's V) and the gate's
     flat params. It returns a pair: ``Wbar`` of shape ``(*target_state_axes,
     n_source_components)`` for a collective source, or ``(*target_state_axes,)``
     for a singleton source (a single leg with no trailing axis); and the raw
@@ -161,10 +161,10 @@ def get_edge_fold(
     target-state draw, exactly like any other solved array simulate reads.
     Returning both from one fold avoids evaluating `gate_evaluator` twice.
 
-    **Numerics.** The target regime's OWN value components and divorce flag are
+    **Numerics.** The target regime's OWN value components and dissolution flag are
     read by DIRECT array indexing off the same-period mapping — never by
     interpolation. Linear interpolation of the target's ``-inf``-bearing V would
-    compute ``0 * -inf = NaN`` at the grid points ADJACENT to a divorce cell
+    compute ``0 * -inf = NaN`` at the grid points ADJACENT to a dissolution cell
     (the zero-weight neighbour), poisoning the OPEN branch before the
     ``jnp.where`` could guard it. Only the gate references and leg fallbacks —
     which read OTHER (finite) regimes at projected coordinates — are
@@ -282,7 +282,7 @@ def get_edge_fold(
     def fold(**kwargs: _ParamsLeaf) -> tuple[FloatND, BoolND]:
         same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
         # Direct (un-interpolated) reads of the target's own value and flag, so a
-        # `-inf` divorce cell never poisons a neighbour through interpolation.
+        # `-inf` dissolution cell never poisons a neighbour through interpolation.
         target_V = same_period_V[edge.target]
         target_components: dict[str, FloatND] = {}
         for index, name in enumerate(target_component_names):
@@ -360,7 +360,7 @@ def build_fallback_state_projector(
     (which reads the fallback regime's V at these same projected
     coordinates, for the solve-side fold): the simulate-side value router
     does not need the fallback's VALUE (Wbar already folds that in) but does
-    need the fallback's own STATE coordinates, to write the divorced/rejected
+    need the fallback's own STATE coordinates, to write the dissolutiond/rejected
     stakeholder's next-period row into `states[fallback.regime]`. Reuses the
     identical projection-function construction (same `dag_pool`, same
     `concatenate_functions` targets) so the coordinates are guaranteed
@@ -423,7 +423,7 @@ def _assemble_gate_kwargs(
     """Bind each gate argument to its grid array (E3').
 
     Resolves the gate's declared arguments against the target's own value
-    components (``V_target_<s>``), its boolean divorce flag (``D_target``), the
+    components (``V_target_<s>``), its boolean dissolution flag (``D_target``), the
     gate references, the broadcast target-state grids, and remaining cell kwargs.
 
     COLLECTIVE-REGIMES (E3', slice 5): ``state_mesh`` carries the target
@@ -439,18 +439,18 @@ def _assemble_gate_kwargs(
             gate_kwargs[arg] = target_components[arg]
         elif arg == "D_target":
             if d_value is None:
-                # COLLECTIVE-REGIMES (E4). Solve always publishes a divorce
+                # COLLECTIVE-REGIMES (E4). Solve always publishes a dissolution
                 # flag for every active collective regime, so this branch is
                 # unreachable there; it fires only when a SIMULATE caller
                 # invoked the internal `simulate()` without threading
-                # `period_to_regime_to_divorce_flags` (e.g. the public
+                # `period_to_regime_to_dissolution_flags` (e.g. the public
                 # `Model.simulate()`, which does not yet surface it — see
                 # `pylcm-extension-collective-regimes.md` v2.1, slice 6). Fail
                 # clearly instead of `None > 0.5`.
                 msg = (
-                    "This gate reads 'D_target', but no divorce-flag array "
+                    "This gate reads 'D_target', but no dissolution-flag array "
                     "was supplied for the target regime at this period. "
-                    "Forward simulation needs `period_to_regime_to_divorce_flags` "
+                    "Forward simulation needs `period_to_regime_to_dissolution_flags` "
                     "(the third element `backward_induction.solve` returns) "
                     "threaded through to `simulate()`; the public "
                     "`Model.simulate()` does not yet surface it."
@@ -470,16 +470,16 @@ def build_same_period_mapping_for_fold(
     *,
     edge: ResolvedGatedEdge,
     period_solution: Mapping[RegimeName, FloatND],
-    period_divorce_flags: Mapping[RegimeName, BoolND],
+    period_dissolution_flags: Mapping[RegimeName, BoolND],
 ) -> MappingProxyType[RegimeName, FloatND]:
     """Assemble the same-period value mapping the fold reads for one edge.
 
-    Carries the target regime's V, its divorce flag cast to float (under the
+    Carries the target regime's V, its dissolution flag cast to float (under the
     reserved `D_KEY_SUFFIX` key), and every reference regime's V — all
     period-``t`` arrays, still live at the fold site.
     """
     mapping: dict[RegimeName, FloatND] = {edge.target: period_solution[edge.target]}
-    d_flag = period_divorce_flags.get(edge.target)
+    d_flag = period_dissolution_flags.get(edge.target)
     if d_flag is not None:
         mapping[f"{edge.target}{D_KEY_SUFFIX}"] = jnp.asarray(d_flag, dtype=float)
     for regime_name in edge.reference_regimes:

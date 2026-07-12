@@ -58,6 +58,7 @@ from _lcm.typing import (
     FlatParams,
     FunctionName,
     ParamsTemplate,
+    PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
@@ -340,6 +341,7 @@ class Model:
         log_path: str | Path | None = ...,
         log_keep_n_latest: int = ...,
         return_simulation_policy: Literal[False] = ...,
+        return_dissolution_flags: Literal[False] = ...,
     ) -> PeriodToRegimeToVArr: ...
 
     @overload
@@ -352,6 +354,7 @@ class Model:
         log_path: str | Path | None = ...,
         log_keep_n_latest: int = ...,
         return_simulation_policy: Literal[True],
+        return_dissolution_flags: Literal[False] = ...,
     ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]: ...
 
     @overload
@@ -363,9 +366,47 @@ class Model:
         max_compilation_workers: int | None = ...,
         log_path: str | Path | None = ...,
         log_keep_n_latest: int = ...,
+        return_simulation_policy: Literal[False] = ...,
+        return_dissolution_flags: Literal[True],
+    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        return_simulation_policy: Literal[True],
+        return_dissolution_flags: Literal[True],
+    ) -> tuple[
+        PeriodToRegimeToVArr,
+        PeriodToRegimeToSimPolicy,
+        PeriodToRegimeToDissolutionFlags,
+    ]: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
         return_simulation_policy: bool,
+        return_dissolution_flags: bool,
     ) -> (
-        PeriodToRegimeToVArr | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]
+        PeriodToRegimeToVArr
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]
+        | tuple[
+            PeriodToRegimeToVArr,
+            PeriodToRegimeToSimPolicy,
+            PeriodToRegimeToDissolutionFlags,
+        ]
     ): ...
 
     @beartype(conf=PARAMS_CONF)
@@ -378,7 +419,17 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         return_simulation_policy: bool = False,
-    ) -> PeriodToRegimeToVArr | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]:
+        return_dissolution_flags: bool = False,
+    ) -> (
+        PeriodToRegimeToVArr
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]
+        | tuple[
+            PeriodToRegimeToVArr,
+            PeriodToRegimeToSimPolicy,
+            PeriodToRegimeToDissolutionFlags,
+        ]
+    ):
         """Solve the model using the pre-computed functions.
 
         Args:
@@ -417,11 +468,22 @@ class Model:
                 `simulate` is grid-restricted and consumes only the value
                 functions, so it does not yet take the policies back. Defaults
                 to `False` (value functions only).
+            return_dissolution_flags: When `True`, also return the per-period,
+                per-COLLECTIVE-regime dissolution-flag arrays `D` (`True` on state
+                cells whose action mask is empty; empty inner mappings for
+                models without collective regimes). Pass the result back into
+                `simulate(period_to_regime_to_dissolution_flags=...)` so a
+                dissolution `GatedEdge` whose gate reads `D_target` can be
+                evaluated during forward simulation. Defaults to `False`
+                (value functions only).
 
         Returns:
             Immutable mapping of period to a value function array for each
-            regime; or, when `return_simulation_policy=True`, that mapping
-            paired with the per-period DC-EGM simulation-policy mapping.
+            regime; combined with the per-period DC-EGM simulation-policy
+            mapping when `return_simulation_policy=True` and/or the
+            per-period dissolution-flag mapping when `return_dissolution_flags=True`
+            (in that order: value functions, then simulation policy, then
+            dissolution flags — either or both may be appended).
 
         """
         log = get_logger(log_level=log_level)
@@ -432,18 +494,28 @@ class Model:
             ages=self.ages,
             logger=log,
         )
-        period_to_regime_to_V_arr, period_to_regime_to_sim_policy = (
-            self._solve_compiled(
-                flat_params=flat_params,
-                params=params,
-                log=log,
-                log_path=log_path,
-                log_keep_n_latest=log_keep_n_latest,
-                max_compilation_workers=max_compilation_workers,
-            )
+        (
+            period_to_regime_to_V_arr,
+            period_to_regime_to_sim_policy,
+            period_to_regime_to_dissolution_flags,
+        ) = self._solve_compiled(
+            flat_params=flat_params,
+            params=params,
+            log=log,
+            log_path=log_path,
+            log_keep_n_latest=log_keep_n_latest,
+            max_compilation_workers=max_compilation_workers,
         )
+        if return_simulation_policy and return_dissolution_flags:
+            return (
+                period_to_regime_to_V_arr,
+                period_to_regime_to_sim_policy,
+                period_to_regime_to_dissolution_flags,
+            )
         if return_simulation_policy:
             return period_to_regime_to_V_arr, period_to_regime_to_sim_policy
+        if return_dissolution_flags:
+            return period_to_regime_to_V_arr, period_to_regime_to_dissolution_flags
         return period_to_regime_to_V_arr
 
     def _solve_compiled(
@@ -455,23 +527,28 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
-    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]:
+    ) -> tuple[
+        PeriodToRegimeToVArr,
+        PeriodToRegimeToSimPolicy,
+        PeriodToRegimeToDissolutionFlags,
+    ]:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
-        Returns the value-function arrays and the per-period DC-EGM simulation
-        policies (the off-grid consumption functions `simulate` interpolates).
-        With `log_path` set, a snapshot is written at `log_level="debug"`
-        (every solve) and at `"warning"` / `"progress"` whenever the returned
-        solution contains NaN. `_enforce_retention` caps the snapshot count at
+        Returns the value-function arrays, the per-period DC-EGM simulation
+        policies (the off-grid consumption functions `simulate` interpolates),
+        and the per-period, per-COLLECTIVE-regime dissolution-flag arrays (E2;
+        empty for models without collective regimes). With `log_path` set, a
+        snapshot is written at `log_level="debug"` (every solve) and at
+        `"warning"` / `"progress"` whenever the returned solution contains
+        NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
         try:
-            # COLLECTIVE-REGIMES (E2): the third element is the per-period
-            # divorce-flag mapping (empty for models without collective
-            # regimes). Not yet surfaced through the public Model API — the
-            # E3' gates (slice 4) consume it inside the solve; a public
-            # accessor lands with the routing machinery.
-            period_to_regime_to_V_arr, period_to_regime_to_sim_policy, _ = solve(
+            (
+                period_to_regime_to_V_arr,
+                period_to_regime_to_sim_policy,
+                period_to_regime_to_dissolution_flags,
+            ) = solve(
                 flat_params=flat_params,
                 ages=self.ages,
                 regimes=self._regimes,
@@ -502,7 +579,11 @@ class Model:
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
             )
-        return period_to_regime_to_V_arr, period_to_regime_to_sim_policy
+        return (
+            period_to_regime_to_V_arr,
+            period_to_regime_to_sim_policy,
+            period_to_regime_to_dissolution_flags,
+        )
 
     def _resolve_simulate_regimes(
         self,
@@ -549,6 +630,8 @@ class Model:
         initial_conditions: UserInitialConditions | pd.DataFrame,
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         log_level: LogLevel,
+        period_to_regime_to_dissolution_flags: PeriodToRegimeToDissolutionFlags
+        | None = None,
         seed: int | None = None,
         subject_batch_size: int = 0,
         log_path: str | Path | None = None,
@@ -580,6 +663,12 @@ class Model:
                 (auto-converted via `initial_conditions_from_dataframe`).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
+            period_to_regime_to_dissolution_flags: Per-period, per-COLLECTIVE-regime
+                dissolution-flag arrays from `solve(return_dissolution_flags=True)`.
+                Required only for a model with a dissolution `GatedEdge` (a gate
+                that reads `D_target`); such a gate raises a clear
+                `NotImplementedError` at simulate time if this is left `None`.
+                `None` (the default) is a no-op for every other model.
             seed: Random seed.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG
@@ -679,8 +768,12 @@ class Model:
         if period_to_regime_to_V_arr is None:
             # Simulation is grid-restricted: it interpolates only the value
             # functions, so the published DC-EGM policy is unpacked and dropped.
-            # Off-grid simulation would interpolate the policy instead.
-            period_to_regime_to_V_arr, _period_to_regime_to_sim_policy = (
+            # Off-grid simulation would interpolate the policy instead. The
+            # dissolution-flag array is similarly dropped here — a caller relying
+            # on the auto-solve path for a dissolution-gated model must call
+            # `solve(return_dissolution_flags=True)` explicitly and pass the
+            # result via `period_to_regime_to_dissolution_flags`.
+            period_to_regime_to_V_arr, _period_to_regime_to_sim_policy, _ = (
                 self._solve_compiled(
                     flat_params=flat_params,
                     params=params,
@@ -702,6 +795,11 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             logger=log,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_dissolution_flags=(
+                MappingProxyType({})
+                if period_to_regime_to_dissolution_flags is None
+                else period_to_regime_to_dissolution_flags
+            ),
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,

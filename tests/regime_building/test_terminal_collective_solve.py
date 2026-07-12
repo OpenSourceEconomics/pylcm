@@ -65,7 +65,7 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
         enable_jit=False,
     )
 
-    solution, _sim_policies, _divorce_flags = solve(
+    solution, _sim_policies, _dissolution_flags = solve(
         flat_params=MappingProxyType({"couple": MappingProxyType({})}),
         ages=ages,
         regimes=regimes,

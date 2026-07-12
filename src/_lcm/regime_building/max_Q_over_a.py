@@ -97,7 +97,7 @@ def get_max_Q_over_a(
             reads off each stakeholder's own value at the shared household argmax
             (`collective_readout`) instead of the plain masked max; the returned
             function then yields the pair `(V, D)` — the stakeholder-axis value
-            array plus the boolean divorce flag `D = 1[mask empty]` on the state
+            array plus the boolean dissolution flag `D = 1[mask empty]` on the state
             axes (E2; distinct from a numeric `-inf`, which occurs on-path).
         weights: Household Pareto weights per stakeholder; required (and only used)
             when `stakeholders` is set.
@@ -107,7 +107,7 @@ def get_max_Q_over_a(
             evaluated exactly as today — but its axis is then weighted-averaged
             away (`jnp.average(..., weights=fold_weights[name])`) before the
             result is returned, so the caller never sees it. A collective
-            regime's divorce flag `D` is folded by `jnp.any` instead (stays
+            regime's dissolution flag `D` is folded by `jnp.any` instead (stays
             strictly boolean; see `_wrap_with_fold_reduction`).
         fold_weights: Quadrature weights per name in `fold_state_names` (each a
             1-D array matching that state's node count, summing to 1). Ignored
@@ -198,7 +198,7 @@ def get_max_Q_over_a(
                 # off each stakeholder's OWN value at that shared argmax. The
                 # returned pair is the stakeholder value vector (re-stacked on
                 # a trailing axis, which the outer state product-map turns
-                # into `(*states, n_stakeholders)`) plus the divorce flag D —
+                # into `(*states, n_stakeholders)`) plus the dissolution flag D —
                 # `True` where NO action is feasible (empty mask), published
                 # alongside V and never conflated with a numeric -inf value
                 # (which occurs on-path).
@@ -206,7 +206,7 @@ def get_max_Q_over_a(
                 stakeholder_Q = {
                     name: Q_arr[..., index] for index, name in enumerate(stakeholders)
                 }
-                values, divorce = collective_readout(
+                values, dissolution = collective_readout(
                     stakeholder_Q=stakeholder_Q,
                     feasibility=F_arr,
                     weights=cast("Mapping[str, float]", weights),
@@ -214,7 +214,7 @@ def get_max_Q_over_a(
                 )
                 return (
                     jnp.stack([values[name] for name in stakeholders], axis=-1),
-                    divorce,
+                    dissolution,
                 )
             return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
@@ -288,10 +288,10 @@ def _wrap_with_fold_reduction(
     so it composes transparently with the co-map `vmap_1d` wrapping that may
     follow.
 
-    The divorce flag `D` (collective only) stays strictly boolean — reduced
-    by `jnp.any` ("divorced at any folded node"), not a weighted average — so
+    The dissolution flag `D` (collective only) stays strictly boolean — reduced
+    by `jnp.any` ("dissolutiond at any folded node"), not a weighted average — so
     it keeps its `BoolND` contract for every downstream reader (the gated-edge
-    fold, `KernelResult.divorce`). This is a conservative, not an exact,
+    fold, `KernelResult.dissolution`). This is a conservative, not an exact,
     reduction; `_validate_fold_declarations` already rejects a fold state a
     same-period gate reads DIRECTLY, but a gate reading `D` itself (of a
     regime that happens to also fold an UNRELATED state) is not caught — out
@@ -315,11 +315,11 @@ def _wrap_with_fold_reduction(
     ) -> FloatND | tuple[FloatND, BoolND]:
         out = mapped(next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params)
         if stakeholders is not None:
-            V_arr, divorce = cast("tuple[FloatND, BoolND]", out)
+            V_arr, dissolution = cast("tuple[FloatND, BoolND]", out)
             for name, axis in fold_axis_positions:
                 V_arr = jnp.average(V_arr, axis=axis, weights=fold_weights[name])
-                divorce = jnp.any(divorce, axis=axis)
-            return V_arr, divorce
+                dissolution = jnp.any(dissolution, axis=axis)
+            return V_arr, dissolution
         V_arr = cast("FloatND", out)
         for name, axis in fold_axis_positions:
             V_arr = jnp.average(V_arr, axis=axis, weights=fold_weights[name])
@@ -481,7 +481,7 @@ def get_argmax_and_max_Q_over_a(
                 stakeholder_Q = {
                     name: Q_arr[..., index] for index, name in enumerate(stakeholders)
                 }
-                argmax_flat, values, _divorce = collective_argmax_and_readout(
+                argmax_flat, values, _dissolution = collective_argmax_and_readout(
                     stakeholder_Q=stakeholder_Q,
                     feasibility=F_arr,
                     weights=cast("Mapping[str, float]", weights),

@@ -115,7 +115,7 @@ class EdgeLeg:
       regime, at the projection back to its single state). The mixture is the
       strict ``jnp.where(gate, V_target, V_fallback)`` — NEVER a linear
       ``gate*V_target + (1-gate)*V_fallback`` (the target value is ``-inf`` in a
-      divorce cell, and ``0 * -inf = NaN``).
+      dissolution cell, and ``0 * -inf = NaN``).
     """
 
     fallback: SamePeriodRef
@@ -134,7 +134,7 @@ class GatedEdge:
     The design-doc §2 E3' construct that unlocks MIXED singleton/collective
     regime topologies: a singleton regime may reach a collective regime (mutual
     consent marriage) and a collective regime may route per-stakeholder to
-    singleton regimes (divorce) — but only THROUGH a declared gated edge. Direct
+    singleton regimes (dissolution) — but only THROUGH a declared gated edge. Direct
     raw transitions between different-stakeholder regimes stay rejected.
 
     A source regime declares ``gated_edges`` as a mapping of TARGET regime name
@@ -150,11 +150,11 @@ class GatedEdge:
     - ``gate`` — a BOOLEAN user function evaluated pointwise on the target
       regime's grid. It may read the target regime's per-stakeholder value
       components under the names ``V_target_<s>`` (one per target stakeholder),
-      the target's divorce flag ``D_target`` (a collective target only), each
+      the target's dissolution flag ``D_target`` (a collective target only), each
       key of ``gate_refs`` (a same-period reference value at its projection), and
       ordinary target states / params. EKL consent (eq. 27):
       ``gate = (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)``
-      — strict, unanimous. EKL no-divorce (eqs. 9/12): ``gate = ~D_target``.
+      — strict, unanimous. EKL no-dissolution (eqs. 9/12): ``gate = ~D_target``.
       Stochastic (``kappa`` in ``(0, 1)``) gates are out of scope for this
       slice.
     - ``legs`` — one `EdgeLeg` per SOURCE stakeholder (keyed by source
@@ -334,7 +334,7 @@ class Regime:
     behavior change. A non-`None` tuple declares a *collective regime*: a couple
     (or other multi-party household) that solves one household argmax but reads
     off a per-stakeholder value at that common argmax, with value-aware
-    feasibility and value-gated regime routing (consent / divorce).
+    feasibility and value-gated regime routing (consent / dissolution).
 
     This is the API surface of the "collective regimes" extension (E1-E4 +
     shared shocks). The **E1 solve** is implemented for terminal and
@@ -346,7 +346,7 @@ class Regime:
     `pylcm-extension-collective-regimes.md` v2.1, §2 E1). A non-terminal
     collective regime's transition targets must all be collective regimes with
     the identical `stakeholders` tuple — per-stakeholder routing to different
-    regimes (value gates, divorce) is E3'. Collective-regime simulation, EV1
+    regimes (value gates, dissolution) is E3'. Collective-regime simulation, EV1
     taste shocks, nonlinear certainty equivalents, and non-GridSearch solvers
     on a collective regime still raise `NotImplementedError`.
     """
@@ -375,14 +375,14 @@ class Regime:
     - `Q_<s>` for each stakeholder `<s>` — that stakeholder's own action value
       `Q^s(x, a)` (felicity plus discounted continuation) at the cell;
     - each key of `same_period_refs` — the reference regime's same-period value
-      interpolated at the projected state (e.g. the divorcee's single value);
+      interpolated at the projected state (e.g. the dissolutione's single value);
     - ordinary states, actions, regime functions, and parameters via the DAG
       (a predicate parameter such as EKL's `Delta_j` surfaces in the params
       template under the constraint's name).
 
     The final action mask is the AND of ordinary constraints and all value
     constraints; the household argmax runs over the masked set, and a state
-    cell whose mask is empty publishes the divorce flag `D = True` (returned by
+    cell whose mask is empty publishes the dissolution flag `D = True` (returned by
     the solve alongside V — never conflated with a numeric `-inf` value, which
     can occur on-path). EKL 2019 eq. 11 is exactly
     `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each stakeholder `j`.
@@ -398,7 +398,7 @@ class Regime:
     Maps a TARGET regime name to a `GatedEdge`. A gated edge lets this regime
     reach a target of a DIFFERENT stakeholder layout (a singleton regime into a
     collective one for mutual-consent marriage, or a collective regime into
-    singleton regimes for divorce) — the only way to cross the mixed-topology
+    singleton regimes for dissolution) — the only way to cross the mixed-topology
     fence. When declared, the engine folds a gated continuation object
     ``Wbar^s = jnp.where(gate, V_target, V_fallback)`` on the target regime's
     grid at each period's end, and this regime's continuation reads ``Wbar`` in

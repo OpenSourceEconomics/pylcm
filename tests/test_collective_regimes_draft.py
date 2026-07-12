@@ -214,14 +214,14 @@ def test_value_aware_feasibility_reads_reference_value():
     The married participation set is `Q^j(x, a) >= V^j(outside_j) - Delta_j`, so
     the mask must read a *same-period* single-regime reference value at the
     matched shock realization — it can no longer be computed before Q. The solve
-    must also expose an explicit divorce flag `D = 1[mask empty]`, distinct from
+    must also expose an explicit dissolution flag `D = 1[mask empty]`, distinct from
     a numeric -inf value. See design doc §2 (E2).
     """
     regime = _build_married_regime()
     result = regime.solve_period_values()  # ty: ignore[unresolved-attribute]
-    # Target API: a boolean divorce flag alongside the per-stakeholder values,
+    # Target API: a boolean dissolution flag alongside the per-stakeholder values,
     # never inferred from V == -inf.
-    assert result.divorce_flag.dtype == jnp.bool_
+    assert result.dissolution_flag.dtype == jnp.bool_
 
 
 @pytest.mark.xfail(

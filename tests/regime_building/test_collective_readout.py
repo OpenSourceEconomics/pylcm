@@ -24,7 +24,7 @@ def test_readout_reads_own_Q_at_household_argmax_single_state():
     #   O = [5.0, 3.5, 4.5]  -> argmax = action 0
     feas = jnp.array([True, True, True])
 
-    values, divorce = collective_readout(
+    values, dissolution = collective_readout(
         stakeholder_Q={"f": q_f, "m": q_m},
         feasibility=feas,
         weights={"f": 0.5, "m": 0.5},
@@ -36,7 +36,7 @@ def test_readout_reads_own_Q_at_household_argmax_single_state():
     assert values["m"] == pytest.approx(0.0)
     # The two values differ -> genuinely per-stakeholder (not the shared objective).
     assert values["f"] != values["m"]
-    assert bool(divorce) is False
+    assert bool(dissolution) is False
 
 
 def test_feasibility_mask_changes_the_joint_choice():
@@ -46,7 +46,7 @@ def test_feasibility_mask_changes_the_joint_choice():
     q_m = jnp.array([0.0, 3.0, 9.0])
     feas = jnp.array([False, True, True])
 
-    values, divorce = collective_readout(
+    values, dissolution = collective_readout(
         stakeholder_Q={"f": q_f, "m": q_m},
         feasibility=feas,
         weights={"f": 0.5, "m": 0.5},
@@ -54,22 +54,22 @@ def test_feasibility_mask_changes_the_joint_choice():
     )
     assert values["f"] == pytest.approx(0.0)
     assert values["m"] == pytest.approx(9.0)
-    assert bool(divorce) is False
+    assert bool(dissolution) is False
 
 
-def test_empty_feasible_set_sets_divorce_flag():
+def test_empty_feasible_set_sets_dissolution_flag():
     q_f = jnp.array([10.0, 4.0, 0.0])
     q_m = jnp.array([0.0, 3.0, 9.0])
     feas = jnp.array([False, False, False])
 
-    _, divorce = collective_readout(
+    _, dissolution = collective_readout(
         stakeholder_Q={"f": q_f, "m": q_m},
         feasibility=feas,
         weights={"f": 0.5, "m": 0.5},
         action_axes=(0,),
     )
-    # No feasible action -> the empty-set / divorce marker, distinct from -inf value.
-    assert bool(divorce) is True
+    # No feasible action -> the empty-set / dissolution marker, distinct from -inf.
+    assert bool(dissolution) is True
 
 
 def test_batched_over_states():
@@ -80,7 +80,7 @@ def test_batched_over_states():
     q_m = jnp.array([[0.0, 0.0, 3.0], [0.0, 0.0, 1.0]])
     feas = jnp.ones((2, 3), dtype=bool)
 
-    values, divorce = collective_readout(
+    values, dissolution = collective_readout(
         stakeholder_Q={"f": q_f, "m": q_m},
         feasibility=feas,
         weights={"f": 0.5, "m": 0.5},
@@ -88,7 +88,7 @@ def test_batched_over_states():
     )
     np.testing.assert_allclose(np.asarray(values["f"]), [0.0, 5.0])
     np.testing.assert_allclose(np.asarray(values["m"]), [3.0, 0.0])
-    np.testing.assert_array_equal(np.asarray(divorce), [False, False])
+    np.testing.assert_array_equal(np.asarray(dissolution), [False, False])
 
 
 def test_unequal_weights_shift_the_choice():
@@ -154,7 +154,7 @@ def test_terminal_e1_end_to_end_with_real_utilities():
     q_m = jax.vmap(lambda w: jax.vmap(lambda a: u_husband(w, a))(work))(wage)
     feas = jnp.ones((2, 2), dtype=bool)
 
-    values, divorce = collective_readout(
+    values, dissolution = collective_readout(
         stakeholder_Q={"f": q_f, "m": q_m},
         feasibility=feas,
         weights={"f": 0.5, "m": 0.5},
@@ -168,7 +168,7 @@ def test_terminal_e1_end_to_end_with_real_utilities():
     #          a*=1 -> V_f=40, V_m=80.
     np.testing.assert_allclose(np.asarray(values["f"]), [30.0, 40.0])
     np.testing.assert_allclose(np.asarray(values["m"]), [0.0, 80.0])
-    np.testing.assert_array_equal(np.asarray(divorce), [False, False])
+    np.testing.assert_array_equal(np.asarray(dissolution), [False, False])
     # The household trades off: at the low wage it keeps the wife home (her leisure
     # taste dominates the joint objective); at the high wage her work wins jointly.
 

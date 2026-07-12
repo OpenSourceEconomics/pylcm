@@ -128,7 +128,7 @@ def test_nonterminal_collective_regime_solves_with_continuation():
         enable_jit=False,
     )
 
-    solution, _sim_policies, _divorce_flags = solve(
+    solution, _sim_policies, _dissolution_flags = solve(
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
@@ -249,7 +249,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
         enable_jit=False,
     )
 
-    solution, _sim_policies, _divorce_flags = solve(
+    solution, _sim_policies, _dissolution_flags = solve(
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
@@ -293,7 +293,7 @@ def test_collective_model_simulates_end_to_end_via_public_model_api():
     `tests/regime_building/test_collective_regime_simulate.py`; this pin just
     confirms the PUBLIC `Model.simulate()` path — auto-solving, then
     simulating — runs end to end instead of raising, for a collective regime
-    with no gated edges (so `period_to_regime_to_V_arr`/divorce flags need no
+    with no gated edges (so `period_to_regime_to_V_arr`/dissolution flags need no
     special threading).
     """
     ages = AgeGrid(start=0, stop=2, step="Y")

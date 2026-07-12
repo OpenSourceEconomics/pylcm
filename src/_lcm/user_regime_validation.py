@@ -913,7 +913,7 @@ def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
 
     - a same-period gate / value-constraint predicate (E2/E3') that reads the
       shock's realized value — these read live per-node values to decide a
-      within-period household choice or a divorce/consent gate, which the
+      within-period household choice or a dissolution/consent gate, which the
       fold has already averaged away by the time any *other* regime's
       same-period logic runs;
     - a next-period transition (state or regime) that reads the shock's

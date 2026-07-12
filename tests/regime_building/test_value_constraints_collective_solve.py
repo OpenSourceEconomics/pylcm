@@ -12,7 +12,7 @@ married regime *within* period t (the within-period topological order induced
 by `same_period_refs`) — no transition edges between the singleton and
 collective regimes exist (they are separate regime "islands", each reaching its
 own terminal). The final mask is ordinary constraints AND all value
-constraints; an all-infeasible cell publishes the divorce flag `D = True`,
+constraints; an all-infeasible cell publishes the dissolution flag `D = True`,
 distinct from a numeric `-inf` value (which occurs on-path).
 
 Hand computation for the IR model (wage grid {1, 2, 3}, terminal utilities all
@@ -280,9 +280,9 @@ _EXPECTED_D_MARRIED = np.array([False, True, False])
 _EXPECTED_V_MARRIED_UNCONSTRAINED = np.array([[3.0, 0.5], [4.0, 2.0], [6.0, 3.0]])
 
 
-def test_ir_constraints_mask_actions_and_publish_divorce_flag():
-    """EKL eq. 11 end-to-end: binding IR, empty-mask divorce, slack cells."""
-    solution, _sim_policies, divorce_flags = _solve_ir_model()
+def test_ir_constraints_mask_actions_and_publish_dissolution_flag():
+    """EKL eq. 11 end-to-end: binding IR, empty-mask dissolution, slack cells."""
+    solution, _sim_policies, dissolution_flags = _solve_ir_model()
 
     np.testing.assert_allclose(
         np.asarray(solution[0]["single_f"]), _EXPECTED_V_SINGLE_F, rtol=1e-6
@@ -295,20 +295,20 @@ def test_ir_constraints_mask_actions_and_publish_divorce_flag():
     assert V_married.shape == (3, 2)
     np.testing.assert_allclose(V_married, _EXPECTED_V_MARRIED, rtol=1e-6)
 
-    D_married = np.asarray(divorce_flags[0]["married"])
+    D_married = np.asarray(dissolution_flags[0]["married"])
     assert D_married.dtype == np.bool_
     assert D_married.shape == (3,)
     np.testing.assert_array_equal(D_married, _EXPECTED_D_MARRIED)
 
-    # Singleton regimes publish no divorce flag.
-    assert "single_f" not in divorce_flags[0]
-    assert "single_m" not in divorce_flags[0]
+    # Singleton regimes publish no dissolution flag.
+    assert "single_f" not in dissolution_flags[0]
+    assert "single_m" not in dissolution_flags[0]
 
 
 def test_ir_constraint_binds_relative_to_unconstrained_solve():
     """The masked household argmax differs from the unconstrained one at w=1."""
     constrained, _, _ = _solve_ir_model()
-    unconstrained, _, unconstrained_divorce = _solve_ir_model(
+    unconstrained, _, unconstrained_dissolution = _solve_ir_model(
         with_value_constraints=False
     )
 
@@ -320,18 +320,18 @@ def test_ir_constraint_binds_relative_to_unconstrained_solve():
     np.testing.assert_allclose(V_c[2], V_u[2], rtol=1e-6)
     # Without value constraints no cell is empty.
     np.testing.assert_array_equal(
-        np.asarray(unconstrained_divorce[0]["married"]), np.array([False] * 3)
+        np.asarray(unconstrained_dissolution[0]["married"]), np.array([False] * 3)
     )
 
 
 def test_within_period_topological_order_overrides_dict_order():
     """Married declared FIRST in the regimes dict still reads the singles' V."""
-    solution, _, divorce_flags = _solve_ir_model(married_first=True)
+    solution, _, dissolution_flags = _solve_ir_model(married_first=True)
     np.testing.assert_allclose(
         np.asarray(solution[0]["married"]), _EXPECTED_V_MARRIED, rtol=1e-6
     )
     np.testing.assert_array_equal(
-        np.asarray(divorce_flags[0]["married"]), _EXPECTED_D_MARRIED
+        np.asarray(dissolution_flags[0]["married"]), _EXPECTED_D_MARRIED
     )
 
 
@@ -461,7 +461,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         ),
         enable_jit=False,
     )
-    solution, _, divorce_flags = solve(
+    solution, _, dissolution_flags = solve(
         flat_params=MappingProxyType(
             {
                 "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
@@ -489,12 +489,12 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         V_married, np.array([[-np.inf, -np.inf], [4.0, 2.0]]), rtol=1e-6
     )
     np.testing.assert_array_equal(
-        np.asarray(divorce_flags[0]["married"]), np.array([True, False])
+        np.asarray(dissolution_flags[0]["married"]), np.array([True, False])
     )
 
 
 # --------------------------------------------------------------------------------------
-# On-path -inf vs the divorce flag (no value constraints involved)
+# On-path -inf vs the dissolution flag (no value constraints involved)
 # --------------------------------------------------------------------------------------
 
 
@@ -504,7 +504,7 @@ class InfRegimeId:
     couple_terminal: ScalarInt
 
 
-def test_on_path_minus_inf_value_is_not_divorce():
+def test_on_path_minus_inf_value_is_not_dissolution():
     """-inf utility with a NONEMPTY mask has D=False; an EMPTY mask has D=True.
 
     Wage grid {1, 2, 3}; the non-terminal couple has an ordinary constraint
@@ -561,7 +561,7 @@ def test_on_path_minus_inf_value_is_not_divorce():
         ),
         enable_jit=False,
     )
-    solution, _, divorce_flags = solve(
+    solution, _, dissolution_flags = solve(
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
@@ -575,13 +575,13 @@ def test_on_path_minus_inf_value_is_not_divorce():
     )
 
     V = np.asarray(solution[0]["couple"])
-    D = np.asarray(divorce_flags[0]["couple"])
+    D = np.asarray(dissolution_flags[0]["couple"])
     np.testing.assert_allclose(V[0], np.array([2.0, 1.0]), rtol=1e-6)
     assert np.all(np.isneginf(V[1]))
     np.testing.assert_array_equal(D, np.array([False, False, True]))
 
     # A collective TERMINAL regime publishes D too (here: nothing infeasible).
-    D_terminal = np.asarray(divorce_flags[1]["couple_terminal"])
+    D_terminal = np.asarray(dissolution_flags[1]["couple_terminal"])
     assert D_terminal.dtype == np.bool_
     np.testing.assert_array_equal(D_terminal, np.array([False, False, False]))
 
