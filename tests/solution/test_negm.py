@@ -115,7 +115,7 @@ def test_negm_simulate_phase_synthesizes_inner_budget_constraint():
 
 
 def test_keeper_no_adjustment_map_threads_every_declared_argument() -> None:
-    """A keeper no-adjustment map threads every argument it declares, not just the durable.
+    """A keeper map threads every argument it declares, not only the durable stock.
 
     A permanent-income deflator `keep(car, growth) = 0.9 * car / growth` reads the
     durable stock and a growth node; the keeper transition carries both arguments

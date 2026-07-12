@@ -1235,11 +1235,12 @@ def _durable_keeper_transition(
     """
     annotations = ensure_annotations_are_strings(get_annotations(no_adjustment_func))
     arg_names = tuple(name for name in annotations if name != "return")
+    # The durable margin is a continuous state regardless of how the map annotates
+    # it; every other declared argument keeps the map's own annotation.
+    args_spec = {name: annotations[name] for name in arg_names}
+    args_spec[durable_state] = "ContinuousState"
 
-    @with_signature(
-        args={name: annotations[name] for name in arg_names},
-        return_annotation="ContinuousState",
-    )
+    @with_signature(args=args_spec, return_annotation="ContinuousState")
     def keeper_transition(**kwargs: ContinuousState) -> ContinuousState:
         return no_adjustment_func(**{name: kwargs[name] for name in arg_names})
 
