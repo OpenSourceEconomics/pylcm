@@ -15,18 +15,20 @@ everywhere — its off-grid policy is at least as good as brute's grid-quantized
 percent on average.
 """
 
+from collections.abc import Callable
+
 import jax.numpy as jnp
 import numpy as np
 
 from lcm import (
     NBEGM,
+    NNBEGM,
     AgeGrid,
     GridSearch,
     H_epstein_zin,
     LinSpacedGrid,
     MarkovTransition,
     Model,
-    NNBEGM,
     PowerMean,
     Regime,
     categorical,
@@ -139,7 +141,9 @@ def _build_solver(*, variant: str) -> Solver:
 
 def _build_model(*, variant: str) -> Model:
     final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
-    constraints = {"consumption_feasible": _consumption_feasible}
+    constraints: dict[str, Callable[..., FloatND]] = {
+        "consumption_feasible": _consumption_feasible
+    }
     if variant == "brute":
         constraints |= {
             "illiquid_feasible": _illiquid_feasible,

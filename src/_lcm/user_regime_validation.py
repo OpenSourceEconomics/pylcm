@@ -22,7 +22,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import NBEGM, GridSearch, NNBEGM
+from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import MarkovTransition
 
 if TYPE_CHECKING:

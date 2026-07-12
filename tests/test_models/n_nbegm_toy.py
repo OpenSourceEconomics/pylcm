@@ -22,11 +22,11 @@ import jax.numpy as jnp
 from lcm import (
     DCEGM,
     NEGM,
+    NNBEGM,
     AgeGrid,
     GridSearch,
     LinSpacedGrid,
     Model,
-    NNBEGM,
     Regime,
     categorical,
 )
