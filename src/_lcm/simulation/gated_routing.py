@@ -29,22 +29,28 @@ gated edge (e.g. a married couple's divorce edge) declares one leg per
 stakeholder, each with its OWN fallback regime (wife -> her own single
 regime, husband -> his). pylcm's forward simulation is a single fixed-size
 population pass: one subject ROW cannot occupy two regimes at once, so a
-genuine second forward-simulated row per additional stakeholder — subject
-population reallocation on divorce — is NOT implemented here; it is a
-follow-up engine feature (see `pylcm-extension-implementation-plan.md`,
-slice 6 notes), analogous in spirit to the deferred child-age
-state-reassignment hook. What IS implemented, faithfully and tested: the
+genuine second forward-simulated row per additional stakeholder — LINKED
+subject population reallocation on divorce, where both partners are
+independently tracked rows that unlink — is NOT implemented here; it is a
+follow-up engine feature (row-split PLAN, "linked mode"). What IS
+implemented, faithfully and tested (row-split PLAN, "synthetic mode"): the
 router recomputes the gate at the realized state, computes EVERY leg's own
 fallback state coordinates via `Regime.gated_edge_leg_projectors` and writes
 each into its OWN fallback regime's per-subject state slot (so a divorced
 household's row-level record of "what regime and state would each partner
 have started at" is complete and correct for every stakeholder), and then
-picks ONE of them — deterministically, the FIRST declared leg (source
-stakeholder order) — as the row's own continuing regime membership. This
-mirrors the ENGINE's existing pattern elsewhere (e.g. `calculate_next_states`
-already computes states for every structurally reachable target regime
-regardless of which one is stochastically drawn as `next_regime_id`) rather
-than inventing a new convention.
+picks ONE of them as the row's OWN continuing regime membership: the leg
+whose `source_stakeholder` matches `own_stakeholder` — the row's own,
+call-level-fixed role (e.g. "f" for an all-women simulate() population
+tracking synthetic male partners, "m" for an all-men population) — or, when
+`own_stakeholder` is `None` (the default: a singleton source, or a caller
+that never declares one), the FIRST declared leg (source stakeholder order),
+exactly as before. `own_stakeholder` is a single value for the whole
+`simulate()` call, not a per-subject array: this is the "synthetic partner"
+mode (EKL Appendix F's two independent, single-gender cohorts), which needs
+no cross-row linkage. A genuinely mixed population where individual rows
+have DIFFERING own-roles, or two TRACKED (linked) rows that must unlink into
+each other's rows on divorce, remains the deferred "linked mode".
 
 **Deferred: the generic between-period state-reassignment hook.** The
 design doc (§2 E4) and EKL's App. E.2 additionally motivate a callback that
@@ -74,6 +80,7 @@ from _lcm.engine import Regime, StateActionSpace
 from _lcm.regime_building.gated_edges import (
     GATE_ARR_NAME,
     GATE_THRESHOLD,
+    ResolvedEdgeLeg,
     build_same_period_mapping_for_fold,
 )
 from _lcm.simulation.transitions import _advance_states_for_subjects
@@ -136,6 +143,29 @@ def _call_with_accepted_kwargs(func: Callable, kwargs: Mapping[str, object]) -> 
     return func(**{name: value for name, value in kwargs.items() if name in accepted})
 
 
+def _select_own_leg(
+    legs: tuple[ResolvedEdgeLeg, ...], own_stakeholder: str | None
+) -> ResolvedEdgeLeg:
+    """Pick the leg whose fallback IS this row's own continuing regime.
+
+    ROW-SPLIT (synthetic mode). A collective source declares one leg per
+    stakeholder (`leg.source_stakeholder`); `own_stakeholder` is this
+    `simulate()` call's fixed own-role (e.g. "f" for an all-women
+    population), so the matching leg's fallback is the row's own single
+    regime on divorce — not unconditionally the first declared leg. Falls
+    back to the first declared leg when `own_stakeholder` is `None` (a
+    singleton source has exactly one leg anyway) or matches no leg (a
+    caller-error-tolerant default, not a silent per-edge mismatch: singleton
+    sources' sole leg has `source_stakeholder=None` and never matches a
+    non-`None` `own_stakeholder`, which is the common, correct case).
+    """
+    if own_stakeholder is not None:
+        for leg in legs:
+            if leg.source_stakeholder == own_stakeholder:
+                return leg
+    return legs[0]
+
+
 def route_gated_edges(
     *,
     regime: Regime,
@@ -145,6 +175,7 @@ def route_gated_edges(
     new_subject_regime_ids: Int1D,
     subjects_in_regime: Bool1D,
     flat_params: FlatParams,
+    own_stakeholder: str | None = None,
 ) -> tuple[StatesPerRegime, Int1D]:
     """Route each subject through its regime's declared gated edges (E4).
 
@@ -158,9 +189,17 @@ def route_gated_edges(
     structurally reaches a gated edge's target — see module docstring), then
     for `subjects_in_regime`: writes EVERY leg's own fallback state
     coordinates into its fallback regime's state slot, and sets this row's
-    own continuing regime membership to the target (gate open) or the FIRST
-    leg's fallback (gate closed) — see the module docstring's scope fence for
-    a collective (multi-leg) source.
+    own continuing regime membership to the target (gate open) or its OWN
+    leg's fallback (gate closed, selected via `own_stakeholder` — see
+    `_select_own_leg` and the module docstring's scope fence for a
+    collective (multi-leg) source).
+
+    Args:
+        own_stakeholder: This `simulate()` call's fixed own-role (ROW-SPLIT,
+            synthetic mode), e.g. "f"/"m" for an all-women/all-men
+            population tracking synthetic partners. `None` (default)
+            preserves the original "first declared leg" convention exactly
+            — byte-identical for any caller that does not pass it.
     """
     if not regime.gated_edges:
         return next_states, new_subject_regime_ids
@@ -183,8 +222,9 @@ def route_gated_edges(
 
         target_id = regime_names_to_ids[target_name]
         legs = edge.legs
-        primary_fallback_id = regime_names_to_ids[legs[0].fallback.regime]
-        candidate_id = jnp.where(gate_bool, target_id, primary_fallback_id)
+        own_leg = _select_own_leg(legs, own_stakeholder)
+        own_fallback_id = regime_names_to_ids[own_leg.fallback.regime]
+        candidate_id = jnp.where(gate_bool, target_id, own_fallback_id)
         routed_ids = jnp.where(subjects_in_regime, candidate_id, routed_ids)
 
         projectors = regime.gated_edge_leg_projectors[target_name]
