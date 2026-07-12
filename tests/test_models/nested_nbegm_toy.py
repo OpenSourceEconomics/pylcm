@@ -10,19 +10,15 @@ keeper/adjuster wrapper from the inner solver's kink machinery:
 - `"negm"` — `NEGM(inner=DCEGM(...))`, the smooth nested baseline;
 - `"nested_nbegm"` — `NestedNBEGM(inner=NBEGM(...))`, the target method.
 
-NB-EGM requires at least one declared breakpoint, so the budget carries a
-declared piecewise-affine `tax` whose upper rate is *zero* — a kink in name
-only, keeping the model mathematically smooth while engaging the NB-EGM
-schedule machinery. The other solvers evaluate the same (flat) tax.
-
 The nested solvers fix the outer post-decision `next_illiquid` per outer-grid
 node; the inner consumption-saving problem is then a 1-D solve on `wealth` with
-the credited durable move entering `resources` as a constant.
+the credited durable move entering `resources` as a constant. The budget
+declares no breakpoints, so the inner NB-EGM partition is a single interval —
+the degenerate plain-EGM case.
 """
 
 import jax.numpy as jnp
 
-import lcm
 from lcm import (
     DCEGM,
     NEGM,
@@ -65,32 +61,15 @@ def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> Float
     return next_illiquid - illiquid
 
 
-@lcm.piecewise_affine(
-    "tax",
-    variable="wealth",
-    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="continuous_kink"),),
-)
-def tax(wealth: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
-    """Declared piecewise-affine tax on wealth above the exemption.
-
-    The toy sets `tax_rate = 0`, so the declared kink is numerically smooth —
-    it exists to satisfy NB-EGM's declared-breakpoint requirement while every
-    solver sees a flat budget.
-    """
-    return tax_rate * jnp.maximum(wealth - tax_exemption, 0.0)
-
-
 def resources(
     wealth: ContinuousState,
     illiquid: ContinuousState,
     next_illiquid: ContinuousState,
-    tax: FloatND,
 ) -> FloatND:
     """Liquid resources consumption is paid out of, given the fixed outer node."""
     return (
         wealth
         + LABOUR_INCOME
-        - tax
         - credited(illiquid=illiquid, next_illiquid=next_illiquid)
     )
 
@@ -213,7 +192,6 @@ def build_model(
     functions = {
         "utility": utility,
         "resources": resources,
-        "tax": tax,
         "liquid_savings": liquid_savings,
         "keep_illiquid": keep_illiquid,
         "credited": credited,
@@ -248,9 +226,5 @@ def build_model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 5, step="5Y"),
-        fixed_params={
-            "final_age_alive": final_age_alive,
-            "tax_rate": 0.0,
-            "tax_exemption": 15.0,
-        },
+        fixed_params={"final_age_alive": final_age_alive},
     )
