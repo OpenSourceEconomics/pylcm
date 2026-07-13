@@ -466,9 +466,7 @@ def _derivative_between_nodes(
         jnp.where(raw_position > 1.0, 0.0, in_bracket_slope),
     )
     derivative = jnp.where(bracket_width == 0.0, 0.0, derivative)
-    return jnp.where(
-        jnp.isneginf(fp_lower) | jnp.isneginf(fp_upper), 0.0, derivative
-    )
+    return jnp.where(jnp.isneginf(fp_lower) | jnp.isneginf(fp_upper), 0.0, derivative)
 
 
 def _hermite_coefficients(
