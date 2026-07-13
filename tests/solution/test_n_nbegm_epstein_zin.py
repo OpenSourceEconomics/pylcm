@@ -9,7 +9,7 @@ the fixed outer durable node the inner consumption-saving problem is a 1-D NB-EG
 solve whose flow is a single power `A c^phi` — so the inner Euler inversion reads
 the composite flow's power structure, the regime-level survival split takes the
 joint certainty equivalent, and the outer durable choice is a plain max. The
-NNBEGM value weakly dominates the dense two-action `GridSearch` value
+NNBEGM value closely tracks the dense two-action `GridSearch` value
 everywhere — its off-grid policy is at least as good as brute's grid-quantized one
 (the point of endogenous grids for durable choice) — and tracks it to under a
 percent on average.
@@ -202,12 +202,16 @@ _PARAMS = {
 }
 
 
-def test_n_nbegm_epstein_zin_weakly_dominates_and_tracks_brute() -> None:
-    """NNBEGM weakly beats and closely tracks dense grid search under EZ.
+def test_n_nbegm_epstein_zin_tracks_the_dense_reference() -> None:
+    """NNBEGM closely tracks a deliberately different dense reference under EZ.
 
-    On a two-asset Epstein-Zin problem the nested value is never materially below
-    the dense grid-search value (its off-grid policy is at least as good) and the
-    mean relative gap is under a percent.
+    The two solvers optimize over different candidate sets by construction —
+    NNBEGM enumerates a fixed post-decision grid of next-period stocks with an
+    off-grid inner consumption policy, while dense grid search enumerates an
+    investment action grid whose induced next-stock candidates depend on the
+    current state, with grid-quantized consumption. Neither candidate set
+    contains the other, so no directional (dominance) ordering exists between
+    the two values; agreement is asserted as unsigned gaps.
     """
     nested = _build_model(variant="n_nbegm").solve(params=_PARAMS, log_level="off")
     brute = _build_model(variant="brute").solve(params=_PARAMS, log_level="off")
@@ -215,19 +219,13 @@ def test_n_nbegm_epstein_zin_weakly_dominates_and_tracks_brute() -> None:
         nested_V = np.asarray(nested[period]["alive"])
         brute_V = np.asarray(brute[period]["alive"])
         assert not np.isnan(nested_V).any(), f"period {period}"
-        # The nested EGM value weakly dominates the dense brute EZ oracle
-        # everywhere: its off-grid consumption-saving policy is at least as good
-        # as brute's grid-quantized one (the Kaplan-Violante point — grid
-        # quantization of the durable/consumption choice is what EGM dissolves).
-        # Small dips below brute are interpolation noise on brute's own grid.
-        assert np.all(nested_V >= brute_V - 0.1), (
-            f"period {period}: nested falls below brute by "
-            f"{float((brute_V - nested_V).max()):.4f}"
-        )
-        # And it tracks the oracle closely: the mean relative gap is well under a
-        # percent. A handful of cells adjacent to the borrowing corner and the
+        # A handful of cells adjacent to the borrowing corner and the
         # adjust/no-adjust kink carry the inner families' constrained-region
-        # representation gap (as in the CRRA nested toy), so equality is a mean,
-        # not per-cell, statement.
-        mean_rel_gap = float(np.mean(np.abs(nested_V - brute_V) / np.abs(brute_V)))
+        # representation gap (as in the CRRA nested toy), so agreement is a
+        # mean statement with a loose per-cell cap.
+        rel_gap = np.abs(nested_V - brute_V) / np.abs(brute_V)
+        assert float(rel_gap.max()) < 0.10, (
+            f"period {period}: max rel gap {float(rel_gap.max()):.4f}"
+        )
+        mean_rel_gap = float(np.mean(rel_gap))
         assert mean_rel_gap < 0.01, f"period {period}: mean rel gap {mean_rel_gap:.4f}"
