@@ -700,7 +700,7 @@ def test_period_value_is_computed_in_the_log_domain() -> None:
     With `rho = 5` and inputs near `1e-10`, `flow^(1-rho)` is ~1e40 — past
     float32 — while the aggregated value (~1e-10) is comfortably representable.
     The log-domain reference is
-    `exp(logsumexp([log(1-beta) + (1-rho) log q, log beta + (1-rho) log nu]) / (1-rho))`.
+    `exp(LSE(log(1-beta) + (1-rho) log q, log beta + (1-rho) log nu) / (1-rho))`.
     """
     rho = 5.0
     beta = 0.5
