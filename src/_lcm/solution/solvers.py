@@ -2021,6 +2021,26 @@ class NBEGM(Solver):
                         "GridSearch() for this regime."
                     )
                     raise RegimeInitializationError(msg)
+                # The per-interval candidate step evaluates every interior and
+                # corner candidate with the additive expected-utility recursion;
+                # combining it with a certainty equivalent would compare
+                # candidates under the wrong objective. Reject at model build.
+                if (
+                    context.certainty_equivalent is not None
+                    and statics.continuation_reads_liquid
+                ):
+                    msg = (
+                        f"Regime {context.regime_name!r} declares a "
+                        "`certainty_equivalent` while its continuation depends "
+                        "on the current liquid state (a next-state law or the "
+                        "regime-transition probabilities read it). The "
+                        "per-interval candidate step is additive; Epstein-Zin "
+                        "NBEGM requires a continuation that is independent of "
+                        "the current liquid state. Keep the laws of motion and "
+                        "transition probabilities free of the liquid state, or "
+                        "use GridSearch() for this regime."
+                    )
+                    raise RegimeInitializationError(msg)
                 # Save-to-cliff candidates need the regime's own carry read
                 # (the cliffs are the self-schedule's); a period whose targets
                 # exclude the regime itself solves without them.
@@ -3340,10 +3360,16 @@ def _fail_if_flow_not_single_power(
     Reading `q(1)` and `q'(1)` alone identifies a local scale and elasticity —
     it cannot certify the global structure (for `q = e^c` the locally fitted
     power solves a different first-order condition). The probe evaluates the
-    elasticity `c q'(c)/q(c)` at several consumption values, with every other
-    argument filled by a scalar probe and each integer-coded argument swept
-    over its actual grid codes, and rejects a varying-elasticity or
-    non-increasing flow at model build.
+    flow, its marginal, and the elasticity `c q'(c)/q(c)` at several
+    consumption values, with every other argument filled by a scalar probe and
+    each integer-coded argument swept over its actual grid codes. Rejected at
+    model build:
+
+    - a nonpositive flow or nonpositive marginal at any probed point (the
+      recursion takes fractional powers of the flow; `q = -c` carries a
+      constant positive elasticity, so signs are checked directly),
+    - a varying elasticity (the closed-form inversion needs one global power),
+    - a nonpositive elasticity.
     """
     import inspect  # noqa: PLC0415
 
@@ -3371,17 +3397,20 @@ def _fail_if_flow_not_single_power(
 
     sweep_names = tuple(name for name in arg_names if name in int_arg_names)
     try:
-        elasticities = [
-            float(
-                probe_c
-                * jax.grad(flow_of_consumption)(jnp.asarray(probe_c), overrides)
-                / flow_of_consumption(jnp.asarray(probe_c), overrides)
-            )
-            for overrides in _int_code_sweeps(
-                arg_names=sweep_names, int_arg_values=int_arg_values
-            )
-            for probe_c in probe_consumptions
-        ]
+        flows: list[float] = []
+        marginals: list[float] = []
+        elasticities: list[float] = []
+        for overrides in _int_code_sweeps(
+            arg_names=sweep_names, int_arg_values=int_arg_values
+        ):
+            for probe_c in probe_consumptions:
+                flow = float(flow_of_consumption(jnp.asarray(probe_c), overrides))
+                marginal = float(
+                    jax.grad(flow_of_consumption)(jnp.asarray(probe_c), overrides)
+                )
+                flows.append(flow)
+                marginals.append(marginal)
+                elasticities.append(probe_c * marginal / flow)
     except Exception as probe_error:
         msg = (
             f"NBEGM could not verify that regime {regime_name!r}'s period flow "
@@ -3402,6 +3431,21 @@ def _fail_if_flow_not_single_power(
             "`probe_failure='assume_declared'` to assert the structure "
             "yourself, or use GridSearch() for this regime."
         ) from probe_error
+    # A negative flow can carry a constant *positive* elasticity (`q = -c` has
+    # elasticity one everywhere), so the sign of the flow and of its marginal
+    # must be checked directly — the recursion takes fractional powers of the
+    # flow, and the Euler inversion assumes an increasing one.
+    if min(flows) <= 0.0 or min(marginals) <= 0.0:
+        msg = (
+            f"Regime {regime_name!r} declares a `certainty_equivalent`, but "
+            "its period flow is not strictly positive and increasing in "
+            f"{consumption_action_name!r} at the probed points (flow range "
+            f"[{min(flows):.6g}, {max(flows):.6g}], marginal range "
+            f"[{min(marginals):.6g}, {max(marginals):.6g}]). The Epstein-Zin "
+            "recursion requires `q = A c^phi` with `A > 0` and `phi > 0`; "
+            "restructure the flow or use GridSearch() for this regime."
+        )
+        raise RegimeInitializationError(msg)
     tol = 1e-8
     spread = max(elasticities) - min(elasticities)
     scale = max(1.0, abs(elasticities[0]))

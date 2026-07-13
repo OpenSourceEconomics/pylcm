@@ -11,6 +11,7 @@ the inverse has exponent `1/[phi(1-rho)-1]`. The basic single-good flow is
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.egm.nbegm_step import _ez_flow_power_structure
 from _lcm.egm.ez_kernel import (
     ez_blend_partials,
     ez_consumption_from_euler,
@@ -588,3 +589,31 @@ def test_single_node_transform_partial_matches_the_scalar_anchor() -> None:
         np.asarray(value ** (-gamma) * marginal),
         rtol=1e-10,
     )
+
+
+def test_flow_power_structure_poisons_a_degenerate_euler_exponent() -> None:
+    """`xi = phi (1-rho) - 1 = 0` yields a NaN exponent, not a spurious policy.
+
+    At `xi = 0` the Euler equation is constant in consumption — the closed-form
+    inversion `c = x^(1/xi)` is undefined. The exponent `phi` and the inverse
+    EIS `rho` are runtime parameters, so the degenerate combination cannot be
+    rejected at model build; the structure reader poisons the exponent with NaN
+    so the solve's NaN fail-fast surfaces the (regime, period) instead of the
+    inversion computing a finite but meaningless consumption.
+    """
+    flow_coefficient, flow_exponent = _ez_flow_power_structure(
+        utility_of_action=lambda consumption: consumption**2,
+        inverse_eis=jnp.asarray(0.5),
+    )
+    assert bool(jnp.isnan(flow_exponent))
+    assert bool(jnp.isfinite(flow_coefficient))
+
+
+def test_flow_power_structure_is_exact_away_from_the_degenerate_exponent() -> None:
+    """For `q = c` and `rho = 2` the structure is `(1, -rho)` exactly."""
+    flow_coefficient, flow_exponent = _ez_flow_power_structure(
+        utility_of_action=lambda consumption: consumption,
+        inverse_eis=jnp.asarray(2.0),
+    )
+    np.testing.assert_allclose(np.asarray(flow_coefficient), 1.0, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(flow_exponent), -2.0, rtol=1e-12)

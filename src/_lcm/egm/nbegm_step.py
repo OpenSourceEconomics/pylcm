@@ -320,7 +320,14 @@ def _ez_flow_power_structure(
     flow_power = jax.grad(utility_of_action)(one) / flow_scale
     one_minus_rho = 1.0 - inverse_eis
     flow_coefficient = flow_scale**one_minus_rho * flow_power
-    flow_exponent = flow_power * one_minus_rho - 1.0
+    raw_exponent = flow_power * one_minus_rho - 1.0
+    # At `xi = phi (1-rho) - 1 = 0` the Euler equation is constant in
+    # consumption and the closed-form inversion `c = x^(1/xi)` is undefined.
+    # Both `phi` and `rho` are runtime parameters, so the degenerate
+    # combination cannot be rejected at model build; poison the exponent with
+    # NaN so the solve's NaN fail-fast surfaces the (regime, period) instead
+    # of the inversion computing a finite but meaningless consumption.
+    flow_exponent = jnp.where(jnp.abs(raw_exponent) < 1e-8, jnp.nan, raw_exponent)
     return flow_coefficient, flow_exponent
 
 
