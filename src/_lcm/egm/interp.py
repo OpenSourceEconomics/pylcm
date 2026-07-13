@@ -211,13 +211,14 @@ def _interp_between_nodes(
     """
     bracket_width = xp_upper - xp_lower
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
+    raw_position = (x_query - xp_lower) / safe_width
     # Zero-width brackets arise only when a duplicated abscissa sits at the end
     # of the non-NaN prefix; queries there are at or above the duplicate, so
     # the right value applies.
     relative_position = jnp.where(
         bracket_width == 0.0,
         1.0,
-        jnp.clip((x_query - xp_lower) / safe_width, 0.0, 1.0),
+        jnp.clip(raw_position, 0.0, 1.0),
     )
     weight_lower = 1.0 - relative_position
     # Blend on results with zero-weight short-circuits: a `-inf` endpoint
@@ -227,6 +228,20 @@ def _interp_between_nodes(
     linear = jnp.where(weight_lower > 0.0, weight_lower * fp_lower, 0.0) + jnp.where(
         relative_position > 0.0, relative_position * fp_upper, 0.0
     )
+    # Out-of-range queries continue the edge bracket's secant — the same
+    # convention as the canonical state-grid value read (`map_coordinates`
+    # extrapolates linearly), so a transition landing outside the carry's
+    # support (a borrowing corner undershooting the grid start) is priced on
+    # the edge slope, not credited with a boundary value no action attains.
+    # Brackets with a non-finite endpoint (`-inf` infeasible values) keep the
+    # clamped read, and a zero-width kink bracket never extends.
+    finite_pair = jnp.isfinite(fp_lower) & jnp.isfinite(fp_upper)
+    extension = jnp.where(
+        finite_pair & (bracket_width != 0.0),
+        (raw_position - relative_position) * (fp_upper - fp_lower),
+        0.0,
+    )
+    linear = linear + extension
     if slope_lower is None or slope_upper is None:
         return linear
     return linear + _hermite_correction(

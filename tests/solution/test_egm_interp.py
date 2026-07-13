@@ -55,15 +55,42 @@ def test_nan_tail_is_ignored():
     np.testing.assert_allclose(got, expected, atol=1e-12)
 
 
-def test_edge_clamp_below_and_above():
-    """Queries outside the non-NaN range return the boundary values."""
+def test_out_of_range_extrapolates_the_edge_bracket_linearly():
+    """Queries outside the non-NaN range extrapolate the edge bracket's secant.
+
+    The canonical state-grid value read (`map_coordinates`) extrapolates
+    linearly outside the grid; the carry read follows the same convention, so a
+    transition landing below the child grid (a borrowing corner whose savings
+    undershoot the grid start) is priced on the edge slope rather than credited
+    with the boundary value — which no feasible action attains there.
+    """
     xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     x_query = jnp.array([0.0, 100.0])
 
     got = interp.interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
 
-    np.testing.assert_allclose(got, jnp.array([0.0, 5.0]), atol=1e-12)
+    below = 0.0 + (0.0 - 1.0) * (3.0 - 0.0) / (2.0 - 1.0)
+    above = 3.0 + (100.0 - 2.0) * (5.0 - 3.0) / (4.0 - 2.0)
+    np.testing.assert_allclose(got, jnp.array([below, above]), atol=1e-12)
+
+
+def test_out_of_range_extrapolation_ignores_the_hermite_correction():
+    """With slopes, out-of-range queries still extrapolate the linear secant.
+
+    The Hermite correction vanishes at the bracket endpoints, so extending it
+    outside the bracket would leave the cubic's tail; the read instead
+    continues the edge bracket's secant, matching the slope-free convention.
+    """
+    xp = jnp.array([1.0, 2.0, 4.0])
+    fp = jnp.array([0.0, 3.0, 5.0])
+    fp_slopes = jnp.array([0.0, 0.0, 0.0])
+
+    got = interp.interp_on_padded_grid(
+        x_query=jnp.array([0.5, 5.0]), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(got, jnp.array([-1.5, 6.0]), atol=1e-12)
 
 
 def test_duplicated_abscissa_is_tie_safe():
@@ -125,8 +152,8 @@ def test_exact_slopes_reproduce_a_monotone_cubic():
     np.testing.assert_allclose(got, np.asarray(x_query) ** 3, atol=1e-12)
 
 
-def test_slopes_keep_nan_tail_edge_clamp_and_node_values():
-    """The Hermite path preserves NaN-tail handling, edge clamps, and nodes."""
+def test_slopes_keep_nan_tail_extrapolation_and_node_values():
+    """The Hermite path preserves NaN-tail handling, edge secants, and nodes."""
     xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     fp_slopes = jnp.array([3.0, 2.0, 0.5, jnp.nan])
@@ -136,7 +163,11 @@ def test_slopes_keep_nan_tail_edge_clamp_and_node_values():
         x_query=x_query, xp=xp, fp=fp, fp_slopes=fp_slopes
     )
 
-    np.testing.assert_allclose(got, jnp.array([0.0, 0.0, 3.0, 5.0, 5.0]), atol=1e-12)
+    below = 0.0 + (0.0 - 1.0) * 3.0
+    above = 3.0 + (100.0 - 2.0) * 1.0
+    np.testing.assert_allclose(
+        got, jnp.array([below, 0.0, 3.0, 5.0, above]), atol=1e-12
+    )
 
 
 def test_slopes_keep_duplicated_abscissa_tie_safe():
