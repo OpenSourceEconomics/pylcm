@@ -25,6 +25,7 @@ from dags import concatenate_functions
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.ez_kernel import (
+    ez_blend_partials,
     ez_invert_partials,
     ez_transform_partials,
     ez_transform_scalar,
@@ -395,19 +396,62 @@ def bind_continuation(
 
         Linear (expected-utility) mode returns the regime-probability-weighted
         expected value and marginal. Epstein-Zin mode blends each target's
-        transform-space partials `(S_r, T_r)` with the regime probabilities and
-        inverts once, so the certainty equivalent spans the joint (regime x shock)
-        lottery — the regime split (e.g. survival) is inside the CE, not a linear
-        average of per-regime certainty equivalents.
+        anchored transform-space partials `(a_r, S~_r, T~_r)` with the regime
+        probabilities (`ez_blend_partials`) and inverts once, so the certainty
+        equivalent spans the joint (regime x shock) lottery — the regime split
+        (e.g. survival) is inside the CE, not a linear average of per-regime
+        certainty equivalents.
         """
+        if risk_aversion is not None:
+            anchors: list[ScalarFloat] = []
+            scaled_values: list[ScalarFloat] = []
+            scaled_marginals: list[ScalarFloat] = []
+            probs: list[ScalarFloat] = []
+            for target in plan.carry_targets:
+                # The reader returns the anchored triple whenever risk_aversion
+                # is set (this branch); ty cannot correlate the union's arity
+                # with the mode.
+                anchor, scaled_value, scaled_marginal = cast(
+                    "tuple[ScalarFloat, ScalarFloat, ScalarFloat]",
+                    child_readers[target](savings_value),
+                )
+                anchors.append(anchor)
+                scaled_values.append(scaled_value)
+                scaled_marginals.append(scaled_marginal)
+                probs.append(regime_transition_probs[target])
+            for target in plan.scalar_targets:
+                # A stateless target (a constant bequest) contributes only to
+                # the value channel; its constant enters transform space as its
+                # own anchor.
+                constant_value = next_regime_to_egm_carry[target].value[0]
+                anchor, scaled_value = ez_transform_scalar(
+                    value=constant_value, risk_aversion=risk_aversion
+                )
+                anchors.append(anchor)
+                scaled_values.append(scaled_value)
+                scaled_marginals.append(jnp.asarray(0.0, dtype=dtype))
+                probs.append(regime_transition_probs[target])
+            joint_anchor, blended_value, blended_marginal = ez_blend_partials(
+                log_anchors=jnp.stack(anchors),
+                scaled_values=jnp.stack(scaled_values),
+                scaled_marginals=jnp.stack(scaled_marginals),
+                probs=jnp.stack(probs),
+                risk_aversion=risk_aversion,
+            )
+            return ez_invert_partials(
+                log_anchor=joint_anchor,
+                scaled_value=blended_value,
+                scaled_marginal=blended_marginal,
+                risk_aversion=risk_aversion,
+            )
         blended_marginal = jnp.asarray(0.0, dtype=dtype)
         blended_value = jnp.asarray(0.0, dtype=dtype)
         for target in plan.carry_targets:
-            # In linear mode the reader returns the target's expected value and
-            # (savings-space) marginal; in Epstein-Zin mode its transform-space
-            # partials. Either way the regime blend is the same linear sum — the
-            # CE transform/inverse wraps it.
-            target_value, target_marginal = child_readers[target](savings_value)
+            # Linear mode: the reader returns the plain (value, marginal) pair.
+            target_value, target_marginal = cast(
+                "tuple[ScalarFloat, ScalarFloat]",
+                child_readers[target](savings_value),
+            )
             prob = regime_transition_probs[target]
             # Zero unreachable-target contributions on the results, never by
             # multiplying into a possibly non-finite value. The else branch is
@@ -422,21 +466,8 @@ def bind_continuation(
         for target in plan.scalar_targets:
             prob = regime_transition_probs[target]
             constant_value = next_regime_to_egm_carry[target].value[0]
-            # A stateless target (a constant bequest) contributes only to the
-            # value channel; under Epstein-Zin its constant enters transform space.
-            target_value = (
-                ez_transform_scalar(value=constant_value, risk_aversion=risk_aversion)
-                if risk_aversion is not None
-                else constant_value
-            )
             blended_value = blended_value + jnp.where(
-                prob > 0.0, prob * target_value, prob * 0.0
-            )
-        if risk_aversion is not None:
-            return ez_invert_partials(
-                transformed_value=blended_value,
-                transformed_marginal=blended_marginal,
-                risk_aversion=risk_aversion,
+                prob > 0.0, prob * constant_value, prob * 0.0
             )
         return blended_value, blended_marginal
 
@@ -641,7 +672,10 @@ def _get_child_carry_reader(
     stochastic_node_batch_size: int,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     risk_aversion: FloatND | None = None,
-) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
+) -> Callable[
+    [ScalarFloat],
+    tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat],
+]:
     """Build the per-savings-node carry read of one target for one combo.
 
     The returned callable maps a savings node to the target's smoothed
@@ -677,8 +711,13 @@ def _get_child_carry_reader(
     # A foldable dim of a topology-bearing carry shares the duplicated jump
     # abscissae across its rows (no jump source reads it — enforced by the
     # fold flags), so averaging the rows preserves both one-sided limits and
-    # the fold applies exactly as for a smooth carry.
-    if any(read.foldable_stochastic_flags):
+    # the fold applies exactly as for a smooth carry. Folding is a linear
+    # expectation over the dim's rows, so it is valid only for the linear
+    # expected-utility read: a nonlinear certainty equivalent must transform
+    # every node's value before the lottery sum (`E[g(V)] != g(E[V])`), so
+    # under Epstein-Zin the node axis stays and the per-node loop transforms
+    # each row.
+    if risk_aversion is None and any(read.foldable_stochastic_flags):
         read, carry, stochastic_node_values, weight_vecs = _fold_stochastic_dims(
             read=read,
             carry=carry,
@@ -702,7 +741,9 @@ def _get_child_carry_reader(
     prepared_search_grid = flat_search.reshape(carry.endog_grid.shape)
     prepared_valid_length = flat_valid.reshape(carry.endog_grid.shape[:-1])
 
-    def read_child(savings_value: ScalarFloat) -> tuple[ScalarFloat, ScalarFloat]:
+    def read_child(
+        savings_value: ScalarFloat,
+    ) -> tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
         """Read the child's carry at one savings node."""
         # The solution-phase next-state function returns a flat mapping of
         # `next_<state>` names to scalars; the shared protocol's nested
@@ -775,17 +816,20 @@ def _get_child_carry_reader(
                 child_passive_grids=read.passive_grids,
                 row_queries=queries,
                 row_gradients=gradients,
+                paired_marginal_read=risk_aversion is not None,
             )
             if risk_aversion is not None:
                 # A target whose continuation carries no shock lottery at this
                 # seam — a stateless terminal value, or one whose stochastic
                 # states are ride-along co-states integrated in the outer
-                # envelope — contributes its Epstein-Zin transformed partial
-                # `(g(V), V^-gamma * dV/ds)` to the joint regime blend. This is
-                # `ez_transform_partials` on a single unit-weight node.
-                return (
-                    ez_transform_scalar(value=value, risk_aversion=risk_aversion),
-                    value ** (-risk_aversion) * marginal,
+                # envelope — contributes its anchored Epstein-Zin partials to
+                # the joint regime blend: `ez_transform_partials` on a single
+                # unit-weight node.
+                return ez_transform_partials(
+                    child_values=value[..., None],
+                    child_marginals=marginal[..., None],
+                    weights=jnp.ones(1, dtype=value.dtype),
+                    risk_aversion=risk_aversion,
                 )
             return value, marginal
 
@@ -893,7 +937,7 @@ def _expect_over_stochastic_nodes(
     resources_reads_stochastic: bool,
     stochastic_node_batch_size: int,
     risk_aversion: FloatND | None = None,
-) -> tuple[ScalarFloat, ScalarFloat]:
+) -> tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
     """Weight the carry read over the child's stochastic-node combos.
 
     Runs the full read (per-row queries, mixed passive interpolation, choice
@@ -939,6 +983,7 @@ def _expect_over_stochastic_nodes(
             child_passive_grids=read.passive_grids,
             row_queries=queries,
             row_gradients=gradients,
+            paired_marginal_read=risk_aversion is not None,
         )
 
     node_index_mesh = jnp.meshgrid(
@@ -1097,6 +1142,7 @@ def _aggregate_child_choices(
     child_passive_grids: tuple[Float1D, ...],
     row_queries: FloatND,
     row_gradients: FloatND,
+    paired_marginal_read: bool = False,
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Read one child's carry with mixed interpolation and aggregate its choices.
 
@@ -1162,9 +1208,16 @@ def _aggregate_child_choices(
     gradients_flat = row_gradients.reshape(-1)
 
     # The marginal-utility row is the value row's exact slope (envelope
-    # theorem), upgrading the value read to cubic Hermite; the mu read itself
-    # stays linear (a policy-grade quantity, and its interpolation error
-    # enters the value only at second order through the Euler inversion).
+    # theorem), upgrading the value read to cubic Hermite. The marginal read
+    # comes in two conventions:
+    # - linear expected utility reads the marginal row itself linearly (a
+    #   policy-grade quantity whose interpolation error enters the value only
+    #   at second order through the Euler inversion);
+    # - a paired read (`paired_marginal_read`, the Epstein-Zin transform
+    #   marginal) differentiates the value interpolant itself, so the marginal
+    #   is exactly the derivative of the value the certainty equivalent
+    #   carries — where the slope limiter binds, the two conventions differ at
+    #   leading order.
     def interp_value_row(
         search_grid: Float1D,
         valid_length: ScalarInt,
@@ -1199,12 +1252,33 @@ def _aggregate_child_choices(
             fp=fp,
         )
 
-    value_at_child = jax.vmap(interp_value_row)(
-        search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
-    )
-    marginal_at_child = jax.vmap(interp_row)(
-        search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
-    )
+    if paired_marginal_read:
+
+        def value_and_slope_row(
+            search_grid: Float1D,
+            valid_length: ScalarInt,
+            xp: Float1D,
+            fp: Float1D,
+            fp_slopes: Float1D,
+            x_query: ScalarFloat,
+        ) -> tuple[ScalarFloat, ScalarFloat]:
+            """Value read and its query derivative; positional per `jax.vmap`."""
+            return jax.value_and_grad(
+                lambda query: interp_value_row(
+                    search_grid, valid_length, xp, fp, fp_slopes, query
+                )
+            )(x_query)
+
+        value_at_child, marginal_at_child = jax.vmap(value_and_slope_row)(
+            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+        )
+    else:
+        value_at_child = jax.vmap(interp_value_row)(
+            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+        )
+        marginal_at_child = jax.vmap(interp_row)(
+            search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
+        )
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as
     # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
