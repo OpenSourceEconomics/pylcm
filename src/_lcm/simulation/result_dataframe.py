@@ -47,6 +47,7 @@ def _create_flat_dataframe(
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
             regime_params=flat_params[name],
+            stakeholders=metadata.regime_to_stakeholders[name],
             additional_targets=additional_targets,
             ages=ages,
             subject_batch_size=subject_batch_size,
@@ -70,6 +71,7 @@ def _process_regime(
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
     regime_params: FlatRegimeParams,
+    stakeholders: tuple[str, ...] | None,
     additional_targets: list[str] | None,
     ages: AgeGrid,
     subject_batch_size: int | None = None,
@@ -79,7 +81,10 @@ def _process_regime(
     `regime` is required only when `additional_targets` is set. With
     `additional_targets=None`, only `regime_name` is read, so callers
     may pass `regime=None` after dropping compiled `Regime` objects to
-    free device workspaces.
+    free device workspaces. `stakeholders` is read unconditionally (from
+    `ResultMetadata`, computed while `regime` was still guaranteed
+    present) so a COLLECTIVE regime's `value` column can be split even
+    when `regime` itself is `None`.
     """
     period_dicts = [
         _extract_period_data(
@@ -94,6 +99,11 @@ def _process_regime(
     data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = dict(
         _concatenate_and_filter(period_dicts)
     )
+
+    if stakeholders is not None:
+        data.update(
+            _split_stakeholder_value(value=data.pop("value"), stakeholders=stakeholders)
+        )
 
     data["age"] = ages.values[data["period"]]  # noqa: PD011
     data["regime_name"] = [regime_name] * len(data["period"])
@@ -120,6 +130,27 @@ def _process_regime(
             data.update(target_values)
 
     return pd.DataFrame(data)
+
+
+def _split_stakeholder_value(
+    *,
+    value: np.ndarray,
+    stakeholders: tuple[str, ...],
+) -> dict[str, np.ndarray]:
+    """Split a COLLECTIVE regime's 2D `value` column into per-stakeholder columns.
+
+    A collective regime's recorded value carries a trailing stakeholder axis
+    (`PeriodRegimeSimulationData.V_arr`, shape `(n_rows, n_stakeholders)`), so
+    `pd.DataFrame` cannot ingest it as a single "value" column the way it does
+    for a singleton regime's 1D array. Naming is deterministic:
+    `value_<stakeholder>`, one 1D column per entry of `stakeholders`, in the
+    same order as the trailing axis (fixed by `Regime.stakeholders` — see
+    `_lcm.regime_building.Q_and_F`).
+    """
+    return {
+        f"value_{stakeholder}": value[:, i]
+        for i, stakeholder in enumerate(stakeholders)
+    }
 
 
 def _extract_period_data(

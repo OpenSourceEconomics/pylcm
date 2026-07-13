@@ -36,6 +36,7 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
@@ -1168,3 +1169,168 @@ def test_public_model_simulate_without_dissolution_flags_raises_clearly():
             log_level="off",
             seed=0,
         )
+
+
+# ----------------------------------------------------------------------------------
+# Test 7: `to_dataframe()` flattens a collective regime's 2D per-stakeholder value
+# into per-stakeholder columns, and leaves a singleton regime's 1D `value` column
+# untouched — regression pin for the `pd.DataFrame` "must be 1-dimensional" crash
+# fixed in `_lcm.simulation.result_dataframe._process_regime`.
+# ----------------------------------------------------------------------------------
+
+
+def test_to_dataframe_splits_collective_value_into_per_stakeholder_columns():
+    """A mixed singleton+collective topology (consent routing) round-trips.
+
+    Reuses the consent fixture (`test_consent_routing_simulate_matches_gate_exactly`):
+    period 0 both households are in singleton `single_f` (own `value` column,
+    hand-verified V=(2.9, 4.85)); period 1 the wage=1 household routes to
+    collective `married_terminal` (own `value_f`/`value_m` columns, V=(2, 1))
+    while the wage=2 household routes to singleton `single_f_terminal`
+    (`value`=3.0). Each row must be finite in exactly the column(s) its own
+    regime populates and NaN in the other regime kind's column(s).
+    """
+    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
+        _solve_consent()
+    )
+    initial_conditions = MappingProxyType(
+        {
+            "wage": jnp.array([1.0, 2.0]),
+            "age": jnp.array([0.0, 0.0]),
+            "regime_id": jnp.array(
+                [regime_names_to_ids["single_f"]] * 2, dtype=jnp.int32
+            ),
+        }
+    )
+    result = simulate(
+        flat_params=flat_params,
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        logger=get_logger(log_level="off"),
+        period_to_regime_to_V_arr=solution,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
+        ages=ages,
+        simulation_output_dtypes={},
+        seed=0,
+    )
+
+    df = result.to_dataframe()
+
+    assert {"value", "value_f", "value_m"} <= set(df.columns)
+    # 2 subjects x 2 periods; single_m_terminal never routed to (0 rows).
+    assert len(df) == 4
+
+    period0 = df[df["period"] == 0].sort_values("subject_id")
+    np.testing.assert_allclose(
+        period0["value"].to_numpy(dtype=float), [2.9, 4.85], rtol=1e-6
+    )
+    assert period0["value_f"].isna().all()
+    assert period0["value_m"].isna().all()
+
+    married_row = df[df["regime_name"] == "married_terminal"]
+    assert len(married_row) == 1
+    np.testing.assert_allclose(married_row["value_f"].to_numpy(dtype=float), [2.0])
+    np.testing.assert_allclose(married_row["value_m"].to_numpy(dtype=float), [1.0])
+    assert married_row["value"].isna().all()
+
+    single_term_row = df[df["regime_name"] == "single_f_terminal"]
+    assert len(single_term_row) == 1
+    np.testing.assert_allclose(single_term_row["value"].to_numpy(dtype=float), [3.0])
+    assert single_term_row["value_f"].isna().all()
+    assert single_term_row["value_m"].isna().all()
+
+
+@categorical(ordered=False)
+class SoloRegimeId:
+    solo: ScalarInt
+    solo_terminal: ScalarInt
+
+
+def _next_solo_regime() -> ScalarInt:
+    return SoloRegimeId.solo_terminal
+
+
+def _u_solo(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    consumption = wage * work
+    return consumption + 30.0 * (1.0 - work)
+
+
+def _u_solo_terminal(wage: ContinuousState) -> FloatND:
+    return wage
+
+
+def _make_solo_regimes() -> dict[str, Regime]:
+    """Singleton-only two-regime model, structurally identical to the couple
+    fixture (`_make_couple_regimes`) minus `stakeholders` and the split
+    `utility_f`/`utility_m` pair — isolates the singleton path from the
+    collective one for the byte-identical regression check below."""
+    solo = Regime(
+        transition=_next_solo_regime,
+        active=lambda age: age < 1,
+        states={"wage": _WAGE_GRID_2},
+        state_transitions={"wage": _next_wage},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_solo},
+    )
+    solo_terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wage": _WAGE_GRID_2},
+        functions={"utility": _u_solo_terminal},
+    )
+    return {"solo": solo, "solo_terminal": solo_terminal}
+
+
+def test_to_dataframe_singleton_only_value_column_is_unchanged():
+    """A singleton-only model's `to_dataframe()` keeps a single 1D `value` column.
+
+    No regime here declares `stakeholders`, so `_process_regime` never enters
+    the split branch added for collective regimes — this pins that the
+    singleton path is untouched by the fix.
+    """
+    ages = AgeGrid(start=0, stop=2, step="Y")
+    regimes_dict = _make_solo_regimes()
+    regimes, regime_names_to_ids = _solve_and_process(
+        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+    )
+    flat_params = MappingProxyType(
+        {
+            "solo": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "solo_terminal": MappingProxyType({}),
+        }
+    )
+    solution, _sim_policies, dissolution_flags = solve(
+        flat_params=flat_params,
+        ages=ages,
+        regimes=regimes,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    )
+    initial_conditions = MappingProxyType(
+        {
+            "wage": jnp.array([8.0, 40.0]),
+            "age": jnp.array([0.0, 0.0]),
+            "regime_id": jnp.array([0, 0], dtype=jnp.int32),
+        }
+    )
+    result = simulate(
+        flat_params=flat_params,
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        logger=get_logger(log_level="off"),
+        period_to_regime_to_V_arr=solution,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
+        ages=ages,
+        simulation_output_dtypes={},
+        seed=0,
+    )
+
+    df = result.to_dataframe()
+
+    assert "value" in df.columns
+    assert not any(col.startswith("value_") for col in df.columns)
+    assert len(df) == 4  # 2 subjects x 2 periods, no routing/dissolution.
+    assert df["value"].notna().all()
+    assert pd.api.types.is_float_dtype(df["value"])
