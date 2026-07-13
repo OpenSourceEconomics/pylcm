@@ -1033,14 +1033,6 @@ def _expect_over_stochastic_nodes(
     # value function matches the fused solve to numerical tolerance (the block
     # reduction reorders the floating-point adds).
     n_nodes = flat_node_indices[0].shape[0]
-    if risk_aversion is not None and 0 < stochastic_node_batch_size < n_nodes:
-        msg = (
-            "Epstein-Zin continuation does not support a positive "
-            "`stochastic_node_batch_size`: the power-mean certainty equivalent is "
-            "not additively separable across node blocks, so the block-scan "
-            "accumulation is invalid. Use the fused expectation (batch size 0)."
-        )
-        raise NotImplementedError(msg)
     if 0 < stochastic_node_batch_size < n_nodes:
         n_blocks = -(-n_nodes // stochastic_node_batch_size)
         pad = n_blocks * stochastic_node_batch_size - n_nodes
@@ -1056,6 +1048,54 @@ def _expect_over_stochastic_nodes(
         blocked_weights = jnp.concatenate(
             [joint_weights, jnp.zeros(pad, dtype=joint_weights.dtype)]
         ).reshape(n_blocks, stochastic_node_batch_size)
+        zero = jnp.zeros((), dtype=joint_weights.dtype)
+
+        if risk_aversion is not None:
+            # Epstein-Zin blocks accumulate in transform space: the anchored
+            # partials `(a, S~, b, T~)` are additive across node blocks (each
+            # block is a partial sum of the same lottery), so each scan step
+            # transforms its block and folds it into the carry with a
+            # unit-probability blend. The single inversion happens downstream
+            # of the regime blend, exactly as in the fused path.
+            exponent = 1.0 - risk_aversion
+            neutral_anchor = jnp.where(
+                exponent == 0.0,
+                0.0,
+                jnp.where(exponent >= 0.0, -jnp.inf, jnp.inf),
+            ).astype(joint_weights.dtype)
+            unit_probs = jnp.ones(2, dtype=joint_weights.dtype)
+
+            def accumulate_partials(
+                carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+                block: tuple[tuple[IntND, ...], FloatND],
+            ) -> tuple[tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None]:
+                block_indices, block_weights = block
+                block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
+                block_quad = ez_transform_partials(
+                    child_values=block_values,
+                    child_marginals=block_marginals,
+                    weights=block_weights,
+                    risk_aversion=risk_aversion,
+                )
+                combined = ez_blend_partials(
+                    log_anchors=jnp.stack([carry[0], block_quad[0]]),
+                    scaled_values=jnp.stack([carry[1], block_quad[1]]),
+                    marginal_log_scales=jnp.stack([carry[2], block_quad[2]]),
+                    marginal_mantissas=jnp.stack([carry[3], block_quad[3]]),
+                    probs=unit_probs,
+                    risk_aversion=risk_aversion,
+                )
+                return combined, None
+
+            # The neutral carry: an empty partial sum whose anchor sits on the
+            # non-dominating side, so the first real block's anchor wins the
+            # joint extremum and the empty term contributes exactly zero.
+            quad, _ = jax.lax.scan(
+                accumulate_partials,
+                (neutral_anchor, zero, zero, zero),
+                (blocked_indices, blocked_weights),
+            )
+            return quad
 
         def accumulate(
             carry: tuple[ScalarFloat, ScalarFloat],
@@ -1069,7 +1109,6 @@ def _expect_over_stochastic_nodes(
                 acc_marginal + _weighted_node_sum(block_marginals, block_weights),
             ), None
 
-        zero = jnp.zeros((), dtype=joint_weights.dtype)
         (smoothed_value, smoothed_marginal), _ = jax.lax.scan(
             accumulate, (zero, zero), (blocked_indices, blocked_weights)
         )

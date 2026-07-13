@@ -193,3 +193,37 @@ def test_nbegm_epstein_zin_flow_shock_matches_brute_force() -> None:
         brute_V = np.asarray(brute[period]["alive"])
         assert not np.isnan(nbegm_V).any(), f"period {period}"
         np.testing.assert_allclose(nbegm_V, brute_V, rtol=2e-2, atol=1e-2)
+
+
+def test_stochastic_node_batching_matches_the_fused_expectation() -> None:
+    """A positive `stochastic_node_batch_size` reproduces the fused EZ solve.
+
+    The anchored transform partials are additive across stochastic-node
+    blocks: each block reduces to `(a, S~, b, T~)`, blocks combine by
+    re-anchored summation, and one inversion follows the full lottery — so
+    the block-scan accumulation equals the single fused reduction up to
+    floating-point reassociation.
+    """
+    fused = _build_model(
+        solver=NBEGM(
+            post_decision_function="savings",
+            budget_target="resources",
+            savings_grid=_SAVINGS_GRID,
+            continuous_state="liquid",
+        )
+    ).solve(params=_PARAMS, log_level="off")
+    batched = _build_model(
+        solver=NBEGM(
+            post_decision_function="savings",
+            budget_target="resources",
+            savings_grid=_SAVINGS_GRID,
+            continuous_state="liquid",
+            stochastic_node_batch_size=2,
+        )
+    ).solve(params=_PARAMS, log_level="off")
+    for period in (0, 1):
+        np.testing.assert_allclose(
+            np.asarray(batched[period]["alive"]),
+            np.asarray(fused[period]["alive"]),
+            rtol=1e-10,
+        )
