@@ -397,52 +397,59 @@ def bind_continuation(
 
         Linear (expected-utility) mode returns the regime-probability-weighted
         expected value and marginal. Epstein-Zin mode blends each target's
-        anchored transform-space partials `(a_r, S~_r, T~_r)` with the regime
-        probabilities (`ez_blend_partials`) and inverts once, so the certainty
-        equivalent spans the joint (regime x shock) lottery — the regime split
-        (e.g. survival) is inside the CE, not a linear average of per-regime
-        certainty equivalents.
+        anchored transform-space partials `(a_r, S~_r, b_r, T~_r)` with the
+        regime probabilities (`ez_blend_partials`) and inverts once, so the
+        certainty equivalent spans the joint (regime x shock) lottery — the
+        regime split (e.g. survival) is inside the CE, not a linear average of
+        per-regime certainty equivalents.
         """
         if risk_aversion is not None:
             anchors: list[ScalarFloat] = []
             scaled_values: list[ScalarFloat] = []
-            scaled_marginals: list[ScalarFloat] = []
+            marginal_log_scales: list[ScalarFloat] = []
+            marginal_mantissas: list[ScalarFloat] = []
             probs: list[ScalarFloat] = []
             for target in plan.carry_targets:
-                # The reader returns the anchored triple whenever risk_aversion
+                # The reader returns the anchored quad whenever risk_aversion
                 # is set (this branch); ty cannot correlate the union's arity
                 # with the mode.
-                anchor, scaled_value, scaled_marginal = cast(
-                    "tuple[ScalarFloat, ScalarFloat, ScalarFloat]",
+                anchor, scaled_value, marginal_log_scale, marginal_mantissa = cast(
+                    "tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]",
                     child_readers[target](savings_value),
                 )
                 anchors.append(anchor)
                 scaled_values.append(scaled_value)
-                scaled_marginals.append(scaled_marginal)
+                marginal_log_scales.append(marginal_log_scale)
+                marginal_mantissas.append(marginal_mantissa)
                 probs.append(regime_transition_probs[target])
             for target in plan.scalar_targets:
                 # A stateless target (a constant bequest) contributes only to
                 # the value channel; its constant enters transform space as its
-                # own anchor.
+                # own anchor, and its marginal channel is exactly zero.
                 constant_value = next_regime_to_egm_carry[target].value[0]
                 anchor, scaled_value = ez_transform_scalar(
                     value=constant_value, risk_aversion=risk_aversion
                 )
                 anchors.append(anchor)
                 scaled_values.append(scaled_value)
-                scaled_marginals.append(jnp.asarray(0.0, dtype=dtype))
+                marginal_log_scales.append(jnp.asarray(0.0, dtype=dtype))
+                marginal_mantissas.append(jnp.asarray(0.0, dtype=dtype))
                 probs.append(regime_transition_probs[target])
-            joint_anchor, blended_value, blended_marginal = ez_blend_partials(
-                log_anchors=jnp.stack(anchors),
-                scaled_values=jnp.stack(scaled_values),
-                scaled_marginals=jnp.stack(scaled_marginals),
-                probs=jnp.stack(probs),
-                risk_aversion=risk_aversion,
+            joint_anchor, blended_value, joint_marginal_scale, blended_mantissa = (
+                ez_blend_partials(
+                    log_anchors=jnp.stack(anchors),
+                    scaled_values=jnp.stack(scaled_values),
+                    marginal_log_scales=jnp.stack(marginal_log_scales),
+                    marginal_mantissas=jnp.stack(marginal_mantissas),
+                    probs=jnp.stack(probs),
+                    risk_aversion=risk_aversion,
+                )
             )
             return ez_invert_partials(
                 log_anchor=joint_anchor,
                 scaled_value=blended_value,
-                scaled_marginal=blended_marginal,
+                marginal_log_scale=joint_marginal_scale,
+                marginal_mantissa=blended_mantissa,
                 risk_aversion=risk_aversion,
             )
         blended_marginal = jnp.asarray(0.0, dtype=dtype)
@@ -675,7 +682,8 @@ def _get_child_carry_reader(
     risk_aversion: FloatND | None = None,
 ) -> Callable[
     [ScalarFloat],
-    tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat],
+    tuple[ScalarFloat, ScalarFloat]
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
 ]:
     """Build the per-savings-node carry read of one target for one combo.
 
@@ -744,7 +752,10 @@ def _get_child_carry_reader(
 
     def read_child(
         savings_value: ScalarFloat,
-    ) -> tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
+    ) -> (
+        tuple[ScalarFloat, ScalarFloat]
+        | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+    ):
         """Read the child's carry at one savings node."""
         # The solution-phase next-state function returns a flat mapping of
         # `next_<state>` names to scalars; the shared protocol's nested
@@ -938,7 +949,10 @@ def _expect_over_stochastic_nodes(
     resources_reads_stochastic: bool,
     stochastic_node_batch_size: int,
     risk_aversion: FloatND | None = None,
-) -> tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
+) -> (
+    tuple[ScalarFloat, ScalarFloat]
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+):
     """Weight the carry read over the child's stochastic-node combos.
 
     Runs the full read (per-row queries, mixed passive interpolation, choice
