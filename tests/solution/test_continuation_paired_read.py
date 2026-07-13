@@ -67,3 +67,27 @@ def test_linear_read_keeps_the_separate_marginal_interpolation() -> None:
         **_one_row_scene(0.25), paired_marginal_read=False
     )
     np.testing.assert_allclose(np.asarray(marginal), 0.0, atol=1e-12)
+
+
+def test_paired_read_marginal_at_an_exact_node_uses_the_declared_side() -> None:
+    """An on-node query reads the right piece's endpoint slope, not a subgradient.
+
+    Transitions land on child grid nodes routinely (a zero-savings corner on a
+    grid starting at zero), so the paired marginal at an exact node must be
+    the declared right-side interpolation derivative. With zero endpoint
+    slopes both adjacent Hermite pieces have derivative zero at the node —
+    any other value would feed the Euler equation a marginal the value read
+    does not have.
+    """
+    _, marginal = _aggregate_child_choices(
+        **_one_row_scene(0.0), paired_marginal_read=True
+    )
+    np.testing.assert_allclose(np.asarray(marginal), 0.0, atol=1e-12)
+
+
+def test_paired_read_marginal_above_support_is_zero() -> None:
+    """Above the carry's support the value read clamps, so its slope is zero."""
+    _, marginal = _aggregate_child_choices(
+        **_one_row_scene(1.5), paired_marginal_read=True
+    )
+    np.testing.assert_allclose(np.asarray(marginal), 0.0, atol=1e-12)

@@ -134,8 +134,11 @@ class PowerMean(QuasiArithmeticMean):
 
         Args:
             values: Strictly positive continuation values along the last axis.
-            weights: Nonnegative probabilities over `values` (need not be
-                normalized; zero-weight entries drop out).
+            weights: Nonnegative probabilities over `values`, summing to one.
+                The generator-weighted sum is not renormalized — scaling the
+                weights by `k` scales the result by `k^(1/(1-ra))` — so only a
+                unit-mass lottery yields a certainty equivalent. Zero-weight
+                entries drop out exactly.
             risk_aversion: The Epstein-Zin risk-aversion coefficient.
 
         Returns:

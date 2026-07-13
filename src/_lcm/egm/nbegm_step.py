@@ -59,6 +59,11 @@ from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 # Euler inversion is degenerate (consumption diverges) and the candidate is dropped.
 _DEGENERATE_MARGINAL_TOL = 1e-10
 
+# Below this |xi| = |phi (1-rho) - 1| the Euler equation is treated as constant in
+# consumption: the closed-form inversion `c = x^(1/xi)` is undefined at xi = 0, so
+# the exponent is NaN-poisoned and the solve's NaN fail-fast reports it.
+_DEGENERATE_EULER_EXPONENT_TOL = 1e-8
+
 # A budget interval is flat when the consumption floor binds: cash-on-hand is constant
 # in the liquid state, so the Euler inversion onto the coh-endogenous grid is degenerate
 # and the interval is solved by a dense savings search at the constant budget, not EGM.
@@ -320,7 +325,18 @@ def _ez_flow_power_structure(
     flow_power = jax.grad(utility_of_action)(one) / flow_scale
     one_minus_rho = 1.0 - inverse_eis
     flow_coefficient = flow_scale**one_minus_rho * flow_power
-    flow_exponent = flow_power * one_minus_rho - 1.0
+    raw_exponent = flow_power * one_minus_rho - 1.0
+    # At `xi = phi (1-rho) - 1 = 0` the Euler equation is constant in
+    # consumption and the closed-form inversion `c = x^(1/xi)` is undefined.
+    # Both `phi` and `rho` are runtime parameters, so the degenerate
+    # combination cannot be rejected at model build; poison the exponent with
+    # NaN so the solve's NaN fail-fast surfaces the (regime, period) instead
+    # of the inversion computing a finite but meaningless consumption.
+    flow_exponent = jnp.where(
+        jnp.abs(raw_exponent) < _DEGENERATE_EULER_EXPONENT_TOL,
+        jnp.nan,
+        raw_exponent,
+    )
     return flow_coefficient, flow_exponent
 
 

@@ -60,7 +60,7 @@ def ez_continuation(
         `dnu/ds`, each reduced over the last axis.
 
     """
-    anchor, scaled_value, scaled_marginal = ez_transform_partials(
+    anchor, scaled_value, marginal_log_scale, marginal_mantissa = ez_transform_partials(
         child_values=child_values,
         child_marginals=child_marginals,
         weights=weights,
@@ -69,7 +69,8 @@ def ez_continuation(
     return ez_invert_partials(
         log_anchor=anchor,
         scaled_value=scaled_value,
-        scaled_marginal=scaled_marginal,
+        marginal_log_scale=marginal_log_scale,
+        marginal_mantissa=marginal_mantissa,
         risk_aversion=risk_aversion,
     )
 
@@ -80,25 +81,27 @@ def ez_transform_partials(
     child_marginals: FloatND,
     weights: FloatND,
     risk_aversion: ScalarFloat | float,
-) -> tuple[FloatND, FloatND, FloatND]:
+) -> tuple[FloatND, FloatND, FloatND, FloatND]:
     """Reduce one continuation lottery to anchored Epstein-Zin partial sums.
 
     Reduces over the last axis (a continuation lottery — the stochastic node combo
     of one target regime) into the certainty-equivalent generator's transform
-    space, represented in the log domain against a per-lottery anchor `a` so the
-    powers never leave the exponent range:
+    space. The two channels need independent scaling — for `gamma < 1` the value
+    sum is dominated by the *largest* child value while the marginal sum is
+    dominated by the *smallest* — so each carries its own log scale:
 
     - transformed value `S = sum_j w_j V_j^(1-gamma) = e^((1-gamma) a) * S~` with
-      `S~ = sum_j w_j e^((1-gamma)(log V_j - a))`;
-    - transformed marginal `T = sum_j w_j V_j^(-gamma) dV_j/ds = e^(-gamma a) * T~`
-      with `T~ = sum_j w_j e^(-gamma (log V_j - a)) dV_j/ds`.
-
-    The anchor is the positive-weight nodes' extremal log value on the side that
-    keeps every `(1-gamma)(log V_j - a)` nonpositive (the smallest value dominates
-    `S` for `gamma > 1`, the largest for `gamma < 1`), so `S~` sums terms in
-    `(0, 1]` and `T~` stays scaled to the dominating node. At `gamma = 1` the
-    generator is `log V`: the anchor is zero and the scaled value is the plain
-    weighted sum `sum_j w_j log V_j`.
+      `S~ = sum_j w_j e^((1-gamma)(log V_j - a))`; the anchor `a` is the
+      positive-weight nodes' extremal log value on the side that keeps every
+      exponent nonpositive (the smallest value dominates for `gamma > 1`, the
+      largest for `gamma < 1`), so `S~` sums terms in `(0, 1]`. At `gamma = 1`
+      the generator is `log V`: the anchor is zero and the scaled value is the
+      plain weighted sum `sum_j w_j log V_j`.
+    - transformed marginal `T = sum_j w_j V_j^(-gamma) dV_j/ds = e^b * T~`, held
+      as a signed mantissa against its own log scale
+      `b = max_j [log w_j - gamma log V_j + log |dV_j/ds|]`, so every mantissa
+      term has magnitude at most one whatever the value spread. A lottery whose
+      marginals are all zero reads `(b, T~) = (0, 0)`.
 
     Anchored partials from different lotteries combine additively through
     `ez_blend_partials`, so the joint certainty equivalent over the
@@ -113,8 +116,9 @@ def ez_transform_partials(
         risk_aversion: The Epstein-Zin risk-aversion coefficient.
 
     Returns:
-        Tuple of the log anchor `a`, the anchored value partial `S~`, and the
-        anchored marginal partial `T~`, each reduced over the last axis.
+        Tuple of the value log anchor `a`, the anchored value partial `S~`, the
+        marginal log scale `b`, and the marginal mantissa `T~`, each reduced
+        over the last axis.
 
     """
     exponent = 1.0 - risk_aversion
@@ -135,48 +139,67 @@ def ez_transform_partials(
         ),
         axis=-1,
     )
-    scaled_marginal = jnp.sum(
+    # `contributing` keeps NaN marginals in (`NaN != 0` is true), so a poisoned
+    # carry still propagates; zero-probability and zero-marginal nodes drop out
+    # exactly.
+    contributing = positive & (child_marginals != 0.0)
+    log_magnitude = jnp.where(
+        contributing,
+        jnp.log(jnp.where(positive, weights, 1.0))
+        - risk_aversion * log_v
+        + jnp.log(jnp.abs(child_marginals)),
+        -jnp.inf,
+    )
+    peak = jnp.max(log_magnitude, axis=-1)
+    marginal_log_scale = jnp.where(jnp.isfinite(peak), peak, 0.0)
+    marginal_mantissa = jnp.sum(
         jnp.where(
-            positive,
-            weights * jnp.exp(-risk_aversion * centered) * child_marginals,
+            contributing,
+            jnp.sign(child_marginals)
+            * jnp.exp(log_magnitude - marginal_log_scale[..., None]),
             weights * 0.0,
         ),
         axis=-1,
     )
-    return anchor, scaled_value, scaled_marginal
+    return anchor, scaled_value, marginal_log_scale, marginal_mantissa
 
 
 def ez_blend_partials(
     *,
     log_anchors: FloatND,
     scaled_values: FloatND,
-    scaled_marginals: FloatND,
+    marginal_log_scales: FloatND,
+    marginal_mantissas: FloatND,
     probs: FloatND,
     risk_aversion: ScalarFloat | float,
-) -> tuple[FloatND, FloatND, FloatND]:
+) -> tuple[FloatND, FloatND, FloatND, FloatND]:
     """Blend per-target anchored partials with the regime probabilities.
 
     Reduces over the leading axis (the target regimes of one regime lottery).
     Each target `r` contributes `p_r * S_r` and `p_r * T_r` to the joint
-    transform-space sums; in the anchored representation that is a re-anchoring
-    to the targets' joint extremal anchor followed by the probability-weighted
-    sum, with every re-anchoring factor `e^((1-gamma)(a_r - a))` and
-    `e^(-gamma (a_r - a))` at most one by the anchor choice. Zero-probability
-    targets contribute exactly zero and are excluded from the joint anchor
-    (`p * 0` keeps a NaN probability poisoning the sum). At `gamma = 1` the
-    anchors are all zero and the blend is the plain probability-weighted sum.
+    transform-space sums. On the value channel that is a re-anchoring to the
+    targets' joint extremal anchor followed by the probability-weighted sum,
+    with every re-anchoring factor `e^((1-gamma)(a_r - a))` at most one by the
+    anchor choice; at `gamma = 1` the anchors are all zero and the blend is the
+    plain probability-weighted sum. On the marginal channel the joint log scale
+    is `max_r [log p_r + b_r]` over contributing targets, so every re-scaled
+    mantissa keeps magnitude at most one. Zero-probability targets contribute
+    exactly zero and are excluded from both joint scales (`p * 0` keeps a NaN
+    probability poisoning the sums).
 
     Args:
-        log_anchors: Per-target log anchors, stacked on the leading axis.
+        log_anchors: Per-target value log anchors, stacked on the leading axis.
         scaled_values: Per-target anchored value partials `S~_r`, same stacking.
-        scaled_marginals: Per-target anchored marginal partials `T~_r` (zero for
-            a stateless target), same stacking.
+        marginal_log_scales: Per-target marginal log scales `b_r`, same
+            stacking (zero for a stateless target).
+        marginal_mantissas: Per-target marginal mantissas `T~_r` (zero for a
+            stateless target), same stacking.
         probs: Regime transition probabilities over the leading axis.
         risk_aversion: The Epstein-Zin risk-aversion coefficient.
 
     Returns:
-        Tuple of the joint log anchor, the blended value partial, and the
-        blended marginal partial.
+        Tuple of the joint value log anchor, the blended value partial, the
+        joint marginal log scale, and the blended marginal mantissa.
 
     """
     exponent = 1.0 - risk_aversion
@@ -194,44 +217,55 @@ def ez_blend_partials(
         ),
         axis=0,
     )
-    blended_marginal = jnp.sum(
+    contributing = reachable & (marginal_mantissas != 0.0)
+    candidate = jnp.where(
+        contributing,
+        jnp.log(jnp.where(reachable, probs, 1.0)) + marginal_log_scales,
+        -jnp.inf,
+    )
+    peak = jnp.max(candidate, axis=0)
+    joint_marginal_scale = jnp.where(jnp.isfinite(peak), peak, 0.0)
+    blended_mantissa = jnp.sum(
         jnp.where(
-            reachable,
-            probs * jnp.exp(-risk_aversion * shift) * scaled_marginals,
+            contributing,
+            marginal_mantissas * jnp.exp(candidate - joint_marginal_scale),
             probs * 0.0,
         ),
         axis=0,
     )
-    return joint_anchor, blended_value, blended_marginal
+    return joint_anchor, blended_value, joint_marginal_scale, blended_mantissa
 
 
 def ez_invert_partials(
     *,
     log_anchor: FloatND,
     scaled_value: FloatND,
-    scaled_marginal: FloatND,
+    marginal_log_scale: FloatND,
+    marginal_mantissa: FloatND,
     risk_aversion: ScalarFloat | float,
 ) -> tuple[FloatND, FloatND]:
     """Invert anchored Epstein-Zin partial sums to `(nu, dnu/ds)`.
 
     The inverse of the anchored transform, applied after the regime-probability
-    blend: with `S = e^((1-gamma) a) S~` and `T = e^(-gamma a) T~`,
+    blend: with `S = e^((1-gamma) a) S~` and `T = e^b T~`,
 
-    - `nu = S^(1/(1-gamma)) = e^a * S~^(1/(1-gamma))` (or `exp(S~)` at
-      `gamma = 1`, where the anchor is zero);
-    - `dnu/ds = nu^gamma T = S~^(gamma/(1-gamma)) T~` (or `nu * T~` at
-      `gamma = 1`).
+    - `nu = S^(1/(1-gamma))`, computed as
+      `log nu = a + log(S~) / (1-gamma)` (or `log nu = S~` at `gamma = 1`,
+      where the generator is the plain logarithm);
+    - `dnu/ds = nu^gamma T = e^(gamma log nu + b) * T~`.
 
-    Every power acts on the anchored `S~` — a sum of terms at most one each —
-    so the inversion stays finite wherever the exact certainty equivalent is
-    representable.
+    All scale arithmetic happens on log quantities and the mantissa `T~` keeps
+    magnitude of order one, so the inversion stays finite wherever the exact
+    `(nu, dnu/ds)` pair is representable.
 
     Args:
-        log_anchor: The joint log anchor `a`.
+        log_anchor: The joint value log anchor `a`.
         scaled_value: The anchored transform-space value `S~`, blended over the
             joint (regime x shock) lottery.
-        scaled_marginal: The anchored transform-space marginal `T~`, blended over
-            the same joint lottery.
+        marginal_log_scale: The joint marginal log scale `b`, blended over the
+            same joint lottery.
+        marginal_mantissa: The transform-space marginal mantissa `T~`, blended
+            over the same joint lottery.
         risk_aversion: The Epstein-Zin risk-aversion coefficient.
 
     Returns:
@@ -240,19 +274,13 @@ def ez_invert_partials(
     """
     exponent = 1.0 - risk_aversion
     safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
-    nu = jnp.where(
+    log_nu = jnp.where(
         exponent == 0.0,
-        jnp.exp(scaled_value),
-        jnp.exp(log_anchor) * scaled_value ** (1.0 / safe_exponent),
+        scaled_value,
+        log_anchor + jnp.log(scaled_value) / safe_exponent,
     )
-    dnu_ds = (
-        jnp.where(
-            exponent == 0.0,
-            nu,
-            scaled_value ** (risk_aversion / safe_exponent),
-        )
-        * scaled_marginal
-    )
+    nu = jnp.exp(log_nu)
+    dnu_ds = jnp.exp(risk_aversion * log_nu + marginal_log_scale) * marginal_mantissa
     return nu, dnu_ds
 
 
@@ -305,10 +333,18 @@ def ez_consumption_from_euler(
         The optimal consumption at the savings node.
 
     """
-    target_marginal = (
-        discount_factor * nu ** (-inverse_eis) * dnu_ds / (1.0 - discount_factor)
+    # Log-domain inversion: the Euler target `nu^(-rho) dnu/ds` overflows the
+    # dtype long before the inverted consumption does (small `nu` and large
+    # `rho` push the target past the exponent range while `c` stays ordinary).
+    # `dnu_ds = 0` reads `log(0) = -inf` and inverts to the same limit as the
+    # raw power; a negative `dnu_ds` reads NaN and poisons the candidate.
+    log_target = (
+        jnp.log(discount_factor)
+        - jnp.log1p(-discount_factor)
+        - inverse_eis * jnp.log(nu)
+        + jnp.log(dnu_ds)
     )
-    return (target_marginal / flow_coefficient) ** (1.0 / flow_exponent)
+    return jnp.exp((log_target - jnp.log(flow_coefficient)) / flow_exponent)
 
 
 def ez_marginal_of_resource(
@@ -342,7 +378,14 @@ def ez_marginal_of_resource(
         The marginal value of the resource `dV/dm`.
 
     """
-    return (1.0 - discount_factor) * value**inverse_eis * flow_marginal
+    # Log-domain product: `V^rho` underflows the dtype long before the
+    # marginal `(1-beta) V^rho q_m` does (its factors' exponents cancel).
+    # A zero flow marginal reads `log(0) = -inf` and returns exactly zero.
+    return jnp.exp(
+        jnp.log1p(-discount_factor)
+        + inverse_eis * jnp.log(value)
+        + jnp.log(flow_marginal)
+    )
 
 
 def ez_period_value(
@@ -374,9 +417,19 @@ def ez_period_value(
     one_minus_rho = 1.0 - inverse_eis
     # The unselected CES branch must not divide by zero at `rho = 1`.
     safe_one_minus_rho = jnp.where(one_minus_rho == 0.0, 1.0, one_minus_rho)
-    cobb_douglas = flow ** (1.0 - discount_factor) * nu**discount_factor
-    aggregate = (1.0 - discount_factor) * flow**safe_one_minus_rho + (
-        discount_factor
-    ) * nu**safe_one_minus_rho
-    ces = aggregate ** (1.0 / safe_one_minus_rho)
+    log_flow = jnp.log(flow)
+    log_nu = jnp.log(nu)
+    cobb_douglas = jnp.exp(
+        (1.0 - discount_factor) * log_flow + discount_factor * log_nu
+    )
+    # Log-domain CES: `flow^(1-rho)` overflows the dtype long before the
+    # aggregated value does (curved aggregators push the raw powers past the
+    # exponent range while `V` stays between its two inputs).
+    ces = jnp.exp(
+        jnp.logaddexp(
+            jnp.log1p(-discount_factor) + safe_one_minus_rho * log_flow,
+            jnp.log(discount_factor) + safe_one_minus_rho * log_nu,
+        )
+        / safe_one_minus_rho
+    )
     return jnp.where(one_minus_rho == 0.0, cobb_douglas, ces)

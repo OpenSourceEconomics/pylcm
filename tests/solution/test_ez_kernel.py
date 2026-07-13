@@ -21,6 +21,7 @@ from _lcm.egm.ez_kernel import (
     ez_transform_partials,
     ez_transform_scalar,
 )
+from _lcm.egm.nbegm_step import _ez_flow_power_structure
 
 
 def test_basic_flow_consumption_matches_the_crra_power_inversion() -> None:
@@ -432,14 +433,14 @@ def test_continuation_stays_finite_at_high_risk_aversion_in_float32() -> None:
 def test_transform_partials_carry_the_generator_weighted_sums() -> None:
     """The anchored partials represent `S = sum_j w_j V_j^(1-gamma)` and `T`.
 
-    De-anchoring with `S = e^((1-gamma) a) S~` and `T = e^(-gamma a) T~` recovers
-    the plain generator-weighted sums the joint-lottery theorem is stated in.
+    De-scaling with `S = e^((1-gamma) a) S~` and `T = e^b T~` recovers the
+    plain generator-weighted sums the joint-lottery theorem is stated in.
     """
     gamma = 4.0
     child_values = jnp.array([[1.0, 2.0]])
     child_marginals = jnp.array([[0.5, 0.25]])
     weights = jnp.array([0.5, 0.5])
-    anchor, scaled_value, scaled_marginal = ez_transform_partials(
+    anchor, scaled_value, marginal_log_scale, marginal_mantissa = ez_transform_partials(
         child_values=child_values,
         child_marginals=child_marginals,
         weights=weights,
@@ -452,7 +453,9 @@ def test_transform_partials_carry_the_generator_weighted_sums() -> None:
         np.exp((1.0 - gamma) * a) * np.asarray(scaled_value)[0], exp_value, rtol=1e-10
     )
     np.testing.assert_allclose(
-        np.exp(-gamma * a) * np.asarray(scaled_marginal)[0], exp_marginal, rtol=1e-10
+        np.exp(np.asarray(marginal_log_scale)[0]) * np.asarray(marginal_mantissa)[0],
+        exp_marginal,
+        rtol=1e-10,
     )
 
 
@@ -486,7 +489,7 @@ def test_invert_partials_recovers_the_continuation_certainty_equivalent() -> Non
     child_values = jnp.array([[1.0, 2.0]])
     child_marginals = jnp.array([[0.5, 0.25]])
     weights = jnp.array([0.5, 0.5])
-    anchor, scaled_value, scaled_marginal = ez_transform_partials(
+    anchor, scaled_value, marginal_log_scale, marginal_mantissa = ez_transform_partials(
         child_values=child_values,
         child_marginals=child_marginals,
         weights=weights,
@@ -495,7 +498,8 @@ def test_invert_partials_recovers_the_continuation_certainty_equivalent() -> Non
     nu, dnu_ds = ez_invert_partials(
         log_anchor=anchor,
         scaled_value=scaled_value,
-        scaled_marginal=scaled_marginal,
+        marginal_log_scale=marginal_log_scale,
+        marginal_mantissa=marginal_mantissa,
         risk_aversion=jnp.asarray(gamma),
     )
     ref_nu, ref_dnu_ds = ez_continuation(
@@ -533,17 +537,21 @@ def test_blend_partials_matches_the_single_joint_lottery() -> None:
         )
         for values, marginals in ((values_a, marginals_a), (values_b, marginals_b))
     ]
-    joint_anchor, blended_value, blended_marginal = ez_blend_partials(
-        log_anchors=jnp.stack([p[0] for p in partials]),
-        scaled_values=jnp.stack([p[1] for p in partials]),
-        scaled_marginals=jnp.stack([p[2] for p in partials]),
-        probs=prob[:, None],
-        risk_aversion=jnp.asarray(gamma),
+    joint_anchor, blended_value, joint_marginal_scale, blended_mantissa = (
+        ez_blend_partials(
+            log_anchors=jnp.stack([p[0] for p in partials]),
+            scaled_values=jnp.stack([p[1] for p in partials]),
+            marginal_log_scales=jnp.stack([p[2] for p in partials]),
+            marginal_mantissas=jnp.stack([p[3] for p in partials]),
+            probs=prob[:, None],
+            risk_aversion=jnp.asarray(gamma),
+        )
     )
     nu, dnu_ds = ez_invert_partials(
         log_anchor=joint_anchor,
         scaled_value=blended_value,
-        scaled_marginal=blended_marginal,
+        marginal_log_scale=joint_marginal_scale,
+        marginal_mantissa=blended_mantissa,
         risk_aversion=jnp.asarray(gamma),
     )
     ref_nu, ref_dnu_ds = ez_continuation(
@@ -568,7 +576,7 @@ def test_single_node_transform_partial_matches_the_scalar_anchor() -> None:
     gamma = 4.0
     value = jnp.asarray(2.0)
     marginal = jnp.asarray(0.25)
-    anchor, scaled_value, scaled_marginal = ez_transform_partials(
+    anchor, scaled_value, marginal_log_scale, marginal_mantissa = ez_transform_partials(
         child_values=value[None],
         child_marginals=marginal[None],
         weights=jnp.array([1.0]),
@@ -584,7 +592,177 @@ def test_single_node_transform_partial_matches_the_scalar_anchor() -> None:
         np.asarray(scaled_value), np.asarray(scalar_scaled), rtol=1e-12
     )
     np.testing.assert_allclose(
-        np.exp(-gamma * np.asarray(anchor)) * np.asarray(scaled_marginal),
+        np.exp(np.asarray(marginal_log_scale)) * np.asarray(marginal_mantissa),
         np.asarray(value ** (-gamma) * marginal),
         rtol=1e-10,
     )
+
+
+def test_flow_power_structure_poisons_a_degenerate_euler_exponent() -> None:
+    """`xi = phi (1-rho) - 1 = 0` yields a NaN exponent, not a spurious policy.
+
+    At `xi = 0` the Euler equation is constant in consumption — the closed-form
+    inversion `c = x^(1/xi)` is undefined. The exponent `phi` and the inverse
+    EIS `rho` are runtime parameters, so the degenerate combination cannot be
+    rejected at model build; the structure reader poisons the exponent with NaN
+    so the solve's NaN fail-fast surfaces the (regime, period) instead of the
+    inversion computing a finite but meaningless consumption.
+    """
+    flow_coefficient, flow_exponent = _ez_flow_power_structure(
+        utility_of_action=lambda consumption: consumption**2,
+        inverse_eis=jnp.asarray(0.5),
+    )
+    assert bool(jnp.isnan(flow_exponent))
+    assert bool(jnp.isfinite(flow_coefficient))
+
+
+def test_flow_power_structure_is_exact_away_from_the_degenerate_exponent() -> None:
+    """For `q = c` and `rho = 2` the structure is `(1, -rho)` exactly."""
+    flow_coefficient, flow_exponent = _ez_flow_power_structure(
+        utility_of_action=lambda consumption: consumption,
+        inverse_eis=jnp.asarray(2.0),
+    )
+    np.testing.assert_allclose(np.asarray(flow_coefficient), 1.0, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(flow_exponent), -2.0, rtol=1e-12)
+
+
+def test_continuation_marginal_is_finite_for_gamma_below_one_extreme_ratio() -> None:
+    """`gamma < 1` with extreme child-value ratios keeps `dnu/ds` finite.
+
+    For `gamma < 1` the value channel is anchored to the largest child value,
+    but the transform marginal `T = sum w V^(-gamma) dV/ds` is dominated by
+    the *smallest* — the two channels need independent scaling. With child
+    values spanning the normal float64 range, an anchor shared with the value
+    channel puts `e^(gamma * spread)` (here `e^1368`) in the marginal's
+    intermediate even though the exact `(nu, dnu/ds)` pair is comfortably
+    representable. The reference is the plain log-domain arithmetic of the
+    two-node lottery.
+    """
+    gamma = 0.99
+    values = np.array([1e-300, 1e300])
+    marginals = np.array([1e-290, 1.0])
+    nu, dnu_ds = ez_continuation(
+        child_values=jnp.asarray(values),
+        child_marginals=jnp.asarray(marginals),
+        weights=jnp.array([0.5, 0.5]),
+        risk_aversion=gamma,
+    )
+
+    log_v = np.log(values)
+    log_transformed = np.logaddexp(
+        np.log(0.5) + (1.0 - gamma) * log_v[0],
+        np.log(0.5) + (1.0 - gamma) * log_v[1],
+    )
+    log_nu = log_transformed / (1.0 - gamma)
+    log_marginal_sum = np.logaddexp(
+        np.log(0.5) - gamma * log_v[0] + np.log(marginals[0]),
+        np.log(0.5) - gamma * log_v[1] + np.log(marginals[1]),
+    )
+    expected_nu = np.exp(log_nu)
+    expected_dnu_ds = np.exp(gamma * log_nu + log_marginal_sum)
+    assert bool(jnp.isfinite(dnu_ds))
+    np.testing.assert_allclose(float(nu), expected_nu, rtol=1e-10)
+    np.testing.assert_allclose(float(dnu_ds), expected_dnu_ds, rtol=1e-10)
+
+
+def test_continuation_is_graceful_when_a_child_value_flushes_to_zero() -> None:
+    """A zero (flushed-subnormal) child value never turns `dnu/ds` into NaN.
+
+    Accelerator float32 flushes subnormal inputs to zero; the transform
+    marginal must then drop that node exactly (its marginal is zero) rather
+    than form `inf * 0`. The float32 result equals the float64 computation on
+    the same effective inputs.
+    """
+    values_32 = jnp.array([1e-38, 1.0], dtype=jnp.float32)
+    marginals_32 = jnp.array([1e-38, 1.0], dtype=jnp.float32)
+    weights_32 = jnp.array([0.5, 0.5], dtype=jnp.float32)
+    nu_32, dnu_ds_32 = ez_continuation(
+        child_values=values_32,
+        child_marginals=marginals_32,
+        weights=weights_32,
+        risk_aversion=0.99,
+    )
+    nu_64, dnu_ds_64 = ez_continuation(
+        child_values=values_32.astype(jnp.float64),
+        child_marginals=marginals_32.astype(jnp.float64),
+        weights=weights_32.astype(jnp.float64),
+        risk_aversion=0.99,
+    )
+
+    assert bool(jnp.isfinite(dnu_ds_32))
+    np.testing.assert_allclose(float(nu_32), float(nu_64), rtol=1e-3)
+    np.testing.assert_allclose(float(dnu_ds_32), float(dnu_ds_64), rtol=1e-3)
+
+
+def test_period_value_is_computed_in_the_log_domain() -> None:
+    """The CES aggregator stays exact where raw powers overflow float32.
+
+    With `rho = 5` and inputs near `1e-10`, `flow^(1-rho)` is ~1e40 — past
+    float32 — while the aggregated value (~1e-10) is comfortably representable.
+    The log-domain reference is
+    `exp(LSE(log(1-beta) + (1-rho) log q, log beta + (1-rho) log nu) / (1-rho))`.
+    """
+    rho = 5.0
+    beta = 0.5
+    flow = 1e-10
+    nu = 2e-10
+
+    got = ez_period_value(
+        flow=jnp.asarray(flow, dtype=jnp.float32),
+        nu=jnp.asarray(nu, dtype=jnp.float32),
+        discount_factor=beta,
+        inverse_eis=rho,
+    )
+
+    logs = np.array(
+        [
+            np.log(1.0 - beta) + (1.0 - rho) * np.log(flow),
+            np.log(beta) + (1.0 - rho) * np.log(nu),
+        ]
+    )
+    shift = logs.max()
+    expected = np.exp((shift + np.log(np.exp(logs - shift).sum())) / (1.0 - rho))
+    assert float(got) > 0.0
+    np.testing.assert_allclose(float(got), expected, rtol=1e-4)
+
+
+def test_consumption_from_euler_is_computed_in_the_log_domain() -> None:
+    """The Euler inversion stays exact where `nu^(-rho)` overflows float32.
+
+    With `nu = dnu/ds = 1e-10` and `rho = 5`, the Euler target `nu^(-rho) dnu/ds`
+    is ~1e40 — past float32 — while the inverted consumption `1e-8` is
+    comfortably representable.
+    """
+    got = ez_consumption_from_euler(
+        nu=jnp.asarray(1e-10, dtype=jnp.float32),
+        dnu_ds=jnp.asarray(1e-10, dtype=jnp.float32),
+        discount_factor=0.5,
+        inverse_eis=5.0,
+        flow_coefficient=1.0,
+        flow_exponent=-5.0,
+    )
+
+    log_target = -5.0 * np.log(1e-10) + np.log(1e-10)
+    expected = np.exp(-log_target / 5.0)
+    assert float(got) > 0.0
+    np.testing.assert_allclose(float(got), expected, rtol=1e-4)
+
+
+def test_marginal_of_resource_is_computed_in_the_log_domain() -> None:
+    """The envelope marginal stays exact where `V^rho` underflows float32.
+
+    With `V = 1e-10` and `rho = 5`, `V^rho = 1e-50` underflows float32 to zero,
+    while the marginal `(1-beta) V^rho q_m` with a large Euler-form flow
+    marginal (`1e30`, itself float32-representable) is ~5e-21 — comfortably
+    representable.
+    """
+    got = ez_marginal_of_resource(
+        flow_marginal=jnp.asarray(1e30, dtype=jnp.float32),
+        value=jnp.asarray(1e-10, dtype=jnp.float32),
+        discount_factor=0.5,
+        inverse_eis=5.0,
+    )
+
+    expected = 0.5 * np.exp(5.0 * np.log(1e-10) + np.log(1e30))
+    assert float(got) > 0.0
+    np.testing.assert_allclose(float(got), expected, rtol=1e-4)

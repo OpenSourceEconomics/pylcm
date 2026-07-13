@@ -31,6 +31,7 @@ from _lcm.egm.ez_kernel import (
     ez_transform_scalar,
 )
 from _lcm.egm.interp import (
+    interp_and_derivative_on_prepared_grid,
     interp_on_prepared_grid,
     locate_on_grid,
     prepare_padded_grid,
@@ -396,52 +397,59 @@ def bind_continuation(
 
         Linear (expected-utility) mode returns the regime-probability-weighted
         expected value and marginal. Epstein-Zin mode blends each target's
-        anchored transform-space partials `(a_r, S~_r, T~_r)` with the regime
-        probabilities (`ez_blend_partials`) and inverts once, so the certainty
-        equivalent spans the joint (regime x shock) lottery — the regime split
-        (e.g. survival) is inside the CE, not a linear average of per-regime
-        certainty equivalents.
+        anchored transform-space partials `(a_r, S~_r, b_r, T~_r)` with the
+        regime probabilities (`ez_blend_partials`) and inverts once, so the
+        certainty equivalent spans the joint (regime x shock) lottery — the
+        regime split (e.g. survival) is inside the CE, not a linear average of
+        per-regime certainty equivalents.
         """
         if risk_aversion is not None:
             anchors: list[ScalarFloat] = []
             scaled_values: list[ScalarFloat] = []
-            scaled_marginals: list[ScalarFloat] = []
+            marginal_log_scales: list[ScalarFloat] = []
+            marginal_mantissas: list[ScalarFloat] = []
             probs: list[ScalarFloat] = []
             for target in plan.carry_targets:
-                # The reader returns the anchored triple whenever risk_aversion
+                # The reader returns the anchored quad whenever risk_aversion
                 # is set (this branch); ty cannot correlate the union's arity
                 # with the mode.
-                anchor, scaled_value, scaled_marginal = cast(
-                    "tuple[ScalarFloat, ScalarFloat, ScalarFloat]",
+                anchor, scaled_value, marginal_log_scale, marginal_mantissa = cast(
+                    "tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]",
                     child_readers[target](savings_value),
                 )
                 anchors.append(anchor)
                 scaled_values.append(scaled_value)
-                scaled_marginals.append(scaled_marginal)
+                marginal_log_scales.append(marginal_log_scale)
+                marginal_mantissas.append(marginal_mantissa)
                 probs.append(regime_transition_probs[target])
             for target in plan.scalar_targets:
                 # A stateless target (a constant bequest) contributes only to
                 # the value channel; its constant enters transform space as its
-                # own anchor.
+                # own anchor, and its marginal channel is exactly zero.
                 constant_value = next_regime_to_egm_carry[target].value[0]
                 anchor, scaled_value = ez_transform_scalar(
                     value=constant_value, risk_aversion=risk_aversion
                 )
                 anchors.append(anchor)
                 scaled_values.append(scaled_value)
-                scaled_marginals.append(jnp.asarray(0.0, dtype=dtype))
+                marginal_log_scales.append(jnp.asarray(0.0, dtype=dtype))
+                marginal_mantissas.append(jnp.asarray(0.0, dtype=dtype))
                 probs.append(regime_transition_probs[target])
-            joint_anchor, blended_value, blended_marginal = ez_blend_partials(
-                log_anchors=jnp.stack(anchors),
-                scaled_values=jnp.stack(scaled_values),
-                scaled_marginals=jnp.stack(scaled_marginals),
-                probs=jnp.stack(probs),
-                risk_aversion=risk_aversion,
+            joint_anchor, blended_value, joint_marginal_scale, blended_mantissa = (
+                ez_blend_partials(
+                    log_anchors=jnp.stack(anchors),
+                    scaled_values=jnp.stack(scaled_values),
+                    marginal_log_scales=jnp.stack(marginal_log_scales),
+                    marginal_mantissas=jnp.stack(marginal_mantissas),
+                    probs=jnp.stack(probs),
+                    risk_aversion=risk_aversion,
+                )
             )
             return ez_invert_partials(
                 log_anchor=joint_anchor,
                 scaled_value=blended_value,
-                scaled_marginal=blended_marginal,
+                marginal_log_scale=joint_marginal_scale,
+                marginal_mantissa=blended_mantissa,
                 risk_aversion=risk_aversion,
             )
         blended_marginal = jnp.asarray(0.0, dtype=dtype)
@@ -674,7 +682,8 @@ def _get_child_carry_reader(
     risk_aversion: FloatND | None = None,
 ) -> Callable[
     [ScalarFloat],
-    tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat],
+    tuple[ScalarFloat, ScalarFloat]
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
 ]:
     """Build the per-savings-node carry read of one target for one combo.
 
@@ -743,7 +752,10 @@ def _get_child_carry_reader(
 
     def read_child(
         savings_value: ScalarFloat,
-    ) -> tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
+    ) -> (
+        tuple[ScalarFloat, ScalarFloat]
+        | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+    ):
         """Read the child's carry at one savings node."""
         # The solution-phase next-state function returns a flat mapping of
         # `next_<state>` names to scalars; the shared protocol's nested
@@ -937,7 +949,10 @@ def _expect_over_stochastic_nodes(
     resources_reads_stochastic: bool,
     stochastic_node_batch_size: int,
     risk_aversion: FloatND | None = None,
-) -> tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
+) -> (
+    tuple[ScalarFloat, ScalarFloat]
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+):
     """Weight the carry read over the child's stochastic-node combos.
 
     Runs the full read (per-row queries, mixed passive interpolation, choice
@@ -1018,14 +1033,6 @@ def _expect_over_stochastic_nodes(
     # value function matches the fused solve to numerical tolerance (the block
     # reduction reorders the floating-point adds).
     n_nodes = flat_node_indices[0].shape[0]
-    if risk_aversion is not None and 0 < stochastic_node_batch_size < n_nodes:
-        msg = (
-            "Epstein-Zin continuation does not support a positive "
-            "`stochastic_node_batch_size`: the power-mean certainty equivalent is "
-            "not additively separable across node blocks, so the block-scan "
-            "accumulation is invalid. Use the fused expectation (batch size 0)."
-        )
-        raise NotImplementedError(msg)
     if 0 < stochastic_node_batch_size < n_nodes:
         n_blocks = -(-n_nodes // stochastic_node_batch_size)
         pad = n_blocks * stochastic_node_batch_size - n_nodes
@@ -1041,6 +1048,15 @@ def _expect_over_stochastic_nodes(
         blocked_weights = jnp.concatenate(
             [joint_weights, jnp.zeros(pad, dtype=joint_weights.dtype)]
         ).reshape(n_blocks, stochastic_node_batch_size)
+        zero = jnp.zeros((), dtype=joint_weights.dtype)
+
+        if risk_aversion is not None:
+            return _accumulate_ez_partials_over_blocks(
+                read_at_nodes=read_at_nodes,
+                blocked_indices=blocked_indices,
+                blocked_weights=blocked_weights,
+                risk_aversion=risk_aversion,
+            )
 
         def accumulate(
             carry: tuple[ScalarFloat, ScalarFloat],
@@ -1054,7 +1070,6 @@ def _expect_over_stochastic_nodes(
                 acc_marginal + _weighted_node_sum(block_marginals, block_weights),
             ), None
 
-        zero = jnp.zeros((), dtype=joint_weights.dtype)
         (smoothed_value, smoothed_marginal), _ = jax.lax.scan(
             accumulate, (zero, zero), (blocked_indices, blocked_weights)
         )
@@ -1078,6 +1093,66 @@ def _expect_over_stochastic_nodes(
     smoothed_value = _weighted_node_sum(node_values, joint_weights)
     smoothed_marginal = _weighted_node_sum(node_marginals, joint_weights)
     return smoothed_value, smoothed_marginal
+
+
+def _accumulate_ez_partials_over_blocks(
+    *,
+    read_at_nodes: Callable[
+        [tuple[ScalarInt, ...] | tuple[IntND, ...]], tuple[FloatND, FloatND]
+    ],
+    blocked_indices: tuple[IntND, ...],
+    blocked_weights: FloatND,
+    risk_aversion: ScalarFloat,
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
+    """Accumulate one target's Epstein-Zin transform partials in node blocks.
+
+    The anchored partials `(a, S~, b, T~)` are additive across node blocks —
+    each block is a partial sum of the same lottery — so each scan step
+    transforms its block and folds it into the carry with a unit-probability
+    blend. The single inversion happens downstream of the regime blend,
+    exactly as in the fused path, so the block scan is a memory lever only.
+    """
+    dtype = blocked_weights.dtype
+    exponent = 1.0 - risk_aversion
+    neutral_anchor = jnp.where(
+        exponent == 0.0,
+        0.0,
+        jnp.where(exponent >= 0.0, -jnp.inf, jnp.inf),
+    ).astype(dtype)
+    unit_probs = jnp.ones(2, dtype=dtype)
+    zero = jnp.zeros((), dtype=dtype)
+
+    def accumulate_partials(
+        carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+        block: tuple[tuple[IntND, ...], FloatND],
+    ) -> tuple[tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None]:
+        block_indices, block_weights = block
+        block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
+        block_quad = ez_transform_partials(
+            child_values=block_values,
+            child_marginals=block_marginals,
+            weights=block_weights,
+            risk_aversion=risk_aversion,
+        )
+        combined = ez_blend_partials(
+            log_anchors=jnp.stack([carry[0], block_quad[0]]),
+            scaled_values=jnp.stack([carry[1], block_quad[1]]),
+            marginal_log_scales=jnp.stack([carry[2], block_quad[2]]),
+            marginal_mantissas=jnp.stack([carry[3], block_quad[3]]),
+            probs=unit_probs,
+            risk_aversion=risk_aversion,
+        )
+        return combined, None
+
+    # The neutral carry: an empty partial sum whose anchor sits on the
+    # non-dominating side, so the first real block's anchor wins the joint
+    # extremum and the empty term contributes exactly zero.
+    quad, _ = jax.lax.scan(
+        accumulate_partials,
+        (neutral_anchor, zero, zero, zero),
+        (blocked_indices, blocked_weights),
+    )
+    return quad
 
 
 def _interleave_child_index(
@@ -1262,12 +1337,22 @@ def _aggregate_child_choices(
             fp_slopes: Float1D,
             x_query: ScalarFloat,
         ) -> tuple[ScalarFloat, ScalarFloat]:
-            """Value read and its query derivative; positional per `jax.vmap`."""
-            return jax.value_and_grad(
-                lambda query: interp_value_row(
-                    search_grid, valid_length, xp, fp, fp_slopes, query
-                )
-            )(x_query)
+            """Value read and its analytic derivative; positional per `jax.vmap`.
+
+            The closed-form derivative of the selected piece — not autodiff
+            through the bracket-selection program, whose `searchsorted`/`clip`
+            representation returns arbitrary subgradients at exact grid nodes
+            (a routine alignment: a zero-savings corner on a child grid that
+            starts at zero).
+            """
+            return interp_and_derivative_on_prepared_grid(
+                x_query=x_query,
+                search_grid=search_grid,
+                valid_length=valid_length,
+                xp=xp,
+                fp=fp,
+                fp_slopes=fp_slopes,
+            )
 
         value_at_child, marginal_at_child = jax.vmap(value_and_slope_row)(
             search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat

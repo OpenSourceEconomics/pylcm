@@ -485,6 +485,144 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         )
 
 
+def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
+    """A flow that is negative at the probe points is rejected at build.
+
+    The Epstein-Zin recursion requires a strictly positive period flow
+    `q = A c^phi` with `A > 0`: the power mean and the aggregator take
+    fractional powers of it. A negative flow (here `-c`) has a *constant
+    positive* consumption elasticity, so elasticity constancy alone cannot
+    catch it — the probe must check the flow's sign directly.
+    """
+
+    @categorical(ordered=False)
+    class _Kind:
+        lo: ScalarInt
+        hi: ScalarInt
+
+    def _u(consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
+        return -consumption + 0.0 * kind
+
+    def _ride_resources(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return wealth + 0.5 * kind
+
+    def _next_wealth_from_savings(savings: FloatND) -> ContinuousState:
+        return savings
+
+    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return jnp.sqrt(wealth) + 0.0 * kind
+
+    nbegm = NBEGM(
+        post_decision_function="savings",
+        budget_target="resources",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    alive = Regime(
+        transition=_next_regime,
+        states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
+        state_transitions={
+            "wealth": _next_wealth_from_savings,
+            "kind": fixed_transition("kind"),
+        },
+        actions={"consumption": _CONSUMPTION},
+        functions={
+            "utility": _u,
+            "resources": _ride_resources,
+            "savings": _savings,
+            "H": H_epstein_zin,
+        },
+        certainty_equivalent=PowerMean(),
+        solver=nbegm,
+        active=lambda age: age < 41,
+    )
+    dead = Regime(
+        transition=None,
+        states={
+            "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+            "kind": DiscreteGrid(_Kind),
+        },
+        functions={"utility": _dead_utility},
+    )
+    with pytest.raises(RegimeInitializationError, match="positive"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=40, stop=41, step="Y"),
+            regime_id_class=_RegimeId,
+        )
+
+
+def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
+    """EZ NBEGM rejects a continuation that depends on the current liquid state.
+
+    When a next-period state law (or the regime transition) reads the current
+    liquid state, the continuation differs by current-liquid interval and the
+    per-interval candidate step applies. That step evaluates candidates with
+    the additive expected-utility recursion, so combining it with a
+    `certainty_equivalent` must fail at model build rather than silently
+    compare candidates under the wrong objective.
+    """
+
+    @categorical(ordered=False)
+    class _Kind:
+        lo: ScalarInt
+        hi: ScalarInt
+
+    def _u(consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
+        return consumption + 0.0 * kind
+
+    def _ride_resources(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return wealth + 0.5 * kind
+
+    def _next_wealth_with_transfer(
+        savings: FloatND, wealth: ContinuousState
+    ) -> ContinuousState:
+        # An asset-tested transfer: piecewise-constant in the current liquid
+        # state, so the interval-constancy probe passes and the continuation
+        # routes through the per-interval step.
+        return savings + jnp.where(wealth < 100.0, 0.4, 0.0)
+
+    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return jnp.sqrt(wealth) + 0.0 * kind
+
+    nbegm = NBEGM(
+        post_decision_function="savings",
+        budget_target="resources",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    alive = Regime(
+        transition=_next_regime,
+        states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
+        state_transitions={
+            "wealth": _next_wealth_with_transfer,
+            "kind": fixed_transition("kind"),
+        },
+        actions={"consumption": _CONSUMPTION},
+        functions={
+            "utility": _u,
+            "resources": _ride_resources,
+            "savings": _savings,
+            "H": H_epstein_zin,
+        },
+        certainty_equivalent=PowerMean(),
+        solver=nbegm,
+        active=lambda age: age < 41,
+    )
+    dead = Regime(
+        transition=None,
+        states={
+            "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+            "kind": DiscreteGrid(_Kind),
+        },
+        functions={"utility": _dead_utility},
+    )
+    with pytest.raises(RegimeInitializationError, match="current liquid"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=40, stop=41, step="Y"),
+            regime_id_class=_RegimeId,
+        )
+
+
 def test_certainty_equivalent_rejects_phased():
     """The certainty equivalent is phase-invariant; `Phased` is rejected."""
     with pytest.raises(RegimeInitializationError):
