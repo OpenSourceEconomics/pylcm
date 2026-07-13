@@ -112,7 +112,10 @@ def _build_model(*, solver: Solver) -> Model:
     dead = Regime(
         transition=None,
         active=lambda age, n=final_age_alive: age > n,
-        states={"liquid": _LIQUID_GRID},
+        # Starts at zero so the terminal carry covers the whole attainable
+        # savings range: the corner `s = 0` reads the terminal value exactly
+        # instead of the edge bracket's secant.
+        states={"liquid": LinSpacedGrid(start=0.0, stop=20.0, n_points=15)},
         functions={"utility": _terminal_value},
     )
     return Model(
@@ -134,6 +137,44 @@ _PARAMS = {
     },
     "dead": {},
 }
+
+
+def test_constrained_corner_wins_at_the_bottom_of_the_liquid_grid() -> None:
+    """The borrowing-constrained corner prices the bottom liquid cells.
+
+    Where the flow's marginal at full cash-on-hand still exceeds the
+    continuation's (all but the lowest health node at the bottom liquid
+    point), the optimum is the corner `c = coh`, `s = 0`, with the analytic
+    penultimate-period value
+    `[(1-beta) (coh e^h)^(1-rho) + beta nu_0^(1-rho)]^(1/(1-rho))` and
+    `nu_0 = sqrt(1.03 * 0 + 1) = 1`. Pricing that corner correctly requires
+    the continuation read at `s = 0` to land on the terminal carry (covered
+    since the dead grid starts at zero) and the corner candidate to beat any
+    off-support interior record in the envelope. At the lowest health node the
+    interior optimum is feasible, so the value there may only exceed the
+    corner — never fall below it.
+    """
+    beta = _PARAMS["alive"]["H"]["discount_factor"]
+    rho = 1.0 / _PARAMS["alive"]["H"]["intertemporal_elasticity_of_substitution"]
+    sigma = _PARAMS["alive"]["health"]["sigma"]
+    nbegm = _build_model(
+        solver=NBEGM(
+            post_decision_function="savings",
+            budget_target="resources",
+            savings_grid=_SAVINGS_GRID,
+            continuous_state="liquid",
+        )
+    ).solve(params=_PARAMS, log_level="off")
+    values = np.asarray(nbegm[1]["alive"])[:, 0]
+    nodes, _ = np.polynomial.hermite_e.hermegauss(5)
+    health_nodes = nodes * sigma
+    coh = 0.5 + _BASE_INCOME
+    corner = (
+        (1.0 - beta) * (coh * np.exp(health_nodes)) ** (1.0 - rho)
+        + beta * 1.0 ** (1.0 - rho)
+    ) ** (1.0 / (1.0 - rho))
+    np.testing.assert_allclose(values[1:], corner[1:], rtol=1e-6)
+    assert values[0] >= corner[0] - 1e-9
 
 
 def test_nbegm_epstein_zin_flow_shock_matches_brute_force() -> None:

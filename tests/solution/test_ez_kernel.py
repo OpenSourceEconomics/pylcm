@@ -277,6 +277,158 @@ def test_continuation_stays_finite_at_high_risk_aversion_near_the_constraint() -
     np.testing.assert_allclose(np.asarray(dnu_ds)[0], dnu_reference, rtol=1e-9)
 
 
+def test_continuation_marginal_matches_finite_differences() -> None:
+    """`dnu/ds` equals the finite-difference derivative of `nu(s)`.
+
+    With affine child values `V_j(s) = a_j + b_j s` (marginals `b_j`), the
+    certainty equivalent's savings derivative from the anchored `T` channel
+    must equal the numerical derivative of the certainty equivalent itself.
+    """
+    gamma = 6.0
+    weights = jnp.array([0.3, 0.7])
+    intercepts = np.array([1.0, 2.5])
+    slopes = np.array([0.4, 0.15])
+    savings = 2.0
+    step = 1e-6
+
+    def nu_at(s: float) -> float:
+        nu, _ = ez_continuation(
+            child_values=jnp.asarray(intercepts + slopes * s)[None, :],
+            child_marginals=jnp.asarray(slopes)[None, :],
+            weights=weights,
+            risk_aversion=jnp.asarray(gamma),
+        )
+        return float(np.asarray(nu)[0])
+
+    _, dnu_ds = ez_continuation(
+        child_values=jnp.asarray(intercepts + slopes * savings)[None, :],
+        child_marginals=jnp.asarray(slopes)[None, :],
+        weights=weights,
+        risk_aversion=jnp.asarray(gamma),
+    )
+    finite_difference = (nu_at(savings + step) - nu_at(savings - step)) / (2.0 * step)
+    np.testing.assert_allclose(np.asarray(dnu_ds)[0], finite_difference, rtol=1e-6)
+
+
+def test_continuation_is_continuous_at_unit_risk_aversion() -> None:
+    """The pair `(nu, dnu/ds)` is continuous through `gamma = 1`.
+
+    The generator switches to its logarithmic branch at unit risk aversion;
+    values just below and just above must bracket the exact-limit value, not
+    jump across the branch switch.
+    """
+    child_values = jnp.array([[1.0, 3.0]])
+    child_marginals = jnp.array([[0.5, 0.25]])
+    weights = jnp.array([0.5, 0.5])
+
+    def pair(gamma: float) -> tuple[float, float]:
+        nu, dnu = ez_continuation(
+            child_values=child_values,
+            child_marginals=child_marginals,
+            weights=weights,
+            risk_aversion=jnp.asarray(gamma),
+        )
+        return float(np.asarray(nu)[0]), float(np.asarray(dnu)[0])
+
+    at_limit = pair(1.0)
+    below = pair(1.0 - 1e-7)
+    above = pair(1.0 + 1e-7)
+    np.testing.assert_allclose(below, at_limit, rtol=1e-5)
+    np.testing.assert_allclose(above, at_limit, rtol=1e-5)
+
+
+def test_period_value_is_continuous_at_unit_eis() -> None:
+    """`ez_period_value` is continuous through `rho = 1`.
+
+    The CES aggregator switches to its Cobb-Douglas branch at unit elasticity;
+    values just off the singular exponent must approach the limit value.
+    """
+
+    def value(rho: float) -> float:
+        return float(
+            ez_period_value(
+                flow=jnp.asarray(2.0),
+                nu=jnp.asarray(8.0),
+                discount_factor=0.3,
+                inverse_eis=rho,
+            )
+        )
+
+    at_limit = value(1.0)
+    np.testing.assert_allclose(value(1.0 - 1e-7), at_limit, rtol=1e-5)
+    np.testing.assert_allclose(value(1.0 + 1e-7), at_limit, rtol=1e-5)
+
+
+def test_gamma_equal_rho_is_expected_utility_in_the_transformed_index() -> None:
+    """At `gamma = rho` the recursion is linear in `W = V^(1-rho)`, not in `V`.
+
+    The transformed index satisfies
+    `W = (1-beta) q^(1-rho) + beta E[W']`; composing `ez_continuation` and
+    `ez_period_value` at `gamma = rho` must reproduce `V = W^(1/(1-rho))`
+    exactly — and differ from the recursion with an arithmetic (linear-in-`V`)
+    continuation.
+    """
+    gamma = rho = 2.0
+    beta = 0.9
+    flow = 1.5
+    child_values = np.array([1.0, 3.0])
+    weights = np.array([0.5, 0.5])
+    nu, _ = ez_continuation(
+        child_values=jnp.asarray(child_values)[None, :],
+        child_marginals=jnp.zeros((1, 2)),
+        weights=jnp.asarray(weights),
+        risk_aversion=jnp.asarray(gamma),
+    )
+    value = ez_period_value(
+        flow=jnp.asarray(flow),
+        nu=nu,
+        discount_factor=beta,
+        inverse_eis=rho,
+    )
+    transformed = (1.0 - beta) * flow ** (1.0 - rho) + beta * np.sum(
+        weights * child_values ** (1.0 - rho)
+    )
+    reference = transformed ** (1.0 / (1.0 - rho))
+    np.testing.assert_allclose(np.asarray(value)[0], reference, rtol=1e-10)
+    arithmetic_nu = np.sum(weights * child_values)
+    assert not np.isclose(float(np.asarray(nu)[0]), arithmetic_nu)
+
+
+def test_continuation_stays_finite_at_high_risk_aversion_in_float32() -> None:
+    """The anchored kernel survives the high-`gamma` stress in float32.
+
+    Raw transformed terms `V^(1-gamma)` at `gamma = 50` overflow float32 many
+    orders of magnitude before float64; the anchored form keeps every exponent
+    nonpositive on the value channel, so single precision returns the same
+    certainty equivalent as the float64 reference.
+    """
+    gamma = 50.0
+    values64 = np.array([1e-6, 2e-6])
+    weights64 = np.array([0.5, 0.5])
+    marginals64 = np.array([1.0, 1.0])
+    nu64, dnu64 = ez_continuation(
+        child_values=jnp.asarray(values64)[None, :],
+        child_marginals=jnp.asarray(marginals64)[None, :],
+        weights=jnp.asarray(weights64),
+        risk_aversion=jnp.asarray(gamma),
+    )
+    nu32, dnu32 = ez_continuation(
+        child_values=jnp.asarray(values64, dtype=jnp.float32)[None, :],
+        child_marginals=jnp.asarray(marginals64, dtype=jnp.float32)[None, :],
+        weights=jnp.asarray(weights64, dtype=jnp.float32),
+        risk_aversion=jnp.asarray(gamma, dtype=jnp.float32),
+    )
+    assert np.asarray(nu32).dtype == np.float32
+    assert np.isfinite(np.asarray(nu32)).all()
+    assert np.isfinite(np.asarray(dnu32)).all()
+    np.testing.assert_allclose(
+        np.asarray(nu32), np.asarray(nu64, dtype=np.float32), rtol=1e-4
+    )
+    np.testing.assert_allclose(
+        np.asarray(dnu32), np.asarray(dnu64, dtype=np.float32), rtol=1e-3
+    )
+
+
 def test_transform_partials_carry_the_generator_weighted_sums() -> None:
     """The anchored partials represent `S = sum_j w_j V_j^(1-gamma)` and `T`.
 
