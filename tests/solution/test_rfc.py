@@ -343,10 +343,12 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
     The asset-row solve reads the refined envelope at one query per node. RFC
     has no streamed bracket finder, so `get_bracket_finder` materializes the
     full envelope and locates the `searchsorted(side="right")` bracket. The
-    bracket's interior interpolation must equal `interp_on_padded_grid` on the
-    full refined row at every query — below the first node, on the kink, and
-    above the last — so a full-envelope-then-interpolate and the bracket read
-    publish the same `(value, policy)`.
+    bracket's linear read must equal `interp_on_padded_grid` on the full
+    refined row at every query — below the first node, on the kink, and above
+    the last — so a full-envelope-then-interpolate and the bracket read publish
+    the same `(value, policy)`. Below-support queries extrapolate along the
+    first bracket's secant; above-support queries clamp to the last kept
+    value, matching the padded-row read's boundary conventions.
     """
     solver = _rfc_solver()
     grid, policy, value, marginal = _crossing_segments_candidates()
@@ -375,7 +377,7 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
         1.0,
         bracket.upper_grid - bracket.lower_grid,
     )
-    weight = jnp.clip((query - bracket.lower_grid) / width, 0.0, 1.0)
+    weight = jnp.minimum((query - bracket.lower_grid) / width, 1.0)
     bracket_value = bracket.lower_value + weight * (
         bracket.upper_value - bracket.lower_value
     )

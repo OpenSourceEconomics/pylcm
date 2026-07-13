@@ -11,7 +11,8 @@ Contract under test — `_lcm.egm.interp.interp_on_padded_grid`:
 Behavior:
 
 - linear interpolation between neighboring non-NaN nodes,
-- edge clamp outside the non-NaN range,
+- below the first node: linear extrapolation along the first bracket's secant;
+  at or above the last non-NaN node: clamp to the boundary value,
 - tie-safe at duplicated abscissae (zero-width brackets from envelope kinks):
   queries strictly below the duplicate interpolate toward the left value, queries
   at or above it use the right value — never a division by the zero bracket,
@@ -55,14 +56,17 @@ def test_nan_tail_is_ignored():
     np.testing.assert_allclose(got, expected, atol=1e-12)
 
 
-def test_out_of_range_extrapolates_the_edge_bracket_linearly():
-    """Queries outside the non-NaN range extrapolate the edge bracket's secant.
+def test_below_support_extrapolates_and_above_support_clamps():
+    """Below the first node the first bracket's secant continues; above clamps.
 
-    The canonical state-grid value read (`map_coordinates`) extrapolates
-    linearly outside the grid; the carry read follows the same convention, so a
-    transition landing below the child grid (a borrowing corner whose savings
-    undershoot the grid start) is priced on the edge slope rather than credited
-    with the boundary value — which no feasible action attains there.
+    Below support the carry read matches the canonical state-grid read
+    (`map_coordinates` extrapolates linearly), so a transition landing below
+    the child grid (a borrowing corner whose savings undershoot the grid
+    start) is priced on the edge slope rather than credited with the boundary
+    value — which no feasible action attains there. At or above the last node
+    the boundary value applies: a refined envelope row can end in a
+    crossing-inserted near-duplicate bracket whose secant slope is arbitrarily
+    steep, so extending it would poison every above-support read.
     """
     xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
@@ -71,16 +75,17 @@ def test_out_of_range_extrapolates_the_edge_bracket_linearly():
     got = interp.interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
 
     below = 0.0 + (0.0 - 1.0) * (3.0 - 0.0) / (2.0 - 1.0)
-    above = 3.0 + (100.0 - 2.0) * (5.0 - 3.0) / (4.0 - 2.0)
+    above = 5.0
     np.testing.assert_allclose(got, jnp.array([below, above]), atol=1e-12)
 
 
-def test_out_of_range_extrapolation_ignores_the_hermite_correction():
-    """With slopes, out-of-range queries still extrapolate the linear secant.
+def test_out_of_range_reads_ignore_the_hermite_correction():
+    """With slopes, out-of-range queries follow the slope-free convention.
 
     The Hermite correction vanishes at the bracket endpoints, so extending it
     outside the bracket would leave the cubic's tail; the read instead
-    continues the edge bracket's secant, matching the slope-free convention.
+    continues the first bracket's secant below support and clamps to the
+    boundary value above, matching the slope-free convention.
     """
     xp = jnp.array([1.0, 2.0, 4.0])
     fp = jnp.array([0.0, 3.0, 5.0])
@@ -90,7 +95,7 @@ def test_out_of_range_extrapolation_ignores_the_hermite_correction():
         x_query=jnp.array([0.5, 5.0]), xp=xp, fp=fp, fp_slopes=fp_slopes
     )
 
-    np.testing.assert_allclose(got, jnp.array([-1.5, 6.0]), atol=1e-12)
+    np.testing.assert_allclose(got, jnp.array([-1.5, 5.0]), atol=1e-12)
 
 
 def test_duplicated_abscissa_is_tie_safe():
@@ -152,8 +157,8 @@ def test_exact_slopes_reproduce_a_monotone_cubic():
     np.testing.assert_allclose(got, np.asarray(x_query) ** 3, atol=1e-12)
 
 
-def test_slopes_keep_nan_tail_extrapolation_and_node_values():
-    """The Hermite path preserves NaN-tail handling, edge secants, and nodes."""
+def test_slopes_keep_nan_tail_boundary_reads_and_node_values():
+    """The Hermite path preserves NaN-tail handling, boundary reads, and nodes."""
     xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     fp_slopes = jnp.array([3.0, 2.0, 0.5, jnp.nan])
@@ -164,7 +169,7 @@ def test_slopes_keep_nan_tail_extrapolation_and_node_values():
     )
 
     below = 0.0 + (0.0 - 1.0) * 3.0
-    above = 3.0 + (100.0 - 2.0) * 1.0
+    above = 5.0
     np.testing.assert_allclose(
         got, jnp.array([below, 0.0, 3.0, 5.0, above]), atol=1e-12
     )
