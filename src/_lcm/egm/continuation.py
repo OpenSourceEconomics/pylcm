@@ -405,19 +405,28 @@ def bind_continuation(
         """
         if risk_aversion is not None:
             anchors: list[ScalarFloat] = []
+            weight_sums: list[ScalarFloat] = []
             scaled_values: list[ScalarFloat] = []
             marginal_log_scales: list[ScalarFloat] = []
             marginal_mantissas: list[ScalarFloat] = []
             probs: list[ScalarFloat] = []
             for target in plan.carry_targets:
-                # The reader returns the anchored quad whenever risk_aversion
+                # The reader returns the anchored quint whenever risk_aversion
                 # is set (this branch); ty cannot correlate the union's arity
                 # with the mode.
-                anchor, scaled_value, marginal_log_scale, marginal_mantissa = cast(
-                    "tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]",
+                (
+                    anchor,
+                    weight_sum,
+                    scaled_value,
+                    marginal_log_scale,
+                    marginal_mantissa,
+                ) = cast(
+                    "tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat,"
+                    " ScalarFloat]",
                     child_readers[target](savings_value),
                 )
                 anchors.append(anchor)
+                weight_sums.append(weight_sum)
                 scaled_values.append(scaled_value)
                 marginal_log_scales.append(marginal_log_scale)
                 marginal_mantissas.append(marginal_mantissa)
@@ -427,26 +436,33 @@ def bind_continuation(
                 # the value channel; its constant enters transform space as its
                 # own anchor, and its marginal channel is exactly zero.
                 constant_value = next_regime_to_egm_carry[target].value[0]
-                anchor, scaled_value = ez_transform_scalar(
+                anchor, weight_sum, scaled_value = ez_transform_scalar(
                     value=constant_value, risk_aversion=risk_aversion
                 )
                 anchors.append(anchor)
+                weight_sums.append(weight_sum)
                 scaled_values.append(scaled_value)
                 marginal_log_scales.append(jnp.asarray(0.0, dtype=dtype))
                 marginal_mantissas.append(jnp.asarray(0.0, dtype=dtype))
                 probs.append(regime_transition_probs[target])
-            joint_anchor, blended_value, joint_marginal_scale, blended_mantissa = (
-                ez_blend_partials(
-                    log_anchors=jnp.stack(anchors),
-                    scaled_values=jnp.stack(scaled_values),
-                    marginal_log_scales=jnp.stack(marginal_log_scales),
-                    marginal_mantissas=jnp.stack(marginal_mantissas),
-                    probs=jnp.stack(probs),
-                    risk_aversion=risk_aversion,
-                )
+            (
+                joint_anchor,
+                blended_weight,
+                blended_value,
+                joint_marginal_scale,
+                blended_mantissa,
+            ) = ez_blend_partials(
+                log_anchors=jnp.stack(anchors),
+                weight_sums=jnp.stack(weight_sums),
+                scaled_values=jnp.stack(scaled_values),
+                marginal_log_scales=jnp.stack(marginal_log_scales),
+                marginal_mantissas=jnp.stack(marginal_mantissas),
+                probs=jnp.stack(probs),
+                risk_aversion=risk_aversion,
             )
             return ez_invert_partials(
                 log_anchor=joint_anchor,
+                weight_sum=blended_weight,
                 scaled_value=blended_value,
                 marginal_log_scale=joint_marginal_scale,
                 marginal_mantissa=blended_mantissa,
@@ -683,7 +699,7 @@ def _get_child_carry_reader(
 ) -> Callable[
     [ScalarFloat],
     tuple[ScalarFloat, ScalarFloat]
-    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
 ]:
     """Build the per-savings-node carry read of one target for one combo.
 
@@ -754,7 +770,7 @@ def _get_child_carry_reader(
         savings_value: ScalarFloat,
     ) -> (
         tuple[ScalarFloat, ScalarFloat]
-        | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+        | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
     ):
         """Read the child's carry at one savings node."""
         # The solution-phase next-state function returns a flat mapping of
@@ -951,7 +967,7 @@ def _expect_over_stochastic_nodes(
     risk_aversion: FloatND | None = None,
 ) -> (
     tuple[ScalarFloat, ScalarFloat]
-    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
 ):
     """Weight the carry read over the child's stochastic-node combos.
 
@@ -1103,10 +1119,10 @@ def _accumulate_ez_partials_over_blocks(
     blocked_indices: tuple[IntND, ...],
     blocked_weights: FloatND,
     risk_aversion: ScalarFloat,
-) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
     """Accumulate one target's Epstein-Zin transform partials in node blocks.
 
-    The anchored partials `(a, S~, b, T~)` are additive across node blocks —
+    The anchored partials `(a, W, E, b, T~)` are additive across node blocks —
     each block is a partial sum of the same lottery — so each scan step
     transforms its block and folds it into the carry with a unit-probability
     blend. The single inversion happens downstream of the regime blend,
@@ -1123,22 +1139,25 @@ def _accumulate_ez_partials_over_blocks(
     zero = jnp.zeros((), dtype=dtype)
 
     def accumulate_partials(
-        carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+        carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
         block: tuple[tuple[IntND, ...], FloatND],
-    ) -> tuple[tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None]:
+    ) -> tuple[
+        tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None
+    ]:
         block_indices, block_weights = block
         block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
-        block_quad = ez_transform_partials(
+        block_quint = ez_transform_partials(
             child_values=block_values,
             child_marginals=block_marginals,
             weights=block_weights,
             risk_aversion=risk_aversion,
         )
         combined = ez_blend_partials(
-            log_anchors=jnp.stack([carry[0], block_quad[0]]),
-            scaled_values=jnp.stack([carry[1], block_quad[1]]),
-            marginal_log_scales=jnp.stack([carry[2], block_quad[2]]),
-            marginal_mantissas=jnp.stack([carry[3], block_quad[3]]),
+            log_anchors=jnp.stack([carry[0], block_quint[0]]),
+            weight_sums=jnp.stack([carry[1], block_quint[1]]),
+            scaled_values=jnp.stack([carry[2], block_quint[2]]),
+            marginal_log_scales=jnp.stack([carry[3], block_quint[3]]),
+            marginal_mantissas=jnp.stack([carry[4], block_quint[4]]),
             probs=unit_probs,
             risk_aversion=risk_aversion,
         )
@@ -1147,12 +1166,12 @@ def _accumulate_ez_partials_over_blocks(
     # The neutral carry: an empty partial sum whose anchor sits on the
     # non-dominating side, so the first real block's anchor wins the joint
     # extremum and the empty term contributes exactly zero.
-    quad, _ = jax.lax.scan(
+    quint, _ = jax.lax.scan(
         accumulate_partials,
-        (neutral_anchor, zero, zero, zero),
+        (neutral_anchor, zero, zero, zero, zero),
         (blocked_indices, blocked_weights),
     )
-    return quad
+    return quint
 
 
 def _interleave_child_index(

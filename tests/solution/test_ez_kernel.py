@@ -440,17 +440,22 @@ def test_transform_partials_carry_the_generator_weighted_sums() -> None:
     child_values = jnp.array([[1.0, 2.0]])
     child_marginals = jnp.array([[0.5, 0.25]])
     weights = jnp.array([0.5, 0.5])
-    anchor, scaled_value, marginal_log_scale, marginal_mantissa = ez_transform_partials(
-        child_values=child_values,
-        child_marginals=child_marginals,
-        weights=weights,
-        risk_aversion=jnp.asarray(gamma),
+    anchor, weight_sum, scaled_value, marginal_log_scale, marginal_mantissa = (
+        ez_transform_partials(
+            child_values=child_values,
+            child_marginals=child_marginals,
+            weights=weights,
+            risk_aversion=jnp.asarray(gamma),
+        )
     )
     exp_value = 0.5 * 1.0 ** (1.0 - gamma) + 0.5 * 2.0 ** (1.0 - gamma)
     exp_marginal = 0.5 * 1.0 ** (-gamma) * 0.5 + 0.5 * 2.0 ** (-gamma) * 0.25
     a = np.asarray(anchor)[0]
     np.testing.assert_allclose(
-        np.exp((1.0 - gamma) * a) * np.asarray(scaled_value)[0], exp_value, rtol=1e-10
+        np.exp((1.0 - gamma) * a)
+        * (np.asarray(weight_sum)[0] + np.asarray(scaled_value)[0]),
+        exp_value,
+        rtol=1e-10,
     )
     np.testing.assert_allclose(
         np.exp(np.asarray(marginal_log_scale)[0]) * np.asarray(marginal_mantissa)[0],
@@ -460,12 +465,15 @@ def test_transform_partials_carry_the_generator_weighted_sums() -> None:
 
 
 def test_transform_scalar_anchors_the_generator() -> None:
-    """A certain value enters transform space as its own anchor: `(log V, 1)`."""
+    """A certain value enters transform space as its own anchor: `(log V, 1, 0)`."""
     gamma = 4.0
     value = jnp.asarray(2.0)
-    anchor, scaled = ez_transform_scalar(value=value, risk_aversion=jnp.asarray(gamma))
+    anchor, weight, scaled = ez_transform_scalar(
+        value=value, risk_aversion=jnp.asarray(gamma)
+    )
     np.testing.assert_allclose(
-        np.exp((1.0 - gamma) * np.asarray(anchor)) * np.asarray(scaled),
+        np.exp((1.0 - gamma) * np.asarray(anchor))
+        * (np.asarray(weight) + np.asarray(scaled)),
         2.0 ** (1.0 - gamma),
         rtol=1e-10,
     )
@@ -474,8 +482,11 @@ def test_transform_scalar_anchors_the_generator() -> None:
 def test_transform_scalar_is_the_log_generator_at_unit_risk_aversion() -> None:
     """At `gamma = 1` the generator degenerates to `log V` with a zero anchor."""
     value = jnp.asarray(3.0)
-    anchor, scaled = ez_transform_scalar(value=value, risk_aversion=jnp.asarray(1.0))
+    anchor, weight, scaled = ez_transform_scalar(
+        value=value, risk_aversion=jnp.asarray(1.0)
+    )
     np.testing.assert_allclose(np.asarray(anchor), 0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(weight), 1.0, atol=1e-12)
     np.testing.assert_allclose(np.asarray(scaled), np.log(3.0), rtol=1e-10)
 
 
@@ -489,14 +500,17 @@ def test_invert_partials_recovers_the_continuation_certainty_equivalent() -> Non
     child_values = jnp.array([[1.0, 2.0]])
     child_marginals = jnp.array([[0.5, 0.25]])
     weights = jnp.array([0.5, 0.5])
-    anchor, scaled_value, marginal_log_scale, marginal_mantissa = ez_transform_partials(
-        child_values=child_values,
-        child_marginals=child_marginals,
-        weights=weights,
-        risk_aversion=jnp.asarray(gamma),
+    anchor, weight_sum, scaled_value, marginal_log_scale, marginal_mantissa = (
+        ez_transform_partials(
+            child_values=child_values,
+            child_marginals=child_marginals,
+            weights=weights,
+            risk_aversion=jnp.asarray(gamma),
+        )
     )
     nu, dnu_ds = ez_invert_partials(
         log_anchor=anchor,
+        weight_sum=weight_sum,
         scaled_value=scaled_value,
         marginal_log_scale=marginal_log_scale,
         marginal_mantissa=marginal_mantissa,
@@ -537,18 +551,24 @@ def test_blend_partials_matches_the_single_joint_lottery() -> None:
         )
         for values, marginals in ((values_a, marginals_a), (values_b, marginals_b))
     ]
-    joint_anchor, blended_value, joint_marginal_scale, blended_mantissa = (
-        ez_blend_partials(
-            log_anchors=jnp.stack([p[0] for p in partials]),
-            scaled_values=jnp.stack([p[1] for p in partials]),
-            marginal_log_scales=jnp.stack([p[2] for p in partials]),
-            marginal_mantissas=jnp.stack([p[3] for p in partials]),
-            probs=prob[:, None],
-            risk_aversion=jnp.asarray(gamma),
-        )
+    (
+        joint_anchor,
+        blended_weight,
+        blended_value,
+        joint_marginal_scale,
+        blended_mantissa,
+    ) = ez_blend_partials(
+        log_anchors=jnp.stack([p[0] for p in partials]),
+        weight_sums=jnp.stack([p[1] for p in partials]),
+        scaled_values=jnp.stack([p[2] for p in partials]),
+        marginal_log_scales=jnp.stack([p[3] for p in partials]),
+        marginal_mantissas=jnp.stack([p[4] for p in partials]),
+        probs=prob[:, None],
+        risk_aversion=jnp.asarray(gamma),
     )
     nu, dnu_ds = ez_invert_partials(
         log_anchor=joint_anchor,
+        weight_sum=blended_weight,
         scaled_value=blended_value,
         marginal_log_scale=joint_marginal_scale,
         marginal_mantissa=blended_mantissa,
@@ -576,13 +596,15 @@ def test_single_node_transform_partial_matches_the_scalar_anchor() -> None:
     gamma = 4.0
     value = jnp.asarray(2.0)
     marginal = jnp.asarray(0.25)
-    anchor, scaled_value, marginal_log_scale, marginal_mantissa = ez_transform_partials(
-        child_values=value[None],
-        child_marginals=marginal[None],
-        weights=jnp.array([1.0]),
-        risk_aversion=jnp.asarray(gamma),
+    anchor, weight_sum, scaled_value, marginal_log_scale, marginal_mantissa = (
+        ez_transform_partials(
+            child_values=value[None],
+            child_marginals=marginal[None],
+            weights=jnp.array([1.0]),
+            risk_aversion=jnp.asarray(gamma),
+        )
     )
-    scalar_anchor, scalar_scaled = ez_transform_scalar(
+    scalar_anchor, scalar_weight, scalar_scaled = ez_transform_scalar(
         value=value, risk_aversion=jnp.asarray(gamma)
     )
     np.testing.assert_allclose(
@@ -820,3 +842,60 @@ def test_marginal_of_resource_consumes_the_log_flow_marginal() -> None:
     )
 
     np.testing.assert_allclose(float(got), 0.5, rtol=1e-5)
+
+
+def test_period_value_is_stable_one_ulp_from_unit_eis() -> None:
+    """One float64 step from `rho = 1` the aggregator sits on the CD limit.
+
+    The generic CES branch divides a rounded log-sum by `1 - rho`; at the
+    representable neighbors of one that quotient must not lose the limit —
+    risk aversion and EIS are estimated parameters that can land arbitrarily
+    close to (but not exactly on) one.
+    """
+    flow = jnp.asarray(2.0)
+    nu = jnp.asarray(8.0)
+    beta = 0.3
+    limit = float(flow ** (1.0 - beta) * nu**beta)
+
+    for rho in (
+        np.nextafter(np.float64(1.0), np.float64(np.inf)),
+        np.nextafter(np.float64(1.0), np.float64(-np.inf)),
+    ):
+        got = float(
+            ez_period_value(
+                flow=flow,
+                nu=nu,
+                discount_factor=beta,
+                inverse_eis=jnp.asarray(rho),
+            )
+        )
+        np.testing.assert_allclose(got, limit, rtol=1e-8)
+
+
+def test_continuation_is_stable_one_ulp_from_unit_risk_aversion() -> None:
+    """One float64 step from `gamma = 1` the CE and marginal sit on the limits.
+
+    The power-mean limit at unit risk aversion is the weighted geometric mean
+    with derivative `nu * sum w dV/V`; the generic branch divides by
+    `1 - gamma` and must not lose either channel at the representable
+    neighbors of one.
+    """
+    values = jnp.asarray([1.0, 4.0, 16.0])
+    marginals = jnp.asarray([0.5, 0.75, 1.25])
+    weights = jnp.asarray([0.25, 0.25, 0.5])
+
+    geometric = float(jnp.exp(jnp.sum(weights * jnp.log(values))))
+    geometric_derivative = float(geometric * jnp.sum(weights * marginals / values))
+
+    for gamma in (
+        np.nextafter(np.float64(1.0), np.float64(np.inf)),
+        np.nextafter(np.float64(1.0), np.float64(-np.inf)),
+    ):
+        nu, dnu_ds = ez_continuation(
+            child_values=values[None, :],
+            child_marginals=marginals[None, :],
+            weights=weights,
+            risk_aversion=jnp.asarray(gamma),
+        )
+        np.testing.assert_allclose(float(nu[0]), geometric, rtol=1e-8)
+        np.testing.assert_allclose(float(dnu_ds[0]), geometric_derivative, rtol=1e-8)
