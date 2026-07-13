@@ -448,10 +448,27 @@ def _attach_gated_edge_folds(
             # is read through, so an exactly-on-grid discrete draw (E4's own
             # test topologies) is read exactly and a genuinely off-grid
             # continuous state degrades gracefully to linear interpolation.
+            # The candidate target state fed in at simulate is a genuine
+            # (possibly off-grid) VALUE for every target state — including a
+            # non-folded process state (`_ContinuousStochasticProcess`,
+            # classified `discrete_states` for the Markov-chain solve path
+            # but never fed an exact on-grid index here). Mirror
+            # `_build_same_period_ref_reader`'s (`Q_and_F.py`) auto-select of
+            # `get_V_interpolator`'s process-aware mode so that axis is
+            # linearly interpolated instead of integer-looked-up; a target
+            # without a process state is unaffected (byte-identical ordinary
+            # path).
+            target_has_process_axis = any(
+                isinstance(grid, _ContinuousStochasticProcess)
+                for grid in regime_to_v_interpolation_info[
+                    target_name
+                ].discrete_states.values()
+            )
             gate_interpolators[target_name] = get_V_interpolator(
                 v_interpolation_info=regime_to_v_interpolation_info[target_name],
                 state_prefix="",
                 V_arr_name=GATE_ARR_NAME,
+                interpolate_process_axes=target_has_process_axis,
             )
             leg_projectors[target_name] = tuple(
                 build_fallback_state_projector(
