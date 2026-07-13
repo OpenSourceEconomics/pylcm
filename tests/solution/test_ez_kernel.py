@@ -126,6 +126,26 @@ def test_marginal_of_resource_matches_the_foc_substituted_continuation_form() ->
     np.testing.assert_allclose(np.asarray(marginal), foc_form, rtol=1e-9)
 
 
+def test_period_value_at_unit_eis_is_the_cobb_douglas_limit() -> None:
+    """At `rho = 1` the aggregator is the Cobb-Douglas limit `flow^(1-beta) nu^beta`.
+
+    The CES exponent `1/(1-rho)` is singular at unit elasticity; the recursion's
+    well-defined limit is the geometric aggregator, matching `H_epstein_zin`.
+    """
+    beta = 0.3
+    flow = 2.0
+    nu = 8.0
+    value = ez_period_value(
+        flow=jnp.asarray(flow),
+        nu=jnp.asarray(nu),
+        discount_factor=beta,
+        inverse_eis=1.0,
+    )
+    np.testing.assert_allclose(
+        np.asarray(value), flow ** (1.0 - beta) * nu**beta, rtol=1e-10
+    )
+
+
 def test_period_value_is_strictly_positive_for_positive_inputs() -> None:
     """The recursive value index stays strictly positive, as the recursion needs."""
     value = ez_period_value(

@@ -243,10 +243,12 @@ def ez_period_value(
 ) -> FloatND:
     """Return the Epstein-Zin recursive value index at a state.
 
-    `V = [(1-beta) flow^(1-rho) + beta nu^(1-rho)]^(1/(1-rho))`. The aggregator is
-    a CES combination of the current-period flow and the continuation certainty
-    equivalent; it stays strictly positive for strictly positive inputs, which
-    the recursion (and the power-mean certainty equivalent) require.
+    `V = [(1-beta) flow^(1-rho) + beta nu^(1-rho)]^(1/(1-rho))`, with the
+    Cobb-Douglas limit `flow^(1-beta) nu^beta` at unit elasticity (`rho = 1`),
+    matching `H_epstein_zin`. The aggregator is a CES combination of the
+    current-period flow and the continuation certainty equivalent; it stays
+    strictly positive for strictly positive inputs, which the recursion (and
+    the power-mean certainty equivalent) require.
 
     Args:
         flow: The current-period flow `q` (consumption in the single-good case).
@@ -259,7 +261,11 @@ def ez_period_value(
 
     """
     one_minus_rho = 1.0 - inverse_eis
-    aggregate = (
-        1.0 - discount_factor
-    ) * flow**one_minus_rho + discount_factor * nu**one_minus_rho
-    return aggregate ** (1.0 / one_minus_rho)
+    # The unselected CES branch must not divide by zero at `rho = 1`.
+    safe_one_minus_rho = jnp.where(one_minus_rho == 0.0, 1.0, one_minus_rho)
+    cobb_douglas = flow ** (1.0 - discount_factor) * nu**discount_factor
+    aggregate = (1.0 - discount_factor) * flow**safe_one_minus_rho + (
+        discount_factor
+    ) * nu**safe_one_minus_rho
+    ces = aggregate ** (1.0 / safe_one_minus_rho)
+    return jnp.where(one_minus_rho == 0.0, cobb_douglas, ces)
