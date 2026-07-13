@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions, get_ancestors, with_signature
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, resolve_certainty_equivalent
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -638,11 +639,28 @@ def _build_same_period_ref_reader(
     reference is collective. The returned callable's signature carries only
     user-level names (states / actions / params reached by the projections,
     plus `SAME_PERIOD_V_ARG`), so the kernel signature stays clean.
+
+    A projection produces a genuine VALUE for every reference state
+    (interpolation-worthy, possibly off-grid) — unlike the ordinary
+    continuation-value path, which always feeds a process axis its exact
+    on-grid Markov-chain index. When the reference regime carries a
+    non-folded process state (`_ContinuousStochasticProcess`, classified
+    `discrete_states` for the Markov-chain solve path but read here as a
+    genuine value), `get_V_interpolator`'s process-aware mode
+    (`interpolate_process_axes=True`) is used so that axis is linearly
+    interpolated instead of integer-looked-up; a reference regime without a
+    process state is unaffected (`interpolate_process_axes=False`, the
+    ordinary path, byte-identical).
     """
+    _reference_has_process_axis = any(
+        isinstance(grid, _ContinuousStochasticProcess)
+        for grid in v_interpolation_info.discrete_states.values()
+    )
     interpolator = get_V_interpolator(
         v_interpolation_info=v_interpolation_info,
         state_prefix=_REF_STATE_PREFIX,
         V_arr_name=_REF_V_ARR_NAME,
+        interpolate_process_axes=_reference_has_process_axis,
     )
     dag_pool = {
         **dict(deterministic_transitions),
