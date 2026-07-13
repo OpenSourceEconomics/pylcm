@@ -816,6 +816,7 @@ def _get_child_carry_reader(
                 child_passive_grids=read.passive_grids,
                 row_queries=queries,
                 row_gradients=gradients,
+                paired_marginal_read=risk_aversion is not None,
             )
             if risk_aversion is not None:
                 # A target whose continuation carries no shock lottery at this
@@ -982,6 +983,7 @@ def _expect_over_stochastic_nodes(
             child_passive_grids=read.passive_grids,
             row_queries=queries,
             row_gradients=gradients,
+            paired_marginal_read=risk_aversion is not None,
         )
 
     node_index_mesh = jnp.meshgrid(
@@ -1140,6 +1142,7 @@ def _aggregate_child_choices(
     child_passive_grids: tuple[Float1D, ...],
     row_queries: FloatND,
     row_gradients: FloatND,
+    paired_marginal_read: bool = False,
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Read one child's carry with mixed interpolation and aggregate its choices.
 
@@ -1205,9 +1208,16 @@ def _aggregate_child_choices(
     gradients_flat = row_gradients.reshape(-1)
 
     # The marginal-utility row is the value row's exact slope (envelope
-    # theorem), upgrading the value read to cubic Hermite; the mu read itself
-    # stays linear (a policy-grade quantity, and its interpolation error
-    # enters the value only at second order through the Euler inversion).
+    # theorem), upgrading the value read to cubic Hermite. The marginal read
+    # comes in two conventions:
+    # - linear expected utility reads the marginal row itself linearly (a
+    #   policy-grade quantity whose interpolation error enters the value only
+    #   at second order through the Euler inversion);
+    # - a paired read (`paired_marginal_read`, the Epstein-Zin transform
+    #   marginal) differentiates the value interpolant itself, so the marginal
+    #   is exactly the derivative of the value the certainty equivalent
+    #   carries — where the slope limiter binds, the two conventions differ at
+    #   leading order.
     def interp_value_row(
         search_grid: Float1D,
         valid_length: ScalarInt,
@@ -1242,12 +1252,33 @@ def _aggregate_child_choices(
             fp=fp,
         )
 
-    value_at_child = jax.vmap(interp_value_row)(
-        search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
-    )
-    marginal_at_child = jax.vmap(interp_row)(
-        search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
-    )
+    if paired_marginal_read:
+
+        def value_and_slope_row(
+            search_grid: Float1D,
+            valid_length: ScalarInt,
+            xp: Float1D,
+            fp: Float1D,
+            fp_slopes: Float1D,
+            x_query: ScalarFloat,
+        ) -> tuple[ScalarFloat, ScalarFloat]:
+            """Value read and its query derivative; positional per `jax.vmap`."""
+            return jax.value_and_grad(
+                lambda query: interp_value_row(
+                    search_grid, valid_length, xp, fp, fp_slopes, query
+                )
+            )(x_query)
+
+        value_at_child, marginal_at_child = jax.vmap(value_and_slope_row)(
+            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+        )
+    else:
+        value_at_child = jax.vmap(interp_value_row)(
+            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+        )
+        marginal_at_child = jax.vmap(interp_row)(
+            search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
+        )
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as
     # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
