@@ -307,25 +307,28 @@ def ez_consumption_from_euler(
     dnu_ds: FloatND,
     discount_factor: ScalarFloat | float,
     inverse_eis: ScalarFloat | float,
-    flow_coefficient: FloatND | float,
+    log_flow_coefficient: FloatND | float,
     flow_exponent: ScalarFloat | float,
 ) -> FloatND:
     """Invert the Epstein-Zin Euler equation for consumption at a savings node.
 
     Solves `(1-beta) q_c(c) = beta nu^(-rho) dnu/ds` where the period-flow
-    marginal is the single power `q^(-rho) q_c = flow_coefficient · c^flow_exponent`.
-    For the basic single-good flow `q = c`, `flow_coefficient = 1` and
+    marginal is the single power `q^(-rho) q_c = kappa · c^flow_exponent`,
+    with the coefficient supplied as `log_flow_coefficient = log(kappa)` —
+    the raw `kappa = A^(1-rho) phi` overflows the dtype long before the
+    inverted consumption does, so it is never materialized. For the basic
+    single-good flow `q = c`, `log_flow_coefficient = 0` and
     `flow_exponent = -rho`. For the fixed-service Cobb-Douglas flow
-    `q = c^phi s^(1-phi)`, `flow_coefficient = phi · s^((1-phi)(1-rho))` and
-    `flow_exponent = phi(1-rho) - 1`.
+    `q = c^phi s^(1-phi)`, `log_flow_coefficient =
+    (1-phi)(1-rho) log(s) + log(phi)` and `flow_exponent = phi(1-rho) - 1`.
 
     Args:
         nu: Certainty equivalent of the next-period value at the savings node.
         dnu_ds: Derivative of `nu` with respect to end-of-period savings.
         discount_factor: The discount factor `beta`.
         inverse_eis: The inverse elasticity of intertemporal substitution `rho`.
-        flow_coefficient: The constant multiplying `c^flow_exponent` in the
-            period-flow marginal (depends on the fixed service level).
+        log_flow_coefficient: The log of the constant multiplying
+            `c^flow_exponent` in the period-flow marginal.
         flow_exponent: The power of `c` in the period-flow marginal
             (`phi(1-rho) - 1`, or `-rho` for the basic flow).
 
@@ -344,12 +347,12 @@ def ez_consumption_from_euler(
         - inverse_eis * jnp.log(nu)
         + jnp.log(dnu_ds)
     )
-    return jnp.exp((log_target - jnp.log(flow_coefficient)) / flow_exponent)
+    return jnp.exp((log_target - log_flow_coefficient) / flow_exponent)
 
 
 def ez_marginal_of_resource(
     *,
-    flow_marginal: FloatND,
+    log_flow_marginal: FloatND,
     value: FloatND,
     discount_factor: ScalarFloat | float,
     inverse_eis: ScalarFloat | float,
@@ -358,18 +361,19 @@ def ez_marginal_of_resource(
 
     By the envelope theorem the derivative of the recursive value with respect to
     the Euler state (cash-on-hand `m`) is `dV/dm = (1-beta) V^rho (q^(-rho) q_c)`,
-    where `flow_marginal = q^(-rho) q_c` is the period flow's Euler-form marginal
-    and `rho` the inverse elasticity of intertemporal substitution. For a
-    single-power flow `q = flow_coefficient**... c^phi`, `flow_marginal =
-    flow_coefficient * c^flow_exponent` (`c^(-rho)` for the basic single-good flow
-    `q = c`). Substituting the interior Euler equation `(1-beta) q^(-rho) q_c =
-    beta nu^(-rho) dnu/ds` recovers the equivalent continuation form `V^rho beta
-    nu^(-rho) dnu/ds`, so the marginal is consistent with the consumption the Euler
-    inversion returns.
+    where `q^(-rho) q_c` is the period flow's Euler-form marginal and `rho` the
+    inverse elasticity of intertemporal substitution. The marginal enters as its
+    logarithm — for a single-power flow,
+    `log_flow_marginal = log_flow_coefficient + flow_exponent * log(c)`
+    (`-rho log(c)` for the basic single-good flow `q = c`) — because the raw
+    power leaves the dtype's range long before `dV/dm` does. Substituting the
+    interior Euler equation `(1-beta) q^(-rho) q_c = beta nu^(-rho) dnu/ds`
+    recovers the equivalent continuation form `V^rho beta nu^(-rho) dnu/ds`, so
+    the marginal is consistent with the consumption the Euler inversion returns.
 
     Args:
-        flow_marginal: The period flow's Euler-form marginal `q^(-rho) q_c` at the
-            optimum (`flow_coefficient * c^flow_exponent`; `c^(-rho)` for `q = c`).
+        log_flow_marginal: The log of the period flow's Euler-form marginal
+            `q^(-rho) q_c` at the optimum.
         value: The recursive value index `V` at the state.
         discount_factor: The discount factor `beta`.
         inverse_eis: The inverse elasticity of intertemporal substitution `rho`.
@@ -380,11 +384,8 @@ def ez_marginal_of_resource(
     """
     # Log-domain product: `V^rho` underflows the dtype long before the
     # marginal `(1-beta) V^rho q_m` does (its factors' exponents cancel).
-    # A zero flow marginal reads `log(0) = -inf` and returns exactly zero.
     return jnp.exp(
-        jnp.log1p(-discount_factor)
-        + inverse_eis * jnp.log(value)
-        + jnp.log(flow_marginal)
+        jnp.log1p(-discount_factor) + inverse_eis * jnp.log(value) + log_flow_marginal
     )
 
 

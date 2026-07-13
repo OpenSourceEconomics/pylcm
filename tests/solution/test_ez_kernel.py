@@ -35,7 +35,7 @@ def test_basic_flow_consumption_matches_the_crra_power_inversion() -> None:
         dnu_ds=jnp.asarray(dnu_ds),
         discount_factor=beta,
         inverse_eis=rho,
-        flow_coefficient=1.0,
+        log_flow_coefficient=0.0,
         flow_exponent=-rho,
     )
     reference = (beta / (1.0 - beta) * nu ** (-rho) * dnu_ds) ** (-1.0 / rho)
@@ -56,13 +56,13 @@ def test_composite_flow_uses_the_cobb_douglas_exponent_not_minus_one_over_rho() 
     nu = 4.0
     dnu_ds = 0.05
     flow_exponent = phi * (1.0 - rho) - 1.0
-    flow_coefficient = phi * service ** ((1.0 - phi) * (1.0 - rho))
+    log_flow_coefficient = np.log(phi) + (1.0 - phi) * (1.0 - rho) * np.log(service)
     consumption = ez_consumption_from_euler(
         nu=jnp.asarray(nu),
         dnu_ds=jnp.asarray(dnu_ds),
         discount_factor=beta,
         inverse_eis=rho,
-        flow_coefficient=flow_coefficient,
+        log_flow_coefficient=log_flow_coefficient,
         flow_exponent=flow_exponent,
     )
     c = float(consumption)
@@ -109,7 +109,7 @@ def test_marginal_of_resource_matches_the_foc_substituted_continuation_form() ->
         dnu_ds=jnp.asarray(dnu_ds),
         discount_factor=beta,
         inverse_eis=rho,
-        flow_coefficient=1.0,
+        log_flow_coefficient=0.0,
         flow_exponent=-rho,
     )
     value = ez_period_value(
@@ -119,7 +119,7 @@ def test_marginal_of_resource_matches_the_foc_substituted_continuation_form() ->
         inverse_eis=rho,
     )
     marginal = ez_marginal_of_resource(
-        flow_marginal=consumption ** (-rho),
+        log_flow_marginal=-rho * jnp.log(consumption),
         value=value,
         discount_factor=beta,
         inverse_eis=rho,
@@ -608,21 +608,21 @@ def test_flow_power_structure_poisons_a_degenerate_euler_exponent() -> None:
     so the solve's NaN fail-fast surfaces the (regime, period) instead of the
     inversion computing a finite but meaningless consumption.
     """
-    flow_coefficient, flow_exponent = _ez_flow_power_structure(
+    log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
         utility_of_action=lambda consumption: consumption**2,
         inverse_eis=jnp.asarray(0.5),
     )
     assert bool(jnp.isnan(flow_exponent))
-    assert bool(jnp.isfinite(flow_coefficient))
+    assert bool(jnp.isfinite(log_flow_coefficient))
 
 
 def test_flow_power_structure_is_exact_away_from_the_degenerate_exponent() -> None:
-    """For `q = c` and `rho = 2` the structure is `(1, -rho)` exactly."""
-    flow_coefficient, flow_exponent = _ez_flow_power_structure(
+    """For `q = c` and `rho = 2` the structure is `(log 1, -rho) = (0, -2)` exactly."""
+    log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
         utility_of_action=lambda consumption: consumption,
         inverse_eis=jnp.asarray(2.0),
     )
-    np.testing.assert_allclose(np.asarray(flow_coefficient), 1.0, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(log_flow_coefficient), 0.0, atol=1e-12)
     np.testing.assert_allclose(np.asarray(flow_exponent), -2.0, rtol=1e-12)
 
 
@@ -738,7 +738,7 @@ def test_consumption_from_euler_is_computed_in_the_log_domain() -> None:
         dnu_ds=jnp.asarray(1e-10, dtype=jnp.float32),
         discount_factor=0.5,
         inverse_eis=5.0,
-        flow_coefficient=1.0,
+        log_flow_coefficient=0.0,
         flow_exponent=-5.0,
     )
 
@@ -757,7 +757,7 @@ def test_marginal_of_resource_is_computed_in_the_log_domain() -> None:
     representable.
     """
     got = ez_marginal_of_resource(
-        flow_marginal=jnp.asarray(1e30, dtype=jnp.float32),
+        log_flow_marginal=jnp.log(jnp.asarray(1e30, dtype=jnp.float32)),
         value=jnp.asarray(1e-10, dtype=jnp.float32),
         discount_factor=0.5,
         inverse_eis=5.0,
@@ -766,3 +766,57 @@ def test_marginal_of_resource_is_computed_in_the_log_domain() -> None:
     expected = 0.5 * np.exp(5.0 * np.log(1e-10) + np.log(1e30))
     assert float(got) > 0.0
     np.testing.assert_allclose(float(got), expected, rtol=1e-4)
+
+
+def test_flow_power_structure_returns_a_finite_log_coefficient() -> None:
+    """A tiny flow scale yields a finite log coefficient where the raw overflows.
+
+    For `q = A c^phi` with `A = 1e-14` and `rho = 25`, the raw coefficient
+    `A^(1-rho) phi` is ~1e336 — past float64 — while its logarithm (~773) is
+    ordinary. The Euler inversion consumes the log form, so the exact solution
+    `c = 1` (at `nu = A`, `dnu/ds = phi A`, `beta = 1/2`) comes out exactly.
+    """
+    scale = 1e-14
+    power = 0.5
+    rho = 25.0
+
+    log_coefficient, flow_exponent = _ez_flow_power_structure(
+        utility_of_action=lambda consumption: scale * consumption**power,
+        inverse_eis=jnp.asarray(rho),
+    )
+    consumption = ez_consumption_from_euler(
+        nu=jnp.asarray(scale),
+        dnu_ds=jnp.asarray(power * scale),
+        discount_factor=0.5,
+        inverse_eis=rho,
+        log_flow_coefficient=log_coefficient,
+        flow_exponent=flow_exponent,
+    )
+
+    expected_log_coefficient = (1.0 - rho) * np.log(scale) + np.log(power)
+    assert bool(jnp.isfinite(log_coefficient))
+    np.testing.assert_allclose(
+        float(log_coefficient), expected_log_coefficient, rtol=1e-12
+    )
+    np.testing.assert_allclose(float(consumption), 1.0, rtol=1e-12)
+
+
+def test_marginal_of_resource_consumes_the_log_flow_marginal() -> None:
+    """A large Euler-form flow marginal enters as its log, exact in float32.
+
+    With `c = 1e-10` and `rho = 5` the raw flow marginal `c^(-rho)` is 1e50 —
+    past float32 — while the resource marginal `(1-beta) V^rho c^(-rho)` is
+    exactly 0.5 for `V = c`. Passing the marginal in log form keeps the whole
+    chain inside the dtype.
+    """
+    rho = 5.0
+    log_consumption = jnp.log(jnp.asarray(1e-10, dtype=jnp.float32))
+
+    got = ez_marginal_of_resource(
+        log_flow_marginal=-rho * log_consumption,
+        value=jnp.asarray(1e-10, dtype=jnp.float32),
+        discount_factor=0.5,
+        inverse_eis=rho,
+    )
+
+    np.testing.assert_allclose(float(got), 0.5, rtol=1e-5)

@@ -305,16 +305,20 @@ def _ez_flow_power_structure(
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     inverse_eis: ScalarFloat,
 ) -> tuple[ScalarFloat, ScalarFloat]:
-    """Euler-inversion coefficients for a single-power period flow.
+    """Log-domain Euler-inversion coefficients for a single-power period flow.
 
     The Epstein-Zin closed-form Euler inversion needs the flow's marginal as a
-    single power of consumption, `q^(-rho) q_c = flow_coefficient * c^flow_exponent`.
-    For any constant-elasticity flow `q(c) = A c^phi` — the basic good `q = c`, and
-    the fixed-service Cobb-Douglas `q = c^phi s^(1-phi)` with `s` the outer durable
-    fixed per outer node — read `A = q(1)` and the elasticity `phi = q'(1) / A` from
-    the regime's own flow, then `flow_coefficient = A^(1-rho) phi` and
-    `flow_exponent = phi (1-rho) - 1`. Reduces to `(1, -rho)` for the basic flow
-    (`A = phi = 1`).
+    single power of consumption, `q^(-rho) q_c = kappa * c^flow_exponent`. For
+    any constant-elasticity flow `q(c) = A c^phi` — the basic good `q = c`, and
+    the fixed-service Cobb-Douglas `q = c^phi s^(1-phi)` with `s` the outer
+    durable fixed per outer node — read `A = q(1)` and the elasticity
+    `phi = q'(1) / A` from the regime's own flow, then
+    `log(kappa) = (1-rho) log(A) + log(phi)` and
+    `flow_exponent = phi (1-rho) - 1`. The coefficient stays in log form
+    throughout: the raw `A^(1-rho)` leaves the dtype's range long before the
+    inverted consumption does. Reduces to `(0, -rho)` for the basic flow
+    (`A = phi = 1`). A nonpositive `A` or `phi` (excluded by the build probe,
+    but runtime parameters can recreate it) reads NaN and poisons the solve.
 
     Valid only for a flow with a constant consumption elasticity (a single power of
     `c`); a flow whose elasticity varies with `c` (e.g. a nested CES) needs a
@@ -324,7 +328,7 @@ def _ez_flow_power_structure(
     flow_scale = utility_of_action(one)
     flow_power = jax.grad(utility_of_action)(one) / flow_scale
     one_minus_rho = 1.0 - inverse_eis
-    flow_coefficient = flow_scale**one_minus_rho * flow_power
+    log_flow_coefficient = one_minus_rho * jnp.log(flow_scale) + jnp.log(flow_power)
     raw_exponent = flow_power * one_minus_rho - 1.0
     # At `xi = phi (1-rho) - 1 = 0` the Euler equation is constant in
     # consumption and the closed-form inversion `c = x^(1/xi)` is undefined.
@@ -337,7 +341,7 @@ def _ez_flow_power_structure(
         jnp.nan,
         raw_exponent,
     )
-    return flow_coefficient, flow_exponent
+    return log_flow_coefficient, flow_exponent
 
 
 def nbegm_multi_interval_step_savings(
@@ -411,7 +415,7 @@ def nbegm_multi_interval_step_savings(
     # the additive `u + beta E[V']` form.
     marginal_utility = jax.grad(utility_of_action)
     if inverse_eis is not None:
-        flow_coefficient, flow_exponent = _ez_flow_power_structure(
+        log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
             utility_of_action=utility_of_action, inverse_eis=inverse_eis
         )
         consumption = ez_consumption_from_euler(
@@ -419,7 +423,7 @@ def nbegm_multi_interval_step_savings(
             dnu_ds=cont_marginal,
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
-            flow_coefficient=flow_coefficient,
+            log_flow_coefficient=log_flow_coefficient,
             flow_exponent=flow_exponent,
         )
     else:
@@ -442,7 +446,8 @@ def nbegm_multi_interval_step_savings(
             inverse_eis=inverse_eis,
         )
         marginal_endog = slope_endog * ez_marginal_of_resource(
-            flow_marginal=flow_coefficient * consumption**flow_exponent,
+            log_flow_marginal=log_flow_coefficient
+            + flow_exponent * jnp.log(consumption),
             value=value_endog,
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
@@ -477,7 +482,8 @@ def nbegm_multi_interval_step_savings(
             inverse_eis=inverse_eis,
         )
         node_marginal_safe = ez_marginal_of_resource(
-            flow_marginal=flow_coefficient * node_consumption_safe**flow_exponent,
+            log_flow_marginal=log_flow_coefficient
+            + flow_exponent * jnp.log(node_consumption_safe),
             value=node_value_safe,
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
