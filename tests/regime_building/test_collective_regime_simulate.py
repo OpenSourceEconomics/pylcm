@@ -1334,3 +1334,186 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
     assert len(df) == 4  # 2 subjects x 2 periods, no routing/dissolution.
     assert df["value"].notna().all()
     assert pd.api.types.is_float_dtype(df["value"])
+
+
+# ----------------------------------------------------------------------------------
+# Test 8: regression — a REPEATING, self-looping, value-gated edge past the
+# source's own activity boundary. Every OTHER gated-edge test above has a
+# source active for exactly ONE period (a "one-shot" edge): the target is
+# always present at `period + 1`, so `gated_routing.py` never has to handle a
+# period whose target regime is not itself solved. `src` here is active over
+# TWO periods (ages 0 and 1) and declares a gated edge back to ITSELF — a
+# genuinely repeating self-loop. At `src`'s own last active period (age 1,
+# the activity boundary), the edge's target (`src` at age 2) does not exist:
+# `period_to_regime_to_V_arr[2]` (the sparse per-period solve output) has no
+# `"src"` entry. Pre-fix, `build_same_period_mapping_for_fold`'s unconditional
+# `period_solution[edge.target]` raised `KeyError: 'src'` there.
+# ----------------------------------------------------------------------------------
+
+_REPEAT_GATE_THRESHOLD = 2.0
+
+
+def _u_src_repeat(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return wage + 0.0 * work
+
+
+def _u_src_exit(wage: ContinuousState) -> FloatND:
+    return 0.5 * wage
+
+
+def _u_src_fallback(wage: ContinuousState) -> FloatND:
+    return 0.1 * wage
+
+
+def _prob_stay(age: FloatND) -> FloatND:
+    return jnp.where(age < 1.0, 1.0, 0.0)
+
+
+def _prob_exit_boundary(age: FloatND) -> FloatND:
+    return jnp.where(age < 1.0, 0.0, 1.0)
+
+
+def _repeat_gate(V_target: FloatND) -> BoolND:
+    return V_target > _REPEAT_GATE_THRESHOLD
+
+
+def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
+    """A source active over TWO periods with a repeating self-loop `GatedEdge`.
+
+    `src` is active for ages 0 and 1 (periods 0, 1) and declares a gated edge
+    back to ITSELF (`gated_edges={"src": ...}`). At period 0 the edge fires
+    normally — its target (`src` itself) is active at period 1. At period 1 —
+    `src`'s own last active period, the activity boundary — the edge's target
+    (`src` at period 2) does not exist: `src` is not active past age 1. The
+    ordinary (ungated) regime transition routes a household past the
+    boundary into `src_exit` instead (`_prob_stay` / `_prob_exit_boundary`,
+    both keyed off age, sum to 1, and structurally declare BOTH `src` and
+    `src_exit` as reachable — the gated edge's target must be one of the
+    regime's declared transition targets).
+    """
+    src = Regime(
+        transition={
+            "src": MarkovTransition(_prob_stay),
+            "src_exit": MarkovTransition(_prob_exit_boundary),
+        },
+        active=lambda age: age < 2,
+        states={"wage": _WAGE_2},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src_repeat},
+        gated_edges={
+            "src": GatedEdge(
+                gate=_repeat_gate,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="src_fallback",
+                            projection={"wage": _identity_wage},
+                        ),
+                    )
+                },
+            )
+        },
+    )
+    src_exit = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wage": _WAGE_2},
+        functions={"utility": _u_src_exit},
+    )
+    src_fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wage": _WAGE_2},
+        functions={"utility": _u_src_fallback},
+    )
+    return {"src": src, "src_exit": src_exit, "src_fallback": src_fallback}
+
+
+def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
+    """E4 regression: a REPEATING self-loop edge must not `KeyError` at the
+    source's own activity boundary (see module-level Test 8 comment).
+
+    Hand computation. Period 1's `src` Bellman weights only the `src_exit`
+    continuation (`_prob_stay(age=1)=0`, `_prob_exit_boundary(age=1)=1`):
+    `V_1(wage) = wage + beta * 0.5 * wage = 1.475 * wage` (`beta=0.95`). The
+    self-loop's gate (`V_target > 2.0`) reads exactly this `V_1`: OPEN at
+    wage=2 (`V_1(2)=2.95`), CLOSED at wage=1 (`V_1(1)=1.475`).
+
+    - wage=1: period-0 gate CLOSED -> routed to `src_fallback` for period 1
+      (period-1 value `0.1 * 1 = 0.1`); period-0 own value
+      `V_0(1) = 1 + beta * 0.1 = 1.095`.
+    - wage=2: period-0 gate OPEN -> STAYS in `src` for period 1 — the
+      genuine repeat, and exactly the household that raised `KeyError`
+      pre-fix (period 1 is `src`'s own activity boundary, and period 2's
+      solution has no `src` entry). Post-fix the edge is a no-op at period 1
+      (its target is absent); the ordinary transition (100% `src_exit` at
+      age=1) routes it to `src_exit` for period 2, with period-1 own value
+      `V_1(2) = 2.95` and period-2 terminal value `0.5 * 2 = 1.0`. Period-0
+      own value `V_0(2) = 2 + beta * 2.95 = 4.8025`.
+    """
+    ages = AgeGrid(start=0, stop=3, step="Y")
+    regimes_dict = _make_repeating_self_loop_regimes()
+    regimes, regime_names_to_ids = _solve_and_process(
+        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+    )
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src_exit": MappingProxyType({}),
+            "src_fallback": MappingProxyType({}),
+        }
+    )
+    # Solve already tolerates a per-period-absent target (the SOLVE-side
+    # `_roll_gated_edges` guard predates this fix); this is the control that
+    # isolates the bug to the SIMULATE path below.
+    solution, _sim_policies, dissolution_flags = solve(
+        flat_params=flat_params,
+        ages=ages,
+        regimes=regimes,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    )
+
+    initial_conditions = MappingProxyType(
+        {
+            "wage": jnp.array([1.0, 2.0]),
+            "age": jnp.array([0.0, 0.0]),
+            "regime_id": jnp.array([regime_names_to_ids["src"]] * 2, dtype=jnp.int32),
+        }
+    )
+    # Pre-fix, this raised `KeyError: 'src'` inside
+    # `build_same_period_mapping_for_fold`, called from
+    # `substitute_gated_edge_continuations` while simulating the wage=2
+    # household's period-1 (boundary) step.
+    result = simulate(
+        flat_params=flat_params,
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        logger=get_logger(log_level="off"),
+        period_to_regime_to_V_arr=solution,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
+        ages=ages,
+        simulation_output_dtypes={},
+        seed=0,
+    )
+
+    period_0 = result.raw_results["src"][0]
+    np.testing.assert_allclose(np.asarray(period_0.V_arr), [1.095, 4.8025], rtol=1e-6)
+
+    # wage=1 -> gate closed at period 0 -> `src_fallback`; wage=2 -> gate
+    # open -> stays in `src` for the genuine repeat.
+    fallback_1 = result.raw_results["src_fallback"][1]
+    src_1 = result.raw_results["src"][1]
+    np.testing.assert_array_equal(np.asarray(fallback_1.in_regime), [True, False])
+    np.testing.assert_array_equal(np.asarray(src_1.in_regime), [False, True])
+    np.testing.assert_allclose(np.asarray(fallback_1.V_arr)[0], 0.1, rtol=1e-6)
+    np.testing.assert_allclose(np.asarray(src_1.V_arr)[1], 2.95, rtol=1e-6)
+
+    # Past the boundary: the wage=2 household's repeat ends at `src`'s own
+    # activity boundary; the ordinary (not gated-edge) transition routes it
+    # to `src_exit`, exactly as the ordinary per-target probabilities say.
+    exit_2 = result.raw_results["src_exit"][2]
+    np.testing.assert_array_equal(np.asarray(exit_2.in_regime), [False, True])
+    np.testing.assert_allclose(np.asarray(exit_2.V_arr)[1], 1.0, rtol=1e-6)

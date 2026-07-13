@@ -107,11 +107,29 @@ def substitute_gated_edge_continuations(
     when `regime` declares no `gated_edges` — the default simulate path is
     untouched.
 
+    COLLECTIVE-REGIMES (E4 bugfix). ``period_to_regime_to_V_arr`` is the
+    SPARSE per-period solution `backward_induction.solve` returns (only the
+    regimes actually active — i.e. solved — in that period; see
+    `solution[period] = MappingProxyType(period_solution)` there). A
+    REPEATING edge (the source active over a range of ages, not just a
+    single "one-shot" period) folds at every period it is active, including
+    the source's own last active period — whose `period + 1` may not include
+    the target (or a fallback/gate-ref reference regime) at all, e.g. a
+    self-looping edge whose target IS the source, past the source's own
+    `active` boundary. Skip (no substitution, no gate) for a target — and
+    hence the whole edge — not solved at `period + 1`: mirrors the identical
+    guard the SOLVE-side roll already applies
+    (`backward_induction._roll_gated_edges`'s
+    `if target_name not in period_solution: continue`). A one-shot edge's
+    target is always present at `period + 1` (that is the whole point of a
+    one-shot edge), so this is byte-identical for every existing test.
+
     Returns:
         Tuple `(substituted_next_regime_to_V_arr, gate_arrays)` — the first
-        has every declared edge target's slot replaced by `Wbar`; the second
-        maps target regime name to the fold's raw grid-level `gate` array
-        (consumed by `route_gated_edges`).
+        has every declared edge target's slot replaced by `Wbar` (for edges
+        that fired this period); the second maps target regime name to the
+        fold's raw grid-level `gate` array (consumed by `route_gated_edges`),
+        only for edges that fired.
     """
     if not regime.gated_edges:
         return MappingProxyType(dict(next_regime_to_V_arr)), MappingProxyType({})
@@ -122,6 +140,10 @@ def substitute_gated_edge_continuations(
     substituted = dict(next_regime_to_V_arr)
     gate_arrays: dict[RegimeName, BoolND] = {}
     for target_name, edge in regime.gated_edges.items():
+        if target_name not in next_period_V:
+            continue
+        if any(ref not in next_period_V for ref in edge.reference_regimes):
+            continue
         same_period_mapping = build_same_period_mapping_for_fold(
             edge=edge,
             period_solution=next_period_V,
@@ -252,6 +274,18 @@ def route_gated_edges(
     states = next_states
     routed_ids = new_subject_regime_ids
     for target_name, edge in regime.gated_edges.items():
+        # COLLECTIVE-REGIMES (E4 bugfix). `gate_arrays` only carries an entry
+        # for a target `substitute_gated_edge_continuations` actually folded
+        # this period — absent for a REPEATING edge's target that is not
+        # itself solved at `period + 1` (e.g. a self-looping edge past the
+        # source's own `active` boundary; see that function's docstring).
+        # The edge cannot possibly gate into a target that does not exist
+        # next period, so it is a no-op here too: the ordinary (ungated)
+        # transition draw and candidate states already computed upstream
+        # stand, unrouted and unoverridden. Byte-identical for every
+        # one-shot edge, whose target is always present at `period + 1`.
+        if target_name not in gate_arrays:
+            continue
         candidate_target_states = dict(next_states[target_name])
         target_kwargs = {**candidate_target_states, **flat_params[target_name]}
 
