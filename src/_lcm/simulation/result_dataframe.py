@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -102,7 +103,9 @@ def _process_regime(
 
     if stakeholders is not None:
         data.update(
-            _split_stakeholder_value(value=data.pop("value"), stakeholders=stakeholders)
+            _split_stakeholder_value(
+                value=cast("np.ndarray", data.pop("value")), stakeholders=stakeholders
+            )
         )
 
     data["age"] = ages.values[data["period"]]  # noqa: PD011
