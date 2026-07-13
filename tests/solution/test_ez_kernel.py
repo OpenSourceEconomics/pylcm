@@ -11,7 +11,6 @@ the inverse has exponent `1/[phi(1-rho)-1]`. The basic single-good flow is
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm.nbegm_step import _ez_flow_power_structure
 from _lcm.egm.ez_kernel import (
     ez_blend_partials,
     ez_consumption_from_euler,
@@ -22,6 +21,7 @@ from _lcm.egm.ez_kernel import (
     ez_transform_partials,
     ez_transform_scalar,
 )
+from _lcm.egm.nbegm_step import _ez_flow_power_structure
 
 
 def test_basic_flow_consumption_matches_the_crra_power_inversion() -> None:

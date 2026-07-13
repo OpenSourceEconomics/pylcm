@@ -31,6 +31,7 @@ from _lcm.egm.ez_kernel import (
     ez_transform_scalar,
 )
 from _lcm.egm.interp import (
+    interp_and_derivative_on_prepared_grid,
     interp_on_prepared_grid,
     locate_on_grid,
     prepare_padded_grid,
@@ -1262,12 +1263,22 @@ def _aggregate_child_choices(
             fp_slopes: Float1D,
             x_query: ScalarFloat,
         ) -> tuple[ScalarFloat, ScalarFloat]:
-            """Value read and its query derivative; positional per `jax.vmap`."""
-            return jax.value_and_grad(
-                lambda query: interp_value_row(
-                    search_grid, valid_length, xp, fp, fp_slopes, query
-                )
-            )(x_query)
+            """Value read and its analytic derivative; positional per `jax.vmap`.
+
+            The closed-form derivative of the selected piece — not autodiff
+            through the bracket-selection program, whose `searchsorted`/`clip`
+            representation returns arbitrary subgradients at exact grid nodes
+            (a routine alignment: a zero-savings corner on a child grid that
+            starts at zero).
+            """
+            return interp_and_derivative_on_prepared_grid(
+                x_query=x_query,
+                search_grid=search_grid,
+                valid_length=valid_length,
+                xp=xp,
+                fp=fp,
+                fp_slopes=fp_slopes,
+            )
 
         value_at_child, marginal_at_child = jax.vmap(value_and_slope_row)(
             search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
