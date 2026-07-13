@@ -70,6 +70,12 @@ from lcm.typing import (
     ScalarInt,
 )
 
+# The anchored Epstein-Zin partials `(a, W, E, b, T~)` a child reader returns
+# when a certainty equivalent is active.
+type _EZPartials = tuple[
+    ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat
+]
+
 
 def _is_runtime_process(grid: Grid) -> bool:
     """Whether the grid is a process whose nodes resolve only at solve time."""
@@ -421,8 +427,7 @@ def bind_continuation(
                     marginal_log_scale,
                     marginal_mantissa,
                 ) = cast(
-                    "tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat,"
-                    " ScalarFloat]",
+                    "_EZPartials",
                     child_readers[target](savings_value),
                 )
                 anchors.append(anchor)

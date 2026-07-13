@@ -611,7 +611,10 @@ def test_single_node_transform_partial_matches_the_scalar_anchor() -> None:
         np.asarray(anchor), np.asarray(scalar_anchor), rtol=1e-12
     )
     np.testing.assert_allclose(
-        np.asarray(scaled_value), np.asarray(scalar_scaled), rtol=1e-12
+        np.asarray(weight_sum), np.asarray(scalar_weight), rtol=1e-12
+    )
+    np.testing.assert_allclose(
+        np.asarray(scaled_value), np.asarray(scalar_scaled), atol=1e-12
     )
     np.testing.assert_allclose(
         np.exp(np.asarray(marginal_log_scale)) * np.asarray(marginal_mantissa),

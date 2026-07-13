@@ -114,10 +114,9 @@ def ez_transform_partials(
     `ez_blend_partials`, so the joint certainty equivalent over the
     `(regime x shock)` lottery is `ez_invert_partials` applied to the
     regime-probability-weighted blend. The generator and its weighting match the
-    brute-force joint-lottery operator; the inversion normalizes by the blended
-    weight sum, so the certainty equivalent is the *normalized* power mean and
-    floating-point noise in a unit-mass lottery cannot leak through the
-    `1/(1-gamma)` exponent.
+    brute-force joint-lottery operator; the inversion de-scales the true mass
+    `W + E` as `log(W) + log1p(E/W)`, so the exact blend mass is preserved
+    while the near-unit generator information rides in the deviation ratio.
 
     Args:
         child_values: Strictly positive next-period values on the lottery axis.
