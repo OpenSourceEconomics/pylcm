@@ -1743,6 +1743,20 @@ class NBEGM(Solver):
                 schedule_spec=schedule_spec,
             )
 
+        # Every route below solves the additive expected-utility step; only the
+        # ride-along route above carries the Epstein-Zin kernels. Reject a
+        # declared certainty equivalent here rather than silently solving the
+        # additive recursion the regime did not declare.
+        if context.certainty_equivalent is not None:
+            msg = (
+                f"Regime {context.regime_name!r} declares a "
+                "`certainty_equivalent` but has no ride-along state, so NBEGM "
+                "would route it to the additive expected-utility step. The "
+                "Epstein-Zin kernels run on the ride-along route only; use "
+                "GridSearch() for a single-liquid-state recursive regime."
+            )
+            raise RegimeInitializationError(msg)
+
         liquid_state_name = (
             schedule_spec.liquid_state_name
             if schedule_spec is not None
@@ -1937,6 +1951,16 @@ class NBEGM(Solver):
             int(context.grids[name].to_jax().shape[0])
             for name in schedule_spec.ride_along_state_names
         )
+        if context.certainty_equivalent is not None:
+            _fail_if_flow_not_single_power(
+                utility_dag=schedule_spec.utility_dag,
+                consumption_action_name=next(
+                    iter(context.state_action_space.continuous_actions)
+                ),
+                regime_name=context.regime_name,
+                int_arg_values=_int_probe_arg_values(context.grids),
+                probe_failure=self.probe_failure,
+            )
         reachable_targets = frozenset(
             _reachable_target_names(
                 user_regime=context.user_regimes[context.regime_name],
@@ -1984,6 +2008,19 @@ class NBEGM(Solver):
                     publish_jump_topology=self.jump_read == "one_sided",
                     co_map_state_names=context.co_map_state_names,
                 )
+                # The Epstein-Zin kernels cover smooth and pure-kink budgets;
+                # the unified jump-and-kink candidate step is additive. Reject
+                # the combination here, at model build, rather than midway
+                # through a traced solve.
+                if context.certainty_equivalent is not None and statics.has_jump:
+                    msg = (
+                        f"Regime {context.regime_name!r} declares a "
+                        "`certainty_equivalent` and a current-period jump "
+                        "breakpoint. Epstein-Zin NBEGM covers smooth and "
+                        "pure-kink budgets only; use a kink-only schedule or "
+                        "GridSearch() for this regime."
+                    )
+                    raise RegimeInitializationError(msg)
                 # Save-to-cliff candidates need the regime's own carry read
                 # (the cliffs are the self-schedule's); a period whose targets
                 # exclude the regime itself solves without them.
@@ -3284,6 +3321,100 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
             f"a budget slope of {slopes[0]:.4g} in {liquid_name!r}. Declare a "
             "coincident `continuous_kink` so the non-unit affine slope routes to the "
             "mixed step, or keep the jump-only budget additive (unit slope)."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_flow_not_single_power(
+    *,
+    utility_dag: Callable[..., object],
+    consumption_action_name: str,
+    regime_name: RegimeName,
+    int_arg_values: Mapping[str, tuple[int, ...]],
+    probe_failure: Literal["reject", "assume_declared"],
+) -> None:
+    """Probe the flow's consumption elasticity for the single-power contract.
+
+    The Epstein-Zin Euler inversion is closed-form only for a flow whose
+    marginal is a single power of consumption, `q = A c^phi` with `phi > 0`.
+    Reading `q(1)` and `q'(1)` alone identifies a local scale and elasticity —
+    it cannot certify the global structure (for `q = e^c` the locally fitted
+    power solves a different first-order condition). The probe evaluates the
+    elasticity `c q'(c)/q(c)` at several consumption values, with every other
+    argument filled by a scalar probe and each integer-coded argument swept
+    over its actual grid codes, and rejects a varying-elasticity or
+    non-increasing flow at model build.
+    """
+    import inspect  # noqa: PLC0415
+
+    arg_names = tuple(inspect.signature(utility_dag).parameters)
+    if consumption_action_name not in arg_names:
+        return
+    int_arg_names = frozenset(int_arg_values)
+    probe_consumptions = (0.5, 1.0, 2.0, 5.0)
+    fill = 1.7
+
+    def flow_of_consumption(
+        consumption: ScalarFloat, int_overrides: Mapping[str, int]
+    ) -> ScalarFloat:
+        kwargs = {
+            name: (
+                consumption
+                if name == consumption_action_name
+                else jnp.asarray(int_overrides[name], dtype=jnp.int32)
+                if name in int_overrides
+                else _probe_fill(name, fill, int_arg_names)
+            )
+            for name in arg_names
+        }
+        return jnp.asarray(utility_dag(**kwargs)).reshape(())
+
+    sweep_names = tuple(name for name in arg_names if name in int_arg_names)
+    try:
+        elasticities = [
+            float(
+                probe_c
+                * jax.grad(flow_of_consumption)(jnp.asarray(probe_c), overrides)
+                / flow_of_consumption(jnp.asarray(probe_c), overrides)
+            )
+            for overrides in _int_code_sweeps(
+                arg_names=sweep_names, int_arg_values=int_arg_values
+            )
+            for probe_c in probe_consumptions
+        ]
+    except Exception as probe_error:
+        msg = (
+            f"NBEGM could not verify that regime {regime_name!r}'s period flow "
+            f"is a single power of {consumption_action_name!r}: the build-time "
+            "elasticity probe failed to evaluate the flow on scalar inputs "
+            f"({type(probe_error).__name__}: {probe_error})."
+        )
+        if probe_failure == "assume_declared":
+            warnings.warn(
+                msg + " Building anyway (`probe_failure='assume_declared'`): "
+                "the model author asserts the single-power flow; validate the "
+                "solve against an independent reference.",
+                stacklevel=2,
+            )
+            return
+        raise RegimeInitializationError(
+            msg + " Restructure the flow so it evaluates on scalar inputs, set "
+            "`probe_failure='assume_declared'` to assert the structure "
+            "yourself, or use GridSearch() for this regime."
+        ) from probe_error
+    tol = 1e-8
+    spread = max(elasticities) - min(elasticities)
+    scale = max(1.0, abs(elasticities[0]))
+    if spread > tol * scale or min(elasticities) <= 0.0:
+        msg = (
+            f"Regime {regime_name!r} declares a `certainty_equivalent`, but "
+            "its period flow is not a single power of "
+            f"{consumption_action_name!r} with a positive exponent: the probed "
+            f"consumption elasticities range over "
+            f"[{min(elasticities):.6g}, {max(elasticities):.6g}]. The "
+            "Epstein-Zin Euler inversion is closed-form only for "
+            "`q = A c^phi` with `phi > 0`; restructure the flow or use "
+            "GridSearch() for this regime."
         )
         raise RegimeInitializationError(msg)
 

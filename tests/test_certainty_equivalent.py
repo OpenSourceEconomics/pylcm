@@ -9,18 +9,30 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    DiscreteGrid,
+    H_epstein_zin,
     LinSpacedGrid,
     Model,
     Phased,
     PowerMean,
     QuasiArithmeticMean,
     Regime,
+    affine_breakpoint,
     categorical,
+    fixed_transition,
+    piecewise_affine,
 )
 from lcm.exceptions import InvalidNameError, RegimeInitializationError
 from lcm.solvers import DCEGM, NBEGM
 from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 from lcm_examples.epstein_zin import get_model, get_params
 
 
@@ -231,6 +243,245 @@ def test_nbegm_with_taste_shocks_rejects_certainty_equivalent():
                 "taste_shocks": ExtremeValueTasteShocks(),
             },
             dead_kwargs={},
+        )
+
+
+def _resources(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+    return resources - consumption
+
+
+_NBEGM_FUNCTIONS: dict[str, Any] = {
+    "utility": _utility_alive,
+    "resources": _resources,
+    "savings": _savings,
+}
+
+
+def test_nbegm_rejects_a_non_power_mean_certainty_equivalent():
+    """NBEGM implements the Epstein-Zin recursion for `PowerMean` only.
+
+    The endogenous-grid kernels read the power mean's `risk_aversion` parameter
+    and invert its generator in closed form; a general quasi-arithmetic mean has
+    no such inverse-derivative interface, so declaring one with NBEGM must fail
+    at model build rather than solve the wrong recursion.
+    """
+
+    def g(value: FloatND) -> FloatND:
+        return jnp.log(value)
+
+    def g_inv(value: FloatND) -> FloatND:
+        return jnp.exp(value)
+
+    nbegm = NBEGM(
+        post_decision_function="savings",
+        budget_target="resources",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    with pytest.raises(RegimeInitializationError, match="PowerMean"):
+        _make_model(
+            alive_kwargs={
+                "certainty_equivalent": QuasiArithmeticMean(transform=g, inverse=g_inv),
+                "solver": nbegm,
+                "functions": dict(_NBEGM_FUNCTIONS),
+            },
+            dead_kwargs={},
+        )
+
+
+def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
+    """NBEGM with a certainty equivalent needs `H_epstein_zin` as the regime's `H`.
+
+    The Euler inversion and period value read the aggregator's intertemporal
+    elasticity; with the default linear `H` the recursion the kernels implement
+    is not the recursion the regime declares, so the combination must fail at
+    model build.
+    """
+    nbegm = NBEGM(
+        post_decision_function="savings",
+        budget_target="resources",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    with pytest.raises(RegimeInitializationError, match="H_epstein_zin"):
+        _make_model(
+            alive_kwargs={
+                "certainty_equivalent": PowerMean(),
+                "solver": nbegm,
+                "functions": dict(_NBEGM_FUNCTIONS),
+            },
+            dead_kwargs={},
+        )
+
+
+def test_nbegm_certainty_equivalent_requires_a_ride_along_route():
+    """A zero-ride NBEGM regime cannot declare a certainty equivalent.
+
+    The single-liquid-state smooth route solves the additive expected-utility
+    step; only the ride-along route carries the Epstein-Zin kernels. Declaring
+    a certainty equivalent on a regime without a ride-along state must fail at
+    model build rather than silently solve the additive recursion.
+    """
+    nbegm = NBEGM(
+        post_decision_function="savings",
+        budget_target="resources",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    with pytest.raises(RegimeInitializationError, match="ride-along"):
+        _make_model(
+            alive_kwargs={
+                "certainty_equivalent": PowerMean(),
+                "solver": nbegm,
+                "functions": dict(_NBEGM_FUNCTIONS) | {"H": H_epstein_zin},
+            },
+            dead_kwargs={},
+        )
+
+
+def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
+    """EZ NBEGM covers smooth and pure-kink budgets; a jump is rejected at build.
+
+    The unified jump-and-kink candidate step assumes the additive aggregator,
+    so a regime combining a `certainty_equivalent` with a current-period jump
+    breakpoint must fail when the model is built, not midway through a traced
+    solve.
+    """
+
+    @categorical(ordered=False)
+    class _Kind:
+        lo: ScalarInt
+        hi: ScalarInt
+
+    def _u(consumption: ContinuousAction) -> FloatND:
+        return consumption
+
+    def _gross_income(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return wealth + 0.5 * kind
+
+    @piecewise_affine(
+        "subsidy",
+        variable="gross_income",
+        breakpoints=(affine_breakpoint("fpl_cliff", kind="jump"),),
+    )
+    def _subsidy(gross_income: FloatND, fpl_cliff: float) -> FloatND:
+        return jnp.where(gross_income < fpl_cliff, 1.0, 0.0)
+
+    def _jump_resources(gross_income: FloatND, subsidy: FloatND) -> FloatND:
+        return gross_income + subsidy
+
+    def _next_wealth_from_savings(savings: FloatND) -> ContinuousState:
+        return savings
+
+    nbegm = NBEGM(
+        post_decision_function="savings",
+        budget_target="resources",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    alive = Regime(
+        transition=_next_regime,
+        states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
+        state_transitions={
+            "wealth": _next_wealth_from_savings,
+            "kind": fixed_transition("kind"),
+        },
+        actions={"consumption": _CONSUMPTION},
+        functions={
+            "utility": _u,
+            "gross_income": _gross_income,
+            "subsidy": _subsidy,
+            "resources": _jump_resources,
+            "savings": _savings,
+            "H": H_epstein_zin,
+        },
+        certainty_equivalent=PowerMean(),
+        solver=nbegm,
+        active=lambda age: age < 41,
+    )
+
+    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return jnp.sqrt(wealth) + 0.0 * kind
+
+    dead = Regime(
+        transition=None,
+        states={
+            "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+            "kind": DiscreteGrid(_Kind),
+        },
+        functions={"utility": _dead_utility},
+    )
+    with pytest.raises(RegimeInitializationError, match="jump"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=40, stop=41, step="Y"),
+            regime_id_class=_RegimeId,
+        )
+
+
+def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
+    """A flow that is not a single power of consumption is rejected at build.
+
+    The Epstein-Zin Euler inversion is closed-form only for `q = A c^phi` with
+    `phi > 0`; the flow's consumption elasticity `c q'(c)/q(c)` is probed at
+    several points, so a varying-elasticity flow (here `c + 0.1 c^2`) fails at
+    model build instead of silently solving a locally fitted power's
+    first-order condition.
+    """
+
+    @categorical(ordered=False)
+    class _Kind:
+        lo: ScalarInt
+        hi: ScalarInt
+
+    def _u(consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
+        return consumption + 0.1 * consumption**2 + 0.0 * kind
+
+    def _ride_resources(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return wealth + 0.5 * kind
+
+    def _next_wealth_from_savings(savings: FloatND) -> ContinuousState:
+        return savings
+
+    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return jnp.sqrt(wealth) + 0.0 * kind
+
+    nbegm = NBEGM(
+        post_decision_function="savings",
+        budget_target="resources",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    alive = Regime(
+        transition=_next_regime,
+        states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
+        state_transitions={
+            "wealth": _next_wealth_from_savings,
+            "kind": fixed_transition("kind"),
+        },
+        actions={"consumption": _CONSUMPTION},
+        functions={
+            "utility": _u,
+            "resources": _ride_resources,
+            "savings": _savings,
+            "H": H_epstein_zin,
+        },
+        certainty_equivalent=PowerMean(),
+        solver=nbegm,
+        active=lambda age: age < 41,
+    )
+    dead = Regime(
+        transition=None,
+        states={
+            "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+            "kind": DiscreteGrid(_Kind),
+        },
+        functions={"utility": _dead_utility},
+    )
+    with pytest.raises(RegimeInitializationError, match="single power"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=40, stop=41, step="Y"),
+            regime_id_class=_RegimeId,
         )
 
 

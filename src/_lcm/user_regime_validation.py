@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
 
+from _lcm.certainty_equivalent import PowerMean
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
@@ -23,6 +24,7 @@ from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, GridSearch
+from lcm.temporal_aggregation import H_epstein_zin
 from lcm.transition import MarkovTransition
 
 if TYPE_CHECKING:
@@ -294,6 +296,30 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "nonlinear `certainty_equivalent`: its Euler inversion assumes "
             "expected utility. Use GridSearch() or NBEGM() for this regime."
         )
+    if isinstance(regime.solver, NBEGM):
+        # The endogenous-grid kernels implement the Epstein-Zin recursion for
+        # exactly one pairing: they read the power mean's `risk_aversion`
+        # parameter for the transform partials and the aggregator's
+        # intertemporal elasticity for the Euler inversion and period value.
+        # GridSearch aggregates any certainty equivalent in concrete values,
+        # so only the NBEGM route is narrowed.
+        if not isinstance(regime.certainty_equivalent, PowerMean):
+            error_messages.append(
+                f"NBEGM implements the recursive certainty equivalent for "
+                f"`PowerMean` only, got "
+                f"{type(regime.certainty_equivalent).__name__}. Use "
+                f"`certainty_equivalent=PowerMean()` or solve the regime with "
+                f"GridSearch()."
+            )
+        if regime.functions.get("H") is not H_epstein_zin:
+            error_messages.append(
+                "NBEGM with a `certainty_equivalent` requires the regime's "
+                "aggregator to be `H_epstein_zin` "
+                '(`functions={"H": lcm.H_epstein_zin, ...}`): the Euler '
+                "inversion and period value read its intertemporal "
+                "elasticity. With a different `H` the kernels would solve a "
+                "recursion the regime does not declare."
+            )
     if regime.taste_shocks is not None:
         error_messages.append(
             "A regime cannot combine `certainty_equivalent` with "
