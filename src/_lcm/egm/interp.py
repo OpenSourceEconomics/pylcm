@@ -31,7 +31,11 @@ def interp_on_padded_grid(
     influences the result. Behavior at the boundaries and at duplicated
     abscissae:
 
-    - Queries outside the non-NaN range are clamped to the boundary values.
+    - Queries below the first node continue the first bracket's secant
+      (linear extrapolation, matching the canonical state-grid read); queries
+      at or above the last non-NaN node are clamped to the boundary value,
+      because a refined row's last bracket can be a crossing-inserted
+      near-duplicate whose secant is no usable extrapolant.
     - At a duplicated abscissa (an envelope kink carrying left and right
       values), queries strictly below the duplicate interpolate toward the
       left value; queries at or above it use the right value. The zero-width
@@ -228,16 +232,22 @@ def _interp_between_nodes(
     linear = jnp.where(weight_lower > 0.0, weight_lower * fp_lower, 0.0) + jnp.where(
         relative_position > 0.0, relative_position * fp_upper, 0.0
     )
-    # Out-of-range queries continue the edge bracket's secant — the same
-    # convention as the canonical state-grid value read (`map_coordinates`
-    # extrapolates linearly), so a transition landing outside the carry's
-    # support (a borrowing corner undershooting the grid start) is priced on
-    # the edge slope, not credited with a boundary value no action attains.
+    # Out-of-range reads are asymmetric:
+    # - Below the first node the query continues the first bracket's secant —
+    #   the convention of the canonical state-grid value read
+    #   (`map_coordinates` extrapolates linearly) — so a transition landing
+    #   under the carry's support (a borrowing corner undershooting the grid
+    #   start) is priced on the edge slope, not credited with a boundary value
+    #   no action attains.
+    # - At or above the last node the clamped boundary value applies: refined
+    #   envelope rows can end in a crossing-inserted near-duplicate bracket
+    #   whose secant slope is arbitrarily steep, so extending it would let one
+    #   degenerate pair poison every above-support read.
     # Brackets with a non-finite endpoint (`-inf` infeasible values) keep the
     # clamped read, and a zero-width kink bracket never extends.
     finite_pair = jnp.isfinite(fp_lower) & jnp.isfinite(fp_upper)
     extension = jnp.where(
-        finite_pair & (bracket_width != 0.0),
+        finite_pair & (bracket_width != 0.0) & (raw_position < 0.0),
         (raw_position - relative_position) * (fp_upper - fp_lower),
         0.0,
     )
