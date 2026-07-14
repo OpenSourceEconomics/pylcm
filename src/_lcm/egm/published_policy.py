@@ -56,8 +56,11 @@ class EGMSimPolicy:
     endog_grid: FloatND
     """Endogenous grid in resources space, NaN-padded in the tail.
 
-    Shared with the period's `EGMCarry.endog_grid`; weakly ascending per row,
-    with envelope-kink abscissae duplicated.
+    Shared with the period's `EGMCarry.endog_grid`; weakly ascending per row.
+    Under a crossing-inserting upper-envelope backend (`fues`, `mss`) the
+    envelope-switch abscissae are duplicated with one-sided policy copies —
+    the topology the off-grid read requires; RFC/LTM rows leave switches
+    between retained nodes and do not qualify for the read.
     """
 
     policy: FloatND

@@ -989,7 +989,15 @@ def _build_simulation_phase(
     )
 
     # Replaying the solve-phase EGM policy in simulation is valid only when
-    # the simulate-phase decision problem is the one the solve optimized:
+    # the simulate-phase decision problem is the one the solve optimized and
+    # the published rows carry the topology the read assumes:
+    # - a standalone `DCEGM` solver — a NEGM regime maximizes its value over
+    #   keeper and adjuster candidates but publishes only the keeper's inner
+    #   consumption function, so replaying it would pair an adjuster-won
+    #   value with the keeper's policy;
+    # - a crossing-inserting upper-envelope backend (`fues`, `mss`) — RFC and
+    #   LTM leave the envelope switch between two retained nodes, so linear
+    #   policy interpolation across the switch would mix two branch policies;
     # - no `Phased` declaration anywhere on the regime (a phase-variant
     #   utility, budget, transition, or state domain changes the
     #   simulate-phase FOC or the policy-row coordinates even under an
@@ -1002,12 +1010,16 @@ def _build_simulation_phase(
         not regime_declares_phased(user_regime) and not spec.carried_only_state_names
     )
     egm_policy_read = None
-    egm_config = solver.inner if isinstance(solver, NEGM) else solver
-    if isinstance(egm_config, DCEGM) and phase_invariant and not has_taste_shocks:
+    if (
+        isinstance(solver, DCEGM)
+        and solver.upper_envelope in ("fues", "mss")
+        and phase_invariant
+        and not has_taste_shocks
+    ):
         egm_policy_read = EGMPolicyRead(
-            action_name=egm_config.continuous_action,
-            resources_target=egm_config.resources,
-            savings_lower_bound=float(egm_config.savings_grid.to_jax()[0]),
+            action_name=solver.continuous_action,
+            resources_target=solver.resources,
+            savings_lower_bound=float(solver.savings_grid.to_jax()[0]),
         )
 
     return SimulationPhase(

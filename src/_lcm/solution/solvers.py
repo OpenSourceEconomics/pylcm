@@ -151,12 +151,17 @@ class DCEGM(Solver):
     Forward simulation reads the continuous action *off-grid* where the
     regime qualifies: the solve publishes the refined consumption function
     (`EGMSimPolicy`) and `simulate` interpolates the subject's row at its
-    resources, following the standard EGM convention, then checks the read
-    against the intrinsic budget (`continuous_action <= resources -
-    savings_grid lower bound`), positivity, and finiteness — an infeasible
-    read keeps that subject's grid value. Regimes where replaying the
-    solve-phase policy is invalid keep the gridded continuous action
-    entirely:
+    resources, following the standard EGM convention, then accepts the read
+    only when it lies inside the row's live support and satisfies the
+    intrinsic budget (`continuous_action <= resources - savings_grid lower
+    bound`), positivity, and finiteness — any other read keeps that
+    subject's grid value. Regimes where replaying the solve-phase policy is
+    invalid keep the gridded continuous action entirely:
+    - a nested (`NEGM`) solver — the published policy is keeper-conditional
+      while the value maximizes over adjusters;
+    - a non-crossing-inserting `upper_envelope` backend (`rfc`, `ltm`) —
+      their rows leave envelope switches between retained nodes, so linear
+      policy interpolation would mix two branch policies;
     - any `Phased` declaration (a phase-variant utility, budget, transition,
       or state domain changes the simulate-phase decision problem);
     - discrete actions (the branch is chosen from grid-restricted values and
