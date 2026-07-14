@@ -550,25 +550,46 @@ def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
     return error_messages
 
 
+def _phase_stochasticity_mismatch(*, name: StateName, value: Phased) -> list[str]:
+    """Both variants of a `Phased` law must be stochastic, or neither.
+
+    The two phases drive different machinery: the solve law supplies the probability
+    weights Q integrates the continuation over, while the simulate law realizes the next
+    state. A mixed pair (`MarkovTransition` on one side, a deterministic callable on the
+    other) asks the engine to integrate over a state in one phase and assign it a point
+    value in the other — the state would not even have the same kind in the two phases.
+    """
+    solve_stochastic = isinstance(value.solve, MarkovTransition)
+    simulate_stochastic = isinstance(value.simulate, MarkovTransition)
+    if solve_stochastic == simulate_stochastic:
+        return []
+    stochastic, deterministic = (
+        ("solve", "simulate") if solve_stochastic else ("simulate", "solve")
+    )
+    return [
+        f"state_transitions['{name}']: the {stochastic} variant is stochastic "
+        f"(`MarkovTransition`) but the {deterministic} variant is deterministic. Both "
+        f"phases must agree on whether the law is stochastic — wrap both in "
+        f"`MarkovTransition`, or neither.",
+    ]
+
+
 def _state_transition_value_errors(*, name: StateName, value: object) -> list[str]:
     """Validate one `state_transitions` entry against the value vocabulary.
 
-    Each variant of a `Phased` entry is held to the vocabulary of a bare
-    value — callable or a per-target Mapping — except that a stochastic
-    (`MarkovTransition`) variant is rejected: per-phase stochasticity of a
-    law of motion is not yet supported. `None` is not a law of motion; the
-    error points to `fixed_transition`.
+    Each variant of a `Phased` entry is held to the vocabulary of a bare value —
+    callable, `MarkovTransition`, or a per-target Mapping. A stochastic variant inside
+    `Phased` is supported: the solve variant is the perceived law that prices the
+    continuation in Q, the simulate variant is the true law the next state is drawn
+    from. Both variants must agree on *whether* the law is stochastic, though — a
+    state cannot be integrated over in one phase and set deterministically in the
+    other. `None` is not a law of motion; the error points to `fixed_transition`.
     """
     error_messages: list[str] = []
     phase_variant = isinstance(value, Phased)
+    if phase_variant:
+        error_messages.extend(_phase_stochasticity_mismatch(name=name, value=value))
     for variant, label in _state_transition_variants(value):
-        if phase_variant and isinstance(variant, MarkovTransition):
-            error_messages.append(
-                f"state_transitions['{name}']{label}: a stochastic "
-                f"(`MarkovTransition`) variant inside `Phased` is not yet "
-                f"supported.",
-            )
-            continue
         if variant is None:
             if phase_variant:
                 error_messages.append(

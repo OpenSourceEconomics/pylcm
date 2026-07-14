@@ -661,10 +661,31 @@ def _markov_law(wealth: float) -> FloatND:  # noqa: ARG001
     return jnp.asarray([0.5, 0.5])
 
 
-def test_markov_variant_in_phased_law_is_rejected() -> None:
-    """Stochastic (`MarkovTransition`) variants inside a `Phased` law of
-    motion are not yet supported."""
-    with pytest.raises(RegimeInitializationError, match="not yet supported"):
+def test_markov_variant_in_phased_law_is_accepted() -> None:
+    """A `Phased` law may be stochastic: solve = perceived law, simulate = true law.
+
+    The solve variant supplies the probabilities Q integrates the continuation over; the
+    simulate variant is the law the next state is actually drawn from. See
+    `tests/regime_building/test_perceived_stochastic_transitions.py` for the behavioural
+    split.
+    """
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(
+                solve=MarkovTransition(_markov_law),
+                simulate=MarkovTransition(_markov_law),
+            )
+        }
+    )
+
+
+def test_mixed_stochastic_and_deterministic_phased_law_is_rejected() -> None:
+    """Both phases must agree on whether the law is stochastic.
+
+    A state cannot be integrated over in one phase and assigned a point value in the
+    other — it would not even have the same kind across phases.
+    """
+    with pytest.raises(RegimeInitializationError, match="must agree on whether"):
         _build_regime(
             state_transitions={
                 "wealth": Phased(

@@ -42,6 +42,7 @@ def get_Q_and_F(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
+    continuation_functions: EconFunctionsMapping | None = None,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -49,9 +50,20 @@ def get_Q_and_F(
     not closure constants. This allows periods with the same target
     configuration to share a single JIT-compiled function.
 
+    Q mixes two phases when it is built for the simulate phase: the *current* flow
+    (utility, feasibility, `H`) is simulate-phase, while the *continuation* is priced
+    under the agent's perceived law — the solve phase. `transitions` already carries the
+    solve-phase laws, but a transition law is a DAG node like any other: `dags` resolves
+    its argument names against a function pool, so a law that depends on a `Phased`
+    helper picks up whichever variant that pool holds. Passing the solve pool as
+    `continuation_functions` is what makes the whole continuation sub-DAG — the outer
+    `next_<state>` / `weight_<target>__next_<state>` nodes *and* every helper they
+    read — resolve from the solve phase.
+
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
+            Supplies the current-period flow (utility, feasibility, `H`).
         constraints: Immutable mapping of constraint names to internal user functions.
         period_targets: Target regimes whose continuation enters E[V]
             this period (reachable, with state laws, active next period).
@@ -67,12 +79,22 @@ def get_Q_and_F(
             (never-transitioning) distributed states qualify.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None` for the linear expectation.
+        continuation_functions: Function pool the continuation sub-DAG (the state
+            transitions and the stochastic weights) is resolved against. Defaults to
+            `functions`, which is correct in the solve phase, where both pools are the
+            solve pool. The simulate phase must pass the SOLVE pool here so the agent
+            compares actions under its perceived law while the world is realized under
+            the true one.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
         for a non-terminal period.
 
     """
+    # In the solve phase the two pools coincide; only simulate passes them apart.
+    continuation_pool = (
+        functions if continuation_functions is None else (continuation_functions)
+    )
     deterministic_transitions, conflicting_deterministic_transition_names = (
         _get_deterministic_transitions(
             transitions=transitions,
@@ -98,14 +120,16 @@ def get_Q_and_F(
         # Transitions from the current regime to the target regime
         bundle = transitions[target_regime_name]
 
-        # Functions required to calculate the expected continuation values
+        # Functions required to calculate the expected continuation values. These read
+        # `continuation_pool`, NOT `functions`: the continuation is priced under the
+        # perceived (solve-phase) law, helpers included.
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
-            functions=functions,
+            functions=continuation_pool,
             transitions=bundle,
         )
         next_stochastic_states_weights[target_regime_name] = (
             get_next_stochastic_weights_function(
-                functions=functions,
+                functions=continuation_pool,
                 transitions=bundle,
                 stochastic_transition_names=stochastic_transition_names,
                 regime_name=target_regime_name,

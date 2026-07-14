@@ -287,6 +287,7 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
+            solve_functions=solution.functions,
             solve_transitions=solution.transitions,
             solve_stochastic_transition_names=solution.stochastic_transition_names,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
@@ -806,6 +807,7 @@ def _build_simulation_phase(
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
+    solve_functions: EconFunctionsMapping,
     solve_transitions: TransitionFunctionsMapping,
     solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
@@ -851,6 +853,10 @@ def _build_simulation_phase(
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
+        solve_functions: The solve phase's function pool. Q prices the continuation
+            under the agent's perceived law, so the continuation sub-DAG (state laws,
+            stochastic weights, and every helper they read) is resolved against this
+            pool rather than the simulate one.
         solve_transitions: Transitions from the solve phase (reused).
         solve_stochastic_transition_names: Stochastic transition names from solve
             (reused).
@@ -958,6 +964,15 @@ def _build_simulation_phase(
         # it evaluates on the Cartesian grid, not per-subject. The solve
         # phase built that function unconditionally for non-terminal regimes.
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
+        # The simulated agent acts on its BELIEFS and lives in the TRUTH: the current
+        # flow comes from the simulate pool (`functions`), while the whole continuation
+        # sub-DAG — the state laws, the stochastic weights, and every helper they read —
+        # is resolved against the SOLVE pool. Passing `transitions=solve_transitions`
+        # alone is not enough: `dags` resolves a transition's argument names against the
+        # function pool it is handed, so the outer law would still read `Phased` helpers
+        # (and, for `MarkovTransition`, its whole `weight_*` node) from the simulate
+        # phase. The realized next state stays on the simulate laws — see
+        # `next_state`/`compute_regime_transition_probs` below.
         Q_and_F_functions = _build_Q_and_F_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
             functions=functions,
@@ -969,6 +984,7 @@ def _build_simulation_phase(
             ages=ages,
             flat_param_names=flat_param_names,
             certainty_equivalent=certainty_equivalent,
+            continuation_functions=solve_functions,
         )
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
@@ -2139,6 +2155,7 @@ def _build_Q_and_F_per_period(
     flat_param_names: frozenset[str],
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
+    continuation_functions: EconFunctionsMapping | None = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
@@ -2192,6 +2209,7 @@ def _build_Q_and_F_per_period(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
+            continuation_functions=continuation_functions,
         )
 
     # Map each period to its group's function
