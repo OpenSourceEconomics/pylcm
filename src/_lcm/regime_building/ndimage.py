@@ -21,6 +21,7 @@ from collections.abc import Sequence
 import jax.numpy as jnp
 from jax import jit, lax
 
+from _lcm.regime_building.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
 
@@ -61,7 +62,14 @@ def map_coordinates(
     for indices_and_weights in itertools.product(*interpolation_data):
         indices, weights = zip(*indices_and_weights, strict=True)
         contribution = input[indices]
-        weighted_value = _multiply_all(weights) * contribution
+        weight_product = _multiply_all(weights)
+        # Zero-safe: an exact-integer coordinate (or a coordinate that lands
+        # exactly on the last node) gives one corner weight 0 exactly; if the
+        # NEIGHBORING corner (weight != 0) or this one holds an admissible
+        # on-path -inf, `0.0 * -inf = nan` must not leak into the sum — the
+        # zero-weight corner contributes exactly nothing, regardless of its
+        # (possibly -inf) value.
+        weighted_value = zero_safe_weighted_term(weight_product, contribution)
         interpolation_values.append(weighted_value)
 
     result = _sum_all(interpolation_values)

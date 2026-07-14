@@ -15,6 +15,7 @@ from _lcm.regime_building.collective import (
     collective_argmax_and_readout,
     collective_readout,
 )
+from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -105,7 +106,7 @@ def get_max_Q_over_a(
             default). Each is still an ordinary inner (non-co-mapped) productmap
             axis THROUGH the max-over-actions / collective readout — every node is
             evaluated exactly as today — but its axis is then weighted-averaged
-            away (`jnp.average(..., weights=fold_weights[name])`) before the
+            away (`zero_safe_average(..., weights=fold_weights[name])`) before the
             result is returned, so the caller never sees it. A collective
             regime's dissolution flag `D` is folded by `jnp.any` instead (stays
             strictly boolean; see `_wrap_with_fold_reduction`).
@@ -317,12 +318,17 @@ def _wrap_with_fold_reduction(
         if stakeholders is not None:
             V_arr, dissolution = cast("tuple[FloatND, BoolND]", out)
             for name, axis in fold_axis_positions:
-                V_arr = jnp.average(V_arr, axis=axis, weights=fold_weights[name])
+                # Zero-safe: a zero-weight fold node (e.g. a zero-probability
+                # co-mapped state) next to an admissible on-path -inf (a
+                # dissolution or infeasible-cell value) must not turn the
+                # fold average into a nan.
+                V_arr = zero_safe_average(V_arr, axis=axis, weights=fold_weights[name])
                 dissolution = jnp.any(dissolution, axis=axis)
             return V_arr, dissolution
         V_arr = cast("FloatND", out)
         for name, axis in fold_axis_positions:
-            V_arr = jnp.average(V_arr, axis=axis, weights=fold_weights[name])
+            # Zero-safe, mirroring the collective branch above.
+            V_arr = zero_safe_average(V_arr, axis=axis, weights=fold_weights[name])
         return V_arr
 
     return folded

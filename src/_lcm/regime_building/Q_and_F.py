@@ -14,6 +14,7 @@ from _lcm.regime_building.next_state import (
     get_next_stochastic_weights_function,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
+from _lcm.regime_building.zero_safe import zero_safe_average, zero_safe_weighted_term
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
@@ -236,12 +237,17 @@ def get_Q_and_F(
 
             # We then take the weighted average of the next value function at the
             # stochastic states to get the expected next value function.
-            next_V_expected_arr = jnp.average(
+            # Zero-safe: a zero-probability stochastic node next to an
+            # admissible on-path -inf must not turn the average into a nan.
+            next_V_expected_arr = zero_safe_average(
                 next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
             )
-            E_next_V = (
-                E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
+            # Zero-safe: an inactive regime-transition target (probability
+            # exactly 0) next to an admissible on-path -inf continuation must
+            # not turn this mixture term into a nan either.
+            E_next_V = E_next_V + zero_safe_weighted_term(
+                active_regime_probs[target_regime_name], next_V_expected_arr
             )
 
         if ce is not None:
@@ -429,8 +435,11 @@ def get_compute_intermediates(
                         for arg, flat_name in ce_transform_flat_names.items()
                     },
                 )
-            contribution = jnp.average(next_V_stoch, weights=joint)
-            E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
+            # Zero-safe, mirroring `get_Q_and_F` above: see the guards there.
+            contribution = zero_safe_average(next_V_stoch, weights=joint)
+            E_next_V = E_next_V + zero_safe_weighted_term(
+                active_regime_probs[target_regime_name], contribution
+            )
 
         if ce is not None:
             E_next_V = ce.inverse(
@@ -959,14 +968,15 @@ def get_Q_and_F_collective(
             )
 
             # Per-stakeholder weighted average over the stochastic nodes only —
-            # never over the trailing stakeholder axis.
-            next_V_expected_arr = jnp.average(
+            # never over the trailing stakeholder axis. Zero-safe: see the
+            # guards in `get_Q_and_F` above.
+            next_V_expected_arr = zero_safe_average(
                 next_V_at_stochastic_states_arr.reshape(-1, n_stakeholders),
                 axis=0,
                 weights=jnp.asarray(joint_next_stochastic_states_weights).reshape(-1),
             )
-            E_next_V = (
-                E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
+            E_next_V = E_next_V + zero_safe_weighted_term(
+                active_regime_probs[target_regime_name], next_V_expected_arr
             )
 
         # H applied on the stacked arrays is H per stakeholder: `utility` and

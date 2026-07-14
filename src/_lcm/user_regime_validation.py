@@ -9,7 +9,9 @@ public module keeps `lcm.regime` to class definitions.
 
 import ast
 import inspect
+import math
 import textwrap
+from collections import Counter
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, cast
 
@@ -85,10 +87,15 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
 
     Both the terminal (slice 1b) and non-terminal continuation (slice 2) cases
     are implemented; a regime is checked for the invariants the collective
-    kernels rely on: a per-stakeholder `utility_<s>` function for every
-    stakeholder, at least one discrete action (the household argmax runs over
-    the discrete-action product), and — if `weights` is given — weight keys
-    matching the stakeholder names.
+    kernels rely on: a non-empty, duplicate-free `stakeholders` tuple, a
+    per-stakeholder `utility_<s>` function for every stakeholder, at least one
+    discrete action (the household argmax runs over the discrete-action
+    product), and — if `weights` is given — weight keys matching the
+    stakeholder names, with every weight finite, non-negative, and a positive
+    total (the zero-safe scalarization in `collective._weighted_sum` treats an
+    exact-zero weight as a deliberate exclusion, so a non-finite or negative
+    weight, or an all-zero `weights` mapping, would silently produce a
+    meaningless or undefined household objective rather than erroring).
 
     Features outside the E1 scope raise `NotImplementedError`: EV1 taste shocks
     (the collective argmax is the hard household maximum), a nonlinear
@@ -134,6 +141,7 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
 
     error_messages: list[str] = []
     error_messages.extend(_collective_value_constraint_errors(regime))
+    error_messages.extend(_stakeholders_tuple_errors(stakeholders))
 
     missing = [s for s in stakeholders if f"utility_{s}" not in regime.functions]
     if missing:
@@ -151,14 +159,63 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
             "product."
         )
 
-    if regime.weights is not None and set(regime.weights) != set(stakeholders):
-        error_messages.append(
-            f"`weights` keys {sorted(regime.weights)} must match the "
-            f"stakeholders {sorted(stakeholders)}."
-        )
+    error_messages.extend(_collective_weights_errors(regime, stakeholders))
 
     if error_messages:
         raise RegimeInitializationError(format_messages(error_messages))
+
+
+def _stakeholders_tuple_errors(stakeholders: tuple[str, ...]) -> list[str]:
+    """Collect errors for an empty or duplicate-containing `stakeholders` tuple."""
+    if not stakeholders:
+        return ["`stakeholders` must be a non-empty tuple for a collective regime."]
+
+    duplicate_counts = Counter(stakeholders)
+    duplicates = sorted(name for name, count in duplicate_counts.items() if count > 1)
+    if duplicates:
+        return [
+            f"`stakeholders` must not contain duplicate names; got "
+            f"{stakeholders} (duplicated: {duplicates})."
+        ]
+    return []
+
+
+def _collective_weights_errors(
+    regime: lcm.regime.Regime, stakeholders: tuple[str, ...]
+) -> list[str]:
+    """Collect errors for a collective regime's `weights` mapping.
+
+    Weight keys must match `stakeholders`, and every weight must be finite,
+    non-negative, with a positive total — the zero-safe scalarization in
+    `collective._weighted_sum` treats an exact-zero weight as a deliberate
+    exclusion, so a non-finite or negative weight, or an all-zero `weights`
+    mapping, would silently produce a meaningless or undefined household
+    objective rather than erroring.
+    """
+    if regime.weights is None:
+        return []
+
+    if set(regime.weights) != set(stakeholders):
+        return [
+            f"`weights` keys {sorted(regime.weights)} must match the "
+            f"stakeholders {sorted(stakeholders)}."
+        ]
+
+    non_finite_or_negative = {
+        name: w for name, w in regime.weights.items() if not math.isfinite(w) or w < 0
+    }
+    if non_finite_or_negative:
+        return [
+            "`weights` must be finite and non-negative for every "
+            f"stakeholder; got {non_finite_or_negative}."
+        ]
+    if sum(regime.weights.values()) <= 0:
+        return [
+            "`weights` must sum to a positive total; an all-zero "
+            "Pareto-weight mapping leaves the household scalarization "
+            "identically zero for every action, so the argmax is undefined."
+        ]
+    return []
 
 
 def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:

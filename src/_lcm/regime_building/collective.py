@@ -27,6 +27,7 @@ from _lcm.regime_building.argmax import (
     _move_axes_to_back,
     argmax_and_max,
 )
+from _lcm.regime_building.zero_safe import zero_safe_weighted_term
 from lcm.typing import BoolND, FloatND, IntND
 
 
@@ -136,11 +137,22 @@ def _weighted_sum(
     stakeholder_Q: Mapping[str, FloatND],
     weights: Mapping[str, FloatND | float],
 ) -> FloatND:
-    """Scalarize the per-stakeholder Q into the household objective Σ_s λ_s Q^s."""
+    """Scalarize the per-stakeholder Q into the household objective Σ_s λ_s Q^s.
+
+    Zero-safe: a stakeholder excluded from the household scalarization via a
+    zero Pareto weight may still hold an admissible on-path `-inf` `Q^s` (e.g.
+    a feasible zero-consumption action for that partner); `weight * Q` would
+    then be `0.0 * -inf = nan`, poisoning the objective — and, via the
+    argmax, the WRONG stakeholder's `Q` would decide the household's choice.
+    Each term goes through `zero_safe_weighted_term` so a zero-weight
+    stakeholder contributes exactly `0.0` regardless of its own `Q^s`.
+    """
     names = list(stakeholder_Q)
-    objective = weights[names[0]] * stakeholder_Q[names[0]]
+    objective = zero_safe_weighted_term(weights[names[0]], stakeholder_Q[names[0]])
     for name in names[1:]:
-        objective = objective + weights[name] * stakeholder_Q[name]
+        objective = objective + zero_safe_weighted_term(
+            weights[name], stakeholder_Q[name]
+        )
     return objective
 
 
