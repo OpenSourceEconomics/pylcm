@@ -42,6 +42,7 @@ from _lcm.typing import (
     StateName,
 )
 from lcm.typing import (
+    BoolND,
     Float1D,
     FloatND,
     ScalarFloat,
@@ -226,16 +227,13 @@ def _get_solve_one_combo_asset_rows(
                 marginal_utility_node
                 + discount_factor * continuation_gradient / resources_gradient
             )
-            mu_node = jnp.where(jnp.isnan(policy_node), jnp.nan, mu_node)
-
-            # A node with no live candidate (its entire continuation is
-            # `-inf`) is worth `-inf`, like an infeasible combo; its
-            # marginal is exactly zero so probability-weighted sums stay
-            # finite.
-            no_live_candidate = jnp.all(candidate_dead)
-            V_node = jnp.where(no_live_candidate, -jnp.inf, V_node)
-            mu_node = jnp.where(jnp.isneginf(V_node) | no_live_candidate, 0.0, mu_node)
-
+            V_node, mu_node = _finalize_asset_row_node(
+                V_node=V_node,
+                mu_node=mu_node,
+                policy_node=policy_node,
+                candidate_dead=candidate_dead,
+                resources_gradient=resources_gradient,
+            )
             return V_node, policy_node, mu_node
 
         # Splay the per-asset-node solve into `lax.map` blocks of
@@ -274,6 +272,37 @@ def _get_solve_one_combo_asset_rows(
         )
 
     return solve_one_combo
+
+
+def _finalize_asset_row_node(
+    *,
+    V_node: ScalarFloat,
+    mu_node: ScalarFloat,
+    policy_node: ScalarFloat,
+    candidate_dead: BoolND,
+    resources_gradient: ScalarFloat,
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Apply the no-live-candidate and resources-validity guards to one node.
+
+    A node with no live candidate (its entire continuation is `-inf`) is worth
+    `-inf`, like an infeasible combo, with an exactly-zero marginal so
+    probability-weighted sums stay finite. Separately, the published marginal
+    divides the direct continuation channel by the resources slope `dR/da`, which
+    the method requires strictly positive (the carry abscissae are the node
+    resources). The build-time strict-monotonicity check skips a resources map that
+    reads a parameter, so a non-positive slope would otherwise publish a
+    finite value/marginal with the wrong orientation. Fail loud: NaN the value
+    *and* the marginal so the solve's NaN diagnostics (which scan the value array)
+    name the offending regime/period rather than returning silently-wrong numbers.
+    """
+    mu_node = jnp.where(jnp.isnan(policy_node), jnp.nan, mu_node)
+    no_live_candidate = jnp.all(candidate_dead)
+    V_node = jnp.where(no_live_candidate, -jnp.inf, V_node)
+    mu_node = jnp.where(jnp.isneginf(V_node) | no_live_candidate, 0.0, mu_node)
+    invalid_resources = resources_gradient <= 0.0
+    V_node = jnp.where(invalid_resources, jnp.nan, V_node)
+    mu_node = jnp.where(invalid_resources, jnp.nan, mu_node)
+    return V_node, mu_node
 
 
 def _get_expected_continuation_value(

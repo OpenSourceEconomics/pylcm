@@ -334,6 +334,15 @@ def _get_compute_node(
         # scale; a clamped near-zero-marginal corner whose root exceeds the
         # bracket lands far to the right and is discarded by the envelope, exactly
         # as the analytic path's large value is).
+        #
+        # `action_upper` must dominate every feasible consumption. It is derived
+        # from the savings-grid scale (the model's own resources scale) rather than
+        # the resources bound directly, since the per-savings-node kernel has no
+        # single current-state resources value here. A model whose optimal
+        # consumption can genuinely exceed ~1000x the top savings node (income far
+        # above the savings scale) is mis-scaled for this grid and would clamp a
+        # real interior root to the bound (reported with `dc/dm = 0`, like a binding
+        # corner); widen the savings grid or supply an analytic inverse in that case.
         marginal_utility_of_action = jax.grad(utility_of_action)
         action_upper = pieces.savings_nodes[-1] * 1000.0 + 1000.0
         action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
