@@ -7,6 +7,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+- A continuous stochastic process may condition its `sigma` on a discrete regime
+  state via `sigma=StateConditioned(on="<discrete state>", by={<category>: sigma})`.
+  The scalar `sigma` field then defines a FIXED common node grid; each regime's
+  transition row is evaluated directly at the from-value with that regime's `sigma`
+  (no precomputed-row interpolation). This expresses regime-switching income risk /
+  stochastic volatility. Supported for CDF-binned `NormalIIDProcess`
+  (`gauss_hermite=False`) and `TauchenAR1Process`; Gauss-Hermite IID and Rouwenhorst
+  are rejected at construction (their fixed-node kernels cannot carry a
+  state-conditioned `sigma`). Current-regime conditioning only. See
+  `lcm_examples/stochastic_volatility.py`.
+
 - Adds the DC-EGM solver (Iskhakov, Jørgensen, Rust & Schjerning 2017) as a
   per-regime alternative to grid search: `Regime(solver=lcm.DCEGM(...))`.
   Euler-equation inversion on an exogenous savings grid with a fast
