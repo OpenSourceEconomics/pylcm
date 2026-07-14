@@ -136,10 +136,14 @@ class PowerMean(QuasiArithmeticMean):
         Args:
             values: Strictly positive continuation values along the last axis.
             weights: Nonnegative probabilities over `values`, summing to one.
-                The generator-weighted sum is not renormalized — scaling the
-                weights by `k` scales the result by `k^(1/(1-ra))` — so only a
-                unit-mass lottery yields a certainty equivalent. Zero-weight
-                entries drop out exactly.
+                A weight sum within sqrt(eps) of one is floating summation
+                roundoff on a unit-mass lottery and aggregates as exactly
+                normalized — the power mean has a finite `ra -> 1` limit only
+                at unit mass. Scaling the weights by a materially non-unit
+                `k` scales the result by `k^(1/(1-ra))` (with no `ra -> 1`
+                limit; `ra = 1` publishes the normalized geometric mean), so
+                only a unit-mass lottery yields a certainty equivalent.
+                Zero-weight entries drop out exactly.
             risk_aversion: The Epstein-Zin risk-aversion coefficient.
 
         Returns:
@@ -157,8 +161,9 @@ class PowerMean(QuasiArithmeticMean):
         # and `E = sum w expm1((1-ra)(log v - a))`. The deviation ratio keeps
         # the quotient exact arbitrarily close to `ra = 1` — a rounded
         # log-sum divided by a near-zero exponent loses the geometric-mean
-        # limit to cancellation — while the exact mass term `log(W)` (zero
-        # for a unit-mass lottery) preserves the unnormalized sum's value.
+        # limit to cancellation — while the mass term `log(W)` carries a
+        # materially non-unit weight sum exactly and drops out for a
+        # unit-mass lottery (up to summation roundoff; see below).
         anchor_high = jnp.max(jnp.where(positive, log_v, -jnp.inf), axis=-1)
         anchor_low = jnp.min(jnp.where(positive, log_v, jnp.inf), axis=-1)
         anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
@@ -175,13 +180,24 @@ class PowerMean(QuasiArithmeticMean):
             axis=-1,
         )
         safe_weight = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+        # A mass gap below sqrt(eps) is floating summation roundoff on a
+        # mathematically unit-mass lottery (quadrature weights rarely sum to
+        # one bit-exactly): `log(W)/(1-ra)` would amplify it to an order-one
+        # error near `ra = 1`, so such lotteries aggregate as exactly
+        # normalized. A materially non-unit mass keeps its exact `log(W)`
+        # contribution (the documented `k^(1/(1-ra))` scaling).
+        roundoff_mass = (
+            jnp.abs(weight_sum - 1.0)
+            <= jnp.sqrt(jnp.finfo(safe_weight.dtype).eps)
+        )
+        log_mass = jnp.where(roundoff_mass, 0.0, jnp.log(safe_weight))
         log_ce_power = (
             anchor
-            + (jnp.log(safe_weight) + jnp.log1p(deviation_sum / safe_weight))
-            / safe_exponent
+            + (log_mass + jnp.log1p(deviation_sum / safe_weight)) / safe_exponent
         )
-        log_ce_geometric = jnp.sum(
-            jnp.where(positive, weights * log_v, weights * 0.0), axis=-1
+        log_ce_geometric = (
+            jnp.sum(jnp.where(positive, weights * log_v, weights * 0.0), axis=-1)
+            / safe_weight
         )
         return jnp.exp(jnp.where(exponent == 0.0, log_ce_geometric, log_ce_power))
 

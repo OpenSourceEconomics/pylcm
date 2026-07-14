@@ -115,8 +115,9 @@ def ez_transform_partials(
     `(regime x shock)` lottery is `ez_invert_partials` applied to the
     regime-probability-weighted blend. The generator and its weighting match the
     brute-force joint-lottery operator; the inversion de-scales the true mass
-    `W + E` as `log(W) + log1p(E/W)`, so the exact blend mass is preserved
-    while the near-unit generator information rides in the deviation ratio.
+    `W + E` as `log(W) + log1p(E/W)`, treating a weight sum within summation
+    roundoff of one as exactly normalized, while the near-unit generator
+    information rides in the deviation ratio.
 
     Args:
         child_values: Strictly positive next-period values on the lottery axis.
@@ -288,16 +289,26 @@ def ez_invert_partials(
     blend: with `S = e^((1-gamma) a) (W + E)` and `T = e^b T~`,
 
     - `nu = S^(1/(1-gamma))`, computed as
-      `log nu = a + [log(W) + log1p(E / W)] / (1-gamma)` (or `log nu = E` at
-      `gamma = 1`, where the deviation slot holds the weighted log generator).
-      Splitting `log(W + E)` into the mass term and the `log1p` deviation
-      ratio keeps the quotient exact through the `gamma -> 1` limit: one ULP
-      from unit risk aversion, `E / W` carries the first-order generator mean
-      that a rounded `log(W + E)` would lose to cancellation before the
-      division, while a genuinely sub-unit blend mass (a regime lottery whose
-      reachable probabilities do not sum to one) keeps its exact `log(W)`
-      contribution.
-    - `dnu/ds = nu^gamma T = e^(gamma log nu + b) * T~`.
+      `log nu = a + [log(W) + log1p(E / W)] / (1-gamma)` (or `log nu = E / W`
+      at `gamma = 1`, where the deviation slot holds the weighted log
+      generator). Splitting `log(W + E)` into the mass term and the `log1p`
+      deviation ratio keeps the quotient exact through the `gamma -> 1`
+      limit: one ULP from unit risk aversion, `E / W` carries the first-order
+      generator mean that a rounded `log(W + E)` would lose to cancellation
+      before the division.
+    - The mass term is gated on how far `W` sits from one:
+      - within sqrt(eps) — floating summation roundoff on a mathematically
+        unit-mass lottery — the lottery inverts as exactly normalized
+        (`log(W)` dropped, marginal divided by `W`), because the power mean
+        has a finite `gamma -> 1` limit only at unit mass and a roundoff gap
+        would otherwise blow up as `log(W)/(1-gamma)`;
+      - materially away from one, the exact `log(W)` contribution is kept
+        (a fixed-`gamma` sub-probability operator), and the `gamma = 1`
+        branch publishes the normalized geometric pair, the only finite
+        choice there.
+    - `dnu/ds = nu^gamma T = e^(gamma log nu + b) * T~`, divided by `W`
+      exactly where the value channel is normalized so the pair stays
+      consistent.
 
     All scale arithmetic happens on log quantities and the mantissa `T~` keeps
     magnitude of order one, so the inversion stays finite wherever the exact
@@ -322,15 +333,34 @@ def ez_invert_partials(
     exponent = 1.0 - risk_aversion
     safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
     safe_weight = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+    # A mass gap below sqrt(eps) is floating summation roundoff on a
+    # mathematically unit-mass lottery (quadrature weights rarely sum to one
+    # bit-exactly), not economic mass: the raw `log(W)/(1-gamma)` term would
+    # amplify it to an order-one error near `gamma = 1`, while its true effect
+    # on the certainty equivalent is below sqrt(eps) relative at any gamma.
+    # Such lotteries invert as exactly normalized (`W = 1`, deviations `E/W`);
+    # a materially non-unit mass keeps its exact `log(W)` contribution.
+    roundoff_mass = (
+        jnp.abs(weight_sum - 1.0) <= jnp.sqrt(jnp.finfo(safe_weight.dtype).eps)
+    )
+    log_mass = jnp.where(roundoff_mass, 0.0, jnp.log(safe_weight))
     log_nu = jnp.where(
         exponent == 0.0,
-        scaled_value,
-        log_anchor
-        + (jnp.log(safe_weight) + jnp.log1p(scaled_value / safe_weight))
-        / safe_exponent,
+        scaled_value / safe_weight,
+        log_anchor + (log_mass + jnp.log1p(scaled_value / safe_weight)) / safe_exponent,
     )
     nu = jnp.exp(log_nu)
-    dnu_ds = jnp.exp(risk_aversion * log_nu + marginal_log_scale) * marginal_mantissa
+    # Where the value channel is normalized — the roundoff snap, and the
+    # `gamma = 1` branch (whose unnormalized form has no finite value) — the
+    # marginal divides by the same mass so `(nu, dnu/ds)` stay an exact pair.
+    mass_normalizer = jnp.where(
+        roundoff_mass | (exponent == 0.0), safe_weight, 1.0
+    )
+    dnu_ds = (
+        jnp.exp(risk_aversion * log_nu + marginal_log_scale)
+        * marginal_mantissa
+        / mass_normalizer
+    )
     return nu, dnu_ds
 
 

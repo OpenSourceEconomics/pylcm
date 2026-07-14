@@ -902,3 +902,36 @@ def test_continuation_is_stable_one_ulp_from_unit_risk_aversion() -> None:
         )
         np.testing.assert_allclose(float(nu[0]), geometric, rtol=1e-8)
         np.testing.assert_allclose(float(dnu_ds[0]), geometric_derivative, rtol=1e-8)
+
+
+def test_continuation_is_stable_near_unit_gamma_for_quadrature_roundoff_mass() -> None:
+    """Quadrature weights whose float sum is one ULP below one hit the limits.
+
+    A mathematically normalized lottery need not sum to one bit-exactly —
+    normalized five-node Gauss-Hermite weights sum to `1 - 1 ULP` in float64.
+    A mass gap at roundoff scale must not leak into the `log(W)/(1-gamma)`
+    mass term, so at and one ULP around `gamma = 1` the CE and marginal sit
+    on the normalized geometric-mean limits.
+    """
+    _, raw_weights = np.polynomial.hermite.hermgauss(5)
+    weights = jnp.asarray(raw_weights / np.sqrt(np.pi))
+    values = jnp.asarray(np.exp(np.linspace(0.0, 2.0, 5)))
+    marginals = jnp.asarray(np.ones(5))
+
+    normalized = weights / jnp.sum(weights)
+    geometric = float(jnp.exp(jnp.sum(normalized * jnp.log(values))))
+    geometric_derivative = float(geometric * jnp.sum(normalized * marginals / values))
+
+    for gamma in (
+        np.nextafter(np.float64(1.0), np.float64(np.inf)),
+        np.float64(1.0),
+        np.nextafter(np.float64(1.0), np.float64(-np.inf)),
+    ):
+        nu, dnu_ds = ez_continuation(
+            child_values=values[None, :],
+            child_marginals=marginals[None, :],
+            weights=weights,
+            risk_aversion=jnp.asarray(gamma),
+        )
+        np.testing.assert_allclose(float(nu[0]), geometric, rtol=1e-8)
+        np.testing.assert_allclose(float(dnu_ds[0]), geometric_derivative, rtol=1e-8)
