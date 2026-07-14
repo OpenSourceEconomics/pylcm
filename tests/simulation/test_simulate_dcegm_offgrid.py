@@ -3,23 +3,18 @@
 Standard EGM (Carroll 2006; Iskhakov-Jørgensen-Rust-Schjerning 2017; Druedahl
 2021) simulates the continuous choice by interpolating the refined consumption
 function at the simulated state, not by an argmax over the action grid. The
-solve publishes that function (`EGMSimPolicy`, per `model.solve(
-return_simulation_policy=True)`); simulation interpolates it at each subject's
-resources.
+solve publishes that function (`EGMSimPolicy`); simulation interpolates it at
+each subject's resources.
 
 The spec below is the closed-form two-period retirement model with log utility,
 zero interest, and an age-50 bequest `(age/50) log(wealth)`: optimal consumption
 is `c* = wealth / (1 + beta)` at every resources level. Seeding subjects at
 wealth strictly between consumption-grid nodes, the simulated consumption must
 hit `c*` — which a grid-restricted argmax cannot.
-
-Marked xfail until Increment 2 wires the off-grid interpolation into `simulate`
-(the solve-side publication landed first); flip when it does.
 """
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from lcm import AgeGrid, LogSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
@@ -54,11 +49,6 @@ def _closed_form_model() -> Model:
     )
 
 
-@pytest.mark.xfail(
-    reason="off-grid continuous-action interpolation not yet wired into simulate "
-    "(Increment 2 pending; the solve-side EGMSimPolicy publication landed first)",
-    strict=False,
-)
 def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     """Simulated consumption equals `wealth / (1 + beta)` at off-grid wealth.
 
@@ -75,6 +65,7 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     off_grid_wealth = 0.5 * (wealth_nodes[3:-1] + wealth_nodes[4:])
     initial_conditions = {
         "wealth": jnp.asarray(off_grid_wealth),
+        "age": jnp.full(off_grid_wealth.shape, 40.0),
         "regime_id": jnp.full(
             off_grid_wealth.shape,
             retirement_only.RetirementOnlyRegimeId.retirement,
@@ -87,7 +78,7 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
         period_to_regime_to_V_arr=None,
         log_level="off",
     )
-    df = result.to_dataframe(additional_targets=["consumption"])
+    df = result.to_dataframe()
     period_0 = df.query("period == 0")
     consumption = period_0["consumption"].to_numpy()
     expected = off_grid_wealth / (1.0 + _DISCOUNT_FACTOR)

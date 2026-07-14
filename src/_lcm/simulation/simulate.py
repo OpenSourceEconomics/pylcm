@@ -1,18 +1,22 @@
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 from jax import vmap
 
+from _lcm.egm.interp import interp_on_padded_grid
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import (
     PeriodRegimeSimulationData,
     Regime,
     StateActionSpace,
 )
+from _lcm.simulation.additional_targets import _compute_targets
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
@@ -26,8 +30,11 @@ from _lcm.simulation.transitions import (
 )
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import (
+    ActionName,
     FlatParams,
+    FlatRegimeParams,
     InitialConditions,
+    PeriodToRegimeToSimPolicy,
     PRNGKeyND,
     RegimeIdsToNames,
     RegimeName,
@@ -48,7 +55,15 @@ from _lcm.utils.logging import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.result import SimulationResult
-from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+)
 
 
 def simulate(
@@ -63,6 +78,7 @@ def simulate(
     ],
     ages: AgeGrid,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
+    period_to_regime_to_sim_policy: PeriodToRegimeToSimPolicy | None = None,
     seed: int | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
@@ -83,6 +99,12 @@ def simulate(
         period_to_regime_to_V_arr: Immutable mapping of periods to regime
             value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
+        period_to_regime_to_sim_policy: Immutable mapping of periods to each
+            EGM regime's published off-grid simulation policy, or `None`
+            (user-supplied V arrays carry no policy). Sparse over regimes.
+            Where a regime qualifies (`SimulationPhase.egm_policy_read`), the
+            continuous action is interpolated from the policy at the
+            subject's resources instead of argmaxed over the action grid.
         simulation_output_dtypes: Mapping of variable name to `pd.CategoricalDtype`,
             used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
@@ -158,6 +180,7 @@ def simulate(
             regime_names_to_ids=regime_names_to_ids,
             regime_ids_to_names=regime_ids_to_names,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
             flat_params=flat_params,
             ages=ages,
             seed=seed,
@@ -232,6 +255,7 @@ def _simulate_subject_chunk(
     ages: AgeGrid,
     seed: int,
     logger: logging.Logger,
+    period_to_regime_to_sim_policy: PeriodToRegimeToSimPolicy | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -303,6 +327,9 @@ def _simulate_subject_chunk(
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                    sim_policy=(period_to_regime_to_sim_policy or {})
+                    .get(period, {})
+                    .get(regime_name),
                     flat_params=flat_params,
                     regime_names_to_ids=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
@@ -404,6 +431,7 @@ def _simulate_regime_in_period(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
+    sim_policy: EGMSimPolicy | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -429,6 +457,9 @@ def _simulate_regime_in_period(
         n_subjects: Total number of subjects (the full population), used to keep RNG
             key generation independent of how subjects are chunked.
         subject_slice: Global-index slice of the subjects in this chunk.
+        sim_policy: The regime's published off-grid simulation policy for this
+            period, or `None`. Consumed only where the regime qualifies
+            (`regime.simulation.egm_policy_read`).
 
     Returns:
         Tuple containing:
@@ -502,6 +533,15 @@ def _simulate_regime_in_period(
         flat_indices=indices_optimal_actions,
         grids=state_action_space.actions,
     )
+    optimal_actions = _replace_continuous_action_with_policy_read(
+        optimal_actions=optimal_actions,
+        regime=regime,
+        sim_policy=sim_policy,
+        states=states[regime_name],
+        flat_params=flat_params[regime_name],
+        period=period,
+        age=age,
+    )
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match this chunk's subject count.
@@ -557,6 +597,54 @@ def _simulate_regime_in_period(
         states = next_states
 
     return simulation_result, states, new_subject_regime_ids, key
+
+
+def _replace_continuous_action_with_policy_read(
+    *,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: EGMSimPolicy | None,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> MappingProxyType[ActionName, FloatND | IntND]:
+    """Interpolate the published EGM policy at each subject's resources.
+
+    Replaces the grid-argmax value of the EGM continuous action with the
+    off-grid solve-phase optimum. Applies only where the regime qualifies
+    (`regime.simulation.egm_policy_read` is set) and the published policy is
+    a single refined row — rows with leading combo axes (discrete states,
+    passive states, discrete actions) keep the grid value.
+    """
+    read = regime.simulation.egm_policy_read
+    if sim_policy is None or read is None or sim_policy.policy.ndim != 1:
+        return optimal_actions
+    n_subjects = next(iter(states.values())).shape[0]
+    data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
+        **dict(states),
+        "period": jnp.full(n_subjects, period, dtype=jnp.int32),
+        "age": jnp.full(n_subjects, age),
+    }
+    # `_compute_targets` squeezes its outputs, collapsing a single-subject
+    # vector to 0-d; the action override must keep the subject axis.
+    resources = jnp.reshape(
+        jnp.asarray(
+            _compute_targets(
+                data=data,
+                targets=[read.resources_target],
+                regime=regime,
+                regime_params=flat_params,
+            )[read.resources_target]
+        ),
+        (n_subjects,),
+    )
+    off_grid_action = interp_on_padded_grid(
+        x_query=jnp.asarray(resources),
+        xp=sim_policy.endog_grid,
+        fp=sim_policy.policy,
+    )
+    return MappingProxyType({**optimal_actions, read.action_name: off_grid_action})
 
 
 def _lookup_values_from_indices(

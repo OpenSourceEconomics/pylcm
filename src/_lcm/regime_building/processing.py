@@ -29,6 +29,7 @@ from _lcm.egm.terminal import (
 )
 from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.engine import (
+    EGMPolicyRead,
     Regime,
     SimulationPhase,
     SolutionPhase,
@@ -980,6 +981,21 @@ def _build_simulation_phase(
         enable_jit=enable_jit,
     )
 
+    # Replaying the solve-phase EGM policy in simulation is valid only when
+    # the simulate-phase decision problem is the one the solve optimized:
+    # - `H` phase-invariant (`_split_functions` copies the same object into
+    #   both phase slices when the user did not declare a `Phased` H);
+    # - no taste shocks (the realized discrete draw perturbs the decision).
+    h_phase_invariant = spec.solution.functions.get(
+        "H"
+    ) is spec.simulation.functions.get("H")
+    egm_policy_read = None
+    if isinstance(solver, DCEGM) and h_phase_invariant and not has_taste_shocks:
+        egm_policy_read = EGMPolicyRead(
+            action_name=solver.continuous_action,
+            resources_target=solver.resources,
+        )
+
     return SimulationPhase(
         _variables=simulation_variables,
         grids=simulate_grids,
@@ -991,6 +1007,7 @@ def _build_simulation_phase(
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         next_state=next_state,
+        egm_policy_read=egm_policy_read,
     )
 
 

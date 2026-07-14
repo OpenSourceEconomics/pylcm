@@ -675,11 +675,14 @@ class Model:
             max_compilation_workers=max_compilation_workers,
             log=log,
         )
+        period_to_regime_to_sim_policy = None
         if period_to_regime_to_V_arr is None:
-            # Simulation is grid-restricted: it interpolates only the value
-            # functions, so the published DC-EGM policy is unpacked and dropped.
-            # Off-grid simulation would interpolate the policy instead.
-            period_to_regime_to_V_arr, _period_to_regime_to_sim_policy = (
+            # A fresh solve also publishes the off-grid DC-EGM policy, which
+            # simulation interpolates at each subject's resources where the
+            # regime qualifies (`SimulationPhase.egm_policy_read`). With
+            # user-supplied V arrays there is no published policy, so the
+            # grid-argmax path decides the continuous action.
+            period_to_regime_to_V_arr, period_to_regime_to_sim_policy = (
                 self._solve_compiled(
                     flat_params=flat_params,
                     params=params,
@@ -701,6 +704,7 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             logger=log,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
