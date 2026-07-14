@@ -12,6 +12,7 @@ from jax import vmap
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import (
+    EGMPolicyRead,
     PeriodRegimeSimulationData,
     Regime,
     StateActionSpace,
@@ -612,23 +613,115 @@ def _replace_continuous_action_with_policy_read(
     """Interpolate the published EGM policy at each subject's resources.
 
     Replaces the grid-argmax value of the EGM continuous action with the
-    off-grid solve-phase optimum. Applies only where the regime qualifies
-    (`regime.simulation.egm_policy_read` is set) and the published policy is
-    a single refined row — rows with leading combo axes (discrete states,
-    passive states, discrete actions) keep the grid value.
+    off-grid solve-phase optimum. Row selection follows the policy's own
+    layout:
+    - discrete-state and discrete-action axes index the row at the subject's
+      state / chosen action (positions located on the variable's grid);
+    - a passive continuous-state axis blends the two rows bracketing the
+      subject's off-grid value, interpolating each row at the subject's
+      resources first (never a pre-blended row).
+    Applies only where the regime qualifies (`regime.simulation.egm_policy_read`
+    is set); more than one passive axis keeps the grid value.
     """
     read = regime.simulation.egm_policy_read
-    if sim_policy is None or read is None or sim_policy.policy.ndim != 1:
+    if sim_policy is None or read is None:
         return optimal_actions
+    if len(sim_policy.row_passive_state_names) > 1:
+        return optimal_actions
+
     n_subjects = next(iter(states.values())).shape[0]
+    resources = _resources_at_subjects(
+        read=read,
+        regime=regime,
+        sim_policy=sim_policy,
+        states=states,
+        optimal_actions=optimal_actions,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+
+    def grid_position(name: StateOrActionName, values: FloatND | IntND) -> IntND:
+        grid_values = jnp.asarray(regime.simulation.grids[name].to_jax())
+        return jnp.clip(
+            jnp.searchsorted(grid_values, values), 0, grid_values.shape[0] - 1
+        )
+
+    state_positions = tuple(
+        grid_position(name, jnp.asarray(states[name]))
+        for name in sim_policy.row_discrete_state_names
+    )
+    action_positions = tuple(
+        grid_position(name, jnp.asarray(optimal_actions[name]))
+        for name in sim_policy.row_discrete_action_names
+    )
+
+    def read_rows(passive_positions: tuple[IntND, ...]) -> FloatND:
+        index = (*state_positions, *passive_positions, *action_positions)
+        if index:
+            rows_x = sim_policy.endog_grid[index]
+            rows_f = sim_policy.policy[index]
+        else:
+            rows_x = jnp.broadcast_to(
+                sim_policy.endog_grid, (n_subjects, *sim_policy.endog_grid.shape)
+            )
+            rows_f = jnp.broadcast_to(
+                sim_policy.policy, (n_subjects, *sim_policy.policy.shape)
+            )
+        return vmap(
+            lambda x_query, xp, fp: interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
+        )(resources, rows_x, rows_f)
+
+    if sim_policy.row_passive_state_names:
+        passive_name = sim_policy.row_passive_state_names[0]
+        passive_grid = jnp.asarray(regime.simulation.grids[passive_name].to_jax())
+        passive_values = jnp.asarray(states[passive_name])
+        lower = jnp.clip(
+            jnp.searchsorted(passive_grid, passive_values, side="right") - 1,
+            0,
+            passive_grid.shape[0] - 2,
+        )
+        width = passive_grid[lower + 1] - passive_grid[lower]
+        weight = jnp.clip((passive_values - passive_grid[lower]) / width, 0.0, 1.0)
+        off_grid_action = (1.0 - weight) * read_rows((lower,)) + weight * read_rows(
+            (lower + 1,)
+        )
+    else:
+        off_grid_action = read_rows(())
+
+    return MappingProxyType({**optimal_actions, read.action_name: off_grid_action})
+
+
+def _resources_at_subjects(
+    *,
+    read: EGMPolicyRead,
+    regime: Regime,
+    sim_policy: EGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+) -> FloatND:
+    """Compute each subject's endogenous resources through the simulate DAG.
+
+    The chosen discrete actions enter the data: a budget whose income depends
+    on a discrete action (work choice) reads the simulated choice. The result
+    keeps the subject axis (`_compute_targets` squeezes its outputs, which
+    would collapse a single-subject vector to 0-d before the next-state vmap).
+    """
     data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
         **dict(states),
+        **{
+            name: jnp.asarray(optimal_actions[name])
+            for name in sim_policy.row_discrete_action_names
+        },
         "period": jnp.full(n_subjects, period, dtype=jnp.int32),
         "age": jnp.full(n_subjects, age),
     }
-    # `_compute_targets` squeezes its outputs, collapsing a single-subject
-    # vector to 0-d; the action override must keep the subject axis.
-    resources = jnp.reshape(
+    return jnp.reshape(
         jnp.asarray(
             _compute_targets(
                 data=data,
@@ -639,12 +732,6 @@ def _replace_continuous_action_with_policy_read(
         ),
         (n_subjects,),
     )
-    off_grid_action = interp_on_padded_grid(
-        x_query=jnp.asarray(resources),
-        xp=sim_policy.endog_grid,
-        fp=sim_policy.policy,
-    )
-    return MappingProxyType({**optimal_actions, read.action_name: off_grid_action})
 
 
 def _lookup_values_from_indices(

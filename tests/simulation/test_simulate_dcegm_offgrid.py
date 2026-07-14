@@ -16,11 +16,13 @@ hit `c*` — which a grid-restricted argmax cannot.
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, LogSpacedGrid, Model
+from _lcm.egm.interp import interp_on_padded_grid
+from lcm import AgeGrid, LinSpacedGrid, LogSpacedGrid, Model, fixed_transition
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousState, FloatND
-from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
-from tests.test_models.deterministic import retirement_only
+from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
+from tests.test_models.deterministic import base, retirement_only
+from tests.test_models.deterministic import dcegm_variants
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
@@ -82,4 +84,145 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     period_0 = df.query("period == 0")
     consumption = period_0["consumption"].to_numpy()
     expected = off_grid_wealth / (1.0 + _DISCOUNT_FACTOR)
+    np.testing.assert_allclose(consumption, expected, rtol=2e-2)
+
+
+def test_dcegm_simulated_consumption_reads_the_chosen_discrete_actions_row():
+    """With a discrete work choice, consumption is the chosen row's policy value.
+
+    The published policy carries one refined row per discrete-action value.
+    Simulation selects the row of the simulated `labor_supply` and interpolates
+    it at the subject's resources — so the simulated consumption must equal
+    that row's off-grid read, not an action-grid node.
+    """
+    n_periods = 3
+    model = dcegm_variants.get_full_model("dcegm", n_periods)
+    params = dcegm_variants.get_full_params(n_periods)
+
+    wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
+    off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])
+    n_subjects = off_grid_wealth.shape[0]
+    initial_conditions = {
+        "wealth": jnp.asarray(off_grid_wealth),
+        "age": jnp.full(n_subjects, 40.0),
+        "regime_id": jnp.full(n_subjects, base.RegimeId.working_life),
+    }
+
+    _, policies = model.solve(
+        params=params, log_level="off", return_simulation_policy=True
+    )
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    )
+    period_0 = (
+        result.to_dataframe(use_labels=False)
+        .query("period == 0 and regime_name == 'working_life'")
+        .sort_values("subject_id")
+    )
+    consumption = period_0["consumption"].to_numpy()
+    chosen_action = period_0["labor_supply"].to_numpy().astype(int)
+
+    policy = policies[0]["working_life"]
+    expected = np.array(
+        [
+            float(
+                interp_on_padded_grid(
+                    x_query=jnp.asarray(wealth),
+                    xp=policy.endog_grid[action],
+                    fp=policy.policy[action],
+                )
+            )
+            for wealth, action in zip(off_grid_wealth, chosen_action, strict=True)
+        ]
+    )
+    np.testing.assert_allclose(consumption, expected, rtol=1e-10)
+
+
+def _skill_bequest_utility(
+    wealth: ContinuousState, skill: ContinuousState, age: float
+) -> FloatND:
+    return skill * (age / 50.0) * jnp.log(wealth)
+
+
+def _skill_alive_utility(
+    consumption: ContinuousState, skill: ContinuousState
+) -> FloatND:
+    # The zero-weight `skill` term keeps the FOC at `1/c` while satisfying the
+    # every-state-is-used model validation; `skill` matters through the
+    # bequest weight only.
+    return jnp.log(consumption) + 0.0 * skill
+
+
+def _skill_model() -> Model:
+    """Two-period model whose optimal consumption depends on a passive state.
+
+    Alive: `log(c)`; dead bequest: `skill * log(wealth)`. Optimal consumption
+    is `c* = wealth / (1 + beta * skill)` — the passive `skill` axis shifts
+    the policy row as a function of resources, so an off-grid skill
+    exercises the cross-row blend.
+    """
+    skill_grid = LinSpacedGrid(start=0.5, stop=1.5, n_points=5)
+    alive = dcegm_retirement.replace(
+        active=lambda age: age < 50,
+        states={"wealth": WEALTH_GRID, "skill": skill_grid},
+        state_transitions={
+            "wealth": next_wealth_from_savings,
+            "skill": fixed_transition("skill"),
+        },
+        functions={
+            **dict(dcegm_retirement.functions),
+            "utility": _skill_alive_utility,
+        },
+    )
+    bequest_dead = UserRegime(
+        transition=None,
+        states={
+            "wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400),
+            "skill": skill_grid,
+        },
+        functions={"utility": _skill_bequest_utility},
+    )
+    return Model(
+        regimes={"retirement": alive, "dead": bequest_dead},
+        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        regime_id_class=retirement_only.RetirementOnlyRegimeId,
+    )
+
+
+def test_dcegm_simulated_consumption_blends_rows_at_off_grid_passive_state():
+    """An off-grid passive state blends the two bracketing policy rows.
+
+    With bequest weight `skill`, optimal consumption is
+    `c* = wealth / (1 + beta * skill)`. Seeding subjects at skill values
+    strictly between the skill-grid nodes, the simulated consumption must
+    track the closed form — a single row (either bracket) cannot.
+    """
+    model = _skill_model()
+    params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
+
+    wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
+    off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])
+    off_grid_skill = np.array([0.625, 0.875, 1.125, 1.375])
+    n_subjects = off_grid_wealth.shape[0]
+    initial_conditions = {
+        "wealth": jnp.asarray(off_grid_wealth),
+        "skill": jnp.asarray(off_grid_skill),
+        "age": jnp.full(n_subjects, 40.0),
+        "regime_id": jnp.full(
+            n_subjects, retirement_only.RetirementOnlyRegimeId.retirement
+        ),
+    }
+
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    )
+    period_0 = result.to_dataframe().query("period == 0")
+    consumption = period_0["consumption"].to_numpy()
+    expected = off_grid_wealth / (1.0 + _DISCOUNT_FACTOR * off_grid_skill)
     np.testing.assert_allclose(consumption, expected, rtol=2e-2)

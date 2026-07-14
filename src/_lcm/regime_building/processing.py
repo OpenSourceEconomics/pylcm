@@ -990,10 +990,11 @@ def _build_simulation_phase(
         "H"
     ) is spec.simulation.functions.get("H")
     egm_policy_read = None
-    if isinstance(solver, DCEGM) and h_phase_invariant and not has_taste_shocks:
+    egm_config = solver.inner if isinstance(solver, NEGM) else solver
+    if isinstance(egm_config, DCEGM) and h_phase_invariant and not has_taste_shocks:
         egm_policy_read = EGMPolicyRead(
-            action_name=solver.continuous_action,
-            resources_target=solver.resources,
+            action_name=egm_config.continuous_action,
+            resources_target=egm_config.resources,
         )
 
     return SimulationPhase(

@@ -8,21 +8,19 @@ that function — the off-grid policy a simulated subject's continuous action
 the action grid.
 
 It is produced and carried for *every* solved period alongside the
-value-function arrays, but it is **not consumed by `simulate` today**: forward
-simulation re-optimizes the gridded continuous action via
-`argmax_and_max_Q_over_a` (the grid-restricted path documented on `DCEGM`), so
-simulated actions live on the action grid. `EGMSimPolicy` is built ahead of an
-off-grid simulation path that is not yet wired in.
+value-function arrays. Forward simulation consumes it where the regime
+qualifies (`SimulationPhase.egm_policy_read`): the subject's row — indexed by
+its discrete states and the chosen discrete action, with an off-grid passive
+state blending the two bracketing rows — is interpolated at the subject's
+resources, replacing the action-grid argmax value of the continuous action.
 
-Invariant for whoever wires it in: the stored policy is the **solve-phase**
-optimum. It may be used at simulate time only when the solve-phase and
-simulate-phase aggregators `H` coincide. With a phase-variant `H` (e.g. naive
-present bias — solve under the exponential `δ`, simulate under `β̃β`) the stored
-policy encodes the wrong continuous-action FOC; such models must keep the
-re-optimization path, which re-applies the simulate-phase decision. A regression
-should assert that DC-EGM simulation of a present-bias model differs from the
-exponential one in the expected direction before any off-grid lookup replaces
-the re-optimization.
+The gate exists because the stored policy is the **solve-phase** optimum. It
+is valid at simulate time only when the solve-phase and simulate-phase
+aggregators `H` coincide: with a phase-variant `H` (e.g. naive present bias —
+solve under the exponential `δ`, simulate under `β̃β`) the stored policy
+encodes the wrong continuous-action FOC. Such regimes — and regimes with EV1
+taste shocks, whose realized draws perturb the decision — keep the
+grid-argmax path, which re-applies the simulate-phase decision.
 
 Unlike the rolling `EGMCarry` (the cross-period continuation channel, overwritten
 each period), this is saved for every solved period and travels to `simulate`
@@ -36,7 +34,7 @@ from typing import Any
 
 import jax
 
-from lcm.typing import FloatND
+from lcm.typing import ActionName, FloatND, StateName
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -58,18 +56,41 @@ class EGMSimPolicy:
     policy: FloatND
     """Optimal continuous action at `endog_grid` (NaN on padding slots)."""
 
+    row_discrete_state_names: tuple[StateName, ...] = ()
+    """Names of the leading discrete-state row axes, in axis order."""
 
-_EGM_SIM_POLICY_FIELDS = ("endog_grid", "policy")
+    row_passive_state_names: tuple[StateName, ...] = ()
+    """Names of the passive continuous-state row axes, after the discrete
+    states."""
+
+    row_discrete_action_names: tuple[ActionName, ...] = ()
+    """Names of the discrete-action row axes, after the passive states."""
 
 
-def _flatten_egm_sim_policy(policy: EGMSimPolicy) -> tuple[tuple[Any, ...], None]:
-    return tuple(getattr(policy, name) for name in _EGM_SIM_POLICY_FIELDS), None
+_EGM_SIM_POLICY_ARRAY_FIELDS = ("endog_grid", "policy")
+_EGM_SIM_POLICY_STATIC_FIELDS = (
+    "row_discrete_state_names",
+    "row_passive_state_names",
+    "row_discrete_action_names",
+)
 
 
-def _unflatten_egm_sim_policy(_aux: None, children: Sequence[Any]) -> EGMSimPolicy:
+def _flatten_egm_sim_policy(
+    policy: EGMSimPolicy,
+) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    children = tuple(getattr(policy, name) for name in _EGM_SIM_POLICY_ARRAY_FIELDS)
+    aux = tuple(getattr(policy, name) for name in _EGM_SIM_POLICY_STATIC_FIELDS)
+    return children, aux
+
+
+def _unflatten_egm_sim_policy(
+    aux: tuple[Any, ...], children: Sequence[Any]
+) -> EGMSimPolicy:
     policy = object.__new__(EGMSimPolicy)
-    for name, child in zip(_EGM_SIM_POLICY_FIELDS, children, strict=True):
+    for name, child in zip(_EGM_SIM_POLICY_ARRAY_FIELDS, children, strict=True):
         object.__setattr__(policy, name, child)
+    for name, value in zip(_EGM_SIM_POLICY_STATIC_FIELDS, aux, strict=True):
+        object.__setattr__(policy, name, value)
     return policy
 
 
