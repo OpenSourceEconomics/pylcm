@@ -42,6 +42,13 @@ from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.processes.ar1 import TauchenAR1Process
+from _lcm.processes.iid import NormalIIDProcess
+from _lcm.processes.state_conditioned import (
+    conditioned_row,
+    gather_sigma,
+    sigma_array_by_code,
+)
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -1222,7 +1229,13 @@ def _process_regime_core(
     }
     processed_functions |= {
         f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
-            name=process, grid=grid
+            name=process,
+            grid=grid,
+            conditioning_grid=(
+                all_grids[user_regime][grid.state_conditioned.on]
+                if grid.state_conditioned is not None
+                else None
+            ),
         )
         for (user_regime, process), grid in target_process_grids.items()
     } | {
@@ -1551,15 +1564,90 @@ def _get_stochastic_next_function_for_process(
     return next_func
 
 
+def _process_family(grid: _ContinuousStochasticProcess) -> str:
+    """Map a supported process to its state-conditioned family (audit F2).
+
+    Only families whose transition CDF carries ``sigma`` can express a fixed-node,
+    state-conditioned ``sigma``: CDF-binned ``NormalIIDProcess`` and
+    ``TauchenAR1Process``. Gauss-Hermite IID (nodes scale with ``sigma``) and
+    Rouwenhorst (``rho``-only transition) are rejected at construction.
+    """
+    if isinstance(grid, NormalIIDProcess):
+        if grid.gauss_hermite:
+            msg = (
+                "state-conditioned sigma is not supported for Gauss-Hermite IID "
+                "(its nodes scale with sigma); use gauss_hermite=False (CDF binning)."
+            )
+            raise ModelInitializationError(msg)
+        return "iid_normal"
+    if isinstance(grid, TauchenAR1Process):
+        return "tauchen"
+    msg = (
+        "state-conditioned sigma is only supported for CDF-binned NormalIIDProcess "
+        f"and TauchenAR1Process (audit F2); got {type(grid).__name__}."
+    )
+    raise ModelInitializationError(msg)
+
+
+def _get_conditioned_weights_func(
+    *, name: str, grid: _ContinuousStochasticProcess, conditioning_grid: DiscreteGrid
+) -> UserFunction:
+    """Weights function for a state-conditioned process (direct-CDF, audit F1/F5/F6).
+
+    The transition row is computed DIRECTLY at the from-value on the FIXED common nodes
+    (from the scalar ``sigma``), with the per-regime ``sigma`` gathered by the
+    conditioning state's integer code. No precomputed-row interpolation (F1).
+    """
+    sc = grid.state_conditioned
+    family = _process_family(grid)
+    nodes = grid.get_gridpoints()
+    sigma_by_code = sigma_array_by_code(conditioning_grid, sc.by)
+    rho_fixed = dict(grid.params).get("rho")
+    if family == "tauchen" and rho_fixed is None:
+        msg = (
+            "state-conditioned Tauchen requires rho fixed at construction (v1); "
+            "pass rho=... to TauchenAR1Process(...)."
+        )
+        raise ModelInitializationError(msg)
+
+    args = {name: "ContinuousState", sc.on: "DiscreteState"}
+
+    @with_signature(args=args, return_annotation="FloatND", enforce=False)
+    def weights_func_conditioned(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+        sigma = gather_sigma(sigma_by_code, kwargs[sc.on])
+        return conditioned_row(
+            family=family,
+            nodes=nodes,
+            sigma=sigma,
+            from_value=kwargs[name],
+            rho=rho_fixed,
+        )
+
+    return weights_func_conditioned
+
+
 def _get_weights_func_for_process(
-    *, name: str, grid: _ContinuousStochasticProcess
+    *,
+    name: str,
+    grid: _ContinuousStochasticProcess,
+    conditioning_grid: DiscreteGrid | None = None,
 ) -> UserFunction:
     """Get function that uses linear interpolation to calculate the process weights.
 
     For processes whose params are supplied at runtime, the grid points and
-    transition probabilities are computed inside JIT from those runtime params.
+    transition probabilities are computed inside JIT from those runtime params. For a
+    state-conditioned process the row is instead computed directly at the from-value
+    (``_get_conditioned_weights_func``).
 
     """
+    if grid.state_conditioned is not None:
+        if conditioning_grid is None:  # pragma: no cover - guarded at the call site
+            msg = "state-conditioned process needs its conditioning DiscreteGrid"
+            raise ModelInitializationError(msg)
+        return _get_conditioned_weights_func(
+            name=name, grid=grid, conditioning_grid=conditioning_grid
+        )
+
     if grid.params_to_pass_at_runtime:
         n_points = grid.n_points
         fixed_params = dict(grid.params)

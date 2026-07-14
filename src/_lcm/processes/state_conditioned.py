@@ -17,14 +17,23 @@ These builders reduce exactly to ``NormalIIDProcess(gauss_hermite=False)`` /
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Literal
 
 import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
 from _lcm.grids import DiscreteGrid
+from _lcm.processes.base import StateConditioned
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
+
+__all__ = [
+    "StateConditioned",
+    "conditioned_row",
+    "gather_sigma",
+    "iid_normal_row",
+    "sigma_array_by_code",
+    "tauchen_row",
+]
 
 _Scalar = float | int | ScalarFloat
 
@@ -32,20 +41,6 @@ _Scalar = float | int | ScalarFloat
 # intentionally absent: its transition is `rho`-only, so a fixed node grid leaves no
 # channel for a state-conditioned `sigma` (audit F2).
 Family = Literal["iid_normal", "tauchen"]
-
-
-@dataclass(frozen=True, kw_only=True)
-class StateConditioned:
-    """A process parameter (v1: `sigma`) conditioned on a discrete regime state.
-
-    `on` names a `DiscreteGrid` state in the *same* regime (current-regime conditioning
-    only — audit S4/F4). `by` maps each of that state's category names to a concrete
-    parameter value. Values are baked at build time (v1); runtime-estimated per-category
-    values are a later extension.
-    """
-
-    on: str
-    by: Mapping[str, float]
 
 
 def sigma_array_by_code(cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Float1D:
@@ -61,7 +56,7 @@ def sigma_array_by_code(cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Flo
         msg = f"StateConditioned.by is missing categories {sorted(missing)}"
         raise ValueError(msg)
     ordered = sorted(zip(codes, cats, strict=True))  # by integer code
-    return jnp.asarray([by[name] for _code, name in ordered], dtype=jnp.float64)
+    return jnp.asarray([by[name] for _code, name in ordered])
 
 
 def conditioned_row(
