@@ -179,13 +179,14 @@ def _skill_model() -> Model:
     )
 
 
-def test_dcegm_simulated_consumption_blends_rows_at_off_grid_passive_state():
-    """An off-grid passive state blends the two bracketing policy rows.
+def test_passive_state_regime_keeps_the_grid_consumption_path():
+    """With a passive continuous state, simulated consumption stays on the grid.
 
-    With bequest weight `skill`, optimal consumption is
-    `c* = wealth / (1 + beta * skill)`. Seeding subjects at skill values
-    strictly between the skill-grid nodes, the simulated consumption must
-    track the closed form — a single row (either bracket) cannot.
+    Each published policy row is the upper-envelope consumption conditional on
+    one passive-state node. Where the winning endogenous branch differs across
+    passive nodes, blending the rows would read an action from neither branch,
+    so passive regimes keep the grid-argmax consumption until conditional-value
+    re-decision across the passive axis exists.
     """
     model = _skill_model()
     params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
@@ -211,8 +212,12 @@ def test_dcegm_simulated_consumption_blends_rows_at_off_grid_passive_state():
     )
     period_0 = result.to_dataframe().query("period == 0")
     consumption = period_0["consumption"].to_numpy()
-    expected = off_grid_wealth / (1.0 + _DISCOUNT_FACTOR * off_grid_skill)
-    np.testing.assert_allclose(consumption, expected, rtol=2e-2)
+
+    consumption_nodes = np.asarray(dcegm_variants.CONSUMPTION_GRID.to_jax())
+    node_distance = np.abs(consumption[:, None] - consumption_nodes[None, :]).min(
+        axis=1
+    )
+    np.testing.assert_allclose(node_distance, 0.0, atol=1e-12)
 
 
 def _phased_alive_utility_solve(consumption: ContinuousState) -> FloatND:

@@ -27,7 +27,10 @@ from _lcm.egm.terminal import (
     get_stateless_terminal_carry_producer,
     get_terminal_wealth_carry_producer,
 )
-from _lcm.egm.validation import validate_dcegm_regimes
+from _lcm.egm.validation import (
+    savings_stage_reads_euler_state,
+    validate_dcegm_regimes,
+)
 from _lcm.engine import (
     EGMPolicyRead,
     Regime,
@@ -990,7 +993,8 @@ def _build_simulation_phase(
 
     # Replaying the solve-phase EGM policy in simulation is valid only when
     # the simulate-phase decision problem is the one the solve optimized and
-    # the published rows carry the topology the read assumes:
+    # the published rows carry both the coordinates and the branch topology
+    # the read interpolates over at every state dimension:
     # - a standalone `DCEGM` solver — a NEGM regime maximizes its value over
     #   keeper and adjuster candidates but publishes only the keeper's inner
     #   consumption function, so replaying it would pair an adjuster-won
@@ -998,6 +1002,18 @@ def _build_simulation_phase(
     # - a crossing-inserting upper-envelope backend (`fues`, `mss`) — RFC and
     #   LTM leave the envelope switch between two retained nodes, so linear
     #   policy interpolation across the switch would mix two branch policies;
+    # - the single-post-state kernel (not asset-row mode) — when a
+    #   savings-stage function reads the Euler state, DC-EGM solves per
+    #   exogenous asset node and publishes one optimal point per node, not a
+    #   crossing-complete resources-space row, so interpolating across nodes
+    #   would mix branches wherever the winner changes between adjacent nodes;
+    # - no continuous stochastic-process state — a process is stored as a
+    #   node-valued row axis, but its simulation transition draws a continuous
+    #   value that need not land on a node, so nearest-node row selection
+    #   reads the wrong conditional policy;
+    # - no passive continuous state — each row is the upper-envelope policy
+    #   conditional on one passive node, and blending two rows across a
+    #   passive-dimension branch switch yields an action from neither branch;
     # - no `Phased` declaration anywhere on the regime (a phase-variant
     #   utility, budget, transition, or state domain changes the
     #   simulate-phase FOC or the policy-row coordinates even under an
@@ -1006,15 +1022,24 @@ def _build_simulation_phase(
     # - no carried-only states (their simulate-phase domain has no solve-side
     #   row coordinates to read the policy on);
     # - no taste shocks (the realized discrete draw perturbs the decision).
+    # The process, passive, and asset-row exclusions each lift once the read
+    # publishes conditional values and re-decides the branch at the simulated
+    # state; today the gate keeps those regimes on the grid-argmax path.
     phase_invariant = (
         not regime_declares_phased(user_regime) and not spec.carried_only_state_names
     )
+    own_v_info = regime_to_v_interpolation_info[regime_name]
     egm_policy_read = None
     if (
         isinstance(solver, DCEGM)
         and solver.upper_envelope in ("fues", "mss")
         and phase_invariant
         and not has_taste_shocks
+        and not _regime_has_process_state(own_v_info)
+        and not _regime_has_passive_state(
+            v_interpolation_info=own_v_info, euler_state_name=solver.continuous_state
+        )
+        and not savings_stage_reads_euler_state(user_regime=user_regime, solver=solver)
     ):
         egm_policy_read = EGMPolicyRead(
             action_name=solver.continuous_action,
@@ -1034,6 +1059,33 @@ def _build_simulation_phase(
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         next_state=next_state,
         egm_policy_read=egm_policy_read,
+    )
+
+
+def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:
+    """Whether the regime carries a continuous stochastic-process state.
+
+    A process is stored among the node-valued discrete states, so its policy
+    row is a discrete axis. Its simulation transition draws a continuous value
+    off the process grid, which a nearest-node row read cannot resolve.
+    """
+    return any(
+        isinstance(grid, _ContinuousStochasticProcess)
+        for grid in v_interpolation_info.discrete_states.values()
+    )
+
+
+def _regime_has_passive_state(
+    *, v_interpolation_info: VInterpolationInfo, euler_state_name: StateName
+) -> bool:
+    """Whether the regime carries a passive continuous state.
+
+    Every continuous state other than the Euler state is passive; the DC-EGM
+    policy row is conditional on each passive node, so blending rows across the
+    passive axis is only branch-faithful where no envelope switch lies between.
+    """
+    return any(
+        name != euler_state_name for name in v_interpolation_info.continuous_states
     )
 
 

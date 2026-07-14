@@ -162,6 +162,15 @@ class DCEGM(Solver):
     - a non-crossing-inserting `upper_envelope` backend (`rfc`, `ltm`) —
       their rows leave envelope switches between retained nodes, so linear
       policy interpolation would mix two branch policies;
+    - asset-row mode (a savings-stage function reads the Euler state) — the
+      per-node solve publishes one point per exogenous asset node, not a
+      crossing-complete row, so interpolating across nodes would mix branches;
+    - a continuous stochastic-process state — the process is a node-valued row
+      axis whose simulation transition draws an off-node continuous value that
+      nearest-node row selection cannot resolve;
+    - a passive continuous state — each row is the envelope policy conditional
+      on one passive node, so blending across a passive-dimension branch switch
+      would read neither branch;
     - any `Phased` declaration (a phase-variant utility, budget, transition,
       or state domain changes the simulate-phase decision problem);
     - discrete actions (the branch is chosen from grid-restricted values and

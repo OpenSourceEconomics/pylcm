@@ -613,18 +613,17 @@ def _replace_continuous_action_with_policy_read(
     """Interpolate the published EGM policy at each subject's resources.
 
     Replaces the grid-argmax value of the EGM continuous action with the
-    off-grid solve-phase optimum. Row selection follows the policy's own
-    layout:
-    - discrete-state axes index the row at the subject's state (positions
-      located on the variable's grid);
-    - a passive continuous-state axis blends the two rows bracketing the
-      subject's off-grid value, interpolating each row at the subject's
-      resources first (never a pre-blended row).
+    off-grid solve-phase optimum. Discrete-state axes index the row at the
+    subject's state (positions located on the variable's grid), and the row is
+    interpolated at the subject's resources.
     Applies only where the regime qualifies (`regime.simulation.egm_policy_read`
     is set). Kept on the grid value:
     - rows with discrete-action axes (the grid-chosen branch need not remain
       optimal after continuous refinement);
-    - more than one passive axis;
+    - rows with a passive continuous-state axis (the build-time gate excludes
+      passive regimes; the runtime guard is defensive) — each row is the
+      envelope policy conditional on one passive node, so blending across a
+      passive-dimension branch switch would read neither branch;
     - subjects whose read is out of the live row support (edge extension is
       not the policy), non-finite, or infeasible (positivity and the
       borrowing limit `action <= resources - savings_lower_bound`).
@@ -640,7 +639,7 @@ def _replace_continuous_action_with_policy_read(
     # Branch re-decision from published conditional values is the follow-up.
     if sim_policy.row_discrete_action_names:
         return optimal_actions
-    if len(sim_policy.row_passive_state_names) > 1:
+    if sim_policy.row_passive_state_names:
         return optimal_actions
 
     n_subjects = next(iter(states.values())).shape[0]
@@ -671,8 +670,8 @@ def _replace_continuous_action_with_policy_read(
         for name in sim_policy.row_discrete_action_names
     )
 
-    def read_rows(passive_positions: tuple[IntND, ...]) -> tuple[FloatND, BoolND]:
-        index = (*state_positions, *passive_positions, *action_positions)
+    def read_rows() -> tuple[FloatND, BoolND]:
+        index = (*state_positions, *action_positions)
         if index:
             rows_x = sim_policy.endog_grid[index]
             rows_f = sim_policy.policy[index]
@@ -697,23 +696,7 @@ def _replace_continuous_action_with_policy_read(
         in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)
         return values, in_support
 
-    if sim_policy.row_passive_state_names:
-        passive_name = sim_policy.row_passive_state_names[0]
-        passive_grid = jnp.asarray(regime.simulation.grids[passive_name].to_jax())
-        passive_values = jnp.asarray(states[passive_name])
-        lower = jnp.clip(
-            jnp.searchsorted(passive_grid, passive_values, side="right") - 1,
-            0,
-            passive_grid.shape[0] - 2,
-        )
-        width = passive_grid[lower + 1] - passive_grid[lower]
-        weight = jnp.clip((passive_values - passive_grid[lower]) / width, 0.0, 1.0)
-        lower_action, lower_in_support = read_rows((lower,))
-        upper_action, upper_in_support = read_rows((lower + 1,))
-        off_grid_action = (1.0 - weight) * lower_action + weight * upper_action
-        in_support = lower_in_support & upper_in_support
-    else:
-        off_grid_action, in_support = read_rows(())
+    off_grid_action, in_support = read_rows()
 
     # Post-read acceptance: the replacement must be an in-support
     # interpolation (outside the live rows the read is an edge extension,
