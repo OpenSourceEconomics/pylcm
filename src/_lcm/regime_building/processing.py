@@ -1232,7 +1232,7 @@ def _process_regime_core(
             name=process,
             grid=grid,
             conditioning_grid=(
-                all_grids[user_regime][grid.state_conditioned.on]
+                all_grids[user_regime].get(grid.state_conditioned.on)
                 if grid.state_conditioned is not None
                 else None
             ),
@@ -1590,7 +1590,10 @@ def _process_family(grid: _ContinuousStochasticProcess) -> str:
 
 
 def _get_conditioned_weights_func(
-    *, name: str, grid: _ContinuousStochasticProcess, conditioning_grid: DiscreteGrid
+    *,
+    name: str,
+    grid: _ContinuousStochasticProcess,
+    conditioning_grid: DiscreteGrid | None,
 ) -> UserFunction:
     """Weights function for a state-conditioned process (direct-CDF, audit F1/F5/F6).
 
@@ -1599,6 +1602,15 @@ def _get_conditioned_weights_func(
     conditioning state's integer code. No precomputed-row interpolation (F1).
     """
     sc = grid.state_conditioned
+    if not isinstance(conditioning_grid, DiscreteGrid):
+        msg = (
+            f"state_conditioned.on='{sc.on}' must name a DiscreteGrid state in the "
+            f"same regime as the process."
+        )
+        raise ModelInitializationError(msg)
+    if any(v is None or float(v) <= 0.0 for v in sc.by.values()):
+        msg = f"state_conditioned.by values must be positive sigmas; got {dict(sc.by)}"
+        raise ModelInitializationError(msg)
     family = _process_family(grid)
     nodes = grid.get_gridpoints()
     sigma_by_code = sigma_array_by_code(conditioning_grid, sc.by)
@@ -1641,9 +1653,8 @@ def _get_weights_func_for_process(
 
     """
     if grid.state_conditioned is not None:
-        if conditioning_grid is None:  # pragma: no cover - guarded at the call site
-            msg = "state-conditioned process needs its conditioning DiscreteGrid"
-            raise ModelInitializationError(msg)
+        # `conditioning_grid` may be None here (unknown `on`); the callee raises a
+        # clear message naming the offending state.
         return _get_conditioned_weights_func(
             name=name, grid=grid, conditioning_grid=conditioning_grid
         )

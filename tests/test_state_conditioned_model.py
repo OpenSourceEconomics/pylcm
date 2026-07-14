@@ -227,3 +227,33 @@ def test_rouwenhorst_state_conditioned_rejected():
     )
     with pytest.raises(ModelInitializationError, match="only supported for CDF-binned"):
         _model_with_income(income).solve(params=_params())
+
+
+def test_unknown_conditioning_state_rejected():
+    """`on` naming a non-existent (or non-discrete) state raises a clear error."""
+    income = NormalIIDProcess(
+        n_points=5,
+        gauss_hermite=False,
+        mu=0.0,
+        sigma=0.3,
+        n_std=3.0,
+        state_conditioned=StateConditioned(on="nope", by={"low": 0.1, "high": 0.3}),
+    )
+    with pytest.raises(ModelInitializationError, match="must name a DiscreteGrid"):
+        _model_with_income(income).solve(params=_params())
+
+
+def test_nonpositive_sigma_rejected():
+    """Non-positive per-regime sigma raises at construction."""
+    income = NormalIIDProcess(
+        n_points=5,
+        gauss_hermite=False,
+        mu=0.0,
+        sigma=0.3,
+        n_std=3.0,
+        state_conditioned=StateConditioned(
+            on="uncertainty", by={"low": 0.0, "high": 0.3}
+        ),
+    )
+    with pytest.raises(ModelInitializationError, match="must be positive sigmas"):
+        _model_with_income(income).solve(params=_params())
