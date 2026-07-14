@@ -136,3 +136,34 @@ def test_interpolate_reproduces_affine_field():
     weights = barycentric_weights(triangle=triangle, query=query)
     interpolated = interpolate_on_triangle(node_values=node_values, weights=weights)
     np.testing.assert_allclose(np.asarray(interpolated), [3.5, 4.5], atol=_ATOL)
+
+
+def test_near_collinear_triangle_is_inadmissible_even_at_its_centroid():
+    """A near-degenerate mapped triangle is dropped, not admitted with unstable weights.
+
+    A source cell can map to three nearly collinear endogenous points (a sliver
+    triangle). Its affine inverse is ill-conditioned, so its interpolated policy is
+    untrustworthy; the geometry marks it inadmissible (non-finite weights) so the
+    within-segment envelope drops it and a non-degenerate triangle — or the direct
+    Bellman fill — covers the target instead. The centroid is inside the sliver, where
+    the raw weights are finite and in-band, so only a degeneracy guard excludes it.
+    """
+    sliver = jnp.array([[0.0, 0.0], [1.0, 0.0], [2.0, 1e-13]])
+    centroid = jnp.mean(sliver, axis=0)
+    weights = barycentric_weights(triangle=sliver, query=centroid)
+    assert not bool(is_admissible(weights=weights, threshold=0.25))
+
+
+def test_exactly_collinear_triangle_is_inadmissible():
+    """A collinear-image triangle yields non-finite weights, so it is inadmissible."""
+    collinear = jnp.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
+    weights = barycentric_weights(triangle=collinear, query=jnp.array([1.0, 0.0]))
+    assert not bool(is_admissible(weights=weights, threshold=0.25))
+
+
+def test_healthy_triangle_stays_admissible_at_its_centroid():
+    """A well-conditioned triangle is admissible with finite weights at its centroid."""
+    triangle = jnp.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    centroid = jnp.mean(triangle, axis=0)
+    weights = barycentric_weights(triangle=triangle, query=centroid)
+    assert bool(is_admissible(weights=weights, threshold=0.25))

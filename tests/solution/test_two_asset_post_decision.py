@@ -64,6 +64,56 @@ def test_post_decision_grad_b_is_return_scaled_marginal_value():
     np.testing.assert_allclose(np.asarray(out.grad_b), expected, rtol=1e-5)
 
 
+def test_post_decision_flags_out_of_domain_transformed_state_invalid():
+    """`valid` is False where the carried-forward `(m', n')` leaves the `(m, n)` grid.
+
+    The reader clamps an out-of-domain transformed state to the grid boundary, which
+    fabricates a continuation value with a zero boundary gradient. `valid` marks those
+    nodes so the envelope can drop them instead of trusting the fabricated value.
+    """
+    m_grid = jnp.linspace(0.0, 10.0, 11)
+    n_grid = jnp.linspace(0.0, 10.0, 11)
+    mesh_m, mesh_n = jnp.meshgrid(m_grid, n_grid, indexing="ij")
+    next_value = mesh_m + 2.0 * mesh_n
+    # With r=wage=0, m'=a and n'=b: a=2 stays in [0,10]; a=20 leaves it.
+    a = jnp.array([[2.0, 20.0]])
+    b = jnp.array([[1.0, 1.0]])
+    out = post_decision_value_and_grad(
+        next_value=next_value,
+        m_grid=m_grid,
+        n_grid=n_grid,
+        a=a,
+        b=b,
+        return_liquid=0.0,
+        return_pension=0.0,
+        wage=0.0,
+    )
+    assert bool(out.valid[0, 0])
+    assert not bool(out.valid[0, 1])
+
+
+def test_retiring_post_decision_flags_out_of_domain_liquid_invalid():
+    """`valid` is False where the lump-sum retired liquid state leaves `liquid_grid`."""
+    liquid_grid = jnp.linspace(0.0, 10.0, 11)
+    next_value_retired = liquid_grid
+    next_marginal_retired = jnp.ones_like(liquid_grid)
+    # liquid' = a (r=0, payout=0, income=0): a=3 in [0,10]; a=50 out.
+    a = jnp.array([[3.0, 50.0]])
+    b = jnp.array([[1.0, 1.0]])
+    out = post_decision_value_and_grad_retiring(
+        next_value_retired=next_value_retired,
+        next_marginal_retired=next_marginal_retired,
+        liquid_grid=liquid_grid,
+        a=a,
+        b=b,
+        return_liquid=0.0,
+        pension_payout_return=0.0,
+        retirement_income=0.0,
+    )
+    assert bool(out.valid[0, 0])
+    assert not bool(out.valid[0, 1])
+
+
 _PAYOUT, _RETIREMENT_INCOME, _BETA_L = 1.05, 0.5, 0.4
 
 
