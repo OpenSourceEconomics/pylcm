@@ -134,11 +134,21 @@ def envelope_at_query(
     any_bracket = jnp.any(brackets, axis=1)
     max_value = jnp.max(masked_value, axis=1, keepdims=True)
     # Break a value tie right-continuously, matching the kernel's `side="right"`
-    # read: among the bracketing segments attaining the maximum, the one with the
-    # larger value-slope is higher just to the right, so it carries the policy.
+    # read: among the bracketing segments attaining the maximum, prefer one that
+    # extends strictly to the right of the query (so "larger value-slope is higher
+    # just to the right" is meaningful), and among those the larger slope. Only at the
+    # global upper endpoint, where nothing continues right, fall back to the largest
+    # near-max slope. `_right_continuous_rank` folds both keys into one comparable
+    # scalar so this dense reduction and the blocked scan select the same winner.
     slope = (right_value - left_value)[None, :] / safe_width
     near_max = brackets & (masked_value >= max_value - _VALUE_TIE_ATOL)
-    best = jnp.argmax(jnp.where(near_max, slope, -jnp.inf), axis=1)
+    right_available = flat < upper
+    best = jnp.argmax(
+        _right_continuous_rank(
+            near_max=near_max, right_available=right_available, slope=slope
+        ),
+        axis=1,
+    )
     env_value = jnp.where(any_bracket, max_value[:, 0], jnp.nan)
     env_policy = jnp.where(
         any_bracket,
@@ -157,15 +167,34 @@ def envelope_at_query(
     )
 
 
+def _right_continuous_rank(
+    *, near_max: BoolND, right_available: BoolND, slope: FloatND
+) -> FloatND:
+    """One comparable scalar per segment for the right-continuous tie-break.
+
+    Ranks a right-extending near-max segment above one that ends at the query, and
+    among equally-eligible segments the larger value-slope. `arctan` bounds the slope
+    into `(-pi/2, pi/2)`, so the integer right-extends bit dominates it; non-near-max
+    segments get `-inf`. `argmax` over this key reproduces "prefer a right-extending
+    near-max segment, else the largest near-max slope" with no global reduction, so
+    the dense path and the blocked scan (which compares this scalar across blocks)
+    select the same winner.
+    """
+    bounded_slope = jnp.arctan(slope) / jnp.pi + 0.5
+    rank = right_available.astype(bounded_slope.dtype) + bounded_slope
+    return jnp.where(near_max, rank, -jnp.inf)
+
+
 def _block_query_terms(
     *, block: FloatND, live: BoolND, flat: Float1D
-) -> tuple[BoolND, FloatND, FloatND, FloatND, FloatND]:
+) -> tuple[BoolND, FloatND, FloatND, FloatND, FloatND, FloatND]:
     """Bracket-and-interpolate one segment block against every query.
 
     `block` is one `(block_size, 8)` slice of the stacked link endpoint columns
     and `live` its `(block_size,)` live-flag slice. Returns the
-    `(n_query, block_size)` bracket mask and the value, policy, marginal, and
-    value-slope interpolated at each query for each link in the block — the same
+    `(n_query, block_size)` bracket mask; the value, policy, marginal, and
+    value-slope interpolated at each query for each link in the block; and the
+    link's upper endpoint (for the right-continuous tie-break) — the same
     quantities the dense path forms over all segments at once, but only for this
     block, so the peak working set is `(n_query, block_size)`.
     """
@@ -190,7 +219,7 @@ def _block_query_terms(
         left_marginal[None, :] + relative * (right_marginal - left_marginal)[None, :]
     )
     slope = (right_value - left_value)[None, :] / safe_width
-    return brackets, value_interp, policy_interp, marginal_interp, slope
+    return brackets, value_interp, policy_interp, marginal_interp, slope, upper
 
 
 def _envelope_at_query_blocked(
@@ -205,9 +234,10 @@ def _envelope_at_query_blocked(
     - Pass 1 accumulates the running per-query max over segment blocks — the
       envelope value, with a running `any_bracket` flag.
     - Pass 2 re-scans the blocks and, among segments whose value is within
-      `_VALUE_TIE_ATOL` of that (now fixed) envelope value, keeps the global
-      max-slope winner's policy and marginal (the dense path's right-continuous
-      tie-break). The strict cross-block `>` keeps the earliest such winner,
+      `_VALUE_TIE_ATOL` of that (now fixed) envelope value, keeps the winner of the
+      right-continuous rank (`_right_continuous_rank`: a right-extending near-max
+      segment over one ending at the query, then larger value-slope) — the dense
+      path's tie-break. The strict cross-block `>` keeps the earliest such winner,
       matching the dense `argmax`.
 
     The links are padded to a multiple of `block_size` with dead segments (which
@@ -274,20 +304,22 @@ def _envelope_at_query_blocked(
         carry: tuple[FloatND, FloatND, FloatND],
         block_and_live: tuple[FloatND, BoolND],
     ) -> tuple[tuple[FloatND, FloatND, FloatND], None]:
-        best_slope, best_policy, best_marginal = carry
+        best_rank, best_policy, best_marginal = carry
         block, block_live = block_and_live
-        brackets, value_interp, policy_interp, marginal_interp, slope = (
+        brackets, value_interp, policy_interp, marginal_interp, slope, upper = (
             _block_query_terms(block=block, live=block_live, flat=flat)
         )
         near_max = brackets & (value_interp >= env_value[:, None] - _VALUE_TIE_ATOL)
-        candidate_slope = jnp.where(near_max, slope, -jnp.inf)
-        winner = jnp.argmax(candidate_slope, axis=1)[:, None]
-        block_slope = jnp.take_along_axis(candidate_slope, winner, axis=1)[:, 0]
+        rank = _right_continuous_rank(
+            near_max=near_max, right_available=flat[:, None] < upper, slope=slope
+        )
+        winner = jnp.argmax(rank, axis=1)[:, None]
+        block_rank = jnp.take_along_axis(rank, winner, axis=1)[:, 0]
         block_policy = jnp.take_along_axis(policy_interp, winner, axis=1)[:, 0]
         block_marginal = jnp.take_along_axis(marginal_interp, winner, axis=1)[:, 0]
-        take = block_slope > best_slope
+        take = block_rank > best_rank
         return (
-            jnp.where(take, block_slope, best_slope),
+            jnp.where(take, block_rank, best_rank),
             jnp.where(take, block_policy, best_policy),
             jnp.where(take, block_marginal, best_marginal),
         ), None
