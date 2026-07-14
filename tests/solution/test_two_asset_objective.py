@@ -84,6 +84,36 @@ def test_objective_flags_negative_liquid_post_decision_as_infeasible():
     assert np.isfinite(float(value))
 
 
+def test_objective_flags_candidate_whose_post_decision_source_is_out_of_domain():
+    """A candidate landing on a post-decision node with a fabricated (clamped)
+    continuation is infeasible, even with `(a, b)` in-grid and `c > 0`.
+
+    The post-decision value `W(a, b)` may itself have been built by clamping an
+    out-of-domain transformed state; `post_decision_valid` marks those nodes, and a
+    candidate whose reconstructed `(a, b)` reads a non-in-domain node must not compete.
+    """
+    a_mesh, b_mesh = jnp.meshgrid(_A_GRID, _B_GRID, indexing="ij")
+    post_decision_value = 2.0 * a_mesh + 3.0 * b_mesh + 1.0
+    post_decision_valid = jnp.ones_like(post_decision_value, dtype=bool)
+    # Node (a=3.0, b=2.0) has a fabricated continuation.
+    post_decision_valid = post_decision_valid.at[3, 2].set(False)
+    objective = build_two_asset_objective(
+        post_decision_value=post_decision_value,
+        a_grid=_A_GRID,
+        b_grid=_B_GRID,
+        discount_factor=_DISCOUNT,
+        crra=_CRRA,
+        match_rate=_MATCH,
+        post_decision_valid=post_decision_valid,
+    )
+    # state (5, 2), policy (2, 0): a = 5-2-0 = 3, b = 2+0 = 2 -> node (3, 2).
+    _value, feasible = objective(jnp.array([5.0, 2.0]), jnp.array([2.0, 0.0]))
+    assert not bool(feasible)
+    # A candidate landing on an in-domain node stays feasible: a=4, b=2 (node (4,2)).
+    _value_ok, feasible_ok = objective(jnp.array([6.0, 2.0]), jnp.array([2.0, 0.0]))
+    assert bool(feasible_ok)
+
+
 def test_objective_flags_negative_consumption_as_infeasible():
     """A non-positive interpolated consumption is infeasible with a finite value."""
     a_mesh, b_mesh = jnp.meshgrid(_A_GRID, _B_GRID, indexing="ij")

@@ -371,10 +371,16 @@ def _insert_node_crossings(
     right_policy = jnp.where(right_is_upper, policy_right, policy_left)
     crossing_grid = jnp.where(is_crossing, grid_left, jnp.nan)
 
-    # Set each kept crossing node's policy to the left branch's policy.
+    # Set each kept crossing node's policy to the left branch's policy. When more
+    # than one crossing coincides at the node (three or more branches meeting at one
+    # abscissa), select a single matching crossing's policy rather than summing them:
+    # a summed policy is not a consumption any branch prescribes. `argmax` takes the
+    # first matching crossing; for the ordinary two-branch node exactly one crossing
+    # matches, so this is unchanged there.
     match = (refined_grid[:, None] == crossing_grid[None, :]) & is_crossing[None, :]
     matched = jnp.any(match, axis=1)
-    matched_left_policy = jnp.sum(jnp.where(match, left_policy[None, :], 0.0), axis=1)
+    first_match = jnp.argmax(match, axis=1)
+    matched_left_policy = left_policy[first_match]
     refined_policy = jnp.where(matched, matched_left_policy, refined_policy)
 
     # Append the right copies and stable-sort so each lands just after its node.
