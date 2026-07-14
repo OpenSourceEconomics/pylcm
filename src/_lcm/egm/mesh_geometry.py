@@ -79,8 +79,16 @@ def barycentric_weights(*, triangle: Float2D, query: Float1D) -> Float1D:
     e2 = p2 - p0
     rhs = query - p0
     det = e1[0] * e2[1] - e1[1] * e2[0]
-    w1 = (rhs[0] * e2[1] - rhs[1] * e2[0]) / det
-    w2 = (e1[0] * rhs[1] - e1[1] * rhs[0]) / det
+    # A mapped triangle whose image is (near-)collinear has an ill-conditioned affine
+    # inverse — `|det| = |e1| |e2| |sin(theta)|`, so the scale-free degeneracy measure
+    # is `|det| / (|e1| |e2|)`. Below tolerance the weights are non-finite, which
+    # `is_admissible` treats as inadmissible: a sliver triangle is dropped (a
+    # non-degenerate triangle or the direct Bellman fill covers the target) rather than
+    # contributing unstable weights.
+    area_scale = jnp.sqrt((e1 @ e1) * (e2 @ e2))
+    safe_det = jnp.where(jnp.abs(det) <= 1e-12 * area_scale, jnp.nan, det)
+    w1 = (rhs[0] * e2[1] - rhs[1] * e2[0]) / safe_det
+    w2 = (e1[0] * rhs[1] - e1[1] * rhs[0]) / safe_det
     w0 = 1.0 - w1 - w2
     return jnp.stack([w0, w1, w2])
 
