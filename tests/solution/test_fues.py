@@ -236,3 +236,40 @@ def test_overflow_is_reported_via_n_kept():
     )
 
     assert int(n_kept) > 4
+
+
+def test_insert_node_crossings_selects_one_branch_at_a_three_way_tie():
+    """A node where three branches coincide keeps one genuine branch policy.
+
+    The on-node crossing repair reinserts the branch policy dropped by the
+    coincident-node dedup. When three candidates share one abscissa with equal value
+    (two coincident crossings at that node), the kept node must carry a single genuine
+    branch policy, not the sum of both crossings' policies — a summed policy is not a
+    consumption any branch prescribes.
+    """
+    presort_grid = jnp.array([1.0, 1.0, 1.0])
+    presort_policy = jnp.array([10.0, 20.0, 30.0])
+    presort_value = jnp.array([5.0, 5.0, 5.0])
+    segment_sorted = jnp.array([0.0, 1.0, 2.0])
+    n_refined = 8
+    refined_grid = jnp.full(n_refined, jnp.nan).at[0].set(1.0)
+    refined_policy = jnp.full(n_refined, jnp.nan).at[0].set(10.0)
+    refined_value = jnp.full(n_refined, jnp.nan).at[0].set(5.0)
+
+    out_grid, out_policy, _out_value, _n = fues._insert_node_crossings(
+        refined_grid=refined_grid,
+        refined_policy=refined_policy,
+        refined_value=refined_value,
+        n_kept=jnp.asarray(1, dtype=jnp.int32),
+        presort_grid=presort_grid,
+        presort_policy=presort_policy,
+        presort_value=presort_value,
+        segment_sorted=segment_sorted,
+        n_refined=n_refined,
+        n_points_to_scan=1,
+        jump_thresh=2.0,
+    )
+
+    at_tie = np.asarray(out_policy)[np.isclose(np.asarray(out_grid), 1.0)]
+    genuine = {10.0, 20.0, 30.0}
+    assert set(at_tie.tolist()) <= genuine
