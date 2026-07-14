@@ -186,14 +186,12 @@ class PowerMean(QuasiArithmeticMean):
         # error near `ra = 1`, so such lotteries aggregate as exactly
         # normalized. A materially non-unit mass keeps its exact `log(W)`
         # contribution (the documented `k^(1/(1-ra))` scaling).
-        roundoff_mass = (
-            jnp.abs(weight_sum - 1.0)
-            <= jnp.sqrt(jnp.finfo(safe_weight.dtype).eps)
+        roundoff_mass = jnp.abs(weight_sum - 1.0) <= jnp.sqrt(
+            jnp.finfo(safe_weight.dtype).eps
         )
         log_mass = jnp.where(roundoff_mass, 0.0, jnp.log(safe_weight))
         log_ce_power = (
-            anchor
-            + (log_mass + jnp.log1p(deviation_sum / safe_weight)) / safe_exponent
+            anchor + (log_mass + jnp.log1p(deviation_sum / safe_weight)) / safe_exponent
         )
         log_ce_geometric = (
             jnp.sum(jnp.where(positive, weights * log_v, weights * 0.0), axis=-1)
