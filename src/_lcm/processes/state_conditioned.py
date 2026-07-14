@@ -55,6 +55,9 @@ def sigma_array_by_code(cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Flo
     if missing:
         msg = f"StateConditioned.by is missing categories {sorted(missing)}"
         raise ValueError(msg)
+    # Runtime indexing (`gather_sigma`) uses the conditioning state's code directly,
+    # which is safe because `@categorical` assigns contiguous 0..n-1 codes and
+    # `DiscreteGrid` accepts only such classes — so position == code here.
     ordered = sorted(zip(codes, cats, strict=True))  # by integer code
     return jnp.asarray([by[name] for _code, name in ordered])
 
