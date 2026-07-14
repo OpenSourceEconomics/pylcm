@@ -148,24 +148,24 @@ class DCEGM(Solver):
     and an `inverse_marginal_utility` regime function — which is validated at
     `Model` construction time.
 
-    The configuration is published so a model can name the solver and its
-    parameters, but the solver engine is not yet wired in: `validate` rejects a
-    regime requesting it. `GridSearch` is the only available solver.
-
-    Forward simulation reads the continuous action *off-grid*: the solve
-    publishes the refined consumption function (`EGMSimPolicy`) and
-    `simulate` interpolates the subject's row at its resources, following
-    the standard EGM convention. Discrete actions remain grid-argmax
-    decisions against the stored value function. Regimes where replaying
-    the solve-phase policy is invalid keep the gridded continuous action:
-    - a phase-variant temporal aggregator `H` (the stored policy solves the
-      wrong simulate-phase FOC);
+    Forward simulation reads the continuous action *off-grid* where the
+    regime qualifies: the solve publishes the refined consumption function
+    (`EGMSimPolicy`) and `simulate` interpolates the subject's row at its
+    resources, following the standard EGM convention, then checks the read
+    against the intrinsic budget (`continuous_action <= resources -
+    savings_grid lower bound`), positivity, and finiteness — an infeasible
+    read keeps that subject's grid value. Regimes where replaying the
+    solve-phase policy is invalid keep the gridded continuous action
+    entirely:
+    - any `Phased` declaration (a phase-variant utility, budget, transition,
+      or state domain changes the simulate-phase decision problem);
+    - discrete actions (the branch is chosen from grid-restricted values and
+      need not remain optimal after continuous refinement);
     - EV1 taste shocks (the realized draws perturb the decision, and the
       simulated choice frequencies follow the grid-restricted
       choice-specific values).
-    The budget constraint the solve enforces intrinsically
-    (`continuous_action <= resources - savings_grid lower bound`) is applied
-    as a feasibility mask during simulation.
+    The intrinsic budget constraint is also applied as a feasibility mask in
+    the grid-argmax path.
 
     """
 

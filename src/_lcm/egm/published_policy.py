@@ -10,17 +10,24 @@ the action grid.
 It is produced and carried for *every* solved period alongside the
 value-function arrays. Forward simulation consumes it where the regime
 qualifies (`SimulationPhase.egm_policy_read`): the subject's row — indexed by
-its discrete states and the chosen discrete action, with an off-grid passive
-state blending the two bracketing rows — is interpolated at the subject's
-resources, replacing the action-grid argmax value of the continuous action.
+its discrete states, with an off-grid passive state blending the two
+bracketing rows — is interpolated at the subject's resources, replacing the
+action-grid argmax value of the continuous action, subject to a post-read
+feasibility check (finite, positive, within the intrinsic budget).
 
-The gate exists because the stored policy is the **solve-phase** optimum. It
-is valid at simulate time only when the solve-phase and simulate-phase
-aggregators `H` coincide: with a phase-variant `H` (e.g. naive present bias —
-solve under the exponential `δ`, simulate under `β̃β`) the stored policy
-encodes the wrong continuous-action FOC. Such regimes — and regimes with EV1
-taste shocks, whose realized draws perturb the decision — keep the
-grid-argmax path, which re-applies the simulate-phase decision.
+The gate exists because the stored policy is the **solve-phase** optimum of
+one conditional problem. Kept on the grid-argmax path, which re-applies the
+simulate-phase decision:
+- regimes with any `Phased` declaration — a phase-variant utility, budget,
+  transition, or state domain (not only `H`, e.g. naive present bias) makes
+  the stored policy solve the wrong simulate-phase FOC or puts the policy
+  rows on the wrong coordinates;
+- regimes with discrete actions — the branch is chosen from grid-restricted
+  Q values, and a branch whose refined conditional optimum lies between
+  action-grid nodes can lose that comparison yet win after continuous
+  refinement, so the refined policy could be paired with the wrong branch
+  (branch re-decision from published conditional values is the follow-up);
+- regimes with EV1 taste shocks, whose realized draws perturb the decision.
 
 Unlike the rolling `EGMCarry` (the cross-period continuation channel, overwritten
 each period), this is saved for every solved period and travels to `simulate`

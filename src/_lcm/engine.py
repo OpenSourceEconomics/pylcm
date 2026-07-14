@@ -500,6 +500,10 @@ class EGMPolicyRead:
     resources_target: FunctionName
     """DAG function computing the endogenous resources the policy is read at."""
 
+    savings_lower_bound: float
+    """Lower bound of the solver's savings grid — the borrowing limit the
+    post-read feasibility check enforces (`action <= resources - bound`)."""
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
@@ -826,7 +830,13 @@ class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
 
     V_arr: Float1D
-    """Value function array for all subjects at this period."""
+    """Value function array for all subjects at this period.
+
+    The grid-argmax value: where the off-grid policy read replaces the
+    continuous action, this value belongs to the pre-replacement gridded
+    action combination, not to the recorded action — the pair is not a
+    consistent (action, value) evaluation there.
+    """
 
     actions: MappingProxyType[ActionName, FloatND | IntND]
     """Immutable mapping of action names to optimal action arrays for all subjects."""

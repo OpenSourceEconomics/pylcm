@@ -16,8 +16,7 @@ hit `c*` — which a grid-restricted argmax cannot.
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm.interp import interp_on_padded_grid
-from lcm import AgeGrid, LinSpacedGrid, LogSpacedGrid, Model, fixed_transition
+from lcm import AgeGrid, LinSpacedGrid, LogSpacedGrid, Model, Phased, fixed_transition
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
@@ -86,13 +85,15 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     np.testing.assert_allclose(consumption, expected, rtol=2e-2)
 
 
-def test_dcegm_simulated_consumption_reads_the_chosen_discrete_actions_row():
-    """With a discrete work choice, consumption is the chosen row's policy value.
+def test_discrete_action_regime_keeps_the_grid_consumption_path():
+    """With a discrete work choice, simulated consumption stays on the grid.
 
-    The published policy carries one refined row per discrete-action value.
-    Simulation selects the row of the simulated `labor_supply` and interpolates
-    it at the subject's resources — so the simulated consumption must equal
-    that row's off-grid read, not an action-grid node.
+    The discrete branch is chosen from grid-restricted Q values; a branch
+    whose refined conditional optimum lies between action-grid nodes can lose
+    that comparison yet win after continuous refinement, so replacing only
+    the continuous action could pair the refined policy with the wrong
+    branch. Until branch re-decision from published conditional values
+    exists, such regimes keep the grid-argmax consumption.
     """
     n_periods = 3
     model = dcegm_variants.get_full_model("dcegm", n_periods)
@@ -107,9 +108,6 @@ def test_dcegm_simulated_consumption_reads_the_chosen_discrete_actions_row():
         "regime_id": jnp.full(n_subjects, base.RegimeId.working_life),
     }
 
-    _, policies = model.solve(
-        params=params, log_level="off", return_simulation_policy=True
-    )
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
@@ -122,22 +120,12 @@ def test_dcegm_simulated_consumption_reads_the_chosen_discrete_actions_row():
         .sort_values("subject_id")
     )
     consumption = period_0["consumption"].to_numpy()
-    chosen_action = period_0["labor_supply"].to_numpy().astype(int)
 
-    policy = policies[0]["working_life"]
-    expected = np.array(
-        [
-            float(
-                interp_on_padded_grid(
-                    x_query=jnp.asarray(wealth),
-                    xp=policy.endog_grid[action],
-                    fp=policy.policy[action],
-                )
-            )
-            for wealth, action in zip(off_grid_wealth, chosen_action, strict=True)
-        ]
+    consumption_nodes = np.asarray(dcegm_variants.CONSUMPTION_GRID.to_jax())
+    node_distance = np.abs(consumption[:, None] - consumption_nodes[None, :]).min(
+        axis=1
     )
-    np.testing.assert_allclose(consumption, expected, rtol=1e-10)
+    np.testing.assert_allclose(node_distance, 0.0, atol=1e-12)
 
 
 def _skill_bequest_utility(
@@ -225,3 +213,66 @@ def test_dcegm_simulated_consumption_blends_rows_at_off_grid_passive_state():
     consumption = period_0["consumption"].to_numpy()
     expected = off_grid_wealth / (1.0 + _DISCOUNT_FACTOR * off_grid_skill)
     np.testing.assert_allclose(consumption, expected, rtol=2e-2)
+
+
+def _phased_alive_utility_solve(consumption: ContinuousState) -> FloatND:
+    return jnp.log(consumption)
+
+
+def _phased_alive_utility_simulate(consumption: ContinuousState) -> FloatND:
+    return 2.0 * jnp.log(consumption)
+
+
+def test_phase_variant_utility_keeps_the_grid_consumption_path():
+    """A phase-variant utility disables the solve-policy replay.
+
+    The stored policy solves the solve-phase first-order condition; a
+    `Phased` utility (or any phase-variant function) changes the
+    simulate-phase optimum even under an unchanged `H`, so the regime keeps
+    the grid-argmax consumption.
+    """
+    alive = dcegm_retirement.replace(
+        active=lambda age: age < 50,
+        functions={
+            **dict(dcegm_retirement.functions),
+            "utility": Phased(
+                solve=_phased_alive_utility_solve,
+                simulate=_phased_alive_utility_simulate,
+            ),
+        },
+    )
+    bequest_dead = UserRegime(
+        transition=None,
+        states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
+        functions={"utility": _bequest_utility},
+    )
+    model = Model(
+        regimes={"retirement": alive, "dead": bequest_dead},
+        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        regime_id_class=retirement_only.RetirementOnlyRegimeId,
+    )
+    params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
+
+    wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
+    off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])
+    initial_conditions = {
+        "wealth": jnp.asarray(off_grid_wealth),
+        "age": jnp.full(off_grid_wealth.shape, 40.0),
+        "regime_id": jnp.full(
+            off_grid_wealth.shape,
+            retirement_only.RetirementOnlyRegimeId.retirement,
+        ),
+    }
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    )
+    consumption = result.to_dataframe().query("period == 0")["consumption"].to_numpy()
+
+    consumption_nodes = np.asarray(dcegm_variants.CONSUMPTION_GRID.to_jax())
+    node_distance = np.abs(consumption[:, None] - consumption_nodes[None, :]).min(
+        axis=1
+    )
+    np.testing.assert_allclose(node_distance, 0.0, atol=1e-12)
