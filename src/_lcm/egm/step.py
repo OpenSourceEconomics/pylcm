@@ -613,7 +613,13 @@ def _get_egm_step(
                 marginal_utility=marginal_stack,
                 taste_shock_scale=own_taste_shock_scale,
             )
-            sim_policy = EGMSimPolicy(endog_grid=grid_stack, policy=policy_stack)
+            sim_policy = EGMSimPolicy(
+                endog_grid=grid_stack,
+                policy=policy_stack,
+                row_discrete_state_names=own_discrete_state_names,
+                row_passive_state_names=own_passive_state_names,
+                row_discrete_action_names=tuple(own_discrete_action_values),
+            )
         else:
             V_arr, grid_row, policy_row, value_row, marginal_row = solve_one_combo(())
             carry = EGMCarry(

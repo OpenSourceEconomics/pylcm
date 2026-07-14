@@ -486,6 +486,22 @@ class SolutionPhase:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class EGMPolicyRead:
+    """Names for the off-grid read of a published `EGMSimPolicy` in simulate.
+
+    The stored policy maps the endogenous resources value to the optimal
+    continuous action; simulation interpolates it at each subject's resources
+    instead of argmaxing over the action grid.
+    """
+
+    action_name: ActionName
+    """The EGM continuous action the interpolated policy value replaces."""
+
+    resources_target: FunctionName
+    """DAG function computing the endogenous resources the policy is read at."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
     """Simulate-phase view of a canonical regime.
 
@@ -533,6 +549,17 @@ class SimulationPhase:
 
     next_state: NextStateSimulationFunction
     """Compiled function to compute next-period states."""
+
+    egm_policy_read: EGMPolicyRead | None = None
+    """Off-grid read of the published EGM simulation policy, or `None`.
+
+    Present only where replaying the solve-phase policy is valid:
+    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`;
+    - the temporal aggregator `H` is phase-invariant (a phase-variant `H`
+      changes the simulate-phase FOC, so the stored policy is wrong there);
+    - the regime declares no taste shocks.
+    `None` keeps the grid-argmax decision path for the continuous action.
+    """
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:

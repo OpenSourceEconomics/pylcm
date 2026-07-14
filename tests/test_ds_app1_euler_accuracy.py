@@ -36,8 +36,10 @@ def test_app1_euler_error_is_finite_and_in_paper_ballpark():
     """The FUES Euler error at tau=1, n_grid=1000 is finite, negative, and sane.
 
     The mean log10 consumption Euler error is a negative number (more negative =
-    more accurate); the paper reports roughly -1.6 for tau=1 at the full grids,
-    so at a coarser local grid the metric sits in the -1.0 to -4.0 band.
+    more accurate). Simulation reads consumption off-grid from the published
+    EGM policy, so the metric scores the solver's own precision — well below
+    the action-grid quantization floor the paper's roughly -1.6 reflects —
+    and sits in the -3.0 to -12.0 band at the local grids.
     """
     error = app1_euler_error(
         tau=1.0,
@@ -47,7 +49,7 @@ def test_app1_euler_error_is_finite_and_in_paper_ballpark():
         seed=0,
     )
     assert np.isfinite(error)
-    assert -4.0 < error < -1.0
+    assert -12.0 < error < -3.0
 
 
 def test_app1_euler_error_improves_under_grid_refinement():
@@ -72,8 +74,8 @@ def test_app1_euler_error_improves_under_grid_refinement():
         n_subjects=_LOCAL_N_SUBJECTS,
         seed=0,
     )
-    assert -4.0 < coarse < -1.0
-    assert -4.0 < fine < -1.0
+    assert -12.0 < coarse < -3.0
+    assert -12.0 < fine < -3.0
     assert fine < coarse - 0.5
 
 
@@ -88,7 +90,7 @@ def test_app1_accuracy_table_has_one_row_per_cell():
     )
     assert list(table.columns) == ["tau", "n_grid", "fues_euler_error"]
     assert len(table) == 2
-    assert table["fues_euler_error"].between(-4.0, -1.0).all()
+    assert table["fues_euler_error"].between(-12.0, -3.0).all()
 
 
 def test_sample_path_euler_error_recovers_a_planted_residual():
@@ -136,7 +138,7 @@ def test_app1_rfc_euler_error_is_in_the_same_regime_as_fues():
     fues = app1_euler_error(upper_envelope="fues", **config)
     rfc = app1_euler_error(upper_envelope="rfc", **config)
     assert np.isfinite(rfc)
-    assert -4.0 < rfc < -1.0
+    assert -12.0 < rfc < -3.0
     assert abs(rfc - fues) < 1.0
 
 
@@ -175,9 +177,10 @@ def test_app1_timing_measures_compile_after_a_warm_cache():
 def test_app1_taste_shock_variant_is_in_paper_ballpark():
     """The taste-shock retirement variant (Table 6, scale 0.05) scores a sane error.
 
-    EV1 taste shocks smooth the work/retire margin but leave the continuous
-    consumption Euler equation intact, so the mean log10 error stays in the same
-    band as the deterministic Table 2 baseline.
+    EV1 taste shocks keep the grid-argmax simulate path (the realized draws
+    perturb the decision, so the stored solve-phase policy is not replayed),
+    so the mean log10 error sits at the action-grid quantization floor rather
+    than the off-grid solver precision of the deterministic variant.
     """
     error = app1_euler_error(
         tau=1.0,

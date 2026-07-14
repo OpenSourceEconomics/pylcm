@@ -152,12 +152,17 @@ class DCEGM(Solver):
     parameters, but the solver engine is not yet wired in: `validate` rejects a
     regime requesting it. `GridSearch` is the only available solver.
 
-    Forward simulation works but is *grid-restricted*: `simulate` recomputes
-    the argmax over the regime's gridded continuous action against the
-    stored value function, rather than interpolating the exact EGM policy.
-    Simulated continuous actions therefore live on the action grid, and with
-    taste shocks the simulated choice frequencies follow the grid-restricted
-    choice-specific values, not exactly the solve's choice probabilities.
+    Forward simulation reads the continuous action *off-grid*: the solve
+    publishes the refined consumption function (`EGMSimPolicy`) and
+    `simulate` interpolates the subject's row at its resources, following
+    the standard EGM convention. Discrete actions remain grid-argmax
+    decisions against the stored value function. Regimes where replaying
+    the solve-phase policy is invalid keep the gridded continuous action:
+    - a phase-variant temporal aggregator `H` (the stored policy solves the
+      wrong simulate-phase FOC);
+    - EV1 taste shocks (the realized draws perturb the decision, and the
+      simulated choice frequencies follow the grid-restricted
+      choice-specific values).
     The budget constraint the solve enforces intrinsically
     (`continuous_action <= resources - savings_grid lower bound`) is applied
     as a feasibility mask during simulation.
