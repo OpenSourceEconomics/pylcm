@@ -12,7 +12,6 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 from beartype import beartype
-from jax.scipy.special import logsumexp
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.utils.functools import get_union_of_args
@@ -126,11 +125,13 @@ class PowerMean(QuasiArithmeticMean):
         `ra` is `risk_aversion`. The naive `inverse(sum(w · transform(v)))`
         overflows when `risk_aversion > 1` and `v` is near the borrowing
         constraint: the intermediate `v^(1-ra)` exceeds the dtype's range and the
-        certainty equivalent collapses to zero or infinity. Evaluating the
-        aggregation in the log domain —
-        `log CE = logsumexp(log w + (1-ra)·log v) / (1-ra)` — keeps it finite
-        wherever the mathematical value is. `risk_aversion = 1` is the weighted
-        geometric mean `exp(E[log v])`.
+        certainty equivalent collapses to zero or infinity. The aggregation
+        evaluates in an anchored weight/deviation log form —
+        `log CE = a + [log(W) + log1p(E/W)] / (1-ra)` with `a` the extremal
+        log value, `W` the weight sum, and `E` the `expm1`-deviation sum —
+        which stays finite wherever the mathematical value is and keeps the
+        geometric-mean limit exact arbitrarily close to `risk_aversion = 1`.
+        `risk_aversion = 1` is the weighted geometric mean `exp(E[log v])`.
 
         Args:
             values: Strictly positive continuation values along the last axis.
@@ -146,13 +147,41 @@ class PowerMean(QuasiArithmeticMean):
 
         """
         log_v = jnp.log(values)
-        log_w = jnp.log(weights)
+        positive = weights > 0.0
         exponent = 1.0 - risk_aversion
         # The `risk_aversion == 1` power branch must not divide by zero.
         safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
-        log_ce_power = logsumexp(log_w + exponent * log_v, axis=-1) / safe_exponent
+        # Anchored weight/deviation form: with `a` the extremal log value on
+        # the side that keeps every exponent nonpositive,
+        # `log CE = a + [log(W) + log1p(E / W)] / (1-ra)` where `W = sum w`
+        # and `E = sum w expm1((1-ra)(log v - a))`. The deviation ratio keeps
+        # the quotient exact arbitrarily close to `ra = 1` — a rounded
+        # log-sum divided by a near-zero exponent loses the geometric-mean
+        # limit to cancellation — while the exact mass term `log(W)` (zero
+        # for a unit-mass lottery) preserves the unnormalized sum's value.
+        anchor_high = jnp.max(jnp.where(positive, log_v, -jnp.inf), axis=-1)
+        anchor_low = jnp.min(jnp.where(positive, log_v, jnp.inf), axis=-1)
+        anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
+        anchor = jnp.where(exponent == 0.0, 0.0, anchor)
+        centered = log_v - anchor[..., None]
+        masked_weights = jnp.where(positive, weights, weights * 0.0)
+        weight_sum = jnp.sum(jnp.broadcast_to(masked_weights, centered.shape), axis=-1)
+        deviation_sum = jnp.sum(
+            jnp.where(
+                positive,
+                weights * jnp.expm1(exponent * centered),
+                weights * 0.0,
+            ),
+            axis=-1,
+        )
+        safe_weight = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+        log_ce_power = (
+            anchor
+            + (jnp.log(safe_weight) + jnp.log1p(deviation_sum / safe_weight))
+            / safe_exponent
+        )
         log_ce_geometric = jnp.sum(
-            jnp.where(weights > 0.0, weights * log_v, 0.0), axis=-1
+            jnp.where(positive, weights * log_v, weights * 0.0), axis=-1
         )
         return jnp.exp(jnp.where(exponent == 0.0, log_ce_geometric, log_ce_power))
 

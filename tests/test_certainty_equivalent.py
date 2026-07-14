@@ -897,3 +897,25 @@ def test_nnbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
             },
             dead_kwargs={},
         )
+
+
+def test_power_mean_is_stable_one_ulp_from_unit_risk_aversion() -> None:
+    """One float64 step from `gamma = 1` the power mean sits on the geometric mean.
+
+    `PowerMean.aggregate` divides a rounded log-sum by `1 - gamma`; at the
+    representable neighbors of one that quotient must not lose the limit.
+    """
+    values = jnp.asarray([1.0, 4.0, 16.0])
+    weights = jnp.asarray([0.25, 0.25, 0.5])
+    geometric = float(jnp.exp(jnp.sum(weights * jnp.log(values))))
+
+    for gamma in (
+        np.nextafter(np.float64(1.0), np.float64(np.inf)),
+        np.nextafter(np.float64(1.0), np.float64(-np.inf)),
+    ):
+        got = PowerMean().aggregate(
+            values=values,
+            weights=weights,
+            risk_aversion=jnp.asarray(gamma),
+        )
+        np.testing.assert_allclose(float(got), geometric, rtol=1e-8)
