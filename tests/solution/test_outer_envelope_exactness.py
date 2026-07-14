@@ -20,8 +20,12 @@ island cannot hide between mesh points.
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import interp_on_padded_grid
-from _lcm.egm.outer_envelope import outer_envelope_at_query
+from _lcm.egm.outer_envelope import (
+    build_stacked_outer_carry,
+    outer_envelope_at_query,
+)
 
 
 def _host_envelope(
@@ -115,6 +119,58 @@ def test_query_side_envelope_marginal_is_the_winner_slope_across_the_crossing():
 
     np.testing.assert_allclose(float(marginal[0]), -1.0, atol=1e-9)
     np.testing.assert_allclose(float(marginal[1]), 1.0, atol=1e-9)
+
+
+def test_stacked_carry_lifts_candidates_into_common_coh_and_round_trips():
+    """A stacked carry read at the query reproduces the exact `max_j V_j`.
+
+    The keeper occupies coh space directly; the adjuster carries its value in its
+    own resources space `R = coh - 0.5` (a credited cost of `0.5`), so its node
+    grid `{0, 1, 2}` must be lifted to `{0.5, 1.5, 2.5}` before the max. Reading
+    the stacked carry's single leading cell through `outer_envelope_at_query` must
+    equal the max of the keeper read and the *lifted* adjuster read at every
+    query — the lift is what puts both branches on the same coh axis.
+    """
+    keeper = EGMCarry(
+        endog_grid=jnp.array([0.0, 1.0, 2.0])[None, :],
+        value=jnp.array([0.0, 1.0, 2.0])[None, :],
+        marginal_utility=jnp.array([1.0, 1.0, 1.0])[None, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    adjuster = EGMCarry(
+        endog_grid=jnp.array([0.0, 1.0, 2.0])[None, :],
+        value=jnp.array([1.0, 1.6, 2.0])[None, :],
+        marginal_utility=jnp.array([0.8, 0.5, 0.3])[None, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+
+    stacked = build_stacked_outer_carry(
+        keeper_carry=keeper,
+        adjuster_carries=(adjuster,),
+        coh_shifts=jnp.asarray([[0.5]]),
+    )
+    # Leading shape is (durable=1, n_candidates=2); the trailing axis is the grid.
+    assert stacked.endog_grid.shape == (1, 2, 3)
+    np.testing.assert_allclose(
+        np.asarray(stacked.endog_grid[0, 1]), np.array([0.5, 1.5, 2.5]), atol=1e-9
+    )
+
+    events = jnp.array([0.5, 1.0, 1.25, 1.5, 2.0, 2.5])
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=stacked.endog_grid[0],
+        candidate_value=stacked.value[0],
+        candidate_marginal=stacked.marginal_utility[0],
+        x_query=events,
+    )
+    host_value, host_marginal = _host_envelope(
+        np.array([[0.0, 1.0, 2.0], [0.5, 1.5, 2.5]]),
+        np.array([[0.0, 1.0, 2.0], [1.0, 1.6, 2.0]]),
+        np.array([[1.0, 1.0, 1.0], [0.8, 0.5, 0.3]]),
+        np.asarray(events),
+    )
+
+    np.testing.assert_allclose(np.asarray(value), host_value, atol=1e-9)
+    np.testing.assert_allclose(np.asarray(marginal), host_marginal, atol=1e-9)
 
 
 def test_query_below_every_candidate_support_is_masked_out():
