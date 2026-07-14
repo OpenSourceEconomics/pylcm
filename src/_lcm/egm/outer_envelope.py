@@ -303,6 +303,117 @@ def build_outer_envelope_carry(
     return finalize_outer_envelope(state)
 
 
+def build_stacked_outer_carry(
+    *,
+    keeper_carry: EGMCarry,
+    adjuster_carries: tuple[EGMCarry, ...],
+    coh_shifts: FloatND,
+) -> EGMCarry:
+    """Stack the outer durable candidates into a common-coh candidate axis.
+
+    Every candidate is lifted into a common cash-on-hand axis by adding back its
+    credited cost (`∂coh/∂R = 1`, so value and resource-marginal transfer
+    unchanged), then stacked on a new candidate axis inserted just before the
+    grid axis. Unlike the node-sampled merge this takes no maximum at build time:
+    the A+1 conditional carries are retained verbatim so the parent can take the
+    exact `max_j V_j(q)` at its own query (`outer_envelope_at_query`). The keeper
+    is candidate 0 (zero shift, `credited(z, z) = 0`); adjuster `j` is candidate
+    `j + 1`, lifted by `coh_shifts[:, j]` per durable state.
+
+    Args:
+        keeper_carry: The keeper's continuation carry — one row per leading cell
+            `(discrete..., durable)`, already in coh space.
+        adjuster_carries: One carry per outer-grid node, each in its own resources
+            space; aligned with the columns of `coh_shifts`.
+        coh_shifts: Per durable state (rows) and adjuster node (columns), the
+            credited cost added to that adjuster's endogenous grid to map it into
+            coh space. Shape `(n_durable, n_adjusters)`.
+
+    Returns:
+        A carry whose leading shape is `(discrete..., durable, n_candidates)` and
+        whose trailing axis is the grid: `carry[cell]` is the `(n_candidates,
+        n_pad)` block `outer_envelope_at_query` consumes.
+
+    """
+    leading_shape = keeper_carry.endog_grid.shape[:-1]
+    n_durable = leading_shape[-1]
+    # The durable margin is the last leading axis; broadcast a per-durable shift
+    # over the leading discrete axes and the grid axis.
+    broadcast = (1,) * (len(leading_shape) - 1) + (n_durable, 1)
+
+    lifted_endog = [keeper_carry.endog_grid]
+    for adjuster_index, adjuster_carry in enumerate(adjuster_carries):
+        shift = coh_shifts[:, adjuster_index].reshape(broadcast)
+        lifted_endog.append(adjuster_carry.endog_grid + shift)
+
+    candidates = (keeper_carry, *adjuster_carries)
+    return EGMCarry(
+        endog_grid=jnp.stack(lifted_endog, axis=-2),
+        value=jnp.stack([c.value for c in candidates], axis=-2),
+        marginal_utility=jnp.stack([c.marginal_utility for c in candidates], axis=-2),
+        taste_shock_scale=keeper_carry.taste_shock_scale,
+    )
+
+
+def outer_envelope_at_query(
+    *,
+    candidate_endog: FloatND,
+    candidate_value: FloatND,
+    candidate_marginal: FloatND,
+    x_query: Float1D,
+) -> tuple[Float1D, Float1D]:
+    """Pointwise upper envelope `max_j V_j(q)` of the lifted outer candidates.
+
+    Each candidate row is read at every query through the parent's own
+    interpolation convention — edge-clamped Fritsch-Carlson-limited cubic Hermite
+    value with the marginal row as node slopes, a separate linear marginal read,
+    and the value masked to `-inf` below the candidate's first finite coh node
+    (its borrowing-constrained support has not started). The published value is
+    the pointwise maximum over candidates; the published marginal is the *winning*
+    candidate's resource slope (Danskin), so it is winner-consistent and never
+    averaged across a branch crossing.
+
+    Taking the maximum at the query — rather than at a shared node grid and
+    republishing a single interpolated row — is exact for the finite candidate set
+    at every query (`thm:nnbegm`): a candidate that wins only on an interval
+    strictly between two nodes is read at its true value there instead of being
+    bridged upward (`thm:aggregate-bridge`).
+
+    Args:
+        candidate_endog: Lifted common-coh grids, `(n_candidates, n_pad)`, each
+            NaN-padded in the tail.
+        candidate_value: Conditional value rows, `(n_candidates, n_pad)`.
+        candidate_marginal: Conditional resource-marginal rows,
+            `(n_candidates, n_pad)`.
+        x_query: Query cash-on-hand points, `(n_query,)`.
+
+    Returns:
+        Tuple of the envelope value and the winner's marginal, each `(n_query,)`.
+
+    """
+
+    def read_one(
+        endog: Float1D, value: Float1D, marginal: Float1D
+    ) -> tuple[Float1D, Float1D]:
+        cand_lower = jnp.min(jnp.where(jnp.isfinite(endog), endog, jnp.inf))
+        value_at_query = interp_on_padded_grid(
+            x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
+        )
+        marginal_at_query = interp_on_padded_grid(
+            x_query=x_query, xp=endog, fp=marginal
+        )
+        value_at_query = jnp.where(x_query < cand_lower, -jnp.inf, value_at_query)
+        return value_at_query, marginal_at_query
+
+    values, marginals = jax.vmap(read_one)(
+        candidate_endog, candidate_value, candidate_marginal
+    )
+    winner = jnp.argmax(values, axis=0)
+    envelope_value = jnp.max(values, axis=0)
+    envelope_marginal = jnp.take_along_axis(marginals, winner[None, :], axis=0)[0]
+    return envelope_value, envelope_marginal
+
+
 def _read_candidate_row(
     shared_coh: Float1D,
     cand_endog: Float1D,

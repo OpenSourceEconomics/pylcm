@@ -10,14 +10,14 @@ the action grid.
 It is produced and carried for *every* solved period alongside the
 value-function arrays. Forward simulation consumes it where the regime
 qualifies (`SimulationPhase.egm_policy_read`): the subject's row — indexed by
-its discrete states, with an off-grid passive state blending the two
-bracketing rows — is interpolated at the subject's resources, replacing the
+its discrete states — is interpolated at the subject's resources, replacing the
 action-grid argmax value of the continuous action, subject to a post-read
-feasibility check (finite, positive, within the intrinsic budget).
+feasibility check (in-support, finite, positive, within the intrinsic budget).
 
 The gate exists because the stored policy is the **solve-phase** optimum of
-one conditional problem. Kept on the grid-argmax path, which re-applies the
-simulate-phase decision:
+one conditional problem, and a linear read is faithful only where the row
+carries the coordinates and branch topology it interpolates over. Kept on the
+grid-argmax path:
 - regimes with any `Phased` declaration — a phase-variant utility, budget,
   transition, or state domain (not only `H`, e.g. naive present bias) makes
   the stored policy solve the wrong simulate-phase FOC or puts the policy
@@ -25,9 +25,20 @@ simulate-phase decision:
 - regimes with discrete actions — the branch is chosen from grid-restricted
   Q values, and a branch whose refined conditional optimum lies between
   action-grid nodes can lose that comparison yet win after continuous
-  refinement, so the refined policy could be paired with the wrong branch
-  (branch re-decision from published conditional values is the follow-up);
+  refinement, so the refined policy could be paired with the wrong branch;
+- regimes with a passive continuous state — each row is the envelope policy
+  conditional on one passive node, so blending rows across a passive-dimension
+  branch switch would read an action from neither branch;
+- regimes with a continuous stochastic-process state — the process is a
+  node-valued row axis, but its simulation transition draws an off-node
+  continuous value that nearest-node row selection cannot resolve;
+- asset-row DC-EGM regimes (a savings-stage function reads the Euler state) —
+  the per-node solve publishes one point per exogenous asset node, not a
+  crossing-complete row, so interpolating across nodes would mix branches;
 - regimes with EV1 taste shocks, whose realized draws perturb the decision.
+Publishing conditional values and re-deciding the branch at the simulated
+state lifts the discrete-action, passive, process, and asset-row exclusions
+(the tracked follow-up).
 
 Unlike the rolling `EGMCarry` (the cross-period continuation channel, overwritten
 each period), this is saved for every solved period and travels to `simulate`
