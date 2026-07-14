@@ -281,6 +281,7 @@ def _g2egm_envelope_step(
         discount_factor=discount_factor,
         crra=crra,
         match_rate=match_rate,
+        post_decision_valid=post.valid,
     )
 
     m_mesh, n_mesh = jnp.meshgrid(m_grid, n_grid, indexing="ij")
