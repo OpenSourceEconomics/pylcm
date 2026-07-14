@@ -105,6 +105,7 @@ from _lcm.variables import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import (
@@ -272,6 +273,7 @@ def process_regimes(
 
         simulation = _build_simulation_phase(
             spec=spec,
+            user_regime=user_regime,
             regime_name=regime_name,
             nested_transitions=simulate_nested_transitions[regime_name],
             all_grids=all_grids,
@@ -340,6 +342,8 @@ def _build_solution_phase(
 
     Args:
         spec: The regime's per-phase specification.
+        user_regime: The finalized user regime, scanned for `Phased`
+            declarations by the policy-replay gate.
         regime_name: The name of the regime.
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
@@ -788,6 +792,7 @@ def _build_egm_child_carry_producer(
 def _build_simulation_phase(
     *,
     spec: PhasedRegimeSpec,
+    user_regime: UserRegime,
     regime_name: RegimeName,
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
@@ -828,6 +833,8 @@ def _build_simulation_phase(
 
     Args:
         spec: The regime's per-phase specification.
+        user_regime: The finalized user regime, scanned for `Phased`
+            declarations by the policy-replay gate.
         regime_name: The name of the regime.
         nested_transitions: Per-target transition bundles for internal
             processing.
@@ -983,18 +990,24 @@ def _build_simulation_phase(
 
     # Replaying the solve-phase EGM policy in simulation is valid only when
     # the simulate-phase decision problem is the one the solve optimized:
-    # - `H` phase-invariant (`_split_functions` copies the same object into
-    #   both phase slices when the user did not declare a `Phased` H);
+    # - no `Phased` declaration anywhere on the regime (a phase-variant
+    #   utility, budget, transition, or state domain changes the
+    #   simulate-phase FOC or the policy-row coordinates even under an
+    #   unchanged `H`) — `Phased` is the grammar's only source of phase
+    #   variance, so its absence is the exact test;
+    # - no carried-only states (their simulate-phase domain has no solve-side
+    #   row coordinates to read the policy on);
     # - no taste shocks (the realized discrete draw perturbs the decision).
-    h_phase_invariant = spec.solution.functions.get(
-        "H"
-    ) is spec.simulation.functions.get("H")
+    phase_invariant = (
+        not regime_declares_phased(user_regime) and not spec.carried_only_state_names
+    )
     egm_policy_read = None
     egm_config = solver.inner if isinstance(solver, NEGM) else solver
-    if isinstance(egm_config, DCEGM) and h_phase_invariant and not has_taste_shocks:
+    if isinstance(egm_config, DCEGM) and phase_invariant and not has_taste_shocks:
         egm_policy_read = EGMPolicyRead(
             action_name=egm_config.continuous_action,
             resources_target=egm_config.resources,
+            savings_lower_bound=float(egm_config.savings_grid.to_jax()[0]),
         )
 
     return SimulationPhase(
@@ -1009,6 +1022,29 @@ def _build_simulation_phase(
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         next_state=next_state,
         egm_policy_read=egm_policy_read,
+    )
+
+
+def regime_declares_phased(user_regime: UserRegime) -> bool:
+    """Whether any regime slot carries a `Phased` (phase-variant) declaration.
+
+    Scans `functions`, `state_transitions` (including per-target dicts), the
+    regime `transition`, and `states`. `Phased` is outermost-only in every
+    slot except a per-target transition dict, whose cells it may wrap.
+    """
+
+    def is_phased(value: object) -> bool:
+        if isinstance(value, Phased):
+            return True
+        if isinstance(value, Mapping):
+            return any(isinstance(cell, Phased) for cell in value.values())
+        return False
+
+    return (
+        any(is_phased(value) for value in user_regime.functions.values())
+        or any(is_phased(value) for value in user_regime.state_transitions.values())
+        or is_phased(user_regime.transition)
+        or any(is_phased(value) for value in user_regime.states.values())
     )
 
 

@@ -615,16 +615,29 @@ def _replace_continuous_action_with_policy_read(
     Replaces the grid-argmax value of the EGM continuous action with the
     off-grid solve-phase optimum. Row selection follows the policy's own
     layout:
-    - discrete-state and discrete-action axes index the row at the subject's
-      state / chosen action (positions located on the variable's grid);
+    - discrete-state axes index the row at the subject's state (positions
+      located on the variable's grid);
     - a passive continuous-state axis blends the two rows bracketing the
       subject's off-grid value, interpolating each row at the subject's
       resources first (never a pre-blended row).
     Applies only where the regime qualifies (`regime.simulation.egm_policy_read`
-    is set); more than one passive axis keeps the grid value.
+    is set). Kept on the grid value:
+    - rows with discrete-action axes (the grid-chosen branch need not remain
+      optimal after continuous refinement);
+    - more than one passive axis;
+    - subjects whose read is non-finite or infeasible (positivity and the
+      borrowing limit `action <= resources - savings_lower_bound`).
     """
     read = regime.simulation.egm_policy_read
     if sim_policy is None or read is None:
+        return optimal_actions
+    # A regime with discrete actions keeps the grid path: the discrete branch
+    # was chosen from grid-restricted Q values, and a branch whose refined
+    # conditional optimum lies between action-grid nodes can lose that
+    # comparison yet win after continuous refinement — replacing only the
+    # continuous action could pair the refined policy with the wrong branch.
+    # Branch re-decision from published conditional values is the follow-up.
+    if sim_policy.row_discrete_action_names:
         return optimal_actions
     if len(sim_policy.row_passive_state_names) > 1:
         return optimal_actions
@@ -689,6 +702,17 @@ def _replace_continuous_action_with_policy_read(
         )
     else:
         off_grid_action = read_rows(())
+
+    # Post-read feasibility: a below-support secant extension can imply
+    # consumption above current resources; an infeasible or non-finite read
+    # keeps that subject's grid-argmax value.
+    grid_action = jnp.asarray(optimal_actions[read.action_name])
+    feasible = (
+        jnp.isfinite(off_grid_action)
+        & (off_grid_action > 0.0)
+        & (off_grid_action <= resources - read.savings_lower_bound)
+    )
+    off_grid_action = jnp.where(feasible, off_grid_action, grid_action)
 
     return MappingProxyType({**optimal_actions, read.action_name: off_grid_action})
 
