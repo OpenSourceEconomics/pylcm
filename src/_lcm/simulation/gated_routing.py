@@ -87,6 +87,7 @@ from _lcm.regime_building.gated_edges import (
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.solution.backward_induction import _evaluate_edge_fold
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, StatesPerRegime
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import Bool1D, BoolND, FloatND, Int1D
 
 
@@ -114,15 +115,28 @@ def substitute_gated_edge_continuations(
     REPEATING edge (the source active over a range of ages, not just a
     single "one-shot" period) folds at every period it is active, including
     the source's own last active period — whose `period + 1` may not include
-    the target (or a fallback/gate-ref reference regime) at all, e.g. a
-    self-looping edge whose target IS the source, past the source's own
-    `active` boundary. Skip (no substitution, no gate) for a target — and
-    hence the whole edge — not solved at `period + 1`: mirrors the identical
-    guard the SOLVE-side roll already applies
+    the target at all, e.g. a self-looping edge whose target IS the source,
+    past the source's own `active` boundary. Skip (no substitution, no gate)
+    for a target — and hence the whole edge — not solved at `period + 1`:
+    mirrors the identical guard the SOLVE-side roll already applies
     (`backward_induction._roll_gated_edges`'s
     `if target_name not in period_solution: continue`). A one-shot edge's
     target is always present at `period + 1` (that is the whole point of a
     one-shot edge), so this is byte-identical for every existing test.
+
+    By contrast, a reference regime (a leg's `fallback` or a `gate_refs`
+    entry) missing at `period + 1` while the TARGET is present is not a
+    legitimate boundary no-op — the edge is genuinely active there and
+    declares that reference, so its absence means the model is
+    misconfigured (the reference regime is not solved when it needs to be).
+    Raises `ModelInitializationError` rather than silently falling back to
+    the raw (ungated) target V, which would leave the edge's routing
+    undetectably disabled.
+
+    Raises:
+        ModelInitializationError: A declared edge's target is solved at
+            `period + 1` but one or more of its reference regimes
+            (fallbacks / gate refs) are not.
 
     Returns:
         Tuple `(substituted_next_regime_to_V_arr, gate_arrays)` — the first
@@ -142,8 +156,20 @@ def substitute_gated_edge_continuations(
     for target_name, edge in regime.gated_edges.items():
         if target_name not in next_period_V:
             continue
-        if any(ref not in next_period_V for ref in edge.reference_regimes):
-            continue
+        missing_refs = tuple(
+            ref for ref in edge.reference_regimes if ref not in next_period_V
+        )
+        if missing_refs:
+            msg = (
+                f"Regime '{regime_name}', gated_edges['{target_name}']: the "
+                f"target regime '{target_name}' is solved at period {period + 1}, "
+                f"but the edge's reference regime(s) {missing_refs} are not — "
+                "a malformed ACTIVE edge (a fallback or gate reference regime "
+                "must be solved at the same period as the target whenever the "
+                "target itself is). Declare the missing reference regime "
+                f"active at period {period + 1}, or drop the reference."
+            )
+            raise ModelInitializationError(msg)
         same_period_mapping = build_same_period_mapping_for_fold(
             edge=edge,
             period_solution=next_period_V,
@@ -219,17 +245,37 @@ def _select_own_leg(
     stakeholder (`leg.source_stakeholder`); `own_stakeholder` is this
     `simulate()` call's fixed own-role (e.g. "f" for an all-women
     population), so the matching leg's fallback is the row's own single
-    regime on dissolution — not unconditionally the first declared leg. Falls
-    back to the first declared leg when `own_stakeholder` is `None` (a
-    singleton source has exactly one leg anyway) or matches no leg (a
-    caller-error-tolerant default, not a silent per-edge mismatch: singleton
-    sources' sole leg has `source_stakeholder=None` and never matches a
-    non-`None` `own_stakeholder`, which is the common, correct case).
+    regime on dissolution — not unconditionally the first declared leg.
+
+    Falls back to the first declared leg (`legs[0]`) in two LEGITIMATE
+    cases: `own_stakeholder` is `None` (the legacy default — a caller that
+    never opted into row-split), or the source has a single leg
+    (`len(legs) == 1`), which for a singleton source always has
+    `source_stakeholder=None` and so structurally never matches a non-`None`
+    `own_stakeholder` — the common, correct case, not an error.
+
+    A non-`None` `own_stakeholder` that matches NO leg of a genuinely
+    MULTI-leg (collective) source is a caller error — a typo'd or stale
+    role name — not tolerated silently: raises `ValueError` rather than
+    routing the row through an arbitrary leg (F5).
+
+    Raises:
+        ValueError: `own_stakeholder` is not `None`, `legs` has more than
+            one leg, and no leg's `source_stakeholder` matches it.
     """
     if own_stakeholder is not None:
         for leg in legs:
             if leg.source_stakeholder == own_stakeholder:
                 return leg
+        if len(legs) > 1:
+            available = tuple(leg.source_stakeholder for leg in legs)
+            msg = (
+                f"own_stakeholder={own_stakeholder!r} does not match any "
+                f"leg's source_stakeholder (available: {available}). "
+                "This routes a collective source's dissolution edge, so a "
+                "row's own-role must name one of the declared stakeholders."
+            )
+            raise ValueError(msg)
     return legs[0]
 
 

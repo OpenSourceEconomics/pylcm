@@ -800,6 +800,7 @@ def _fail_if_gated_edges_invalid(
                     user_regimes=user_regimes,
                     regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 )
+            _fail_if_duplicate_fallback_regimes(prefix=prefix, edge=edge)
             for ref_name, ref in edge.gate_refs.items():
                 _fail_if_ref_invalid(
                     prefix=f"{prefix}gate_refs['{ref_name}'] ",
@@ -807,6 +808,42 @@ def _fail_if_gated_edges_invalid(
                     user_regimes=user_regimes,
                     regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 )
+
+
+def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: object) -> None:
+    """Reject an edge whose legs share a fallback regime (F4).
+
+    COLLECTIVE-REGIMES (E4, F4 guard). `route_gated_edges`
+    (`_lcm.simulation.gated_routing`) writes EVERY leg's own projected
+    fallback state into `leg.fallback.regime`'s per-subject state slot, one
+    leg at a time, masked by `subjects_in_regime` — never keyed by leg. If
+    two legs of the SAME edge name the same fallback regime (even with
+    different projections, e.g. two stakeholders both falling back to a
+    shared regime name), the second leg's write silently overwrites the
+    first's for every subject in the source regime, regardless of which leg
+    `_select_own_leg` would actually select for a given row — a genuine data
+    corruption, not merely an unused branch. A singleton source (exactly one
+    leg) can never trigger this; only a multi-leg (collective) source can.
+    """
+    edge = cast("Any", edge)
+    fallback_regimes = [leg.fallback.regime for leg in edge.legs.values()]
+    seen: set[RegimeName] = set()
+    duplicates: list[RegimeName] = []
+    for regime_name in fallback_regimes:
+        if regime_name in seen and regime_name not in duplicates:
+            duplicates.append(regime_name)
+        seen.add(regime_name)
+    if duplicates:
+        msg = (
+            f"{prefix}two or more legs share the same fallback regime "
+            f"{sorted(duplicates)}. Forward simulation writes each leg's "
+            "own projected fallback state into its fallback regime's "
+            "per-subject slot; legs sharing a fallback regime would have "
+            "one leg's write silently overwrite the other's for every "
+            "subject, regardless of which leg is actually selected. Give "
+            "each leg its own fallback regime."
+        )
+        raise ModelInitializationError(msg)
 
 
 def _fail_if_target_stakeholder_invalid(

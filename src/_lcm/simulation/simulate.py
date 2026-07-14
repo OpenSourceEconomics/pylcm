@@ -598,6 +598,33 @@ def _simulate_regime_in_period(
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
+    # COLLECTIVE-REGIMES (E4, F7 guard). A STATELESS collective regime (no
+    # declared states, e.g. a terminal `Regime(stakeholders=(...), ...)`
+    # with only actions and/or constant utilities) has no per-subject state
+    # array for the dispatcher to `vmap` the household argmax over, so
+    # `argmax_and_max_Q_over_a` returns a single household-wide result: a
+    # 0-d `indices_optimal_actions` and a `V_arr` of shape `(n_stakeholders,)`
+    # — identical for every subject, but missing the leading subject axis
+    # every OTHER path (stateless singleton, stateful collective) carries.
+    # Left alone, the 0-d index reaches `_lookup_values_from_indices` ->
+    # `vmapped_unravel_index`, which `vmap`s over axis 0 and requires
+    # `flat_indices.ndim >= 1` — a `ValueError` for any subject count. And
+    # even when there are no actions to look up (so that call is a no-op),
+    # the un-broadcast `(n_stakeholders,)` V_arr would silently mismatch
+    # every downstream `(n_chunk_subjects, ...)` shape (the `in_regime`
+    # broadcast below, `to_dataframe`'s per-row extraction). Detected from
+    # the regime's OWN declaration (`stakeholders` set, no state names) —
+    # not from array shapes, which could coincide with `n_chunk_subjects`
+    # by chance. A stateFUL collective regime (`state_action_space.states`
+    # non-empty) already carries its own subject axis from the state
+    # arrays and is untouched by this branch.
+    n_chunk_subjects = subject_ids_in_regime.shape[0]
+    if regime.stakeholders is not None and not state_action_space.states:
+        indices_optimal_actions = jnp.broadcast_to(
+            jnp.asarray(indices_optimal_actions), (n_chunk_subjects,)
+        )
+        V_arr = jnp.broadcast_to(V_arr[None, ...], (n_chunk_subjects, *V_arr.shape))
+
     optimal_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_actions,
         grids=state_action_space.actions,
@@ -605,7 +632,6 @@ def _simulate_regime_in_period(
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match this chunk's subject count.
-    n_chunk_subjects = subject_ids_in_regime.shape[0]
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_chunk_subjects,))
 

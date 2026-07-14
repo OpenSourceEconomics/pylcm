@@ -294,11 +294,30 @@ def _reorder_columns(
     state_names: list[StateName],
     action_names: list[ActionName],
 ) -> pd.DataFrame:
-    """Reorder columns: id, period, regime_name, value, states, actions, rest."""
-    base = ["subject_id", "period", "regime_name", "value"]
+    """Reorder columns: id, period, regime_name, value, states, actions, rest.
+
+    COLLECTIVE-REGIMES (F6 guard). `base`'s canonical columns are built from
+    the ones ACTUALLY present in `df`, not assumed unconditionally: a
+    scalar `value` column exists only when at least one populated regime is
+    a SINGLETON (`_process_regime` never writes one for an all-collective
+    result — `_split_stakeholder_value` pops `"value"` and replaces it with
+    `value_<stakeholder>` columns instead). Unconditionally including
+    `"value"` here raised `KeyError: ['value'] not in index` on `df[...]`
+    when every populated regime was collective. `value_<stakeholder>`
+    columns are placed deterministically right after `base` — after
+    `"value"` when it is present, else after `"regime_name"` (`base`'s last
+    entry either way) — instead of drifting to the end with the unordered
+    `rest` tail.
+    """
+    canonical_base = ["subject_id", "period", "regime_name", "value"]
+    base = [c for c in canonical_base if c in df.columns]
     known = set(base) | set(state_names) | set(action_names)
+    stakeholder_value_cols = sorted(
+        c for c in df.columns if c not in known and c.startswith("value_")
+    )
+    known = known | set(stakeholder_value_cols)
     rest = [c for c in df.columns if c not in known]
-    return df[base + state_names + action_names + rest]
+    return df[base + stakeholder_value_cols + state_names + action_names + rest]
 
 
 def _convert_to_categorical(
