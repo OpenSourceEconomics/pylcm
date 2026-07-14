@@ -21,8 +21,7 @@ from lcm import AgeGrid, LinSpacedGrid, LogSpacedGrid, Model, fixed_transition
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
-from tests.test_models.deterministic import base, retirement_only
-from tests.test_models.deterministic import dcegm_variants
+from tests.test_models.deterministic import base, dcegm_variants, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
