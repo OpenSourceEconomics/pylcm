@@ -303,6 +303,65 @@ def build_outer_envelope_carry(
     return finalize_outer_envelope(state)
 
 
+def outer_envelope_at_query(
+    *,
+    candidate_endog: FloatND,
+    candidate_value: FloatND,
+    candidate_marginal: FloatND,
+    x_query: Float1D,
+) -> tuple[Float1D, Float1D]:
+    """Pointwise upper envelope `max_j V_j(q)` of the lifted outer candidates.
+
+    Each candidate row is read at every query through the parent's own
+    interpolation convention — edge-clamped Fritsch-Carlson-limited cubic Hermite
+    value with the marginal row as node slopes, a separate linear marginal read,
+    and the value masked to `-inf` below the candidate's first finite coh node
+    (its borrowing-constrained support has not started). The published value is
+    the pointwise maximum over candidates; the published marginal is the *winning*
+    candidate's resource slope (Danskin), so it is winner-consistent and never
+    averaged across a branch crossing.
+
+    Taking the maximum at the query — rather than at a shared node grid and
+    republishing a single interpolated row — is exact for the finite candidate set
+    at every query (`thm:nnbegm`): a candidate that wins only on an interval
+    strictly between two nodes is read at its true value there instead of being
+    bridged upward (`thm:aggregate-bridge`).
+
+    Args:
+        candidate_endog: Lifted common-coh grids, `(n_candidates, n_pad)`, each
+            NaN-padded in the tail.
+        candidate_value: Conditional value rows, `(n_candidates, n_pad)`.
+        candidate_marginal: Conditional resource-marginal rows,
+            `(n_candidates, n_pad)`.
+        x_query: Query cash-on-hand points, `(n_query,)`.
+
+    Returns:
+        Tuple of the envelope value and the winner's marginal, each `(n_query,)`.
+
+    """
+
+    def read_one(
+        endog: Float1D, value: Float1D, marginal: Float1D
+    ) -> tuple[Float1D, Float1D]:
+        cand_lower = jnp.min(jnp.where(jnp.isfinite(endog), endog, jnp.inf))
+        value_at_query = interp_on_padded_grid(
+            x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
+        )
+        marginal_at_query = interp_on_padded_grid(
+            x_query=x_query, xp=endog, fp=marginal
+        )
+        value_at_query = jnp.where(x_query < cand_lower, -jnp.inf, value_at_query)
+        return value_at_query, marginal_at_query
+
+    values, marginals = jax.vmap(read_one)(
+        candidate_endog, candidate_value, candidate_marginal
+    )
+    winner = jnp.argmax(values, axis=0)
+    envelope_value = jnp.max(values, axis=0)
+    envelope_marginal = jnp.take_along_axis(marginals, winner[None, :], axis=0)[0]
+    return envelope_value, envelope_marginal
+
+
 def _read_candidate_row(
     shared_coh: Float1D,
     cand_endog: Float1D,
