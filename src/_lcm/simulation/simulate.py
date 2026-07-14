@@ -625,7 +625,8 @@ def _replace_continuous_action_with_policy_read(
     - rows with discrete-action axes (the grid-chosen branch need not remain
       optimal after continuous refinement);
     - more than one passive axis;
-    - subjects whose read is non-finite or infeasible (positivity and the
+    - subjects whose read is out of the live row support (edge extension is
+      not the policy), non-finite, or infeasible (positivity and the
       borrowing limit `action <= resources - savings_lower_bound`).
     """
     read = regime.simulation.egm_policy_read
@@ -670,7 +671,7 @@ def _replace_continuous_action_with_policy_read(
         for name in sim_policy.row_discrete_action_names
     )
 
-    def read_rows(passive_positions: tuple[IntND, ...]) -> FloatND:
+    def read_rows(passive_positions: tuple[IntND, ...]) -> tuple[FloatND, BoolND]:
         index = (*state_positions, *passive_positions, *action_positions)
         if index:
             rows_x = sim_policy.endog_grid[index]
@@ -682,9 +683,19 @@ def _replace_continuous_action_with_policy_read(
             rows_f = jnp.broadcast_to(
                 sim_policy.policy, (n_subjects, *sim_policy.policy.shape)
             )
-        return vmap(
+        values = vmap(
             lambda x_query, xp, fp: interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
         )(resources, rows_x, rows_f)
+        # The live support runs from the first abscissa to the last finite
+        # one (the rows are NaN-padded in the tail). Outside it the
+        # interpolant extends an edge secant (below) or clamps (above) —
+        # feasible values that need not approximate the policy.
+        valid_length = jnp.sum(jnp.isfinite(rows_x), axis=-1)
+        last_live = jnp.take_along_axis(rows_x, (valid_length - 1)[:, None], axis=-1)[
+            :, 0
+        ]
+        in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)
+        return values, in_support
 
     if sim_policy.row_passive_state_names:
         passive_name = sim_policy.row_passive_state_names[0]
@@ -697,22 +708,25 @@ def _replace_continuous_action_with_policy_read(
         )
         width = passive_grid[lower + 1] - passive_grid[lower]
         weight = jnp.clip((passive_values - passive_grid[lower]) / width, 0.0, 1.0)
-        off_grid_action = (1.0 - weight) * read_rows((lower,)) + weight * read_rows(
-            (lower + 1,)
-        )
+        lower_action, lower_in_support = read_rows((lower,))
+        upper_action, upper_in_support = read_rows((lower + 1,))
+        off_grid_action = (1.0 - weight) * lower_action + weight * upper_action
+        in_support = lower_in_support & upper_in_support
     else:
-        off_grid_action = read_rows(())
+        off_grid_action, in_support = read_rows(())
 
-    # Post-read feasibility: a below-support secant extension can imply
-    # consumption above current resources; an infeasible or non-finite read
-    # keeps that subject's grid-argmax value.
+    # Post-read acceptance: the replacement must be an in-support
+    # interpolation (outside the live rows the read is an edge extension,
+    # not the policy), finite, positive, and within the intrinsic budget;
+    # any other read keeps that subject's grid-argmax value.
     grid_action = jnp.asarray(optimal_actions[read.action_name])
-    feasible = (
-        jnp.isfinite(off_grid_action)
+    accepted = (
+        in_support
+        & jnp.isfinite(off_grid_action)
         & (off_grid_action > 0.0)
         & (off_grid_action <= resources - read.savings_lower_bound)
     )
-    off_grid_action = jnp.where(feasible, off_grid_action, grid_action)
+    off_grid_action = jnp.where(accepted, off_grid_action, grid_action)
 
     return MappingProxyType({**optimal_actions, read.action_name: off_grid_action})
 

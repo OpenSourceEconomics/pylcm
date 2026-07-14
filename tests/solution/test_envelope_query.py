@@ -149,6 +149,29 @@ def test_inclusive_bracket_reads_the_boundary_owning_value_at_a_shared_abscissa(
     np.testing.assert_allclose(np.asarray(env_value), [5.0])
 
 
+def test_exact_node_tie_selects_the_segment_that_continues_right():
+    """At a node where one segment ends and another starts, the right-continuous
+    winner is the one that continues to the right, even if the ending segment is
+    steeper.
+
+    Segment A spans [0, 1] with the larger value-slope (10) and policy 0; segment B
+    spans [1, 2] with slope 1 and policy 1. Both bracket the shared node q=1 and
+    attain the same value there, but only B is defined immediately to the right, so
+    a `side="right"` read must publish B's policy and marginal, not A's.
+    """
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.array([0.0, 1.0, 1.0, 2.0]),
+        policy=jnp.array([0.0, 0.0, 1.0, 1.0]),
+        value=jnp.array([0.0, 10.0, 10.0, 11.0]),
+        marginal=jnp.array([10.0, 10.0, 1.0, 1.0]),
+        segment_id=jnp.array([0.0, 0.0, 1.0, 1.0]),
+        x_query=jnp.array(1.0),
+    )
+    assert np.isclose(float(value), 10.0)
+    assert np.isclose(float(policy), 1.0)
+    assert np.isclose(float(marginal), 1.0)
+
+
 def test_query_outside_all_branches_is_nan():
     """A query beyond every branch's support yields NaN value/policy/marginal."""
     got_value, got_policy, got_marginal = envelope_at_query(
