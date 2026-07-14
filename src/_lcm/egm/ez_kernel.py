@@ -340,8 +340,8 @@ def ez_invert_partials(
     # on the certainty equivalent is below sqrt(eps) relative at any gamma.
     # Such lotteries invert as exactly normalized (`W = 1`, deviations `E/W`);
     # a materially non-unit mass keeps its exact `log(W)` contribution.
-    roundoff_mass = (
-        jnp.abs(weight_sum - 1.0) <= jnp.sqrt(jnp.finfo(safe_weight.dtype).eps)
+    roundoff_mass = jnp.abs(weight_sum - 1.0) <= jnp.sqrt(
+        jnp.finfo(safe_weight.dtype).eps
     )
     log_mass = jnp.where(roundoff_mass, 0.0, jnp.log(safe_weight))
     log_nu = jnp.where(
@@ -353,9 +353,7 @@ def ez_invert_partials(
     # Where the value channel is normalized — the roundoff snap, and the
     # `gamma = 1` branch (whose unnormalized form has no finite value) — the
     # marginal divides by the same mass so `(nu, dnu/ds)` stay an exact pair.
-    mass_normalizer = jnp.where(
-        roundoff_mass | (exponent == 0.0), safe_weight, 1.0
-    )
+    mass_normalizer = jnp.where(roundoff_mass | (exponent == 0.0), safe_weight, 1.0)
     dnu_ds = (
         jnp.exp(risk_aversion * log_nu + marginal_log_scale)
         * marginal_mantissa
