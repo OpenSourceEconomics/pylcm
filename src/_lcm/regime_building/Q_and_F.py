@@ -635,6 +635,9 @@ def _build_same_period_ref_reader(
     v_interpolation_info: VInterpolationInfo,
     functions: EconFunctionsMapping,
     deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction],
+    conflicting_deterministic_transition_names: frozenset[
+        TransitionFunctionName
+    ] = frozenset(),
 ) -> Callable[..., FloatND]:
     """Build the reader of one same-period reference value at a (state, action) cell.
 
@@ -660,6 +663,22 @@ def _build_same_period_ref_reader(
     interpolated instead of integer-looked-up; a reference regime without a
     process state is unaffected (`interpolate_process_axes=False`, the
     ordinary path, byte-identical).
+
+    Args:
+        ref: Resolved same-period reference declaration.
+        v_interpolation_info: V-interpolation info of the reference regime.
+        functions: Immutable mapping of function names to internal user
+            functions.
+        deterministic_transitions: Mapping of `next_<state>` names to merged
+            deterministic own-regime transition functions, made available to
+            the projection like an ordinary same-period-ref read.
+        conflicting_deterministic_transition_names: Frozenset of `next_<state>`
+            names whose deterministic law differs across target bundles (see
+            `_get_deterministic_transitions`). Rejected exactly like an
+            ordinary utility/feasibility read
+            (`_fail_if_conflicting_transition_is_read`) if a projection
+            actually reads one of them, since the merged law would silently
+            disagree with the simulate state-update there too.
     """
     _reference_has_process_axis = any(
         isinstance(grid, _ContinuousStochasticProcess)
@@ -675,6 +694,22 @@ def _build_same_period_ref_reader(
         **dict(deterministic_transitions),
         **{k: v for k, v in functions.items() if k != "H"},
     }
+    _fail_if_conflicting_transition_is_read(
+        combined={
+            **dag_pool,
+            **{
+                f"{_REF_STATE_PREFIX}{state_name}": projection
+                for state_name, projection in ref.projection.items()
+            },
+        },
+        targets=[
+            f"{_REF_STATE_PREFIX}{state_name}"
+            for state_name in v_interpolation_info.state_names
+        ],
+        conflicting_deterministic_transition_names=(
+            conflicting_deterministic_transition_names
+        ),
+    )
     projection_funcs: dict[StateName, Callable[..., FloatND]] = {}
     projection_args: dict[StateName, tuple[str, ...]] = {}
     for state_name in v_interpolation_info.state_names:
@@ -890,6 +925,9 @@ def get_Q_and_F_collective(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         functions=functions,
         deterministic_transitions=deterministic_transitions,
+        conflicting_deterministic_transition_names=(
+            conflicting_deterministic_transition_names
+        ),
     )
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
@@ -1043,6 +1081,9 @@ def _build_value_constraint_machinery(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     functions: EconFunctionsMapping,
     deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction],
+    conflicting_deterministic_transition_names: frozenset[
+        TransitionFunctionName
+    ] = frozenset(),
 ) -> _ValueConstraintMachinery:
     """Build the E2 reference readers and value-constraint evaluators once.
 
@@ -1051,6 +1092,13 @@ def _build_value_constraint_machinery(
     deterministic `next_<state>` laws, exactly like ordinary constraints); its
     engine-supplied arguments — `Q_<s>` and the reference-value names — are
     bound per (state, action) cell by `_apply_value_constraints`.
+
+    `conflicting_deterministic_transition_names` is threaded to the reference
+    readers and enforced on the value-constraint predicates themselves
+    (`_fail_if_conflicting_transition_is_read`), exactly as for the ordinary
+    utility/feasibility read in `_get_U_and_F`: an E2 predicate or projection
+    reading a target-dependent `next_<state>` law would silently bind one
+    target's law while the simulate state-update uses the per-target one.
     """
     reference_readers: dict[str, Callable[..., FloatND]] = {}
     reference_reader_args: dict[str, tuple[str, ...]] = {}
@@ -1060,6 +1108,9 @@ def _build_value_constraint_machinery(
             v_interpolation_info=regime_to_v_interpolation_info[ref.regime],
             functions=functions,
             deterministic_transitions=deterministic_transitions,
+            conflicting_deterministic_transition_names=(
+                conflicting_deterministic_transition_names
+            ),
         )
         reference_readers[ref_name] = reader
         reference_reader_args[ref_name] = tuple(get_union_of_args([reader]))
@@ -1071,8 +1122,16 @@ def _build_value_constraint_machinery(
     evaluators: dict[str, Callable[..., BoolND]] = {}
     evaluator_args: dict[str, tuple[str, ...]] = {}
     for constraint_name, predicate in value_constraints.items():
+        combined = {**dag_pool, constraint_name: predicate}
+        _fail_if_conflicting_transition_is_read(
+            combined=combined,
+            targets=[constraint_name],
+            conflicting_deterministic_transition_names=(
+                conflicting_deterministic_transition_names
+            ),
+        )
         evaluator = concatenate_functions(
-            functions={**dag_pool, constraint_name: predicate},
+            functions=combined,
             targets=constraint_name,
             enforce_signature=False,
             set_annotations=True,
