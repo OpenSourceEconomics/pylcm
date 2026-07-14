@@ -10,8 +10,22 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.processes.state_conditioned import iid_normal_row, tauchen_row
-from lcm import NormalIIDProcess, TauchenAR1Process
+from _lcm.processes.state_conditioned import (
+    StateConditioned,
+    conditioned_row,
+    gather_sigma,
+    iid_normal_row,
+    sigma_array_by_code,
+    tauchen_row,
+)
+from lcm import DiscreteGrid, NormalIIDProcess, TauchenAR1Process, categorical
+from lcm.typing import ScalarInt
+
+
+@categorical(ordered=True)
+class Uncertainty:
+    low: ScalarInt
+    high: ScalarInt
 
 
 def test_tauchen_row_reduces_to_pylcm_at_nodes():
@@ -87,3 +101,46 @@ def test_iid_conditional_variance_matches_sigma_on_fine_grid():
     g = np.asarray(nodes)
     var = (g**2 * r).sum() - (g * r).sum() ** 2
     assert abs(var - sigma**2) < 1e-3
+
+
+# --- StateConditioned value object + code-ordered sigma resolver (F5) ------------- #
+
+
+def test_sigma_array_ordered_by_code_not_insertion():
+    """F5/RT5: sigma is ordered by the categorical's integer code, so indexing by the
+    conditioning state's code is correct even when `by` is given in another order."""
+    grid = DiscreteGrid(Uncertainty)  # codes: low=0, high=1
+    by = {"high": 1.0, "low": 0.2}  # deliberately reverse insertion order
+    arr = np.asarray(sigma_array_by_code(grid, by))
+    np.testing.assert_allclose(arr, [0.2, 1.0])  # [code0=low, code1=high]
+    assert float(gather_sigma(jnp.asarray(arr), 0)) == 0.2
+    assert float(gather_sigma(jnp.asarray(arr), 1)) == 1.0
+
+
+def test_sigma_array_missing_category_raises():
+    grid = DiscreteGrid(Uncertainty)
+    with pytest.raises(ValueError, match="missing categories"):
+        sigma_array_by_code(grid, {"low": 0.2})
+
+
+def test_state_conditioned_dataclass_is_frozen():
+    sc = StateConditioned(on="uncertainty", by={"low": 0.2, "high": 1.0})
+    assert sc.on == "uncertainty"
+    with pytest.raises((AttributeError, TypeError)):
+        sc.on = "other"  # type: ignore[misc]
+
+
+def test_conditioned_row_dispatch_sums_to_one():
+    nodes = jnp.linspace(-3.0, 3.0, 7)
+    r_iid = conditioned_row(family="iid_normal", nodes=nodes, sigma=0.5, from_value=0.0)
+    r_tau = conditioned_row(
+        family="tauchen", nodes=nodes, sigma=0.5, from_value=0.3, rho=0.8
+    )
+    assert np.asarray(r_iid).sum() == pytest.approx(1.0)
+    assert np.asarray(r_tau).sum() == pytest.approx(1.0)
+
+
+def test_conditioned_row_tauchen_requires_rho():
+    nodes = jnp.linspace(-3.0, 3.0, 7)
+    with pytest.raises(ValueError, match="requires rho"):
+        conditioned_row(family="tauchen", nodes=nodes, sigma=0.5, from_value=0.0)

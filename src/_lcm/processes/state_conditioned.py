@@ -16,12 +16,81 @@ These builders reduce exactly to ``NormalIIDProcess(gauss_hermite=False)`` /
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Literal
+
 import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-from lcm.typing import Float1D, ScalarFloat
+from _lcm.grids import DiscreteGrid
+from lcm.typing import Float1D, ScalarFloat, ScalarInt
 
 _Scalar = float | int | ScalarFloat
+
+# Process families whose transition CDF carries `sigma` (v1-supported). Rouwenhorst is
+# intentionally absent: its transition is `rho`-only, so a fixed node grid leaves no
+# channel for a state-conditioned `sigma` (audit F2).
+Family = Literal["iid_normal", "tauchen"]
+
+
+@dataclass(frozen=True, kw_only=True)
+class StateConditioned:
+    """A process parameter (v1: `sigma`) conditioned on a discrete regime state.
+
+    `on` names a `DiscreteGrid` state in the *same* regime (current-regime conditioning
+    only — audit S4/F4). `by` maps each of that state's category names to a concrete
+    parameter value. Values are baked at build time (v1); runtime-estimated per-category
+    values are a later extension.
+    """
+
+    on: str
+    by: Mapping[str, float]
+
+
+def sigma_array_by_code(cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Float1D:
+    """Order the per-category `sigma` values by the categorical's integer **code**.
+
+    Stacking by `Mapping` insertion order silently permutes regimes when the code order
+    differs (audit F5/RT5); indexing the returned array by the conditioning state's code
+    is therefore correct by construction. Every category must appear in `by`.
+    """
+    cats, codes = cond_grid.categories, cond_grid.codes
+    missing = set(cats) - set(by)
+    if missing:
+        msg = f"StateConditioned.by is missing categories {sorted(missing)}"
+        raise ValueError(msg)
+    ordered = sorted(zip(codes, cats, strict=True))  # by integer code
+    return jnp.asarray([by[name] for _code, name in ordered], dtype=jnp.float64)
+
+
+def conditioned_row(
+    *,
+    family: Family,
+    nodes: Float1D,
+    sigma: _Scalar,
+    from_value: _Scalar,
+    rho: _Scalar | None = None,
+) -> Float1D:
+    """Dispatch to the direct-CDF row builder for the given process `family`.
+
+    `nodes` are the FIXED common nodes (from `grid_sigma`); `sigma` is the current
+    regime's innovation std (already gathered by code). `rho` is required for Tauchen.
+    """
+    if family == "iid_normal":
+        return iid_normal_row(nodes, mu=0.0, sigma=sigma)
+    if family == "tauchen":
+        if rho is None:
+            msg = "conditioned_row(family='tauchen') requires rho"
+            raise ValueError(msg)
+        return tauchen_row(nodes, rho=rho, sigma=sigma, from_value=from_value)
+    msg = f"unsupported family {family!r} (v1: 'iid_normal' | 'tauchen')"
+    raise ValueError(msg)
+
+
+def gather_sigma(sigma_by_code: Float1D, code: int | ScalarInt) -> ScalarFloat:
+    """Select the current regime's `sigma` from the code-ordered array (audit F5)."""
+    return sigma_by_code[code]
 
 
 def _row_from_edge_cdf(cdf_at_edges: Float1D) -> Float1D:
