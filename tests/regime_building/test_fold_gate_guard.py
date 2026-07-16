@@ -1,4 +1,4 @@
-"""F3 interim guard: `fold=True` on a collective regime a gate reads nodewise.
+"""F3 interim guard: `fold=True` on a regime a gate reads nodewise.
 
 `fold=True` integrates a shock's node axis out of a regime's stored V — and,
 for a collective regime, collapses its dissolution flag `D` by `jnp.any` —
@@ -15,9 +15,16 @@ already-`jnp.any`-reduced D.
 `_validate_fold_declarations` (regime-local) already rejects a regime's own
 same-period gate / value-constraint reading a fold name IT declares; this
 module pins the cross-regime gap the audit found — a DIFFERENT regime's gate
-reading a folded collective TARGET or REFERENCE — which is caught by
-`_fail_if_folded_collective_regime_is_gate_target_or_ref` in
+reading a folded TARGET or REFERENCE — which is caught by
+`_fail_if_folded_regime_is_same_period_endpoint` in
 `regime_building/processing.py`.
+
+A follow-up audit found this collective-only guard's enumerated prohibition
+was incomplete (it omitted gated-edge leg fallbacks, and skipped singleton
+folding regimes entirely) plus a false positive in a different, regime-local
+fold guard; see `test_fold_guard_complete.py` for the completed guard's
+coverage (F1/F2/F4) and the singleton-vs-collective negative controls this
+module's cases don't exercise.
 """
 
 from types import MappingProxyType

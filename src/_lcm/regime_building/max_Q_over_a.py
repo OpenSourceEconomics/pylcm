@@ -290,7 +290,7 @@ def _wrap_with_fold_reduction(
     follow.
 
     The dissolution flag `D` (collective only) stays strictly boolean — reduced
-    by `jnp.any` ("dissolutiond at any folded node"), not a weighted average — so
+    by `jnp.any` ("dissolutioned at any folded node"), not a weighted average — so
     it keeps its `BoolND` contract for every downstream reader (the gated-edge
     fold, `KernelResult.dissolution`). This is a conservative, not an exact,
     reduction; `_validate_fold_declarations` already rejects a fold state a

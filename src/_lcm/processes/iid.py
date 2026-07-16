@@ -37,10 +37,25 @@ class _IIDProcess(_ContinuousStochasticProcess):
     persistent process has no `fold` field at all — the type system rejects
     it). Further restrictions (no same-period gate / value-constraint reads
     the realized node, no next-period transition or continuation depends on
-    it, `GridSearch` only, not combined with `taste_shocks`, and only a
-    fully-specified process — no runtime-supplied distribution params) are
-    enforced by `Regime.__post_init__` / model processing; see
+    it, `GridSearch` only, not combined with `taste_shocks`, not combined
+    with a nonlinear `certainty_equivalent` — the fold average is exact only
+    for the linear expectation, and only a fully-specified process — no
+    runtime-supplied distribution params) are enforced by
+    `Regime.__post_init__` / model processing; see
     `_validate_fold_declarations`.
+
+    SCOPE (nonpersistent-only, no continuation support yet):
+    `_fail_if_folded_state_persists` rejects a fold whenever ANY reachable
+    regime's continuation still carries a `next_<name>` for this state — a
+    self-transition, or the same IID shock redeclared in a later period of
+    the SAME regime. This slice only reduces a shock that is used and
+    discarded within the one period that folds it; it does NOT implement
+    fold-aware continuation interpolation, so a shock that is genuinely
+    redrawn every period across many periods (the multi-period,
+    "repeated-IID" topology — e.g. a wage/match shock redrawn each age) is
+    out of scope and is rejected at construction, not silently
+    mishandled. Continuation support for a persistent fold is a deferred,
+    separate feature.
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (
