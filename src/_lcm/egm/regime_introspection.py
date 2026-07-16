@@ -169,11 +169,14 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     solve variant and baked into the DAG, so their outputs are computed from
     leaf states and params rather than demanded as leaves.
 
-    For a NEGM target the published continuation is the keeper's (the durable
-    stays put), so the inner resources' outer post-decision is replaced by the
-    durable identity `next_<durable> = <durable>`. The child resources then read
-    `<durable>` (a bound passive state) rather than demanding the outer
-    post-decision as an unbound leaf.
+    For a NEGM target the published continuation lives on the keeper's
+    cash-on-hand axis — the axis where keeping is free — so the inner
+    resources' outer post-decision is replaced by the keeper's no-adjustment
+    map `next_<durable> = keep(<durable>)` (the identity when the regime
+    declares none). The child resources then read `<durable>` (a bound passive
+    state) rather than demanding the outer post-decision as an unbound leaf,
+    and the parent's query axis matches the axis the stacked candidates are
+    lifted onto.
     """
     # Imported lazily: `regime_building.processing` imports the solver
     # registry, which imports this module, so a top-level import would cycle.
@@ -193,9 +196,17 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
         if isinstance(value, Phased) and name not in resolved:
             resolved[name] = cast("UserFunction", value.solve)
     if isinstance(user_regime.solver, NEGM):
-        resolved[user_regime.solver.outer_post_decision] = _keeper_identity_function(
-            outer_post_decision=user_regime.solver.outer_post_decision,
-            functions=resolved,
+        no_adjustment_name = user_regime.solver.outer_no_adjustment_candidate
+        resolved[user_regime.solver.outer_post_decision] = (
+            _keeper_no_adjustment_function(
+                outer_post_decision=user_regime.solver.outer_post_decision,
+                no_adjustment_func=(
+                    resolved[no_adjustment_name]
+                    if no_adjustment_name is not None
+                    else None
+                ),
+                functions=resolved,
+            )
         )
     qnamed = {
         name: _proc._rename_params_to_qnames(  # noqa: SLF001
@@ -213,22 +224,29 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     )
 
 
-def _keeper_identity_function(
-    *, outer_post_decision: FunctionName, functions: dict[str, UserFunction]
+def _keeper_no_adjustment_function(
+    *,
+    outer_post_decision: FunctionName,
+    no_adjustment_func: UserFunction | None,
+    functions: dict[str, UserFunction],
 ) -> UserFunction:
-    """Build the keeper identity `next_<durable>(durable) = durable`.
+    """Build the keeper map `next_<durable>(durable) = keep(durable)`.
 
-    The injected function declares the durable state as its single argument and
-    copies its annotation off the first regime function that declares it, so the
-    DAG's annotation-consistency check (which requires every consumer of a leaf
-    to agree) stays satisfied.
+    `keep` is the regime's no-adjustment candidate (e.g. the depreciated stock
+    `durable (1 - delta)`); with none declared it is the identity. The injected
+    function declares the durable state as its single argument and copies its
+    annotation off the first regime function that declares it, so the DAG's
+    annotation-consistency check (which requires every consumer of a leaf to
+    agree) stays satisfied.
     """
     durable_state = outer_post_decision.removeprefix("next_")
     annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
 
     @with_signature(args={durable_state: annotation}, return_annotation=annotation)
     def keep_outer_post_decision(**kwargs: ScalarFloat) -> ScalarFloat:
-        return kwargs[durable_state]
+        if no_adjustment_func is None:
+            return kwargs[durable_state]
+        return no_adjustment_func(kwargs[durable_state])
 
     keep_outer_post_decision.__name__ = outer_post_decision
     return cast("UserFunction", keep_outer_post_decision)
