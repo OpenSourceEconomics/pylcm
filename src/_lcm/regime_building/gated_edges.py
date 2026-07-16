@@ -42,7 +42,7 @@ from _lcm.regime_building.Q_and_F import (
     ResolvedSamePeriodRef,
     _build_same_period_ref_reader,
 )
-from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.typing import (
     ConstraintFunction,
     EconFunctionsMapping,
@@ -62,12 +62,12 @@ D_KEY_SUFFIX = "__gated_edge_D__"
 # The float dissolution flag is 0.0 / 1.0 at grid points; threshold back to boolean.
 _D_THRESHOLD = 0.5
 
-# COLLECTIVE-REGIMES (E4). `V_arr_name` under which a fold's grid-level `gate`
-# array (cast to float) is bound when interpolated at a simulate-side
-# candidate target-state draw (`get_V_interpolator`); the resulting float is
-# thresholded the same way as `D_target` above.
-GATE_ARR_NAME = "__gate_arr__"
-GATE_THRESHOLD = 0.5
+# COLLECTIVE-REGIMES (E4, simulate F1 fix). `V_arr_name`s under which the
+# target's own (per-component) value array and its float dissolution flag are
+# bound inside `get_edge_simulate_gate_evaluator`'s two interpolators. Never
+# real regime or gate-ref names.
+_SIMULATE_TARGET_V_ARR_NAME = "__simulate_target_component_v_arr__"
+_SIMULATE_D_ARR_NAME = "__simulate_target_D_arr__"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -140,26 +140,30 @@ def get_edge_fold(
     ],
     reference_v_info: Mapping[RegimeName, VInterpolationInfo],
     target_stakeholders: tuple[str, ...] | None,
-) -> Callable[..., tuple[FloatND, BoolND]]:
-    """Build one edge's fold: a jittable ``(Wbar, gate)`` producer on the target grid.
+) -> Callable[..., FloatND]:
+    """Build one edge's fold: a jittable ``Wbar`` producer on the target grid.
 
     Returns a callable whose keyword arguments are the target regime's state
     grids, the same-period value mapping (under `SAME_PERIOD_V_ARG` — the target
     V, its float dissolution flag, and every reference regime's V) and the gate's
-    flat params. It returns a pair: ``Wbar`` of shape ``(*target_state_axes,
+    flat params. It returns ``Wbar`` of shape ``(*target_state_axes,
     n_source_components)`` for a collective source, or ``(*target_state_axes,)``
-    for a singleton source (a single leg with no trailing axis); and the raw
-    boolean ``gate`` array of shape ``(*target_state_axes,)`` (grid-level,
-    shared across every leg — the same predicate value that decided each
-    ``jnp.where`` branch of ``Wbar``).
+    for a singleton source (a single leg with no trailing axis).
 
-    COLLECTIVE-REGIMES (E4). The solve-side roll (`_roll_gated_edges` in
-    `backward_induction.py`) only ever consumed ``Wbar``; the simulate-side
-    value router additionally needs the raw ``gate`` to decide REGIME
-    ROUTING for a realized subject (`_lcm/simulation/gated_routing.py`) — the
-    grid-level array here is interpolated at the subject's candidate
-    target-state draw, exactly like any other solved array simulate reads.
-    Returning both from one fold avoids evaluating `gate_evaluator` twice.
+    COLLECTIVE-REGIMES (E4, simulate F1 fix). Earlier revisions also returned
+    the fold's raw grid-level boolean ``gate`` array, which the simulate-side
+    value router (`_lcm/simulation/gated_routing.py`) used to decide REGIME
+    ROUTING for a realized subject by INTERPOLATING that baked boolean array
+    and thresholding the result at 0.5. That does not commute with a
+    nonlinear gate predicate (e.g. a strict inequality between two
+    interpolated values): interpolate-then-threshold can disagree with
+    threshold-then-interpolate arbitrarily close to a grid cell boundary,
+    silently flipping routing decisions the fold itself never evaluated at
+    that off-grid point. Simulate now instead RECOMPUTES the gate from
+    interpolated VALUE OPERANDS via `get_edge_simulate_gate_evaluator`
+    (this module), so the fold no longer needs to return `gate` at all — it
+    is still computed INTERNALLY below (needed for `Wbar`'s own
+    ``jnp.where``), just no longer part of the return value.
 
     **Numerics.** The target regime's OWN value components and dissolution flag are
     read by DIRECT array indexing off the same-period mapping — never by
@@ -181,7 +185,7 @@ def get_edge_fold(
         target_stakeholders: The target regime's stakeholders, or `None`.
 
     Returns:
-        The fold callable producing ``(Wbar, gate)`` on the target grid.
+        The fold callable producing ``Wbar`` on the target grid.
     """
     state_names = target_v_info.state_names
 
@@ -278,8 +282,8 @@ def get_edge_fold(
 
     singleton_source = all(leg.source_stakeholder is None for leg in edge.legs)
 
-    @with_signature(args=outer_arg_names, return_annotation="tuple[FloatND, BoolND]")
-    def fold(**kwargs: _ParamsLeaf) -> tuple[FloatND, BoolND]:
+    @with_signature(args=outer_arg_names, return_annotation="FloatND")
+    def fold(**kwargs: _ParamsLeaf) -> FloatND:
         same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
         # Direct (un-interpolated) reads of the target's own value and flag, so a
         # `-inf` dissolution cell never poisons a neighbour through interpolation.
@@ -332,14 +336,235 @@ def get_edge_fold(
             # STRICT where — never `gate*V + (1-gate)*fallback` (`0*-inf = NaN`).
             component_values.append(jnp.where(gate, open_branch, fallback))
 
-        wbar = (
+        return (
             component_values[0]
             if singleton_source
             else jnp.stack(component_values, axis=-1)
         )
-        return wbar, gate
 
     return fold
+
+
+def get_edge_simulate_gate_evaluator(
+    *,
+    edge: ResolvedGatedEdge,
+    target_v_info: VInterpolationInfo,
+    target_functions: EconFunctionsMapping,
+    target_deterministic_transitions: Mapping[
+        TransitionFunctionName, TransitionFunction
+    ],
+    reference_v_info: Mapping[RegimeName, VInterpolationInfo],
+    target_stakeholders: tuple[str, ...] | None,
+    target_has_process_axis: bool,
+) -> Callable[..., BoolND]:
+    """Build one edge's SIMULATE-side gate evaluator (E4, simulate F1 fix).
+
+    Companion to `get_edge_fold`, consumed only by forward simulation
+    (`_lcm.simulation.gated_routing.route_gated_edges`). RECOMPUTES the gate
+    predicate at a realized, generically OFF-GRID candidate target state,
+    instead of interpolating the solve-side fold's baked boolean `gate`
+    array and thresholding the interpolated float at 0.5 — the old approach
+    does not commute with a nonlinear predicate (e.g. a strict inequality
+    between two interpolated values: interpolate-then-compare and
+    compare-then-interpolate can disagree arbitrarily close to a grid cell
+    boundary), silently flipping routing decisions the fold never evaluated
+    at that point.
+
+    Mirrors `get_edge_fold`'s own gate-kwargs assembly
+    (`_assemble_gate_kwargs` + `gate_evaluator(**kwargs)`, the SAME two
+    calls, so solve and simulate apply the identical predicate); only how
+    the OPERANDS feeding it are obtained differs:
+
+    - VALUE operands (`V_target_<s>`, every `gate_refs` entry) are FAITHFUL
+      recomputes: the target's own value array (sliced per stakeholder for
+      a collective target) and each declared gate ref are interpolated at
+      the realized point — the former via a fresh `get_V_interpolator` over
+      the target's own grid, the latter via the SAME
+      `_build_same_period_ref_reader` reader `get_edge_fold` uses, just
+      called directly at one point instead of product-mapped over the whole
+      target grid. This fully fixes a value-operand gate (e.g. mutual
+      consent, EKL eq. 27).
+    - The BOOLEAN `D_target` operand (a no-dissolution gate, e.g. EKL eqs.
+      9/12) is a DOCUMENTED RESIDUAL: linearly interpolating the float-cast
+      flag and thresholding at 0.5 (`_assemble_gate_kwargs`'s existing
+      `D_target` branch, reused unchanged) is kept, rather than recomputed
+      from `D`'s own underlying per-action value comparison at the realized
+      point. That would mean re-deriving `D` from IR internals the fold
+      itself never exposes here — a deeper, separate slice; a gate reading
+      ONLY `D_target` (a pure divorce/no-dissolution gate) is therefore
+      NOT yet fully faithful off-grid, only nearest-node-equivalent via
+      linear interpolation + threshold, same as before this fix.
+
+    **Numerics.** Unlike `get_edge_fold`'s target-V read (exact grid-point
+    indexing, to dodge `0 * -inf = nan` poisoning a dissolution cell's
+    neighbour), a realized simulate-side point is generically off-grid, so
+    interpolating the target's own V is unavoidable here. The interpolation
+    kernel (`_lcm.regime_building.ndimage.map_coordinates`) is already
+    zero-weight-`-inf`-safe for the on-grid degenerate case
+    (`zero_safe_weighted_term`); a genuinely off-grid point straddling a
+    dissolution boundary interpolates TOWARDS `-inf` rather than producing a
+    `nan` (a finite corner weight times `-inf` is `-inf`, not `0 * -inf`), so
+    a value-operand comparison like `V_target_<s> > ref` degrades to
+    `False` there — the same qualitative answer a strict `-inf`-aware
+    predicate would give.
+
+    Args:
+        edge: The resolved edge declaration (identical to `get_edge_fold`).
+        target_v_info: The target regime's V-interpolation info (its grid).
+        target_functions: The target regime's processed functions, so the
+            gate resolves target states / helper functions.
+        target_deterministic_transitions: The target regime's merged
+            deterministic ``next_<state>`` laws.
+        reference_v_info: V-interpolation info per reference regime.
+        target_stakeholders: The target regime's stakeholders, or `None`.
+        target_has_process_axis: Whether the target carries a non-folded
+            `_ContinuousStochasticProcess` state axis — selects the
+            process-aware interpolator (`get_V_interpolator`'s
+            `interpolate_process_axes`) for the target's OWN value / `D`
+            reads, mirroring `_build_same_period_ref_reader`'s identical
+            auto-select for each gate ref (independently, off its OWN
+            reference regime's grid).
+
+    Returns:
+        A callable keyed by the target's state names (a realized candidate
+        point — scalar per subject once `vmap`-ped by the caller, exactly
+        like `route_gated_edges`'s old gate-array interpolator),
+        `SAME_PERIOD_V_ARG` (target V, `D`-as-float, and every reference
+        regime's V — `build_same_period_mapping_for_fold`'s output), and any
+        extra params the gate or the interpolators need; returns the
+        recomputed boolean gate at that point.
+    """
+    state_names = target_v_info.state_names
+
+    # Gate-ref readers: the IDENTICAL per-cell construction `get_edge_fold`
+    # uses for its own `gate_ref_readers`, but WITHOUT that function's
+    # `_grid_reader` product-map wrap — `get_edge_fold` maps these over the
+    # full target GRID (solve time, one evaluation per grid cell); here each
+    # reader is called directly at ONE realized point (vmapped by the
+    # caller over subjects), exactly the off-grid idiom
+    # `_build_same_period_ref_reader` is built for everywhere else.
+    gate_ref_readers = {
+        name: _build_same_period_ref_reader(
+            ref=ref,
+            v_interpolation_info=reference_v_info[ref.regime],
+            functions=target_functions,
+            deterministic_transitions=target_deterministic_transitions,
+        )
+        for name, ref in edge.gate_refs.items()
+    }
+    gate_ref_args = {
+        name: tuple(get_union_of_args([reader]))
+        for name, reader in gate_ref_readers.items()
+    }
+
+    target_component_interpolator = get_V_interpolator(
+        v_interpolation_info=target_v_info,
+        state_prefix="",
+        V_arr_name=_SIMULATE_TARGET_V_ARR_NAME,
+        interpolate_process_axes=target_has_process_axis,
+    )
+    target_component_args = tuple(
+        arg
+        for arg in get_union_of_args([target_component_interpolator])
+        if arg != _SIMULATE_TARGET_V_ARR_NAME
+    )
+
+    d_interpolator = get_V_interpolator(
+        v_interpolation_info=target_v_info,
+        state_prefix="",
+        V_arr_name=_SIMULATE_D_ARR_NAME,
+        interpolate_process_axes=target_has_process_axis,
+    )
+    d_interpolator_args = tuple(
+        arg
+        for arg in get_union_of_args([d_interpolator])
+        if arg != _SIMULATE_D_ARR_NAME
+    )
+
+    # The SAME gate predicate `get_edge_fold` builds (identical DAG pool,
+    # identical `concatenate_functions` call) — solve and simulate must
+    # apply the exact same function, only the operands feeding it differ.
+    dag_pool = {
+        **dict(target_deterministic_transitions),
+        **{k: v for k, v in target_functions.items() if k != "H"},
+    }
+    gate_evaluator = concatenate_functions(
+        functions={**dag_pool, "__gate__": edge.gate},
+        targets="__gate__",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    gate_arg_names = tuple(get_union_of_args([gate_evaluator]))
+    reads_d_target = "D_target" in gate_arg_names
+
+    target_component_names = (
+        [f"V_target_{s}" for s in target_stakeholders]
+        if target_stakeholders is not None
+        else ["V_target"]
+    )
+    injected_names = frozenset({*target_component_names, "D_target", *gate_ref_readers})
+
+    outer_arg_names = sorted(
+        {SAME_PERIOD_V_ARG}
+        | set(state_names)
+        | {arg for args in gate_ref_args.values() for arg in args}
+        | set(target_component_args)
+        | set(d_interpolator_args)
+        | (set(gate_arg_names) - injected_names)
+    )
+
+    @with_signature(args=outer_arg_names, return_annotation="BoolND")
+    def evaluate_simulate_gate(**kwargs: _ParamsLeaf) -> BoolND:
+        same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
+        target_V = same_period_V[edge.target]
+
+        # Faithful VALUE-operand recompute: interpolate the target's own
+        # (per-component) value array at the realized point, instead of
+        # reading the solve-side fold's baked boolean gate off-grid.
+        target_components: dict[str, FloatND] = {}
+        for index, name in enumerate(target_component_names):
+            component_arr = (
+                target_V[..., index] if target_stakeholders is not None else target_V
+            )
+            target_components[name] = target_component_interpolator(
+                **{arg: kwargs[arg] for arg in target_component_args},
+                **{_SIMULATE_TARGET_V_ARR_NAME: component_arr},
+            )
+
+        # DOCUMENTED RESIDUAL: `D_target` is linearly interpolated and
+        # thresholded (same recipe as every other simulate-side value read),
+        # never recomputed from its own per-action IR comparison — see this
+        # function's docstring. Only built/interpolated when the gate
+        # actually reads it (`reads_d_target`, a Python-level bool at trace
+        # time), so a pure value-operand gate (consent) pays no cost for a
+        # `D` array it never uses.
+        d_value: FloatND | None = None
+        if reads_d_target:
+            d_flag = same_period_V.get(f"{edge.target}{D_KEY_SUFFIX}")
+            if d_flag is not None:
+                d_value = d_interpolator(
+                    **{arg: kwargs[arg] for arg in d_interpolator_args},
+                    **{_SIMULATE_D_ARR_NAME: d_flag},
+                )
+
+        gate_ref_values = {
+            name: reader(**{arg: kwargs[arg] for arg in gate_ref_args[name]})
+            for name, reader in gate_ref_readers.items()
+        }
+
+        # Shared with `get_edge_fold`: identical kwargs assembly, then the
+        # identical predicate call.
+        gate_kwargs = _assemble_gate_kwargs(
+            gate_arg_names=gate_arg_names,
+            target_components=target_components,
+            d_value=d_value,
+            gate_ref_values=gate_ref_values,
+            state_mesh={name: jnp.asarray(kwargs[name]) for name in state_names},
+            cell_kwargs=kwargs,
+        )
+        return jnp.asarray(gate_evaluator(**gate_kwargs))
+
+    return evaluate_simulate_gate
 
 
 _FALLBACK_PROJECTION_TARGET_PREFIX = "__fallback_state__"

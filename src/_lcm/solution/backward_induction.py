@@ -611,11 +611,7 @@ def _roll_gated_edges(
                 period_solution=period_solution,
                 period_dissolution_flags=period_dissolution_flags,
             )
-            # COLLECTIVE-REGIMES (E4): the fold now also returns the raw
-            # grid-level `gate` array (simulate's value router interpolates
-            # it to route a realized subject); solve's roll only ever needed
-            # `Wbar`, so the gate is discarded here.
-            wbar, _gate = _evaluate_edge_fold(
+            wbar = _evaluate_edge_fold(
                 fold=fold,
                 target_states=base_state_action_spaces[target_name].states,
                 same_period_mapping=same_period_mapping,
@@ -631,7 +627,7 @@ def _evaluate_edge_fold(
     target_states: Mapping[str, ContinuousState | DiscreteState],
     same_period_mapping: Mapping[RegimeName, FloatND],
     source_flat_params: Mapping[str, object],
-) -> tuple[FloatND, BoolND]:
+) -> FloatND:
     """Call one edge's fold with exactly the arguments its signature declares.
 
     COLLECTIVE-REGIMES (E3', slice 5): the target regime's grid may carry

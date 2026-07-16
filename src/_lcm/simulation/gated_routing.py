@@ -13,14 +13,20 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
    would systematically differ from the one the solved V embeds.
 2. **Regime routing** (`route_gated_edges`) — genuinely new relative to
    solve: forward simulation must decide, for each REALIZED subject, which
-   regime it actually occupies next period and with what states. The same
-   boolean `gate` the fold evaluated (per E3') is interpolated at the
-   subject's candidate target-state draw (the states `calculate_next_states`
-   already computed for the target via the regime's ordinary `transition`
-   declaration — a gated edge's target is always ALSO an ordinary Markov
-   transition target, so those candidate states already exist) and
-   thresholded; the household is routed to the target when open, or to a
-   leg's FALLBACK regime when closed, discarding the other branch's
+   regime it actually occupies next period and with what states. The gate is
+   RECOMPUTED (simulate F1 fix) at the subject's candidate target-state draw
+   (the states `calculate_next_states` already computed for the target via
+   the regime's ordinary `transition` declaration — a gated edge's target is
+   always ALSO an ordinary Markov transition target, so those candidate
+   states already exist): each VALUE operand the gate predicate reads (the
+   target's own value components, every declared `gate_refs` entry) is
+   interpolated at that realized point and the SAME predicate the solve-side
+   fold uses is re-applied — never by interpolating the fold's baked boolean
+   `gate` array and thresholding the interpolated float, which does not
+   commute with a nonlinear predicate (see `_lcm.regime_building.gated_edges
+   .get_edge_simulate_gate_evaluator`'s docstring for the full rationale).
+   The household is routed to the target when the recomputed gate is open,
+   or to a leg's FALLBACK regime when closed, discarding the other branch's
    coordinates — precisely the source of the wording in the design doc and
    the implementation plan ("discard the non-taken branch's coordinates").
 
@@ -79,11 +85,10 @@ import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.regime_building.gated_edges import (
-    GATE_ARR_NAME,
-    GATE_THRESHOLD,
     ResolvedEdgeLeg,
     build_same_period_mapping_for_fold,
 )
+from _lcm.regime_building.Q_and_F import SAME_PERIOD_V_ARG
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.solution.backward_induction import _evaluate_edge_fold
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, StatesPerRegime
@@ -101,12 +106,15 @@ def substitute_gated_edge_continuations(
     period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
     period_to_regime_to_dissolution_flags: Mapping[int, Mapping[RegimeName, BoolND]],
     flat_params: FlatParams,
-) -> tuple[MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, BoolND]]:
+) -> tuple[
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]],
+]:
     """Substitute each declared edge's ``Wbar`` for the raw target V (E4).
 
-    A no-op (returns `next_regime_to_V_arr` unchanged and no gate arrays)
-    when `regime` declares no `gated_edges` — the default simulate path is
-    untouched.
+    A no-op (returns `next_regime_to_V_arr` unchanged and no same-period
+    mappings) when `regime` declares no `gated_edges` — the default
+    simulate path is untouched.
 
     COLLECTIVE-REGIMES (E4 bugfix). ``period_to_regime_to_V_arr`` is the
     SPARSE per-period solution `backward_induction.solve` returns (only the
@@ -139,11 +147,15 @@ def substitute_gated_edge_continuations(
             (fallbacks / gate refs) are not.
 
     Returns:
-        Tuple `(substituted_next_regime_to_V_arr, gate_arrays)` — the first
-        has every declared edge target's slot replaced by `Wbar` (for edges
-        that fired this period); the second maps target regime name to the
-        fold's raw grid-level `gate` array (consumed by `route_gated_edges`),
-        only for edges that fired.
+        Tuple `(substituted_next_regime_to_V_arr, same_period_mappings)` —
+        the first has every declared edge target's slot replaced by `Wbar`
+        (for edges that fired this period); the second maps target regime
+        name to the SAME same-period value mapping the fold itself was
+        evaluated on (target V, `D`-as-float, and every reference regime's
+        V — `build_same_period_mapping_for_fold`'s output), consumed by
+        `route_gated_edges` to RECOMPUTE the gate from interpolated value
+        operands at the realized candidate state (simulate F1 fix) — only
+        for edges that fired.
     """
     if not regime.gated_edges:
         return MappingProxyType(dict(next_regime_to_V_arr)), MappingProxyType({})
@@ -152,7 +164,7 @@ def substitute_gated_edge_continuations(
         period + 1, MappingProxyType({})
     )
     substituted = dict(next_regime_to_V_arr)
-    gate_arrays: dict[RegimeName, BoolND] = {}
+    same_period_mappings: dict[RegimeName, MappingProxyType[RegimeName, FloatND]] = {}
     for target_name, edge in regime.gated_edges.items():
         if target_name not in next_period_V:
             continue
@@ -175,15 +187,19 @@ def substitute_gated_edge_continuations(
             period_solution=next_period_V,
             period_dissolution_flags=next_period_D,
         )
-        wbar, gate = _evaluate_edge_fold(
+        wbar = _evaluate_edge_fold(
             fold=regime.gated_edge_folds[target_name],
             target_states=base_state_action_spaces[target_name].states,
             same_period_mapping=same_period_mapping,
             source_flat_params=flat_params[regime_name],
         )
         substituted[target_name] = wbar
-        gate_arrays[target_name] = gate
-    return MappingProxyType(substituted), MappingProxyType(gate_arrays)
+        # Simulate F1 fix: no longer captures the fold's own boolean `gate`
+        # output (the fold doesn't compute one for this purpose any more) —
+        # `route_gated_edges` recomputes the gate itself from this SAME
+        # same-period mapping, at the realized candidate state.
+        same_period_mappings[target_name] = same_period_mapping
+    return MappingProxyType(substituted), MappingProxyType(same_period_mappings)
 
 
 def _call_with_accepted_kwargs(func: Callable, kwargs: Mapping[str, object]) -> object:
@@ -282,7 +298,7 @@ def _select_own_leg(
 def route_gated_edges(
     *,
     regime: Regime,
-    gate_arrays: Mapping[RegimeName, BoolND],
+    same_period_mappings: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
     next_states: StatesPerRegime,
     regime_names_to_ids: RegimeNamesToIds,
     new_subject_regime_ids: Int1D,
@@ -295,17 +311,25 @@ def route_gated_edges(
     A no-op (returns the inputs unchanged) when `regime` declares no
     `gated_edges`.
 
-    For each declared edge: interpolates the target's raw `gate` array
-    (`gate_arrays[target_name]`, from `substitute_gated_edge_continuations`)
-    at the candidate target states `calculate_next_states` already computed
-    for the target (the regime's ordinary `transition` declaration always
-    structurally reaches a gated edge's target — see module docstring), then
-    for every subject `subjects_in_regime` AND whose ORDINARY next-regime
-    draw (`new_subject_regime_ids`, snapshotted before any edge is
-    processed) actually selected this edge's target: writes every leg's own
-    fallback state coordinates into its fallback regime's state slot, and
-    sets this row's own continuing regime membership to the target (gate
-    open) or its OWN leg's fallback (gate closed, selected via
+    For each declared edge: RECOMPUTES the gate (simulate F1 fix) at the
+    candidate target states `calculate_next_states` already computed for the
+    target (the regime's ordinary `transition` declaration always
+    structurally reaches a gated edge's target — see module docstring) via
+    `regime.gated_edge_simulate_gate_evaluators[target_name]` — which
+    interpolates the gate predicate's VALUE operands (the target's own value
+    components, every declared `gate_refs` entry) at that realized point from
+    `same_period_mappings[target_name]` (the target V / `D` / reference-V
+    arrays, from `substitute_gated_edge_continuations`) and re-applies the
+    SAME predicate the solve-side fold uses — never by interpolating the
+    fold's baked boolean `gate` array and thresholding the result, which does
+    not commute with a nonlinear predicate (pre-fix defect; see
+    `_lcm.regime_building.gated_edges.get_edge_simulate_gate_evaluator`'s
+    docstring). Then for every subject `subjects_in_regime` AND whose
+    ORDINARY next-regime draw (`new_subject_regime_ids`, snapshotted before
+    any edge is processed) actually selected this edge's target: writes
+    every leg's own fallback state coordinates into its fallback regime's
+    state slot, and sets this row's own continuing regime membership to the
+    target (gate open) or its OWN leg's fallback (gate closed, selected via
     `own_stakeholder` — see `_select_own_leg` and the module docstring's
     scope fence for a collective (multi-leg) source). A row whose ordinary
     draw selected a different regime — this edge's target was never reached
@@ -336,31 +360,48 @@ def route_gated_edges(
     states = next_states
     routed_ids = new_subject_regime_ids
     for target_name, edge in regime.gated_edges.items():
-        # COLLECTIVE-REGIMES (E4 bugfix). `gate_arrays` only carries an entry
-        # for a target `substitute_gated_edge_continuations` actually folded
-        # this period — absent for a REPEATING edge's target that is not
-        # itself solved at `period + 1` (e.g. a self-looping edge past the
-        # source's own `active` boundary; see that function's docstring).
-        # The edge cannot possibly gate into a target that does not exist
-        # next period, so it is a no-op here too: the ordinary (ungated)
-        # transition draw and candidate states already computed upstream
-        # stand, unrouted and unoverridden. Byte-identical for every
-        # one-shot edge, whose target is always present at `period + 1`.
-        if target_name not in gate_arrays:
+        # COLLECTIVE-REGIMES (E4 bugfix). `same_period_mappings` only carries
+        # an entry for a target `substitute_gated_edge_continuations`
+        # actually folded this period — absent for a REPEATING edge's target
+        # that is not itself solved at `period + 1` (e.g. a self-looping
+        # edge past the source's own `active` boundary; see that function's
+        # docstring). The edge cannot possibly gate into a target that does
+        # not exist next period, so it is a no-op here too: the ordinary
+        # (ungated) transition draw and candidate states already computed
+        # upstream stand, unrouted and unoverridden. Byte-identical for
+        # every one-shot edge, whose target is always present at
+        # `period + 1`.
+        if target_name not in same_period_mappings:
             continue
         candidate_target_states = dict(next_states[target_name])
         target_kwargs = {**candidate_target_states, **flat_params[target_name]}
 
-        gate_interpolator = regime.gated_edge_gate_interpolators[target_name]
-        gate_float = _call_vmapped_with_accepted_kwargs(
-            gate_interpolator,
-            batched_kwargs=candidate_target_states,
-            static_kwargs={
-                **flat_params[target_name],
-                GATE_ARR_NAME: jnp.asarray(gate_arrays[target_name], dtype=float),
-            },
+        # Simulate F1 fix. Recompute the gate from interpolated VALUE
+        # operands at the realized candidate state, instead of interpolating
+        # the fold's baked boolean `gate` array and thresholding it. The
+        # evaluator's own extra params (beyond the target's state grids and
+        # `SAME_PERIOD_V_ARG`) can come from either the TARGET's flat params
+        # (interpolator helper args, e.g. runtime irregular-grid points) or
+        # this SOURCE regime's own flat params (any genuine extra gate
+        # argument) — mirrors the solve-side fold's own split
+        # (`_evaluate_edge_fold` sources such extras from `source_flat_params`
+        # exclusively; `route_gated_edges` merges both namespaces since it
+        # has both available and no test model relies on one shadowing the
+        # other).
+        simulate_gate_evaluator = regime.gated_edge_simulate_gate_evaluators[
+            target_name
+        ]
+        gate_bool = jnp.asarray(
+            _call_vmapped_with_accepted_kwargs(
+                simulate_gate_evaluator,
+                batched_kwargs=candidate_target_states,
+                static_kwargs={
+                    **flat_params[target_name],
+                    **flat_params[regime.name],
+                    SAME_PERIOD_V_ARG: same_period_mappings[target_name],
+                },
+            )
         )
-        gate_bool = jnp.asarray(gate_float) > GATE_THRESHOLD
 
         target_id = regime_names_to_ids[target_name]
         # F2 fix. Only a row whose ORDINARY draw actually selected THIS

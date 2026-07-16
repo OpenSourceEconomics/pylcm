@@ -44,11 +44,11 @@ from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.gated_edges import (
-    GATE_ARR_NAME,
     ResolvedEdgeLeg,
     ResolvedGatedEdge,
     build_fallback_state_projector,
     get_edge_fold,
+    get_edge_simulate_gate_evaluator,
 )
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
@@ -74,7 +74,6 @@ from _lcm.regime_building.stochastic_state_transitions import (
 from _lcm.regime_building.V import (
     VInterpolationInfo,
     create_v_interpolation_info,
-    get_V_interpolator,
 )
 from _lcm.solution.contract import (
     ContinuationPayload,
@@ -423,7 +422,7 @@ def _attach_gated_edge_folds(
         resolved: dict[RegimeName, ResolvedGatedEdge] = {}
         folds: dict[RegimeName, Callable] = {}
         leg_projectors: dict[RegimeName, tuple[Callable, ...]] = {}
-        gate_interpolators: dict[RegimeName, Callable] = {}
+        simulate_gate_evaluators: dict[RegimeName, Callable] = {}
         for target_name, edge in user_regime.gated_edges.items():
             resolved_edge = _resolve_gated_edge(
                 source_name=source_name,
@@ -448,34 +447,40 @@ def _attach_gated_edge_folds(
                 target_stakeholders=user_regimes[target_name].stakeholders,
             )
             folds[target_name] = jax.jit(fold) if enable_jit else fold
-            # COLLECTIVE-REGIMES (E4): the fold's `gate` output lives on the
-            # target's full grid; the simulate-side router reads it at a
-            # REALIZED (candidate target-state) point via ordinary
-            # V-interpolation — the same machinery every other solved array
-            # is read through, so an exactly-on-grid discrete draw (E4's own
-            # test topologies) is read exactly and a genuinely off-grid
-            # continuous state degrades gracefully to linear interpolation.
-            # The candidate target state fed in at simulate is a genuine
-            # (possibly off-grid) VALUE for every target state — including a
-            # non-folded process state (`_ContinuousStochasticProcess`,
-            # classified `discrete_states` for the Markov-chain solve path
-            # but never fed an exact on-grid index here). Mirror
-            # `_build_same_period_ref_reader`'s (`Q_and_F.py`) auto-select of
-            # `get_V_interpolator`'s process-aware mode so that axis is
-            # linearly interpolated instead of integer-looked-up; a target
-            # without a process state is unaffected (byte-identical ordinary
-            # path).
+            # COLLECTIVE-REGIMES (E4, simulate F1 fix). The simulate-side
+            # router needs its own gate re-evaluated at a REALIZED (candidate
+            # target-state) point — no longer by interpolating the fold's
+            # baked boolean `gate` array and thresholding it (which does not
+            # commute with a nonlinear predicate), but by recomputing the
+            # predicate from interpolated VALUE operands
+            # (`get_edge_simulate_gate_evaluator`). The candidate target
+            # state fed in at simulate is a genuine (possibly off-grid) VALUE
+            # for every target state — including a non-folded process state
+            # (`_ContinuousStochasticProcess`, classified `discrete_states`
+            # for the Markov-chain solve path but never fed an exact on-grid
+            # index here). Mirror `_build_same_period_ref_reader`'s
+            # (`Q_and_F.py`) auto-select of `get_V_interpolator`'s
+            # process-aware mode so that axis is linearly interpolated
+            # instead of integer-looked-up; a target without a process state
+            # is unaffected (byte-identical ordinary path).
             target_has_process_axis = any(
                 isinstance(grid, _ContinuousStochasticProcess)
                 for grid in regime_to_v_interpolation_info[
                     target_name
                 ].discrete_states.values()
             )
-            gate_interpolators[target_name] = get_V_interpolator(
-                v_interpolation_info=regime_to_v_interpolation_info[target_name],
-                state_prefix="",
-                V_arr_name=GATE_ARR_NAME,
-                interpolate_process_axes=target_has_process_axis,
+            # Never wrapped in `jax.jit` here — mirrors the previous gate
+            # interpolator (a plain `get_V_interpolator` product, likewise
+            # unjitted), consumed only inside `route_gated_edges`'s own
+            # `jax.vmap` over subjects.
+            simulate_gate_evaluators[target_name] = get_edge_simulate_gate_evaluator(
+                edge=resolved_edge,
+                target_v_info=regime_to_v_interpolation_info[target_name],
+                target_functions=target_solution.functions,
+                target_deterministic_transitions=target_deterministic_transitions,
+                reference_v_info=regime_to_v_interpolation_info,
+                target_stakeholders=user_regimes[target_name].stakeholders,
+                target_has_process_axis=target_has_process_axis,
             )
             leg_projectors[target_name] = tuple(
                 build_fallback_state_projector(
@@ -491,7 +496,9 @@ def _attach_gated_edge_folds(
             gated_edges=MappingProxyType(resolved),
             gated_edge_folds=MappingProxyType(folds),
             gated_edge_leg_projectors=MappingProxyType(leg_projectors),
-            gated_edge_gate_interpolators=MappingProxyType(gate_interpolators),
+            gated_edge_simulate_gate_evaluators=MappingProxyType(
+                simulate_gate_evaluators
+            ),
         )
     return canonical_regimes
 

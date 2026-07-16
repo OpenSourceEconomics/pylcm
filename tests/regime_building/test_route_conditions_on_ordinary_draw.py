@@ -74,13 +74,20 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def _gate_arrays_for(regime, *, regimes, flat_params, solution, dissolution_flags):
-    """Fold-and-gate exactly like `simulate()` does before `route_gated_edges`."""
+def _same_period_mappings_for(
+    regime, *, regimes, flat_params, solution, dissolution_flags
+):
+    """Fold exactly like `simulate()` does before `route_gated_edges`.
+
+    Returns the per-target same-period value mapping (target V / `D` /
+    reference-V arrays) `route_gated_edges` now recomputes its gate from
+    (simulate F1 fix), not a boolean gate array.
+    """
     base_state_action_spaces = {
         name: r.solution.state_action_space(regime_params=flat_params[name])
         for name, r in regimes.items()
     }
-    _substituted, gate_arrays = substitute_gated_edge_continuations(
+    _substituted, same_period_mappings = substitute_gated_edge_continuations(
         regime=regime,
         regime_name=next(n for n, r in regimes.items() if r is regime),
         period=0,
@@ -90,7 +97,7 @@ def _gate_arrays_for(regime, *, regimes, flat_params, solution, dissolution_flag
         period_to_regime_to_dissolution_flags=dissolution_flags,
         flat_params=flat_params,
     )
-    return gate_arrays
+    return same_period_mappings
 
 
 # ------------------------------------------------------------------------------
@@ -120,14 +127,14 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
         _solve_consent()
     )
     single_f = regimes["single_f"]
-    gate_arrays = _gate_arrays_for(
+    same_period_mappings = _same_period_mappings_for(
         single_f,
         regimes=regimes,
         flat_params=flat_params,
         solution=solution,
         dissolution_flags=dissolution_flags,
     )
-    assert "married_terminal" in gate_arrays
+    assert "married_terminal" in same_period_mappings
 
     target_id = regime_names_to_ids["married_terminal"]
     unrelated_id = regime_names_to_ids["single_m_terminal"]
@@ -148,7 +155,7 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
 
     routed_states, routed_ids = route_gated_edges(
         regime=single_f,
-        gate_arrays=gate_arrays,
+        same_period_mappings=same_period_mappings,
         next_states=states,
         regime_names_to_ids=regime_names_to_ids,
         new_subject_regime_ids=new_subject_regime_ids,
@@ -179,7 +186,7 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
         _solve_consent()
     )
     single_f = regimes["single_f"]
-    gate_arrays = _gate_arrays_for(
+    same_period_mappings = _same_period_mappings_for(
         single_f,
         regimes=regimes,
         flat_params=flat_params,
@@ -204,7 +211,7 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
 
     _states, routed_ids = route_gated_edges(
         regime=single_f,
-        gate_arrays=gate_arrays,
+        same_period_mappings=same_period_mappings,
         next_states=next_states,
         regime_names_to_ids=regime_names_to_ids,
         new_subject_regime_ids=new_subject_regime_ids,
@@ -354,14 +361,14 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
         _solve_dual_edge(edge_order=edge_order)
     )
     src = regimes["src"]
-    gate_arrays = _gate_arrays_for(
+    same_period_mappings = _same_period_mappings_for(
         src,
         regimes=regimes,
         flat_params=flat_params,
         solution=solution,
         dissolution_flags=dissolution_flags,
     )
-    assert set(gate_arrays) == {"target_a", "target_b"}
+    assert set(same_period_mappings) == {"target_a", "target_b"}
 
     target_a_id = regime_names_to_ids["target_a"]
     target_b_id = regime_names_to_ids["target_b"]
@@ -382,7 +389,7 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
 
     _states, routed_ids = route_gated_edges(
         regime=src,
-        gate_arrays=gate_arrays,
+        same_period_mappings=same_period_mappings,
         next_states=next_states,
         regime_names_to_ids=regime_names_to_ids,
         new_subject_regime_ids=new_subject_regime_ids,

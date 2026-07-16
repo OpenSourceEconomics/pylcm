@@ -29,6 +29,28 @@ for the gate interpolator whenever the TARGET regime's own
 axis — the identical auto-select `_build_same_period_ref_reader` already uses,
 applied to this second, previously-missed reader.
 
+UPDATE (simulate F1 fix). `route_gated_edges` no longer interpolates a baked
+boolean `gate` array at all — `gated_edge_gate_interpolators` /
+`GATE_ARR_NAME` are gone; `route_gated_edges` now RECOMPUTES the gate from
+interpolated VALUE operands via `get_edge_simulate_gate_evaluator`
+(`_lcm.regime_building.gated_edges`), stored as
+`gated_edge_simulate_gate_evaluators`. The `interpolate_process_axes`
+auto-select this test exercises now lives on the TARGET-V-component and `D`
+interpolators inside that evaluator instead (same auto-select condition,
+same target-grid process axis). This test's own assertions are UNCHANGED by
+that fix and continue to pass: `_consent_gate`'s two operands are engineered
+to be LINEAR in `shock` on both sides of the comparison (`_u_married_f`/`_m`
+and the terminal single references), so linearly interpolating the VALUES
+and applying the strict inequality is, for this specific fixture, exactly
+equivalent to linearly interpolating the boolean predicate's own {0,1} grid
+and thresholding at 0.5 (`_hand_computed_gate`'s derivation below still
+holds — see the recomputed derivation in the module docstring's tail, kept
+for the record). This is a special-case coincidence of a fixture engineered
+to isolate the process-axis interpolation machinery in isolation, not a
+general property — see `test_gated_edge_simulate_operand_recompute.py` for a
+fixture where interpolate-then-threshold and recompute-then-predicate
+genuinely DISAGREE.
+
 This test builds a singleton source (`single_f`) with a mutual-consent gated
 edge into a collective target (`married_terminal`, stakeholders `f`/`m`) that
 carries a non-folded `NormalIIDProcess` shock IN ADDITION to `wage`. Utility

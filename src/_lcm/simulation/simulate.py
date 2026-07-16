@@ -519,11 +519,14 @@ def _simulate_regime_in_period(
     # continuation `Wbar`, not the target's raw (ungated) value — substitute
     # it into `next_regime_to_V_arr` exactly like the solve-side kernel does
     # (`_with_edge_substitution`), computed here from the already-solved
-    # next-period arrays. `gate_arrays` (the fold's raw boolean gate, per
-    # target) feeds the REGIME-ROUTING step below, after the action and
-    # candidate next-states are known. No-op (returns the inputs unchanged)
-    # for a regime without `gated_edges`. See design doc §2 (E4) / §3.
-    next_regime_to_V_arr, gate_arrays = substitute_gated_edge_continuations(
+    # next-period arrays. `same_period_mappings` (the target V / `D` /
+    # reference-V arrays each firing edge was folded on, per target) feeds
+    # the REGIME-ROUTING step below, after the action and candidate
+    # next-states are known — `route_gated_edges` RECOMPUTES the gate from
+    # these (simulate F1 fix) rather than interpolating a baked boolean.
+    # No-op (returns the inputs unchanged) for a regime without
+    # `gated_edges`. See design doc §2 (E4) / §3.
+    next_regime_to_V_arr, same_period_mappings = substitute_gated_edge_continuations(
         regime=regime,
         regime_name=regime_name,
         period=period,
@@ -685,13 +688,13 @@ def _simulate_regime_in_period(
         # target, so `calculate_next_states` already computed candidate
         # target states above and `calculate_next_regime_membership` already
         # drew a (gate-blind) next regime id; `route_gated_edges` now
-        # interpolates the realized gate at those candidate states and
-        # OVERRIDES both — the target when open, a leg's fallback (with its
-        # own projected states) when closed — for every subject in this
+        # RECOMPUTES the gate at those candidate states (simulate F1 fix)
+        # and OVERRIDES both — the target when open, a leg's fallback (with
+        # its own projected states) when closed — for every subject in this
         # regime. No-op for a regime without `gated_edges`.
         next_states, new_subject_regime_ids = route_gated_edges(
             regime=regime,
-            gate_arrays=gate_arrays,
+            same_period_mappings=same_period_mappings,
             next_states=next_states,
             regime_names_to_ids=regime_names_to_ids,
             new_subject_regime_ids=new_subject_regime_ids,
