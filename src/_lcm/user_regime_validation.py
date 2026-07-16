@@ -979,6 +979,10 @@ def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
     - EV1 `taste_shocks` on the same regime — the taste-shock reduction is a
       separate closed-form max over discrete actions; the two reductions are
       not composed;
+    - a nonlinear `certainty_equivalent` on the same regime — the fold
+      reduction is always the ARITHMETIC `zero_safe_average`, exact only for
+      the linear expectation `E[V']`; a nonlinear certainty equivalent needs
+      the shock's node axis intact to apply its own aggregator;
     - any solver other than `GridSearch` — the fold reduction is implemented
       only in the grid-search max-Q-over-a kernel;
     - a process with runtime-supplied distribution params — the fold weights
@@ -1035,6 +1039,17 @@ def _fold_scope_errors(
             "reduction over a state axis — the two reductions are not "
             "composed."
         )
+    if regime.certainty_equivalent is not None:
+        error_messages.append(
+            f"fold=True on state(s) {sorted(fold_names)} is not supported "
+            "together with a nonlinear `certainty_equivalent`: the fold "
+            "reduction (`_wrap_with_fold_reduction`) always averages the "
+            "shock's node axis ARITHMETICALLY (`zero_safe_average`), exact "
+            "only for the LINEAR expectation E[V']. A nonlinear certainty "
+            "equivalent needs the shock's node axis intact to apply its own "
+            "(possibly nonlinear) aggregator instead. Drop `fold=True`, or "
+            "drop `certainty_equivalent`."
+        )
     if not isinstance(regime.solver, GridSearch):
         error_messages.append(
             f"fold=True on state(s) {sorted(fold_names)} is only implemented "
@@ -1054,23 +1069,34 @@ def _fold_resolution_table(regime: lcm.regime.Regime) -> dict[str, Callable | Ph
 
 
 def _fold_same_period_roots(regime: lcm.regime.Regime) -> list[tuple[str, Callable]]:
-    """Named same-period gate / value-constraint / reference-projection roots."""
+    """Named same-period gate / value-constraint / reference-projection roots.
+
+    Deliberately EXCLUDES this regime's own OUTBOUND `gated_edges[...].gate`
+    and `gated_edges[...].gate_refs[...]` projections (F4 audit finding): a
+    `GatedEdge`'s `gate` and its `gate_refs` projections are compiled and
+    evaluated on the TARGET regime's grid/DAG
+    (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on this
+    (source) regime's own — so an argument name they declare has no
+    relationship to a state THIS regime folds, even when the names happen to
+    collide (e.g. both regimes declare a `wage_shock`). Walking them here as
+    if they were source-local reads produced false positives: a source
+    folding a state whose name a target-grid gate merely reuses was
+    incorrectly rejected. The genuine cross-regime hazard — this regime
+    itself being read nodewise as a gated-edge target, leg fallback, or
+    same-period reference — is the now-COMPLETE
+    `_fail_if_folded_regime_is_same_period_endpoint` guard in
+    `regime_building/processing.py`, which correctly checks the TARGET side
+    of the very same declarations. `value_constraints` and
+    `same_period_refs` stay as roots here: both are evaluated on THIS
+    (source) regime's own grid/DAG, so a source-local name collision there
+    is a real same-period read of this regime's own fold name.
+    """
     roots: list[tuple[str, Callable]] = []
     for name, predicate in regime.value_constraints.items():
         roots.extend(
             (f"value_constraints['{name}']", variant)
             for variant in _function_variants(predicate)
         )
-    for target_name, edge in regime.gated_edges.items():
-        roots.extend(
-            (f"gated_edges['{target_name}'].gate", variant)
-            for variant in _function_variants(edge.gate)
-        )
-        for ref_name, ref in edge.gate_refs.items():
-            roots.extend(
-                (f"gated_edges['{target_name}'].gate_refs['{ref_name}']", func)
-                for func in ref.projection.values()
-            )
     for ref_name, ref in regime.same_period_refs.items():
         roots.extend(
             (f"same_period_refs['{ref_name}']", func)

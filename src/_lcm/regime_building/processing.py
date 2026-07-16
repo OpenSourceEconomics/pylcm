@@ -237,13 +237,12 @@ def process_regimes(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
 
-    # COLLECTIVE-REGIMES (fold / E2 / E3' interaction, F3 interim guard):
-    # `fold=True` on a collective regime that another regime's gate reads
-    # nodewise (as a gated-edge target or a same-period reference) is
-    # rejected here — see the function docstring.
-    _fail_if_folded_collective_regime_is_gate_target_or_ref(
-        user_regimes=user_regimes
-    )
+    # COLLECTIVE-REGIMES (fold / E2 / E3' interaction, completed guard):
+    # `fold=True` on a regime that another regime's gate reads nodewise (as a
+    # gated-edge target, a leg fallback, or a same-period reference) is
+    # rejected here, regardless of stakeholder cardinality — see the function
+    # docstring.
+    _fail_if_folded_regime_is_same_period_endpoint(user_regimes=user_regimes)
 
     model_has_egm_regime = any(
         user_regime.solver.requires_continuation_carries
@@ -968,74 +967,94 @@ def _fail_if_same_period_ref_cycle(
         visit(regime_name)
 
 
-def _fail_if_folded_collective_regime_is_gate_target_or_ref(
+def _fail_if_folded_regime_is_same_period_endpoint(
     *, user_regimes: Mapping[RegimeName, UserRegime]
 ) -> None:
-    """Reject `fold=True` on a collective regime read nodewise by another gate.
+    """Reject `fold=True` on a regime read nodewise by another gate/reference.
 
-    COLLECTIVE-REGIMES (fold / E2 / E3' interaction — F3, interim guard).
-    `fold=True` integrates a shock's node axis out of a regime's stored V —
-    and, for a collective regime, collapses its dissolution flag `D` by
-    `jnp.any` — immediately after that regime's OWN period solve
-    (`_wrap_with_fold_reduction` in `regime_building/max_Q_over_a.py`). E3'
-    gated-edge routing and E2 same-period reads both require
-    gate-THEN-integrate: each realized shock node must be routed through its
-    own gate / consent decision before any node is averaged away
-    (`jnp.where(gate, V_target, V_fallback)` per node, then integrate — never
-    integrate first and gate the average). If the folding regime is itself
-    read nodewise by another regime's gate or same-period reference, the two
-    orderings conflict: the reader only ever sees the already-averaged V and
-    the already-`jnp.any`-reduced D, not the per-node values gate-then-
-    integrate needs. Counterexample: target node values ``[-inf, 1]``,
-    nodewise dissolution ``[True, False]``, fallback ``0``, equal weights —
-    the correct route-then-average is ``0.5``, but fold-first (`D_any=True`)
-    routes the whole cell to the fallback, ``0.0``.
+    COLLECTIVE-REGIMES (fold / E2 / E3' interaction — F1-F4 audit, completed
+    guard). `fold=True` integrates a shock's node axis out of a regime's
+    stored V — and, for a COLLECTIVE regime, additionally collapses its
+    dissolution flag `D` by `jnp.any` — immediately after that regime's OWN
+    period solve (`_wrap_with_fold_reduction` in
+    `regime_building/max_Q_over_a.py`). E3' gated-edge routing and E2
+    same-period reads both require gate-THEN-integrate: each realized shock
+    node must be routed through its own gate / consent decision before any
+    node is averaged away (`jnp.where(gate, V_target, V_fallback)` per node,
+    then integrate — never integrate first and gate the average). If the
+    folding regime is itself read nodewise by another regime's gate or
+    same-period reference, the two orderings conflict: the reader only ever
+    sees the already-averaged V (and, if collective, the already-`jnp.any`-
+    reduced D), not the per-node values gate-then-integrate needs.
+    Counterexample: target node values ``[-inf, 1]``, nodewise dissolution
+    ``[True, False]``, fallback ``0``, equal weights — the correct
+    route-then-average is ``0.5``, but fold-first (`D_any=True`) routes the
+    whole cell to the fallback, ``0.0``.
 
-    A collective regime is unsafe to fold when it is either:
+    A regime is unsafe to fold when it is any of:
 
     - an inbound gated-edge TARGET — named as a key of another regime's
       `gated_edges`, so its V/D would be read nodewise by that edge's gate
-      and the leg routing, or
+      and the leg routing;
+    - a gated-edge leg FALLBACK — named by the `regime` of a
+      `gated_edges[...].legs[...].fallback` entry: `get_edge_fold` reads the
+      fallback nodewise, `jnp.where(gate, V_target, V_fallback)`, at every
+      target grid node, BEFORE any integration — the same ordering hazard as
+      the edge target itself; or
     - a same-period REFERENCE — named by the `regime` of another regime's
       `same_period_refs` entry, or of a `gated_edges[...].gate_refs` entry —
       so its per-node V would be read through a projection.
 
+    This applies regardless of stakeholder cardinality: gate-then-integrate
+    is violated whether the folding regime is collective or a SINGLETON — a
+    singleton has a node-valued V (just no D) that a gate/reference reads
+    exactly the same way.
+
     This is the bounded INTERIM fix for the finding: reject the unsafe
     combination at construction rather than implement the full transient
     V_node/D_node split that would let a gate read the pre-fold, per-node
-    values (a separate, larger slice). A singleton folded regime, or a
-    collective folded regime that is neither a gated-edge target nor a
-    same-period reference, is unaffected and stays allowed — mirroring the
-    cross-regime graph walks in `_fail_if_same_period_refs_invalid` /
+    values (a separate, larger slice). A folded regime that is none of the
+    above — neither a gated-edge target, a leg fallback, nor a same-period
+    reference — is unaffected and stays allowed — mirroring the cross-regime
+    graph walks in `_fail_if_same_period_refs_invalid` /
     `_fail_if_gated_edges_invalid` above and `_fail_if_folded_state_persists`
     below, this runs once every regime's declarations are known, not in the
     regime-local `_validate_fold_declarations`.
 
     Raises:
         ModelInitializationError: Naming every offending regime, its folded
-            state(s), and which role(s) (gated-edge target / same-period
-            reference) make the fold unsafe.
+            state(s), and which role(s) (gated-edge target / leg fallback /
+            same-period reference) make the fold unsafe.
     """
     gated_edge_targets: set[RegimeName] = {
         target_name
         for regime in user_regimes.values()
         for target_name in regime.gated_edges
     }
+    # Build the reference set from each resolved edge's COMPLETE reference
+    # set (fallbacks + gate_refs), rather than re-enumerating `edge.legs` /
+    # `edge.gate_refs` by hand here — `_resolve_gated_edge` is the single
+    # source of truth for "which regimes does this edge read nodewise", and
+    # every named regime is already known to exist
+    # (`_fail_if_gated_edges_invalid` runs before this).
     same_period_reference_regimes: set[RegimeName] = {
         ref.regime
         for regime in user_regimes.values()
         for ref in regime.same_period_refs.values()
     } | {
-        ref.regime
-        for regime in user_regimes.values()
-        for edge in regime.gated_edges.values()
-        for ref in edge.gate_refs.values()
+        reference_name
+        for source_name, regime in user_regimes.items()
+        for target_name, edge in regime.gated_edges.items()
+        for reference_name in _resolve_gated_edge(
+            source_name=source_name,
+            target_name=target_name,
+            edge=edge,
+            user_regimes=user_regimes,
+        ).reference_regimes
     }
 
     error_messages: list[str] = []
     for regime_name, regime in user_regimes.items():
-        if regime.stakeholders is None:
-            continue
         fold_names = sorted(
             name
             for name, grid in regime.states.items()
@@ -1050,22 +1069,31 @@ def _fail_if_folded_collective_regime_is_gate_target_or_ref(
         if regime_name in same_period_reference_regimes:
             roles.append(
                 "a same-period REFERENCE (named by another regime's "
-                "`same_period_refs` or `gated_edges[...].gate_refs`)"
+                "`same_period_refs`, `gated_edges[...].gate_refs`, or "
+                "`gated_edges[...].legs[...].fallback`)"
             )
         if not roles:
             continue
 
+        d_clause = (
+            " (and collapses its dissolution flag D by `jnp.any`)"
+            if regime.stakeholders is not None
+            else ""
+        )
+        cardinality = (
+            f"a collective (stakeholders={regime.stakeholders}) regime"
+            if regime.stakeholders is not None
+            else "a singleton regime"
+        )
         error_messages.append(
             f"Regime '{regime_name}' declares fold=True on state(s) "
-            f"{fold_names} while being a collective (stakeholders="
-            f"{regime.stakeholders}) regime that is "
+            f"{fold_names} while being {cardinality} that is "
             f"{' and '.join(roles)}. Folding integrates the shock's node "
-            "axis out of this regime's stored V (and collapses its "
-            "dissolution flag D by `jnp.any`) before that gate / reference "
-            "can route or read per node: E2/E3' require gate-then-integrate, "
-            "not integrate-then-gate. Drop `fold=True` on this regime, or "
-            "stop targeting / referencing it from a gated edge or "
-            "same-period reference."
+            f"axis out of this regime's stored V{d_clause} before that gate "
+            "/ reference can route or read per node: E2/E3' require "
+            "gate-then-integrate, not integrate-then-gate. Drop "
+            "`fold=True` on this regime, or stop targeting / referencing it "
+            "from a gated edge or same-period reference."
         )
 
     if error_messages:

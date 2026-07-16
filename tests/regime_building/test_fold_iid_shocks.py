@@ -21,7 +21,13 @@ self-transition, in any regime a transition reaches. A genuinely persistent
 IID shock (redrawn every period across many periods of the SAME regime)
 would additionally need the continuation side (`regime_to_v_interpolation_info`
 / `stochastic_transition_names`) of every regime reading into it to also
-recognize the fold; that is out of scope here.
+recognize the fold; that is out of scope here (fold-review F5). Concretely:
+the memory saving this slice delivers is PER-PERIOD only (isolated,
+non-persistent shocks within the one period that folds them) — it does not
+yet deliver a MULTI-period saving for a shock redrawn every period across
+many ages (the central "repeated-IID" use case); do not advertise a
+multi-period node-count reduction until continuation support for a
+persistent fold lands.
 """
 
 from types import MappingProxyType
@@ -301,25 +307,39 @@ def test_fold_on_non_gridsearch_solver_is_rejected():
         )
 
 
-def test_fold_read_by_a_gated_edge_gate_is_rejected():
-    """A same-period gate that reads the shock's realized value can't compose
-    with folding it: the fold averages the axis away before any OTHER
-    regime's same-period logic runs."""
-    with pytest.raises(RegimeInitializationError, match="gated_edges"):
-        Regime(
-            transition=None,
-            states={"wage_shock": _shock(fold=True)},
-            gated_edges={
-                "some_target": GatedEdge(
-                    gate=lambda wage_shock: wage_shock > 0.0,
-                    legs={
-                        "only": EdgeLeg(
-                            fallback=SamePeriodRef(regime="elsewhere", projection={})
-                        )
-                    },
-                )
-            },
-        )
+def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
+    """A source folding a state does NOT reject merely because its OWN
+    outbound `gated_edges[...].gate` declares an argument of the same name
+    (fold-review F4, corrected from this test's earlier assertion).
+
+    `GatedEdge.gate` is compiled and evaluated on the TARGET regime's own
+    grid/DAG (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on
+    this (source) regime's — so `gate=lambda wage_shock: ...` here reads
+    `some_target`'s `wage_shock` (if it declares one), not this regime's.
+    Treating the SOURCE-local `_validate_fold_declarations` walk as if the
+    gate were source-local (the old behavior this test used to pin) produced
+    a false positive purely from name collision. The genuine cross-regime
+    hazard — THIS regime being read nodewise as a gated-edge target, leg
+    fallback, or same-period reference — is covered by the model-processing
+    guard `_fail_if_folded_regime_is_same_period_endpoint`
+    (`regime_building/processing.py`; see
+    `test_fold_gate_guard.py`/`test_fold_guard_complete.py`), which correctly
+    checks the TARGET side of the same declarations instead.
+    """
+    Regime(
+        transition=None,
+        states={"wage_shock": _shock(fold=True)},
+        gated_edges={
+            "some_target": GatedEdge(
+                gate=lambda wage_shock: wage_shock > 0.0,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(regime="elsewhere", projection={})
+                    )
+                },
+            )
+        },
+    )
 
 
 def test_fold_on_transition_conditioning_shock_is_rejected():
