@@ -919,10 +919,15 @@ def _aggregate_child_choices(
         # Below a candidate's own first finite coh node its support has not
         # started: mask the read to `-inf` so the edge clamp cannot hand an
         # infeasible lifted candidate a boundary value that wins the max. The
-        # `-inf` also pins the marginal to zero below.
+        # `-inf` also pins the marginal to zero below. The upper support edge
+        # feeds the right-continuous tie rule at the candidate max.
         row_lower = jnp.min(
             jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1
         )
+        row_upper = jnp.max(
+            jnp.where(jnp.isfinite(grid_rows), grid_rows, -jnp.inf), axis=1
+        )
+        candidate_right_available = queries_flat < row_upper
         value_at_child = jnp.where(queries_flat < row_lower, -jnp.inf, value_at_child)
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as
@@ -937,13 +942,26 @@ def _aggregate_child_choices(
     marginal_at_child = marginal_at_child.reshape(block_shape)
     if n_outer_candidates:
         # Collapse the candidate axis by the exact hard max at the query,
-        # publishing the winner's marginal (Danskin; the keeper — candidate 0 —
-        # wins exact ties). This happens *before* the passive blend so the
-        # blend interpolates the nodewise outer maximum. A cell whose
-        # candidates are all `-inf` (no live support) keeps the `(-inf, 0)`
-        # infeasible contract: argmax picks candidate 0, whose masked marginal
-        # is exactly zero.
-        winner = jnp.argmax(value_at_child, axis=-1, keepdims=True)
+        # publishing the winner's marginal (Danskin). This happens *before* the
+        # passive blend so the blend interpolates the nodewise outer maximum. An
+        # exact value tie resolves right-continuously and support-aware: among
+        # tied candidates, one whose support continues right of the query beats
+        # one ending there, and the largest marginal breaks the rest — so the
+        # branch that wins immediately to the right owns the derivative the
+        # parent's Euler inversion consumes. (The rank uses the gradient-scaled
+        # marginal; the composed gradient is shared by all candidates of a cell
+        # and positive, so it never reorders them.) A cell whose candidates are
+        # all `-inf` (no live support) keeps the `(-inf, 0)` infeasible
+        # contract: every masked marginal is exactly zero.
+        best_value = jnp.max(value_at_child, axis=-1, keepdims=True)
+        bounded_slope = jnp.arctan(marginal_at_child) / jnp.pi + 0.5
+        rank = jnp.where(
+            value_at_child >= best_value,
+            candidate_right_available.reshape(block_shape).astype(bounded_slope.dtype)
+            + bounded_slope,
+            -jnp.inf,
+        )
+        winner = jnp.argmax(rank, axis=-1, keepdims=True)
         value_at_child = jnp.take_along_axis(value_at_child, winner, axis=-1)[..., 0]
         marginal_at_child = jnp.take_along_axis(marginal_at_child, winner, axis=-1)[
             ..., 0

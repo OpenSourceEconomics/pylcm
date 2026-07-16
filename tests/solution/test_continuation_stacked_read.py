@@ -15,6 +15,12 @@ import numpy as np
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import _aggregate_child_choices
 from _lcm.egm.interp import interp_on_padded_grid, prepare_padded_grid
+from tests.conftest import X64_ENABLED
+
+# The host comparison reruns the identical interpolation arithmetic, so the two
+# sides agree to the active float precision's roundoff, not better.
+_READ_RTOL = 1e-12 if X64_ENABLED else 2e-5
+_READ_ATOL = 1e-12 if X64_ENABLED else 2e-5
 
 
 def _prepare(carry: EGMCarry):
@@ -93,8 +99,8 @@ def test_stacked_read_blends_the_nodewise_candidate_maximum():
         n_outer_candidates=2,
     )
 
-    np.testing.assert_allclose(float(smoothed_value), 2.25, atol=1e-9)
-    np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=1e-9)
+    np.testing.assert_allclose(float(smoothed_value), 2.25, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
 
 
 def test_stacked_read_masks_a_candidate_below_its_lifted_support():
@@ -132,9 +138,47 @@ def test_stacked_read_masks_a_candidate_below_its_lifted_support():
         n_outer_candidates=2,
     )
 
-    np.testing.assert_allclose(float(smoothed_value), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(smoothed_value), 1.0, atol=_READ_ATOL)
     # Winner A's marginal 0.5, scaled by the composed gradient 3.0.
-    np.testing.assert_allclose(float(smoothed_marginal), 1.5, atol=1e-9)
+    np.testing.assert_allclose(float(smoothed_marginal), 1.5, atol=_READ_ATOL)
+
+
+def test_stacked_read_tie_publishes_the_right_continuous_marginal():
+    """At an exact candidate crossing the production read selects the right winner.
+
+    Keeper `K(q) = 1 - q` (marginal `-1`) and adjuster `A(q) = q` (marginal `+1`)
+    tie at the query `q = 0.5`. The right-continuous envelope's marginal there is
+    `+1` (times the composed gradient `2.0`); a first-index tie would publish the
+    keeper's `-1` — the branch that loses immediately to the right — into the
+    parent's Euler inversion.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.stack([jnp.array([0.0, 1.0]), jnp.array([0.0, 1.0])])[
+            None, :, :
+        ],
+        value=jnp.stack([jnp.array([1.0, 0.0]), jnp.array([0.0, 1.0])])[None, :, :],
+        marginal_utility=jnp.stack([jnp.array([-1.0, -1.0]), jnp.array([1.0, 1.0])])[
+            None, :, :
+        ],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([0.5]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 0.5, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
 
 
 def test_stacked_read_matches_host_max_of_reads_on_curved_rows():
@@ -195,5 +239,9 @@ def test_stacked_read_matches_host_max_of_reads_on_curved_rows():
         expected_value += weights[node] * reads[winner][0]
         expected_marginal += weights[node] * reads[winner][1] * gradients[node]
 
-    np.testing.assert_allclose(float(smoothed_value), expected_value, rtol=1e-12)
-    np.testing.assert_allclose(float(smoothed_marginal), expected_marginal, rtol=1e-12)
+    np.testing.assert_allclose(
+        float(smoothed_value), expected_value, rtol=_READ_RTOL, atol=_READ_ATOL
+    )
+    np.testing.assert_allclose(
+        float(smoothed_marginal), expected_marginal, rtol=_READ_RTOL, atol=_READ_ATOL
+    )

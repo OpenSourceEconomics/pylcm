@@ -162,7 +162,11 @@ def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
         delta=0.10,
     ).solve(params=build_params(variant="negm", delta=0.10), log_level="off")
     oracle = solve_ds2024_housing_vfi(
-        n_grid=N_GRID, n_periods=N_PERIODS, n_consumption=400, delta=0.10
+        n_grid=N_GRID,
+        n_periods=N_PERIODS,
+        n_consumption=400,
+        delta=0.10,
+        read="clamp",
     )
 
     difference = _pooled_interior_difference(negm, oracle)
@@ -186,10 +190,10 @@ def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
 
     Beyond this range the difference sits at the fixed state-grid floor
     (roughly half the finest value here), where further outer refinement no
-    longer moves it monotonically: the model converges to its own
-    continuous-outer fixed point, which differs from the oracle's by the
-    shared state discretization, and the query-side maximum selects each
-    winner's interpolation error upward as the candidate set grows.
+    longer moves it monotonically — an unresolved interaction of the remaining
+    approximations shared by both sides. Candidate count alone cannot grow a
+    uniform value-error bound (the max is 1-Lipschitz in the sup norm), so the
+    floor is diagnosed, not explained, by this test.
     """
     oracle = solve_ds2024_housing_vfi(
         n_grid=N_GRID,
