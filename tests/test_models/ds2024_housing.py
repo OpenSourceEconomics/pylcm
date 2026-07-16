@@ -298,6 +298,7 @@ def build_model(
     n_consumption: int = 60,
     n_savings: int = 60,
     delta: float = 0.0,
+    n_outer_grid: int | None = None,
 ) -> Model:
     """Build the DS-2024 housing model.
 
@@ -317,6 +318,9 @@ def build_model(
             `H' = h(1 - delta)` (param-free, so set at build time). Pass the same
             value to `build_params` (where it enters the adjust cost and bequest
             as a param); `0.0` is the keeper-holds-the-stock case.
+        n_outer_grid: Number of points on the NEGM outer house grid; `None`
+            uses `n_grid`. Decoupling it from the state grids enables nested
+            outer refinements at a fixed state resolution.
 
     Returns:
         The alive housing regime plus the terminal bequest regime.
@@ -327,7 +331,9 @@ def build_model(
 
     liquid_grid = LinSpacedGrid(start=housing_min, stop=liquid_max, n_points=n_grid)
     housing_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
-    outer_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
+    outer_grid = LinSpacedGrid(
+        start=housing_min, stop=housing_max, n_points=n_outer_grid or n_grid
+    )
     consumption_grid = LinSpacedGrid(
         start=0.05, stop=consumption_max, n_points=n_consumption
     )

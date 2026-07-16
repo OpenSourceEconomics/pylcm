@@ -169,3 +169,48 @@ def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
 
     assert float(difference.mean()) < ORACLE_MEAN_TOL
     assert float((difference <= ORACLE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
+
+
+def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
+    """Refining the outer house grid moves the NEGM solve toward the dense truth.
+
+    Exactness is to the *declared outer grid*: enlarging the candidate set on
+    nested grids (5 ⊂ 9 ⊂ 17 linspace points) can only add outer options, so
+    the solve improves toward the continuous-outer problem. The reference is
+    the VFI oracle with a dense outer search (129 points plus the free-keep
+    candidate) and its continuation reads clamp-matched to the NEGM carry
+    read; the state and liquid grids are fixed throughout, so the comparison
+    isolates the outer-grid refinement. The pooled interior difference must
+    fall strictly at each refinement and at least halve from coarsest to
+    finest.
+
+    Beyond this range the difference sits at the fixed state-grid floor
+    (roughly half the finest value here), where further outer refinement no
+    longer moves it monotonically: the model converges to its own
+    continuous-outer fixed point, which differs from the oracle's by the
+    shared state discretization, and the query-side maximum selects each
+    winner's interpolation error upward as the candidate set grows.
+    """
+    oracle = solve_ds2024_housing_vfi(
+        n_grid=N_GRID,
+        n_periods=N_PERIODS,
+        n_consumption=400,
+        delta=0.10,
+        n_outer_grid=129,
+        read="clamp",
+    )
+    means = []
+    for n_outer_grid in (5, 9, 17):
+        negm = build_model(
+            variant="negm",
+            n_grid=N_GRID,
+            n_periods=N_PERIODS,
+            n_consumption=N_CONSUMPTION,
+            delta=0.10,
+            n_outer_grid=n_outer_grid,
+        ).solve(params=build_params(variant="negm", delta=0.10), log_level="off")
+        means.append(float(_pooled_interior_difference(negm, oracle).mean()))
+
+    assert means[0] > means[1] > means[2]
+    assert means[2] < means[0] / 2
+    assert means[2] < ORACLE_MEAN_TOL
