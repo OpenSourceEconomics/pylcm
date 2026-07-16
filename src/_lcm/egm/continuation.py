@@ -273,16 +273,6 @@ class _ChildRead:
     row_block_shape: tuple[int, ...]
     """Shape of the carry's row block: passive sizes, then action sizes."""
 
-<<<<<<< HEAD
-    co_map_state_names: tuple[StateName, ...] = ()
-    """Fixed, distributed child states co-mapped with the carry's leading axes.
-
-    A co-mapped state's carry axis is sliced off by the caller's outer `vmap`
-    before the read runs, so it names no discrete index here: its `next_<name>`
-    coordinate is dropped from the carry indexing (the axis is gone), while the
-    resources read still binds it from the combo pool. Empty in the replicated
-    (non-co-mapped) read.
-=======
     n_outer_candidates: int
     """Candidate-axis length of a stacked NEGM child carry (`0` = none).
 
@@ -292,7 +282,16 @@ class _ChildRead:
     that axis at the query, per durable node, *before* the passive blend, so
     the blended value interpolates the nodewise outer maximum. `0` for every
     other child (no candidate axis in its carry).
->>>>>>> origin/feat/dcegm
+    """
+
+    co_map_state_names: tuple[StateName, ...] = ()
+    """Fixed, distributed child states co-mapped with the carry's leading axes.
+
+    A co-mapped state's carry axis is sliced off by the caller's outer `vmap`
+    before the read runs, so it names no discrete index here: its `next_<name>`
+    coordinate is dropped from the carry indexing (the axis is gone), while the
+    resources read still binds it from the combo pool. Empty in the replicated
+    (non-co-mapped) read.
     """
 
 
@@ -861,11 +860,8 @@ def _get_child_carry_reader(
                 child_passive_grids=read.passive_grids,
                 row_queries=queries,
                 row_gradients=gradients,
-<<<<<<< HEAD
                 paired_marginal_read=risk_aversion is not None,
-=======
                 n_outer_candidates=read.n_outer_candidates,
->>>>>>> origin/feat/dcegm
             )
             if risk_aversion is not None:
                 # A target whose continuation carries no shock lottery at this
@@ -1035,11 +1031,8 @@ def _expect_over_stochastic_nodes(
             child_passive_grids=read.passive_grids,
             row_queries=queries,
             row_gradients=gradients,
-<<<<<<< HEAD
             paired_marginal_read=risk_aversion is not None,
-=======
             n_outer_candidates=read.n_outer_candidates,
->>>>>>> origin/feat/dcegm
         )
 
     node_index_mesh = jnp.meshgrid(
@@ -1261,11 +1254,8 @@ def _aggregate_child_choices(
     child_passive_grids: tuple[Float1D, ...],
     row_queries: FloatND,
     row_gradients: FloatND,
-<<<<<<< HEAD
     paired_marginal_read: bool = False,
-=======
     n_outer_candidates: int = 0,
->>>>>>> origin/feat/dcegm
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Read one child's carry with mixed interpolation and aggregate its choices.
 
@@ -1399,7 +1389,6 @@ def _aggregate_child_choices(
             fp=fp,
         )
 
-<<<<<<< HEAD
     if paired_marginal_read:
 
         def value_and_slope_row(
@@ -1437,13 +1426,6 @@ def _aggregate_child_choices(
         marginal_at_child = jax.vmap(interp_row)(
             search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
         )
-=======
-    value_at_child = jax.vmap(interp_value_row)(
-        search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
-    )
-    marginal_at_child = jax.vmap(interp_row)(
-        search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
-    )
     if n_outer_candidates:
         # Below a candidate's own first finite coh node its support has not
         # started: mask the read to `-inf` so the edge clamp cannot hand an
@@ -1453,7 +1435,6 @@ def _aggregate_child_choices(
             jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1
         )
         value_at_child = jnp.where(queries_flat < row_lower, -jnp.inf, value_at_child)
->>>>>>> origin/feat/dcegm
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as
     # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
