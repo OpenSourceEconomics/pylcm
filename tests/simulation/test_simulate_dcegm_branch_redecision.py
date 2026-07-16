@@ -42,7 +42,9 @@ class BonusChoice:
     take: ScalarInt
 
 
-def _bonus_utility(consumption: ContinuousAction, take_bonus: DiscreteAction) -> FloatND:
+def _bonus_utility(
+    consumption: ContinuousAction, take_bonus: DiscreteAction
+) -> FloatND:
     return jnp.log(consumption) - _EFFORT_COST * take_bonus
 
 
@@ -52,10 +54,6 @@ def _bonus_resources(wealth: ContinuousState, take_bonus: DiscreteAction) -> Flo
 
 def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
-
-
-def _next_wealth(savings: FloatND, interest_rate: float) -> ContinuousState:
-    return (1 + interest_rate) * savings
 
 
 def _inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
@@ -79,7 +77,6 @@ def _bonus_model(constraints: dict | None = None) -> Model:
             "savings": _savings,
             "inverse_marginal_utility": _inverse_marginal_utility,
         },
-        state_transitions={"wealth": _next_wealth},
         constraints=constraints or {},
     )
     bequest_dead = UserRegime(
@@ -117,8 +114,12 @@ def _off_grid_wealth_straddling_the_switch() -> np.ndarray:
     """Off-node wealth values on both sides of the closed-form switch."""
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     midpoints = 0.5 * (wealth_nodes[:-1] + wealth_nodes[1:])
-    below = midpoints[(midpoints > 0.4 * _SWITCH_WEALTH) & (midpoints < 0.9 * _SWITCH_WEALTH)]
-    above = midpoints[(midpoints > 1.1 * _SWITCH_WEALTH) & (midpoints < 3.0 * _SWITCH_WEALTH)]
+    below = midpoints[
+        (midpoints > 0.4 * _SWITCH_WEALTH) & (midpoints < 0.9 * _SWITCH_WEALTH)
+    ]
+    above = midpoints[
+        (midpoints > 1.1 * _SWITCH_WEALTH) & (midpoints < 3.0 * _SWITCH_WEALTH)
+    ]
     return np.concatenate([below[:4], above[:4]])
 
 
@@ -144,7 +145,7 @@ def test_branch_redecision_matches_the_closed_form_switch_and_policy():
     consumption = period_0["consumption"].to_numpy()
     resources = off_grid_wealth + _BONUS * expected_take
     np.testing.assert_allclose(
-        consumption, resources / (1.0 + _DISCOUNT_FACTOR), rtol=2e-2
+        consumption, resources / (1.0 + _DISCOUNT_FACTOR), rtol=5e-3
     )
 
 
@@ -168,5 +169,5 @@ def test_branch_redecision_respects_discrete_action_constraints():
 
     consumption = period_0["consumption"].to_numpy()
     np.testing.assert_allclose(
-        consumption, off_grid_wealth / (1.0 + _DISCOUNT_FACTOR), rtol=2e-2
+        consumption, off_grid_wealth / (1.0 + _DISCOUNT_FACTOR), rtol=5e-3
     )

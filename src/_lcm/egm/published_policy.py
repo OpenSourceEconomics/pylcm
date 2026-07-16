@@ -77,6 +77,15 @@ class EGMSimPolicy:
     policy: FloatND
     """Optimal continuous action at `endog_grid` (NaN on padding slots)."""
 
+    value: FloatND
+    """Conditional value at `endog_grid` (NaN on padding slots).
+
+    Shared with the period's `EGMCarry.value`: the row's combo-conditional
+    value function on the refined resources grid. Simulation compares the
+    interpolated conditional values across discrete-action rows to re-decide
+    the branch at the subject's state.
+    """
+
     row_discrete_state_names: tuple[StateName, ...] = ()
     """Names of the leading discrete-state row axes, in axis order."""
 
@@ -88,7 +97,7 @@ class EGMSimPolicy:
     """Names of the discrete-action row axes, after the passive states."""
 
 
-_EGM_SIM_POLICY_ARRAY_FIELDS = ("endog_grid", "policy")
+_EGM_SIM_POLICY_ARRAY_FIELDS = ("endog_grid", "policy", "value")
 _EGM_SIM_POLICY_STATIC_FIELDS = (
     "row_discrete_state_names",
     "row_passive_state_names",
