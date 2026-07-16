@@ -300,12 +300,20 @@ def route_gated_edges(
     at the candidate target states `calculate_next_states` already computed
     for the target (the regime's ordinary `transition` declaration always
     structurally reaches a gated edge's target — see module docstring), then
-    for `subjects_in_regime`: writes EVERY leg's own fallback state
-    coordinates into its fallback regime's state slot, and sets this row's
-    own continuing regime membership to the target (gate open) or its OWN
-    leg's fallback (gate closed, selected via `own_stakeholder` — see
-    `_select_own_leg` and the module docstring's scope fence for a
-    collective (multi-leg) source).
+    for every subject `subjects_in_regime` AND whose ORDINARY next-regime
+    draw (`new_subject_regime_ids`, snapshotted before any edge is
+    processed) actually selected this edge's target: writes every leg's own
+    fallback state coordinates into its fallback regime's state slot, and
+    sets this row's own continuing regime membership to the target (gate
+    open) or its OWN leg's fallback (gate closed, selected via
+    `own_stakeholder` — see `_select_own_leg` and the module docstring's
+    scope fence for a collective (multi-leg) source). A row whose ordinary
+    draw selected a different regime — this edge's target was never reached
+    — keeps that draw untouched by this edge (F2): this is also what makes
+    several gated edges declared on one source order-independent, since each
+    edge's eligibility is decided from the same pre-loop snapshot rather
+    than from the (successively overwritten) routing result of an
+    earlier-processed edge.
 
     Args:
         own_stakeholder: This `simulate()` call's fixed own-role (ROW-SPLIT,
@@ -316,6 +324,14 @@ def route_gated_edges(
     """
     if not regime.gated_edges:
         return next_states, new_subject_regime_ids
+
+    # F2 fix. An IMMUTABLE snapshot of the ordinary (gate-blind) draw, taken
+    # BEFORE the edge loop below ever writes into `routed_ids`. Each edge's
+    # mask below reads THIS snapshot, never the successively-updated
+    # `routed_ids` — so which rows an edge is even eligible to touch does not
+    # depend on what an EARLIER-processed edge did, making multiple edges
+    # declaration-order-independent (see the routing-mask comment below).
+    ordinary_draw_ids = new_subject_regime_ids
 
     states = next_states
     routed_ids = new_subject_regime_ids
@@ -347,11 +363,22 @@ def route_gated_edges(
         gate_bool = jnp.asarray(gate_float) > GATE_THRESHOLD
 
         target_id = regime_names_to_ids[target_name]
+        # F2 fix. Only a row whose ORDINARY draw actually selected THIS
+        # edge's target is eligible for this edge's gate at all — a row
+        # whose ordinary draw picked some other (edge-unrelated, or another
+        # edge's target) regime must keep that draw untouched, not be
+        # force-routed through a gate it never reached. Reading the
+        # immutable `ordinary_draw_ids` snapshot (not `routed_ids`) is what
+        # makes multiple edges from one source order-independent: each
+        # edge's eligibility is decided from the SAME pre-loop draw,
+        # regardless of what an earlier edge in this loop already wrote.
+        edge_mask = subjects_in_regime & (ordinary_draw_ids == target_id)
+
         legs = edge.legs
         own_leg = _select_own_leg(legs, own_stakeholder)
         own_fallback_id = regime_names_to_ids[own_leg.fallback.regime]
         candidate_id = jnp.where(gate_bool, target_id, own_fallback_id)
-        routed_ids = jnp.where(subjects_in_regime, candidate_id, routed_ids)
+        routed_ids = jnp.where(edge_mask, candidate_id, routed_ids)
 
         projectors = regime.gated_edge_leg_projectors[target_name]
         for leg, projector in zip(legs, projectors, strict=True):
@@ -359,12 +386,16 @@ def route_gated_edges(
                 "Mapping[str, FloatND]",
                 _call_with_accepted_kwargs(projector, target_kwargs),
             )
+            # F2 fix. Likewise, a row not eligible for this edge (its
+            # ordinary draw isn't this edge's target) must not have this
+            # edge's fallback-leg state written into its record either —
+            # that state slot belongs to a row this edge never routes.
             states = _advance_states_for_subjects(
                 states_per_regime=states,
                 next_states_per_regime=MappingProxyType(
                     {leg.fallback.regime: MappingProxyType(dict(fallback_states))}
                 ),
-                subject_indices=subjects_in_regime,
+                subject_indices=edge_mask,
             )
 
     return states, routed_ids
