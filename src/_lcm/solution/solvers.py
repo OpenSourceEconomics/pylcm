@@ -36,11 +36,7 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
 from _lcm.egm.nbegm import NBEGMRegistry
-from _lcm.egm.outer_envelope import (
-    finalize_outer_envelope,
-    fold_outer_envelope,
-    init_outer_envelope,
-)
+from _lcm.egm.outer_envelope import build_stacked_outer_carry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
@@ -526,6 +522,7 @@ class NEGM(Solver):
             euler_state_name=self.inner.continuous_state,
             durable_state_name=durable_state,
             outer_post_decision=self.outer_post_decision,
+            no_adjustment_func=no_adjustment_func,
         )
         durable_grid_values = context.grids[durable_state].to_jax()
         period_kernels = MappingProxyType(
@@ -545,9 +542,9 @@ class NEGM(Solver):
         )
         return SolutionKernels(
             period_kernels=period_kernels,
-            continuation_template=_widen_carry_template(
+            continuation_template=_stack_carry_template(
                 template=keeper_kernels.continuation_template,
-                n_extra=outer_grid_values.shape[0],
+                n_candidates=outer_grid_values.shape[0] + 1,
             ),
         )
 
@@ -931,29 +928,29 @@ class _NEGMPeriodKernel:
             period=period,
             ages=ages,
         )
-        # The published continuation is the genuine cash-on-hand upper envelope of
-        # the keeper and every adjuster candidate, so the parent period's
-        # keeper-identity continuation read sees the best durable choice at every
-        # coh — not only the keeper's, and an adjuster that wins strictly between
-        # keeper nodes survives.
+        # The published continuation retains every outer candidate: the keeper
+        # and each adjuster carry, lifted into a common cash-on-hand axis and
+        # stacked on a candidate axis. The parent period's continuation read
+        # takes the exact `max_j V_j(q)` over that axis at its own query, so an
+        # adjuster that wins strictly between keeper nodes is read at its true
+        # value there — never bridged upward by interpolating a node-sampled
+        # maximum.
         coh_shifts = self.coh_shift_func(
             durable_values=self.durable_grid_values,
             outer_values=self.outer_grid_values,
             **flat_params[self.regime_name],
         )
-        # Fold the adjuster outer-grid nodes into a running outer maximum — `V =
-        # max_j W_j` on the state grid and the coh-space envelope carry — in chunks
-        # of `outer_batch_size`, rather than materialising every node's solve at
-        # once. Each chunk's independent solves overlap; reducing them into the
-        # running `(V_arr, envelope)` bounds the peak to one chunk of candidates.
-        # `max` is associative and the envelope's shared coh grid is fixed at the
-        # keeper's, so the chunked fold is value-identical to a single stacked
-        # maximum regardless of the chunk size. The keeper and every adjuster are
+        # Sweep the adjuster outer-grid nodes in chunks of `outer_batch_size`:
+        # each chunk's independent solves overlap, and blocking on the chunk
+        # bounds the *solve*-side peak (the per-node intermediate buffers) to
+        # one chunk. The candidate carries themselves are all retained — the
+        # `(A+1) * n_pad` resident width is inherent to the exact query-side
+        # maximum, not a fold artifact. The keeper and every adjuster are
         # DC-EGM kernels, so each always publishes a continuation carry.
         keeper_carry = cast("EGMCarry", keeper_result.carry)
         V_arr = keeper_result.V_arr
         nodes = self._outer_nodes()
-        envelope = init_outer_envelope(keeper_carry, len(nodes))
+        adjuster_carries: list[EGMCarry] = []
         chunk_size = self.outer_batch_size or len(nodes)
         for chunk_start in range(0, len(nodes), chunk_size):
             chunk_results = [
@@ -973,20 +970,20 @@ class _NEGMPeriodKernel:
                 )
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]
-            for offset, adjuster_result in enumerate(chunk_results):
+            for adjuster_result in chunk_results:
                 V_arr = jnp.maximum(V_arr, adjuster_result.V_arr)
-                envelope = fold_outer_envelope(
-                    envelope,
-                    cast("EGMCarry", adjuster_result.carry),
-                    coh_shifts[:, chunk_start + offset],
-                    chunk_start + offset,
-                )
-            # Force the running maximum to device before the next chunk. Without
-            # this the lazy fold accumulates a dependency on every chunk's solves
-            # at once — the peak would grow with the whole outer grid rather than
-            # one chunk — and the chunk's independent solves could not overlap.
-            V_arr, envelope = jax.block_until_ready((V_arr, envelope))
-        carry = finalize_outer_envelope(envelope)
+                adjuster_carries.append(cast("EGMCarry", adjuster_result.carry))
+            # Force the chunk's results to device before the next chunk. Without
+            # this the lazy sweep accumulates a dependency on every chunk's
+            # solves at once — the solve-side peak would grow with the whole
+            # outer grid rather than one chunk — and the chunk's independent
+            # solves could not overlap.
+            V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
+        carry = build_stacked_outer_carry(
+            keeper_carry=keeper_carry,
+            adjuster_carries=tuple(adjuster_carries),
+            coh_shifts=coh_shifts,
+        )
         # The simulate phase re-optimizes the outer durable action by grid argmax
         # over the next-period value array, so the published `sim_policy` (the
         # keeper's off-grid inner consumption function) is not the channel that
@@ -1009,26 +1006,30 @@ class _NEGMPeriodKernel:
         ]
 
 
-def _widen_carry_template(
-    *, template: EGMCarry | None, n_extra: int
+def _stack_carry_template(
+    *, template: EGMCarry | None, n_candidates: int
 ) -> EGMCarry | None:
-    """Widen a keeper carry template by `n_extra` trailing island-peak slots.
+    """Stack a keeper carry template into the published candidate-axis shape.
 
-    The NEGM outer envelope publishes the keeper's shared-grid envelope plus one
-    spliced island-peak slot per adjuster, so the published carry is `n_extra`
-    nodes wider than the keeper's. The parent period's kernel is AOT-compiled
-    against this template, so the template's last axis must match the published
-    width. The padding is `NaN` (trailing dead nodes), consistent with the
-    interpolator's first-finite-node search.
+    The NEGM continuation carry retains every outer candidate (the keeper plus
+    one per outer-grid node) on a candidate axis inserted just before the grid
+    axis. The parent period's kernel is AOT-compiled against this template, so
+    the template must carry that axis: the keeper template is broadcast across
+    the `n_candidates` slots, keeping every row finite and ascending so a parent
+    evaluated against the template stays finite.
     """
     if template is None:
         return None
-    pad = [(0, 0)] * (template.endog_grid.ndim - 1) + [(0, n_extra)]
-    widen = lambda arr: jnp.pad(arr, pad, constant_values=jnp.nan)  # noqa: E731
+
+    def stack(arr: FloatND) -> FloatND:
+        return jnp.broadcast_to(
+            arr[..., None, :], (*arr.shape[:-1], n_candidates, arr.shape[-1])
+        )
+
     return EGMCarry(
-        endog_grid=widen(template.endog_grid),
-        value=widen(template.value),
-        marginal_utility=widen(template.marginal_utility),
+        endog_grid=stack(template.endog_grid),
+        value=stack(template.value),
+        marginal_utility=stack(template.marginal_utility),
         taste_shock_scale=template.taste_shock_scale,
     )
 
@@ -1040,6 +1041,7 @@ def _build_coh_shift_function(
     euler_state_name: StateName,
     durable_state_name: StateName,
     outer_post_decision: FunctionName,
+    no_adjustment_func: EconFunction | None,
 ) -> Callable[..., FloatND]:
     """Build the per-(durable, outer-node) cash-on-hand shift of each adjuster.
 
@@ -1049,7 +1051,15 @@ def _build_coh_shift_function(
     difference of the regime's own inner resources at any fixed liquid wealth
     (`resources` is affine in wealth, so wealth cancels):
 
-    `shift(z, z'_j) = resources(w0, z, next=z) - resources(w0, z, next=z'_j)`.
+    `shift(z, z'_j) = resources(w0, z, next=keep(z)) - resources(w0, z, next=z'_j)`,
+
+    where `keep` is the keeper's no-adjustment map (`no_adjustment_func`; the
+    identity when the regime declares none). The keeper leg holds the outer
+    post-decision at exactly the level the keeper core realises — `keep(z)`,
+    e.g. the depreciated stock `z (1 - delta)` — so the lift is the adjuster's
+    full credited cost relative to the free keep. The axis change has
+    derivative 1, so each candidate's value and resource-marginal transfer
+    into coh space unchanged; with an identity keeper the two legs coincide.
 
     The returned callable takes the durable grid (`durable_values`), the outer
     grid (`outer_values`), and the regime's flat params, and returns the shift
@@ -1078,23 +1088,19 @@ def _build_coh_shift_function(
         separable_references = dict.fromkeys(separable_arg_names, zero_reference)
 
         def shift_one(durable: FloatND, outer: FloatND) -> FloatND:
-            # The keeper reference holds the outer post-decision at the durable
-            # itself (`next = durable`), not at the keeper core's no-adjustment
-            # level `keep(durable)`. For an identity keeper (`keep(d) = d`) the two
-            # coincide and this is the exact credited-cost lift. Under a
-            # depreciating keeper (`keep(d) = d(1 - delta)`) the design-exact
-            # reference would be `keep(durable)`, but using it in isolation lifts
-            # each adjuster to a coh that the fixed keeper-grid envelope reads by
-            # extrapolation and the one-island-per-adjuster splice then over-counts
-            # — empirically regressing the DS-2024 delta=0.10 oracle agreement from
-            # a converging ~0.08 to a plateaued ~0.18. The identity reference and
-            # the island splice are tuned together; correcting both belongs with
-            # the segment-topology outer-envelope redesign, not here.
+            # The keeper leg holds the outer post-decision at the keeper core's
+            # own no-adjustment level `keep(durable)` — the level whose credited
+            # cost is zero — so the shift is the adjuster's full credited cost
+            # relative to the free keep. With an identity keeper this is
+            # `durable` itself.
+            keeper_next = (
+                durable if no_adjustment_func is None else no_adjustment_func(durable)
+            )
             keeper_resources = resources_func(
                 **{
                     euler_state_name: zero_reference,
                     durable_state_name: durable,
-                    outer_post_decision: durable,
+                    outer_post_decision: keeper_next,
                 },
                 **separable_references,
                 **params,

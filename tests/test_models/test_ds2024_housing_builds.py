@@ -28,12 +28,17 @@ N_GRID = 10
 N_CONSUMPTION = 200
 N_PERIODS = 4
 
-# Pooled-interior thresholds. The value function is O(1)-O(10) on the interior;
-# the brute consumption grid undershoots and the DC-EGM carries a savings-grid
-# interpolation error, so the two agree in bulk up to grid resolution rather than
-# exactly at every cell.
-MEAN_TOL = 0.20
-CELL_TOL = 0.60
+# Pooled-interior thresholds. The value function is O(1)-O(10) on the interior.
+# Comparisons against the brute grid-search twin are limited by the brute
+# consumption grid's undershoot, so they agree in bulk up to grid resolution
+# rather than exactly at every cell. The NEGM-vs-VFI-oracle comparison is
+# limited only by the shared grid resolution — the exact query-side outer
+# envelope keeps the depreciating keeper at the same agreement as the identity
+# keeper — so its thresholds are much tighter.
+BRUTE_MEAN_TOL = 0.20
+BRUTE_CELL_TOL = 0.60
+ORACLE_MEAN_TOL = 0.06
+ORACLE_CELL_TOL = 0.30
 MIN_FRACTION_WITHIN = 0.95
 
 
@@ -92,8 +97,8 @@ def test_ds2024_housing_negm_matches_brute_on_interior():
         differences.append(np.abs(brute_V[interior] - negm_V[interior])[finite])
     difference = np.concatenate(differences)
 
-    assert float(difference.mean()) < MEAN_TOL
-    assert float((difference <= CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
+    assert float(difference.mean()) < BRUTE_MEAN_TOL
+    assert float((difference <= BRUTE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
 def _pooled_interior_difference(pylcm_solution, oracle):
@@ -136,8 +141,8 @@ def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta():
 
     difference = _pooled_interior_difference(brute, oracle)
 
-    assert float(difference.mean()) < MEAN_TOL
-    assert float((difference <= CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
+    assert float(difference.mean()) < BRUTE_MEAN_TOL
+    assert float((difference <= BRUTE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
 def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
@@ -162,5 +167,5 @@ def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
 
     difference = _pooled_interior_difference(negm, oracle)
 
-    assert float(difference.mean()) < MEAN_TOL
-    assert float((difference <= CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
+    assert float(difference.mean()) < ORACLE_MEAN_TOL
+    assert float((difference <= ORACLE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
