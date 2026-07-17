@@ -30,9 +30,7 @@ _ATOL = 1e-8 if X64_ENABLED else 1e-4
 
 def _interp(grid: jnp.ndarray, field: jnp.ndarray, x_query: float) -> float:
     keep = ~np.isnan(np.asarray(grid))
-    return float(
-        np.interp(x_query, np.asarray(grid)[keep], np.asarray(field)[keep])
-    )
+    return float(np.interp(x_query, np.asarray(grid)[keep], np.asarray(field)[keep]))
 
 
 def _three_branch_candidates() -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -48,9 +46,7 @@ def _three_branch_candidates() -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
 
     grid = jnp.array([10.0, 11.0, 10.0, 11.0, 10.0, 11.0])
     policy = jnp.asarray(np.repeat(policies, 2))
-    value = jnp.asarray(
-        np.stack([intercepts, intercepts + slopes], axis=1).ravel()
-    )
+    value = jnp.asarray(np.stack([intercepts, intercepts + slopes], axis=1).ravel())
     return grid, policy, value
 
 
