@@ -76,13 +76,14 @@ def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> Float
     )
 
 
-def resources(wealth: ContinuousState, credited: FloatND) -> FloatND:
-    """Liquid resources consumption is paid out of, given the fixed outer node.
+def resources_before_outer_cost(wealth: ContinuousState) -> FloatND:
+    """Cost-free base of the liquid resources consumption is paid out of.
 
-    Reads the outer margin exclusively through the `credited` cost function —
-    the NEGM outer-cost contract.
+    With `NEGM.outer_cost` declared, pylcm composes the resources function as
+    `resources_before_outer_cost - credited` at model build, so the credited
+    durable move enters resources additively by construction.
     """
-    return wealth + LABOUR_INCOME - credited
+    return wealth + LABOUR_INCOME
 
 
 def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
@@ -254,7 +255,7 @@ def build_negm_model() -> Model:
         functions={
             "utility": utility,
             "serviced_durable": serviced_durable,
-            "resources": resources,
+            "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,
             "keep_illiquid": keep_illiquid,
             "credited": credited,

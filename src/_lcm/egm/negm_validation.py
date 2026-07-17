@@ -36,12 +36,15 @@ only the *outer*/nesting contract. The rules, in the order they are checked:
   the last passive row axis, so a (hard) discrete action or a passive
   continuous state declared after the durable is rejected — the per-durable
   candidate lift would otherwise address the wrong axis,
-- outer-cost contract: the inner resources may depend on the outer
-  post-decision only through the declared `NEGM.outer_cost` function, which
-  itself may read only the durable state, the outer post-decision, and params
-  (with `outer_cost=None`, resources must be independent of the outer
-  post-decision) — otherwise no constant credited-cost translation onto a
-  common cash-on-hand axis exists and the stacked lift would be wrong,
+- outer-cost contract: with a declared `NEGM.outer_cost`, the resources
+  function is composed by `finalize_regimes` as
+  `<resources>_before_outer_cost - <outer_cost>` (affine in the cost by
+  construction; a user-defined resources function is rejected at
+  finalization); the declared cost may read only the durable state, the outer
+  post-decision, and params, and the cost-free base must not read the outer
+  post-decision (with `outer_cost=None`, resources must be independent of the
+  outer post-decision) — otherwise no constant credited-cost translation onto
+  a common cash-on-hand axis exists and the stacked lift would be wrong,
 - the no-adjustment candidate is a unary function of the durable state — it is
   evaluated as `keep(durable)` in the credited-cost lift and the
   child-resources query map.
@@ -360,29 +363,27 @@ def _fail_if_outer_cost_contract_violated(
     cash-on-hand axis by crediting a constant per (durable, outer-node) cell.
     That constant exists exactly when the inner resources depend on the outer
     post-decision through a single additive cost term that itself varies only
-    with the durable margin. The structural half of that contract is enforced
-    here, fail-closed:
+    with the durable margin. The contract is enforced fail-closed:
 
-    - `NEGM.outer_cost` declared ⇒ it must be a regime function; its DAG
-      ancestors may contain no state or action other than the durable state and
-      the outer post-decision (params are fine); and the inner resources — with
-      the cost function made opaque — must not reach the outer post-decision
-      through any other channel,
+    - `NEGM.outer_cost` declared ⇒ the resources function is composed by
+      `finalize_regimes` as `<resources>_before_outer_cost - <outer_cost>`, so
+      its affine use of the cost holds by construction (a user-defined
+      resources function is rejected at finalization). Here: the cost must be
+      a regime function whose DAG ancestors contain no state or action other
+      than the durable state and the outer post-decision (params are fine),
+      and the cost-free base must not read the outer post-decision — its only
+      outer-margin channel is the subtracted cost itself,
     - `NEGM.outer_cost=None` ⇒ the inner resources must be independent of the
       outer post-decision altogether (every candidate already shares the
       keeper's axis; the shift is zero).
-
-    The additive *use* of the cost inside resources (coefficient exactly `-1`,
-    no nonlinear wrapping) is not a graph property; the shift builder probes it
-    at runtime and raises `InvalidParamsError` on a mismatch.
     """
     inner = solver.inner
     durable_state = solver.outer_post_decision.removeprefix("next_")
-    resources_func = functions.get(inner.resources)
-    if resources_func is None:
-        return
 
     if solver.outer_cost is None:
+        resources_func = functions.get(inner.resources)
+        if resources_func is None:
+            return
         resources_ancestors = _dag_ancestors(
             functions=functions, target_func=resources_func
         )
@@ -425,21 +426,22 @@ def _fail_if_outer_cost_contract_violated(
         )
         raise ModelInitializationError(msg)
 
-    opaque_functions = _without(functions=functions, names={solver.outer_cost})
-    resources_ancestors = _dag_ancestors(
-        functions=opaque_functions, target_func=resources_func
-    )
-    if solver.outer_post_decision in resources_ancestors:
-        msg = (
-            f"In regime '{regime_name}', the inner resources "
-            f"'{inner.resources}' reads the outer post-decision "
-            f"'{solver.outer_post_decision}' outside the declared outer cost "
-            f"'{solver.outer_cost}'. The NEGM lift requires all outer-margin "
-            "dependence of resources to flow through `NEGM.outer_cost` — route "
-            f"it through '{solver.outer_cost}', or use `GridSearch` for this "
-            "regime."
-        )
-        raise ModelInitializationError(msg)
+    base_func = functions.get(f"{inner.resources}_before_outer_cost")
+    if base_func is not None:
+        base_ancestors = _dag_ancestors(functions=functions, target_func=base_func)
+        if solver.outer_post_decision in base_ancestors:
+            msg = (
+                f"In regime '{regime_name}', the cost-free resources base "
+                f"'{inner.resources}_before_outer_cost' reads the outer "
+                f"post-decision '{solver.outer_post_decision}'. It must not "
+                "read the outer post-decision: pylcm composes "
+                f"`{inner.resources} = {inner.resources}_before_outer_cost - "
+                f"{solver.outer_cost}`, so the base's only outer-margin "
+                "channel is the subtracted declared cost itself. Route the "
+                f"dependence through '{solver.outer_cost}', or use "
+                "`GridSearch` for this regime."
+            )
+            raise ModelInitializationError(msg)
 
 
 def _fail_if_no_adjustment_candidate_not_unary(

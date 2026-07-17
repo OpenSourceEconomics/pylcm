@@ -109,7 +109,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
         transition=negm_kinked_toy.next_regime,
         functions={
             "utility": negm_kinked_toy.utility,
-            "resources": negm_kinked_toy.resources,
+            "resources_before_outer_cost": negm_kinked_toy.resources_before_outer_cost,
             "liquid_savings": negm_kinked_toy.liquid_savings,
             "keep_illiquid": negm_kinked_toy.keep_illiquid,
             "credited": negm_kinked_toy.credited,

@@ -17,6 +17,7 @@ The cases mutate the valid kinked-toy NEGM regime one rule at a time:
 """
 
 import dataclasses
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
@@ -25,6 +26,7 @@ from _lcm.egm.negm_validation import (
     _fail_if_margins_not_distinct,
     validate_negm_regimes,
 )
+from _lcm.regime_building.finalize import finalize_regimes
 from lcm import DiscreteGrid, ExtremeValueTasteShocks, categorical
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
@@ -34,6 +36,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserFunction,
 )
 from tests.test_models import negm_kinked_toy
 
@@ -259,42 +262,126 @@ def test_outer_cost_reading_the_euler_state_is_rejected():
         _validate(regime)
 
 
-def _resources_reading_the_outer_margin(
-    wealth: ContinuousState, credited: FloatND, next_illiquid: ContinuousState
+def _base_reading_the_outer_margin(
+    wealth: ContinuousState, next_illiquid: ContinuousState
 ) -> FloatND:
-    """A resources function reading the outer margin around the declared cost."""
-    return wealth + 5.0 - credited + 0.01 * next_illiquid
+    """A cost-free resources base that reads the outer margin directly."""
+    return wealth + 5.0 + 0.01 * next_illiquid
 
 
-def test_resources_reading_the_outer_margin_around_the_cost_is_rejected():
-    """All outer-margin dependence of resources must flow through the cost.
+def test_resources_base_reading_the_outer_margin_is_rejected():
+    """The cost-free resources base must be independent of the outer margin.
 
-    A resources function that reads the outer post-decision directly, alongside
-    the declared cost, has outer-margin dependence the credited-cost lift cannot
-    represent; the regime is rejected at model build.
+    With a declared outer cost, pylcm composes `resources = base - cost`, so
+    the base's only legitimate outer-margin channel is the subtracted cost
+    itself; a base that reads the outer post-decision directly is rejected at
+    model build.
+    """
+    regime = _VALID.replace(
+        functions={
+            **{
+                name: func
+                for name, func in _VALID.functions.items()
+                if name != "resources"
+            },
+            "resources_before_outer_cost": _base_reading_the_outer_margin,
+        },
+    )
+    with pytest.raises(
+        ModelInitializationError, match="must not read the outer post-decision"
+    ):
+        _validate(regime)
+
+
+def _resources_defined_by_the_user(
+    wealth: ContinuousState, credited: FloatND
+) -> FloatND:
+    """A user-defined resources function alongside a declared outer cost."""
+    return wealth + 5.0 - credited
+
+
+def _cost_free_base(wealth: ContinuousState) -> FloatND:
+    """A cost-free resources base for the composed-resources tests."""
+    return wealth + 5.0
+
+
+def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
+    """With a declared outer cost the resources function is composed by pylcm.
+
+    Affineness of resources in the cost holds by construction only when pylcm
+    performs the subtraction itself; a user-defined resources function
+    alongside a declared `NEGM.outer_cost` is rejected at model build with a
+    pointer to the cost-free base.
     """
     regime = _VALID.replace(
         functions={
             **dict(_VALID.functions),
-            "resources": _resources_reading_the_outer_margin,
+            "resources": _resources_defined_by_the_user,
         },
     )
-    with pytest.raises(
-        ModelInitializationError, match="outside the declared outer cost"
-    ):
-        _validate(regime)
+    with pytest.raises(ModelInitializationError, match="composed by pylcm"):
+        finalize_regimes(user_regimes={"alive": regime}, derived_categoricals={})
+
+
+def test_missing_resources_base_with_a_declared_outer_cost_is_rejected():
+    """A declared outer cost requires the cost-free resources base function."""
+    regime = _VALID.replace(
+        functions={
+            name: func
+            for name, func in _VALID.functions.items()
+            if name not in ("resources", "resources_before_outer_cost")
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="resources_before_outer_cost"):
+        finalize_regimes(user_regimes={"alive": regime}, derived_categoricals={})
+
+
+def test_finalize_composes_resources_as_base_minus_outer_cost():
+    """With a declared outer cost, `resources = base - cost` is injected.
+
+    The finalized regime carries a synthesized resources function whose inputs
+    are the cost-free base and the declared cost, and whose value is exactly
+    their difference — affine in the cost by construction.
+    """
+    regime = _VALID.replace(
+        functions={
+            **{
+                name: func
+                for name, func in _VALID.functions.items()
+                if name != "resources"
+            },
+            "resources_before_outer_cost": _cost_free_base,
+        },
+    )
+
+    finalized = finalize_regimes(
+        user_regimes={"alive": regime}, derived_categoricals={}
+    )["alive"]
+    composed = cast("UserFunction", finalized.functions["resources"])
+
+    assert float(
+        composed(
+            resources_before_outer_cost=jnp.asarray(7.0), credited=jnp.asarray(2.0)
+        )
+    ) == pytest.approx(5.0)
 
 
 def test_missing_outer_cost_with_costful_resources_is_rejected():
     """Omitting `NEGM.outer_cost` while resources reads the outer margin fails.
 
-    Without a declared cost the lift would have nothing to credit, so a
-    resources function that depends on the outer post-decision (here through
-    the `credited` function it reads) is rejected with a pointer to
-    `NEGM.outer_cost`.
+    With `outer_cost=None` the user defines the resources function directly and
+    the lift credits nothing, so a resources function that depends on the outer
+    post-decision (here through the `credited` function it reads) is rejected
+    with a pointer to `NEGM.outer_cost`.
     """
     solver = dataclasses.replace(negm_kinked_toy.NEGM_SOLVER, outer_cost=None)
-    regime = _VALID.replace(solver=solver)
+    regime = _VALID.replace(
+        solver=solver,
+        functions={
+            **dict(_VALID.functions),
+            "resources": _resources_defined_by_the_user,
+        },
+    )
     with pytest.raises(ModelInitializationError, match="declares no outer cost"):
         _validate(regime)
 
