@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import jax
+import numpy as np
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
@@ -21,7 +22,12 @@ from _lcm.engine import (
     StateActionSpace,
     Variables,
 )
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import (
+    DiscreteGrid,
+    Grid,
+    IrregSpacedGrid,
+)
+from _lcm.grids.continuous import ContinuousGrid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names
@@ -86,7 +92,7 @@ from _lcm.variables import (
     simulate_variables_from_regime,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import Solver
 from lcm.transition import (
@@ -126,10 +132,25 @@ def _resolve_age_specialized_state_grids(
     )
 
     representative: dict[RegimeName, FinalizedUserRegime] = {}
+    active_by_regime: dict[RegimeName, frozenset[int]] = {}
     for name, regime in user_regimes.items():
         active = ages.get_periods_where(regime.active)
+        active_by_regime[name] = frozenset(active)
+        if not active and has_age_specialized_grid(regime.states):
+            # No active age means no age to resolve the builder at, so the marker would
+            # travel unresolved into the ordinary grid machinery (audit F3). The regime
+            # is inert, but an age-specialized grid on it is a modelling error, not a
+            # thing to silently paper over.
+            msg = (
+                f"Regime '{name}' declares an AgeSpecializedGrid but is active at no "
+                f"age, so there is no age at which to build its grid. Either give the "
+                f"regime an active age or drop the age specialization."
+            )
+            raise RegimeInitializationError(msg)
         if active and has_age_specialized_grid(regime.states):
-            validate_age_specialized_grids(regime.states, ages)
+            # Validate shape-invariance only over the regime's ACTIVE ages — a builder
+            # may be deliberately undefined (raise) outside them (audit F2).
+            validate_age_specialized_grids(regime.states, ages, active_periods=active)
             rep_age = ages.period_to_age(active[0])
             representative[name] = regime.replace(
                 states=dict(resolve_state_grids(regime.states, rep_age))
@@ -145,9 +166,18 @@ def _resolve_age_specialized_state_grids(
         age = ages.period_to_age(period)
         period_map[period] = MappingProxyType(
             {
+                # Resolve a regime's age-varying grids only where it is ACTIVE. A
+                # regime's V_p is consumed as a continuation target only at ages where
+                # the regime exists, so at inactive ages we reuse the representative
+                # grid (built at the first active age) — this is never read as a
+                # continuation and keeps an age-limited/terminal-only builder from being
+                # called outside its domain (audit F2).
                 name: create_v_interpolation_info(
                     regime.replace(states=dict(resolve_state_grids(regime.states, age)))
-                    if has_age_specialized_grid(regime.states)
+                    if (
+                        has_age_specialized_grid(regime.states)
+                        and period in active_by_regime[name]
+                    )
                     else representative[name]
                 )
                 for name, regime in user_regimes.items()
@@ -469,6 +499,10 @@ def _build_solution_phase(
             ages=ages,
             enable_jit=enable_jit,
             certainty_equivalent=certainty_equivalent,
+            # F4: diagnostics recompute on the SAME period-specific target grid as the
+            # primary solve (not the representative grid).
+            period_to_regime_v_interp=period_to_regime_v_interp,
+            continuation_grid_signature=_continuation_grid_signature,
         )
 
     # Dispatch the per-period kernel build polymorphically on the regime's
@@ -1854,30 +1888,98 @@ def _co_map_state_names(
 
 
 def _grid_identity(grid: object) -> Hashable:
-    """A hashable identity of a continuous grid's nodes (for dedup signatures)."""
-    name = type(grid).__name__
-    start: Any = getattr(grid, "start", None)
-    stop: Any = getattr(grid, "stop", None)
-    n_points: Any = getattr(grid, "n_points", None)
-    if start is not None and stop is not None and n_points is not None:
-        return (name, float(start), float(stop), int(n_points))
-    points: Any = getattr(grid, "points", None)
-    if points is not None:
-        return (name, tuple(float(p) for p in points))
-    return (name, 0 if n_points is None else int(n_points))
+    """A hashable identity of a continuous grid's actual nodes (for dedup signatures).
+
+    Keys on the grid's resolved nodes (``to_jax()``) so grids of the same class and
+    point count but different geometry get *distinct* identities: e.g. two piecewise
+    grids with equal total ``n_points`` but different breakpoints, or a custom grid
+    whose geometry lives only in ``to_jax()``. The concrete *class object* is included
+    so distinct grid types never collide even at identical nodes. A grid that is
+    constant over age yields identical node arrays across periods, hence an identical
+    identity, so the age-invariant fast path (`_build_period_state_axes` returning
+    ``None``, shared continuation caches) is preserved. It keys both the per-period
+    current-state axes and the continuation-cache signatures
+    (`_continuation_grid_signature`), so the two can never disagree.
+
+    Audit F1: the prior ``(class, n_points)`` fallback for grids without ``start/stop``
+    or a ``points`` attribute (every piecewise grid) let geometry-changing grids collide
+    and silently reuse the wrong axes/kernels. Re-review: the cheap branches must key on
+    the grid's *exact* built-in type, never on the mere presence of ``start``/``stop``/
+    ``points`` — a custom grid may expose those attributes yet derive its nodes from
+    further ones (a power-spacing exponent, say), so duck-typing reintroduced exactly
+    the collision this function exists to prevent.
+
+    Round-3 re-review F1: runtime-supplied points are a property of the *mode*, not of
+    the exact class. `V._get_coordinate_finder` dispatches the runtime-points path on
+    ``isinstance(grid, IrregSpacedGrid)``, so an `IrregSpacedGrid` subclass with
+    ``pass_points_at_runtime`` is a supported runtime grid there; keying identity on the
+    exact type alone sent it to the node branch, where its inherited ``to_jax()`` must
+    raise. The runtime-mode test therefore comes first and mirrors the interpolation
+    dispatch. Concrete subclasses still fall through to the node fingerprint, so an
+    overridden ``to_jax()`` remains geometry-sensitive.
+
+    Round-4 re-review F1: there is no cheap shortcut for the uniform built-ins either.
+    Keying `LinSpacedGrid`/`LogSpacedGrid` on ``(start, stop, n_points)`` as Python
+    floats collapsed ``-0.0`` and ``+0.0``, which ``jnp.linspace`` faithfully preserves
+    as *different* endpoint bits. Only the resolved nodes decide identity now: a key
+    derived from a grid's *description* is one restatement away from disagreeing with
+    the array the kernel is actually handed.
+    """
+    # Runtime mode first, and by `isinstance` — mirrors V._get_coordinate_finder. Nodes
+    # are substituted at solve time and are not build-time closure constants, so the
+    # concrete class + shape is the whole of the build-time identity.
+    if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+        return (type(grid), int(grid.n_points))
+    # Every concrete grid — built-in uniform, Irregular, Piecewise, or custom — carries
+    # its geometry only through its resolved nodes.
+    return (type(grid), *_node_fingerprint(cast("ContinuousGrid", grid).to_jax()))
+
+
+def _node_fingerprint(nodes: Any) -> tuple[Hashable, ...]:  # noqa: ANN401
+    """Fingerprint a node array by dtype, weak-type, shape and raw bytes.
+
+    One bulk device-to-host transfer; iterating the array elementwise instead costs
+    orders of magnitude more on realistically sized grids.
+
+    The exact `np.dtype` *object* is the key, never ``dtype.str``: the latter is not
+    injective over the extended floating types JAX supports — ``float8_e4m3fnuz`` and
+    ``float8_e5m2fnuz`` both report ``'<V1'``, so same-shape arrays with identical raw
+    bytes decode to different numbers while comparing equal. (Audit round-4 F1.)
+
+    `weak_type` is read off the *JAX* array before ``np.asarray`` drops it: two axes
+    can agree on dtype, shape and bytes yet promote differently in the shared trace,
+    which changes the argmax. Varying it across ages violates the
+    only-node-values-may-vary contract, so this is defence in depth — it turns that
+    violation into a construction-time error instead of a silent mis-share. No
+    built-in grid yields a weak array, so it cannot split a supported grid.
+    (Audit round-5 hardening note.)
+    """
+    arr = np.asarray(nodes)
+    weak_type = bool(getattr(nodes, "weak_type", False))
+    return (arr.dtype, weak_type, arr.shape, arr.tobytes())
 
 
 def _continuation_grid_signature(
     regime_to_v_interp: MappingProxyType[RegimeName, VInterpolationInfo],
+    period_targets: tuple[RegimeName, ...] | None = None,
 ) -> Hashable:
-    """Fingerprint the continuous-state grids of every target regime's V info."""
+    """Fingerprint the continuous-state grids of the period's target regimes.
+
+    `period_targets` restricts the fingerprint to the regimes the period's kernel
+    actually interpolates. Fingerprinting every regime in the global mapping instead
+    (audit F4) splits otherwise identical period groups whenever an unreachable
+    regime's grid moves, costing compilations for no correctness gain. `None` keeps
+    the all-regime behaviour for callers without a target list.
+    """
+    targets = sorted(regime_to_v_interp) if period_targets is None else period_targets
     return tuple(
         (
             rname,
             sname,
             _grid_identity(regime_to_v_interp[rname].continuous_states[sname]),
         )
-        for rname in sorted(regime_to_v_interp)
+        for rname in sorted(targets)
+        if rname in regime_to_v_interp
         for sname in sorted(regime_to_v_interp[rname].continuous_states)
     )
 
@@ -2000,7 +2102,9 @@ def _build_Q_and_F_per_period(
         age = ages.period_to_age(period)
         # Fold the continuation grids' identities (at period+1) into the signature so
         # periods with different age-varying continuation grids get distinct kernels.
-        continuation_sig = _continuation_grid_signature(continuation_info(period))
+        continuation_sig = _continuation_grid_signature(
+            continuation_info(period), complete
+        )
         signature = (
             tree_signature(functions, age),
             tree_signature(constraints, age),

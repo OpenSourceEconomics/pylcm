@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 import logging
 import os
@@ -628,6 +629,15 @@ def _raise_at(
         {**regime.resolved_fixed_params, **regime_params}
     )
     state_action_space = regime.solution.state_action_space(regime_params=regime_params)
+    # The live solve tabulated period t on period t's grid, so the diagnostic has to as
+    # well — otherwise a moving current-state grid reports U/F/E/Q fractions on state
+    # values the failing solve never saw (audit F5).
+    state_action_space = dataclasses.replace(
+        state_action_space,
+        states=MappingProxyType(
+            dict(_states_for_period(regime, state_action_space, row.period))
+        ),
+    )
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
         period=row.period,
         regimes=regimes,

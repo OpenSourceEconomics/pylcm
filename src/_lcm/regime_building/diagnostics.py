@@ -56,6 +56,14 @@ def _build_compute_intermediates_per_period(
     ages: AgeGrid,
     enable_jit: bool,
     certainty_equivalent: CertaintyEquivalent | None = None,
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
+    continuation_grid_signature: Callable[
+        [MappingProxyType[RegimeName, VInterpolationInfo], tuple[RegimeName, ...]],
+        Hashable,
+    ]
+    | None = None,
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
@@ -97,9 +105,23 @@ def _build_compute_intermediates_per_period(
         if name in state_action_space.state_names
     }
 
-    # Group by (target configuration, per-age policy signature), mirroring
-    # `_build_Q_and_F_per_period`: with no `AgeSpecializedFunction` node the
-    # signature is constant and the grouping collapses to the target configuration.
+    def continuation_info(
+        period: int,
+    ) -> MappingProxyType[RegimeName, VInterpolationInfo]:
+        """Target-regime interpolation info for period `t`'s continuation V_{t+1}.
+
+        Mirrors `_build_Q_and_F_per_period.continuation_info` so a NaN diagnostic
+        recomputes intermediates on the *same* period-specific target grid the primary
+        solve used, not the representative grid (audit F4).
+        """
+        if period_to_regime_v_interp is None:
+            return regime_to_v_interpolation_info
+        return period_to_regime_v_interp.get(period + 1, regime_to_v_interpolation_info)
+
+    # Group by (target configuration, per-age policy signature, continuation-grid
+    # signature), mirroring `_build_Q_and_F_per_period`: with no
+    # `AgeSpecializedFunction` node and no age-varying grid the signature is constant
+    # and the grouping collapses to the target configuration.
     configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
     for period in range(ages.n_periods):
         complete = get_period_targets(
@@ -108,7 +130,16 @@ def _build_compute_intermediates_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
         )
         age = ages.period_to_age(period)
-        signature = (tree_signature(functions, age), tree_signature(constraints, age))
+        cont_sig = (
+            continuation_grid_signature(continuation_info(period), complete)
+            if continuation_grid_signature is not None
+            else ()
+        )
+        signature = (
+            tree_signature(functions, age),
+            tree_signature(constraints, age),
+            cont_sig,
+        )
         configs.setdefault((complete, signature), []).append(period)
 
     variable_names = (
@@ -132,7 +163,7 @@ def _build_compute_intermediates_per_period(
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            regime_to_v_interpolation_info=continuation_info(periods[0]),
             certainty_equivalent=certainty_equivalent,
         )
         mapped = _productmap_over_state_action_space(
