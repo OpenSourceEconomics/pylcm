@@ -31,11 +31,23 @@ were solved under (`mod_simul.f90:365` vs `dimreduce3_new`), swapping beta and
 eta for four of eight types.
 
 Numerical scope: the paper's effort and saving choices are continuous, and the
-Fortran searches both by golden section with an interpolated continuation over
+Fortran searches both by golden section (`mod_parameters_v12.f90:140` sets
+`puregrid = 2`, selecting the effort search at `sub_main.f90:777-831` around the
+asset search at `mod_solve.f90:101-155`) with an interpolated continuation over
 200 adjustment-cost nodes. pylcm's brute-force solver takes discrete grids
 instead (40 effort levels, 50 saving points, 5 adjustment-cost nodes), so
 quantities that depend on fine optimisation — the wealth moments especially —
 carry a discretisation error that needs convergence evidence, not assumption.
+
+Two consequences worth stating explicitly. (i) The adjust/no-adjust value is
+convex and piecewise linear in the adjustment-cost draw, with one kink, so a
+5-node equal-probability rule integrates it exactly only when a single branch
+dominates over the whole support; the node count needs a refinement check. Note
+that simulated adjustment shares are NOT restricted to multiples of 1/5 —
+simulation draws the cost continuously. (ii) The discrete grids make the
+simulated moments locally flat in the parameters, which is why MSM inference is
+withheld in the replication. That is a property of this solver, not of the
+paper's model: the authors' continuous searches do not share it.
 """
 
 import dataclasses
