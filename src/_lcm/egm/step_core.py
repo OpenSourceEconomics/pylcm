@@ -108,7 +108,7 @@ class _EgmKernelPieces:
     build_H_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
     """Closure assembling the Bellman aggregator's keyword arguments."""
 
-    refine: Callable[..., tuple[Float1D, Float1D, Float1D, ScalarInt]]
+    refine: Callable[..., tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]]
     """The configured upper-envelope backend (single-post-state carry)."""
 
     refine_to_bracket: Callable[..., QueryBracket]
@@ -129,7 +129,7 @@ def _get_solve_one_combo(
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+    tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
 ]:
     """Build the per-combo EGM computation for one kernel invocation.
 
@@ -146,16 +146,19 @@ def _get_solve_one_combo(
 
     def solve_one_combo(
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
         """Run the EGM step for one (discrete x passive-node) combo.
 
         Takes the combo's values (discrete codes and passive node values)
         positionally so `jax.vmap` can batch over flattened combo arrays.
 
         Returns:
-            Tuple of the combo's value row on the exogenous state grid and
-            its refined endogenous grid, the published consumption policy on
-            that grid, and the value and marginal-utility carry rows.
+            Tuple of the combo's value row on the exogenous state grid, its
+            refined endogenous grid, the published consumption policy on that
+            grid, the value and marginal-utility carry rows, and the
+            backend's read-support verdict (whether the row's linear span is
+            free of compacted coverage gaps, so the off-grid simulation read
+            may consume it).
 
         """
         combo_pool = {
@@ -229,11 +232,13 @@ def _get_solve_one_combo(
         # not an explicit label — that resolves it. Explicit topology is the
         # oracle/test path (LTM/MSS/query accept `segment_id`); production has none
         # to emit.
-        refined_grid, refined_policy, refined_value, n_kept = pieces.refine(
-            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
-            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
-            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
-            marginal_utility=candidate_marginal,
+        refined_grid, refined_policy, refined_value, n_kept, read_supported = (
+            pieces.refine(
+                endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
+                policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
+                value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+                marginal_utility=candidate_marginal,
+            )
         )
 
         V_row, value_row, marginal_utility_row = _publish_V_and_carry_rows(
@@ -270,6 +275,7 @@ def _get_solve_one_combo(
             refined_policy.astype(dtype),
             value_row,
             marginal_utility_row,
+            read_supported,
         )
 
     return solve_one_combo

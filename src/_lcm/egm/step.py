@@ -186,6 +186,7 @@ from _lcm.utils.dispatchers import productmap
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
+    BoolND,
     Float1D,
     FloatND,
     IntND,
@@ -479,6 +480,12 @@ def _get_egm_step(
     get_solve_one_combo = (
         _get_solve_one_combo_asset_rows if asset_row_mode else _get_solve_one_combo
     )
+    # Only the MSS backend computes a per-row read-support verdict; the other
+    # backends (and the asset-row kernel) report the constant fail-closed
+    # `False` on a channel the policy-read gate never consumes from them.
+    # Masking on that constant would blank every published row, so the gap
+    # mask applies only where the verdict is actually computed.
+    mask_gap_rows = solver.upper_envelope == "mss" and not asset_row_mode
     pieces = _build_kernel_pieces(
         solver=solver,
         user_regimes=user_regimes,
@@ -559,7 +566,7 @@ def _get_egm_step(
             @with_signature(args=list(combo_var_names))
             def solve_one_combo_over_axes(
                 **combo_values: ScalarFloat | ScalarInt,
-            ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+            ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
                 return solve_one_combo(
                     tuple(combo_values[name] for name in combo_var_names)
                 )
@@ -581,16 +588,21 @@ def _get_egm_step(
                     for name, values in own_discrete_action_values.items()
                 },
             }
-            V_stack, grid_stack, policy_stack, value_stack, marginal_stack = (
-                _map_combo_product(
-                    func=solve_one_combo_over_axes,
-                    combo_var_names=combo_var_names,
-                    combo_axis_values=combo_axis_values,
-                    batch_sizes={
-                        **dict(combo_state_batch_sizes),
-                        **dict.fromkeys(own_discrete_action_values, 0),
-                    },
-                )
+            (
+                V_stack,
+                grid_stack,
+                policy_stack,
+                value_stack,
+                marginal_stack,
+                read_supported_stack,
+            ) = _map_combo_product(
+                func=solve_one_combo_over_axes,
+                combo_var_names=combo_var_names,
+                combo_axis_values=combo_axis_values,
+                batch_sizes={
+                    **dict(combo_state_batch_sizes),
+                    **dict.fromkeys(own_discrete_action_values, 0),
+                },
             )
             n_state_axes = len(own_discrete_state_names) + len(own_passive_state_names)
             action_axes = tuple(range(n_state_axes, len(combo_var_names)))
@@ -613,28 +625,43 @@ def _get_egm_step(
                 marginal_utility=marginal_stack,
                 taste_shock_scale=own_taste_shock_scale,
             )
+            # A row whose refinement reports a compacted coverage gap is
+            # withheld from the off-grid read (its linear span fabricates
+            # values there): the simulation rows are NaN-poisoned per combo,
+            # so the read's finite/in-support acceptance falls back to the
+            # grid-argmax pair. The solve-side carry keeps the row unchanged.
+            read_ok = (
+                read_supported_stack[..., None] if mask_gap_rows else jnp.asarray(True)  # noqa: FBT003
+            )
             sim_policy = EGMSimPolicy(
-                endog_grid=grid_stack,
-                policy=policy_stack,
-                value=value_stack,
-                marginal_utility=marginal_stack,
+                endog_grid=jnp.where(read_ok, grid_stack, jnp.nan),
+                policy=jnp.where(read_ok, policy_stack, jnp.nan),
+                value=jnp.where(read_ok, value_stack, jnp.nan),
+                marginal_utility=jnp.where(read_ok, marginal_stack, jnp.nan),
                 row_discrete_state_names=own_discrete_state_names,
                 row_passive_state_names=own_passive_state_names,
                 row_discrete_action_names=tuple(own_discrete_action_values),
             )
         else:
-            V_arr, grid_row, policy_row, value_row, marginal_row = solve_one_combo(())
+            V_arr, grid_row, policy_row, value_row, marginal_row, read_supported = (
+                solve_one_combo(())
+            )
             carry = EGMCarry(
                 endog_grid=grid_row,
                 value=value_row,
                 marginal_utility=marginal_row,
                 taste_shock_scale=own_taste_shock_scale,
             )
+            # See the combo branch: a gap-compacted row is withheld from the
+            # off-grid read; the carry keeps it.
+            read_ok = (
+                read_supported if mask_gap_rows else jnp.asarray(True)  # noqa: FBT003
+            )
             sim_policy = EGMSimPolicy(
-                endog_grid=grid_row,
-                policy=policy_row,
-                value=value_row,
-                marginal_utility=marginal_row,
+                endog_grid=jnp.where(read_ok, grid_row, jnp.nan),
+                policy=jnp.where(read_ok, policy_row, jnp.nan),
+                value=jnp.where(read_ok, value_row, jnp.nan),
+                marginal_utility=jnp.where(read_ok, marginal_row, jnp.nan),
             )
         return V_arr, carry, sim_policy
 
@@ -643,15 +670,16 @@ def _get_egm_step(
 
 def _map_combo_product(
     *,
-    func: Callable[..., tuple[Float1D, ...]],
+    func: Callable[..., tuple[Float1D | ScalarBool, ...]],
     combo_var_names: tuple[StateOrActionName, ...],
     combo_axis_values: dict[StateOrActionName, FloatND | IntND],
     batch_sizes: dict[StateOrActionName, int],
-) -> tuple[FloatND, ...]:
+) -> tuple[FloatND | BoolND, ...]:
     """Map the per-combo solve over the Cartesian product of the combo axes.
 
     `func` has a `combo_var_names` keyword signature and returns one tuple of
-    1-D arrays per combo. Each combo axis with `batch_size == 0` is vmapped;
+    per-combo outputs (1-D float arrays plus the scalar read-support flag).
+    Each combo axis with `batch_size == 0` is vmapped;
     axes with `batch_size > 0` are splayed (run in `lax.map` blocks) to shed
     peak memory. Returns the stacked outputs with the combo axes as leading
     dims in `combo_var_names` order (the canonical carry layout).
@@ -693,7 +721,7 @@ def _map_combo_product(
 
     def at_one_splayed_combo(
         splayed_values: tuple[ScalarFloat | ScalarInt, ...],
-    ) -> tuple[FloatND, ...]:
+    ) -> tuple[FloatND | BoolND, ...]:
         return inner(
             **dict(zip(splayed, splayed_values, strict=True)), **vmapped_values
         )
@@ -707,7 +735,7 @@ def _map_combo_product(
     perm = tuple(current_order.index(name) for name in combo_var_names)
     n_combo = len(combo_var_names)
 
-    def _reorder(arr: FloatND) -> FloatND:
+    def _reorder(arr: FloatND | BoolND) -> FloatND | BoolND:
         arr = arr.reshape(*splayed_dims, *arr.shape[1:])
         trailing = tuple(range(n_combo, arr.ndim))
         return jnp.transpose(arr, (*perm, *trailing))

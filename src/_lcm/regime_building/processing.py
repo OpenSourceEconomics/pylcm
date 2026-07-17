@@ -1075,10 +1075,14 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
       abscissae (where the bracketing segments are full lines), switches and
       value jumps landing exactly on a candidate abscissa via two-sided node
       records — and an interval whose switch sequence exceeds the enumeration
-      budget overflows loudly through `n_kept`, so a published row is never a
-      silently truncated envelope. The guarantee covers the live-covered
-      domain; interior coverage gaps (NaN-dead candidates splitting the
-      chain) are compacted and read linearly across.
+      budget overflows loudly through `n_kept` — as does a live candidate
+      point whose value no interval read can represent — so a published row
+      is never a silently truncated envelope. The guarantee covers the
+      live-covered domain; a row whose segment chain splits (NaN-dead
+      candidates or a finite value decrease between consecutive candidates)
+      is NaN-poisoned in the published policy via the kernel's read-support
+      verdict, so the reader falls back to grid-argmax instead of bridging
+      the gap linearly.
     - `"fues"` ⇒ no: segment identity is decided by thresholding the
       implied-savings slope (`fues_jump_thresh`) — a heuristic — and the
       DC-EGM kernel supplies no segment labels. Two value branches whose

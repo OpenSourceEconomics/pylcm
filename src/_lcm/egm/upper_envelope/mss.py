@@ -29,10 +29,31 @@ grid value, left record then right record — covering three cases:
   above, or a new branch starting above, every other line): both one-sided
   values and policies, preserving the discontinuity instead of smearing it.
 
-Interior coverage gaps (abscissa ranges no live segment spans, which arise
-only from NaN-dead candidates splitting the chain) are compacted: the flanking
-live nodes become adjacent output rows and a linear read bridges them. The
-crossing-completeness guarantee therefore applies on the live-covered domain.
+Interior coverage gaps — abscissa ranges no live segment spans — split the
+chain in two ways:
+
+- NaN-dead candidates (infeasible cases) break the segment chain outright;
+- a finite value decrease between consecutive candidates is treated as a
+  branch boundary rather than a segment, leaving the open interval between
+  the two abscissae uncovered.
+
+Gapped rows are compacted (the flanking live nodes become adjacent output
+rows), so a linear read would bridge the gap with fabricated values. The
+`read_supported` verdict from `refine_envelope_with_support` fail-closes such
+rows for off-grid policy reads; the crossing-completeness guarantee applies on
+the live-covered domain.
+
+Crossing arithmetic runs in interval-local coordinates (offsets from the
+interval's left endpoint), so the enumeration is invariant to translating the
+resource grid or shifting all values by a common constant. Tolerances are
+scale-relative only: crossing ties use a fixed multiple of machine epsilon
+times the interval width, and value/policy record ties use a relative
+tolerance with no absolute floor.
+
+A live candidate *point* whose value exceeds both one-sided winners at its
+abscissa beyond representational rounding (a zero-width dominating link that
+no interval read can represent) triggers the loud `n_kept > n_refined`
+overflow rather than being dropped.
 
 All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
@@ -41,7 +62,7 @@ batched over a leading dimension of the candidate arrays.
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, ScalarInt
+from lcm.typing import BoolND, Float1D, FloatND, Int1D, ScalarBool, ScalarInt
 
 # Per-interval envelope-switch enumeration budget. The upper envelope of the
 # lines bracketing one candidate interval can switch winners several times;
@@ -60,6 +81,31 @@ def refine_envelope(
     segment_id: Float1D | None = None,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its exact upper envelope.
+
+    Thin wrapper over `refine_envelope_with_support` that drops the
+    read-support verdict — the historical four-field kernel contract for
+    consumers that only interpolate the solve-side rows (which keep the
+    compaction convention across coverage gaps).
+    """
+    out_grid, out_policy, out_value, n_kept, _ = refine_envelope_with_support(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=n_refined,
+        segment_id=segment_id,
+    )
+    return out_grid, out_policy, out_value, n_kept
+
+
+def refine_envelope_with_support(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    n_refined: int,
+    segment_id: Float1D | None = None,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
+    """Refine to the exact upper envelope and report off-grid read support.
 
     The candidates arrive as a chain of consecutive linear segments (one segment
     per consecutive input pair), as the Euler inversion produces them: the
@@ -88,13 +134,21 @@ def refine_envelope(
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each
-        of length `n_refined`, NaN-padded), and the number of envelope points
-        `n_kept`. `n_kept > n_refined` signals overflow — either more envelope
-        rows than `n_refined` slots, or an interval whose switch sequence
-        exceeds the enumeration budget. Callers must check the counter rather
-        than publish the truncated arrays silently — the EGM step NaN-poisons
-        its published rows on overflow so the solve loop's NaN diagnostics name
-        the offending (regime, period).
+        of length `n_refined`, NaN-padded), the number of envelope points
+        `n_kept`, and the read-support verdict. `n_kept > n_refined` signals
+        overflow — more envelope rows than `n_refined` slots, an interval
+        whose switch sequence exceeds the enumeration budget, or a live
+        candidate point that strictly dominates both one-sided link records
+        at its abscissa (a single-abscissa spike no linearly-read row can
+        carry). Callers must check the counter rather than publish the
+        truncated arrays silently — the EGM step NaN-poisons its published
+        rows on overflow so the solve loop's NaN diagnostics name the
+        offending (regime, period). The read-support verdict is `False` when
+        any interval between adjacent emitted nodes has no covering live link
+        (a coverage gap — from NaN-dead candidates or an inferred
+        finite-value-decrease split): the compacted row bridges such an
+        interval linearly, so its off-grid read fabricates values and the
+        publication layer must withhold the simulation rows.
 
     """
     # A dead candidate arrives NaN-filled (the EGM step poisons `-inf`-valued
@@ -108,6 +162,7 @@ def refine_envelope(
     grid_key = jnp.where(dead, jnp.inf, endog_grid)
     order = jnp.argsort(grid_key)
     query_grid = jnp.where(dead, jnp.nan, endog_grid)[order]
+    query_dead = dead[order]
 
     # Segment endpoints: candidate `k` to candidate `k+1`, consecutive in the
     # (unsorted) input order — the EGM cloud's natural segment chain. A segment
@@ -157,16 +212,29 @@ def refine_envelope(
         [jnp.full((1,), -jnp.inf, dtype=query_grid.dtype), query_grid[:-1]]
     )
     is_new = query_grid > prev_grid
-    tolerance = 64.0 * jnp.finfo(query_grid.dtype).eps
+    # Record equality is representational: two computations of the same
+    # quantity agree up to rounding proportional to its magnitude, so the
+    # comparison is relative-only (`atol=0`). No tolerance here depends on the
+    # coordinate origin — a genuinely distinct pair merely duplicates the
+    # node, which the read resolves by its side convention.
+    tolerance = 64.0 * float(jnp.finfo(query_grid.dtype).eps)
     same_record = (
         (left_side.branch == right_side.branch)
-        & jnp.isclose(left_side.value, right_side.value, rtol=tolerance, atol=tolerance)
-        & jnp.isclose(
-            left_side.policy, right_side.policy, rtol=tolerance, atol=tolerance
-        )
+        & jnp.isclose(left_side.value, right_side.value, rtol=tolerance, atol=0.0)
+        & jnp.isclose(left_side.policy, right_side.policy, rtol=tolerance, atol=0.0)
     )
     node_left_valid = left_side.exists & is_new
     node_right_valid = right_side.exists & is_new & ~(left_side.exists & same_record)
+
+    unrepresented_point, read_supported = _unsupported_read_verdicts(
+        query_grid=query_grid,
+        query_dead=query_dead,
+        point_value=jnp.where(query_dead, jnp.nan, value[order]),
+        left_side=left_side,
+        right_side=right_side,
+        links=links,
+        tolerance=tolerance,
+    )
 
     crossings, interval_overflow = _enumerate_interval_crossings(
         query_grid=query_grid,
@@ -224,8 +292,78 @@ def refine_envelope(
     )
 
     n_kept = jnp.sum(row_valid, dtype=jnp.int32)
-    n_kept = jnp.where(interval_overflow, jnp.maximum(n_kept, n_refined + 1), n_kept)
-    return out_grid, out_policy, out_value, n_kept
+    n_kept = jnp.where(
+        interval_overflow | unrepresented_point,
+        jnp.maximum(n_kept, n_refined + 1),
+        n_kept,
+    )
+    return out_grid, out_policy, out_value, n_kept, read_supported
+
+
+def _unsupported_read_verdicts(
+    *,
+    query_grid: Float1D,
+    query_dead: BoolND,
+    point_value: Float1D,
+    left_side: _SideWinner,
+    right_side: _SideWinner,
+    links: _LinkLines,
+    tolerance: float,
+) -> tuple[ScalarBool, ScalarBool]:
+    """Detect envelope features a linearly-read compacted row cannot carry.
+
+    Returns:
+        Tuple of two verdicts:
+
+        - `unrepresented_point`: a live candidate point strictly dominates
+          both one-sided link records at its abscissa — a single-abscissa
+          spike (e.g. a zero-width terminal link). The duplicated-node
+          convention publishes one-sided *limits*, and a spike is neither, so
+          dropping it would understate the envelope at an actual candidate
+          node; the caller routes it into the loud overflow contract. A
+          duplicate candidate matching a covering link's record has zero
+          excess and stays quiet.
+        - `read_supported`: between adjacent *emitted* abscissae the row is
+          read as a linear span, which is genuine only where some live link
+          covers the interval. An uncovered interval — the chain split by
+          NaN-dead candidates or by the inferred finite-value-decrease
+          segment break — is a coverage gap the compaction bridges; `False`
+          lets the publication layer withhold the simulation rows
+          (fail-closed) while the solve rows keep the compaction convention.
+
+    """
+    best_side_value = jnp.maximum(
+        jnp.where(left_side.exists, left_side.value, -jnp.inf),
+        jnp.where(right_side.exists, right_side.value, -jnp.inf),
+    )
+    dominance_margin = tolerance * jnp.maximum(
+        jnp.abs(point_value),
+        jnp.where(jnp.isfinite(best_side_value), jnp.abs(best_side_value), 0.0),
+    )
+    unrepresented_point = jnp.any(
+        ~query_dead & (point_value - best_side_value > dominance_margin)
+    )
+
+    emits = (left_side.exists | right_side.exists) & ~query_dead
+    previous_emitted_grid = jnp.concatenate(
+        [
+            jnp.full((1,), -jnp.inf, dtype=query_grid.dtype),
+            jax.lax.cummax(jnp.where(emits, query_grid, -jnp.inf))[:-1],
+        ]
+    )
+    interval_covered = jnp.any(
+        links.live[None, :]
+        & (links.lower[None, :] <= previous_emitted_grid[:, None])
+        & (links.upper[None, :] >= query_grid[:, None]),
+        axis=1,
+    )
+    coverage_gap = jnp.any(
+        emits
+        & jnp.isfinite(previous_emitted_grid)
+        & (query_grid > previous_emitted_grid)
+        & ~interval_covered
+    )
+    return unrepresented_point, ~coverage_gap
 
 
 class _LinkLines:
@@ -351,9 +489,13 @@ def _lexicographic_winner(
     masked_value = jnp.where(covers, value_at, -jnp.inf)
     best_value = jnp.max(masked_value, axis=1)
     exists = jnp.isfinite(best_value)
+    # Value ties are representational (two computations of the same envelope
+    # value agree up to rounding proportional to its magnitude): relative-only,
+    # no origin-dependent absolute slack. A missed tie merely skips the slope
+    # tie-break and duplicates the node downstream — never merges records.
     tolerance = 64.0 * jnp.finfo(value_at.dtype).eps
     tie = covers & jnp.isclose(
-        masked_value, best_value[:, None], rtol=tolerance, atol=tolerance
+        masked_value, best_value[:, None], rtol=tolerance, atol=0.0
     )
     slope_score = jnp.where(tie, slope_sign * links.value_slope[None, :], -jnp.inf)
     link = jnp.argmax(slope_score, axis=1).astype(jnp.int32)
@@ -423,53 +565,61 @@ def _enumerate_interval_crossings(
     )
     interval_active = is_new & init_exists & jnp.isfinite(prev_grid)
     link_index = jnp.arange(links.lower.shape[0], dtype=jnp.int32)
+    # The crossing-coincidence window is interval-local: comparisons happen on
+    # offsets from the current position, so the tolerance scales with the
+    # interval's width — never with the absolute resource coordinate — and a
+    # translation of the resource origin cannot merge distinct crossings.
+    interval_width = jnp.where(jnp.isfinite(prev_grid), query_grid - prev_grid, 0.0)
+    offset_tolerance = 16.0 * jnp.finfo(query_grid.dtype).eps * interval_width
 
     def overtaking(winner: Int1D, x_current: Float1D) -> tuple[FloatND, BoolND]:
-        """Crossing abscissae where each bracketing line overtakes the winner."""
+        """Overtake offsets from `x_current` for each bracketing line.
+
+        All quantities are interval-local differences: every line is evaluated
+        at `x_current` (an offset from its own anchor, bounded by the link
+        span plus one interval), and the crossing offset is the value gap
+        divided by the slope gap — no absolute-coordinate products enter, so
+        precision does not degrade with the resource origin.
+        """
         winner_slope = links.value_slope[winner]
-        winner_anchor_x = links.anchor_grid[winner]
-        winner_anchor_y = links.anchor_value[winner]
-        denominator = winner_slope[:, None] - links.value_slope[None, :]
-        safe_denominator = jnp.where(denominator == 0.0, 1.0, denominator)
-        x_star = jnp.where(
-            denominator == 0.0,
+        value_at_current = links.value_at(x_current[:, None])
+        winner_value = jnp.take_along_axis(value_at_current, winner[:, None], axis=1)
+        slope_gap = links.value_slope[None, :] - winner_slope[:, None]
+        safe_slope_gap = jnp.where(slope_gap <= 0.0, 1.0, slope_gap)
+        offset = jnp.where(
+            slope_gap <= 0.0,
             jnp.inf,
-            (
-                links.anchor_value[None, :]
-                - winner_anchor_y[:, None]
-                + winner_slope[:, None] * winner_anchor_x[:, None]
-                - links.value_slope[None, :] * links.anchor_grid[None, :]
-            )
-            / safe_denominator,
+            (winner_value - value_at_current) / safe_slope_gap,
         )
         valid = (
             covers_interval
             & (link_index[None, :] != winner[:, None])
-            & (links.value_slope[None, :] > winner_slope[:, None])
-            & (x_star > x_current[:, None])
-            & (x_star < query_grid[:, None])
+            & (slope_gap > 0.0)
+            & (offset > 0.0)
+            & (offset < (query_grid - x_current)[:, None])
         )
-        return x_star, valid
+        return offset, valid
 
     def step(
         carry: tuple[Int1D, Float1D, BoolND], _: ScalarInt
     ) -> tuple[tuple[Int1D, Float1D, BoolND], _IntervalCrossings]:
         winner, x_current, active = carry
-        x_star, valid = overtaking(winner, x_current)
+        offset, valid = overtaking(winner, x_current)
         valid = valid & active[:, None]
-        x_masked = jnp.where(valid, x_star, jnp.inf)
-        x_next = jnp.min(x_masked, axis=1)
-        found = jnp.isfinite(x_next)
-        tolerance = 64.0 * jnp.finfo(query_grid.dtype).eps
-        tie = valid & jnp.isclose(
-            x_star, x_next[:, None], rtol=tolerance, atol=tolerance
-        )
+        offset_masked = jnp.where(valid, offset, jnp.inf)
+        offset_next = jnp.min(offset_masked, axis=1)
+        found = jnp.isfinite(offset_next)
+        tie = valid & (offset <= (offset_next + offset_tolerance)[:, None])
         incoming = jnp.argmax(
             jnp.where(tie, links.value_slope[None, :], -jnp.inf), axis=1
         ).astype(jnp.int32)
 
-        crossing_value = links.anchor_value[winner] + links.value_slope[winner] * (
-            x_next - links.anchor_grid[winner]
+        x_next = x_current + offset_next
+        winner_slope = links.value_slope[winner]
+        crossing_value = (
+            links.anchor_value[winner]
+            + winner_slope * (x_current - links.anchor_grid[winner])
+            + winner_slope * offset_next
         )
         emitted = _IntervalCrossings(
             grid=jnp.where(found, x_next, jnp.nan),
