@@ -40,6 +40,17 @@ on-grid cell anywhere in a batch would flip the whole batch to the safe arm, so
 it would deliver bit-compatibility precisely in the batches that do not need it
 and withhold it from the ones that motivated the guard. The per-element
 `jnp.where` is the honest primitive.
+
+That argument is about weights that are only known at RUNTIME (an
+interpolation corner, a mixture probability) — the case every call site here
+faces but one. The FOLD reduction is the exception: a fold axis's weights are
+the process's own quadrature marginal, and `_validate_fold_declarations`
+rejects a runtime-parameterized folded process, so they are concrete before
+the kernel is ever traced. `max_Q_over_a._select_fold_reducer` therefore
+picks between `jnp.average` and `zero_safe_average` per axis with a plain
+Python ``if``, at kernel-build time — no traced predicate, no `lax.cond`, and
+no global/per-axis conflict. Callers whose weights ARE runtime values cannot
+do this and should keep using `zero_safe_average` unconditionally.
 """
 
 import jax

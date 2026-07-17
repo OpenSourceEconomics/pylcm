@@ -85,10 +85,14 @@ import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.regime_building.gated_edges import (
+    SOURCE_PARAMS,
+    TARGET_PARAMS,
+    EdgeArgProvenance,
     ResolvedEdgeLeg,
+    build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
 )
-from _lcm.regime_building.Q_and_F import SAME_PERIOD_V_ARG
+from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.solution.backward_induction import _evaluate_edge_fold
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, StatesPerRegime
@@ -192,6 +196,9 @@ def substitute_gated_edge_continuations(
             target_states=base_state_action_spaces[target_name].states,
             same_period_mapping=same_period_mapping,
             source_flat_params=flat_params[regime_name],
+            reference_flat_params=build_reference_params_mapping_for_fold(
+                edge=edge, flat_params=flat_params
+            ),
         )
         substituted[target_name] = wbar
         # Simulate F1 fix: no longer captures the fold's own boolean `gate`
@@ -202,10 +209,42 @@ def substitute_gated_edge_continuations(
     return MappingProxyType(substituted), MappingProxyType(same_period_mappings)
 
 
-def _call_with_accepted_kwargs(func: Callable, kwargs: Mapping[str, object]) -> object:
-    """Call `func` with only the keyword arguments its signature declares."""
-    accepted = set(signature(func).parameters)
-    return func(**{name: value for name, value in kwargs.items() if name in accepted})
+def _bind_provenance_params(
+    provenance: EdgeArgProvenance,
+    *,
+    flat_params: FlatParams,
+    source_name: RegimeName,
+    target_name: RegimeName,
+) -> dict[str, object]:
+    """Bind an edge callable's params, each from the regime that OWNS it (F2/F3).
+
+    The router holds every regime's flat params and the realized candidate
+    target states; `provenance` (published by the callable's builder in
+    `_lcm.regime_building.gated_edges`) is what says which of them resolves a
+    given argument. Both merge orders of two name-filtered dicts are wrong — one
+    keyword cannot carry two regimes' identically named arrays, and the target
+    and the source genuinely can contribute the same qname (`x__points` for a
+    state `x` on a runtime irregular grid, in both regimes) — so nothing is
+    merged here: each exposed leaf is looked up in exactly one namespace.
+
+    Raises:
+        KeyError: A namespace does not carry a qname the callable declares.
+    """
+    regime_of_namespace = {SOURCE_PARAMS: source_name, TARGET_PARAMS: target_name}
+    bound: dict[str, object] = {}
+    for exposed, (namespace, qname) in provenance.params.items():
+        regime_name = regime_of_namespace[namespace]
+        regime_params = flat_params[regime_name]
+        if qname not in regime_params:
+            msg = (
+                f"A gated edge into '{target_name}' needs the {namespace} "
+                f"regime '{regime_name}''s parameter '{qname}', which is not in "
+                f"flat_params['{regime_name}'] (present: "
+                f"{sorted(regime_params)})."
+            )
+            raise KeyError(msg)
+        bound[exposed] = regime_params[qname]
+    return bound
 
 
 def _call_vmapped_with_accepted_kwargs(
@@ -213,6 +252,7 @@ def _call_vmapped_with_accepted_kwargs(
     *,
     batched_kwargs: Mapping[str, object],
     static_kwargs: Mapping[str, object],
+    axis_size: int,
 ) -> object:
     """Call a per-subject-scalar `func` over a whole population via `vmap`.
 
@@ -234,9 +274,19 @@ def _call_vmapped_with_accepted_kwargs(
     `batched_kwargs` (mapped over subject axis 0 — e.g. the candidate target
     states) and `static_kwargs` (held fixed across subjects — e.g. regime
     params and the raw grid-level array being read) are filtered down to the
-    names `func` accepts, exactly like `_call_with_accepted_kwargs`; on a name
-    collision, `static_kwargs` wins, mirroring the original
-    `{**states, **params}` merge precedence.
+    names `func` accepts; on a name collision, `static_kwargs` wins, mirroring
+    the original `{**states, **params}` merge precedence. That precedence is
+    safe here and is NOT the F2/F3 defect: `static_kwargs` carries the
+    provenance-bound params, whose exposed names are namespace-qualified and so
+    cannot collide with a target state name.
+
+    `axis_size` is REQUIRED, not inferred. A STATELESS gated target (no
+    continuous or discrete states of its own — e.g. a terminal scrap-value
+    regime) leaves `batched` empty after filtering, and `vmap` cannot infer
+    a batch size from zero batched arguments: it raises "vmap wrapped
+    function must be passed at least one argument containing an array".
+    Passing the population size explicitly makes the stateless case a
+    legal broadcast instead of a crash.
     """
     accepted = set(signature(func).parameters)
     static = {name: value for name, value in static_kwargs.items() if name in accepted}
@@ -249,7 +299,7 @@ def _call_vmapped_with_accepted_kwargs(
     def _call_one_subject(one_subject_kwargs: Mapping[str, object]) -> object:
         return func(**one_subject_kwargs, **static)
 
-    return jax.vmap(_call_one_subject)(batched)
+    return jax.vmap(_call_one_subject, axis_size=axis_size)(batched)
 
 
 def _select_own_leg(
@@ -265,25 +315,33 @@ def _select_own_leg(
 
     Falls back to the first declared leg (`legs[0]`) in two LEGITIMATE
     cases: `own_stakeholder` is `None` (the legacy default — a caller that
-    never opted into row-split), or the source has a single leg
-    (`len(legs) == 1`), which for a singleton source always has
-    `source_stakeholder=None` and so structurally never matches a non-`None`
-    `own_stakeholder` — the common, correct case, not an error.
+    never opted into row-split), or the source is a SINGLETON, whose sole
+    leg carries `source_stakeholder=None` and so structurally never matches
+    a non-`None` `own_stakeholder` — the common, correct case, not an error.
 
-    A non-`None` `own_stakeholder` that matches NO leg of a genuinely
-    MULTI-leg (collective) source is a caller error — a typo'd or stale
-    role name — not tolerated silently: raises `ValueError` rather than
-    routing the row through an arbitrary leg (F5).
+    A non-`None` `own_stakeholder` that matches NO leg of a COLLECTIVE
+    source is a caller error — a typo'd or stale role name — not tolerated
+    silently: raises `ValueError` rather than routing the row through an
+    arbitrary leg (F5).
+
+    The singleton exemption keys on `legs[0].source_stakeholder is None`,
+    NOT on `len(legs) == 1`. Arity is the wrong test: the validator accepts
+    a ONE-element `stakeholders` tuple, and `processing.py`'s
+    `leg_order = [(s, s) for s in source_stakeholders]` then gives that sole
+    leg `source_stakeholder="f"` — not `None`. Keying on arity let a typo'd
+    `own_stakeholder` fall through to that leg silently on exactly the
+    single-stakeholder collective source the raise exists to protect.
 
     Raises:
-        ValueError: `own_stakeholder` is not `None`, `legs` has more than
-            one leg, and no leg's `source_stakeholder` matches it.
+        ValueError: `own_stakeholder` is not `None`, the source is
+            collective (its legs carry roles), and no leg's
+            `source_stakeholder` matches it.
     """
     if own_stakeholder is not None:
         for leg in legs:
             if leg.source_stakeholder == own_stakeholder:
                 return leg
-        if len(legs) > 1:
+        if legs[0].source_stakeholder is not None:
             available = tuple(leg.source_stakeholder for leg in legs)
             msg = (
                 f"own_stakeholder={own_stakeholder!r} does not match any "
@@ -374,20 +432,27 @@ def route_gated_edges(
         if target_name not in same_period_mappings:
             continue
         candidate_target_states = dict(next_states[target_name])
-        target_kwargs = {**candidate_target_states, **flat_params[target_name]}
+        reference_params = build_reference_params_mapping_for_fold(
+            edge=edge, flat_params=flat_params
+        )
 
         # Simulate F1 fix. Recompute the gate from interpolated VALUE
         # operands at the realized candidate state, instead of interpolating
-        # the fold's baked boolean `gate` array and thresholding it. The
-        # evaluator's own extra params (beyond the target's state grids and
-        # `SAME_PERIOD_V_ARG`) can come from either the TARGET's flat params
-        # (interpolator helper args, e.g. runtime irregular-grid points) or
-        # this SOURCE regime's own flat params (any genuine extra gate
-        # argument) — mirrors the solve-side fold's own split
-        # (`_evaluate_edge_fold` sources such extras from `source_flat_params`
-        # exclusively; `route_gated_edges` merges both namespaces since it
-        # has both available and no test model relies on one shadowing the
-        # other).
+        # the fold's baked boolean `gate` array and thresholding it.
+        #
+        # F2 fix. Every param the evaluator needs is bound from the regime that
+        # OWNS it, as recorded argument by argument in the evaluator's published
+        # `arg_provenance`. Filtering two dicts by unqualified names and merging
+        # them was a real bug, not a tidiness question, and no merge ORDER fixes
+        # it: an interpolator's runtime grid helper is named after the STATE
+        # alone (`x__points`), so a source and a target that both declare a state
+        # `x` contribute the same qname, the filtered dicts intersect, and one
+        # keyword cannot carry both regimes' points. Whichever dict is applied
+        # last wins the collision and the other regime's read is silently
+        # resolved on the wrong grid. The evaluator therefore exposes each
+        # namespace's params under distinct, qualified leaves, and the reference
+        # regimes' own grid params never reach this signature at all — they ride
+        # in `SAME_PERIOD_PARAMS_ARG` (F4).
         simulate_gate_evaluator = regime.gated_edge_simulate_gate_evaluators[
             target_name
         ]
@@ -396,10 +461,18 @@ def route_gated_edges(
                 simulate_gate_evaluator,
                 batched_kwargs=candidate_target_states,
                 static_kwargs={
-                    **flat_params[target_name],
-                    **flat_params[regime.name],
+                    **_bind_provenance_params(
+                        simulate_gate_evaluator.arg_provenance,
+                        flat_params=flat_params,
+                        source_name=regime.name,
+                        target_name=target_name,
+                    ),
                     SAME_PERIOD_V_ARG: same_period_mappings[target_name],
+                    SAME_PERIOD_PARAMS_ARG: reference_params,
                 },
+                # A stateless target leaves `batched_kwargs` empty; `vmap`
+                # cannot infer a batch size from nothing (F3).
+                axis_size=int(subjects_in_regime.shape[0]),
             )
         )
 
@@ -423,9 +496,29 @@ def route_gated_edges(
 
         projectors = regime.gated_edge_leg_projectors[target_name]
         for leg, projector in zip(legs, projectors, strict=True):
+            # F3 fix. The projector's free parameters are bound from the regime
+            # that owns them — the SOURCE for a source-declared projection, as
+            # recorded in `arg_provenance` — not from the target, whose params
+            # this call used to merge in wholesale. The solve-side fold projects
+            # this very coordinate with `flat_params[source]`
+            # (`backward_induction._evaluate_edge_fold`), so any other binding
+            # writes the row into the right fallback REGIME at a STATE the
+            # solved policy never priced, and carries it into the next period.
+            projector_provenance = projector.arg_provenance
             fallback_states = cast(
                 "Mapping[str, FloatND]",
-                _call_with_accepted_kwargs(projector, target_kwargs),
+                projector(
+                    **{
+                        name: candidate_target_states[name]
+                        for name in projector_provenance.states
+                    },
+                    **_bind_provenance_params(
+                        projector_provenance,
+                        flat_params=flat_params,
+                        source_name=regime.name,
+                        target_name=target_name,
+                    ),
+                ),
             )
             # F2 fix. Likewise, a row not eligible for this edge (its
             # ordinary draw isn't this edge's target) must not have this

@@ -16,9 +16,10 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.regime_building.gated_edges import (
+    build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
 )
-from _lcm.regime_building.Q_and_F import SAME_PERIOD_V_ARG
+from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.logging import (
@@ -616,6 +617,9 @@ def _roll_gated_edges(
                 target_states=base_state_action_spaces[target_name].states,
                 same_period_mapping=same_period_mapping,
                 source_flat_params=flat_params[source_name],
+                reference_flat_params=build_reference_params_mapping_for_fold(
+                    edge=edge, flat_params=flat_params
+                ),
             )
             rolled[(source_name, target_name)] = wbar
     return MappingProxyType(rolled)
@@ -627,8 +631,20 @@ def _evaluate_edge_fold(
     target_states: Mapping[str, ContinuousState | DiscreteState],
     same_period_mapping: Mapping[RegimeName, FloatND],
     source_flat_params: Mapping[str, object],
+    reference_flat_params: Mapping[RegimeName, Mapping[str, object]],
 ) -> FloatND:
     """Call one edge's fold with exactly the arguments its signature declares.
+
+    Every parameter the fold needs is bound from the SOURCE regime — the fold is
+    the source's own continuation object, and its gate / projections are declared
+    on the source, so this is the namespace they are written against. (It is also
+    the contract the simulate-side gate evaluator and leg projectors must match
+    argument for argument; see `_lcm.regime_building.gated_edges
+    .EdgeArgProvenance`.) The one exception is a REFERENCE regime's own
+    interpolation grid, which belongs to neither the source nor the target:
+    those params ride in `reference_flat_params` under
+    `Q_and_F.SAME_PERIOD_PARAMS_ARG`, keyed by regime, and the reference readers
+    resolve them internally (F4).
 
     COLLECTIVE-REGIMES (E3', slice 5): the target regime's grid may carry
     DISCRETE state axes (e.g. EKL's encoded spouse-type categorical, or any
@@ -647,6 +663,8 @@ def _evaluate_edge_fold(
         name: arr for name, arr in target_states.items() if name in sig_params
     }
     kwargs[SAME_PERIOD_V_ARG] = same_period_mapping
+    if SAME_PERIOD_PARAMS_ARG in sig_params:
+        kwargs[SAME_PERIOD_PARAMS_ARG] = reference_flat_params
     kwargs.update(
         {
             name: value

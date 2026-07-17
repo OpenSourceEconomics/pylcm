@@ -38,6 +38,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 
 from _lcm.regime_building.Q_and_F import (
+    SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
     ResolvedSamePeriodRef,
     _build_same_period_ref_reader,
@@ -68,6 +69,142 @@ _D_THRESHOLD = 0.5
 # real regime or gate-ref names.
 _SIMULATE_TARGET_V_ARR_NAME = "__simulate_target_component_v_arr__"
 _SIMULATE_D_ARR_NAME = "__simulate_target_D_arr__"
+
+# COLLECTIVE-REGIMES (E4, F2/F3 fix). The two parameter namespaces a
+# simulate-side edge callable resolves its arguments against. A REGIME, not a
+# role, is what a params mapping is keyed by; these are the two roles an edge
+# relates, and `_lcm.simulation.gated_routing` maps them to the actual regime
+# names it has in hand (the source regime that declares the edge, the target
+# regime the edge lands on).
+SOURCE_PARAMS = "source"
+TARGET_PARAMS = "target"
+
+# Prefixes under which an edge callable EXPOSES a parameter of each namespace.
+# The qualification is load-bearing, not cosmetic: a runtime irregular grid's
+# helper param is named after the STATE alone and carries no regime
+# qualification (`_lcm.regime_building.V._get_coordinate_finder` ->
+# `qname_from_tree_path((state_name, "points"))` -> `x__points`), so a source
+# and a target that both declare a state `x` contribute a param with the very
+# same qname. One keyword argument cannot carry two regimes' arrays, so no
+# merge ORDER of two same-named entries can be right; the exposed leaves must be
+# distinct in the first place.
+_TARGET_PARAM_PREFIX = "__target_param__"
+_SOURCE_PARAM_PREFIX = "__source_param__"
+
+
+@dataclass(frozen=True, kw_only=True)
+class EdgeArgProvenance:
+    """Where each exposed argument of an edge-side simulate callable comes from.
+
+    COLLECTIVE-REGIMES (E4, F2/F3 fix). The simulate-side router
+    (`_lcm.simulation.gated_routing`) holds EVERY regime's flat params and the
+    realized candidate target states, and has no other way to tell which of them
+    an argument of a gate evaluator / fallback projector wants. Publishing an
+    explicit provenance — rather than two name-filtered param dicts merged in
+    some order — is what makes the answer well defined:
+
+    - `states` are bound from the realized candidate TARGET states (batched over
+      subjects). They mirror the solve side, where the fold is evaluated on the
+      target regime's own state grid.
+    - `params` maps each exposed argument name to the `(namespace, qname)` pair
+      that resolves it, with `namespace` one of `SOURCE_PARAMS` / `TARGET_PARAMS`
+      and `qname` the name the parameter carries in THAT regime's own flat
+      params. Exposed names are namespace-qualified (see `_TARGET_PARAM_PREFIX`
+      / `_SOURCE_PARAM_PREFIX`), so two regimes' identically named params are
+      distinct leaves of the callable's signature and neither can clobber the
+      other.
+
+    Parameters of a REFERENCE regime (a gate ref's / leg fallback's own
+    interpolation grid) are a third provenance, and are NOT represented here:
+    they never surface as an outer argument at all, because
+    `_build_same_period_ref_reader` resolves them internally against
+    `SAME_PERIOD_PARAMS_ARG` (F4). This class covers exactly what remains.
+    """
+
+    states: frozenset[str]
+    """Exposed args bound from the realized candidate target states."""
+
+    params: MappingProxyType[str, tuple[str, str]]
+    """Exposed arg name -> (namespace, qname in that namespace's flat params)."""
+
+
+class _ProvenanceBuilder:
+    """Accumulate an `EdgeArgProvenance` while wiring an edge callable.
+
+    `expose` translates a namespace-owned qname into the qualified name the
+    callable exposes it under, recording the provenance on the way; identical
+    (namespace, qname) pairs requested twice (e.g. two gate refs that both read
+    the same source parameter) collapse onto one leaf, which is correct — they
+    genuinely carry the same value.
+    """
+
+    def __init__(self, *, states: frozenset[str]) -> None:
+        self._states = states
+        self._params: dict[str, tuple[str, str]] = {}
+
+    def expose(self, *, qname: str, namespace: str, qualify: bool = True) -> str:
+        """Return the exposed name for `qname` in `namespace`, recording it.
+
+        `qualify=False` exposes the parameter under its plain qname. Legal only
+        for a callable with a SINGLE params namespace (the fallback projector),
+        where no second regime can contribute the same name; the conflict check
+        below is what holds that promise to account.
+        """
+        prefix = (
+            _TARGET_PARAM_PREFIX if namespace == TARGET_PARAMS else _SOURCE_PARAM_PREFIX
+        )
+        exposed = f"{prefix}{qname}" if qualify else qname
+        recorded = self._params.get(exposed)
+        if recorded is not None and recorded != (namespace, qname):
+            # The construction-time guard the qualified scheme is designed to
+            # make unreachable, asserted rather than assumed: collapsing two
+            # provenances onto one keyword is exactly the defect this mechanism
+            # replaced, and neither an unqualified exposure nor a future change
+            # to the naming scheme may reintroduce it silently.
+            msg = (
+                f"Argument '{exposed}' would carry two different values: "
+                f"{recorded} and {(namespace, qname)}. One keyword argument "
+                "cannot carry two regimes' parameters; expose them under "
+                "namespace-qualified names instead."
+            )
+            raise ValueError(msg)
+        self._params[exposed] = (namespace, qname)
+        return exposed
+
+    def build(
+        self, *, outer_arg_names: tuple[str, ...], engine_args: set[str]
+    ) -> EdgeArgProvenance:
+        """Finalize, checking the provenance PARTITIONS the outer signature.
+
+        Every outer argument must be classified exactly once: an engine-supplied
+        one, a candidate target state, or a parameter of a named namespace. A
+        missing classification is the F2 completeness defect (an argument the
+        router would have to guess a namespace for); an overlap is the F2
+        disjointness defect (a name two provenances both claim).
+
+        Raises:
+            ValueError: The provenance does not partition `outer_arg_names`.
+        """
+        overlap = self._states & set(self._params)
+        if overlap:
+            msg = (
+                f"Arguments {sorted(overlap)} are claimed both as candidate "
+                "target states and as parameters."
+            )
+            raise ValueError(msg)
+        unclassified = (
+            set(outer_arg_names) - engine_args - self._states - set(self._params)
+        )
+        if unclassified:
+            msg = (
+                f"Arguments {sorted(unclassified)} of a gated-edge simulate "
+                "callable have no recorded provenance, so there is no way to "
+                "tell which regime's parameters resolve them."
+            )
+            raise ValueError(msg)
+        return EdgeArgProvenance(
+            states=self._states, params=MappingProxyType(dict(self._params))
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -375,15 +512,59 @@ def get_edge_simulate_gate_evaluator(
     calls, so solve and simulate apply the identical predicate); only how
     the OPERANDS feeding it are obtained differs:
 
-    - VALUE operands (`V_target_<s>`, every `gate_refs` entry) are FAITHFUL
-      recomputes: the target's own value array (sliced per stakeholder for
-      a collective target) and each declared gate ref are interpolated at
-      the realized point — the former via a fresh `get_V_interpolator` over
-      the target's own grid, the latter via the SAME
-      `_build_same_period_ref_reader` reader `get_edge_fold` uses, just
-      called directly at one point instead of product-mapped over the whole
-      target grid. This fully fixes a value-operand gate (e.g. mutual
-      consent, EKL eq. 27).
+    - VALUE operands (`V_target_<s>`, every `gate_refs` entry) are
+      INTERPOLATED at the realized point, not recomputed: the target's own
+      value array (sliced per stakeholder for a collective target) via a
+      fresh `get_V_interpolator` over the target's own grid, and each
+      declared gate ref via the SAME `_build_same_period_ref_reader` reader
+      `get_edge_fold` uses, just called directly at one point instead of
+      product-mapped over the whole target grid.
+
+      This is a KNOWN, NON-CONVERGENT residual: the gate is an
+      APPROXIMATE router, not the exact E4 recomputation the extension spec
+      states. Two earlier versions of this docstring were WRONG about it and
+      both errors are recorded here, because each was a confident claim that
+      no test could contradict:
+
+      1. It first called these "faithful recomputes". They are not.
+         `V_target` is an ALREADY-MAXIMIZED object and interpolation does not
+         commute with a `max`: with target actions `u=x` and `u=1-x` on the
+         grid `{0,1}`, both nodes give `V=1`, so the interpolant reads 1
+         everywhere while the true `max_a Q` at `x=0.5` is 0.5.
+      2. It then called the residual "SECOND-ORDER", citing an O(h^2)
+         crossing-location rate. That rate was measured against a SMOOTH
+         target (`u=sqrt(x)`) — and smoothness is exactly what fails here.
+         **At an action-envelope kink the error is O(h), not O(h^2).**
+
+      Worse, and the reason this is not merely a rate question: **value
+      convergence does not imply ROUTING convergence.** The consent
+      predicate is discontinuous, so refinement does not cure it when the
+      candidate distribution has an atom on the equality surface. Take
+      `V(x) = max(x, 1-x)`, a deterministic candidate atom at `x=0.5`, and
+      the strict gate `V(x) > 0.5`. On every EVEN-cardinality uniform grid
+      the two nodes flanking 0.5 both carry `V = 0.5 + h/2`, so
+      `interp(V)(0.5) = 0.5 + h/2 > 0.5` and the gate OPENS, while the
+      faithful gate is CLOSED. The value error `h/2` vanishes; the routing
+      error stays at probability ONE for every such grid. One ordinary
+      envelope kink plus a deterministic draw is enough — no pathological
+      density is needed.
+
+      Turning value convergence into routing convergence would need a MARGIN
+      condition that is neither stated nor checked here, e.g.
+      `P(|V_target_<s> - ref| <= eps) -> 0` as `eps -> 0` (no atom at zero,
+      with mass control near it), plus a uniform interpolation bound. Callers
+      relying on a value gate should treat routing as approximate and check
+      grid-convergence of the reported route frequencies themselves.
+
+      A fully faithful evaluator would recompute the target's realized
+      `max_a Q` (household argmax + own-component read, for a collective
+      target) instead of interpolating its stored V. That means threading the
+      target's full state-action space, compiled Q/F, params, `solution[t+2]`
+      and `collective_argmax_and_readout` through `route_gated_edges`,
+      `Regime`'s compiled artifacts, and the solve/simulate plumbing — and it
+      would still leave the LAST interpolation level in place (a non-terminal
+      target's recomputed `max_a Q` reads `interp(V_{t+2})`). Not taken here;
+      tracked as the known gap between this router and the E4 spec.
     - The BOOLEAN `D_target` operand (a no-dissolution gate, e.g. EKL eqs.
       9/12) is a DOCUMENTED RESIDUAL: linearly interpolating the float-cast
       flag and thresholding at 0.5 (`_assemble_gate_kwargs`'s existing
@@ -426,13 +607,28 @@ def get_edge_simulate_gate_evaluator(
             reference regime's grid).
 
     Returns:
-        A callable keyed by the target's state names (a realized candidate
-        point — scalar per subject once `vmap`-ped by the caller, exactly
-        like `route_gated_edges`'s old gate-array interpolator),
-        `SAME_PERIOD_V_ARG` (target V, `D`-as-float, and every reference
-        regime's V — `build_same_period_mapping_for_fold`'s output), and any
-        extra params the gate or the interpolators need; returns the
-        recomputed boolean gate at that point.
+        A callable returning the recomputed boolean gate at one realized
+        candidate point (scalar per subject once `vmap`-ped by the caller),
+        keyed by:
+
+        - the target's state names — the realized candidate point;
+        - `SAME_PERIOD_V_ARG` — target V, `D`-as-float, and every reference
+          regime's V (`build_same_period_mapping_for_fold`'s output);
+        - `SAME_PERIOD_PARAMS_ARG` — `{regime: its flat params}`, against
+          which each reference reader resolves its OWN regime's runtime grid
+          helpers internally (F4);
+        - the params named by the returned `EdgeArgProvenance`, exposed under
+          NAMESPACE-QUALIFIED leaves (`__target_param__x__points` vs
+          `__source_param__x__points`).
+
+        The qualification is the F2 fix and is load-bearing: a runtime grid
+        helper is named after the STATE alone (`x__points`), so a source and
+        a target that both declare a state `x` contribute the same qname. One
+        keyword cannot carry two regimes' arrays, so no merge ORDER is
+        correct — the leaves must be distinct. Read the provenance off the
+        callable (`.provenance`) rather than name-filtering two param dicts;
+        `_ProvenanceBuilder.build` asserts at construction that it PARTITIONS
+        the signature (disjoint and complete).
     """
     state_names = target_v_info.state_names
 
@@ -504,30 +700,95 @@ def get_edge_simulate_gate_evaluator(
     )
     injected_names = frozenset({*target_component_names, "D_target", *gate_ref_readers})
 
-    outer_arg_names = sorted(
-        {SAME_PERIOD_V_ARG}
-        | set(state_names)
-        | {arg for args in gate_ref_args.values() for arg in args}
-        | set(target_component_args)
-        | set(d_interpolator_args)
-        | (set(gate_arg_names) - injected_names)
+    # PROVENANCE (F2 fix). Every non-engine argument is attributed to exactly
+    # one namespace, and exposed under a namespace-QUALIFIED name, because the
+    # namespaces are NOT distinguishable by the qname alone: `get_V_interpolator`
+    # names its runtime grid helpers after the STATE (`V.py`'s
+    # `qname_from_tree_path((state_name, "points"))` -> `x__points`), with no
+    # regime qualification, so a source and a target that both declare a state
+    # `x` contribute the identical qname. Two frozensets of UNqualified names
+    # cannot express that: the sets intersect, one keyword can only carry one of
+    # the two arrays, and whichever merge order the router picks, some argument
+    # is bound from the wrong regime.
+    #
+    # The three provenances (this is the completeness half of F2 — the previous
+    # revision knew only two, and assigned every gate-ref reader argument
+    # wholesale to the target):
+    #
+    # 1. TARGET_PARAMS — the target's OWN V / `D` interpolation helpers. These
+    #    are simulate-only objects: the solve-side fold reads the target's value
+    #    by exact grid indexing and never interpolates it, so these args have no
+    #    solve-side counterpart. They interpolate over the TARGET's grid, hence
+    #    the target's params.
+    # 2. SOURCE_PARAMS — the gate predicate's own free params, and the free
+    #    params of the SOURCE-declared gate-ref projections (including those of
+    #    any target helper FUNCTION a projection routes through). This is not a
+    #    choice: `backward_induction._evaluate_edge_fold` binds every one of the
+    #    fold's params from `flat_params[source]`, so binding them anywhere else
+    #    here would make simulate evaluate a different predicate than the Wbar
+    #    the source's own solved policy was optimized against.
+    # 3. The REFERENCE regimes' own interpolation grids — resolved inside
+    #    `_build_same_period_ref_reader` against `SAME_PERIOD_PARAMS_ARG` (F4),
+    #    so they never reach this signature.
+    engine_args = {SAME_PERIOD_V_ARG}
+    if gate_ref_readers:
+        engine_args.add(SAME_PERIOD_PARAMS_ARG)
+    provenance_builder = _ProvenanceBuilder(states=frozenset(state_names))
+
+    def _expose(arg: str, namespace: str) -> str:
+        if arg in state_names or arg in engine_args:
+            return arg
+        return provenance_builder.expose(qname=arg, namespace=namespace)
+
+    target_component_exposed = {
+        arg: _expose(arg, TARGET_PARAMS) for arg in target_component_args
+    }
+    d_interpolator_exposed = {
+        arg: _expose(arg, TARGET_PARAMS) for arg in d_interpolator_args
+    }
+    gate_ref_exposed = {
+        name: {arg: _expose(arg, SOURCE_PARAMS) for arg in args}
+        for name, args in gate_ref_args.items()
+    }
+    gate_extra_exposed = {
+        arg: _expose(arg, SOURCE_PARAMS)
+        for arg in sorted(set(gate_arg_names) - injected_names)
+    }
+
+    outer_arg_names = tuple(
+        sorted(
+            engine_args
+            | set(state_names)
+            | set(target_component_exposed.values())
+            | set(d_interpolator_exposed.values())
+            | {arg for exposed in gate_ref_exposed.values() for arg in exposed.values()}
+            | set(gate_extra_exposed.values())
+        )
+    )
+    arg_provenance = provenance_builder.build(
+        outer_arg_names=outer_arg_names, engine_args=engine_args
     )
 
-    @with_signature(args=outer_arg_names, return_annotation="BoolND")
+    @with_signature(args=list(outer_arg_names), return_annotation="BoolND")
     def evaluate_simulate_gate(**kwargs: _ParamsLeaf) -> BoolND:
         same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
         target_V = same_period_V[edge.target]
 
-        # Faithful VALUE-operand recompute: interpolate the target's own
-        # (per-component) value array at the realized point, instead of
-        # reading the solve-side fold's baked boolean gate off-grid.
+        # VALUE-operand read: interpolate the target's own (per-component)
+        # value array at the realized point, instead of reading the
+        # solve-side fold's baked boolean gate off-grid. Exact on nodes,
+        # O(h^2) between them -- NOT a recompute of `max_a Q`; see this
+        # function's docstring for the measured residual.
         target_components: dict[str, FloatND] = {}
         for index, name in enumerate(target_component_names):
             component_arr = (
                 target_V[..., index] if target_stakeholders is not None else target_V
             )
             target_components[name] = target_component_interpolator(
-                **{arg: kwargs[arg] for arg in target_component_args},
+                **{
+                    arg: kwargs[exposed]
+                    for arg, exposed in target_component_exposed.items()
+                },
                 **{_SIMULATE_TARGET_V_ARR_NAME: component_arr},
             )
 
@@ -543,12 +804,20 @@ def get_edge_simulate_gate_evaluator(
             d_flag = same_period_V.get(f"{edge.target}{D_KEY_SUFFIX}")
             if d_flag is not None:
                 d_value = d_interpolator(
-                    **{arg: kwargs[arg] for arg in d_interpolator_args},
+                    **{
+                        arg: kwargs[exposed]
+                        for arg, exposed in d_interpolator_exposed.items()
+                    },
                     **{_SIMULATE_D_ARR_NAME: d_flag},
                 )
 
         gate_ref_values = {
-            name: reader(**{arg: kwargs[arg] for arg in gate_ref_args[name]})
+            name: reader(
+                **{
+                    arg: kwargs[exposed]
+                    for arg, exposed in gate_ref_exposed[name].items()
+                }
+            )
             for name, reader in gate_ref_readers.items()
         }
 
@@ -560,9 +829,18 @@ def get_edge_simulate_gate_evaluator(
             d_value=d_value,
             gate_ref_values=gate_ref_values,
             state_mesh={name: jnp.asarray(kwargs[name]) for name in state_names},
-            cell_kwargs=kwargs,
+            # The predicate declares its params under their OWN qnames; map the
+            # qualified leaves back before handing them over, so `edge.gate` and
+            # `_assemble_gate_kwargs` are byte-identical to the solve side.
+            cell_kwargs={
+                arg: kwargs[exposed] for arg, exposed in gate_extra_exposed.items()
+            },
         )
         return jnp.asarray(gate_evaluator(**gate_kwargs))
+
+    # Published for `route_gated_edges`, which has EVERY regime's flat params in
+    # hand and no other way to tell which one an arg belongs to.
+    evaluate_simulate_gate.arg_provenance = arg_provenance  # type: ignore[attr-defined]
 
     return evaluate_simulate_gate
 
@@ -574,6 +852,7 @@ def build_fallback_state_projector(
     *,
     ref: ResolvedSamePeriodRef,
     fallback_v_info: VInterpolationInfo,
+    target_state_names: tuple[str, ...],
     target_functions: EconFunctionsMapping,
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
@@ -591,10 +870,42 @@ def build_fallback_state_projector(
     `concatenate_functions` targets) so the coordinates are guaranteed
     consistent with whatever the fold read.
 
+    **Provenance (F3 fix).** Consistency with the fold is a claim about the
+    projection's INPUTS, not only about how it is built, and the two had drifted
+    apart: `backward_induction._evaluate_edge_fold` binds every free parameter
+    the fold's fallback reader needs from `flat_params[SOURCE]`, while the router
+    called this projector with `{**candidate_target_states, **flat_params[
+    TARGET]}`. A projection `z = x + shift` declared on a source with
+    `shift = 1.0` against a target with `shift = 9.0` therefore read the
+    fallback's V at `x + 1.0` when the solve-side fold folded `Wbar`, but wrote
+    the simulated row into the fallback regime at state `x + 9.0` — the right
+    regime with a state the solved policy never priced, carried on into the next
+    period. (If the target simply lacked the source's parameter, it crashed.)
+    The published `arg_provenance` therefore attributes every argument
+    explicitly: the target's own STATES (the realized candidate point, the
+    simulate counterpart of the target grid the fold maps over) and, for
+    everything else, the SOURCE's params — which is not a preference between two
+    merges but the only choice that makes the simulated coordinate equal the one
+    the fold projected.
+
+    Note that "everything else" is deliberately not "the source's free
+    parameters, but target helpers from the target": a projection DAG may route
+    through a target helper FUNCTION, and that helper's own free params are
+    likewise bound from the source at the fold. The provenance follows the fold,
+    argument by argument, whatever the DAG's shape.
+
+    Unlike `get_edge_simulate_gate_evaluator`, this callable exposes both kinds
+    of argument under their PLAIN names: it holds no interpolator of its own, so
+    the target-params namespace (the source of the identically-named-leaf
+    problem there) is empty here and nothing can collide.
+
     Args:
         ref: The leg's resolved fallback reference (`ResolvedEdgeLeg.fallback`).
         fallback_v_info: V-interpolation info of the FALLBACK regime (`ref.regime`),
             fixing which state names to project.
+        target_state_names: The TARGET regime's own state names, i.e. exactly
+            those arguments the router binds from the realized candidate target
+            states rather than from a params namespace.
         target_functions: The target regime's processed functions (projections
             are expressed in terms of the target's own states/helpers).
         target_deterministic_transitions: The target regime's merged
@@ -603,7 +914,8 @@ def build_fallback_state_projector(
     Returns:
         A callable, keyed by (a subset of) the target's state names plus any
         extra params the projections need, returning a dict of the fallback
-        regime's own state-coordinate arrays.
+        regime's own state-coordinate arrays. It carries an `arg_provenance`
+        attribute (`EdgeArgProvenance`) saying which namespace resolves each.
     """
     dag_pool = {
         **dict(target_deterministic_transitions),
@@ -622,9 +934,21 @@ def build_fallback_state_projector(
         projection_args[state_name] = tuple(
             get_union_of_args([projection_funcs[state_name]])
         )
-    arg_names = sorted({arg for args in projection_args.values() for arg in args})
+    arg_names = tuple(
+        sorted({arg for args in projection_args.values() for arg in args})
+    )
 
-    @with_signature(args=arg_names, return_annotation="Mapping[str, FloatND]")
+    provenance_builder = _ProvenanceBuilder(
+        states=frozenset(arg for arg in arg_names if arg in target_state_names)
+    )
+    for arg in arg_names:
+        if arg not in target_state_names:
+            provenance_builder.expose(qname=arg, namespace=SOURCE_PARAMS, qualify=False)
+    arg_provenance = provenance_builder.build(
+        outer_arg_names=arg_names, engine_args=set()
+    )
+
+    @with_signature(args=list(arg_names), return_annotation="Mapping[str, FloatND]")
     def project(**kwargs: _ParamsLeaf) -> Mapping[str, FloatND]:
         return {
             state_name: projection_funcs[state_name](
@@ -632,6 +956,11 @@ def build_fallback_state_projector(
             )
             for state_name in fallback_v_info.state_names
         }
+
+    # Published for `route_gated_edges` (F3), exactly like the simulate gate
+    # evaluator's: the router holds every regime's params and cannot otherwise
+    # tell a source-declared projection parameter from a target one.
+    project.arg_provenance = arg_provenance  # type: ignore[attr-defined]
 
     return project
 
@@ -689,6 +1018,29 @@ def _assemble_gate_kwargs(
         else:
             gate_kwargs[arg] = cell_kwargs[arg]
     return gate_kwargs
+
+
+def build_reference_params_mapping_for_fold(
+    *,
+    edge: ResolvedGatedEdge,
+    flat_params: Mapping[RegimeName, Mapping[str, _ParamsLeaf]],
+) -> MappingProxyType[RegimeName, Mapping[str, _ParamsLeaf]]:
+    """Assemble `SAME_PERIOD_PARAMS_ARG` for one edge's reference readers (F4).
+
+    The params counterpart of `build_same_period_mapping_for_fold`, over the
+    same key set: every regime whose same-period V an edge reads — the target
+    itself, plus each gate ref's and each leg fallback's reference regime —
+    mapped to that regime's OWN flat params, so a reference reader interpolates
+    over the REFERENCE regime's grid with the REFERENCE regime's own runtime grid
+    points, rather than with an identically named param of whichever regime
+    happened to supply the reader's kwargs (see `Q_and_F.SAME_PERIOD_PARAMS_ARG`).
+    """
+    return MappingProxyType(
+        {
+            regime_name: flat_params[regime_name]
+            for regime_name in dict.fromkeys((edge.target, *edge.reference_regimes))
+        }
+    )
 
 
 def build_same_period_mapping_for_fold(

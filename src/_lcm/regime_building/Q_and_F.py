@@ -603,6 +603,31 @@ def get_Q_and_F_terminal_collective(
 # signature. Only regimes declaring `same_period_refs` carry it.
 SAME_PERIOD_V_ARG = "same_period_regime_to_V_arr"
 
+# COLLECTIVE-REGIMES (E2, F4 fix): the name under which the mapping of
+# same-period reference regimes to THEIR OWN flat params enters the kernel
+# signature, alongside `SAME_PERIOD_V_ARG`. Carried by every reader built by
+# `_build_same_period_ref_reader`, and hence by every regime that reads another
+# regime's same-period V.
+#
+# A reference reader interpolates the REFERENCE regime's V over the REFERENCE
+# regime's grid, so the interpolator's runtime grid helpers (an
+# `IrregSpacedGrid(pass_points_at_runtime=True)` reference state's `points`, via
+# `V._get_coordinate_finder`) are parameters of the REFERENCE regime: they live
+# in `flat_params[ref.regime]`, never in the READING regime's own namespace.
+# Before this argument existed the reader exposed those helpers as extra outer
+# arguments named after the PREFIXED coordinate variable
+# (`__same_period_ref__x__points`), which no caller supplies and no params
+# template ever emits (`_lcm.params.regime_template._add_runtime_grid_params`
+# emits `x__points`, in the reference regime's own template): all four consumers
+# of `_build_same_period_ref_reader` — ordinary E2 same-period refs, solve-side
+# gate refs, solve-side leg-fallback value readers, and simulate-side gate refs
+# — raised a missing-argument error the moment a reference regime declared a
+# runtime irregular grid. Coordinate VARIABLES stay prefixed (internal wiring
+# that must not collide with the reading regime's own state names); PARAMETER
+# qnames are separated from them and resolved against the reference regime's
+# explicit namespace through this mapping instead.
+SAME_PERIOD_PARAMS_ARG = "same_period_regime_to_params"
+
 # Internal argument names of the same-period reference interpolation; never
 # surfaced in the kernel signature.
 _REF_STATE_PREFIX = "__same_period_ref__"
@@ -650,7 +675,18 @@ def _build_same_period_ref_reader(
     (`get_V_interpolator`), sliced to the named stakeholder first when the
     reference is collective. The returned callable's signature carries only
     user-level names (states / actions / params reached by the projections,
-    plus `SAME_PERIOD_V_ARG`), so the kernel signature stays clean.
+    plus `SAME_PERIOD_V_ARG` and `SAME_PERIOD_PARAMS_ARG`), so the kernel
+    signature stays clean.
+
+    The projections are expressed in the READING regime's vocabulary and their
+    free parameters are bound from the reading regime's own params (every caller
+    passes exactly that); the INTERPOLATION helpers instead belong to the
+    REFERENCE regime's grid and are resolved against `SAME_PERIOD_PARAMS_ARG`
+    (F4 fix — see that constant). The two provenances are separated here rather
+    than merged into one namespace, because a runtime irregular grid names its
+    helper after the STATE alone (`x__points`), so a reading regime that happens
+    to declare an identically named state would otherwise silently supply its
+    OWN grid points for the reference regime's interpolation.
 
     A projection produces a genuine VALUE for every reference state
     (interpolation-worthy, possibly off-grid) — unlike the ordinary
@@ -727,14 +763,21 @@ def _build_same_period_ref_reader(
         f"{_REF_STATE_PREFIX}{state}" for state in v_interpolation_info.state_names
     }
     # Extra interpolator inputs beyond the coordinates and the V array (e.g.
-    # runtime-supplied irregular-grid points) pass through from the cell kwargs.
-    interpolator_extra = tuple(
-        get_union_of_args([interpolator]) - coordinate_names - {_REF_V_ARR_NAME}
+    # runtime-supplied irregular-grid points). F4 fix: these are the REFERENCE
+    # regime's own parameters, so they are NOT exposed as outer arguments of
+    # this reader (the reading regime's caller has no such param, and the
+    # prefixed name they carried was unsatisfiable by anyone) — they are looked
+    # up per call in `SAME_PERIOD_PARAMS_ARG[ref.regime]` under their qname in
+    # the reference regime's OWN namespace.
+    interpolator_extra_qnames = _reference_interpolator_param_qnames(
+        extra_args=get_union_of_args([interpolator])
+        - coordinate_names
+        - {_REF_V_ARR_NAME},
+        ref=ref,
     )
     arg_names = sorted(
         {arg for args in projection_args.values() for arg in args}
-        | set(interpolator_extra)
-        | {SAME_PERIOD_V_ARG}
+        | {SAME_PERIOD_V_ARG, SAME_PERIOD_PARAMS_ARG}
     )
 
     @with_signature(args=arg_names, return_annotation="FloatND")
@@ -753,11 +796,98 @@ def _build_same_period_ref_reader(
         }
         return interpolator(
             **coordinates,
-            **{arg: kwargs[arg] for arg in interpolator_extra},
+            **_lookup_reference_params(
+                qnames=interpolator_extra_qnames,
+                regime_to_params=kwargs[SAME_PERIOD_PARAMS_ARG],
+                ref_regime=ref.regime,
+            ),
             **{_REF_V_ARR_NAME: V_ref},
         )
 
     return read_reference_value
+
+
+def _reference_interpolator_param_qnames(
+    *,
+    extra_args: set[str],
+    ref: ResolvedSamePeriodRef,
+) -> MappingProxyType[str, str]:
+    """Map each extra interpolator input to its qname in the REFERENCE namespace.
+
+    COLLECTIVE-REGIMES (E2, F4 fix). `get_V_interpolator` derives its runtime
+    grid-helper names from the COORDINATE VARIABLE it was given
+    (`_get_coordinate_finder`: `qname_from_tree_path((in_name.removeprefix(
+    "next_"), "points"))`), so with `state_prefix=_REF_STATE_PREFIX` the helper
+    for reference state `x` is called `__same_period_ref__x__points` while the
+    reference regime's params template calls the very same quantity `x__points`.
+    Stripping the coordinate prefix is exactly the inverse of the prefixing
+    `get_V_interpolator` applied, and recovers the reference regime's own qname.
+
+    Any extra input that does NOT carry the prefix cannot be attributed to a
+    reference state this way; rather than bind it from an arbitrary namespace
+    (the defect class this whole mechanism exists to end), fail loudly at build
+    time.
+
+    Raises:
+        NotImplementedError: An interpolator input could not be attributed to a
+            prefixed reference coordinate.
+    """
+    qnames: dict[str, str] = {}
+    for arg in sorted(extra_args):
+        if not arg.startswith(_REF_STATE_PREFIX):
+            msg = (
+                f"The same-period reference reader for regime '{ref.regime}' "
+                f"needs an interpolation helper argument '{arg}' that does not "
+                f"derive from a prefixed reference coordinate "
+                f"('{_REF_STATE_PREFIX}...'), so pylcm cannot tell which "
+                "regime's parameter namespace it belongs to. Binding it from a "
+                "guessed namespace would silently read another regime's "
+                "parameter; this is not supported."
+            )
+            raise NotImplementedError(msg)
+        qnames[arg] = arg.removeprefix(_REF_STATE_PREFIX)
+    return MappingProxyType(qnames)
+
+
+def _lookup_reference_params(
+    *,
+    qnames: Mapping[str, str],
+    regime_to_params: object,
+    ref_regime: RegimeName,
+) -> dict[str, _ParamsLeaf]:
+    """Resolve a reader's interpolation helpers in the REFERENCE regime's params.
+
+    COLLECTIVE-REGIMES (E2, F4 fix). See `SAME_PERIOD_PARAMS_ARG`.
+
+    Raises:
+        KeyError: The reference regime's params are missing from the mapping, or
+            do not carry a helper the reference regime's own grid needs.
+    """
+    if not qnames:
+        return {}
+    params_per_regime = cast(
+        "Mapping[RegimeName, Mapping[str, _ParamsLeaf]]", regime_to_params
+    )
+    if ref_regime not in params_per_regime:
+        msg = (
+            f"Reading regime '{ref_regime}''s same-period V requires that "
+            f"regime's own params (it declares runtime grid points), but "
+            f"'{ref_regime}' is missing from '{SAME_PERIOD_PARAMS_ARG}' "
+            f"(present: {sorted(params_per_regime)})."
+        )
+        raise KeyError(msg)
+    ref_params = params_per_regime[ref_regime]
+    resolved: dict[str, _ParamsLeaf] = {}
+    for arg, qname in qnames.items():
+        if qname not in ref_params:
+            msg = (
+                f"Interpolating regime '{ref_regime}''s same-period V needs its "
+                f"parameter '{qname}', which is not in flat_params"
+                f"['{ref_regime}'] (present: {sorted(ref_params)})."
+            )
+            raise KeyError(msg)
+        resolved[arg] = ref_params[qname]
+    return resolved
 
 
 def get_Q_and_F_collective(
@@ -1246,8 +1376,23 @@ def get_period_targets(
     The canonical transition bundles (`transitions` keys) carry exactly the
     reachable targets with at least one state law; the period filter keeps
     those active in the next period. A reachable target absent from the
-    bundles has no states (its V is identically zero) and contributes
-    nothing to the continuation.
+    bundles is ASSUMED to have no states — its V identically zero, so it
+    contributes nothing to the continuation.
+
+    That assumption is load-bearing, and only as good as the bundle
+    construction in `_process_regime_core`: a target that DOES declare states
+    yet ends up with an empty bundle is dropped from E[V] SILENTLY — no error,
+    and its value is not in fact zero. Known remaining hole (fold-review F2,
+    deliberately NOT closed in this slice): a target declaring a state the
+    SOURCE does not also declare gets nothing wired for it —
+    `target_process_grids` intersects each target's grids with the SOURCE
+    regime's own `process_names`, and an ordinary state reached only via the
+    regime transition has no auto-wiring at all — so such a target vanishes
+    from the continuation and its actions are valued as if it were worthless.
+    Closing it needs an unconditional-marginal transition primitive (a
+    process's weight/next functions currently take the source's realized value
+    of that same state as an argument, which a source that never declares it
+    cannot supply); that is a separate feature, not a fold concern.
 
     Args:
         period: The period to enumerate targets for.

@@ -486,6 +486,9 @@ def _attach_gated_edge_folds(
                 build_fallback_state_projector(
                     ref=leg.fallback,
                     fallback_v_info=regime_to_v_interpolation_info[leg.fallback.regime],
+                    target_state_names=regime_to_v_interpolation_info[
+                        target_name
+                    ].state_names,
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
                 )
@@ -2005,14 +2008,33 @@ def _process_regime_core(
 
     # Transitions of continuous stochastic processes bypass the stub pipeline
     # entirely. Build weight and next functions for reachable target regimes
-    # from each target's grid. Scope to targets already present in non-process
-    # transitions to avoid spurious entries for unreachable regimes.
+    # from each target's grid. Scope to genuinely reachable targets to avoid
+    # spurious entries for unreachable regimes.
+    #
+    # A target is reachable if it carries an ordinary (non-process) state law
+    # OR if a PER-TARGET regime transition names it explicitly. The second
+    # half was historically missing: a target named only by a per-target
+    # transition, whose sole other content is a process state, has an empty
+    # state-law bundle, so deriving reachability from `flat_nested_transitions`
+    # alone left it with no process transitions — silently dropping it from
+    # `get_period_targets`, and hence its continuation from E[V].
+    #
+    # Only PER-TARGET cells count. A coarse `transition=func` emits a
+    # `next_regime` cell for EVERY regime (the routing is decided at runtime
+    # from the returned id), so its cell keys are the candidate universe, not
+    # canonical reachability — admitting them would wire spurious process
+    # transitions between every regime pair, including a false self-transition.
     process_names = variables.process_names
+    per_target_regime_targets = {
+        target
+        for target, cell in next_regime_cells_by_target.items()
+        if not isinstance(cell, _CoarseTransitionCell)
+    }
     reachable_targets = {
         tree_path_from_qname(k)[0]
         for k in flat_nested_transitions
         if QNAME_DELIMITER in k
-    }
+    } | per_target_regime_targets
     target_process_grids: dict[
         tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
     ] = {

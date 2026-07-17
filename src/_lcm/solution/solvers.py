@@ -661,7 +661,36 @@ class _GridSearchPeriodKernel:
                     for regime_name in self.same_period_ref_regimes
                 }
             )
+            lower_args["same_period_regime_to_params"] = self._same_period_params(
+                flat_params=flat_params
+            )
         return lower_args
+
+    def _same_period_params(
+        self, *, flat_params: FlatParams
+    ) -> MappingProxyType[RegimeName, Mapping[str, object]]:
+        """Each reference regime's OWN flat params, for its own grid (F4).
+
+        A same-period reference reader interpolates the REFERENCE regime's V over
+        the REFERENCE regime's grid, so its runtime grid helpers (an
+        `IrregSpacedGrid(pass_points_at_runtime=True)` reference state's points)
+        are the reference regime's parameters — not this regime's, whose params
+        are the only ones splatted into the core. Threaded per regime name under
+        `Q_and_F.SAME_PERIOD_PARAMS_ARG`, exactly like the same-period V arrays
+        beside it; see that constant for the defect this ends.
+
+        Both argument names are spelled as LITERALS at the two call sites,
+        matching how `same_period_regime_to_V_arr` is already spelled here:
+        importing `_lcm.regime_building.Q_and_F` from this module closes an
+        import cycle (`lcm.regime` -> `_lcm.user_regime_validation` ->
+        `lcm.solvers` -> here -> `Q_and_F` -> `V` -> `lcm.regime`).
+        """
+        return MappingProxyType(
+            {
+                regime_name: flat_params[regime_name]
+                for regime_name in self.same_period_ref_regimes
+            }
+        )
 
     def __call__(
         self,
@@ -698,6 +727,9 @@ class _GridSearchPeriodKernel:
                 )
                 raise RuntimeError(msg)
             extra_kwargs["same_period_regime_to_V_arr"] = same_period_regime_to_V_arr
+            extra_kwargs["same_period_regime_to_params"] = self._same_period_params(
+                flat_params=flat_params
+            )
         out = compiled_cores["main"](
             **state_action_space.states,
             **state_action_space.actions,

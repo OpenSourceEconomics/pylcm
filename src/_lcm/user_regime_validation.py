@@ -1042,13 +1042,18 @@ def _fold_scope_errors(
     if regime.certainty_equivalent is not None:
         error_messages.append(
             f"fold=True on state(s) {sorted(fold_names)} is not supported "
-            "together with a nonlinear `certainty_equivalent`: the fold "
-            "reduction (`_wrap_with_fold_reduction`) always averages the "
-            "shock's node axis ARITHMETICALLY (`zero_safe_average`), exact "
-            "only for the LINEAR expectation E[V']. A nonlinear certainty "
-            "equivalent needs the shock's node axis intact to apply its own "
-            "(possibly nonlinear) aggregator instead. Drop `fold=True`, or "
-            "drop `certainty_equivalent`."
+            "together with an explicit `certainty_equivalent`: the fold "
+            "reduction (`_wrap_with_fold_reduction`) averages the shock's "
+            "node axis ARITHMETICALLY, which is exact only for the LINEAR "
+            "expectation E[V']. A certainty equivalent needs the shock's node "
+            "axis intact to apply its own aggregator instead. Drop "
+            "`fold=True`, or drop `certainty_equivalent`. Note this rejects "
+            "EVERY non-None `certainty_equivalent`, including one that is "
+            "semantically linear (e.g. a parameter-free identity "
+            "`QuasiArithmeticMean`, which is equivalent to leaving it None). "
+            "That is a deliberate over-rejection, not a claim that your "
+            "aggregator is nonlinear: admitting the linear ones would mean "
+            "proving linearity of an arbitrary user aggregator here."
         )
     if not isinstance(regime.solver, GridSearch):
         error_messages.append(

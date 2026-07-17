@@ -32,12 +32,15 @@ persistent fold lands.
 
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_building.max_Q_over_a import _select_fold_reducer
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, NormalIIDProcess, categorical
@@ -87,17 +90,26 @@ def _shock(*, fold: bool, n_points: int = 5, sigma: float = 2.0) -> NormalIIDPro
     )
 
 
-def _make_regimes(*, fold: bool) -> dict[str, Regime]:
+def _make_regimes(
+    *, fold: bool, n_points: int = 5, sigma: float = 2.0
+) -> dict[str, Regime]:
     """A one-shock, one-discrete-action, two-period singleton model.
 
     `wage_shock` enters ONLY `period0`'s own utility; `terminal` does not
     declare it (per this slice's persistence restriction — see module
     docstring), so nothing downstream ever reads its realization.
+
+    `n_points`/`sigma` are exposed because the fold's exactness is a
+    FLOATING-POINT property: whether a given quadrature actually exercises the
+    rounding difference between the two reduction kernels depends on the node
+    values. The defaults do NOT (measured), so a test pinning exactness must
+    pick a configuration that does — see
+    `test_fold_is_bit_exact_against_unfolded_then_averaged`.
     """
     period0 = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        states={"wage_shock": _shock(fold=fold)},
+        states={"wage_shock": _shock(fold=fold, n_points=n_points, sigma=sigma)},
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _utility},
     )
@@ -157,18 +169,52 @@ def test_fold_exactness_oracle_matches_manual_average_and_drops_one_axis():
     )
 
 
-def test_fold_default_path_is_byte_identical():
-    """`fold=False` (the default) reproduces the pre-fold V exactly.
+def _make_regimes_fold_omitted() -> dict[str, Regime]:
+    """`_make_regimes`'s model with `fold` never passed to the process at all.
 
-    Solves the SAME model spec twice — once leaving `fold` at its default,
-    once passing `fold=False` explicitly — and requires bit-identical
-    arrays, pinning that the new machinery introduces no behavior change on
-    the default path.
+    Deliberately does NOT route through `_shock`, which always passes an
+    explicit `fold=`: the whole point is to construct a `NormalIIDProcess`
+    with no `fold` argument, so the DEFAULT is what gets exercised.
     """
-    default = _solve(_make_regimes(fold=False))
-    explicit = _solve(_make_regimes(fold=False))
+    period0 = Regime(
+        transition=_next_regime,
+        active=lambda age: age < 1,
+        states={
+            "wage_shock": NormalIIDProcess(
+                n_points=5, gauss_hermite=True, mu=0.0, sigma=2.0
+            )
+        },
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        functions={"utility": lambda: 0.0},
+    )
+    return {"period0": period0, "terminal": terminal}
+
+
+def test_fold_default_path_is_byte_identical():
+    """Omitting `fold` entirely is bit-identical to passing `fold=False`.
+
+    Pins that `fold`'s DEFAULT really is the pre-fold path. The two branches
+    must construct genuinely DIFFERENT declarations — an omitted `fold` vs an
+    explicit `fold=False` — or this compares a spec with itself and pins
+    nothing but determinism (fold-review J3: it previously did exactly that,
+    since both branches went through `_shock`, which always passes `fold=`).
+    """
+    omitted = _make_regimes_fold_omitted()["period0"].states["wage_shock"]
+    explicit = _make_regimes(fold=False)["period0"].states["wage_shock"]
+    # Guard the guard: the default is what makes the omitted branch meaningful.
+    assert omitted.fold is False
+    assert explicit.fold is False
+    assert omitted == explicit  # identical spec, reached two different ways
+
+    default_V = _solve(_make_regimes_fold_omitted())
+    explicit_V = _solve(_make_regimes(fold=False))
     np.testing.assert_array_equal(
-        np.asarray(default[0]["period0"]), np.asarray(explicit[0]["period0"])
+        np.asarray(default_V[0]["period0"]), np.asarray(explicit_V[0]["period0"])
     )
 
 
@@ -424,3 +470,256 @@ def test_fold_on_persisting_shock_is_rejected_at_model_processing():
             regime_names_to_ids=_REGIME_NAMES_TO_IDS,
             enable_jit=False,
         )
+
+
+def _solve_jit(regimes: dict[str, Regime], *, enable_jit: bool) -> MappingProxyType:
+    """`_solve`, but with `enable_jit` under the caller's control.
+
+    The fold's exactness contract must hold on BOTH paths, and they are not
+    the same path: the jitted core closes over the fold weights as compile-time
+    constants (XLA constant-folds them), while the non-jitted core executes the
+    reduction eagerly. Fold-review F1 was invisible precisely because every
+    other test in this module pins only `enable_jit=False`.
+    """
+    processed = process_regimes(
+        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        ages=_AGES,
+        regime_names_to_ids=_REGIME_NAMES_TO_IDS,
+        enable_jit=enable_jit,
+    )
+    solution, _sim_policies, _dissolution_flags = solve(
+        flat_params=_FLAT_PARAMS,
+        ages=_AGES,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=enable_jit,
+    )
+    return solution
+
+
+def _bits(x: FloatND) -> int:
+    """The exact bit pattern of a float scalar, as an int.
+
+    `assert_allclose` cannot see a 1-ULP defect; a feature whose contract is
+    EXACT equality has to be pinned on the bits themselves (fold-review J4).
+
+    Reads the array's OWN dtype — the suite runs float64 by default and
+    float32 under `--precision=32`. Casting to a fixed width here would
+    silently round the very last bit this helper exists to inspect.
+    """
+    arr = np.asarray(x)
+    assert arr.shape == (), "scalar expected"
+    assert arr.dtype in (np.float32, np.float64), f"unexpected dtype {arr.dtype}"
+    return int(arr.view(np.uint32 if arr.dtype == np.float32 else np.uint64))
+
+
+# A (n_points, sigma) whose Gauss-Hermite nodes MEASURABLY separate the two
+# reduction kernels: `zero_safe_average`'s extra rounding lands on the other
+# side of an ULP from `jnp.average`'s FMA-contracted one. Chosen by search to
+# separate them in BOTH precisions the suite runs (float64 by default, float32
+# under `--precision=32`).
+#
+# This matters more than it looks: the module defaults (5, 2.0) happen NOT to
+# separate the kernels — their symmetric quadrature cancels exactly — so an
+# exactness test built on them passes against the PRE-FIX code and pins
+# nothing at all (fold-review F1/J4). `_average` is asymmetric here only
+# because the sigma is large enough for the leisure floor to bind at the
+# bottom node.
+_DRIFT_N_POINTS = 5
+_DRIFT_SIGMA = 3.0
+
+
+def test_fold_is_bit_exact_against_unfolded_then_averaged():
+    """The folded V is BIT-IDENTICAL to the unfolded V averaged with the same
+    quadrature, on the NON-JITTED path.
+
+    This is the fold's actual contract ("a pure, value-invariant memory
+    optimization"), pinned on bit patterns rather than a tolerance.
+
+    PROVEN fail-pre/pass-post (both `--precision=64` and `--precision=32`):
+    pre-fix, `_wrap_with_fold_reduction` unconditionally used
+    `zero_safe_average`, whose per-term `jnp.where` blocks XLA's FMA
+    contraction, so a strictly-positive-weight fold drifted 1 ULP off the
+    oracle (fold-review F1).
+
+    Scoped to `enable_jit=False` deliberately — see
+    `test_fold_jitted_matches_unfolded_then_averaged_within_one_ulp` for why
+    the jitted path cannot be held to bit-equality.
+    """
+    kwargs = {"n_points": _DRIFT_N_POINTS, "sigma": _DRIFT_SIGMA}
+    weights = _shock(fold=False, **kwargs).get_transition_probs()[0]
+
+    unfolded_V = _solve_jit(_make_regimes(fold=False, **kwargs), enable_jit=False)[0][
+        "period0"
+    ]
+    folded_V = _solve_jit(_make_regimes(fold=True, **kwargs), enable_jit=False)[0][
+        "period0"
+    ]
+    oracle = jnp.average(unfolded_V, weights=weights)
+
+    # Guard the guard #1: strictly positive weights, so this exercises the
+    # all-positive path the fix is about — not the zero-weight one.
+    assert bool(jnp.all(weights > 0))
+    # Guard the guard #2: this configuration really does separate the two
+    # kernels, so the assertion below has something to catch. The module
+    # defaults do NOT — without this, a future edit to the fixture could
+    # silently defang the test into passing against the pre-fix code.
+    guarded = zero_safe_average(unfolded_V, axis=0, weights=weights)
+    assert _bits(oracle) != _bits(guarded)
+
+    assert _bits(folded_V) == _bits(oracle)
+
+
+def test_fold_jitted_matches_unfolded_then_averaged_within_one_ulp():
+    """The JITTED fold matches the unfolded-then-averaged oracle to ~1 ULP,
+    but is NOT held to bit-equality.
+
+    Not a weaker version of the test above out of laziness: under `jit` the
+    fold reduction is compiled INTO the surrounding solve kernel, and XLA's
+    fusion/FMA decisions there depend on the whole graph — they are not
+    reproducible by any standalone oracle, jitted or not. MEASURED: with the
+    fix in place and `--precision=32`, this model's jitted folded V is
+    `10.0` against an isolated-jitted oracle's `10.000001`. That is XLA's
+    fusion policy, not the fold's arithmetic, so pinning bits here would pin
+    the compiler.
+
+    The non-jitted test above is where the fold's exactness contract is
+    actually enforced; this one guards the jitted path against a real
+    (much-larger-than-ULP) regression.
+    """
+    kwargs = {"n_points": _DRIFT_N_POINTS, "sigma": _DRIFT_SIGMA}
+    weights = _shock(fold=False, **kwargs).get_transition_probs()[0]
+
+    unfolded_V = _solve_jit(_make_regimes(fold=False, **kwargs), enable_jit=True)[0][
+        "period0"
+    ]
+    folded_V = _solve_jit(_make_regimes(fold=True, **kwargs), enable_jit=True)[0][
+        "period0"
+    ]
+    oracle = jnp.average(unfolded_V, weights=weights)
+
+    ulp = float(np.spacing(np.asarray(oracle)))
+    assert abs(float(folded_V) - float(oracle)) <= 2 * ulp
+
+
+def test_select_fold_reducer_takes_the_guard_only_when_a_weight_is_zero():
+    """The zero-safe guard is bound per axis, at build time, from that axis's
+    own weights.
+
+    `zero_safe_average` costs an extra rounding (hence F1's 1-ULP drift) and
+    ~3x the runtime; it protects only against `0 * ±inf = nan`, which cannot
+    arise on an axis whose weights are all strictly positive. The weights are
+    concrete at kernel-build time (`_validate_fold_declarations` rejects a
+    runtime-parameterized process), so this is a plain Python branch — not a
+    traced predicate, which could only ever decide globally.
+    """
+    assert (
+        _select_fold_reducer(weight=jnp.array([0.25, 0.5, 0.25]), name="s")
+        is jnp.average
+    )
+    assert (
+        _select_fold_reducer(weight=jnp.array([0.0, 1.0, 0.0]), name="s")
+        is zero_safe_average
+    )
+    # Per AXIS, not per model: each axis gets the kernel its own weights need.
+    assert _select_fold_reducer(weight=jnp.array([1.0]), name="s") is jnp.average
+
+
+def test_select_fold_reducer_rejects_non_concrete_weights():
+    """A traced weight cannot pick a kernel at build time — fail loudly.
+
+    `_validate_fold_declarations` is supposed to make this unreachable by
+    rejecting a fold on a runtime-parameterized process. If that guarantee is
+    ever bypassed, this must raise rather than silently fall back to one
+    kernel for every axis.
+    """
+
+    def _build(w: FloatND) -> object:
+        return _select_fold_reducer(weight=w, name="s")
+
+    with pytest.raises(ValueError, match="not concrete at kernel-build time"):
+        jax.jit(_build)(jnp.array([0.5, 0.5]))
+
+
+def test_zero_weight_fold_axis_still_averages_infinities_safely():
+    """The guard is still TAKEN where it is needed: a zero-weight fold node
+    beside an admissible on-path `-inf` must not poison the fold average.
+
+    The F1 fix narrows WHERE `zero_safe_average` is applied, so this pins that
+    it is still applied on the zero-weight path — otherwise the fix would have
+    traded a 1-ULP drift for a `nan`.
+    """
+    reducer = _select_fold_reducer(weight=jnp.array([0.0, 1.0, 0.0]), name="s")
+    out = reducer(
+        jnp.array([-jnp.inf, 4.0, jnp.inf]),
+        axis=0,
+        weights=jnp.array([0.0, 1.0, 0.0]),
+    )
+    assert reducer is zero_safe_average
+    np.testing.assert_array_equal(np.asarray(out), np.float32(4.0))
+
+
+def test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected():
+    """The persistence guard fires for a target reached ONLY by the per-target
+    regime transition — with NO ordinary state law to carry it.
+
+    The sibling test above deliberately adds a `wealth` law "SOLELY to force
+    the target into reachable_targets". That admission was the bug
+    (fold-review F2/J5): reachability was derived from ordinary state laws
+    only, so WITHOUT such a law the target's process transitions were never
+    built, its bundle stayed empty, the guard found no `next_wage_shock` to
+    object to, and `get_period_targets` dropped the target from E[V] entirely
+    — silently, since `get_period_targets` assumes an absent target "has no
+    state and therefore zero value".
+
+    PROVEN fail-pre/pass-post: pre-fix `process_regimes` returned normally
+    with `period0.solution.transitions == {}`.
+    """
+    from lcm.transition import MarkovTransition  # noqa: PLC0415
+
+    period0 = Regime(
+        transition={"terminal": MarkovTransition(lambda: jnp.asarray(1.0))},
+        active=lambda age: age < 1,
+        states={"wage_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wage_shock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    with pytest.raises(ModelInitializationError, match="structurally persists"):
+        process_regimes(
+            user_regimes=finalize_regimes(
+                user_regimes={"period0": period0, "terminal": terminal},
+                derived_categoricals={},
+            ),
+            ages=_AGES,
+            regime_names_to_ids=_REGIME_NAMES_TO_IDS,
+            enable_jit=False,
+        )
+
+
+def test_coarse_regime_transition_does_not_fabricate_process_reachability():
+    """A coarse `transition=func` must NOT be read as reaching every regime.
+
+    The F2 repair widens reachability with the regime transition's own target
+    cells, so it has to distinguish the two transition forms. A coarse
+    `transition=func` emits a `next_regime` cell for EVERY regime — routing is
+    decided at runtime from the returned id — so its cell keys are the
+    CANDIDATE universe, not reachability. Treating them as reachable wires
+    spurious process transitions between every regime pair, including a false
+    `period0 -> period0` self-transition, which makes this very model (the
+    module's primary supported fold topology, whose shock is declared only in
+    `period0`) fail with a bogus "structurally persists" error.
+
+    MEASURED: the reviewer's proposed `reachable_targets |=
+    set(next_regime_cells_by_target)` does exactly that. This test pins the
+    per-target/coarse distinction that avoids it.
+    """
+    solution = _solve(_make_regimes(fold=True))
+    assert solution[0]["period0"].shape == ()
+    np.testing.assert_allclose(np.asarray(solution[0]["period0"]), 10.0, atol=1e-5)

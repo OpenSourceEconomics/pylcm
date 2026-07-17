@@ -13,6 +13,7 @@ from _lcm.engine import (
     Regime,
     StateActionSpace,
 )
+from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG
 from _lcm.simulation.gated_routing import (
     route_gated_edges,
     substitute_gated_edge_continuations,
@@ -548,11 +549,20 @@ def _simulate_regime_in_period(
     # exactly like the solve kernel's `same_period_regime_to_V_arr`, sourced
     # here from the already-solved solution instead of the live backward-
     # induction loop. Empty for every regime without same-period references.
+    #
+    # Each reference regime's OWN flat params ride alongside under
+    # `SAME_PERIOD_PARAMS_ARG` (F4): the reader interpolates the REFERENCE
+    # regime's V over the REFERENCE regime's grid, whose runtime grid points are
+    # that regime's parameters, not this one's — mirrors the identical pairing in
+    # `solution.solvers._GridSearchPeriodKernel`.
     same_period_kwargs: dict[str, object] = {}
     if regime.same_period_ref_regimes:
         this_period_V = period_to_regime_to_V_arr.get(period, MappingProxyType({}))
         same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
             {ref: this_period_V[ref] for ref in regime.same_period_ref_regimes}
+        )
+        same_period_kwargs[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
+            {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
         )
 
     taste_shock_kwargs = {}

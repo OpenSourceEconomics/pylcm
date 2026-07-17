@@ -106,12 +106,14 @@ def get_max_Q_over_a(
             default). Each is still an ordinary inner (non-co-mapped) productmap
             axis THROUGH the max-over-actions / collective readout — every node is
             evaluated exactly as today — but its axis is then weighted-averaged
-            away (`zero_safe_average(..., weights=fold_weights[name])`) before the
-            result is returned, so the caller never sees it. A collective
-            regime's dissolution flag `D` is folded by `jnp.any` instead (stays
-            strictly boolean; see `_wrap_with_fold_reduction`).
+            away (with `fold_weights[name]`) before the result is returned, so the
+            caller never sees it. A collective regime's dissolution flag `D` is
+            folded by `jnp.any` instead (stays strictly boolean; see
+            `_wrap_with_fold_reduction`).
         fold_weights: Quadrature weights per name in `fold_state_names` (each a
-            1-D array matching that state's node count, summing to 1). Ignored
+            1-D array matching that state's node count, summing to 1). Must be
+            CONCRETE (not traced) — `_select_fold_reducer` reads them at
+            kernel-build time to pick each axis's reduction kernel. Ignored
             when `fold_state_names` is empty.
 
     Returns:
@@ -294,14 +296,21 @@ def _wrap_with_fold_reduction(
     it keeps its `BoolND` contract for every downstream reader (the gated-edge
     fold, `KernelResult.dissolution`). This is a conservative, not an exact,
     reduction; `_validate_fold_declarations` already rejects a fold state a
-    same-period gate reads DIRECTLY, but a gate reading `D` itself (of a
-    regime that happens to also fold an UNRELATED state) is not caught — out
-    of scope for this slice.
+    same-period gate reads DIRECTLY, and the completed fold-before-gate
+    endpoint guard now also catches a gate reading `D` itself on a regime
+    that folds an unrelated state.
+
+    The per-axis reducer is bound HERE, at kernel-build time, from the axis's
+    own quadrature weights — see `_select_fold_reducer`.
     """
     fold_axis_positions = sorted(
         ((name, inner_state_names.index(name)) for name in fold_state_names),
         key=lambda item: -item[1],
     )
+    fold_reducers = {
+        name: _select_fold_reducer(weight=fold_weights[name], name=name)
+        for name in fold_state_names
+    }
 
     @with_signature(
         args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
@@ -318,20 +327,67 @@ def _wrap_with_fold_reduction(
         if stakeholders is not None:
             V_arr, dissolution = cast("tuple[FloatND, BoolND]", out)
             for name, axis in fold_axis_positions:
-                # Zero-safe: a zero-weight fold node (e.g. a zero-probability
-                # co-mapped state) next to an admissible on-path -inf (a
-                # dissolution or infeasible-cell value) must not turn the
-                # fold average into a nan.
-                V_arr = zero_safe_average(V_arr, axis=axis, weights=fold_weights[name])
+                V_arr = fold_reducers[name](
+                    V_arr, axis=axis, weights=fold_weights[name]
+                )
                 dissolution = jnp.any(dissolution, axis=axis)
             return V_arr, dissolution
         V_arr = cast("FloatND", out)
         for name, axis in fold_axis_positions:
-            # Zero-safe, mirroring the collective branch above.
-            V_arr = zero_safe_average(V_arr, axis=axis, weights=fold_weights[name])
+            V_arr = fold_reducers[name](V_arr, axis=axis, weights=fold_weights[name])
         return V_arr
 
     return folded
+
+
+def _select_fold_reducer(*, weight: FloatND, name: StateName) -> Callable[..., FloatND]:
+    """Pick the weighted-average kernel for ONE fold axis, at kernel-build time.
+
+    A fold axis's weights are the folded process's own quadrature marginal.
+    `_validate_fold_declarations` rejects a runtime-parameterized process, so
+    `solvers.py` computes them ONCE as a concrete constant before the core is
+    ever traced — which makes this a plain Python branch on a concrete value,
+    not a traced predicate. (A `jax.lax.cond` could not do this job: its
+    predicate would be a single GLOBAL runtime value, unable to select
+    per-axis at trace time.)
+
+    Why branch at all: `zero_safe_average` exists so a zero-weight node next
+    to an admissible on-path `-inf` cannot inject a `nan` via `0 * -inf`. It
+    buys that with a per-term `jnp.where`, which blocks XLA from contracting
+    the `multiply` into the reduction's FMA — so it rounds twice where
+    `jnp.average` rounds once, and the two can differ by ~1 ULP (see
+    `zero_safe.zero_safe_average`). On an axis whose weights are ALL strictly
+    positive the guard protects against nothing, yet still costs that extra
+    rounding — which is what made the fold non-exact against the
+    unfolded-then-averaged oracle on the non-jitted path (fold-review F1).
+
+    The motivation is EXACTNESS, not speed. MEASURED (jax 0.10.1, CPU,
+    float64, 1e6x4): with the weights closed over as constants — which is
+    exactly how the fold calls it — the guard costs 1.04x, since XLA
+    constant-folds the `select` away; 1.20x for traced weights. Only the
+    EAGER path pays materially (5.3x), because nothing folds the `select`
+    there. So this branch buys real time only for `enable_jit=False`, and its
+    value on the production jitted path is bit-exactness alone.
+
+    This is a per-AXIS decision on that axis's own weights, so a model that
+    folds one zero-weight axis and one all-positive axis gets the right
+    kernel for each.
+    """
+    weight_arr = jnp.asarray(weight)
+    try:
+        has_zero = bool(jnp.any(weight_arr == 0))
+    except jax.errors.ConcretizationTypeError as exc:
+        msg = (
+            f"Fold weights for state '{name}' are not concrete at kernel-build "
+            "time. The fold reduction picks its weighted-average kernel from "
+            "the quadrature weights themselves, which requires them to be "
+            "known before the solve core is traced; "
+            "`_validate_fold_declarations` is supposed to guarantee this by "
+            "rejecting a fold on a process with runtime-supplied distribution "
+            "parameters. Reaching this means that guarantee was bypassed."
+        )
+        raise ValueError(msg) from exc
+    return zero_safe_average if has_zero else jnp.average
 
 
 def get_argmax_and_max_Q_over_a(
