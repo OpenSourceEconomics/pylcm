@@ -12,45 +12,51 @@ a continuation expectation, a fold reduction, an interpolated reference value,
 or a household scalarization — even though the zero-weight term should
 contribute exactly nothing.
 
-Both helpers below apply the same fix pattern: replace the elementwise
-product with an explicit `0.0` wherever the weight is exactly zero, via
-``jnp.where``, BEFORE summing.
+Both helpers below apply the same fix pattern: replace the VALUE with an
+explicit `0.0` wherever the weight is exactly zero, via ``jnp.where``, BEFORE
+multiplying. `weight * where(weight==0, 0, value)` annihilates a zero-weight
+``+-inf`` (the multiply sees ``w * 0 = 0``, never ``0 * -inf``) AND leaves the
+multiply as a bare operation feeding the downstream reduction, which XLA fuses
+into an FMA — so the all-positive-weight path is **bit-identical** to the naive
+``jnp.average`` / raw corner sum.
 
-On the all-positive-weight path the result is MATHEMATICALLY equal to the naive
-computation, but it is **not byte-identical** when the weights are traced: the
-inserted `select` blocks XLA from contracting `multiply` into the reduction's
-FMA, so the naive path rounds once where this one rounds twice, and the two can
-differ by ~1 ULP. MEASURED (jax 0.10.1, CPU, float32): ``jnp.average`` returns
-bits ``3171324718`` where `zero_safe_average` returns ``3171324720``; across
-20k random fractional interpolation coordinates 24.4% of cells differ, by at
-most 4.77e-07 (float32 eps scale). Statically-known weights are constant-folded
-and DO match bit-for-bit. Note the direction: the naive path is the marginally
-more accurate one (one fewer rounding) — the guard buys extended-real
-correctness at the price of a free FMA.
+HISTORY (this docstring was wrong twice; both errors are recorded because each
+was a confident claim no test could contradict, and an external re-review broke
+both by running code). The original guard masked the PRODUCT
+(``where(weight==0, 0, weight*value)``). That `select` sits AFTER the multiply
+and blocks FMA contraction, so the all-positive path rounds twice where the
+naive path rounds once. This docstring then claimed the drift was (a) "~1 ULP",
+(b) "not decision-relevant", and (c) unfixable without a global ``lax.cond``.
+All three were false, MEASURED (jax 0.10.x/0.9.x, CPU, float32):
 
-This is deliberate and the drift is not decision-relevant, because the two
-properties live on disjoint paths: ties arise STRUCTURALLY only where a weight
-is exactly zero (an on-grid interpolation corner, a degenerate ``p = [1, 0]``
-mixture), and on exactly those cells both kernels are exact and agree
-bit-for-bit — while the drift occurs only off-grid/all-positive, where exact
-ties do not arise (measured: 0 exact ties in 200k random off-grid pairs). A
-`jax.lax.cond` on ``any(weights == 0)`` would restore the naive bits on the
-all-positive arm at no measured cost, but its predicate is GLOBAL: a single
-on-grid cell anywhere in a batch would flip the whole batch to the safe arm, so
-it would deliver bit-compatibility precisely in the batches that do not need it
-and withhold it from the ones that motivated the guard. The per-element
-`jnp.where` is the honest primitive.
+- (a) The drift reaches **6 ULP** on a valid all-positive probability vector
+  under cancellation, not ~1: with nodes ``[-3.9480734, 2.6238020]`` and
+  probabilities ``[0.38403073, 0.61596930]`` (sum exactly 1), the masked-PRODUCT
+  average returns bits ``1036831952`` where ``jnp.average`` returns
+  ``1036831946`` — six apart, and on the WRONG side of the exact real mean.
+- (b) That reverses a **non-tied** discrete action: against a deterministic
+  alternative ``0.1``, the exact/naive value is below ``0.1`` (choose the
+  alternative) while the masked-product value is above it (choose the stochastic
+  action). The same 1-ULP+ drift on the interpolation path reverses an E2
+  individual-rationality comparison and hence the dissolution flag ``D`` (which
+  is ``~any(final_mask)`` — any finite IR flip flips it). No exact tie is
+  required: if the IR margin has positive density near 0, any nonzero
+  perturbation flips a positive-probability band.
+- (c) Masking the VALUE (this form) restores the naive bits on the all-positive
+  path with NO global predicate and NO ``lax.cond`` — MEASURED 0 drift vs
+  ``jnp.average`` across K in {2,3,4,7,8,16} x {float32,float64}, and 0 drift
+  vs the raw corner sum across 5000 off-grid interpolation coordinates (where
+  the masked-product form drifted on 802/5000). Cost is ~6% over ``jnp.average``
+  under plain ``vmap`` — versus ~4.5x for the ``lax.map``-batched scalar
+  ``lax.cond`` the re-review proposed; that alternative also works but is a far
+  heavier hit on a solve-core hot path, so it was not taken.
 
-That argument is about weights that are only known at RUNTIME (an
-interpolation corner, a mixture probability) — the case every call site here
-faces but one. The FOLD reduction is the exception: a fold axis's weights are
-the process's own quadrature marginal, and `_validate_fold_declarations`
-rejects a runtime-parameterized folded process, so they are concrete before
-the kernel is ever traced. `max_Q_over_a._select_fold_reducer` therefore
-picks between `jnp.average` and `zero_safe_average` per axis with a plain
-Python ``if``, at kernel-build time — no traced predicate, no `lax.cond`, and
-no global/per-axis conflict. Callers whose weights ARE runtime values cannot
-do this and should keep using `zero_safe_average` unconditionally.
+Statically-known weights were always constant-folded and matched bit-for-bit;
+the FOLD reduction remains the one call site that binds `jnp.average` vs
+`zero_safe_average` at build time via `max_Q_over_a._select_fold_reducer` (its
+weights are the process quadrature marginal, concrete before tracing). Runtime
+call sites use `zero_safe_average` unconditionally and now get bit-exactness for
+free from the value-masking order.
 """
 
 import jax
@@ -66,13 +72,14 @@ def zero_safe_weighted_term(
 
     Standard floating-point multiplication computes ``0.0 * (+-inf) = nan``; on
     the extended reals, a zero weight should annihilate ANY value at that
-    node, including an admissible on-path ``-inf``. `jnp.where` selects the
-    literal `0.0` there instead of the (already-computed, possibly `nan`)
-    product, so the returned array never carries a `nan` a zero-weight term
-    would otherwise have contributed. Mathematically equal to plain
-    ``weight * value`` whenever `weight` is nowhere exactly zero — but not
-    byte-identical for traced weights, since the `select` blocks XLA's FMA
-    contraction (~1 ULP; see the module docstring).
+    node, including an admissible on-path ``-inf``. `jnp.where` replaces the
+    VALUE with `0.0` at a zero-weight node BEFORE the multiply, so the product
+    is ``weight * 0 = 0`` there and never a `nan`. Because the `select` is on
+    the value (an operand of the multiply) rather than on the product, the
+    multiply stays FMA-contractible into a downstream reduction, so the
+    all-positive-weight path is **bit-identical** to plain ``weight * value``
+    (see the module docstring for why the previous product-masking order was
+    not, and the decision reversals that cost).
 
     Args:
         weight: The weight (Pareto weight, regime-transition probability,
@@ -86,9 +93,21 @@ def zero_safe_weighted_term(
     """
     weight_arr = jnp.asarray(weight)
     value_arr = jnp.asarray(value)
-    product = weight_arr * value_arr
-    zero = jnp.zeros((), dtype=product.dtype)
-    return jnp.where(weight_arr == 0, zero, product)
+    # Mask the VALUE before the multiply, not the PRODUCT after it. Both
+    # neutralize a zero-weight `+-inf` (`where` replaces the `+-inf` with 0 at a
+    # zero-weight node, so the multiply sees `w * 0 = 0`, never `0 * -inf`), but
+    # only this ordering keeps the multiply FMA-contractible into a downstream
+    # reduction: a `select` sitting AFTER the multiply (the previous form,
+    # `where(w==0, 0, w*v)`) forces the product to round once on its own before
+    # the sum rounds again, so an all-positive-weight reduction drifts from the
+    # naive `jnp.average` / raw corner sum -- MEASURED up to 6 ULP, enough to
+    # REVERSE a non-tied action or an individual-rationality / dissolution flag
+    # (see the regression tests). Masking the value leaves `w * safe_value` as a
+    # bare multiply feeding the reduce, which XLA fuses, so the all-positive path
+    # is bit-identical to the naive computation while the zero-weight path stays
+    # `+-inf`-safe.
+    safe_value = jnp.where(weight_arr == 0, jnp.zeros((), value_arr.dtype), value_arr)
+    return weight_arr * safe_value
 
 
 def zero_safe_average(

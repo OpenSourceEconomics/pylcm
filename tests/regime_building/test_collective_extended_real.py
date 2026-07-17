@@ -18,21 +18,102 @@ everywhere, which here manifests as a WRONG argmax, not an exception) or
 asserts a value that is `nan` pre-fix.
 """
 
+import contextlib
+import itertools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building import ndimage
 from _lcm.regime_building.collective import (
     _weighted_sum,
     collective_argmax_and_readout,
     collective_readout,
+)
+from _lcm.regime_building.ndimage import (
+    _compute_indices_and_weights,
+    _multiply_all,
+    _sum_all,
 )
 from _lcm.regime_building.zero_safe import zero_safe_average, zero_safe_weighted_term
 from lcm import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
+
+# ----------------------------------------------------------------------------------
+# Helpers for the FMA / bit-exactness regression tests.
+#
+# The fix under test masks the VALUE before the weight-multiply
+# (`w * where(w==0, 0, v)`) instead of masking the PRODUCT after it
+# (`where(w==0, 0, w*v)`). Both neutralize a zero-weight `+-inf`, but only the
+# value-masking form leaves the multiply FMA-contractible into the downstream
+# reduction, so the all-positive-weight path is BIT-IDENTICAL to the naive
+# `jnp.average` / raw corner sum. The pre-fix product-masking form drifts (up to
+# 6 ULP measured), enough to reverse a non-tied action or an IR/dissolution flag.
+# `_old_weighted_average*` replay that pre-fix recipe in-process so each
+# bit-identity test can PROVE it would have failed against the old code without
+# reverting `src/`.
+# ----------------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _x64(enabled: bool):
+    """Scope `jax_enable_x64` and restore it (x64 is OFF by default in this env)."""
+    previous = jax.config.jax_enable_x64
+    jax.config.update("jax_enable_x64", enabled)
+    try:
+        yield
+    finally:
+        jax.config.update("jax_enable_x64", previous)
+
+
+def _bits(x: object) -> object:
+    """Raw IEEE-754 bit pattern(s) as unsigned ints, for exact bit comparison."""
+    arr = np.asarray(x)
+    view = np.uint32 if arr.dtype == np.float32 else np.uint64
+    if arr.ndim == 0:
+        return int(arr.reshape(()).view(view))
+    return arr.view(view)
+
+
+def _old_weighted_average(a: FloatND, w: FloatND) -> FloatND:
+    """The PRE-FIX recipe: mask the PRODUCT after the multiply (blocks FMA fusion)."""
+    return jnp.sum(jnp.where(w == 0, jnp.zeros((), a.dtype), w * a)) / jnp.sum(w)
+
+
+def _old_weighted_average_axis(a: FloatND, w: FloatND) -> FloatND:
+    """Pre-fix product-masking recipe, reduced along `axis=1` (per row)."""
+    w2 = jnp.reshape(w, (1, -1))
+    numerator = jnp.sum(jnp.where(w2 == 0, jnp.zeros((), a.dtype), w2 * a), axis=1)
+    return numerator / jnp.sum(w2, axis=1)
+
+
+def _raw_corner_sum_interpolator(term_fn: object) -> object:
+    """Reimplement `map_coordinates`'s 1-D corner sum with a pluggable `w*v` term.
+
+    Uses the SAME internals as `_lcm.regime_building.ndimage.map_coordinates`
+    (`_compute_indices_and_weights`, `_multiply_all`, `_sum_all`); only the
+    per-corner weight*value term is swapped, so any bit difference between two
+    instances is attributable solely to the term's FMA behavior.
+    """
+
+    @jax.jit
+    def interpolate(array: FloatND, coordinates: FloatND) -> FloatND:
+        interpolation_data = [
+            _compute_indices_and_weights(coordinates, array.shape[0])
+        ]
+        contributions = []
+        for indices_and_weights in itertools.product(*interpolation_data):
+            indices, weights = zip(*indices_and_weights, strict=True)
+            weight_product = _multiply_all(weights)
+            contributions.append(term_fn(weight_product, array[indices]))
+        return _sum_all(contributions)
+
+    return interpolate
+
 
 # ----------------------------------------------------------------------------------
 # `zero_safe_weighted_term` / `zero_safe_average` — the centralized primitives
@@ -65,43 +146,79 @@ def test_zero_safe_average_ignores_a_zero_weight_minus_inf_node():
 
 
 def test_zero_safe_average_matches_jnp_average_on_the_finite_path():
-    # No zero weight, no +-inf value -> MATHEMATICALLY equal to jnp.average.
+    # No zero weight, no +-inf value -> BYTE-IDENTICAL to jnp.average now.
     #
-    # Deliberately assert_allclose, NOT byte-identity: the `where` guard blocks
-    # XLA's FMA contraction, so for TRACED weights the two can differ by ~1 ULP
-    # (see zero_safe.py's module docstring for the measured bit patterns). This
-    # test previously claimed byte-identity in a comment while asserting only
-    # closeness -- the claim was false and the test could never have caught it.
+    # After the value-masking fix the multiply stays FMA-contractible into the
+    # reduction, so the all-positive path matches jnp.average bit-for-bit -- not
+    # merely within a ULP. (The earlier retracted claim was the reverse: that the
+    # product-masking guard blocked FMA and drifted ~1 ULP. That was the BUG.)
+    # This particular fixture rounds identically under both the old and new forms,
+    # so it is a plain regression pin; the fail-pre/pass-post proof that the OLD
+    # recipe drifts lives in the counterexample tests below.
     values = jnp.array([1.0, 3.0, 5.0])
     weights = jnp.array([0.2, 0.3, 0.5])
-    result = zero_safe_average(values, weights=weights)
-    expected = jnp.average(values, weights=weights)
-    np.testing.assert_allclose(float(result), float(expected), rtol=1e-6)
+    result = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(values, weights)
+    expected = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
+    assert _bits(result) == _bits(expected)
 
 
-def test_zero_safe_average_is_within_one_ulp_of_jnp_average_under_jit():
-    """Pin the ACTUAL contract on the all-positive path: <=1 ULP, not bit equality.
+@pytest.mark.parametrize("use_x64", [False, True], ids=["float32", "float64"])
+def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
+    use_x64,
+):
+    """The all-positive path is now BIT-IDENTICAL to `jnp.average`, not within a ULP.
 
-    The reviewer-supplied counterexample. Both weights are strictly positive, so
-    the zero guard never fires, yet the results differ in the last bit because the
-    naive path contracts `multiply` into the reduction's FMA (one rounding) while
-    the guarded path cannot (two roundings). Guarding the ULP DISTANCE rather than
-    equality states what is true and still fails loudly if the drift ever grows.
+    This replaces `test_...within_one_ulp...`, whose `<= 2` assertion encoded the
+    now-retracted drift claim. On the reviewer-supplied counterexample both weights
+    are strictly positive, so the zero guard never fires. Pre-fix (product masking)
+    the guarded path rounded twice and drifted from `jnp.average`; post-fix (value
+    masking) the multiply stays FMA-contractible and the result matches bit-for-bit.
+
+    Fail-pre/pass-post is PROVEN in-process (no `src/` revert): the `guarded ==
+    naive` assertion itself would have failed against the pre-fix code in float32,
+    and we additionally replay the OLD product-masking recipe and show IT drifts
+    while the real `zero_safe_average` does not. In float64 this fixture happens to
+    round identically under both forms, so there the bit-identity is a regression
+    pin rather than a fail-pre proof (noted, not forced).
     """
-    values = jnp.array([-0.3096868097782135, 0.3673213720321655], dtype=jnp.float32)
-    weights = jnp.array([0.5910956263542175, 0.40890437364578247], dtype=jnp.float32)
+    with _x64(use_x64):
+        dtype = jnp.float64 if use_x64 else jnp.float32
+        values = jnp.array(
+            [-0.3096868097782135, 0.3673213720321655], dtype=dtype
+        )
+        weights = jnp.array(
+            [0.5910956263542175, 0.40890437364578247], dtype=dtype
+        )
+        # Guard the guard: an all-positive fixture is the whole point; a zero
+        # weight would make the old and new forms agree and prove nothing.
+        assert bool(jnp.all(weights > 0))
 
-    naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
-    guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(values, weights)
+        naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
+        guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(
+            values, weights
+        )
+        old = jax.jit(_old_weighted_average)(values, weights)
 
-    naive_bits = np.asarray(naive).view(np.uint32)
-    guarded_bits = np.asarray(guarded).view(np.uint32)
-    ulp_distance = abs(int(naive_bits) - int(guarded_bits))
-    assert ulp_distance <= 2, (
-        f"zero_safe_average drifted {ulp_distance} ULP from jnp.average on an "
-        "all-positive-weight input; the guard is documented as costing at most "
-        "an FMA contraction (~1 ULP)"
-    )
+        naive_bits = _bits(naive)
+        guarded_bits = _bits(guarded)
+        old_bits = _bits(old)
+
+        # Core contract: bit-for-bit identical to jnp.average on the positive path.
+        assert guarded_bits == naive_bits, (
+            f"zero_safe_average is not bit-identical to jnp.average on an "
+            f"all-positive input (guarded={guarded_bits}, naive={naive_bits})"
+        )
+
+        if dtype == jnp.float32:
+            # Fail-pre proof: the pre-fix product-masking recipe (what
+            # zero_safe_average USED to compute) drifts from jnp.average here,
+            # so the `guarded == naive` assertion above would have FAILED pre-fix.
+            assert old_bits != naive_bits, (
+                "the OLD product-masking recipe no longer drifts from jnp.average "
+                "on this fixture -- it then fails to exercise the FMA divergence "
+                "and the fail-pre proof is vacuous"
+            )
+            assert guarded_bits != old_bits
 
 
 def test_zero_safe_average_is_exact_where_ties_actually_arise():
@@ -122,12 +239,33 @@ def test_zero_safe_average_is_exact_where_ties_actually_arise():
 
 
 def test_zero_safe_average_axis_reduction_matches_jnp_average_on_the_finite_path():
-    # Mathematically equal, not byte-identical -- see the non-axis variant above.
-    values = jnp.array([[1.0, 2.0], [3.0, 4.0]])
-    weights = jnp.array([0.25, 0.75])
-    result = zero_safe_average(values, axis=1, weights=weights)
-    expected = jnp.average(values, axis=1, weights=weights)
-    np.testing.assert_allclose(np.asarray(result), np.asarray(expected), rtol=1e-6)
+    """The axis reduction is now BYTE-IDENTICAL to `jnp.average` on the positive path.
+
+    Was documented "mathematically equal, not byte-identical" -- that described the
+    pre-fix product-masking form. With the value-masking fix each per-row weighted
+    sum stays FMA-contractible, so it matches `jnp.average` bit-for-bit. Exercised on
+    a cancellation-prone float32 fixture whose first row is the F1 counterexample, so
+    the FMA actually bites: the OLD product-masking recipe drifts on that row
+    (fail-pre proof) while the real axis reduction is exact.
+    """
+    values = jnp.array(
+        [[-3.9480734, 2.623802], [5.5, -1.25], [0.38403073, -7.1]],
+        dtype=jnp.float32,
+    )
+    weights = jnp.array([0.38403073, 0.6159693], dtype=jnp.float32)
+    # Guard the guard: strictly-positive weights, so the FMA divergence is live.
+    assert bool(jnp.all(weights > 0))
+
+    guarded = jax.jit(lambda a, w: zero_safe_average(a, axis=1, weights=w))(
+        values, weights
+    )
+    naive = jax.jit(lambda a, w: jnp.average(a, axis=1, weights=w))(values, weights)
+    old = jax.jit(_old_weighted_average_axis)(values, weights)
+
+    # Byte-identical on the positive path.
+    np.testing.assert_array_equal(_bits(guarded), _bits(naive))
+    # Fail-pre: the pre-fix product-masking recipe drifts on at least the F1 row.
+    assert int(np.sum(_bits(old) != _bits(naive))) > 0
 
 
 def test_zero_safe_average_raises_eagerly_on_concretely_zero_total_weight():
@@ -135,6 +273,93 @@ def test_zero_safe_average_raises_eagerly_on_concretely_zero_total_weight():
     weights = jnp.array([0.0, 0.0])
     with pytest.raises(ValueError, match="total weight is exactly zero"):
         zero_safe_average(values, weights=weights)
+
+
+def test_zero_safe_average_does_not_reverse_a_nontied_action():
+    """F1: the ULP drift must not flip a NON-TIED discrete-action choice.
+
+    The concrete reversal the fix prevents. With nodes `[-3.9480734, 2.623802]`
+    and probabilities `[0.38403073, 0.61596930]` (both strictly positive, sum
+    exactly 1 in float32), the exact stochastic value is ~0.0999998 -- just BELOW
+    a deterministic alternative of 0.1, so the household picks the alternative.
+    `jnp.average` and the fixed `zero_safe_average` both land below 0.1 (same
+    choice). The pre-fix product-masking recipe rounds up to ~0.1000000, ABOVE
+    0.1, and would pick the stochastic action instead -- a reversed, non-tied
+    choice. No exact tie is required; this is the decision-relevance of the drift.
+    """
+    nodes = jnp.array([-3.9480734, 2.623802], dtype=jnp.float32)
+    probabilities = jnp.array([0.38403073, 0.6159693], dtype=jnp.float32)
+    alternative = np.float32(0.1)
+
+    # Guard the guard: all-positive probabilities summing to exactly 1.0 in
+    # float32. A zero weight would make old and new forms agree and defang F1.
+    assert bool(jnp.all(probabilities > 0))
+    assert float(jnp.sum(probabilities)) == 1.0
+
+    naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(nodes, probabilities)
+    guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(
+        nodes, probabilities
+    )
+    old = jax.jit(_old_weighted_average)(nodes, probabilities)
+
+    naive_below = bool(naive < alternative)
+    guarded_below = bool(guarded < alternative)
+    old_below = bool(old < alternative)
+
+    # Fixed function picks the SAME side of the alternative as jnp.average.
+    assert guarded_below == naive_below
+    assert naive_below is True  # exact value is below 0.1 -> choose alternative
+    # Fail-pre proof: the pre-fix recipe lands on the OPPOSITE side (>= 0.1),
+    # i.e. it would reverse the action to the stochastic node.
+    assert old_below is False
+    assert guarded_below != old_below
+
+
+def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
+    """F2: the real interpolation path is bit-exact vs the raw `w*v` corner sum.
+
+    `map_coordinates` weights each corner via `zero_safe_weighted_term`; off-grid,
+    with both corner weights strictly positive, that must be bit-identical to the
+    naive `w*v` corner sum (same internals, plain term). The pre-fix
+    product-masking corner term drifts on a nonzero fraction of coordinates
+    (~14-40% here, exact count platform/jax-version dependent), enough to reverse
+    an IR / dissolution comparison. Asserted as `== 0` for the real path and `> 0`
+    for the old path rather than a hard-coded count.
+    """
+    array = jnp.array([-3.9480734, 2.623802], dtype=jnp.float32)
+    rng = np.random.default_rng(0)
+    # ~2000 strictly-interior off-grid coordinates: both corner weights (1-c, c)
+    # are strictly positive, so the zero guard never fires and the FMA is live.
+    coordinates = jnp.asarray(
+        rng.uniform(1e-4, 1.0 - 1e-4, size=2000), dtype=jnp.float32
+    )
+    # Guard the guard: strictly inside (0, 1) -> no on-grid (zero-weight) corner.
+    assert bool(jnp.all((coordinates > 0.0) & (coordinates < 1.0)))
+
+    real = ndimage.map_coordinates(array, [coordinates])
+    plain_reference = _raw_corner_sum_interpolator(lambda w, v: w * v)(
+        array, coordinates
+    )
+    old_interpolator = _raw_corner_sum_interpolator(
+        lambda w, v: jnp.where(w == 0, jnp.zeros((), v.dtype), w * v)
+    )(array, coordinates)
+
+    real_bits = _bits(real)
+    reference_bits = _bits(plain_reference)
+    old_bits = _bits(old_interpolator)
+
+    # Real interpolation path == naive corner sum, bit-for-bit, everywhere.
+    real_diffs = int(np.sum(real_bits != reference_bits))
+    assert real_diffs == 0, (
+        f"map_coordinates drifted from the raw w*v corner sum on {real_diffs} "
+        f"of {coordinates.size} off-grid coordinates"
+    )
+    # Fail-pre proof: the pre-fix product-masking corner term drifts on some.
+    old_diffs = int(np.sum(old_bits != reference_bits))
+    assert old_diffs > 0, (
+        "the OLD product-masking corner term no longer drifts from the naive "
+        "corner sum -- the fixture stopped exercising the FMA divergence"
+    )
 
 
 # ----------------------------------------------------------------------------------
