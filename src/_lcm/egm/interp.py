@@ -12,7 +12,7 @@ read.
 
 import jax.numpy as jnp
 
-from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import BoolND, Float1D, FloatND, ScalarFloat, ScalarInt
 
 
 def interp_on_padded_grid(
@@ -170,31 +170,32 @@ def interp_on_prepared_grid(
     return jnp.where(valid_length == 0, jnp.nan, result)
 
 
-def interp_right_derivative_on_padded_grid(
+def interp_right_germ_on_padded_grid(
     *,
     x_query: FloatND,
     xp: Float1D,
     fp: Float1D,
     fp_slopes: Float1D,
-) -> FloatND:
-    """Compute the right derivative of the Hermite value read on a padded row.
+) -> tuple[BoolND, FloatND, FloatND, FloatND]:
+    """Compute the right germ of the Hermite value read on a padded row.
 
     Same row contract as `interp_on_padded_grid`; see
-    `interp_right_derivative_on_prepared_grid` for the derivative semantics.
+    `interp_right_germ_on_prepared_grid` for the germ semantics.
 
     Args:
-        x_query: Points at which to evaluate the right derivative; any shape.
+        x_query: Points at which to evaluate the right germ; any shape.
         xp: Weakly ascending grid row with NaNs only in the tail.
         fp: Function values on `xp`, NaN-padded in lockstep with `xp`.
         fp_slopes: Derivatives of `fp` with respect to `xp` at the `xp` nodes,
             NaN-padded in lockstep.
 
     Returns:
-        Right derivatives with the shape of `x_query`.
+        Tuple of the right-finiteness flag and the first, second, and third
+        right derivatives, each with the shape of `x_query`.
 
     """
     search_grid, valid_length = prepare_padded_grid(xp)
-    return interp_right_derivative_on_prepared_grid(
+    return interp_right_germ_on_prepared_grid(
         x_query=x_query,
         search_grid=search_grid,
         valid_length=valid_length,
@@ -204,7 +205,7 @@ def interp_right_derivative_on_padded_grid(
     )
 
 
-def interp_right_derivative_on_prepared_grid(
+def interp_right_germ_on_prepared_grid(
     *,
     x_query: FloatND,
     search_grid: Float1D,
@@ -212,29 +213,32 @@ def interp_right_derivative_on_prepared_grid(
     xp: Float1D,
     fp: Float1D,
     fp_slopes: Float1D,
-) -> FloatND:
-    """Compute the right derivative of the Hermite value read at each query.
+) -> tuple[BoolND, FloatND, FloatND, FloatND]:
+    """Compute the right germ of the Hermite value read at each query.
 
-    This is the one-sided derivative of the *value interpolant* that
-    `interp_on_prepared_grid` evaluates with `fp_slopes` — the local slope
-    governing the read immediately to the right of the query — not a read of
-    the slope row itself. The two differ exactly where a tie-owner decision
-    needs the truth: the Fritsch-Carlson limiter may cap a node's raw slope,
-    and the edge clamps flatten the read outside the valid range. Semantics:
+    The germ is the complete local description of the *value interpolant* that
+    `interp_on_prepared_grid` evaluates with `fp_slopes` immediately to the
+    right of the query — not a read of the slope row itself. Each local piece
+    is a cubic (or a constant clamp), so the germ is finite-dimensional: a
+    right-finiteness flag plus the first, second, and third one-sided
+    derivatives determine the read on a right neighborhood exactly. The germ
+    differs from the raw slope row exactly where a tie-owner decision needs the
+    truth: the Fritsch-Carlson limiter may cap a node's raw slope, the edge
+    clamps flatten the read outside the valid range, and a `-inf` bracket
+    endpoint kills the read immediately right of a finite node. Semantics:
 
-    - Strictly inside a bracket: the derivative of that bracket's limited
-      cubic Hermite (the secant where the correction is inapplicable — the
-      linear fallback).
-    - Exactly on a node: the derivative at the left edge of the node's *right*
-      bracket (the bracket search is right-continuous), i.e. the node's
-      limited slope with respect to that bracket's secant.
-    - Strictly below the first node, and at or above the last valid node: zero
-      — the read clamps to a constant there.
-    - A bracket with a non-finite value difference (e.g. a `-inf` endpoint):
-      zero, matching the linear rule's flat, clamp-like behavior there.
+    - Strictly inside a bracket: the derivatives of that bracket's limited
+      cubic Hermite (the secant and zero curvature where the correction is
+      inapplicable — the linear fallback).
+    - Exactly on a node: the derivatives at the left edge of the node's *right*
+      bracket (the bracket search is right-continuous).
+    - Strictly below the first node, and at or above the last valid node: the
+      read clamps to a constant — right-finite with all derivatives zero.
+    - A bracket with a non-finite endpoint value: not right-finite (the read
+      is `-inf` on the bracket's interior), derivatives zero.
 
     Args:
-        x_query: Points at which to evaluate the right derivative; any shape.
+        x_query: Points at which to evaluate the right germ; any shape.
         search_grid: The row's `+inf`-padded search key from
             `prepare_padded_grid`.
         valid_length: The row's non-NaN prefix length from
@@ -244,12 +248,13 @@ def interp_right_derivative_on_prepared_grid(
         fp_slopes: Node derivatives, NaN-padded in lockstep.
 
     Returns:
-        Right derivatives with the shape of `x_query`.
+        Tuple of the right-finiteness flag and the first, second, and third
+        right derivatives, each with the shape of `x_query`.
 
     """
     # Identical bracket location to `interp_on_prepared_grid`: `side="right"`
     # puts an on-node query into the node's right bracket, which is exactly the
-    # bracket whose derivative the right-continuous read needs.
+    # bracket whose germ the right-continuous read needs.
     upper = jnp.clip(
         jnp.searchsorted(search_grid, x_query, side="right"),
         1,
@@ -274,8 +279,10 @@ def interp_right_derivative_on_prepared_grid(
     safe_df = jnp.where(jnp.isfinite(df), df, 0.0)
     secant = safe_df / safe_width
 
-    # The same limiter as `_hermite_correction`, so this derivative is the
-    # derivative of exactly the polynomial the value read evaluates.
+    # The same limiter as `_hermite_correction`, so these derivatives are the
+    # derivatives of exactly the polynomial the value read evaluates. In the
+    # bracket's local coordinate `t` the read is
+    # `p(t) = f_l + Δf t + c_l t + (c_u - 2 c_l) t² + (c_l - c_u) t³`.
     def limit(slope: FloatND) -> FloatND:
         same_sign = slope * secant > 0.0
         limited = jnp.sign(secant) * jnp.minimum(jnp.abs(slope), 3.0 * jnp.abs(secant))
@@ -283,12 +290,17 @@ def interp_right_derivative_on_prepared_grid(
 
     coeff_lower = safe_width * limit(slope_lower) - safe_df
     coeff_upper = safe_df - safe_width * limit(slope_upper)
-    hermite_slope = (
+    hermite_first = (
         safe_df
         + (1.0 - 2.0 * relative_position)
         * ((1.0 - relative_position) * coeff_lower + relative_position * coeff_upper)
         + relative_position * (1.0 - relative_position) * (coeff_upper - coeff_lower)
     ) / safe_width
+    hermite_second = (
+        2.0 * (coeff_upper - 2.0 * coeff_lower)
+        + 6.0 * (coeff_lower - coeff_upper) * relative_position
+    ) / safe_width**2
+    hermite_third = 6.0 * (coeff_lower - coeff_upper) / safe_width**3
     applicable = (
         (bracket_width > 0.0)
         & jnp.isfinite(fp_lower)
@@ -296,15 +308,23 @@ def interp_right_derivative_on_prepared_grid(
         & jnp.isfinite(slope_lower)
         & jnp.isfinite(slope_upper)
     )
-    derivative = jnp.where(applicable, hermite_slope, secant)
+    first = jnp.where(applicable, hermite_first, secant)
+    second = jnp.where(applicable, hermite_second, 0.0)
+    third = jnp.where(applicable, hermite_third, 0.0)
     # The read clamps to a constant strictly below the first node and at or
-    # above the last valid one; its right derivative there is exactly zero.
-    # (`search_grid` is `+inf` on the pad, so a poisoned all-NaN row lands on
-    # the lower clamp and stays zero.)
+    # above the last valid one; the germ there is right-finite with all
+    # derivatives exactly zero. (`search_grid` is `+inf` on the pad, so a
+    # poisoned all-NaN row lands on the lower clamp.)
     first_node = search_grid[0]
     last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
     on_clamp_ray = (x_query < first_node) | (x_query >= last_node)
-    return jnp.where(on_clamp_ray, 0.0, derivative)
+    right_finite = on_clamp_ray | (jnp.isfinite(fp_lower) & jnp.isfinite(fp_upper))
+    return (
+        right_finite,
+        jnp.where(on_clamp_ray, 0.0, first),
+        jnp.where(on_clamp_ray, 0.0, second),
+        jnp.where(on_clamp_ray, 0.0, third),
+    )
 
 
 def _interp_between_nodes(

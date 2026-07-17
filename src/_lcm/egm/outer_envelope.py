@@ -31,9 +31,9 @@ import jax.numpy as jnp
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import (
     interp_on_padded_grid,
-    interp_right_derivative_on_padded_grid,
+    interp_right_germ_on_padded_grid,
 )
-from lcm.typing import Float1D, FloatND
+from lcm.typing import Bool1D, BoolND, Float1D, FloatND, IntND
 
 
 def build_stacked_outer_carry(
@@ -109,15 +109,15 @@ def outer_envelope_at_query(
     candidates; the published marginal is the *winning* candidate's resource
     slope (Danskin), so it is winner-consistent and never averaged across a
     branch crossing. At an exact value tie the winner is right-continuous in
-    the value read itself: the tied candidates are ranked by the right
-    derivative of their own value interpolants — the Fritsch-Carlson-limited
-    Hermite slope of the bracket right of the query, exactly zero on the clamp
-    ray at or above a candidate's last node — so the branch whose read actually
+    the value read itself: the tied candidates are compared by the complete
+    right germ of their own value interpolants (`right_germ_winner`) — each
+    local piece is a limited cubic Hermite or a constant clamp, so
+    right-finiteness plus the first three one-sided derivatives determine the
+    read on a right neighborhood exactly, and the branch whose read actually
     wins immediately to the right of the query owns the published (economic)
     marginal, matching the one-sided convention the parent's Euler inversion
-    expects. Candidates whose reads are identical to first order on the right
-    fall back to the lowest index, a deterministic choice among locally
-    indistinguishable branches.
+    expects. Only candidates whose local pieces literally coincide fall back
+    to the lowest index, a deterministic choice among identical branches.
 
     Taking the maximum at the query — rather than at a shared node grid and
     republishing a single interpolated row — is exact for the finite candidate set
@@ -140,7 +140,7 @@ def outer_envelope_at_query(
 
     def read_one(
         endog: Float1D, value: Float1D, marginal: Float1D
-    ) -> tuple[Float1D, Float1D, Float1D]:
+    ) -> tuple[Float1D, Float1D, tuple[Bool1D, Float1D, Float1D, Float1D]]:
         cand_lower = jnp.min(jnp.where(jnp.isfinite(endog), endog, jnp.inf))
         value_at_query = interp_on_padded_grid(
             x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
@@ -148,7 +148,7 @@ def outer_envelope_at_query(
         marginal_at_query = interp_on_padded_grid(
             x_query=x_query, xp=endog, fp=marginal
         )
-        right_slope_at_query = interp_right_derivative_on_padded_grid(
+        right_germ_at_query = interp_right_germ_on_padded_grid(
             x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
         )
         # The support mask applies only where a finite first node exists:
@@ -158,19 +158,54 @@ def outer_envelope_at_query(
         below_support = (x_query < cand_lower) & jnp.isfinite(cand_lower)
         value_at_query = jnp.where(below_support, -jnp.inf, value_at_query)
         marginal_at_query = jnp.where(below_support, 0.0, marginal_at_query)
-        right_slope_at_query = jnp.where(below_support, 0.0, right_slope_at_query)
-        return value_at_query, marginal_at_query, right_slope_at_query
+        return value_at_query, marginal_at_query, right_germ_at_query
 
-    values, marginals, right_slopes = jax.vmap(read_one)(
+    values, marginals, right_germ = jax.vmap(read_one)(
         candidate_endog, candidate_value, candidate_marginal
     )
-    envelope_value = jnp.max(values, axis=0)
-    # Staged lexicographic ownership: only candidates attaining the envelope
-    # value compete (`-inf` rank otherwise); among them the largest right
-    # derivative of the value read wins, and `argmax` resolves exact rank ties
-    # to the lowest index. No packing of the two stages into one float — the
-    # comparisons stay exact at any magnitude and any precision.
-    rank = jnp.where(values >= envelope_value, right_slopes, -jnp.inf)
-    winner = jnp.argmax(rank, axis=0)
-    envelope_marginal = jnp.take_along_axis(marginals, winner[None, :], axis=0)[0]
-    return envelope_value, envelope_marginal
+    winner = right_germ_winner(
+        value=values.T, right_germ=tuple(component.T for component in right_germ)
+    )
+    envelope_marginal = jnp.take_along_axis(marginals.T, winner, axis=-1)[..., 0]
+    # The published value is the maximum itself: identical to the winner's read
+    # at any tie, and NaN-propagating when a poisoned candidate row (whose NaN
+    # empties the tie set) must surface fail-loud.
+    return jnp.max(values, axis=0), envelope_marginal
+
+
+def right_germ_winner(
+    *,
+    value: FloatND,
+    right_germ: tuple[BoolND, FloatND, FloatND, FloatND],
+) -> IntND:
+    """Select the tie-owning candidate index along the trailing candidate axis.
+
+    Staged lexicographic comparison, each stage exact (no packing, no
+    tolerance — the claim is exact ordering of the reads' own local pieces):
+
+    - only candidates attaining the maximum value compete,
+    - a right-finite read beats one that dies to `-inf` immediately right,
+    - then the first, second, and third right derivatives in turn (the local
+      pieces are cubics or constant clamps, so agreement through the third
+      derivative means the pieces coincide on a right neighborhood),
+    - `argmax` resolves what remains to the lowest index, a deterministic
+      choice among locally identical branches.
+
+    Args:
+        value: Candidate value reads; the candidate axis is last.
+        right_germ: Tuple of the right-finiteness flag and the first three
+            right derivatives of the candidate value reads, same shape.
+
+    Returns:
+        Index of the winning candidate per query cell, with the candidate axis
+        kept as a trailing length-1 axis (for `take_along_axis`).
+
+    """
+    right_finite, first, second, third = right_germ
+    survivors = value >= jnp.max(value, axis=-1, keepdims=True)
+    for stage_key in (right_finite.astype(value.dtype), first, second, third):
+        stage = jnp.where(survivors, stage_key, -jnp.inf)
+        survivors = survivors & (stage >= jnp.max(stage, axis=-1, keepdims=True))
+    # int32 winner indices: the candidate axis has at most a few hundred
+    # entries, so the x64-default int64 only doubles the gather-index buffers.
+    return jnp.argmax(survivors, axis=-1, keepdims=True).astype(jnp.int32)

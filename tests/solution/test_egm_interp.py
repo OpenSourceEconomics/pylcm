@@ -357,29 +357,33 @@ def test_prepared_interpolation_holds_no_grid_by_query_intermediate():
     assert not offenders, "grid-by-query intermediate present:\n" + "\n".join(offenders)
 
 
-def _host_right_derivative(
+def _host_right_germ(
     xp: np.ndarray, fp: np.ndarray, slopes: np.ndarray, x_query: float
-) -> float:
-    """Scalar NumPy reference for the value read's right derivative.
+) -> tuple[bool, float, float, float]:
+    """Scalar NumPy reference for the value read's right germ.
 
     Independent of the JAX implementation: plain `searchsorted` bracket lookup
     (right-continuous at nodes), the Fritsch-Carlson limiter written out
-    scalar-wise, and the Hermite derivative evaluated on the bracket. Zero on
-    both clamp rays (strictly below the first node; at or above the last).
+    scalar-wise, and the bracket cubic differentiated analytically — with `t`
+    the relative position, `h` the width, and `c_l`, `c_u` the Hermite
+    coefficients, the piece is `p(t) = f_l + Δf t + c_l t + (c_u - 2 c_l) t² +
+    (c_l - c_u) t³`. Right-finite with all derivatives zero on both clamp rays
+    (strictly below the first node; at or above the last).
     """
     valid = ~np.isnan(xp)
     x_valid, f_valid, s_valid = xp[valid], fp[valid], slopes[valid]
     if x_query < x_valid[0] or x_query >= x_valid[-1]:
-        return 0.0
+        return True, 0.0, 0.0, 0.0
     lower = int(np.searchsorted(x_valid, x_query, side="right")) - 1
     width = x_valid[lower + 1] - x_valid[lower]
     relative_position = (x_query - x_valid[lower]) / width
+    right_finite = bool(np.isfinite(f_valid[lower]) and np.isfinite(f_valid[lower + 1]))
     df = f_valid[lower + 1] - f_valid[lower]
     if not np.isfinite(df):
-        return 0.0
+        return right_finite, 0.0, 0.0, 0.0
     secant = df / width
     if not (np.isfinite(s_valid[lower]) and np.isfinite(s_valid[lower + 1])):
-        return float(secant)
+        return right_finite, float(secant), 0.0, 0.0
 
     def limit(slope: float) -> float:
         if slope * secant <= 0.0:
@@ -389,55 +393,62 @@ def _host_right_derivative(
     coeff_lower = width * limit(s_valid[lower]) - df
     coeff_upper = df - width * limit(s_valid[lower + 1])
     t = relative_position
-    return float(
-        (
-            df
-            + (1.0 - 2.0 * t) * ((1.0 - t) * coeff_lower + t * coeff_upper)
-            + t * (1.0 - t) * (coeff_upper - coeff_lower)
-        )
-        / width
-    )
+    first = (
+        df
+        + (1.0 - 2.0 * t) * ((1.0 - t) * coeff_lower + t * coeff_upper)
+        + t * (1.0 - t) * (coeff_upper - coeff_lower)
+    ) / width
+    second = (
+        2.0 * (coeff_upper - 2.0 * coeff_lower) + 6.0 * (coeff_lower - coeff_upper) * t
+    ) / width**2
+    third = 6.0 * (coeff_lower - coeff_upper) / width**3
+    return right_finite, float(first), float(second), float(third)
 
 
-def test_right_derivative_reproduces_a_cubic_interior_derivative():
-    """With exact node slopes the right derivative of `x**3` is `3 x**2`.
+def test_right_germ_reproduces_a_cubic_interior_derivatives():
+    """With exact node slopes the germ of `x**3` is `(3x², 6x, 6)`.
 
     A cubic with exact endpoint values and slopes is reproduced exactly by the
-    Hermite bracket (four constraints determine the cubic), so its derivative
-    read is exact wherever the limiter is inactive.
+    Hermite bracket (four constraints determine the cubic), so all three of its
+    derivative reads are exact wherever the limiter is inactive — and the read
+    is right-finite.
     """
     xp = jnp.array([1.0, 1.5, 2.0, 3.0])
     fp = xp**3
     slopes = 3.0 * xp**2
     x_query = jnp.array([1.2, 1.5, 1.9, 2.4])
 
-    got = interp.interp_right_derivative_on_padded_grid(
+    right_finite, first, second, third = interp.interp_right_germ_on_padded_grid(
         x_query=x_query, xp=xp, fp=fp, fp_slopes=slopes
     )
 
-    np.testing.assert_allclose(got, 3.0 * np.asarray(x_query) ** 2, rtol=1e-9)
+    assert bool(right_finite.all())
+    np.testing.assert_allclose(first, 3.0 * np.asarray(x_query) ** 2, rtol=1e-9)
+    np.testing.assert_allclose(second, 6.0 * np.asarray(x_query), rtol=1e-9)
+    np.testing.assert_allclose(third, np.full(4, 6.0), rtol=1e-9)
 
 
-def test_right_derivative_at_a_node_is_the_right_brackets_limited_slope():
-    """At a node the right derivative is the right bracket's limited slope.
+def test_right_germ_at_a_node_uses_the_right_brackets_limited_slope():
+    """At a node the first right derivative is the right bracket's limited slope.
 
     The value row rises by `0.1` per bracket while the node carries a raw slope
     of `100`; the Fritsch-Carlson limiter caps the value read's slope at three
-    times the secant, so the right derivative at the node is `0.3`, not `100`.
+    times the secant, so the first right derivative at the node is `0.3`, not
+    `100`.
     """
     xp = jnp.array([0.0, 1.0, 2.0])
     fp = jnp.array([0.9, 1.0, 1.1])
     slopes = jnp.array([0.1, 100.0, 0.1])
 
-    got = interp.interp_right_derivative_on_padded_grid(
+    _, first, _, _ = interp.interp_right_germ_on_padded_grid(
         x_query=jnp.array([1.0]), xp=xp, fp=fp, fp_slopes=slopes
     )
 
-    np.testing.assert_allclose(float(got[0]), 0.3, atol=1e-12)
+    np.testing.assert_allclose(float(first[0]), 0.3, atol=1e-12)
 
 
-def test_right_derivative_is_zero_on_the_clamp_rays():
-    """The read clamps outside the valid range, so its right derivative is zero.
+def test_right_germ_is_flat_and_finite_on_the_clamp_rays():
+    """The read clamps outside the valid range: right-finite, all derivatives zero.
 
     Strictly below the first node and at or above the last valid node the value
     read is constant; a query exactly on the first node is interior (its right
@@ -447,35 +458,45 @@ def test_right_derivative_is_zero_on_the_clamp_rays():
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     slopes = jnp.array([3.0, 3.0, 1.0, jnp.nan])
 
-    got = interp.interp_right_derivative_on_padded_grid(
+    right_finite, first, second, third = interp.interp_right_germ_on_padded_grid(
         x_query=jnp.array([0.5, 1.0, 4.0, 7.0]), xp=xp, fp=fp, fp_slopes=slopes
     )
 
-    np.testing.assert_allclose(float(got[0]), 0.0, atol=1e-12)
-    np.testing.assert_allclose(float(got[1]), 3.0, atol=1e-12)
-    np.testing.assert_allclose(float(got[2]), 0.0, atol=1e-12)
-    np.testing.assert_allclose(float(got[3]), 0.0, atol=1e-12)
+    assert bool(right_finite.all())
+    np.testing.assert_allclose(np.asarray(first), [0.0, 3.0, 0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(float(second[0]), 0.0, atol=1e-12)
+    np.testing.assert_allclose(float(third[0]), 0.0, atol=1e-12)
 
 
-def test_right_derivative_falls_back_to_zero_on_a_neg_inf_bracket():
-    """A `-inf` bracket endpoint yields a zero right derivative, never NaN."""
-    xp = jnp.array([1.0, 2.0, 4.0])
-    fp = jnp.array([-jnp.inf, 3.0, 5.0])
+def test_right_germ_flags_a_neg_inf_bracket_as_not_right_finite():
+    """A `-inf` bracket endpoint is not right-finite; derivatives are zero.
+
+    The read is `-inf` on the bracket's interior, so a candidate tied at a
+    finite node whose right bracket dies must be distinguishable from a finite
+    constant clamp — the flag carries that distinction, the derivatives stay
+    zero (never NaN).
+    """
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([0.0, 1.0, -jnp.inf])
     slopes = jnp.array([1.0, 1.0, 1.0])
 
-    got = interp.interp_right_derivative_on_padded_grid(
-        x_query=jnp.array([1.5]), xp=xp, fp=fp, fp_slopes=slopes
+    right_finite, first, second, third = interp.interp_right_germ_on_padded_grid(
+        x_query=jnp.array([1.0, 1.5]), xp=xp, fp=fp, fp_slopes=slopes
     )
 
-    np.testing.assert_allclose(float(got[0]), 0.0, atol=1e-12)
+    assert not bool(right_finite.any())
+    np.testing.assert_allclose(np.asarray(first), [0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(second), [0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(third), [0.0, 0.0], atol=1e-12)
 
 
-def test_right_derivative_matches_scalar_host_on_random_rows():
-    """The vectorized right derivative equals an independent scalar reference.
+def test_right_germ_matches_scalar_host_on_random_rows():
+    """The vectorized right germ equals an independent scalar reference.
 
     Random strictly-ascending rows with arbitrary finite values and slopes are
     read at interior points, exactly at nodes, and on both clamp rays; the JAX
-    implementation must agree with the scalar NumPy host at every query.
+    implementation must agree with the scalar NumPy host at every query, in
+    every germ component.
     """
     rng = np.random.default_rng(seed=42)
     for _ in range(5):
@@ -487,12 +508,18 @@ def test_right_derivative_matches_scalar_host_on_random_rows():
         rays = [xp[0] - 0.5, xp[-1] + 0.5]
         queries = np.array(nodes + interior + rays)
 
-        got = interp.interp_right_derivative_on_padded_grid(
+        got = interp.interp_right_germ_on_padded_grid(
             x_query=jnp.asarray(queries),
             xp=jnp.asarray(xp),
             fp=jnp.asarray(fp),
             fp_slopes=jnp.asarray(slopes),
         )
 
-        expected = [_host_right_derivative(xp, fp, slopes, q) for q in queries]
-        np.testing.assert_allclose(np.asarray(got), expected, atol=1e-9)
+        expected = [_host_right_germ(xp, fp, slopes, q) for q in queries]
+        np.testing.assert_array_equal(np.asarray(got[0]), [e[0] for e in expected])
+        for component in (1, 2, 3):
+            np.testing.assert_allclose(
+                np.asarray(got[component]),
+                [e[component] for e in expected],
+                atol=1e-9,
+            )

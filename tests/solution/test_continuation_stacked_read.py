@@ -255,6 +255,44 @@ def test_stacked_read_tie_owner_follows_the_limited_value_slope():
     np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
 
 
+def test_stacked_read_tie_with_equal_right_slopes_follows_the_curvature():
+    """Equal first right derivatives at a tie resolve by the read's curvature.
+
+    Both candidates tie at the query `q = 1` with limited right derivative
+    exactly 3 (A's raw node slope 100 is limiter-capped, B's slope 3 passes),
+    but B's Hermite piece curves less steeply downward, so B's read is strictly
+    larger for every `q > 1`. The published marginal must be B's, scaled by the
+    composed gradient (`3.0 * 2.0`), not the lower-index candidate A's raw 100.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.broadcast_to(jnp.array([0.0, 1.0, 2.0]), (1, 2, 3)),
+        value=jnp.stack([jnp.array([-1.0, 0.0, 1.0]), jnp.array([-2.0, 0.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([1.0, 100.0, 1.0]), jnp.array([2.0, 3.0, 2.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([1.0]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 0.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 6.0, atol=_READ_ATOL)
+
+
 def test_blend_of_a_dead_and_a_live_passive_node_keeps_the_infeasible_pair():
     """A `-inf` blended value carries an exactly-zero marginal.
 

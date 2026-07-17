@@ -347,6 +347,53 @@ def test_tie_rank_orders_extreme_slopes_exactly_at_float32():
     np.testing.assert_allclose(float(marginal[0]), float(np.float32(2e20)))
 
 
+def test_tie_with_equal_right_slopes_is_owned_by_the_higher_curvature():
+    """Equal first right derivatives at a tie resolve by the read's curvature.
+
+    Both candidates tie at `q = 1` with limited right derivative exactly 3 (A's
+    raw node slope 100 is limiter-capped, B's slope 3 passes), but B's Hermite
+    piece curves less steeply downward, so B's read is strictly larger for
+    every `q > 1`. The published marginal must be B's (3.0), not the
+    lower-index candidate A's raw 100.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.array([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0]])
+    candidate_marginal = jnp.array([[1.0, 100.0, 1.0], [2.0, 3.0, 2.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 0.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 3.0, atol=1e-9)
+
+
+def test_tie_against_a_dying_right_bracket_is_owned_by_the_finite_branch():
+    """A candidate whose read dies to `-inf` immediately right loses the tie.
+
+    Both candidates read value 1 at `q = 1`, but A's right bracket ends in
+    `-inf` (its read is `-inf` for every `q > 1`) while B stays finite. B owns
+    the tie regardless of derivative order, so the published marginal is B's
+    0.0, never the dying branch's 10.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.array([[0.0, 1.0, -jnp.inf], [0.0, 1.0, 1.0]])
+    candidate_marginal = jnp.array([[1.0, 10.0, 10.0], [1.0, 0.0, 0.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 0.0, atol=1e-9)
+
+
 def test_tie_at_a_support_edge_prefers_the_candidate_that_continues_right():
     """A candidate whose support ends at the tie point loses to one continuing.
 
