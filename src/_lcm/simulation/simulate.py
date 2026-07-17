@@ -854,9 +854,10 @@ def _interp_rows_with_support(
     (rows are NaN-padded in the tail). Outside it the interpolant extends an
     edge secant (below) or clamps (above) — feasible values that need not
     approximate the published function. Reads by field:
-    - `"value"` ⇒ cubic Hermite with the marginal-utility row as exact node
-      slopes — the convention the solve publishes values under, so the branch
-      ranking the re-decision sees is the solve convention's ranking;
+    - `"value"` ⇒ cubic Hermite with the marginal-utility row as the node-slope
+      input (Fritsch-Carlson-limited inside the interpolant) — the convention
+      the solve publishes values under, so the branch ranking the re-decision
+      sees is the solve convention's ranking;
     - `"policy"` ⇒ piecewise linear (the policy row carries no slope data).
     """
     rows_f = getattr(sim_policy, field)

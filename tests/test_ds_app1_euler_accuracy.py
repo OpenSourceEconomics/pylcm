@@ -163,14 +163,16 @@ def test_app1_mss_read_gap_dwarfs_the_measured_solve_disagreement():
 
     Each backend builds and solves its own model, so backend differences enter
     through the solve as well as through the read. This comparison measures
-    both: the two backends' solved value arrays agree within `1e-3` relative
-    (they refine envelopes differently at isolated kink nodes; most entries
-    are identical), while the Euler-error metric differs by more than a full
-    log10 unit — MSS qualifies for the off-grid policy read and scores
-    policy-interpolation error, FUES keeps the grid argmax and floors at the
-    action-grid spacing. The comparison is joint (backend plus simulation
-    path); the verified solve agreement bounds how much of the gap the solve
-    side can carry.
+    both: the two backends' solved value arrays share the same finite mask and
+    agree within `1e-3` relative on it (they refine envelopes differently at
+    isolated kink nodes; most entries are identical), while the Euler-error
+    metric differs by more than a full log10 unit — MSS qualifies for the
+    off-grid policy read and scores policy-interpolation error, FUES keeps the
+    grid argmax and floors at the action-grid spacing. The comparison is joint
+    (backend plus simulation path): the measured value agreement is consistent
+    with a large read-quantization component in the metric gap, but a
+    value-level bound does not by itself bound policy or branch differences
+    near ties, so the design does not isolate the read's contribution.
     """
     config = {
         "tau": 1.0,
@@ -190,6 +192,11 @@ def test_app1_mss_read_gap_dwarfs_the_measured_solve_disagreement():
         for regime_name, v_fues in regime_to_v.items():
             v_mss = v_by_backend["mss"][period][regime_name]
             finite = np.isfinite(np.asarray(v_fues))
+            np.testing.assert_array_equal(
+                finite,
+                np.isfinite(np.asarray(v_mss)),
+                err_msg=f"finite masks differ at period {period}, {regime_name}",
+            )
             np.testing.assert_allclose(
                 np.asarray(v_fues)[finite],
                 np.asarray(v_mss)[finite],

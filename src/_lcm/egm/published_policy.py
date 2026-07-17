@@ -24,9 +24,10 @@ branch's conditional value is interpolated at that branch's own resources
 (discrete-only constraints mask infeasible branches to `-inf`), the feasible
 branch of highest interpolated value wins, and only the winner's policy is
 read. The value read uses the cubic Hermite interpolant with the
-`marginal_utility` row as exact node slopes — the same convention the solve
-uses to publish values — so the ranking the re-decision sees is the ranking
-the solve convention implies.
+`marginal_utility` row supplied as the node-slope input (the economic marginal
+at each node, Fritsch-Carlson-limited inside the interpolant) — the same
+convention the solve uses to publish values — so the ranking the re-decision
+sees is the ranking the solve convention implies.
 
 The gate exists because the stored rows are the **solve-phase** optimum of
 one conditional problem each, and a read is faithful only where the rows
@@ -37,10 +38,11 @@ the grid-argmax path:
   the stored policy solve the wrong simulate-phase FOC or puts the policy
   rows on the wrong coordinates;
 - regimes whose upper-envelope backend does not certify every crossing —
-  only MSS inserts the exact segment crossing by construction; FUES decides
-  segment identity by a slope-threshold heuristic (no labels from the
-  kernel), so its row can silently bridge a missed switch, and RFC/LTM leave
-  switches between retained nodes;
+  only MSS enumerates the complete envelope-switch sequence (interior
+  crossings, exact-node switches, value jumps; loud overflow past its
+  budget); FUES decides segment identity by a slope-threshold heuristic (no
+  labels from the kernel), so its row can silently bridge a missed switch,
+  and RFC/LTM leave switches between retained nodes;
 - regimes with a passive continuous state — each row is the envelope policy
   conditional on one passive node, so blending rows across a passive-dimension
   branch switch would read an action from neither branch;
@@ -105,10 +107,12 @@ class EGMSimPolicy:
     marginal_utility: FloatND
     """Marginal utility at `endog_grid` (NaN on padding slots).
 
-    Shared with the period's `EGMCarry.marginal_utility`: the value row's
-    exact node slope by the envelope theorem. Simulation passes it as the
-    slope row of the cubic Hermite value read, matching the interpolation
-    convention the solve publishes values under.
+    Shared with the period's `EGMCarry.marginal_utility`: the economic
+    marginal `u'(c)` at each node — the value row's slope by the envelope
+    theorem at solve nodes. Simulation passes it as the slope input of the
+    cubic Hermite value read (Fritsch-Carlson-limited inside the
+    interpolant), matching the interpolation convention the solve publishes
+    values under.
     """
 
     row_discrete_state_names: tuple[StateName, ...] = ()
