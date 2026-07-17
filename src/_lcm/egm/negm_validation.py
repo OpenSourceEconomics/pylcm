@@ -31,7 +31,11 @@ only the *outer*/nesting contract. The rules, in the order they are checked:
   inner solve (which already performs the discrete `logsumexp`), so the outer
   max sits outside the discrete aggregation — the wrong order
   (`max_{s'} logsumexp_d ≠ logsumexp_d max_{s'}`). A taste-shocked NEGM regime is
-  therefore rejected.
+  therefore rejected,
+- carry layout: the stacked outer continuation carry addresses the durable as
+  the last passive row axis, so a (hard) discrete action or a passive
+  continuous state declared after the durable is rejected — the per-durable
+  candidate lift would otherwise address the wrong axis.
 
 The coupled-2-Euler detector is structural and deliberately over-rejects:
 catching the DS pension coupling (the outer post-decision feeding the inner
@@ -55,6 +59,7 @@ from _lcm.egm.validation import (
     _solve_grids,
     _without,
 )
+from _lcm.grids import ContinuousGrid
 from _lcm.typing import FunctionName, RegimeName
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
@@ -111,6 +116,9 @@ def _validate_negm_regime(
     )
     _fail_if_taste_shock_ordering_violated(
         regime_name=regime_name, user_regime=user_regime
+    )
+    _fail_if_carry_layout_unsupported(
+        regime_name=regime_name, user_regime=user_regime, solver=solver, inner=inner
     )
 
 
@@ -317,5 +325,65 @@ def _fail_if_taste_shock_ordering_violated(
             "(max over the durable margin of logsumexp over the discrete choice "
             "is not logsumexp of the max). Remove the taste shocks or use the "
             "grid-search solver for this regime."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _fail_if_carry_layout_unsupported(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    solver: NEGM,
+    inner: DCEGM,
+) -> None:
+    """The stacked outer carry requires durable-last rows and no discrete actions.
+
+    The published NEGM continuation retains every outer candidate on an axis
+    inserted directly after the durable margin's passive axis, and lifts each
+    candidate by a per-durable-state credited cost addressed through that
+    layout. Two regime shapes break it and are rejected:
+
+    - a **discrete action** (the carry's row block would gain action axes after
+      the durable, so the lift would mis-identify an action axis as the
+      durable) — a taste-shocked discrete choice is already rejected by the
+      aggregation-ordering rule; this rejects the remaining hard case,
+    - a **passive continuous state declared after the durable** (the durable
+      must be the last passive axis for the per-durable lift to address it).
+    """
+    if user_regime.actions:
+        discrete_action_names = [
+            name
+            for name, grid in _solve_grids(slot=user_regime.actions).items()
+            if not isinstance(grid, ContinuousGrid)
+        ]
+        if discrete_action_names:
+            msg = (
+                f"Regime '{regime_name}' declares discrete action(s) "
+                f"{discrete_action_names} alongside `solver=NEGM(...)`. The "
+                "stacked outer continuation carry does not support "
+                "discrete-action row axes (they would follow the durable "
+                "margin's axis and break the per-durable candidate lift) — "
+                "model the discrete choice with `GridSearch`, or fold it into "
+                "the outer margin."
+            )
+            raise ModelInitializationError(msg)
+
+    durable_state = solver.outer_post_decision.removeprefix("next_")
+    passive_state_names = [
+        name
+        for name in _continuous_non_process_names(
+            grids=_solve_grids(slot=user_regime.states)
+        )
+        if name != inner.continuous_state
+    ]
+    if passive_state_names and passive_state_names[-1] != durable_state:
+        msg = (
+            f"Regime '{regime_name}' declares passive continuous state(s) "
+            f"{[n for n in passive_state_names if n != durable_state]} after "
+            f"the durable margin '{durable_state}'. The stacked outer "
+            "continuation carry lifts each candidate by a per-durable-state "
+            "credited cost, so the durable must be the last passive continuous "
+            "state the regime declares — reorder `states` so "
+            f"'{durable_state}' comes last."
         )
         raise ModelInitializationError(msg)

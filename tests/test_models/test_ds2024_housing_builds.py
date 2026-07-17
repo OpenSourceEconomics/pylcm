@@ -28,12 +28,17 @@ N_GRID = 10
 N_CONSUMPTION = 200
 N_PERIODS = 4
 
-# Pooled-interior thresholds. The value function is O(1)-O(10) on the interior;
-# the brute consumption grid undershoots and the DC-EGM carries a savings-grid
-# interpolation error, so the two agree in bulk up to grid resolution rather than
-# exactly at every cell.
-MEAN_TOL = 0.20
-CELL_TOL = 0.60
+# Pooled-interior thresholds. The value function is O(1)-O(10) on the interior.
+# Comparisons against the brute grid-search twin are limited by the brute
+# consumption grid's undershoot, so they agree in bulk up to grid resolution
+# rather than exactly at every cell. The NEGM-vs-VFI-oracle comparison is
+# limited only by the shared grid resolution — the exact query-side outer
+# envelope keeps the depreciating keeper at the same agreement as the identity
+# keeper — so its thresholds are much tighter.
+BRUTE_MEAN_TOL = 0.20
+BRUTE_CELL_TOL = 0.60
+ORACLE_MEAN_TOL = 0.06
+ORACLE_CELL_TOL = 0.30
 MIN_FRACTION_WITHIN = 0.95
 
 
@@ -92,8 +97,8 @@ def test_ds2024_housing_negm_matches_brute_on_interior():
         differences.append(np.abs(brute_V[interior] - negm_V[interior])[finite])
     difference = np.concatenate(differences)
 
-    assert float(difference.mean()) < MEAN_TOL
-    assert float((difference <= CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
+    assert float(difference.mean()) < BRUTE_MEAN_TOL
+    assert float((difference <= BRUTE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
 def _pooled_interior_difference(pylcm_solution, oracle):
@@ -136,8 +141,8 @@ def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta():
 
     difference = _pooled_interior_difference(brute, oracle)
 
-    assert float(difference.mean()) < MEAN_TOL
-    assert float((difference <= CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
+    assert float(difference.mean()) < BRUTE_MEAN_TOL
+    assert float((difference <= BRUTE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
 def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
@@ -157,10 +162,59 @@ def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
         delta=0.10,
     ).solve(params=build_params(variant="negm", delta=0.10), log_level="off")
     oracle = solve_ds2024_housing_vfi(
-        n_grid=N_GRID, n_periods=N_PERIODS, n_consumption=400, delta=0.10
+        n_grid=N_GRID,
+        n_periods=N_PERIODS,
+        n_consumption=400,
+        delta=0.10,
+        read="clamp",
     )
 
     difference = _pooled_interior_difference(negm, oracle)
 
-    assert float(difference.mean()) < MEAN_TOL
-    assert float((difference <= CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
+    assert float(difference.mean()) < ORACLE_MEAN_TOL
+    assert float((difference <= ORACLE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
+
+
+def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
+    """Refining the outer house grid moves the NEGM solve toward the dense truth.
+
+    Exactness is to the *declared outer grid*: enlarging the candidate set on
+    nested grids (5 ⊂ 9 ⊂ 17 linspace points) can only add outer options, so
+    the solve improves toward the continuous-outer problem. The reference is
+    the VFI oracle with a dense outer search (129 points plus the free-keep
+    candidate) and its continuation reads clamp-matched to the NEGM carry
+    read; the state and liquid grids are fixed throughout, so the comparison
+    isolates the outer-grid refinement. The pooled interior difference must
+    fall strictly at each refinement and at least halve from coarsest to
+    finest.
+
+    Beyond this range the difference sits at the fixed state-grid floor
+    (roughly half the finest value here), where further outer refinement no
+    longer moves it monotonically — an unresolved interaction of the remaining
+    approximations shared by both sides. Candidate count alone cannot grow a
+    uniform value-error bound (the max is 1-Lipschitz in the sup norm), so the
+    floor is diagnosed, not explained, by this test.
+    """
+    oracle = solve_ds2024_housing_vfi(
+        n_grid=N_GRID,
+        n_periods=N_PERIODS,
+        n_consumption=400,
+        delta=0.10,
+        n_outer_grid=129,
+        read="clamp",
+    )
+    means = []
+    for n_outer_grid in (5, 9, 17):
+        negm = build_model(
+            variant="negm",
+            n_grid=N_GRID,
+            n_periods=N_PERIODS,
+            n_consumption=N_CONSUMPTION,
+            delta=0.10,
+            n_outer_grid=n_outer_grid,
+        ).solve(params=build_params(variant="negm", delta=0.10), log_level="off")
+        means.append(float(_pooled_interior_difference(negm, oracle).mean()))
+
+    assert means[0] > means[1] > means[2]
+    assert means[2] < means[0] / 2
+    assert means[2] < ORACLE_MEAN_TOL

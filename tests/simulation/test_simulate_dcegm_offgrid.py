@@ -85,15 +85,14 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     np.testing.assert_allclose(consumption, expected, rtol=2e-2)
 
 
-def test_discrete_action_regime_keeps_the_grid_consumption_path():
-    """With a discrete work choice, simulated consumption stays on the grid.
+def test_discrete_action_regime_consumption_leaves_the_action_grid():
+    """With a discrete work choice, simulated consumption is read off-grid.
 
-    The discrete branch is chosen from grid-restricted Q values; a branch
-    whose refined conditional optimum lies between action-grid nodes can lose
-    that comparison yet win after continuous refinement, so replacing only
-    the continuous action could pair the refined policy with the wrong
-    branch. Until branch re-decision from published conditional values
-    exists, such regimes keep the grid-argmax consumption.
+    The discrete branch is re-decided at the subject's state from the
+    published conditional values, and the winning branch's policy row is
+    interpolated at the subject's resources — so consumption need not sit on
+    an action-grid node. (The closed-form re-decision tests pin the values;
+    this pins that the off-grid path engages for a discrete-action regime.)
     """
     n_periods = 3
     model = dcegm_variants.get_full_model("dcegm", n_periods)
@@ -125,7 +124,7 @@ def test_discrete_action_regime_keeps_the_grid_consumption_path():
     node_distance = np.abs(consumption[:, None] - consumption_nodes[None, :]).min(
         axis=1
     )
-    np.testing.assert_allclose(node_distance, 0.0, atol=1e-12)
+    assert np.all(node_distance > 1e-8)
 
 
 def _skill_bequest_utility(

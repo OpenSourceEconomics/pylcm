@@ -192,3 +192,43 @@ def test_taste_shocked_discrete_choice_is_rejected_with_ordering_explanation():
     )
     with pytest.raises(ModelInitializationError, match="outermost aggregation"):
         _validate(regime)
+
+
+def test_hard_discrete_action_is_rejected_with_carry_layout_explanation():
+    """A hard (untaste-shocked) discrete action violates the carry layout.
+
+    The stacked outer continuation carry places the candidate axis directly
+    after the durable margin's passive axis; a discrete-action axis would sit
+    between them and be mis-identified as the durable when the candidates are
+    lifted. The regime is rejected with a pointer to `GridSearch`.
+    """
+    regime = _VALID.replace(
+        actions={
+            **dict(_VALID.actions),
+            "labor_supply": DiscreteGrid(_Work),
+        },
+        functions={
+            **dict(_VALID.functions),
+            "is_working": _is_working,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="stacked outer"):
+        _validate(regime)
+
+
+def test_passive_state_after_the_durable_is_rejected_with_layout_explanation():
+    """A passive continuous state declared after the durable violates the layout.
+
+    The stacked outer carry lifts each candidate by a per-durable-state credited
+    cost, addressing the durable as the last passive axis; a passive state
+    declared after it would occupy that axis instead. The regime is rejected
+    with the required layout named.
+    """
+    regime = _VALID.replace(
+        states={
+            **dict(_VALID.states),
+            "ride_along": negm_kinked_toy.ILLIQUID_GRID,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="last"):
+        _validate(regime)

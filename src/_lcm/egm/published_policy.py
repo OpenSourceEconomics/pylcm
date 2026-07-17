@@ -1,11 +1,14 @@
 """Published continuous-action policy for off-grid DC-EGM forward simulation.
 
-The DC-EGM solve recovers an exact, off-grid consumption function: Euler
-inversion plus the upper envelope give the optimal continuous action on the
+The DC-EGM solve recovers the optimal continuous action off the action grid:
+Euler inversion plus the upper envelope give it exactly at each node of the
 endogenous (resources-space) grid. `EGMSimPolicy` is the per-period snapshot of
-that function — the off-grid policy a simulated subject's continuous action
-*could* be interpolated from at its resources, rather than an argmax snapped to
-the action grid.
+those nodes — a refined off-grid policy interpolant under the selected envelope
+convention, which a simulated subject's continuous action *could* be read from
+at its resources, rather than an argmax snapped to the action grid. Between
+nodes the read carries the interpolation error of a finite row; the envelope
+gate below buys branch faithfulness at the switches, not exactness within a
+branch.
 
 It is produced and carried for *every* solved period alongside the
 value-function arrays. Forward simulation consumes it where the regime
@@ -77,6 +80,15 @@ class EGMSimPolicy:
     policy: FloatND
     """Optimal continuous action at `endog_grid` (NaN on padding slots)."""
 
+    value: FloatND
+    """Conditional value at `endog_grid` (NaN on padding slots).
+
+    Shared with the period's `EGMCarry.value`: the row's combo-conditional
+    value function on the refined resources grid. Simulation compares the
+    interpolated conditional values across discrete-action rows to re-decide
+    the branch at the subject's state.
+    """
+
     row_discrete_state_names: tuple[StateName, ...] = ()
     """Names of the leading discrete-state row axes, in axis order."""
 
@@ -88,7 +100,7 @@ class EGMSimPolicy:
     """Names of the discrete-action row axes, after the passive states."""
 
 
-_EGM_SIM_POLICY_ARRAY_FIELDS = ("endog_grid", "policy")
+_EGM_SIM_POLICY_ARRAY_FIELDS = ("endog_grid", "policy", "value")
 _EGM_SIM_POLICY_STATIC_FIELDS = (
     "row_discrete_state_names",
     "row_passive_state_names",

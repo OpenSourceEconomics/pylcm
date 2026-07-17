@@ -63,6 +63,7 @@ from _lcm.typing import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
+    BoolND,
     Float1D,
     FloatND,
     IntND,
@@ -272,6 +273,17 @@ class _ChildRead:
 
     row_block_shape: tuple[int, ...]
     """Shape of the carry's row block: passive sizes, then action sizes."""
+
+    n_outer_candidates: int
+    """Candidate-axis length of a stacked NEGM child carry (`0` = none).
+
+    A NEGM child publishes every outer durable candidate — the keeper plus one
+    per outer-grid node — lifted into common cash-on-hand and stacked on an
+    axis just before the grid axis. The read takes the exact hard max over
+    that axis at the query, per durable node, *before* the passive blend, so
+    the blended value interpolates the nodewise outer maximum. `0` for every
+    other child (no candidate axis in its carry).
+    """
 
     co_map_state_names: tuple[StateName, ...] = ()
     """Fixed, distributed child states co-mapped with the carry's leading axes.
@@ -850,6 +862,7 @@ def _get_child_carry_reader(
                 row_queries=queries,
                 row_gradients=gradients,
                 paired_marginal_read=risk_aversion is not None,
+                n_outer_candidates=read.n_outer_candidates,
             )
             if risk_aversion is not None:
                 # A target whose continuation carries no shock lottery at this
@@ -1020,6 +1033,7 @@ def _expect_over_stochastic_nodes(
             row_queries=queries,
             row_gradients=gradients,
             paired_marginal_read=risk_aversion is not None,
+            n_outer_candidates=read.n_outer_candidates,
         )
 
     node_index_mesh = jnp.meshgrid(
@@ -1242,6 +1256,7 @@ def _aggregate_child_choices(
     row_queries: FloatND,
     row_gradients: FloatND,
     paired_marginal_read: bool = False,
+    n_outer_candidates: int = 0,
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Read one child's carry with mixed interpolation and aggregate its choices.
 
@@ -1252,9 +1267,10 @@ def _aggregate_child_choices(
     row is interpolated 1-D at its own resources query and its marginal is
     multiplied by its own composed gradient $(\\partial R'/\\partial A)$ —
     per row, because each row's envelope lives in its own resources space.
-    The passive axes are then blended away with edge-clamped linear weights
-    on the two neighboring nodes of each passive grid — *before* the choice
-    aggregation, so the logsum sees blended choice-specific values. Finally
+    The passive axes are then blended away (`_blend_passive_axes`) with
+    edge-clamped linear weights on the two neighboring nodes of each passive
+    grid — *before* the choice aggregation, so the logsum sees blended
+    choice-specific values. Finally
     the discrete-action rows are aggregated with the child's taste-shock
     scale: the smoothed value is the logsum and the smoothed marginal is
     $\\sum_{d'} P_{d'} \\mu_{d'} (\\partial R'/\\partial A)_{d'}$ — exact
@@ -1280,6 +1296,20 @@ def _aggregate_child_choices(
             (passive dims, then action dims).
         row_gradients: Per-row composed gradients $\\partial R'/\\partial A$
             with the row block's shape.
+        n_outer_candidates: Candidate-axis length of a stacked NEGM child
+            carry, `0` for a child without one. When positive, the carry's row
+            block carries a trailing candidate axis (the outer durable
+            candidates lifted into common cash-on-hand); each candidate row is
+            read at the *same* query (they share the coh axis), masked to
+            `-inf` below its own first finite coh node (its
+            borrowing-constrained support has not started — the lift moves
+            adjuster supports up by the credited cost, so the edge clamp would
+            otherwise let an infeasible candidate win on a boundary value),
+            and the axis is collapsed by the exact hard max at the query with
+            the winner's marginal (Danskin) — *before* the passive blend, so
+            the blend interpolates the nodewise outer maximum
+            `sum_k w_k max_j W_j(q; d_k)` rather than the lower bound
+            `max_j sum_k w_k W_j(q; d_k)`.
 
     Returns:
         Tuple of the smoothed continuation value and the smoothed marginal
@@ -1296,8 +1326,18 @@ def _aggregate_child_choices(
     search_block = prepared_search_grid[child_index]
     valid_block = prepared_valid_length[child_index]
     # Leading axes of the blocks: the child's passive nodes, then its
-    # discrete-action combos.
+    # discrete-action combos (then the candidate axis of a stacked NEGM child).
     block_shape = value_block.shape[:-1]
+    if n_outer_candidates:
+        # The stacked candidates share the lifted common-coh axis, so every
+        # candidate row of a block cell is read at that cell's single query and
+        # scaled by its single gradient.
+        row_queries = jnp.broadcast_to(
+            row_queries[..., None], (*row_queries.shape, n_outer_candidates)
+        )
+        row_gradients = jnp.broadcast_to(
+            row_gradients[..., None], (*row_gradients.shape, n_outer_candidates)
+        )
     grid_rows = grid_block.reshape(-1, n_pad)
     value_rows = value_block.reshape(-1, n_pad)
     marginal_rows = marginal_block.reshape(-1, n_pad)
@@ -1388,6 +1428,20 @@ def _aggregate_child_choices(
         marginal_at_child = jax.vmap(interp_row)(
             search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
         )
+    if n_outer_candidates:
+        # Below a candidate's own first finite coh node its support has not
+        # started: mask the read to `-inf` so the edge clamp cannot hand an
+        # infeasible lifted candidate a boundary value that wins the max. The
+        # `-inf` also pins the marginal to zero below. The upper support edge
+        # feeds the right-continuous tie rule at the candidate max.
+        row_lower = jnp.min(
+            jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1
+        )
+        row_upper = jnp.max(
+            jnp.where(jnp.isfinite(grid_rows), grid_rows, -jnp.inf), axis=1
+        )
+        candidate_right_available = queries_flat < row_upper
+        value_at_child = jnp.where(queries_flat < row_lower, -jnp.inf, value_at_child)
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as
     # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
@@ -1399,7 +1453,104 @@ def _aggregate_child_choices(
     )
     value_at_child = value_at_child.reshape(block_shape)
     marginal_at_child = marginal_at_child.reshape(block_shape)
+    if n_outer_candidates:
+        # Collapse the candidate axis *before* the passive blend, so the blend
+        # interpolates the nodewise outer maximum
+        # `sum_k w_k max_j W_j(q; d_k)` rather than the lower bound
+        # `max_j sum_k w_k W_j(q; d_k)`.
+        value_at_child, marginal_at_child = _collapse_outer_candidate_axis(
+            value_at_child=value_at_child,
+            marginal_at_child=marginal_at_child,
+            candidate_right_available=candidate_right_available.reshape(block_shape),
+        )
 
+    value_at_child, marginal_at_child = _blend_passive_axes(
+        value_at_child=value_at_child,
+        marginal_at_child=marginal_at_child,
+        child_passive_values=child_passive_values,
+        child_passive_grids=child_passive_grids,
+    )
+
+    value_at_child = value_at_child.reshape(-1)
+    marginal_at_child = marginal_at_child.reshape(-1)
+    if has_taste_shocks:
+        smoothed_value, choice_probs = logsum_and_softmax(
+            values=value_at_child, scale=carry.taste_shock_scale, axes=(0,)
+        )
+    else:
+        smoothed_value, choice_probs = _hard_max_and_one_hot(
+            values=value_at_child, axes=(0,)
+        )
+    smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
+    return smoothed_value, smoothed_marginal
+
+
+def _collapse_outer_candidate_axis(
+    *,
+    value_at_child: FloatND,
+    marginal_at_child: FloatND,
+    candidate_right_available: BoolND,
+) -> tuple[FloatND, FloatND]:
+    """Collapse a stacked NEGM child's candidate axis by the hard max at the query.
+
+    Publishes the winner's marginal (Danskin). An exact value tie resolves
+    right-continuously and support-aware: among tied candidates, one whose
+    support continues right of the query beats one ending there, and the
+    largest marginal breaks the rest — so the branch that wins immediately to
+    the right owns the derivative the parent's Euler inversion consumes. The
+    rank uses the gradient-scaled marginal; the composed gradient is shared by
+    all candidates of a cell and positive, so it never reorders them. A cell
+    whose candidates are all `-inf` (no live support) keeps the `(-inf, 0)`
+    infeasible contract: every masked marginal is exactly zero.
+
+    Args:
+        value_at_child: Read values with a trailing candidate axis.
+        marginal_at_child: Read marginals with the same shape.
+        candidate_right_available: Whether each candidate's support continues
+            right of the query, with the same shape.
+
+    Returns:
+        Tuple of the value and marginal with the candidate axis collapsed.
+
+    """
+    best_value = jnp.max(value_at_child, axis=-1, keepdims=True)
+    bounded_slope = jnp.arctan(marginal_at_child) / jnp.pi + 0.5
+    rank = jnp.where(
+        value_at_child >= best_value,
+        candidate_right_available.astype(bounded_slope.dtype) + bounded_slope,
+        -jnp.inf,
+    )
+    winner = jnp.argmax(rank, axis=-1, keepdims=True)
+    return (
+        jnp.take_along_axis(value_at_child, winner, axis=-1)[..., 0],
+        jnp.take_along_axis(marginal_at_child, winner, axis=-1)[..., 0],
+    )
+
+
+def _blend_passive_axes(
+    *,
+    value_at_child: FloatND,
+    marginal_at_child: FloatND,
+    child_passive_values: tuple[ScalarFloat, ...],
+    child_passive_grids: tuple[Float1D, ...],
+) -> tuple[FloatND, FloatND]:
+    """Blend each passive axis away with edge-clamped linear node weights.
+
+    Runs before the choice aggregation, so the logsum sees blended
+    choice-specific values.
+
+    Args:
+        value_at_child: Read values with the row block's shape (passive dims,
+            then action dims).
+        marginal_at_child: Read marginals with the same shape.
+        child_passive_values: The child's passive values at this savings node,
+            aligned with `child_passive_grids`.
+        child_passive_grids: The child's passive grids in carry-axis order.
+
+    Returns:
+        Tuple of the value and marginal with every passive axis blended away.
+
+    """
     for passive_value, passive_grid in zip(
         child_passive_values, child_passive_grids, strict=True
     ):
@@ -1420,19 +1571,7 @@ def _aggregate_child_choices(
             weight_lower * marginal_at_child[lower]
             + weight_upper * marginal_at_child[upper]
         )
-
-    value_at_child = value_at_child.reshape(-1)
-    marginal_at_child = marginal_at_child.reshape(-1)
-    if has_taste_shocks:
-        smoothed_value, choice_probs = logsum_and_softmax(
-            values=value_at_child, scale=carry.taste_shock_scale, axes=(0,)
-        )
-    else:
-        smoothed_value, choice_probs = _hard_max_and_one_hot(
-            values=value_at_child, axes=(0,)
-        )
-    smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
-    return smoothed_value, smoothed_marginal
+    return value_at_child, marginal_at_child
 
 
 def _build_child_reads(
@@ -1606,6 +1745,14 @@ def _build_child_reads(
         else:
             row_values = ()
             row_block_shape = ()
+        # A NEGM child carries a stacked candidate axis (keeper + one per outer
+        # node). Detected structurally off the solver spec — `outer_grid` is the
+        # NEGM outer margin's grid — because importing the solver class here
+        # would cycle through the kernel-builder modules that import this one.
+        outer_grid = getattr(target_regime.solver, "outer_grid", None)
+        n_outer_candidates = (
+            int(outer_grid.to_jax().shape[0]) + 1 if outer_grid is not None else 0
+        )
         reads[target] = _ChildRead(
             next_state_func=get_next_state_function_for_solution(
                 transitions=transitions[target],
@@ -1632,5 +1779,6 @@ def _build_child_reads(
             row_arg_names=passive_state_names + action_names,
             row_values=row_values,
             row_block_shape=row_block_shape,
+            n_outer_candidates=n_outer_candidates,
         )
     return MappingProxyType(reads)
