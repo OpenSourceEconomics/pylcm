@@ -607,11 +607,16 @@ class SimulationPhase:
 class _StochasticStateTransition:
     """Metadata for a stochastic state transition, used by automatic validation.
 
-    One entry exists for every `MarkovTransition` state — and for each target
-    of a per-target dict. The pre-solve state-transition validator consumes
-    these to evaluate the function on the regime's grid Cartesian product and
-    check that the output has the expected outcome-axis size, lies in [0, 1],
-    and has rows summing to 1.
+    One entry exists for every `MarkovTransition` state — for each target of a
+    per-target dict, and for each phase variant of a `Phased` law. The pre-solve
+    state-transition validator consumes these to evaluate the function on the
+    regime's grid Cartesian product and check that the output has the expected
+    outcome-axis size, lies in [0, 1], and has rows summing to 1.
+
+    A `Phased` law contributes one entry PER PHASE. Both must be kept: they are
+    different functions, and a malformed perceived law is just as fatal as a
+    malformed true one — it prices every action in backward induction. Collapsing
+    them onto one key would silently validate only whichever was inserted last.
     """
 
     func: Callable[..., FloatND]
@@ -632,6 +637,13 @@ class _StochasticStateTransition:
     Derived statically at process time from the function's AST. Empty
     when the function doesn't use the `probs_array[...]` pattern, in
     which case the AST subscript-order check is permissively skipped.
+    """
+
+    phase: Literal["solve", "simulate"] | None = None
+    """Phase this law belongs to; `None` for a bare (phase-invariant) law.
+
+    Carried only so failures name the offending phase — a bare law and a `Phased`
+    pair are otherwise validated identically.
     """
 
 

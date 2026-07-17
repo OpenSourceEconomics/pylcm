@@ -43,6 +43,8 @@ def get_Q_and_F(
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
     continuation_functions: EconFunctionsMapping | None = None,
+    flow_transitions: TransitionFunctionsMapping | None = None,
+    flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -52,13 +54,23 @@ def get_Q_and_F(
 
     Q mixes two phases when it is built for the simulate phase: the *current* flow
     (utility, feasibility, `H`) is simulate-phase, while the *continuation* is priced
-    under the agent's perceived law — the solve phase. `transitions` already carries the
-    solve-phase laws, but a transition law is a DAG node like any other: `dags` resolves
-    its argument names against a function pool, so a law that depends on a `Phased`
-    helper picks up whichever variant that pool holds. Passing the solve pool as
-    `continuation_functions` is what makes the whole continuation sub-DAG — the outer
-    `next_<state>` / `weight_<target>__next_<state>` nodes *and* every helper they
-    read — resolve from the solve phase.
+    under the agent's perceived law — the solve phase. The flow is *now*, so it is
+    realized under the true law; the belief is about the *future*, so it prices only
+    the continuation.
+
+    Each of the two sub-DAGs must be **phase-closed**: a transition law is a DAG node
+    like any other, and `dags` resolves its argument names against a function pool
+    transitively, so a law that depends on a `Phased` helper picks up whichever variant
+    that pool holds. It therefore takes a matched (transitions, functions) pair per
+    role:
+
+    - flow: `flow_transitions` + `functions`,
+    - continuation: `transitions` + `continuation_functions`.
+
+    Mixing them across roles — e.g. a solve outer `next_<state>` resolving its helpers
+    from the simulate pool — yields a sub-DAG that is neither phase and can reverse the
+    argmax. The same `next_<state>` name legitimately resolves to *different* callables
+    in the two roles; that is the phase split, not an inconsistency.
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
@@ -85,20 +97,38 @@ def get_Q_and_F(
             solve pool. The simulate phase must pass the SOLVE pool here so the agent
             compares actions under its perceived law while the world is realized under
             the true one.
+        flow_transitions: Transition bundle the *flow* `next_<state>` nodes are taken
+            from — the ones a within-period utility or feasibility may read (the NEGM
+            service-flow pattern). Defaults to `transitions`, which is correct in the
+            solve phase. The simulate phase must pass the SIMULATE transitions, so that
+            the flow sub-DAG is closed under the simulate pool supplied as `functions`.
+        flow_stochastic_transition_names: Stochastic names to exclude when merging
+            `flow_transitions`. Defaults to `stochastic_transition_names`. It is a
+            separate argument because a state may be stochastic in one phase and
+            deterministic in the other.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
         for a non-terminal period.
 
     """
-    # In the solve phase the two pools coincide; only simulate passes them apart.
+    # In the solve phase the two roles coincide; only simulate passes them apart.
     continuation_pool = (
-        functions if continuation_functions is None else (continuation_functions)
+        functions if continuation_functions is None else continuation_functions
     )
+    flow_pool = transitions if flow_transitions is None else flow_transitions
+    flow_stochastic_names = (
+        stochastic_transition_names
+        if flow_stochastic_transition_names is None
+        else flow_stochastic_transition_names
+    )
+    # The flow's `next_<state>` nodes pair with `functions`; the continuation's pair
+    # with `continuation_pool`. Keeping the two merges separate is what makes each
+    # sub-DAG phase-closed.
     deterministic_transitions, conflicting_deterministic_transition_names = (
         _get_deterministic_transitions(
-            transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
+            transitions=flow_pool,
+            stochastic_transition_names=flow_stochastic_names,
         )
     )
     U_and_F = _get_U_and_F(

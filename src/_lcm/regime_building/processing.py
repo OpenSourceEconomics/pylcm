@@ -964,15 +964,19 @@ def _build_simulation_phase(
         # it evaluates on the Cartesian grid, not per-subject. The solve
         # phase built that function unconditionally for non-terminal regimes.
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
-        # The simulated agent acts on its BELIEFS and lives in the TRUTH: the current
-        # flow comes from the simulate pool (`functions`), while the whole continuation
-        # sub-DAG — the state laws, the stochastic weights, and every helper they read —
-        # is resolved against the SOLVE pool. Passing `transitions=solve_transitions`
-        # alone is not enough: `dags` resolves a transition's argument names against the
-        # function pool it is handed, so the outer law would still read `Phased` helpers
-        # (and, for `MarkovTransition`, its whole `weight_*` node) from the simulate
-        # phase. The realized next state stays on the simulate laws — see
-        # `next_state`/`compute_regime_transition_probs` below.
+        # The simulated agent acts on its BELIEFS about the FUTURE and lives in the
+        # TRUTH NOW. So Q is built from two phase-closed halves:
+        #   flow         = simulate transitions + simulate pool (`functions`)
+        #   continuation = solve transitions    + solve pool (`solve_functions`)
+        # Each half needs BOTH its transitions and its function pool: `dags` resolves a
+        # transition's argument names against the pool it is handed, transitively, so
+        # passing `transitions=solve_transitions` alone would still read `Phased`
+        # helpers (and, for `MarkovTransition`, the whole `weight_*` node) from the
+        # simulate phase — and passing the solve transitions into the flow would leave
+        # the flow's `next_<state>` a solve law wearing simulate helpers, a sub-DAG that
+        # is neither phase. The same `next_<state>` name therefore legitimately resolves
+        # to different callables in the two halves. The realized next state stays on the
+        # simulate laws — see `next_state`/`compute_regime_transition_probs` below.
         Q_and_F_functions = _build_Q_and_F_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
             functions=functions,
@@ -985,6 +989,8 @@ def _build_simulation_phase(
             flat_param_names=flat_param_names,
             certainty_equivalent=certainty_equivalent,
             continuation_functions=solve_functions,
+            flow_transitions=core.transitions,
+            flow_stochastic_transition_names=core.stochastic_transition_names,
         )
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
@@ -1844,7 +1850,24 @@ def _get_simple_transition_discrete_grid(
     (fixed state), not a DiscreteGrid, or the state is not present in the
     source regime.
 
+    A `Phased` entry is unwrapped: the source grid is the same for both variants, so
+    the only question is whether either variant is a *simple* (broadcast) law. The grid
+    is returned when at least one variant is — that variant is the one that could
+    silently clip — and None only when every variant handles targets explicitly. Left
+    wrapped, a `Phased` of two per-target dicts would be mistaken for one broadcast law
+    and rejected for the very category difference the dicts exist to express.
+
     """
+    if isinstance(raw, Phased):
+        variants = [
+            variant
+            for variant in (raw.solve, raw.simulate)
+            if _get_simple_transition_discrete_grid(user_regime, state_name, variant)
+            is not None
+        ]
+        if not variants:
+            return None
+        raw = variants[0]
     # Per-target dicts handle category differences explicitly
     if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition):
         return None
@@ -2156,6 +2179,8 @@ def _build_Q_and_F_per_period(
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
     continuation_functions: EconFunctionsMapping | None = None,
+    flow_transitions: TransitionFunctionsMapping | None = None,
+    flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
@@ -2180,6 +2205,12 @@ def _build_Q_and_F_per_period(
         flat_param_names: Frozenset of flat parameter names for the regime.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
+        continuation_functions: Solve-phase pool the continuation sub-DAG resolves
+            against; `None` in the solve phase, where it coincides with `functions`.
+        flow_transitions: Simulate-phase transitions the flow `next_<state>` nodes are
+            taken from; `None` in the solve phase, where they coincide with
+            `transitions`. See `get_Q_and_F` for the phase-closure contract.
+        flow_stochastic_transition_names: Stochastic names of `flow_transitions`.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -2210,6 +2241,8 @@ def _build_Q_and_F_per_period(
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
             continuation_functions=continuation_functions,
+            flow_transitions=flow_transitions,
+            flow_stochastic_transition_names=flow_stochastic_transition_names,
         )
 
     # Map each period to its group's function

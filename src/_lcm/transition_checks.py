@@ -569,14 +569,16 @@ def _check_state_probs(
     age: float | ScalarInt | ScalarFloat,
 ) -> None:
     """Assert outcome-axis size, [0, 1] range, and sum-to-1 on a probs array."""
-    state_label = (
-        f"state '{transition.state_name}'"
-        if transition.target_regime_name is None
-        else (
-            f"state '{transition.state_name}' (target regime "
-            f"'{transition.target_regime_name}')"
-        )
-    )
+    qualifiers = []
+    if transition.target_regime_name is not None:
+        qualifiers.append(f"target regime '{transition.target_regime_name}'")
+    if transition.phase is not None:
+        # A `Phased` law has two variants under one state name; without the phase the
+        # message would not say which of them is malformed.
+        qualifiers.append(f"{transition.phase} phase")
+    state_label = f"state '{transition.state_name}'"
+    if qualifiers:
+        state_label += f" ({', '.join(qualifiers)})"
 
     if probs.shape[-1] != transition.n_outcomes:
         raise InvalidStateTransitionProbabilitiesError(

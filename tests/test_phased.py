@@ -679,17 +679,73 @@ def test_markov_variant_in_phased_law_is_accepted() -> None:
     )
 
 
-def test_mixed_stochastic_and_deterministic_phased_law_is_rejected() -> None:
-    """Both phases must agree on whether the law is stochastic.
+def test_mixed_stochastic_and_deterministic_phased_law_is_accepted() -> None:
+    """The two phases need NOT agree on whether the law is stochastic.
 
-    A state cannot be integrated over in one phase and assigned a point value in the
-    other — it would not even have the same kind across phases.
+    A deterministic law is a degenerate kernel, so the state has the same domain either
+    way, and the two phase cores classify their stochastic names independently. A
+    perceived kernel with a point-valued truth is a coherent model, not a kind error.
+    `tests/regime_building/test_mixed_stochasticity_phases.py` pins the behaviour in
+    both directions.
     """
-    with pytest.raises(RegimeInitializationError, match="must agree on whether"):
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(solve=MarkovTransition(_markov_law), simulate=_next_wealth)
+        }
+    )
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(solve=_next_wealth, simulate=MarkovTransition(_markov_law))
+        }
+    )
+
+
+def test_mixed_per_target_dict_phased_law_is_accepted() -> None:
+    """Same for the per-target-dict form, where the cells carry the stochastic-ness."""
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(
+                solve={"working": MarkovTransition(_markov_law)},
+                simulate={"working": _next_wealth},
+            )
+        }
+    )
+
+
+def test_per_target_dict_in_one_phase_only_is_rejected() -> None:
+    """A per-target dict inside `Phased` must be per-target in both phases.
+
+    The outer-dict form is normalized into per-target `Phased` cells; pairing a dict
+    with a single law has no well-defined rewrite, since the bare law would have to be
+    duplicated onto a target list only the other phase declares.
+
+    The message must NOT tell the user to push `Phased` into the dict -- that is
+    rejected by `_validate_per_target_dict` (`Phased` is outermost-only), so the outer
+    form is the only spelling available and the fix is to complete the other side.
+    """
+    with pytest.raises(RegimeInitializationError, match="per-target dict but"):
         _build_regime(
             state_transitions={
                 "wealth": Phased(
-                    solve=MarkovTransition(_markov_law), simulate=_next_wealth
+                    solve={"working": MarkovTransition(_markov_law)},
+                    simulate=_next_wealth,
+                )
+            }
+        )
+
+
+def test_per_target_dicts_with_different_targets_are_rejected() -> None:
+    """Both phases' per-target dicts must cover the same targets.
+
+    Otherwise normalization leaves a target with a law in one phase and none in the
+    other.
+    """
+    with pytest.raises(RegimeInitializationError, match="different targets"):
+        _build_regime(
+            state_transitions={
+                "wealth": Phased(
+                    solve={"working": _next_wealth},
+                    simulate={"retired": _next_wealth},
                 )
             }
         )

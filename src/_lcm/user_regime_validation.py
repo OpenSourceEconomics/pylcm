@@ -550,28 +550,46 @@ def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
     return error_messages
 
 
-def _phase_stochasticity_mismatch(*, name: StateName, value: Phased) -> list[str]:
-    """Both variants of a `Phased` law must be stochastic, or neither.
+def _phased_per_target_shape_mismatch(*, name: StateName, value: Phased) -> list[str]:
+    """Inside `Phased`, a per-target dict must be in both phases, over one target set.
 
-    The two phases drive different machinery: the solve law supplies the probability
-    weights Q integrates the continuation over, while the simulate law realizes the next
-    state. A mixed pair (`MarkovTransition` on one side, a deterministic callable on the
-    other) asks the engine to integrate over a state in one phase and assign it a point
-    value in the other — the state would not even have the same kind in the two phases.
+    `Phased(solve={...}, simulate={...})` is normalized at collection into one entry per
+    target, each holding a `Phased` of that target's two laws — the form the engine
+    actually consumes. That rewrite is only well defined when both variants are dicts
+    over the same targets. A dict paired with a bare law has no meaningful rewrite (the
+    bare law would have to be duplicated onto a target list only the other phase
+    declares), and differing target sets leave a target with a law in one phase and none
+    in the other.
+
+    This constrains the SHAPE of the declaration, not the model. `Phased` is
+    outermost-only (`_validate_per_target_dict` rejects a `Phased` cell), so the outer
+    form IS the spelling for a per-target law that varies by phase — the guidance is to
+    complete the other side, never to push `Phased` into the dict.
     """
-    solve_stochastic = isinstance(value.solve, MarkovTransition)
-    simulate_stochastic = isinstance(value.simulate, MarkovTransition)
-    if solve_stochastic == simulate_stochastic:
+    solve_per_target = isinstance(value.solve, Mapping)
+    simulate_per_target = isinstance(value.simulate, Mapping)
+    if not solve_per_target and not simulate_per_target:
         return []
-    stochastic, deterministic = (
-        ("solve", "simulate") if solve_stochastic else ("simulate", "solve")
-    )
-    return [
-        f"state_transitions['{name}']: the {stochastic} variant is stochastic "
-        f"(`MarkovTransition`) but the {deterministic} variant is deterministic. Both "
-        f"phases must agree on whether the law is stochastic — wrap both in "
-        f"`MarkovTransition`, or neither.",
-    ]
+    if solve_per_target != simulate_per_target:
+        per_target, bare = (
+            ("solve", "simulate") if solve_per_target else ("simulate", "solve")
+        )
+        return [
+            f"state_transitions['{name}']: the {per_target} variant is a per-target "
+            f"dict but the {bare} variant is a single law. Give the {bare} variant a "
+            f"per-target dict over the same targets — `Phased(solve={{...}}, "
+            f"simulate={{...}})` is the spelling for a per-target law that varies by "
+            f"phase (`Phased` cannot go inside the dict).",
+        ]
+    solve_targets = set(cast("Mapping[RegimeName, object]", value.solve))
+    simulate_targets = set(cast("Mapping[RegimeName, object]", value.simulate))
+    if solve_targets != simulate_targets:
+        return [
+            f"state_transitions['{name}']: the per-target dicts inside `Phased` "
+            f"declare different targets — solve has {sorted(solve_targets)}, simulate "
+            f"has {sorted(simulate_targets)}. Both phases must cover the same targets.",
+        ]
+    return []
 
 
 def _state_transition_value_errors(*, name: StateName, value: object) -> list[str]:
@@ -581,14 +599,25 @@ def _state_transition_value_errors(*, name: StateName, value: object) -> list[st
     callable, `MarkovTransition`, or a per-target Mapping. A stochastic variant inside
     `Phased` is supported: the solve variant is the perceived law that prices the
     continuation in Q, the simulate variant is the true law the next state is drawn
-    from. Both variants must agree on *whether* the law is stochastic, though — a
-    state cannot be integrated over in one phase and set deterministically in the
-    other. `None` is not a law of motion; the error points to `fixed_transition`.
+    from.
+
+    The two variants need NOT agree on whether the law is stochastic. A deterministic
+    law is a degenerate kernel, so the state has the same domain either way, and the two
+    phase cores classify their stochastic names independently — a perceived kernel with
+    a point-valued truth, and the reverse, both build and carry the intended meaning
+    (`tests/regime_building/test_mixed_stochasticity_phases.py`).
+
+    They must, however, agree on the SHAPE of the declaration: per-target in both
+    phases over the same targets, or per-target in neither. That is not a modelling
+    restriction but a normalization precondition — see
+    `_phased_per_target_shape_mismatch`.
+
+    `None` is not a law of motion; the error points to `fixed_transition`.
     """
     error_messages: list[str] = []
     phase_variant = isinstance(value, Phased)
     if phase_variant:
-        error_messages.extend(_phase_stochasticity_mismatch(name=name, value=value))
+        error_messages.extend(_phased_per_target_shape_mismatch(name=name, value=value))
     for variant, label in _state_transition_variants(value):
         if variant is None:
             if phase_variant:

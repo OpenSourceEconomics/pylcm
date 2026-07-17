@@ -10,6 +10,7 @@ from lcm import (
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    Phased,
     categorical,
     fixed_transition,
 )
@@ -385,6 +386,49 @@ def test_per_target_dict_transitions():
         f"Retired health codes should be in {valid_retired_codes}, "
         f"got {sorted(retired_rows['health'].unique())}"
     )
+
+
+def test_outer_phased_per_target_dict_spans_grids():
+    """`Phased` of two per-target dicts is a per-target law, not a broadcast one.
+
+    The categorical validator rejects a *simple* transition that spans mismatched
+    discrete grids, because one function applied to every target would silently clip
+    indices. A per-target dict is exempt: it maps each target explicitly. Left wrapped,
+    a `Phased` of two such dicts is neither a `Mapping` nor an identity law, so it fell
+    through to the broadcast branch and was rejected for exactly the category
+    difference the dicts exist to express (3 working health states -> 2 retired ones).
+    """
+    per_target = {
+        "working_life": hm_next_health_working,
+        "retirement": map_working_health_to_retired,
+        "dead": hm_next_health_working,
+    }
+    working = UserRegime(
+        states={"health": DiscreteGrid(HealthWorkingLife)},
+        state_transitions={
+            "health": Phased(solve=per_target, simulate=per_target),
+        },
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        functions={"utility": hm_utility_working},
+        transition=hm_next_regime_working,
+        active=lambda age: age < 3,
+    )
+    retired = UserRegime(
+        states={"health": DiscreteGrid(HealthRetirement)},
+        state_transitions={"health": fixed_transition("health")},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        functions={"utility": hm_utility_retirement},
+        transition=hm_next_regime_retired,
+        active=lambda age: age < 4,
+    )
+    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={"working_life": working, "retirement": retired, "dead": dead},
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=RegimeId,
+    )
+    model.solve(log_level="off", params={"discount_factor": 0.95})
 
 
 def test_discrete_state_same_count_different_names():
