@@ -1,11 +1,14 @@
 """Published continuous-action policy for off-grid DC-EGM forward simulation.
 
-The DC-EGM solve recovers an exact, off-grid consumption function: Euler
-inversion plus the upper envelope give the optimal continuous action on the
+The DC-EGM solve recovers the optimal continuous action off the action grid:
+Euler inversion plus the upper envelope give it exactly at each node of the
 endogenous (resources-space) grid. `EGMSimPolicy` is the per-period snapshot of
-that function — the off-grid policy a simulated subject's continuous action
-*could* be interpolated from at its resources, rather than an argmax snapped to
-the action grid.
+those nodes — a refined off-grid policy interpolant under the selected envelope
+convention, which a simulated subject's continuous action *could* be read from
+at its resources, rather than an argmax snapped to the action grid. Between
+nodes the read carries the interpolation error of a finite row; the envelope
+gate below buys branch faithfulness at the switches, not exactness within a
+branch.
 
 It is produced and carried for *every* solved period alongside the
 value-function arrays. Forward simulation consumes it where the regime

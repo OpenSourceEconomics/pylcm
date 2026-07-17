@@ -999,9 +999,12 @@ def _build_simulation_phase(
     #   keeper and adjuster candidates but publishes only the keeper's inner
     #   consumption function, so replaying it would pair an adjuster-won
     #   value with the keeper's policy;
-    # - a crossing-inserting upper-envelope backend (`fues`, `mss`) — RFC and
-    #   LTM leave the envelope switch between two retained nodes, so linear
-    #   policy interpolation across the switch would mix two branch policies;
+    # - a crossing-inserting upper-envelope backend — RFC and LTM leave the
+    #   envelope switch between two retained nodes, so linear policy
+    #   interpolation across the switch would mix two branch policies. MSS
+    #   inserts the exact crossing by construction; FUES does so only under the
+    #   exhaustive scan, so a bounded `fues_n_points_to_scan` is excluded too
+    #   (see `_envelope_publishes_crossings`);
     # - the single-post-state kernel (not asset-row mode) — when a
     #   savings-stage function reads the Euler state, DC-EGM solves per
     #   exogenous asset node and publishes one optimal point per node, not a
@@ -1032,7 +1035,7 @@ def _build_simulation_phase(
     egm_policy_read = None
     if (
         isinstance(solver, DCEGM)
-        and solver.upper_envelope in ("fues", "mss")
+        and _envelope_publishes_crossings(solver)
         and phase_invariant
         and not has_taste_shocks
         and not _regime_has_process_state(own_v_info)
@@ -1060,6 +1063,24 @@ def _build_simulation_phase(
         next_state=next_state,
         egm_policy_read=egm_policy_read,
     )
+
+
+def _envelope_publishes_crossings(solver: DCEGM) -> bool:
+    """Whether the solver's upper envelope inserts every segment crossing.
+
+    A branch-faithful policy read interpolates a row whose envelope switches sit
+    at duplicated abscissae carrying both branch policies:
+    - `"mss"` ⇒ always: it inserts the exact crossing by construction.
+    - `"fues"` ⇒ only under the exhaustive scan
+      (`fues_n_points_to_scan is None`). A bounded window may miss a segment's
+      continuation past the window's worth of interleaved off-segment
+      candidates, dropping that crossing and retaining the dominated
+      interlopers.
+    - `"rfc"` / `"ltm"` ⇒ never: the switch lands between retained nodes.
+    """
+    if solver.upper_envelope == "mss":
+        return True
+    return solver.upper_envelope == "fues" and solver.fues_n_points_to_scan is None
 
 
 def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:

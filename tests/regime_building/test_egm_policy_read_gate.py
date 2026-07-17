@@ -51,6 +51,39 @@ def test_crossing_inserting_envelope_backends_qualify(backend: str):
     assert model._regimes["retirement"].simulation.egm_policy_read is not None
 
 
+def test_bounded_fues_scan_does_not_qualify_for_the_policy_read():
+    """A finite FUES scan window keeps the grid path: its row may miss crossings.
+
+    Only the exhaustive scan (`fues_n_points_to_scan=None`) is proven to find a
+    segment's continuation when more than the window's worth of off-segment
+    candidates interleave. A bounded window may drop that crossing and retain
+    the dominated interlopers, so the row lacks the switch topology a
+    branch-faithful policy read interpolates over.
+    """
+    solver = dataclasses.replace(
+        DCEGM_SOLVER, upper_envelope="fues", fues_n_points_to_scan=8
+    )
+    model = _model_from_alive(
+        dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
+    )
+    assert model._regimes["retirement"].simulation.egm_policy_read is None
+
+
+def test_bounded_scan_setting_does_not_disqualify_the_mss_backend():
+    """MSS qualifies regardless of `fues_n_points_to_scan`: the knob is FUES-only.
+
+    MSS inserts the exact segment crossing by construction, so a scan-window
+    setting left on the solver never touches its published row.
+    """
+    solver = dataclasses.replace(
+        DCEGM_SOLVER, upper_envelope="mss", fues_n_points_to_scan=8
+    )
+    model = _model_from_alive(
+        dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
+    )
+    assert model._regimes["retirement"].simulation.egm_policy_read is not None
+
+
 def test_process_state_regime_does_not_qualify_for_the_policy_read():
     """A regime with a continuous stochastic-process state keeps the grid path.
 
