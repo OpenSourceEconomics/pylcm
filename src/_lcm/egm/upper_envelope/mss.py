@@ -4,25 +4,35 @@ Implements the upper-envelope method of HARK (Carroll et al. 2018), referenced
 in Dobrescu & Shanker (2026) as the `MSS` method column. Inverting the Euler
 equation in models with discrete choices yields a value *correspondence*: the
 candidates form a chain of linear segments between consecutive nodes that, in
-non-concave regions, overlap in the endogenous grid. MSS sweeps the common grid
-left-to-right and, at each output abscissa, evaluates every currently
-overlapping segment, keeps the max-value branch, and — where the winning branch
-switches between two adjacent abscissae — inserts the exact segment-crossing
-point (the kink).
+non-concave regions, overlap in the endogenous grid. The refinement emits a
+weakly ascending row that represents the correspondence's exact upper envelope
+under linear interpolation: every envelope breakpoint is present as a node.
 
-Inserting the crossing is what separates MSS from LTM: both evaluate the
-envelope at the candidate abscissae, but MSS adds the intersection abscissa as
-its own node, so the kink is placed exactly rather than smeared across the local
-grid spacing. The refined arrays therefore track the FUES envelope tightly. The
-sweep is a single left-to-right scan over the sorted abscissae — `O(N)` emitting
-steps, each evaluating the segment set — in contrast to RFC's per-pair dominance
-test, and unlike FUES it consumes no `jump_thresh` heuristic: the winner switch
-is read directly off the evaluated values.
+Between adjacent candidate abscissae no live segment starts or ends, so the
+bracketing segments are full lines there and the envelope's interior
+breakpoints are enumerated exactly: starting from the interval's left-endpoint
+winner, the earliest abscissa at which another bracketing line overtakes the
+current winner is the next breakpoint, and iterating from it walks the whole
+switch sequence. The enumeration budget per interval is
+`_MAX_CROSSINGS_PER_INTERVAL`; an interval needing more switches overflows
+loudly through the `n_kept > n_refined` contract instead of truncating the
+sequence.
 
-A crossing abscissa is inserted twice — same abscissa, left- and
-right-extrapolated policy — so the refined arrays stay weakly ascending and the
-policy discontinuity at a discrete-choice switch is preserved exactly, the same
-convention FUES uses.
+Discontinuities and switches are represented by duplicated abscissae — same
+grid value, left record then right record — covering three cases:
+
+- an interior crossing: both branch policies at the exact intersection, the
+  common crossing value;
+- a switch exactly at a candidate abscissa: the two one-sided winners' records
+  (equal values, distinct policies);
+- an envelope value jump at a candidate abscissa (a winning branch ending
+  above, or a new branch starting above, every other line): both one-sided
+  values and policies, preserving the discontinuity instead of smearing it.
+
+Interior coverage gaps (abscissa ranges no live segment spans, which arise
+only from NaN-dead candidates splitting the chain) are compacted: the flanking
+live nodes become adjacent output rows and a linear read bridges them. The
+crossing-completeness guarantee therefore applies on the live-covered domain.
 
 All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
@@ -33,6 +43,13 @@ import jax.numpy as jnp
 
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, ScalarInt
 
+# Per-interval envelope-switch enumeration budget. The upper envelope of the
+# lines bracketing one candidate interval can switch winners several times;
+# each switch costs one enumeration step. Real DC-EGM correspondences rarely
+# switch more than twice between adjacent candidates; an interval exceeding
+# the budget overflows loudly via `n_kept > n_refined`.
+_MAX_CROSSINGS_PER_INTERVAL = 8
+
 
 def refine_envelope(
     *,
@@ -42,18 +59,19 @@ def refine_envelope(
     n_refined: int,
     segment_id: Float1D | None = None,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-    """Refine a candidate value correspondence to its upper envelope.
+    """Refine a candidate value correspondence to its exact upper envelope.
 
     The candidates arrive as a chain of consecutive linear segments (one segment
     per consecutive input pair), as the Euler inversion produces them: the
     constrained run followed by the interior run, each ascending along its own
-    margin but jointly non-monotone in the endogenous grid. The abscissae are
-    sorted ascending and swept left-to-right; at each abscissa the highest
-    bracketing segment is kept, and where the winning segment switches between
-    two adjacent abscissae the exact crossing point is inserted (twice — left and
-    right policy). The refined arrays have static length `n_refined`, hold the
-    envelope points in weakly ascending grid order, and are NaN-padded in the
-    tail.
+    margin but jointly non-monotone in the endogenous grid. The output row
+    carries, in weakly ascending grid order:
+
+    - one node per distinct live candidate abscissa (two where the one-sided
+      winners differ — a switch or value jump at the node);
+    - every interior envelope crossing, inserted twice (same abscissa, left-
+      then right-branch policy), enumerated to completeness within the
+      per-interval budget.
 
     Args:
         endog_grid: Candidate endogenous grid points (resources). Consecutive
@@ -71,11 +89,12 @@ def refine_envelope(
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each
         of length `n_refined`, NaN-padded), and the number of envelope points
-        `n_kept`. `n_kept > n_refined` signals overflow; the arrays then hold a
-        valid truncated prefix of the envelope. Callers must check the counter
-        rather than publish the truncated arrays silently — the EGM step
-        NaN-poisons its published rows on overflow so the solve loop's NaN
-        diagnostics name the offending (regime, period).
+        `n_kept`. `n_kept > n_refined` signals overflow — either more envelope
+        rows than `n_refined` slots, or an interval whose switch sequence
+        exceeds the enumeration budget. Callers must check the counter rather
+        than publish the truncated arrays silently — the EGM step NaN-poisons
+        its published rows on overflow so the solve loop's NaN diagnostics name
+        the offending (regime, period).
 
     """
     # A dead candidate arrives NaN-filled (the EGM step poisons `-inf`-valued
@@ -84,13 +103,11 @@ def refine_envelope(
     # is neither queried nor evaluated.
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
 
-    # Sort the candidate abscissae ascending so the sweep is left-to-right and
-    # the NaN tail is contiguous; dead nodes sort last.
+    # Sort the candidate abscissae ascending so the emission order is
+    # left-to-right and the NaN tail is contiguous; dead nodes sort last.
     grid_key = jnp.where(dead, jnp.inf, endog_grid)
     order = jnp.argsort(grid_key)
     query_grid = jnp.where(dead, jnp.nan, endog_grid)[order]
-    query_dead = dead[order]
-    n_query = query_grid.shape[0]
 
     # Segment endpoints: candidate `k` to candidate `k+1`, consecutive in the
     # (unsorted) input order — the EGM cloud's natural segment chain. A segment
@@ -98,9 +115,7 @@ def refine_envelope(
     left_grid = endog_grid[:-1]
     right_grid = endog_grid[1:]
     left_policy = policy[:-1]
-    right_policy = policy[1:]
     left_value = value[:-1]
-    right_value = value[1:]
 
     # Per-link branch id and live mask. With explicit topology a link is a real
     # value segment iff both endpoints carry the same branch label, so unrelated
@@ -110,7 +125,7 @@ def refine_envelope(
     # non-monotone bridge excluded from the scan. Either way the winner stays
     # constant across one branch, so only a genuine branch switch is a kink.
     if segment_id is None:
-        decreases = (right_grid < left_grid) | (right_value < left_value)
+        decreases = (right_grid < left_grid) | (value[1:] < left_value)
         link_segment = jnp.cumsum(decreases.astype(jnp.int32))
         segment_live = ~dead[:-1] & ~dead[1:] & ~decreases
     else:
@@ -118,84 +133,81 @@ def refine_envelope(
         link_segment = segment_id[:-1].astype(jnp.int32)
         segment_live = ~dead[:-1] & ~dead[1:] & same_segment
 
-    envelope_value, envelope_policy, winner_link, winner_segment = _evaluate_envelope(
+    links = _LinkLines(
+        lower=jnp.minimum(left_grid, right_grid),
+        upper=jnp.maximum(left_grid, right_grid),
+        anchor_grid=left_grid,
+        anchor_value=left_value,
+        anchor_policy=left_policy,
+        value_slope=_slope(
+            x_a=left_grid, y_a=left_value, x_b=right_grid, y_b=value[1:]
+        ),
+        policy_slope=_slope(
+            x_a=left_grid, y_a=left_policy, x_b=right_grid, y_b=policy[1:]
+        ),
+        segment=link_segment,
+        live=segment_live,
+    )
+
+    left_side, right_side = _node_side_winners(query_grid=query_grid, links=links)
+
+    # One node per distinct live abscissa; duplicated abscissae in the input
+    # collapse onto the first occurrence (all copies see the same winners).
+    prev_grid = jnp.concatenate(
+        [jnp.full((1,), -jnp.inf, dtype=query_grid.dtype), query_grid[:-1]]
+    )
+    is_new = query_grid > prev_grid
+    tolerance = 64.0 * jnp.finfo(query_grid.dtype).eps
+    same_record = (
+        (left_side.branch == right_side.branch)
+        & jnp.isclose(left_side.value, right_side.value, rtol=tolerance, atol=tolerance)
+        & jnp.isclose(
+            left_side.policy, right_side.policy, rtol=tolerance, atol=tolerance
+        )
+    )
+    node_left_valid = left_side.exists & is_new
+    node_right_valid = right_side.exists & is_new & ~(left_side.exists & same_record)
+
+    crossings, interval_overflow = _enumerate_interval_crossings(
         query_grid=query_grid,
-        left_grid=left_grid,
-        right_grid=right_grid,
-        left_policy=left_policy,
-        right_policy=right_policy,
-        left_value=left_value,
-        right_value=right_value,
-        segment_id=link_segment,
-        segment_live=segment_live,
+        prev_grid=prev_grid,
+        is_new=is_new,
+        init_winner=jnp.concatenate(
+            [jnp.zeros((1,), dtype=jnp.int32), right_side.link[:-1]]
+        ),
+        init_exists=jnp.concatenate(
+            [jnp.zeros((1,), dtype=bool), right_side.exists[:-1]]
+        ),
+        links=links,
     )
 
-    # A query no segment brackets (e.g. the lone dead-padded tail) yields no
-    # envelope value: poison the whole triple to NaN so it joins the tail.
-    no_segment = jnp.isneginf(envelope_value)
-    query_drop = query_dead | no_segment
-    node_grid = jnp.where(query_drop, jnp.nan, query_grid)
-    node_policy = jnp.where(query_drop, jnp.nan, envelope_policy)
-    node_value = jnp.where(query_drop, jnp.nan, envelope_value)
-
-    # Sweep left-to-right: each step emits its query node, then — if the winning
-    # *branch* (segment id) differs from the previous live query's winner — the
-    # exact crossing of the two winning links (twice, left and right policy). The
-    # first live query has no predecessor, so it emits only its node.
-    crossing = _crossing_blocks(
-        query_grid=query_grid,
-        query_drop=query_drop,
-        winner_link=winner_link,
-        winner_segment=winner_segment,
-        left_grid=left_grid,
-        right_grid=right_grid,
-        left_policy=left_policy,
-        right_policy=right_policy,
-        left_value=left_value,
-        right_value=right_value,
-    )
-
-    # A crossing is a genuine envelope kink only if both branches are on the
-    # envelope there: evaluate the dense envelope at each crossing abscissa and
-    # keep the crossing only where that value is finite and equals the crossing
-    # value. A switch across a *gap* in the candidate cloud intersects two lines
-    # in an interval no segment covers — the dense envelope is `-inf` there, so
-    # the test rejects it; colinear adjacent links of one monotone branch pass,
-    # since the branch's own line is on the envelope at the crossing.
-    crossing_envelope, _, _, _ = _evaluate_envelope(
-        query_grid=crossing.grid,
-        left_grid=left_grid,
-        right_grid=right_grid,
-        left_policy=left_policy,
-        right_policy=right_policy,
-        left_value=left_value,
-        right_value=right_value,
-        segment_id=link_segment,
-        segment_live=segment_live,
-    )
-    on_envelope = jnp.isfinite(crossing_envelope) & jnp.isclose(
-        crossing_envelope, crossing.value, atol=1e-7, rtol=1e-5
-    )
-    crossing_valid = crossing.valid & on_envelope
-
-    # Per-query output block: up to three rows in ascending grid order — the two
-    # crossing copies (same abscissa, left then right policy) followed by the
-    # query node. The crossing of step `i` lies in `(grid_{i-1}, grid_i)`, so it
-    # precedes the node `i` in the weakly-ascending output.
+    # Per-query emission block, ascending: the interval's crossings (each two
+    # rows — same abscissa, left- then right-branch policy) precede the node's
+    # left and right records. All crossings of the interval ending at node `i`
+    # lie strictly below `grid_i`, so the block order is the output order.
     nan_scalar = jnp.full((), jnp.nan, dtype=query_grid.dtype)
-    node_valid = ~query_drop
-    # Per-query emission rows in ascending grid order: the crossing inserted
-    # before the node (left then right policy copy, same abscissa), then the node
-    # itself. The crossing of step `i` lies in `(grid_{i-1}, grid_i)`, so it
-    # precedes node `i`. Each row carries its own validity flag.
-    row_valid = jnp.stack([crossing_valid, crossing_valid, node_valid], axis=1).ravel()
-    row_grid = jnp.stack([crossing.grid, crossing.grid, node_grid], axis=1).ravel()
-    row_policy = jnp.stack(
-        [crossing.policy_left, crossing.policy_right, node_policy], axis=1
-    ).ravel()
-    row_value = jnp.stack([crossing.value, crossing.value, node_value], axis=1).ravel()
+    cross_grid_rows = jnp.repeat(crossings.grid, 2, axis=1)
+    cross_value_rows = jnp.repeat(crossings.value, 2, axis=1)
+    cross_policy_rows = jnp.stack(
+        [crossings.policy_left, crossings.policy_right], axis=2
+    ).reshape(crossings.grid.shape[0], -1)
+    cross_valid_rows = jnp.repeat(crossings.valid, 2, axis=1)
 
-    # Compact the valid rows into the NaN-padded prefix, preserving sweep order.
+    row_grid = jnp.concatenate(
+        [cross_grid_rows, query_grid[:, None], query_grid[:, None]], axis=1
+    ).ravel()
+    row_value = jnp.concatenate(
+        [cross_value_rows, left_side.value[:, None], right_side.value[:, None]], axis=1
+    ).ravel()
+    row_policy = jnp.concatenate(
+        [cross_policy_rows, left_side.policy[:, None], right_side.policy[:, None]],
+        axis=1,
+    ).ravel()
+    row_valid = jnp.concatenate(
+        [cross_valid_rows, node_left_valid[:, None], node_right_valid[:, None]], axis=1
+    ).ravel()
+
+    # Compact the valid rows into the NaN-padded prefix, preserving order.
     position = jnp.cumsum(row_valid.astype(jnp.int32)) - 1
     slot = jnp.where(row_valid, position, n_refined)
     out_grid = jnp.full(n_refined, jnp.nan, dtype=endog_grid.dtype)
@@ -212,117 +224,156 @@ def refine_envelope(
     )
 
     n_kept = jnp.sum(row_valid, dtype=jnp.int32)
-    del n_query
+    n_kept = jnp.where(interval_overflow, jnp.maximum(n_kept, n_refined + 1), n_kept)
     return out_grid, out_policy, out_value, n_kept
 
 
-class _CrossingBlocks:
-    """Per-query crossing candidate: abscissa, value, both policy copies, flag.
+class _LinkLines:
+    """Per-link line geometry of the candidate segment chain.
 
-    The fields are aligned with the query sweep: entry `i` is the crossing
-    inserted *before* query node `i`, present (`valid`) only when query `i`'s
-    live winning segment differs from the previous live query's winner and the
-    intersection abscissa falls strictly between the two queries.
+    Each consecutive candidate pair defines one link; within any interval
+    between adjacent candidate abscissae a live link is a full line, described
+    by its anchor point and slopes.
     """
 
     def __init__(
         self,
         *,
-        grid: Float1D,
-        value: Float1D,
-        policy_left: Float1D,
-        policy_right: Float1D,
-        valid: BoolND,
+        lower: Float1D,
+        upper: Float1D,
+        anchor_grid: Float1D,
+        anchor_value: Float1D,
+        anchor_policy: Float1D,
+        value_slope: Float1D,
+        policy_slope: Float1D,
+        segment: Int1D,
+        live: BoolND,
     ) -> None:
-        self.grid = grid
-        self.value = value
-        self.policy_left = policy_left
-        self.policy_right = policy_right
-        self.valid = valid
+        self.lower = lower
+        self.upper = upper
+        self.anchor_grid = anchor_grid
+        self.anchor_value = anchor_value
+        self.anchor_policy = anchor_policy
+        self.value_slope = value_slope
+        self.policy_slope = policy_slope
+        self.segment = segment
+        self.live = live
+
+    def value_at(self, x: FloatND) -> FloatND:
+        """Evaluate every link's value line at `x` (broadcast on the last axis)."""
+        return self.anchor_value + self.value_slope * (x - self.anchor_grid)
+
+    def policy_at(self, x: FloatND) -> FloatND:
+        """Evaluate every link's policy line at `x` (broadcast on the last axis)."""
+        return self.anchor_policy + self.policy_slope * (x - self.anchor_grid)
 
 
-def _crossing_blocks(
-    *,
-    query_grid: Float1D,
-    query_drop: BoolND,
-    winner_link: Int1D,
-    winner_segment: Int1D,
-    left_grid: Float1D,
-    right_grid: Float1D,
-    left_policy: Float1D,
-    right_policy: Float1D,
-    left_value: Float1D,
-    right_value: Float1D,
-) -> _CrossingBlocks:
-    """Compute, per query, the crossing of its winner with the previous winner.
+class _SideWinner:
+    """One-sided envelope winner per query node.
 
-    Sweeps the live queries left-to-right (carrying the previous live query's
-    winning link and branch id) and, whenever the winning *branch* (segment id)
-    switches, intersects the two winning links' value lines. The crossing is
-    kept only when its abscissa falls strictly between the two adjacent live
-    query abscissae — the interval the switch happened in. A move from one link
-    to the next within one monotone branch keeps the segment id, so it is not a
-    switch and inserts nothing; only a genuine branch change is a kink.
+    The left winner is the envelope's limit from below the abscissa (among
+    links covering it from the left, the highest value, ties to the flattest
+    line — the one that was higher just before); the right winner mirrors it
+    (ties to the steepest line — the one higher just after).
     """
-    n_query = query_grid.shape[0]
-    live = ~query_drop
 
-    def step(
-        carry: tuple[ScalarInt, ScalarInt, FloatND], idx: ScalarInt
-    ) -> tuple[tuple[ScalarInt, ScalarInt, FloatND], _CrossingRow]:
-        prev_link, prev_segment, prev_grid = carry
-        is_live = live[idx]
-        this_link = winner_link[idx]
-        this_segment = winner_segment[idx]
-        this_grid = query_grid[idx]
+    def __init__(
+        self,
+        *,
+        exists: BoolND,
+        link: Int1D,
+        branch: Int1D,
+        value: Float1D,
+        policy: Float1D,
+    ) -> None:
+        self.exists = exists
+        self.link = link
+        self.branch = branch
+        self.value = value
+        self.policy = policy
 
-        switches = is_live & (prev_segment >= 0) & (this_segment != prev_segment)
-        row = _intersect_winners(
-            seg_a=prev_link,
-            seg_b=this_link,
-            left_grid=left_grid,
-            right_grid=right_grid,
-            left_policy=left_policy,
-            right_policy=right_policy,
-            left_value=left_value,
-            right_value=right_value,
-        )
-        # The crossing must fall strictly inside the switch interval; whether it
-        # is a genuine envelope kink (rather than a phantom intersection across a
-        # gap) is settled by the dense on-envelope test the caller applies.
-        within = switches & (row.grid > prev_grid) & (row.grid < this_grid)
-        emitted = _CrossingRow(
-            grid=row.grid,
-            value=row.value,
-            policy_left=row.policy_a,
-            policy_right=row.policy_b,
-            valid=within,
-        )
 
-        # Advance the previous-live-query carry only on a live query; a dropped
-        # query leaves the comparison anchored at the last live winner/abscissa.
-        new_link = jnp.where(is_live, this_link, prev_link).astype(jnp.int32)
-        new_segment = jnp.where(is_live, this_segment, prev_segment).astype(jnp.int32)
-        new_grid = jnp.where(is_live, this_grid, prev_grid)
-        return (new_link, new_segment, new_grid), emitted
+def _node_side_winners(
+    *, query_grid: Float1D, links: _LinkLines
+) -> tuple[_SideWinner, _SideWinner]:
+    """Compute the left- and right-side envelope winners at every query node.
 
-    carry_init = (
-        jnp.int32(0),
-        jnp.int32(-1),
-        jnp.asarray(-jnp.inf, dtype=query_grid.dtype),
+    A link owns a node's left side iff the node lies strictly inside or at the
+    link's upper endpoint (`lower < x <= upper`), and the right side iff it
+    lies at the lower endpoint or strictly inside (`lower <= x < upper`).
+    Where the two sides' records differ — branch switch or value jump exactly
+    at the node — the caller emits both, duplicating the abscissa.
+    """
+    query = query_grid[:, None]
+    value_at = links.value_at(query)
+    policy_at = links.policy_at(query)
+    covers_left = (
+        links.live[None, :]
+        & (links.lower[None, :] < query)
+        & (query <= links.upper[None, :])
     )
-    _, rows = jax.lax.scan(step, carry_init, jnp.arange(n_query, dtype=jnp.int32))
-    return _CrossingBlocks(
-        grid=rows.grid,
-        value=rows.value,
-        policy_left=rows.policy_left,
-        policy_right=rows.policy_right,
-        valid=rows.valid,
+    covers_right = (
+        links.live[None, :]
+        & (links.lower[None, :] <= query)
+        & (query < links.upper[None, :])
+    )
+    left = _lexicographic_winner(
+        covers=covers_left,
+        value_at=value_at,
+        policy_at=policy_at,
+        links=links,
+        slope_sign=-1.0,
+    )
+    right = _lexicographic_winner(
+        covers=covers_right,
+        value_at=value_at,
+        policy_at=policy_at,
+        links=links,
+        slope_sign=1.0,
+    )
+    return left, right
+
+
+def _lexicographic_winner(
+    *,
+    covers: BoolND,
+    value_at: FloatND,
+    policy_at: FloatND,
+    links: _LinkLines,
+    slope_sign: float,
+) -> _SideWinner:
+    """Pick the covering link with the highest value, ties by signed slope.
+
+    `slope_sign = -1` prefers the flattest line among value ties (the left-side
+    winner: highest just before the node); `slope_sign = +1` prefers the
+    steepest (the right-side winner: highest just after).
+    """
+    masked_value = jnp.where(covers, value_at, -jnp.inf)
+    best_value = jnp.max(masked_value, axis=1)
+    exists = jnp.isfinite(best_value)
+    tolerance = 64.0 * jnp.finfo(value_at.dtype).eps
+    tie = covers & jnp.isclose(
+        masked_value, best_value[:, None], rtol=tolerance, atol=tolerance
+    )
+    slope_score = jnp.where(tie, slope_sign * links.value_slope[None, :], -jnp.inf)
+    link = jnp.argmax(slope_score, axis=1).astype(jnp.int32)
+    return _SideWinner(
+        exists=exists,
+        link=link,
+        branch=jnp.where(exists, links.segment[link], -1).astype(jnp.int32),
+        value=jnp.take_along_axis(value_at, link[:, None], axis=1)[:, 0],
+        policy=jnp.take_along_axis(policy_at, link[:, None], axis=1)[:, 0],
     )
 
 
-class _CrossingRow:
-    """One step's crossing emission (scan carry-compatible stacked leaves)."""
+class _IntervalCrossings:
+    """Enumerated envelope crossings per interval, aligned with the query axis.
+
+    Entry `(i, s)` is the interval's `s`-th switch strictly inside
+    `(grid_{i-1}, grid_i)`, in ascending order; `valid` masks the enumerated
+    prefix. The two policy fields carry the outgoing and incoming branch's
+    policy line at the crossing.
+    """
 
     def __init__(
         self,
@@ -340,13 +391,129 @@ class _CrossingRow:
         self.valid = valid
 
 
+def _enumerate_interval_crossings(
+    *,
+    query_grid: Float1D,
+    prev_grid: Float1D,
+    is_new: BoolND,
+    init_winner: Int1D,
+    init_exists: BoolND,
+    links: _LinkLines,
+) -> tuple[_IntervalCrossings, BoolND]:
+    """Enumerate every envelope switch strictly inside each candidate interval.
+
+    Between adjacent candidate abscissae no live link starts or ends, so every
+    link bracketing the interval is a full line there. Starting from the
+    interval's left-endpoint winner (the previous node's right-side winner),
+    the earliest abscissa at which a bracketing line with a strictly greater
+    slope overtakes the current winner is the next envelope breakpoint;
+    iterating from it enumerates the complete ordered switch sequence. The
+    iteration runs `_MAX_CROSSINGS_PER_INTERVAL` steps; a scalar overflow flag
+    reports any interval whose sequence is longer, so the caller can refuse the
+    truncated row via the `n_kept` contract.
+
+    Returns:
+        Tuple of the enumerated crossings and the scalar overflow flag.
+
+    """
+    covers_interval = (
+        links.live[None, :]
+        & (links.lower[None, :] <= prev_grid[:, None])
+        & (links.upper[None, :] >= query_grid[:, None])
+    )
+    interval_active = is_new & init_exists & jnp.isfinite(prev_grid)
+    link_index = jnp.arange(links.lower.shape[0], dtype=jnp.int32)
+
+    def overtaking(winner: Int1D, x_current: Float1D) -> tuple[FloatND, BoolND]:
+        """Crossing abscissae where each bracketing line overtakes the winner."""
+        winner_slope = links.value_slope[winner]
+        winner_anchor_x = links.anchor_grid[winner]
+        winner_anchor_y = links.anchor_value[winner]
+        denominator = winner_slope[:, None] - links.value_slope[None, :]
+        safe_denominator = jnp.where(denominator == 0.0, 1.0, denominator)
+        x_star = jnp.where(
+            denominator == 0.0,
+            jnp.inf,
+            (
+                links.anchor_value[None, :]
+                - winner_anchor_y[:, None]
+                + winner_slope[:, None] * winner_anchor_x[:, None]
+                - links.value_slope[None, :] * links.anchor_grid[None, :]
+            )
+            / safe_denominator,
+        )
+        valid = (
+            covers_interval
+            & (link_index[None, :] != winner[:, None])
+            & (links.value_slope[None, :] > winner_slope[:, None])
+            & (x_star > x_current[:, None])
+            & (x_star < query_grid[:, None])
+        )
+        return x_star, valid
+
+    def step(
+        carry: tuple[Int1D, Float1D, BoolND], _: ScalarInt
+    ) -> tuple[tuple[Int1D, Float1D, BoolND], _IntervalCrossings]:
+        winner, x_current, active = carry
+        x_star, valid = overtaking(winner, x_current)
+        valid = valid & active[:, None]
+        x_masked = jnp.where(valid, x_star, jnp.inf)
+        x_next = jnp.min(x_masked, axis=1)
+        found = jnp.isfinite(x_next)
+        tolerance = 64.0 * jnp.finfo(query_grid.dtype).eps
+        tie = valid & jnp.isclose(
+            x_star, x_next[:, None], rtol=tolerance, atol=tolerance
+        )
+        incoming = jnp.argmax(
+            jnp.where(tie, links.value_slope[None, :], -jnp.inf), axis=1
+        ).astype(jnp.int32)
+
+        crossing_value = links.anchor_value[winner] + links.value_slope[winner] * (
+            x_next - links.anchor_grid[winner]
+        )
+        emitted = _IntervalCrossings(
+            grid=jnp.where(found, x_next, jnp.nan),
+            value=crossing_value,
+            policy_left=links.anchor_policy[winner]
+            + links.policy_slope[winner] * (x_next - links.anchor_grid[winner]),
+            policy_right=links.anchor_policy[incoming]
+            + links.policy_slope[incoming] * (x_next - links.anchor_grid[incoming]),
+            valid=found,
+        )
+        new_winner = jnp.where(found, incoming, winner).astype(jnp.int32)
+        new_x = jnp.where(found, x_next, x_current)
+        return (new_winner, new_x, active & found), emitted
+
+    carry_init = (init_winner, prev_grid, interval_active)
+    carry_final, rows = jax.lax.scan(
+        step,
+        carry_init,
+        jnp.arange(_MAX_CROSSINGS_PER_INTERVAL, dtype=jnp.int32),
+    )
+    winner, x_current, active = carry_final
+    _, leftover_valid = overtaking(winner, x_current)
+    interval_overflow = jnp.any(leftover_valid & active[:, None])
+
+    stack_to_query_axis = lambda leaf: jnp.moveaxis(leaf, 0, 1)  # noqa: E731
+    return (
+        _IntervalCrossings(
+            grid=stack_to_query_axis(rows.grid),
+            value=stack_to_query_axis(rows.value),
+            policy_left=stack_to_query_axis(rows.policy_left),
+            policy_right=stack_to_query_axis(rows.policy_right),
+            valid=stack_to_query_axis(rows.valid),
+        ),
+        interval_overflow,
+    )
+
+
 jax.tree_util.register_pytree_node(
-    _CrossingRow,
+    _IntervalCrossings,
     lambda r: (
         (r.grid, r.value, r.policy_left, r.policy_right, r.valid),
         None,
     ),
-    lambda _aux, children: _CrossingRow(
+    lambda _aux, children: _IntervalCrossings(
         grid=children[0],
         value=children[1],
         policy_left=children[2],
@@ -354,133 +521,6 @@ jax.tree_util.register_pytree_node(
         valid=children[4],
     ),
 )
-
-
-class _SegmentIntersection:
-    """Intersection of two winning segments' value lines, with both policies."""
-
-    def __init__(
-        self,
-        *,
-        grid: FloatND,
-        value: FloatND,
-        policy_a: FloatND,
-        policy_b: FloatND,
-    ) -> None:
-        self.grid = grid
-        self.value = value
-        self.policy_a = policy_a
-        self.policy_b = policy_b
-
-
-def _intersect_winners(
-    *,
-    seg_a: ScalarInt,
-    seg_b: ScalarInt,
-    left_grid: Float1D,
-    right_grid: Float1D,
-    left_policy: Float1D,
-    right_policy: Float1D,
-    left_value: Float1D,
-    right_value: Float1D,
-) -> _SegmentIntersection:
-    """Intersect the value lines of segments `seg_a` and `seg_b`.
-
-    Each segment is the line through its two endpoints; the intersection
-    abscissa solves `v_a(x) = v_b(x)`. The policy is read off each segment's own
-    line at that abscissa, so `policy_a` is the left-branch (segment `a`) policy
-    and `policy_b` the right-branch (segment `b`) policy at the kink.
-    """
-    a_x0, a_x1 = left_grid[seg_a], right_grid[seg_a]
-    a_v0, a_v1 = left_value[seg_a], right_value[seg_a]
-    a_p0, a_p1 = left_policy[seg_a], right_policy[seg_a]
-    b_x0, b_x1 = left_grid[seg_b], right_grid[seg_b]
-    b_v0, b_v1 = left_value[seg_b], right_value[seg_b]
-    b_p0, b_p1 = left_policy[seg_b], right_policy[seg_b]
-
-    slope_a = _slope(x_a=a_x0, y_a=a_v0, x_b=a_x1, y_b=a_v1)
-    slope_b = _slope(x_a=b_x0, y_a=b_v0, x_b=b_x1, y_b=b_v1)
-    grid, value = _intersect_lines(
-        x_a=a_x0, y_a=a_v0, slope_a=slope_a, x_b=b_x0, y_b=b_v0, slope_b=slope_b
-    )
-
-    policy_slope_a = _slope(x_a=a_x0, y_a=a_p0, x_b=a_x1, y_b=a_p1)
-    policy_slope_b = _slope(x_a=b_x0, y_a=b_p0, x_b=b_x1, y_b=b_p1)
-    policy_a = a_p0 + policy_slope_a * (grid - a_x0)
-    policy_b = b_p0 + policy_slope_b * (grid - b_x0)
-    return _SegmentIntersection(
-        grid=grid, value=value, policy_a=policy_a, policy_b=policy_b
-    )
-
-
-def _evaluate_envelope(
-    *,
-    query_grid: Float1D,
-    left_grid: Float1D,
-    right_grid: Float1D,
-    left_policy: Float1D,
-    right_policy: Float1D,
-    left_value: Float1D,
-    right_value: Float1D,
-    segment_id: Int1D,
-    segment_live: BoolND,
-) -> tuple[Float1D, Float1D, Int1D, Int1D]:
-    """Evaluate the upper envelope and its winning link/branch at every query.
-
-    Builds the dense `(N_query, N_segments)` bracket-and-interpolate matrix: each
-    query `m_j` is tested against every link `(k, k+1)`. A link brackets the
-    query iff `m_j` lies in its abscissa range; the value and policy are then
-    linearly interpolated along the link. The envelope value is the maximum over
-    bracketing links, the policy is the winner's, the winning link index is
-    reported (so its value line can be intersected), and the winner's branch id
-    `segment_id` is reported (so the sweep can detect a branch switch). A query
-    no link brackets reports `-inf` value (the absent-envelope sentinel), winning
-    link `0`, and branch `-1`.
-
-    Args:
-        query_grid: Abscissae at which to evaluate the envelope; NaN tail.
-        left_grid: Lower endpoint abscissa of each link.
-        right_grid: Upper endpoint abscissa of each link.
-        left_policy: Policy at each link's lower endpoint.
-        right_policy: Policy at each link's upper endpoint.
-        left_value: Value at each link's lower endpoint.
-        right_value: Value at each link's upper endpoint.
-        segment_id: Per-link monotone-branch id; equal across one branch.
-        segment_live: Per-link live indicator; a dead-endpoint or non-monotone
-            bridge link is excluded from the scan.
-
-    Returns:
-        Tuple of the envelope value, the envelope policy, the winning link index
-        (`0` where no link brackets), and the winning branch id (`-1` where no
-        link brackets) at each query.
-
-    """
-    query = query_grid[:, None]
-    lower = jnp.minimum(left_grid, right_grid)[None, :]
-    upper = jnp.maximum(left_grid, right_grid)[None, :]
-    brackets = segment_live[None, :] & (query >= lower) & (query <= upper)
-
-    # Linear position of the query along each segment; a zero-width segment takes
-    # weight 0, so its left endpoint applies.
-    width = (right_grid - left_grid)[None, :]
-    safe_width = jnp.where(width == 0.0, 1.0, width)
-    relative = jnp.where(width == 0.0, 0.0, (query - left_grid[None, :]) / safe_width)
-
-    value_interp = left_value[None, :] + relative * (right_value - left_value)[None, :]
-    policy_interp = (
-        left_policy[None, :] + relative * (right_policy - left_policy)[None, :]
-    )
-
-    masked_value = jnp.where(brackets, value_interp, -jnp.inf)
-    best_link = jnp.argmax(masked_value, axis=1).astype(jnp.int32)
-    envelope_value = jnp.max(masked_value, axis=1)
-    any_bracket = jnp.any(brackets, axis=1)
-    envelope_policy = jnp.take_along_axis(policy_interp, best_link[:, None], axis=1)[
-        :, 0
-    ]
-    winner_link = jnp.where(any_bracket, best_link, 0).astype(jnp.int32)
-    winner_segment = jnp.where(any_bracket, segment_id[best_link], -1).astype(jnp.int32)
-    return envelope_value, envelope_policy, winner_link, winner_segment
 
 
 def _slope(*, x_a: FloatND, y_a: FloatND, x_b: FloatND, y_b: FloatND) -> FloatND:
@@ -500,42 +540,3 @@ def _slope(*, x_a: FloatND, y_a: FloatND, x_b: FloatND, y_b: FloatND) -> FloatND
     return jnp.where(
         delta_x == 0.0, 0.0, (y_b - y_a) / jnp.where(delta_x == 0.0, 1.0, delta_x)
     )
-
-
-def _intersect_lines(
-    *,
-    x_a: FloatND,
-    y_a: FloatND,
-    slope_a: FloatND,
-    x_b: FloatND,
-    y_b: FloatND,
-    slope_b: FloatND,
-) -> tuple[FloatND, FloatND]:
-    """Intersect two lines given in point-slope form.
-
-    Args:
-        x_a: Abscissa of a point on the first line.
-        y_a: Ordinate of a point on the first line.
-        slope_a: Slope of the first line.
-        x_b: Abscissa of a point on the second line.
-        y_b: Ordinate of a point on the second line.
-        slope_b: Slope of the second line.
-
-    Returns:
-        Tuple of the intersection's abscissa and ordinate; NaN abscissa for
-        parallel lines.
-
-    """
-    denominator = slope_a - slope_b
-    safe_denominator = jnp.where(denominator == 0.0, 1.0, denominator)
-    x = jnp.where(
-        denominator == 0.0,
-        jnp.nan,
-        (y_b - y_a + slope_a * x_a - slope_b * x_b) / safe_denominator,
-    )
-    # Evaluate the ordinate from a finite abscissa so the parallel-lines branch
-    # carries a finite (dead) value: NaN here would poison reverse-mode gradients
-    # through the `jnp.where` even though the forward result discards it.
-    safe_x = jnp.where(denominator == 0.0, x_a, x)
-    y = y_a + slope_a * (safe_x - x_a)
-    return x, y

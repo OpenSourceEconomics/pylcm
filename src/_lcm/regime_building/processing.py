@@ -1069,8 +1069,16 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
     """Whether the solver's upper envelope certifies every segment crossing.
 
     A branch-faithful policy read interpolates a row whose envelope switches sit
-    at duplicated abscissae carrying both branch policies:
-    - `"mss"` ⇒ yes: the sweep inserts the exact crossing by construction.
+    at duplicated abscissae carrying both branch records:
+    - `"mss"` ⇒ yes: the refinement enumerates every envelope switch — interior
+      crossings via iterated earliest-overtake between adjacent candidate
+      abscissae (where the bracketing segments are full lines), switches and
+      value jumps landing exactly on a candidate abscissa via two-sided node
+      records — and an interval whose switch sequence exceeds the enumeration
+      budget overflows loudly through `n_kept`, so a published row is never a
+      silently truncated envelope. The guarantee covers the live-covered
+      domain; interior coverage gaps (NaN-dead candidates splitting the
+      chain) are compacted and read linearly across.
     - `"fues"` ⇒ no: segment identity is decided by thresholding the
       implied-savings slope (`fues_jump_thresh`) — a heuristic — and the
       DC-EGM kernel supplies no segment labels. Two value branches whose
