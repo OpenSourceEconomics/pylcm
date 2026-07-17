@@ -13,6 +13,8 @@ wealth strictly between consumption-grid nodes, the simulated consumption must
 hit `c*` — which a grid-restricted argmax cannot.
 """
 
+import dataclasses
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -22,6 +24,7 @@ from lcm.typing import ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
 from tests.test_models.deterministic import base, dcegm_variants, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
+    DCEGM_SOLVER,
     dcegm_retirement,
     get_retirement_only_params,
 )
@@ -39,9 +42,14 @@ def _closed_form_model() -> Model:
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
+    # MSS is the only backend whose rows certify every envelope crossing, so
+    # it is the only one that qualifies for the off-grid read.
+    solver = dataclasses.replace(DCEGM_SOLVER, upper_envelope="mss")
     return Model(
         regimes={
-            "retirement": dcegm_retirement.replace(active=lambda age: age < 50),
+            "retirement": dcegm_retirement.replace(
+                active=lambda age: age < 50, solver=solver
+            ),
             "dead": bequest_dead,
         },
         ages=AgeGrid(start=40, stop=50, step="10Y"),
@@ -95,7 +103,7 @@ def test_discrete_action_regime_consumption_leaves_the_action_grid():
     this pins that the off-grid path engages for a discrete-action regime.)
     """
     n_periods = 3
-    model = dcegm_variants.get_full_model("dcegm", n_periods)
+    model = dcegm_variants.get_full_model("dcegm", n_periods, upper_envelope="mss")
     params = dcegm_variants.get_full_params(n_periods)
 
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())

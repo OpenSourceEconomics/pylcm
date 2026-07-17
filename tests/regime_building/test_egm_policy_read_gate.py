@@ -44,24 +44,30 @@ def test_non_crossing_envelope_backends_do_not_qualify(backend: str):
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-@pytest.mark.parametrize("backend", ["fues", "mss"])
-def test_crossing_inserting_envelope_backends_qualify(backend: str):
-    """FUES/MSS rows qualify: duplicated crossing abscissae carry the switch."""
-    model = _retirement_model_with_backend(backend)
+def test_the_mss_backend_qualifies_for_the_policy_read():
+    """MSS rows qualify: the sweep inserts the exact segment crossing.
+
+    Duplicated crossing abscissae carry both branch policies, so linear
+    interpolation between retained nodes never mixes branches.
+    """
+    model = _retirement_model_with_backend("mss")
     assert model._regimes["retirement"].simulation.egm_policy_read is not None
 
 
-def test_bounded_fues_scan_does_not_qualify_for_the_policy_read():
-    """A finite FUES scan window keeps the grid path: its row may miss crossings.
+@pytest.mark.parametrize("n_points_to_scan", [None, 8])
+def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None):
+    """FUES rows keep the grid path: segment identity is a heuristic.
 
-    Only the exhaustive scan (`fues_n_points_to_scan=None`) is proven to find a
-    segment's continuation when more than the window's worth of off-segment
-    candidates interleave. A bounded window may drop that crossing and retain
-    the dominated interlopers, so the row lacks the switch topology a
-    branch-faithful policy read interpolates over.
+    FUES groups candidates into segments by thresholding the implied-savings
+    slope (`fues_jump_thresh`), and the DC-EGM kernel supplies no segment
+    labels. A cross-segment slope below the threshold merges two value
+    branches into one row — no crossing is inserted and the row bridges the
+    gap between them — regardless of the scan width, so even the exhaustive
+    scan does not certify the crossing topology the off-grid read
+    interpolates over (see `test_fues_segment_detection.py`).
     """
     solver = dataclasses.replace(
-        DCEGM_SOLVER, upper_envelope="fues", fues_n_points_to_scan=8
+        DCEGM_SOLVER, upper_envelope="fues", fues_n_points_to_scan=n_points_to_scan
     )
     model = _model_from_alive(
         dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)

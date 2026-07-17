@@ -17,18 +17,30 @@ its discrete states — is interpolated at the subject's resources, replacing th
 action-grid argmax value of the continuous action, subject to a post-read
 feasibility check (in-support, finite, positive, within the intrinsic budget).
 
-The gate exists because the stored policy is the **solve-phase** optimum of
-one conditional problem, and a linear read is faithful only where the row
-carries the coordinates and branch topology it interpolates over. Kept on the
-grid-argmax path:
+Regimes with discrete actions publish one conditional row per discrete-action
+combination — value and policy per branch, on that branch's own endogenous
+grid. Simulation then *re-decides* the branch at the subject's state: each
+branch's conditional value is interpolated at that branch's own resources
+(discrete-only constraints mask infeasible branches to `-inf`), the feasible
+branch of highest interpolated value wins, and only the winner's policy is
+read. The value read uses the cubic Hermite interpolant with the
+`marginal_utility` row as exact node slopes — the same convention the solve
+uses to publish values — so the ranking the re-decision sees is the ranking
+the solve convention implies.
+
+The gate exists because the stored rows are the **solve-phase** optimum of
+one conditional problem each, and a read is faithful only where the rows
+carry the coordinates and branch topology they are interpolated over. Kept on
+the grid-argmax path:
 - regimes with any `Phased` declaration — a phase-variant utility, budget,
   transition, or state domain (not only `H`, e.g. naive present bias) makes
   the stored policy solve the wrong simulate-phase FOC or puts the policy
   rows on the wrong coordinates;
-- regimes with discrete actions — the branch is chosen from grid-restricted
-  Q values, and a branch whose refined conditional optimum lies between
-  action-grid nodes can lose that comparison yet win after continuous
-  refinement, so the refined policy could be paired with the wrong branch;
+- regimes whose upper-envelope backend does not certify every crossing —
+  only MSS inserts the exact segment crossing by construction; FUES decides
+  segment identity by a slope-threshold heuristic (no labels from the
+  kernel), so its row can silently bridge a missed switch, and RFC/LTM leave
+  switches between retained nodes;
 - regimes with a passive continuous state — each row is the envelope policy
   conditional on one passive node, so blending rows across a passive-dimension
   branch switch would read an action from neither branch;
@@ -39,14 +51,14 @@ grid-argmax path:
   the per-node solve publishes one point per exogenous asset node, not a
   crossing-complete row, so interpolating across nodes would mix branches;
 - regimes with EV1 taste shocks, whose realized draws perturb the decision.
-Publishing conditional values and re-deciding the branch at the simulated
-state lifts the discrete-action, passive, process, and asset-row exclusions
-(the tracked follow-up).
+Publishing per-passive-node / per-process-node conditional values and
+re-deciding across those axes the way the discrete-action axis already is
+lifts the passive, process, and asset-row exclusions (the tracked follow-up).
 
 Unlike the rolling `EGMCarry` (the cross-period continuation channel, overwritten
 each period), this is saved for every solved period and travels to `simulate`
-alongside the value-function arrays. Its `endog_grid` rows are shared with the
-period's carry; only the `policy` row is additional state.
+alongside the value-function arrays. Its rows are shared with the period's
+carry; only the `policy` row is additional state.
 """
 
 from collections.abc import Sequence
@@ -64,17 +76,18 @@ class EGMSimPolicy:
 
     Leading axes match the regime's combo layout (discrete states, then passive
     states, then discrete actions, as in `EGMCarry`); the trailing axis is the
-    static refined-grid length. Both rows are NaN-padded in lockstep in the tail.
+    static refined-grid length. All rows are NaN-padded in lockstep in the tail.
     """
 
     endog_grid: FloatND
     """Endogenous grid in resources space, NaN-padded in the tail.
 
     Shared with the period's `EGMCarry.endog_grid`; weakly ascending per row.
-    Under a crossing-inserting upper-envelope backend (`fues`, `mss`) the
-    envelope-switch abscissae are duplicated with one-sided policy copies —
-    the topology the off-grid read requires; RFC/LTM rows leave switches
-    between retained nodes and do not qualify for the read.
+    Under MSS the envelope-switch abscissae are duplicated with one-sided
+    policy copies — the topology the off-grid read requires; FUES rows are
+    not certified crossing-complete (segment identity is a slope-threshold
+    heuristic) and RFC/LTM rows leave switches between retained nodes, so
+    neither qualifies for the read.
     """
 
     policy: FloatND
@@ -89,6 +102,15 @@ class EGMSimPolicy:
     the branch at the subject's state.
     """
 
+    marginal_utility: FloatND
+    """Marginal utility at `endog_grid` (NaN on padding slots).
+
+    Shared with the period's `EGMCarry.marginal_utility`: the value row's
+    exact node slope by the envelope theorem. Simulation passes it as the
+    slope row of the cubic Hermite value read, matching the interpolation
+    convention the solve publishes values under.
+    """
+
     row_discrete_state_names: tuple[StateName, ...] = ()
     """Names of the leading discrete-state row axes, in axis order."""
 
@@ -100,7 +122,7 @@ class EGMSimPolicy:
     """Names of the discrete-action row axes, after the passive states."""
 
 
-_EGM_SIM_POLICY_ARRAY_FIELDS = ("endog_grid", "policy", "value")
+_EGM_SIM_POLICY_ARRAY_FIELDS = ("endog_grid", "policy", "value", "marginal_utility")
 _EGM_SIM_POLICY_STATIC_FIELDS = (
     "row_discrete_state_names",
     "row_passive_state_names",
