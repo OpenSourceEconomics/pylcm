@@ -18,6 +18,7 @@ everywhere, which here manifests as a WRONG argmax, not an exception) or
 asserts a value that is `nan` pre-fix.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -64,20 +65,69 @@ def test_zero_safe_average_ignores_a_zero_weight_minus_inf_node():
 
 
 def test_zero_safe_average_matches_jnp_average_on_the_finite_path():
-    # No zero weight, no +-inf value -> byte-identical to jnp.average.
+    # No zero weight, no +-inf value -> MATHEMATICALLY equal to jnp.average.
+    #
+    # Deliberately assert_allclose, NOT byte-identity: the `where` guard blocks
+    # XLA's FMA contraction, so for TRACED weights the two can differ by ~1 ULP
+    # (see zero_safe.py's module docstring for the measured bit patterns). This
+    # test previously claimed byte-identity in a comment while asserting only
+    # closeness -- the claim was false and the test could never have caught it.
     values = jnp.array([1.0, 3.0, 5.0])
     weights = jnp.array([0.2, 0.3, 0.5])
     result = zero_safe_average(values, weights=weights)
     expected = jnp.average(values, weights=weights)
-    np.testing.assert_allclose(float(result), float(expected))
+    np.testing.assert_allclose(float(result), float(expected), rtol=1e-6)
+
+
+def test_zero_safe_average_is_within_one_ulp_of_jnp_average_under_jit():
+    """Pin the ACTUAL contract on the all-positive path: <=1 ULP, not bit equality.
+
+    The reviewer-supplied counterexample. Both weights are strictly positive, so
+    the zero guard never fires, yet the results differ in the last bit because the
+    naive path contracts `multiply` into the reduction's FMA (one rounding) while
+    the guarded path cannot (two roundings). Guarding the ULP DISTANCE rather than
+    equality states what is true and still fails loudly if the drift ever grows.
+    """
+    values = jnp.array([-0.3096868097782135, 0.3673213720321655], dtype=jnp.float32)
+    weights = jnp.array([0.5910956263542175, 0.40890437364578247], dtype=jnp.float32)
+
+    naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
+    guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(values, weights)
+
+    naive_bits = np.asarray(naive).view(np.uint32)
+    guarded_bits = np.asarray(guarded).view(np.uint32)
+    ulp_distance = abs(int(naive_bits) - int(guarded_bits))
+    assert ulp_distance <= 2, (
+        f"zero_safe_average drifted {ulp_distance} ULP from jnp.average on an "
+        "all-positive-weight input; the guard is documented as costing at most "
+        "an FMA contraction (~1 ULP)"
+    )
+
+
+def test_zero_safe_average_is_exact_where_ties_actually_arise():
+    """A degenerate p=[1, 0] mixture must be EXACT, not merely close.
+
+    This is the path that matters for the argmax: exact ties arise structurally
+    where a weight IS zero (a degenerate mixture, an on-grid interpolation
+    corner), and there the guard must reproduce the surviving value bit-for-bit
+    -- otherwise a tie-break really could flip. Off-grid, where the ~1 ULP drift
+    lives, exact ties do not arise.
+    """
+    values = jnp.array([2.5, -jnp.inf], dtype=jnp.float32)
+    weights = jnp.array([1.0, 0.0], dtype=jnp.float32)
+
+    result = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(values, weights)
+
+    assert np.asarray(result).view(np.uint32) == np.float32(2.5).view(np.uint32)
 
 
 def test_zero_safe_average_axis_reduction_matches_jnp_average_on_the_finite_path():
+    # Mathematically equal, not byte-identical -- see the non-axis variant above.
     values = jnp.array([[1.0, 2.0], [3.0, 4.0]])
     weights = jnp.array([0.25, 0.75])
     result = zero_safe_average(values, axis=1, weights=weights)
     expected = jnp.average(values, axis=1, weights=weights)
-    np.testing.assert_allclose(np.asarray(result), np.asarray(expected))
+    np.testing.assert_allclose(np.asarray(result), np.asarray(expected), rtol=1e-6)
 
 
 def test_zero_safe_average_raises_eagerly_on_concretely_zero_total_weight():

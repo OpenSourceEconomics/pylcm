@@ -14,9 +14,32 @@ contribute exactly nothing.
 
 Both helpers below apply the same fix pattern: replace the elementwise
 product with an explicit `0.0` wherever the weight is exactly zero, via
-``jnp.where``, BEFORE summing. This is a no-op — byte-identical to the naive
-computation — whenever no weight is exactly zero, so the finite/on-grid path
-is untouched.
+``jnp.where``, BEFORE summing.
+
+On the all-positive-weight path the result is MATHEMATICALLY equal to the naive
+computation, but it is **not byte-identical** when the weights are traced: the
+inserted `select` blocks XLA from contracting `multiply` into the reduction's
+FMA, so the naive path rounds once where this one rounds twice, and the two can
+differ by ~1 ULP. MEASURED (jax 0.10.1, CPU, float32): ``jnp.average`` returns
+bits ``3171324718`` where `zero_safe_average` returns ``3171324720``; across
+20k random fractional interpolation coordinates 24.4% of cells differ, by at
+most 4.77e-07 (float32 eps scale). Statically-known weights are constant-folded
+and DO match bit-for-bit. Note the direction: the naive path is the marginally
+more accurate one (one fewer rounding) — the guard buys extended-real
+correctness at the price of a free FMA.
+
+This is deliberate and the drift is not decision-relevant, because the two
+properties live on disjoint paths: ties arise STRUCTURALLY only where a weight
+is exactly zero (an on-grid interpolation corner, a degenerate ``p = [1, 0]``
+mixture), and on exactly those cells both kernels are exact and agree
+bit-for-bit — while the drift occurs only off-grid/all-positive, where exact
+ties do not arise (measured: 0 exact ties in 200k random off-grid pairs). A
+`jax.lax.cond` on ``any(weights == 0)`` would restore the naive bits on the
+all-positive arm at no measured cost, but its predicate is GLOBAL: a single
+on-grid cell anywhere in a batch would flip the whole batch to the safe arm, so
+it would deliver bit-compatibility precisely in the batches that do not need it
+and withhold it from the ones that motivated the guard. The per-element
+`jnp.where` is the honest primitive.
 """
 
 import jax
@@ -35,8 +58,10 @@ def zero_safe_weighted_term(
     node, including an admissible on-path ``-inf``. `jnp.where` selects the
     literal `0.0` there instead of the (already-computed, possibly `nan`)
     product, so the returned array never carries a `nan` a zero-weight term
-    would otherwise have contributed. Byte-identical to plain
-    ``weight * value`` whenever `weight` is nowhere exactly zero.
+    would otherwise have contributed. Mathematically equal to plain
+    ``weight * value`` whenever `weight` is nowhere exactly zero — but not
+    byte-identical for traced weights, since the `select` blocks XLA's FMA
+    contraction (~1 ULP; see the module docstring).
 
     Args:
         weight: The weight (Pareto weight, regime-transition probability,
