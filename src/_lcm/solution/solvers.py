@@ -404,16 +404,24 @@ class NEGM(Solver):
     outer_batch_size: int = 0
     """Number of outer-grid nodes solved per chunk of the outer sweep.
 
-    Bounds the *solve-side* peak only: each chunk's per-node intermediate
-    buffers are materialised and released together, so they never grow with
-    the whole outer grid. The candidate *carries* are all retained regardless
-    — the published stacked continuation holds every outer candidate
-    (`(A+1) * n_pad` grid slots per leading cell), which is inherent to the
-    exact query-side outer maximum, not a chunking artifact. A positive value
-    processes that many nodes at once (their independent solves overlap);
-    `0` (the default) solves every node at once — fastest, but its solve-side
-    peak grows with the outer-grid size. It is a memory-vs-parallelism knob
-    only: the solved value function is identical across batch sizes.
+    Bounds the *solve-side* chunk transients only: each chunk's per-node
+    intermediate buffers are materialised and released together, so they never
+    grow with the whole outer grid. It does not bound the period's peak, whose
+    remaining candidate-scaled contributions chunking cannot remove:
+
+    - the candidate *carries* are all retained — the published stacked
+      continuation holds every outer candidate (`(A+1) * n_pad` grid slots per
+      leading cell), inherent to the exact query-side outer maximum,
+    - while the stack is built, the unstacked candidate carries and the
+      stacked output coexist transiently,
+    - the parent's continuation read prepares a search key of the full stacked
+      shape and evaluates every candidate per query.
+
+    A positive value processes that many nodes at once (their independent
+    solves overlap); `0` (the default) solves every node at once — fastest,
+    but its solve-side peak grows with the outer-grid size. It is a
+    memory-vs-parallelism knob only: the solved value function is identical
+    across batch sizes.
     """
 
     def __post_init__(self) -> None:
@@ -781,10 +789,14 @@ class _NEGMPeriodKernel:
     """
 
     outer_batch_size: int
-    """Outer-grid nodes solved per chunk before folding into the running maximum.
+    """Outer-grid nodes solved per chunk of the outer sweep.
 
-    `0` solves every node at once; a positive value bounds the peak memory to one
-    chunk of candidates. A memory-vs-parallelism knob only — value-invariant.
+    `0` solves every node at once; a positive value bounds the *solve-side*
+    chunk transients only. It does not bound the period's peak: every candidate
+    carry stays resident for the stacked continuation, the unstacked candidate
+    list and the stacked output coexist while the stack is built, and the
+    parent read evaluates the full candidate axis per query. A
+    memory-vs-parallelism knob only — value-invariant.
     """
 
     @property

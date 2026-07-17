@@ -10,11 +10,16 @@ interval strictly between two nodes is read at its true value there instead of
 being bridged upward, which interpolating an already-maximized row would do
 (`thm:aggregate-bridge`).
 
-The exactness gate reads an event-complete query set — every candidate knot,
-every pairwise crossing on an overlap interval, every support boundary, and one
-midpoint per inter-event gap — through both `outer_envelope_at_query` and an
-independent host max-of-reads, and requires exact agreement, so a sub-spacing
-island cannot hide between mesh points.
+The exactness gate reads a query set that is event-complete *for the affine
+candidate rows it constructs* — every candidate knot, every pairwise crossing,
+every support boundary, and one midpoint per inter-event gap — through both
+`outer_envelope_at_query` and an independent host max-of-reads, and requires
+exact agreement, so for those rows a sub-spacing island cannot hide between
+mesh points. The host loops candidates in plain NumPy but reads each one
+through the same interpolation primitive, so the gate certifies the
+candidate-axis maximum and tie plumbing, not the Hermite primitive itself —
+that has its own spec (with an independent scalar reference) in
+`test_egm_interp.py`.
 """
 
 import jax.numpy as jnp

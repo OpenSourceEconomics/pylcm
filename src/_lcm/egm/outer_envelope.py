@@ -51,7 +51,9 @@ def build_stacked_outer_carry(
     the A+1 conditional carries are retained verbatim so the parent can take the
     exact `max_j V_j(q)` at its own query (`outer_envelope_at_query`). The keeper
     is candidate 0 (zero shift, `credited(z, z) = 0`); adjuster `j` is candidate
-    `j + 1`, lifted by `coh_shifts[:, j]` per durable state.
+    `j + 1`, lifted by `coh_shifts[:, j]` per durable state. While the stack is
+    assembled the unstacked candidate arrays and the stacked output coexist, a
+    transient on top of the resident stacked carry itself.
 
     Args:
         keeper_carry: The keeper's continuation carry — one row per leading cell
