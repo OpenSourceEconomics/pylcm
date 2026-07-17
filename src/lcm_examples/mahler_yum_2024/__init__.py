@@ -19,6 +19,16 @@ the paper's own eq. (6), which discounts `E V_{j+1}(s_{j+1}, f_j)`. Its
 *simulation* meanwhile does advance the habit (`mod_simul.f90:634`), so its
 solve and simulate are mutually inconsistent.
 
+What their solver omits is an interpolation along the habit axis: with
+`puregrid = 2` the chosen effort lands off the 30-point habit grid (`nf = 30`),
+so evaluating `EV` there needs one, and inside the effort objective they
+interpolate over assets only (`lini(agrid, EV(:,h), ap)`). That is the mechanism;
+the source does not reveal the motive, and it does not support calling the
+omission *forced*. Their own simulator carries `effhabit` as `real(8)`, sets the
+next habit to the continuous golden-section effort (`mod_simul.f90:634`), and
+calls `bilini(agrid, fgrid, ...)` at that continuous habit throughout — the
+two-dimensional interpolation the solver would have needed already existed.
+
 `next_lagged_effort` below implements eq. (6). Consequently this model must NOT
 be expected to reproduce the paper's published model column at the published
 Table-II estimates: those estimates were fit against the other recursion.
@@ -44,10 +54,12 @@ convex and piecewise linear in the adjustment-cost draw, with one kink, so a
 5-node equal-probability rule integrates it exactly only when a single branch
 dominates over the whole support; the node count needs a refinement check. Note
 that simulated adjustment shares are NOT restricted to multiples of 1/5 —
-simulation draws the cost continuously. (ii) The discrete grids make the
-simulated moments locally flat in the parameters, which is why MSM inference is
-withheld in the replication. That is a property of this solver, not of the
-paper's model: the authors' continuous searches do not share it.
+simulation draws the cost continuously. (ii) The simulated moments' numerical
+derivative does not converge across finite-difference steps, which is why MSM
+inference is withheld in the replication. The instability is a property of this
+implementation, not of the paper's model — the authors searched continuously and
+estimated successfully — but the measurements do not isolate *which* numerical
+choice produces it; the grid is a consistent explanation, not an identified one.
 """
 
 import dataclasses
@@ -933,18 +945,25 @@ def create_inputs(
     }
 
     td = _build_type_distribution()
-    key = jax.random.key(seed)
+    # Split the root key ONCE and consume each child exactly once. Deriving
+    # `type_indices` from `key` and then splitting that same `key` reuses a
+    # consumed key, which JAX's key-reuse checker rejects: the type draw and the
+    # three draws below are then not guaranteed independent. No bias was measured
+    # at this calibration, but the guarantee is what the initial distribution
+    # relies on, so it has to hold by construction rather than by luck.
+    type_key, health_key, adjustment_key, shock_key = jax.random.split(
+        jax.random.key(seed), num=4
+    )
     type_indices = np.asarray(
         jax.random.choice(
-            key,
+            type_key,
             jnp.arange(len(td)),
             (n_simulation_subjects,),
             p=jnp.array(td["probability"].to_numpy()),
         )
     )
 
-    keys = jax.random.split(key=key, num=3)
-    health_draw = jax.random.uniform(keys[0], (n_simulation_subjects,))
+    health_draw = jax.random.uniform(health_key, (n_simulation_subjects,))
     health_thresholds = np.asarray(td["health_threshold"])[type_indices]
 
     # Round the continuous initial habit to the NEAREST grid point. `searchsorted`
@@ -978,7 +997,7 @@ def create_inputs(
             "productivity_shock": np.asarray(
                 shock_gridpoints[
                     jax.random.choice(
-                        keys[2],
+                        shock_key,
                         jnp.arange(5),
                         (n_simulation_subjects,),
                         p=stationary_shock_dist,
@@ -986,7 +1005,7 @@ def create_inputs(
                 ]
             ),
             "adjustment_cost": np.asarray(
-                jax.random.uniform(keys[1], (n_simulation_subjects,))
+                jax.random.uniform(adjustment_key, (n_simulation_subjects,))
             ),
         }
     )
