@@ -181,6 +181,83 @@ def test_stacked_read_tie_publishes_the_right_continuous_marginal():
     np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
 
 
+def test_stacked_read_tie_owner_follows_the_limited_value_slope():
+    """At a tie the production read ranks by the value read's actual right slope.
+
+    Candidate A carries a raw node marginal of `100` at the tie query, but its
+    value row rises only by `0.1` per bracket, so the Fritsch-Carlson limiter
+    caps the value read's right slope at three times the secant (`0.3`).
+    Candidate B's value rises by `1.0` per bracket, so B actually wins
+    immediately right of the tie and B's gradient-scaled marginal (`1.0 * 2.0`)
+    must be published — ranking by the raw marginal would publish A's
+    `100 * 2.0`.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.broadcast_to(jnp.array([0.0, 1.0, 2.0]), (1, 2, 3)),
+        value=jnp.stack([jnp.array([0.9, 1.0, 1.1]), jnp.array([0.0, 1.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([0.1, 100.0, 0.1]), jnp.array([1.0, 1.0, 1.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([1.0]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 1.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
+
+
+def test_blend_of_a_dead_and_a_live_passive_node_keeps_the_infeasible_pair():
+    """A `-inf` blended value carries an exactly-zero marginal.
+
+    At the lower passive node every candidate's lifted support starts above the
+    query, so that node reads the infeasible pair `(-inf, 0)`; the upper node is
+    live with marginal `2.0`. With positive weights on both nodes the blended
+    value is `-inf` — the cell is infeasible — so the published marginal must be
+    exactly zero, not the finite average `0.5 * 2.0 = 1.0` that could be Euler-
+    inverted before the `-inf` value kills the branch.
+    """
+    dead = jnp.array([10.0, 11.0, 12.0])
+    live = jnp.array([0.0, 5.0, 10.0])
+    carry = EGMCarry(
+        endog_grid=jnp.stack([jnp.stack([dead, dead]), jnp.stack([live, live])]),
+        value=jnp.ones((2, 2, 3)),
+        marginal_utility=jnp.full((2, 2, 3), 2.0),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.5),),
+        child_passive_grids=(jnp.asarray([0.0, 1.0]),),
+        row_queries=jnp.asarray([4.0, 4.0]),
+        row_gradients=jnp.asarray([1.0, 1.0]),
+        n_outer_candidates=2,
+    )
+
+    assert float(smoothed_value) == float("-inf")
+    assert float(smoothed_marginal) == 0.0
+
+
 def test_stacked_read_matches_host_max_of_reads_on_curved_rows():
     """On curved rows the read equals the host nodewise-max-then-blend exactly.
 

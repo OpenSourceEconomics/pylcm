@@ -221,6 +221,81 @@ def test_exact_candidate_tie_publishes_the_right_continuous_marginal():
     np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
 
 
+def test_tie_owner_follows_the_limited_value_slope_not_the_raw_marginal():
+    """At a tie the winner is decided by the value read's actual right slope.
+
+    Candidate A carries a raw node marginal of `100` at the tie, but its value
+    row rises only by `0.1` per bracket, so the Fritsch-Carlson limiter caps the
+    value read's right slope at three times the secant (`0.3`). Candidate B's
+    value rises by `1.0` per bracket (right slope `1.0 > 0.3`), so B is the
+    branch that actually wins immediately right of the tie and B's marginal must
+    be published — ranking by the raw marginal would hand the Euler inversion
+    A's `100`.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.array([[0.9, 1.0, 1.1], [0.0, 1.0, 2.0]])
+    candidate_marginal = jnp.array([[0.1, 100.0, 0.1], [1.0, 1.0, 1.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
+
+
+def test_tie_at_the_upper_clamp_keeps_the_clamped_candidate_available():
+    """A candidate clamped constant above its last knot still competes at a tie.
+
+    Candidate A ends exactly at the tie query and clamps to the constant `1.0`
+    to the right (right slope zero); candidate B continues right but declines
+    (right slope `-1`). The clamp ray beats the declining branch immediately
+    right of the query, so A owns the tie and A's marginal is published —
+    treating A's last knot as the end of its support would hand the tie to the
+    losing branch B.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0], [1.0, 2.0]])
+    candidate_value = jnp.array([[0.0, 1.0], [1.0, 0.0]])
+    candidate_marginal = jnp.array([[1.0, 1.0], [-1.0, -1.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
+
+
+def test_tie_rank_orders_extreme_slopes_exactly_at_float32():
+    """Extreme right slopes at a tie are compared exactly, not through a squash.
+
+    Two candidates tie in value at their shared first node with float32 right
+    slopes `1e20` and `2e20` (each equal to its own secant, so the limiter is
+    inactive). The comparison must order them exactly and pick the steeper
+    candidate B; squashing slopes through `arctan` collapses both to `pi/2` in
+    float32 and silently falls back to first-index ownership.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0], [0.0, 1.0]], dtype=jnp.float32)
+    candidate_value = jnp.array([[0.0, 1e20], [0.0, 2e20]], dtype=jnp.float32)
+    candidate_marginal = jnp.array([[1e20, 1e20], [2e20, 2e20]], dtype=jnp.float32)
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([0.0], dtype=jnp.float32),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 0.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), float(np.float32(2e20)))
+
+
 def test_tie_at_a_support_edge_prefers_the_candidate_that_continues_right():
     """A candidate whose support ends at the tie point loses to one continuing.
 

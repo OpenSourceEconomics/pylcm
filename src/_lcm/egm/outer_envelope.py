@@ -29,8 +29,11 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.interp import interp_on_padded_grid
-from lcm.typing import Bool1D, BoolND, Float1D, FloatND
+from _lcm.egm.interp import (
+    interp_on_padded_grid,
+    interp_right_derivative_on_padded_grid,
+)
+from lcm.typing import Float1D, FloatND
 
 
 def build_stacked_outer_carry(
@@ -103,12 +106,16 @@ def outer_envelope_at_query(
     infeasible pair). The published value is the pointwise maximum over
     candidates; the published marginal is the *winning* candidate's resource
     slope (Danskin), so it is winner-consistent and never averaged across a
-    branch crossing. At an exact value tie the winner is right-continuous and
-    support-aware: among the tied candidates, one whose support continues to the
-    right of the query beats one that ends there, and the largest marginal
-    breaks the remaining tie — the branch that wins immediately to the right of
-    the query owns the published derivative, matching the one-sided convention
-    the parent's Euler inversion expects.
+    branch crossing. At an exact value tie the winner is right-continuous in
+    the value read itself: the tied candidates are ranked by the right
+    derivative of their own value interpolants — the Fritsch-Carlson-limited
+    Hermite slope of the bracket right of the query, exactly zero on the clamp
+    ray at or above a candidate's last node — so the branch whose read actually
+    wins immediately to the right of the query owns the published (economic)
+    marginal, matching the one-sided convention the parent's Euler inversion
+    expects. Candidates whose reads are identical to first order on the right
+    fall back to the lowest index, a deterministic choice among locally
+    indistinguishable branches.
 
     Taking the maximum at the query — rather than at a shared node grid and
     republishing a single interpolated row — is exact for the finite candidate set
@@ -131,53 +138,33 @@ def outer_envelope_at_query(
 
     def read_one(
         endog: Float1D, value: Float1D, marginal: Float1D
-    ) -> tuple[Float1D, Float1D, Bool1D]:
+    ) -> tuple[Float1D, Float1D, Float1D]:
         cand_lower = jnp.min(jnp.where(jnp.isfinite(endog), endog, jnp.inf))
-        cand_upper = jnp.max(jnp.where(jnp.isfinite(endog), endog, -jnp.inf))
         value_at_query = interp_on_padded_grid(
             x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
         )
         marginal_at_query = interp_on_padded_grid(
             x_query=x_query, xp=endog, fp=marginal
         )
+        right_slope_at_query = interp_right_derivative_on_padded_grid(
+            x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
+        )
         below_support = x_query < cand_lower
         value_at_query = jnp.where(below_support, -jnp.inf, value_at_query)
         marginal_at_query = jnp.where(below_support, 0.0, marginal_at_query)
-        return value_at_query, marginal_at_query, x_query < cand_upper
+        right_slope_at_query = jnp.where(below_support, 0.0, right_slope_at_query)
+        return value_at_query, marginal_at_query, right_slope_at_query
 
-    values, marginals, right_available = jax.vmap(read_one)(
+    values, marginals, right_slopes = jax.vmap(read_one)(
         candidate_endog, candidate_value, candidate_marginal
     )
     envelope_value = jnp.max(values, axis=0)
-    winner = jnp.argmax(
-        _right_continuous_candidate_rank(
-            values=values,
-            envelope_value=envelope_value,
-            right_available=right_available,
-            marginals=marginals,
-        ),
-        axis=0,
-    )
+    # Staged lexicographic ownership: only candidates attaining the envelope
+    # value compete (`-inf` rank otherwise); among them the largest right
+    # derivative of the value read wins, and `argmax` resolves exact rank ties
+    # to the lowest index. No packing of the two stages into one float — the
+    # comparisons stay exact at any magnitude and any precision.
+    rank = jnp.where(values >= envelope_value, right_slopes, -jnp.inf)
+    winner = jnp.argmax(rank, axis=0)
     envelope_marginal = jnp.take_along_axis(marginals, winner[None, :], axis=0)[0]
     return envelope_value, envelope_marginal
-
-
-def _right_continuous_candidate_rank(
-    *,
-    values: FloatND,
-    envelope_value: FloatND,
-    right_available: BoolND,
-    marginals: FloatND,
-) -> FloatND:
-    """Rank tied candidates by right-continuity: support first, then slope.
-
-    Only candidates attaining the envelope value compete (`-inf` rank
-    otherwise). Among them, a candidate whose support continues to the right of
-    the query outranks one ending there (`+1`), and the marginal — squashed by
-    `arctan` into `(0, 1)` so it never overturns the support bit — breaks the
-    remaining tie toward the branch that wins immediately to the right. A unique
-    maximizer wins regardless of its rank internals.
-    """
-    bounded_slope = jnp.arctan(marginals) / jnp.pi + 0.5
-    rank = right_available.astype(bounded_slope.dtype) + bounded_slope
-    return jnp.where(values >= envelope_value, rank, -jnp.inf)
