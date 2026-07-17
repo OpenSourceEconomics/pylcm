@@ -62,7 +62,7 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import InvalidParamsError, RegimeInitializationError
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -425,16 +425,18 @@ class NEGM(Solver):
     """
 
     outer_batch_size: int = 0
-    """Number of outer-grid nodes solved per chunk before folding into the
-    running outer maximum.
+    """Number of outer-grid nodes solved per chunk of the outer sweep.
 
-    The outer search folds each node's solve into a running `(V_arr, envelope)`,
-    so the peak device memory holds one chunk of candidates regardless of the
-    outer-grid size. A positive value processes that many nodes at once (their
-    independent solves overlap) before reducing them; `0` (the default) solves
-    every node at once — fastest, but its peak grows with the outer-grid size.
-    It is a memory-vs-parallelism knob only: `max` is associative, so the solved
-    value function is identical across batch sizes.
+    Bounds the *solve-side* peak only: each chunk's per-node intermediate
+    buffers are materialised and released together, so they never grow with
+    the whole outer grid. The candidate *carries* are all retained regardless
+    — the published stacked continuation holds every outer candidate
+    (`(A+1) * n_pad` grid slots per leading cell), which is inherent to the
+    exact query-side outer maximum, not a chunking artifact. A positive value
+    processes that many nodes at once (their independent solves overlap);
+    `0` (the default) solves every node at once — fastest, but its solve-side
+    peak grows with the outer-grid size. It is a memory-vs-parallelism knob
+    only: the solved value function is identical across batch sizes.
     """
 
     def __post_init__(self) -> None:
@@ -1078,6 +1080,7 @@ def _build_coh_shift_function(
         *, durable_values: FloatND, outer_values: FloatND, **params: object
     ) -> FloatND:
         zero_reference = jnp.zeros((), dtype=durable_values.dtype)
+        one_reference = jnp.ones((), dtype=durable_values.dtype)
         # Every resources leaf other than the Euler state, the durable state, the
         # outer post-decision, and the regime params is constant in the outer
         # choice (the credited cost reads only the durable margin), so it appears
@@ -1085,9 +1088,13 @@ def _build_coh_shift_function(
         # difference. Hold each at a fixed reference — exactly as the Euler state
         # is held at zero — so the shift is the pure credited-cost difference.
         separable_arg_names = resources_arg_names - bound_arg_names - set(params)
-        separable_references = dict.fromkeys(separable_arg_names, zero_reference)
 
-        def shift_one(durable: FloatND, outer: FloatND) -> FloatND:
+        def shift_one(
+            durable: FloatND,
+            outer: FloatND,
+            euler_reference: FloatND,
+            separable_reference: FloatND,
+        ) -> FloatND:
             # The keeper leg holds the outer post-decision at the keeper core's
             # own no-adjustment level `keep(durable)` — the level whose credited
             # cost is zero — so the shift is the adjuster's full credited cost
@@ -1096,9 +1103,12 @@ def _build_coh_shift_function(
             keeper_next = (
                 durable if no_adjustment_func is None else no_adjustment_func(durable)
             )
+            separable_references = dict.fromkeys(
+                separable_arg_names, separable_reference
+            )
             keeper_resources = resources_func(
                 **{
-                    euler_state_name: zero_reference,
+                    euler_state_name: euler_reference,
                     durable_state_name: durable,
                     outer_post_decision: keeper_next,
                 },
@@ -1107,7 +1117,7 @@ def _build_coh_shift_function(
             )
             adjuster_resources = resources_func(
                 **{
-                    euler_state_name: zero_reference,
+                    euler_state_name: euler_reference,
                     durable_state_name: durable,
                     outer_post_decision: outer,
                 },
@@ -1116,11 +1126,53 @@ def _build_coh_shift_function(
             )
             return keeper_resources - adjuster_resources
 
-        return jax.vmap(
-            lambda durable: jax.vmap(lambda outer: shift_one(durable, outer))(
-                outer_values
+        def shift_matrix(
+            euler_reference: FloatND, separable_reference: FloatND
+        ) -> FloatND:
+            return jax.vmap(
+                lambda durable: jax.vmap(
+                    lambda outer: shift_one(
+                        durable, outer, euler_reference, separable_reference
+                    )
+                )(outer_values)
+            )(durable_values)
+
+        # The stacked lift is a *constant translation* per (durable, outer)
+        # cell: it exists only if the keeper-adjuster resources difference is
+        # independent of the Euler state (equal liquid slopes) and of every
+        # separable leaf held at a reference. Probe both directions and fail
+        # loudly on a mismatch — a silent broadcast would place candidates on
+        # the wrong cash-on-hand axis.
+        shifts = shift_matrix(zero_reference, zero_reference)
+        euler_probe = shift_matrix(one_reference, zero_reference)
+        separable_probe = shift_matrix(zero_reference, one_reference)
+        tolerance = float(10 * jnp.sqrt(jnp.finfo(shifts.dtype).eps))
+        euler_ok = bool(
+            jnp.allclose(shifts, euler_probe, rtol=tolerance, atol=tolerance)
+        )
+        separable_ok = bool(
+            jnp.allclose(shifts, separable_probe, rtol=tolerance, atol=tolerance)
+        )
+        if not (euler_ok and separable_ok):
+            offender = (
+                f"the Euler state '{euler_state_name}'"
+                if not euler_ok
+                else f"a resources leaf other than '{durable_state_name}' and "
+                f"'{outer_post_decision}'"
             )
-        )(durable_values)
+            msg = (
+                "The NEGM cash-on-hand lift requires the keeper-adjuster "
+                "resources difference to be an additive constant per "
+                "(durable, outer-node) cell, but under the supplied params it "
+                f"depends on {offender}. No constant translation onto a common "
+                "cash-on-hand axis exists for this model, so the stacked outer "
+                "carry would be lifted onto the wrong axis. Restructure the "
+                "outer cost to be additively separable from the other states "
+                "(and leave the Euler-state coefficient identical across outer "
+                "choices), or use `GridSearch` for this regime."
+            )
+            raise InvalidParamsError(msg)
+        return shifts
 
     return coh_shifts
 

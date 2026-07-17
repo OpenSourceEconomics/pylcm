@@ -174,17 +174,19 @@ def test_stacked_carry_lifts_candidates_into_common_coh_and_round_trips():
 
 
 def test_query_below_every_candidate_support_is_masked_out():
-    """A query below every candidate's first finite node yields `-inf` value.
+    """A query below every candidate's first finite node yields `(-inf, 0)`.
 
     Both candidates' support starts at `x = 1.0`; a query at `0.5` is below both,
     so the envelope value is `-inf` (no candidate is feasible), never a clamped
-    boundary value that would let an infeasible branch win spuriously.
+    boundary value that would let an infeasible branch win spuriously — and the
+    published marginal is exactly zero, matching the infeasible contract the
+    parent's probability-weighted expectation relies on.
     """
     candidate_endog = jnp.array([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]])
     candidate_value = jnp.array([[0.0, 1.0, 2.0], [0.5, 0.4, 0.3]])
     candidate_marginal = jnp.array([[1.0, 1.0, 1.0], [-0.1, -0.1, -0.1]])
 
-    value, _marginal = outer_envelope_at_query(
+    value, marginal = outer_envelope_at_query(
         candidate_endog=candidate_endog,
         candidate_value=candidate_value,
         candidate_marginal=candidate_marginal,
@@ -192,3 +194,51 @@ def test_query_below_every_candidate_support_is_masked_out():
     )
 
     assert float(value[0]) == float("-inf")
+    assert float(marginal[0]) == 0.0
+
+
+def test_exact_candidate_tie_publishes_the_right_continuous_marginal():
+    """At an exact crossing the winner is the candidate that wins to the right.
+
+    Keeper `K(q) = 1 - q` (marginal `-1`) and adjuster `A(q) = q` (marginal `+1`)
+    tie at `q = 0.5`. Immediately to the right the adjuster wins, so the
+    right-continuous envelope's marginal there is `+1`; publishing the keeper's
+    `-1` (a first-index tie) would feed the wrong one-sided derivative into the
+    parent's Euler inversion.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0], [0.0, 1.0]])
+    candidate_value = jnp.array([[1.0, 0.0], [0.0, 1.0]])
+    candidate_marginal = jnp.array([[-1.0, -1.0], [1.0, 1.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([0.5]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 0.5, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
+
+
+def test_tie_at_a_support_edge_prefers_the_candidate_that_continues_right():
+    """A candidate whose support ends at the tie point loses to one continuing.
+
+    Candidate A spans `[0, 1]` with the steeper marginal but ends exactly at the
+    query `q = 1`; candidate B spans `[1, 2]` and continues to the right. Both
+    read value `1.0` at the query, but only B exists immediately to the right,
+    so the right-continuous winner is B and the published marginal is B's.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0], [1.0, 2.0]])
+    candidate_value = jnp.array([[0.0, 1.0], [1.0, 1.5]])
+    candidate_marginal = jnp.array([[5.0, 5.0], [0.5, 0.5]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 0.5, atol=1e-9)
