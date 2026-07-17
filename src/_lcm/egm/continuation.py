@@ -63,6 +63,7 @@ from _lcm.typing import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
+    BoolND,
     Float1D,
     FloatND,
     IntND,
@@ -1266,9 +1267,10 @@ def _aggregate_child_choices(
     row is interpolated 1-D at its own resources query and its marginal is
     multiplied by its own composed gradient $(\\partial R'/\\partial A)$ —
     per row, because each row's envelope lives in its own resources space.
-    The passive axes are then blended away with edge-clamped linear weights
-    on the two neighboring nodes of each passive grid — *before* the choice
-    aggregation, so the logsum sees blended choice-specific values. Finally
+    The passive axes are then blended away (`_blend_passive_axes`) with
+    edge-clamped linear weights on the two neighboring nodes of each passive
+    grid — *before* the choice aggregation, so the logsum sees blended
+    choice-specific values. Finally
     the discrete-action rows are aggregated with the child's taste-shock
     scale: the smoothed value is the logsum and the smoothed marginal is
     $\\sum_{d'} P_{d'} \\mu_{d'} (\\partial R'/\\partial A)_{d'}$ — exact
@@ -1452,32 +1454,103 @@ def _aggregate_child_choices(
     value_at_child = value_at_child.reshape(block_shape)
     marginal_at_child = marginal_at_child.reshape(block_shape)
     if n_outer_candidates:
-        # Collapse the candidate axis by the exact hard max at the query,
-        # publishing the winner's marginal (Danskin). This happens *before* the
-        # passive blend so the blend interpolates the nodewise outer maximum. An
-        # exact value tie resolves right-continuously and support-aware: among
-        # tied candidates, one whose support continues right of the query beats
-        # one ending there, and the largest marginal breaks the rest — so the
-        # branch that wins immediately to the right owns the derivative the
-        # parent's Euler inversion consumes. (The rank uses the gradient-scaled
-        # marginal; the composed gradient is shared by all candidates of a cell
-        # and positive, so it never reorders them.) A cell whose candidates are
-        # all `-inf` (no live support) keeps the `(-inf, 0)` infeasible
-        # contract: every masked marginal is exactly zero.
-        best_value = jnp.max(value_at_child, axis=-1, keepdims=True)
-        bounded_slope = jnp.arctan(marginal_at_child) / jnp.pi + 0.5
-        rank = jnp.where(
-            value_at_child >= best_value,
-            candidate_right_available.reshape(block_shape).astype(bounded_slope.dtype)
-            + bounded_slope,
-            -jnp.inf,
+        # Collapse the candidate axis *before* the passive blend, so the blend
+        # interpolates the nodewise outer maximum
+        # `sum_k w_k max_j W_j(q; d_k)` rather than the lower bound
+        # `max_j sum_k w_k W_j(q; d_k)`.
+        value_at_child, marginal_at_child = _collapse_outer_candidate_axis(
+            value_at_child=value_at_child,
+            marginal_at_child=marginal_at_child,
+            candidate_right_available=candidate_right_available.reshape(block_shape),
         )
-        winner = jnp.argmax(rank, axis=-1, keepdims=True)
-        value_at_child = jnp.take_along_axis(value_at_child, winner, axis=-1)[..., 0]
-        marginal_at_child = jnp.take_along_axis(marginal_at_child, winner, axis=-1)[
-            ..., 0
-        ]
 
+    value_at_child, marginal_at_child = _blend_passive_axes(
+        value_at_child=value_at_child,
+        marginal_at_child=marginal_at_child,
+        child_passive_values=child_passive_values,
+        child_passive_grids=child_passive_grids,
+    )
+
+    value_at_child = value_at_child.reshape(-1)
+    marginal_at_child = marginal_at_child.reshape(-1)
+    if has_taste_shocks:
+        smoothed_value, choice_probs = logsum_and_softmax(
+            values=value_at_child, scale=carry.taste_shock_scale, axes=(0,)
+        )
+    else:
+        smoothed_value, choice_probs = _hard_max_and_one_hot(
+            values=value_at_child, axes=(0,)
+        )
+    smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
+    return smoothed_value, smoothed_marginal
+
+
+def _collapse_outer_candidate_axis(
+    *,
+    value_at_child: FloatND,
+    marginal_at_child: FloatND,
+    candidate_right_available: BoolND,
+) -> tuple[FloatND, FloatND]:
+    """Collapse a stacked NEGM child's candidate axis by the hard max at the query.
+
+    Publishes the winner's marginal (Danskin). An exact value tie resolves
+    right-continuously and support-aware: among tied candidates, one whose
+    support continues right of the query beats one ending there, and the
+    largest marginal breaks the rest — so the branch that wins immediately to
+    the right owns the derivative the parent's Euler inversion consumes. The
+    rank uses the gradient-scaled marginal; the composed gradient is shared by
+    all candidates of a cell and positive, so it never reorders them. A cell
+    whose candidates are all `-inf` (no live support) keeps the `(-inf, 0)`
+    infeasible contract: every masked marginal is exactly zero.
+
+    Args:
+        value_at_child: Read values with a trailing candidate axis.
+        marginal_at_child: Read marginals with the same shape.
+        candidate_right_available: Whether each candidate's support continues
+            right of the query, with the same shape.
+
+    Returns:
+        Tuple of the value and marginal with the candidate axis collapsed.
+
+    """
+    best_value = jnp.max(value_at_child, axis=-1, keepdims=True)
+    bounded_slope = jnp.arctan(marginal_at_child) / jnp.pi + 0.5
+    rank = jnp.where(
+        value_at_child >= best_value,
+        candidate_right_available.astype(bounded_slope.dtype) + bounded_slope,
+        -jnp.inf,
+    )
+    winner = jnp.argmax(rank, axis=-1, keepdims=True)
+    return (
+        jnp.take_along_axis(value_at_child, winner, axis=-1)[..., 0],
+        jnp.take_along_axis(marginal_at_child, winner, axis=-1)[..., 0],
+    )
+
+
+def _blend_passive_axes(
+    *,
+    value_at_child: FloatND,
+    marginal_at_child: FloatND,
+    child_passive_values: tuple[ScalarFloat, ...],
+    child_passive_grids: tuple[Float1D, ...],
+) -> tuple[FloatND, FloatND]:
+    """Blend each passive axis away with edge-clamped linear node weights.
+
+    Runs before the choice aggregation, so the logsum sees blended
+    choice-specific values.
+
+    Args:
+        value_at_child: Read values with the row block's shape (passive dims,
+            then action dims).
+        marginal_at_child: Read marginals with the same shape.
+        child_passive_values: The child's passive values at this savings node,
+            aligned with `child_passive_grids`.
+        child_passive_grids: The child's passive grids in carry-axis order.
+
+    Returns:
+        Tuple of the value and marginal with every passive axis blended away.
+
+    """
     for passive_value, passive_grid in zip(
         child_passive_values, child_passive_grids, strict=True
     ):
@@ -1498,19 +1571,7 @@ def _aggregate_child_choices(
             weight_lower * marginal_at_child[lower]
             + weight_upper * marginal_at_child[upper]
         )
-
-    value_at_child = value_at_child.reshape(-1)
-    marginal_at_child = marginal_at_child.reshape(-1)
-    if has_taste_shocks:
-        smoothed_value, choice_probs = logsum_and_softmax(
-            values=value_at_child, scale=carry.taste_shock_scale, axes=(0,)
-        )
-    else:
-        smoothed_value, choice_probs = _hard_max_and_one_hot(
-            values=value_at_child, axes=(0,)
-        )
-    smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
-    return smoothed_value, smoothed_marginal
+    return value_at_child, marginal_at_child
 
 
 def _build_child_reads(
