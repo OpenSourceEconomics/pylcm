@@ -49,6 +49,45 @@ def test_iid_row_reduces_to_pylcm():
     np.testing.assert_allclose(np.asarray(row), np.asarray(P[0]), atol=1e-10)
 
 
+@pytest.mark.parametrize("mu", [0.2, -0.5])
+def test_tauchen_row_reduces_to_pylcm_at_nodes_with_nonzero_mu(mu):
+    """F2 regression: the AR(1) intercept must survive into the row.
+
+    Stock pylcm builds its Tauchen rows in demeaned coordinates, where the intercept
+    drops out; here the nodes and the from-value are PHYSICAL (centred on mu/(1-rho)),
+    so the conditional mean is `mu + rho*y` and dropping `mu` misplaces every row.
+    """
+    p = TauchenAR1Process(
+        n_points=7, gauss_hermite=False, rho=0.9, sigma=0.2, mu=mu, n_std=3.0
+    )
+    nodes = p.get_gridpoints()
+    P = p.get_transition_probs()
+    for i in range(7):
+        row = tauchen_row(nodes, rho=0.9, sigma=0.2, from_value=float(nodes[i]), mu=mu)
+        np.testing.assert_allclose(np.asarray(row), np.asarray(P[i]), atol=1e-10)
+
+
+@pytest.mark.parametrize("mu", [1.0, -0.3])
+def test_iid_row_reduces_to_pylcm_with_nonzero_mu(mu):
+    """F2 regression: a non-zero IID mean must survive into the row."""
+    p = NormalIIDProcess(n_points=7, gauss_hermite=False, mu=mu, sigma=0.2, n_std=3.0)
+    nodes = p.get_gridpoints()
+    P = p.get_transition_probs()
+    row = iid_normal_row(nodes, mu=mu, sigma=0.2)
+    np.testing.assert_allclose(np.asarray(row), np.asarray(P[0]), atol=1e-10)
+
+
+def test_dropping_mu_would_misplace_the_row():
+    """Pins WHY F2 mattered: at mu=1, sigma=0.2 the mu=0 row is a different law that
+    reverses a continuation-vs-sure choice paying 1 on the middle node against 0.5."""
+    nodes = jnp.array([0.0, 1.0, 2.0])
+    correct = np.asarray(iid_normal_row(nodes, mu=1.0, sigma=0.2))
+    dropped = np.asarray(iid_normal_row(nodes, mu=0.0, sigma=0.2))
+    tv = 0.5 * np.abs(correct - dropped).sum()
+    assert tv > 0.9
+    assert dropped[1] < 0.5 < correct[1]
+
+
 @pytest.mark.parametrize("sigma", [0.05, 0.2, 1.0])
 def test_rows_are_distributions(sigma):
     nodes = jnp.linspace(-3.0, 3.0, 9)
@@ -132,9 +171,11 @@ def test_state_conditioned_dataclass_is_frozen():
 
 def test_conditioned_row_dispatch_sums_to_one():
     nodes = jnp.linspace(-3.0, 3.0, 7)
-    r_iid = conditioned_row(family="iid_normal", nodes=nodes, sigma=0.5, from_value=0.0)
+    r_iid = conditioned_row(
+        family="iid_normal", nodes=nodes, sigma=0.5, from_value=0.0, mu=0.0
+    )
     r_tau = conditioned_row(
-        family="tauchen", nodes=nodes, sigma=0.5, from_value=0.3, rho=0.8
+        family="tauchen", nodes=nodes, sigma=0.5, from_value=0.3, mu=0.0, rho=0.8
     )
     assert np.asarray(r_iid).sum() == pytest.approx(1.0)
     assert np.asarray(r_tau).sum() == pytest.approx(1.0)
@@ -143,4 +184,6 @@ def test_conditioned_row_dispatch_sums_to_one():
 def test_conditioned_row_tauchen_requires_rho():
     nodes = jnp.linspace(-3.0, 3.0, 7)
     with pytest.raises(ValueError, match="requires rho"):
-        conditioned_row(family="tauchen", nodes=nodes, sigma=0.5, from_value=0.0)
+        conditioned_row(
+            family="tauchen", nodes=nodes, sigma=0.5, from_value=0.0, mu=0.0
+        )

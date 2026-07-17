@@ -1,5 +1,6 @@
 import functools
 import inspect
+import math
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -1227,6 +1228,11 @@ def _process_regime_core(
         for process in process_names
         if isinstance(grid := grids.get(process), _ContinuousStochasticProcess)
     }
+    for grid in target_process_grids.values():
+        if grid.state_conditioned is not None:
+            _validate_conditioning_codes_agree_across_regimes(
+                on=grid.state_conditioned.on, all_grids=all_grids
+            )
     processed_functions |= {
         f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
             name=process,
@@ -1572,13 +1578,17 @@ def _process_family(grid: _ContinuousStochasticProcess) -> str:
     ``TauchenAR1Process``. Gauss-Hermite IID (nodes scale with ``sigma``) and
     Rouwenhorst (``rho``-only transition) are rejected at construction.
     """
+    if isinstance(grid, NormalIIDProcess | TauchenAR1Process) and grid.gauss_hermite:
+        # Blanket rejection, per the stated v1 scope (code-review F6). GH-placed nodes
+        # are derived from the *grid* sigma, so a state-conditioned sigma would bin a
+        # different law on a quadrature rule chosen for another one; untested here.
+        msg = (
+            "state-conditioned sigma is not supported for Gauss-Hermite node placement "
+            "(the nodes are built from the grid sigma); use gauss_hermite=False "
+            "(CDF binning)."
+        )
+        raise ModelInitializationError(msg)
     if isinstance(grid, NormalIIDProcess):
-        if grid.gauss_hermite:
-            msg = (
-                "state-conditioned sigma is not supported for Gauss-Hermite IID "
-                "(its nodes scale with sigma); use gauss_hermite=False (CDF binning)."
-            )
-            raise ModelInitializationError(msg)
         return "iid_normal"
     if isinstance(grid, TauchenAR1Process):
         return "tauchen"
@@ -1587,6 +1597,75 @@ def _process_family(grid: _ContinuousStochasticProcess) -> str:
         f"and TauchenAR1Process (audit F2); got {type(grid).__name__}."
     )
     raise ModelInitializationError(msg)
+
+
+def _validate_conditioning_codes_agree_across_regimes(
+    *,
+    on: str,
+    all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]],
+) -> None:
+    """Every regime carrying the conditioning state must map categories to codes alike.
+
+    The sigma array is ordered by the *target* regime's grid, but the code gathering
+    it is the *current* (source) state's. Those agree only if the category-to-code maps
+    do; a regime that relabels `{low: 0, high: 1}` to `{high: 0, low: 1}` would silently
+    swap the two volatilities (code-review F4). Rather than thread the source grid
+    through every seam, v1 requires one shared map and rejects otherwise.
+    """
+    maps = {
+        regime: dict(zip(grid.categories, grid.codes, strict=True))
+        for regime, grids in all_grids.items()
+        if isinstance(grid := grids.get(on), DiscreteGrid)
+    }
+    distinct = {tuple(sorted(m.items())) for m in maps.values()}
+    if len(distinct) > 1:
+        msg = (
+            f"state_conditioned.on='{on}' must map categories to the same integer "
+            f"codes in every regime that carries it, because the per-category sigma is "
+            f"indexed by that code; got {maps}."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _validate_conditioned_sigmas(by: Mapping[str, float]) -> None:
+    """Every per-category sigma must be a finite, strictly positive number.
+
+    ``None``, ``NaN`` and ``inf`` all sail through a bare ``v <= 0`` test and then
+    poison every transition row silently (code-review F3).
+    """
+    bad = {
+        k: v
+        for k, v in by.items()
+        if v is None or not math.isfinite(float(v)) or float(v) <= 0.0
+    }
+    if bad:
+        msg = f"state_conditioned.by values must be finite positive sigmas; got {bad}"
+        raise ModelInitializationError(msg)
+
+
+def _validate_conditioned_grid_is_fixed(
+    *, name: str, grid: _ContinuousStochasticProcess
+) -> None:
+    """A state-conditioned process must have every grid parameter fixed at build time.
+
+    The conditioned branch is chosen *before* the runtime-parameter mechanism, so a
+    parameter left for runtime is never bound: ``get_gridpoints()`` returns all-NaN and
+    the closure captures those nodes permanently (code-review F3). Reject instead.
+    """
+    if not grid.is_fully_specified:
+        missing = ", ".join(sorted(grid.params_to_pass_at_runtime))
+        msg = (
+            f"state-conditioned process '{name}' requires every grid parameter fixed "
+            f"at construction (v1); {missing} would be passed at runtime. Pass them to "
+            f"{type(grid).__name__}(...), or drop state_conditioned."
+        )
+        raise ModelInitializationError(msg)
+    nodes = grid.get_gridpoints()
+    if not bool(jnp.all(jnp.isfinite(nodes))):
+        msg = (
+            f"state-conditioned process '{name}' resolved to non-finite nodes: {nodes}"
+        )
+        raise ModelInitializationError(msg)
 
 
 def _get_conditioned_weights_func(
@@ -1608,19 +1687,13 @@ def _get_conditioned_weights_func(
             f"same regime as the process."
         )
         raise ModelInitializationError(msg)
-    if any(v is None or float(v) <= 0.0 for v in sc.by.values()):
-        msg = f"state_conditioned.by values must be positive sigmas; got {dict(sc.by)}"
-        raise ModelInitializationError(msg)
+    _validate_conditioned_sigmas(sc.by)
     family = _process_family(grid)
+    _validate_conditioned_grid_is_fixed(name=name, grid=grid)
     nodes = grid.get_gridpoints()
     sigma_by_code = sigma_array_by_code(conditioning_grid, sc.by)
-    rho_fixed = dict(grid.params).get("rho")
-    if family == "tauchen" and rho_fixed is None:
-        msg = (
-            "state-conditioned Tauchen requires rho fixed at construction (v1); "
-            "pass rho=... to TauchenAR1Process(...)."
-        )
-        raise ModelInitializationError(msg)
+    fixed = dict(grid.params)
+    mu_fixed, rho_fixed = fixed["mu"], fixed.get("rho")
 
     args = {name: "ContinuousState", sc.on: "DiscreteState"}
 
@@ -1632,6 +1705,7 @@ def _get_conditioned_weights_func(
             nodes=nodes,
             sigma=sigma,
             from_value=kwargs[name],
+            mu=mu_fixed,
             rho=rho_fixed,
         )
 

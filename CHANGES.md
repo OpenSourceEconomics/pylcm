@@ -13,10 +13,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   transition row is evaluated directly at the from-value with that regime's `sigma`
   (no precomputed-row interpolation). This expresses regime-switching income risk /
   stochastic volatility. Supported for CDF-binned `NormalIIDProcess`
-  (`gauss_hermite=False`) and `TauchenAR1Process`; Gauss-Hermite IID and Rouwenhorst
-  are rejected at construction (their fixed-node kernels cannot carry a
-  state-conditioned `sigma`). Current-regime conditioning only. See
-  `lcm_examples/stochastic_volatility.py`.
+  (`gauss_hermite=False`) and `TauchenAR1Process`; Gauss-Hermite node placement and
+  Rouwenhorst are rejected at construction (their fixed-node kernels cannot carry a
+  state-conditioned `sigma`). Solving and simulating use the same conditioned law.
+  Every grid parameter must be fixed at construction, and the conditioning state must
+  map its categories to the same integer codes in every regime that carries it.
+  Current-regime conditioning only. See `lcm_examples/stochastic_volatility.py`.
 
 - Adds the DC-EGM solver (Iskhakov, Jørgensen, Rust & Schjerning 2017) as a
   per-regime alternative to grid search: `Regime(solver=lcm.DCEGM(...))`.
