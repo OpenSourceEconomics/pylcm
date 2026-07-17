@@ -29,6 +29,23 @@ import numpy as np
 import pytest
 
 from _lcm.egm import interp
+from tests.conftest import X64_ENABLED
+
+# The germ read and its host reference rerun identical interpolation
+# arithmetic, so the two sides agree to the active float precision's
+# roundoff, not better. The k-th germ component divides by the bracket
+# width to the k-th power, amplifying that roundoff by one power of `1/h`
+# per derivative order — so the higher components carry correspondingly
+# looser float32 bounds.
+_GERM_ATOL = 1e-9 if X64_ENABLED else 2e-5
+if X64_ENABLED:
+    _GERM_COMPONENT_RTOL_ATOL = dict.fromkeys((1, 2, 3), (1e-07, 1e-09))
+else:
+    _GERM_COMPONENT_RTOL_ATOL = {
+        1: (1e-3, 3e-4),
+        2: (1e-3, 1e-2),
+        3: (1e-3, 3e-1),
+    }
 
 
 def test_matches_numpy_interp_on_clean_grid():
@@ -444,7 +461,7 @@ def test_right_germ_at_a_node_uses_the_right_brackets_limited_slope():
         x_query=jnp.array([1.0]), xp=xp, fp=fp, fp_slopes=slopes
     )
 
-    np.testing.assert_allclose(float(first[0]), 0.3, atol=1e-12)
+    np.testing.assert_allclose(float(first[0]), 0.3, atol=_GERM_ATOL)
 
 
 def test_right_germ_is_flat_and_finite_on_the_clamp_rays():
@@ -518,8 +535,10 @@ def test_right_germ_matches_scalar_host_on_random_rows():
         expected = [_host_right_germ(xp, fp, slopes, q) for q in queries]
         np.testing.assert_array_equal(np.asarray(got[0]), [e[0] for e in expected])
         for component in (1, 2, 3):
+            rtol, atol = _GERM_COMPONENT_RTOL_ATOL[component]
             np.testing.assert_allclose(
                 np.asarray(got[component]),
                 [e[component] for e in expected],
-                atol=1e-9,
+                rtol=rtol,
+                atol=atol,
             )
