@@ -9,6 +9,13 @@ upper envelope, so the harness solves the model with DC-EGM, simulates, and scor
 the Euler equation along the working-regime path. The same harness scores the RFC
 column (the paper's fourth method) by passing `upper_envelope="rfc"`.
 
+The backend choice moves the metric by orders of magnitude, because it decides
+what simulation may read back: FUES rows carry the envelope crossings and so
+qualify for the off-grid policy read, while RFC rows do not and keep the
+grid-argmax path. The scored residual is therefore policy-interpolation error
+under FUES and action-grid quantization error under RFC — two different
+quantities, not two estimates of one.
+
 These tests run a single small solve at a time (asset grid <= 1000, shortened
 horizon) so they stay local-safe; the full paper grids {1000..10000} at T=50 are a
 GPU/CI sweep.
@@ -32,15 +39,17 @@ _LOCAL_N_PERIODS = 20
 _LOCAL_N_SUBJECTS = 300
 
 
-def test_app1_euler_error_is_finite_and_in_paper_ballpark():
-    """The FUES Euler error at tau=1, n_grid=1000 is finite, negative, and sane.
+def test_app1_euler_error_is_finite_and_below_the_grid_quantization_floor():
+    """The FUES Euler error at tau=1, n_grid=1000 clears the action-grid floor.
 
     The mean log10 consumption Euler error is a negative number (more negative =
-    more accurate); the paper reports roughly -1.6 for tau=1 at the full
-    grids. The working regime carries the discrete retirement action, so its
-    simulated consumption keeps the grid-argmax path (the off-grid policy
-    read applies only to regimes without discrete actions) and the metric
-    sits at the action-grid quantization floor, in the -1.0 to -4.0 band.
+    more accurate). The working regime qualifies for the off-grid policy read:
+    FUES publishes crossing-complete rows, so simulation re-decides the
+    retirement branch at the subject's own resources and interpolates the
+    winning branch's consumption off the action grid. The metric then measures
+    the policy row's interpolation error rather than the action-grid spacing,
+    and sits well below the -1.0 to -4.0 quantization band a grid argmax floors
+    at.
     """
     error = app1_euler_error(
         tau=1.0,
@@ -50,7 +59,7 @@ def test_app1_euler_error_is_finite_and_in_paper_ballpark():
         seed=0,
     )
     assert np.isfinite(error)
-    assert -4.0 < error < -1.0
+    assert error < -4.0
 
 
 def test_app1_euler_error_improves_under_grid_refinement():
@@ -75,8 +84,8 @@ def test_app1_euler_error_improves_under_grid_refinement():
         n_subjects=_LOCAL_N_SUBJECTS,
         seed=0,
     )
-    assert -4.0 < coarse < -1.0
-    assert -4.0 < fine < -1.0
+    assert coarse < -4.0
+    assert fine < -4.0
     assert fine < coarse - 0.5
 
 
@@ -91,7 +100,7 @@ def test_app1_accuracy_table_has_one_row_per_cell():
     )
     assert list(table.columns) == ["tau", "n_grid", "fues_euler_error"]
     assert len(table) == 2
-    assert table["fues_euler_error"].between(-4.0, -1.0).all()
+    assert (table["fues_euler_error"] < -4.0).all()
 
 
 def test_sample_path_euler_error_recovers_a_planted_residual():
@@ -121,13 +130,16 @@ def test_sample_path_euler_error_recovers_a_planted_residual():
     assert error == pytest.approx(np.log10(0.1), abs=1e-9)
 
 
-def test_app1_rfc_euler_error_is_in_the_same_regime_as_fues():
-    """RFC-1D reproduces the FUES accuracy regime on Application 1.
+def test_app1_rfc_euler_error_sits_at_the_action_grid_floor_above_fues():
+    """RFC-1D scores the action-grid floor; FUES clears it by orders of magnitude.
 
-    The rooftop-cut (`upper_envelope="rfc"`) and the FUES scan are both exact at
-    the endogenous nodes and reintroduce the residual only through the policy
-    interpolation onto the coarse grid, so on this retirement model they land in
-    the same mean log10 Euler-error band.
+    The rooftop-cut (`upper_envelope="rfc"`) leaves each envelope switch between
+    two retained nodes, so its rows carry no crossing topology and the regime
+    keeps the grid-argmax simulate path — its consumption is quantized to the
+    action grid and the Euler residual floors at that spacing. FUES publishes
+    the crossings, qualifies for the off-grid read, and lands in a different
+    accuracy regime entirely. The two backends agree on the solved value; they
+    differ in what simulation is allowed to read back.
     """
     config = {
         "tau": 1.0,
@@ -140,7 +152,7 @@ def test_app1_rfc_euler_error_is_in_the_same_regime_as_fues():
     rfc = app1_euler_error(upper_envelope="rfc", **config)
     assert np.isfinite(rfc)
     assert -4.0 < rfc < -1.0
-    assert abs(rfc - fues) < 1.0
+    assert fues < rfc - 1.0
 
 
 def test_app1_timing_separates_compile_from_runtime():
@@ -178,9 +190,11 @@ def test_app1_timing_measures_compile_after_a_warm_cache():
 def test_app1_taste_shock_variant_is_in_paper_ballpark():
     """The taste-shock retirement variant (Table 6, scale 0.05) scores a sane error.
 
-    EV1 taste shocks smooth the work/retire margin but leave the continuous
-    consumption Euler equation intact, so the mean log10 error stays in the
-    same grid-quantization band as the deterministic baseline.
+    EV1 taste shocks leave the continuous consumption Euler equation intact but
+    disqualify the regime from the off-grid policy read: the realized discrete
+    draw perturbs the branch the solve conditioned on. Simulated consumption
+    therefore keeps the grid-argmax path and the metric floors at the
+    action-grid spacing, in the -1.0 to -4.0 band.
     """
     error = app1_euler_error(
         tau=1.0,

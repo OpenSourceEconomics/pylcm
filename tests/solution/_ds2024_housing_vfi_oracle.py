@@ -22,6 +22,7 @@ It is a test tool only — never a registered solver.
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
@@ -58,17 +59,28 @@ def _build_schedule(*, n_periods: int) -> _Schedule:
 
 
 def _interp_linspace_1d(
-    *, y: np.ndarray, start: float, stop: float, n: int, xq: np.ndarray
+    *,
+    y: np.ndarray,
+    start: float,
+    stop: float,
+    n: int,
+    xq: np.ndarray,
+    read: Literal["extrapolate", "clamp"] = "extrapolate",
 ) -> np.ndarray:
-    """Linearly interpolate `y` on a linspace grid, extrapolating off-range.
+    """Linearly interpolate `y` on a linspace grid; off-range per `read`.
 
-    Mirrors pylcm's `get_linspace_coordinate`: locate the query in the linear grid,
-    clip the upper node index to the last segment, and use that segment's slope to
-    extrapolate beyond either end. `y` is 1-D over the grid; the result has the
-    shape of `xq`.
+    - `"extrapolate"` mirrors pylcm's `get_linspace_coordinate` (the brute
+      solver's V read): locate the query in the linear grid, clip the upper node
+      index to the last segment, and use that segment's slope beyond either end.
+    - `"clamp"` mirrors pylcm's edge-clamped carry read (`locate_on_grid`):
+      queries outside the range take the boundary value.
+
+    `y` is 1-D over the grid; the result has the shape of `xq`.
     """
     step = (stop - start) / (n - 1)
     coord = (xq - start) / step
+    if read == "clamp":
+        coord = np.clip(coord, 0.0, n - 1)
     i_upper = np.clip(np.floor(coord).astype(np.int64) + 1, 1, n - 1)
     i_lower = i_upper - 1
     weight = coord - i_lower
@@ -81,6 +93,7 @@ class _Calibration:
 
     liquid: np.ndarray
     house: np.ndarray
+    outer_house: np.ndarray
     consumption: np.ndarray
     income_value: np.ndarray
     n_grid: int
@@ -96,6 +109,7 @@ class _Calibration:
     alpha: float
     theta: float
     bequest_shift: float
+    read: Literal["extrapolate", "clamp"]
 
 
 def _bilinear_continuation(
@@ -113,6 +127,8 @@ def _bilinear_continuation(
     """
     step_h = (cal.housing_max - cal.housing_min) / (cal.n_grid - 1)
     coord = (next_house - cal.housing_min) / step_h
+    if cal.read == "clamp":
+        coord = float(np.clip(coord, 0.0, cal.n_grid - 1))
     i_upper = int(np.clip(np.floor(coord) + 1, 1, cal.n_grid - 1))
     i_lower = i_upper - 1
     weight = coord - i_lower
@@ -121,7 +137,12 @@ def _bilinear_continuation(
         + value_house_liquid[i_upper] * weight
     )
     return _interp_linspace_1d(
-        y=row, start=cal.housing_min, stop=cal.liquid_max, n=cal.n_grid, xq=next_liquid
+        y=row,
+        start=cal.housing_min,
+        stop=cal.liquid_max,
+        n=cal.n_grid,
+        xq=next_liquid,
+        read=cal.read,
     )
 
 
@@ -146,10 +167,10 @@ def _alive_value(
             held = cal.house[house_index]
             depreciated = held * (1.0 - cal.delta)
             keep_cost = 0.0
-            adjust_costs = (1.0 + cal.tau) * cal.house - (
+            adjust_costs = (1.0 + cal.tau) * cal.outer_house - (
                 1.0 + cal.return_housing
             ) * depreciated
-            next_houses = np.concatenate([[depreciated], cal.house])
+            next_houses = np.concatenate([[depreciated], cal.outer_house])
             costs = np.concatenate([[keep_cost], adjust_costs])
 
             best = np.full(n_grid, -np.inf)
@@ -206,6 +227,8 @@ def solve_ds2024_housing_vfi(
     return_housing: float = 0.10,
     theta: float = 2.0,
     bequest_shift: float = 200.0,
+    n_outer_grid: int | None = None,
+    read: Literal["extrapolate", "clamp"] = "extrapolate",
 ) -> dict[int, np.ndarray]:
     """Solve the DS-2024 housing model by host-side VFI with the free-keep candidate.
 
@@ -231,6 +254,12 @@ def solve_ds2024_housing_vfi(
         return_housing: Net house return.
         theta: Terminal bequest weight.
         bequest_shift: Terminal bequest shift `K`.
+        n_outer_grid: Number of outer house-search points; `None` uses `n_grid`.
+            The state grids stay at `n_grid`, so a dense outer search
+            approximates the continuous-outer problem at fixed state resolution.
+        read: Off-range behavior of the continuation reads — `"extrapolate"`
+            matches the brute solver's V read, `"clamp"` matches the NEGM
+            carry read.
 
     Returns:
         Mapping of period to the alive envelope value `V(income, house, liquid)`;
@@ -238,12 +267,14 @@ def solve_ds2024_housing_vfi(
     """
     liquid = np.linspace(housing_min, liquid_max, n_grid)
     house = np.linspace(housing_min, housing_max, n_grid)
+    outer_house = np.linspace(housing_min, housing_max, n_outer_grid or n_grid)
     consumption = np.linspace(0.05, consumption_max, n_consumption)
     income_value = np.exp(_LOG_INCOME_BASE + np.array([INCOME_LOW, INCOME_HIGH])) * 1e-5
 
     cal = _Calibration(
         liquid=liquid,
         house=house,
+        outer_house=outer_house,
         consumption=consumption,
         income_value=income_value,
         n_grid=n_grid,
@@ -259,6 +290,7 @@ def solve_ds2024_housing_vfi(
         alpha=alpha,
         theta=theta,
         bequest_shift=bequest_shift,
+        read=read,
     )
 
     schedule = _build_schedule(n_periods=n_periods)
