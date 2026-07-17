@@ -27,7 +27,7 @@ from _lcm.egm.negm_validation import (
     validate_negm_regimes,
 )
 from _lcm.regime_building.finalize import finalize_regimes
-from lcm import DiscreteGrid, ExtremeValueTasteShocks, categorical
+from lcm import DiscreteGrid, ExtremeValueTasteShocks, Phased, categorical
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
@@ -351,6 +351,35 @@ def test_finalize_composes_resources_as_base_minus_outer_cost():
                 if name != "resources"
             },
             "resources_before_outer_cost": _cost_free_base,
+        },
+    )
+
+    finalized = finalize_regimes(
+        user_regimes={"alive": regime}, derived_categoricals={}
+    )["alive"]
+    composed = cast("UserFunction", finalized.functions["resources"])
+
+    assert float(
+        composed(
+            resources_before_outer_cost=jnp.asarray(7.0), credited=jnp.asarray(2.0)
+        )
+    ) == pytest.approx(5.0)
+
+
+def test_finalize_composes_resources_with_a_phased_base():
+    """A `Phased` cost-free base still yields the composed resources function.
+
+    The synthesized resources function reads the base and the cost by name, so
+    phase resolution happens at the producer level: composition succeeds with a
+    `Phased` base slot and the injected function is the plain difference of its
+    two inputs in either phase.
+    """
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "resources_before_outer_cost": Phased(
+                solve=_cost_free_base, simulate=_cost_free_base
+            ),
         },
     )
 

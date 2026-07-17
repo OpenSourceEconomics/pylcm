@@ -177,6 +177,50 @@ def test_stacked_read_propagates_a_poisoned_candidate_row():
     assert bool(jnp.isnan(smoothed_value))
 
 
+def test_stacked_read_with_a_singleton_candidate_is_differentiable():
+    """A singleton candidate keeps the read differentiable in the query.
+
+    Asset-row mode publishes the Euler marginal by differentiating the
+    continuation read, so a one-node candidate carry — a constant clamp in the
+    query — must contribute a zero tangent, not a NaN one leaked from its
+    padded bracket. The singleton's clamp value wins here, so the read's query
+    derivative is exactly zero.
+    """
+    singleton = jnp.array([2.0, jnp.nan, jnp.nan])
+    live = jnp.array([0.0, 5.0, 10.0])
+    carry = EGMCarry(
+        endog_grid=jnp.stack([singleton, live])[None, :, :],
+        value=jnp.stack(
+            [jnp.array([10.0, jnp.nan, jnp.nan]), jnp.array([1.0, 2.0, 3.0])]
+        )[None, :, :],
+        marginal_utility=jnp.stack(
+            [jnp.array([0.0, jnp.nan, jnp.nan]), jnp.array([0.5, 0.5, 0.5])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    def read_value(query):
+        smoothed_value, _ = _aggregate_child_choices(
+            carry=carry,
+            prepared_search_grid=prepared_search_grid,
+            prepared_valid_length=prepared_valid_length,
+            has_taste_shocks=False,
+            child_index=(),
+            child_passive_values=(jnp.asarray(0.0),),
+            child_passive_grids=(jnp.asarray([0.0]),),
+            row_queries=query[None],
+            row_gradients=jnp.asarray([1.0]),
+            n_outer_candidates=2,
+        )
+        return smoothed_value
+
+    value, derivative = jax.value_and_grad(read_value)(jnp.asarray(4.0))
+
+    np.testing.assert_allclose(float(value), 10.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(derivative), 0.0, atol=_READ_ATOL)
+
+
 def test_stacked_read_tie_publishes_the_right_continuous_marginal():
     """At an exact candidate crossing the production read selects the right winner.
 

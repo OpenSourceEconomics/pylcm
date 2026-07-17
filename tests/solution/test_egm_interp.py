@@ -145,6 +145,93 @@ def test_singleton_row_clamps_to_its_node():
     np.testing.assert_array_equal(np.asarray(marginal), [2.0, 2.0, 2.0])
 
 
+def test_singleton_row_is_constant_under_autodiff():
+    """A singleton row's constant clamp differentiates as a constant.
+
+    `jax.grad` with respect to the query must be exactly zero (finite, not
+    NaN): asset-row mode differentiates the continuation read in the Euler
+    slot, so a NaN tangent leaking from the padded bracket would poison the
+    published Euler marginal even though the primal value is correct.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+    slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+
+    def read(query):
+        return interp.interp_on_padded_grid(
+            x_query=query, xp=xp, fp=fp, fp_slopes=slopes
+        )
+
+    value, derivative = jax.value_and_grad(read)(jnp.asarray(1.0))
+
+    np.testing.assert_allclose(float(value), 5.0, atol=1e-12)
+    np.testing.assert_allclose(float(derivative), 0.0, atol=1e-12)
+
+
+def test_singleton_row_passes_its_node_values_tangent_through():
+    """The singleton clamp is the node's value: unit derivative in that node.
+
+    Differentiating the read with respect to the row's single valid value must
+    give exactly one — the clamp publishes that value verbatim — with no NaN
+    contamination from the padded slots.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+
+    def read(node_value):
+        fp = jnp.array([jnp.nan, jnp.nan, jnp.nan]).at[0].set(node_value)
+        return interp.interp_on_padded_grid(
+            x_query=jnp.asarray(2.0), xp=xp, fp=fp, fp_slopes=slopes
+        )
+
+    derivative = jax.grad(read)(jnp.asarray(5.0))
+
+    np.testing.assert_allclose(float(derivative), 1.0, atol=1e-12)
+
+
+def test_singleton_row_stays_constant_under_vmap_and_autodiff():
+    """The zero query derivative survives per-row `vmap` batching.
+
+    The production readers map the row read over a stacked candidate axis, so
+    the degenerate-row handling must stay AD-safe inside `vmap` — a construct
+    that re-evaluates both sides of a branch (as `lax.cond` lowered under
+    `vmap` would) leaks the padded bracket's NaN tangent back in.
+    """
+    xp = jnp.array([[1.0, 2.0, 3.0], [1.0, jnp.nan, jnp.nan]])
+    fp = jnp.array([[1.0, 4.0, 9.0], [5.0, jnp.nan, jnp.nan]])
+    slopes = jnp.array([[2.0, 4.0, 6.0], [2.0, jnp.nan, jnp.nan]])
+
+    def summed_read(query):
+        def read_row(xp_row, fp_row, slopes_row):
+            return interp.interp_on_padded_grid(
+                x_query=query, xp=xp_row, fp=fp_row, fp_slopes=slopes_row
+            )
+
+        return jnp.sum(jax.vmap(read_row)(xp, fp, slopes))
+
+    derivative = jax.grad(summed_read)(jnp.asarray(2.5))
+
+    # The regular row holds `x²` data, which the Hermite read reproduces
+    # (derivative `2q = 5`); the singleton row contributes exactly zero.
+    np.testing.assert_allclose(float(derivative), 5.0, atol=1e-12)
+
+
+def test_nan_query_reads_nan_on_a_singleton_row():
+    """A NaN query stays NaN even where the singleton clamp is constant.
+
+    A NaN query marks an upstream failure; the constant clamp must not convert
+    it into a finite value — regular rows already propagate NaN queries through
+    the bracket arithmetic, and singleton rows must fail just as loudly.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+
+    got = interp.interp_on_padded_grid(x_query=jnp.array([jnp.nan, 1.0]), xp=xp, fp=fp)
+
+    assert bool(jnp.isnan(got[0]))
+    np.testing.assert_allclose(float(got[1]), 5.0, atol=1e-12)
+
+
 def test_empty_row_reads_nan():
     """An all-NaN (poisoned) row reads NaN at every query, never a finite value.
 

@@ -151,23 +151,39 @@ def interp_on_prepared_grid(
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
     lower = upper - 1
+    # Degenerate valid prefixes (fewer than two nodes) gather NaN padding into
+    # the bracket. `jnp.where` propagates cotangents through BOTH of its
+    # branches, so NaN partials in the discarded bracket arithmetic would
+    # poison the selected constant's derivative (`0 · NaN = NaN`) — and the
+    # readers are differentiated (asset-row mode grads the continuation read).
+    # Feed the arithmetic a finite dummy bracket on those rows; the overrides
+    # below still publish the contract values.
+    degenerate = valid_length < 2  # noqa: PLR2004
+
+    def _sanitized(gathered: FloatND, dummy: float) -> FloatND:
+        return jnp.where(degenerate, dummy, gathered)
+
     result = _interp_between_nodes(
         x_query=x_query,
-        xp_lower=xp[lower],
-        xp_upper=xp[upper],
-        fp_lower=fp[lower],
-        fp_upper=fp[upper],
-        slope_lower=None if fp_slopes is None else fp_slopes[lower],
-        slope_upper=None if fp_slopes is None else fp_slopes[upper],
+        xp_lower=_sanitized(xp[lower], 0.0),
+        xp_upper=_sanitized(xp[upper], 1.0),
+        fp_lower=_sanitized(fp[lower], 0.0),
+        fp_upper=_sanitized(fp[upper], 0.0),
+        slope_lower=None if fp_slopes is None else _sanitized(fp_slopes[lower], 0.0),
+        slope_upper=None if fp_slopes is None else _sanitized(fp_slopes[upper], 0.0),
     )
-    # Degenerate valid prefixes bypass the bracket arithmetic (whose gathered
-    # upper node is NaN there, which the zero-weight guards would silently turn
-    # into 0.0):
-    # - one valid node ⇒ the edge clamp on both sides is that node's value,
+    # Degenerate-row contract:
+    # - one valid node ⇒ the edge clamp on both sides is that node's value
+    #   (constant in the query, identity in the node's value — also under
+    #   autodiff),
     # - an empty prefix (only from an already-poisoned carry) ⇒ NaN, so the
     #   runtime NaN diagnostics surface the poison instead of a finite constant.
     result = jnp.where(valid_length == 1, fp[0], result)
-    return jnp.where(valid_length == 0, jnp.nan, result)
+    result = jnp.where(valid_length == 0, jnp.nan, result)
+    # A NaN query marks an upstream failure. Regular rows propagate it through
+    # the bracket arithmetic; the degenerate-row constants above would mask it,
+    # so re-pin it explicitly — fail-loud on every row shape.
+    return jnp.where(jnp.isnan(x_query), jnp.nan, result)
 
 
 def interp_right_germ_on_padded_grid(
