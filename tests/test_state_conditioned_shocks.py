@@ -166,7 +166,7 @@ def test_state_conditioned_dataclass_is_frozen():
     sc = StateConditioned(on="uncertainty", by={"low": 0.2, "high": 1.0})
     assert sc.on == "uncertainty"
     with pytest.raises((AttributeError, TypeError)):
-        sc.on = "other"  # type: ignore[misc]
+        sc.on = "other"  # ty: ignore[invalid-assignment]
 
 
 def test_conditioned_row_dispatch_sums_to_one():

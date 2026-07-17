@@ -269,7 +269,7 @@ def test_gauss_hermite_state_conditioned_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="Gauss-Hermite"):
-        _model_with_income(income).solve(params=_params())
+        _model_with_income(income).solve(params=_params(), log_level="warning")
 
 
 def test_rouwenhorst_state_conditioned_rejected():
@@ -284,7 +284,7 @@ def test_rouwenhorst_state_conditioned_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="only supported for CDF-binned"):
-        _model_with_income(income).solve(params=_params())
+        _model_with_income(income).solve(params=_params(), log_level="warning")
 
 
 def test_unknown_conditioning_state_rejected():
@@ -298,7 +298,7 @@ def test_unknown_conditioning_state_rejected():
         state_conditioned=StateConditioned(on="nope", by={"low": 0.1, "high": 0.3}),
     )
     with pytest.raises(ModelInitializationError, match="must name a DiscreteGrid"):
-        _model_with_income(income).solve(params=_params())
+        _model_with_income(income).solve(params=_params(), log_level="warning")
 
 
 @categorical(ordered=True)
@@ -355,7 +355,7 @@ def test_gauss_hermite_tauchen_state_conditioned_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="Gauss-Hermite"):
-        _model_with_income(income).solve(params=_params())
+        _model_with_income(income).solve(params=_params(), log_level="warning")
 
 
 def test_runtime_grid_param_rejected():
@@ -375,7 +375,7 @@ def test_runtime_grid_param_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="every grid parameter fixed"):
-        _model_with_income(income).solve(params=_params())
+        _model_with_income(income).solve(params=_params(), log_level="warning")
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
@@ -392,7 +392,7 @@ def test_nonfinite_sigma_rejected(bad):
         ),
     )
     with pytest.raises(ModelInitializationError, match="finite positive sigmas"):
-        _model_with_income(income).solve(params=_params())
+        _model_with_income(income).solve(params=_params(), log_level="warning")
 
 
 def test_nonpositive_sigma_rejected():
@@ -408,4 +408,4 @@ def test_nonpositive_sigma_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="finite positive sigmas"):
-        _model_with_income(income).solve(params=_params())
+        _model_with_income(income).solve(params=_params(), log_level="warning")

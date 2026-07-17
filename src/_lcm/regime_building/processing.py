@@ -46,6 +46,8 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.ar1 import TauchenAR1Process
 from _lcm.processes.iid import NormalIIDProcess
 from _lcm.processes.state_conditioned import (
+    Family,
+    StateConditioned,
     conditioned_row,
     gather_sigma,
     sigma_array_by_code,
@@ -1235,13 +1237,7 @@ def _process_regime_core(
             )
     processed_functions |= {
         f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
-            name=process,
-            grid=grid,
-            conditioning_grid=(
-                all_grids[user_regime].get(grid.state_conditioned.on)
-                if grid.state_conditioned is not None
-                else None
-            ),
+            name=process, grid=grid, grids=all_grids[user_regime]
         )
         for (user_regime, process), grid in target_process_grids.items()
     } | {
@@ -1570,7 +1566,7 @@ def _get_stochastic_next_function_for_process(
     return next_func
 
 
-def _process_family(grid: _ContinuousStochasticProcess) -> str:
+def _process_family(grid: _ContinuousStochasticProcess) -> Family:
     """Map a supported process to its state-conditioned family (audit F2).
 
     Only families whose transition CDF carries ``sigma`` can express a fixed-node,
@@ -1672,7 +1668,8 @@ def _get_conditioned_weights_func(
     *,
     name: str,
     grid: _ContinuousStochasticProcess,
-    conditioning_grid: DiscreteGrid | None,
+    sc: StateConditioned,
+    grids: Mapping[StateOrActionName, Grid],
 ) -> UserFunction:
     """Weights function for a state-conditioned process (direct-CDF, audit F1/F5/F6).
 
@@ -1680,7 +1677,7 @@ def _get_conditioned_weights_func(
     (from the scalar ``sigma``), with the per-regime ``sigma`` gathered by the
     conditioning state's integer code. No precomputed-row interpolation (F1).
     """
-    sc = grid.state_conditioned
+    conditioning_grid = grids.get(sc.on)
     if not isinstance(conditioning_grid, DiscreteGrid):
         msg = (
             f"state_conditioned.on='{sc.on}' must name a DiscreteGrid state in the "
@@ -1716,22 +1713,22 @@ def _get_weights_func_for_process(
     *,
     name: str,
     grid: _ContinuousStochasticProcess,
-    conditioning_grid: DiscreteGrid | None = None,
+    grids: Mapping[StateOrActionName, Grid] = MappingProxyType({}),
 ) -> UserFunction:
     """Get function that uses linear interpolation to calculate the process weights.
 
     For processes whose params are supplied at runtime, the grid points and
     transition probabilities are computed inside JIT from those runtime params. For a
     state-conditioned process the row is instead computed directly at the from-value
-    (``_get_conditioned_weights_func``).
+    (``_get_conditioned_weights_func``), and `grids` is that regime's grid mapping, from
+    which the conditioning state is resolved.
 
     """
-    if grid.state_conditioned is not None:
-        # `conditioning_grid` may be None here (unknown `on`); the callee raises a
-        # clear message naming the offending state.
-        return _get_conditioned_weights_func(
-            name=name, grid=grid, conditioning_grid=conditioning_grid
-        )
+    sc = grid.state_conditioned
+    if sc is not None:
+        # `sc.on` may be absent from `grids`; the callee raises a clear message naming
+        # the offending state.
+        return _get_conditioned_weights_func(name=name, grid=grid, sc=sc, grids=grids)
 
     if grid.params_to_pass_at_runtime:
         n_points = grid.n_points

@@ -27,6 +27,7 @@ from _lcm.processes.base import StateConditioned
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 
 __all__ = [
+    "Family",
     "StateConditioned",
     "conditioned_row",
     "gather_sigma",
