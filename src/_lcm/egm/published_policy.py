@@ -79,6 +79,13 @@ class EGMSimPolicy:
     Leading axes match the regime's combo layout (discrete states, then passive
     states, then discrete actions, as in `EGMCarry`); the trailing axis is the
     static refined-grid length. All rows are NaN-padded in lockstep in the tail.
+
+    A row whose upper envelope reports no read support (an interior coverage
+    gap: NaN-dead candidates or a finite value decrease split the segment
+    chain, so a linear read would bridge the gap with fabricated values) is
+    published fully NaN — the simulation's acceptance check then rejects it
+    and falls back to the grid-argmax decision. The solve-side carry keeps
+    its compacted rows; only the published read fail-closes.
     """
 
     endog_grid: FloatND
