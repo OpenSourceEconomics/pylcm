@@ -106,6 +106,47 @@ def test_all_neg_inf_row_yields_neg_inf_everywhere():
     assert bool(jnp.isneginf(got).all())
 
 
+def test_singleton_row_clamps_to_its_node():
+    """A row with one valid node reads that node's value at every query.
+
+    The edge clamp applies on both sides of a single-node row: the value read
+    (with slopes) and the slope-free marginal read alike return the node's
+    value below, at, and above the node — a valid one-point carry is never
+    silently replaced by zero.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+    slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+    x_query = jnp.array([0.5, 1.0, 2.0])
+
+    value = interp.interp_on_padded_grid(
+        x_query=x_query, xp=xp, fp=fp, fp_slopes=slopes
+    )
+    marginal = interp.interp_on_padded_grid(x_query=x_query, xp=xp, fp=slopes)
+
+    np.testing.assert_array_equal(np.asarray(value), [5.0, 5.0, 5.0])
+    np.testing.assert_array_equal(np.asarray(marginal), [2.0, 2.0, 2.0])
+
+
+def test_empty_row_reads_nan():
+    """An all-NaN (poisoned) row reads NaN at every query, never a finite value.
+
+    An empty valid prefix only arises from an already-poisoned carry; the read
+    must preserve the NaN so the runtime diagnostics surface the poison instead
+    of masking it with a finite constant.
+    """
+    poisoned = jnp.array([jnp.nan, jnp.nan, jnp.nan])
+    x_query = jnp.array([0.0, 1.0])
+
+    linear = interp.interp_on_padded_grid(x_query=x_query, xp=poisoned, fp=poisoned)
+    hermite = interp.interp_on_padded_grid(
+        x_query=x_query, xp=poisoned, fp=poisoned, fp_slopes=poisoned
+    )
+
+    assert bool(jnp.isnan(linear).all())
+    assert bool(jnp.isnan(hermite).all())
+
+
 def test_exact_slopes_reproduce_a_monotone_cubic():
     """With exact node slopes, a monotone cubic is interpolated exactly.
 

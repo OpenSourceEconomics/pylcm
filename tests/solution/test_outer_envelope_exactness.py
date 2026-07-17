@@ -202,6 +202,52 @@ def test_query_below_every_candidate_support_is_masked_out():
     assert float(marginal[0]) == 0.0
 
 
+def test_poisoned_candidate_row_propagates_nan_through_the_envelope():
+    """An all-NaN (poisoned) candidate row makes the envelope value NaN.
+
+    A poisoned carry row marks an upstream overflow; the envelope must surface
+    it fail-loud through the maximum instead of converting it into an ordinary
+    infeasible `(-inf, 0)` candidate that a live candidate then silently wins
+    over.
+    """
+    poisoned = jnp.full((3,), jnp.nan)
+    live_endog = jnp.array([0.0, 1.0, 2.0])
+    live_value = jnp.array([0.0, 1.0, 2.0])
+    live_marginal = jnp.array([1.0, 1.0, 1.0])
+
+    value, _ = outer_envelope_at_query(
+        candidate_endog=jnp.stack([poisoned, live_endog]),
+        candidate_value=jnp.stack([poisoned, live_value]),
+        candidate_marginal=jnp.stack([poisoned, live_marginal]),
+        x_query=jnp.array([1.0]),
+    )
+
+    assert bool(jnp.isnan(value[0]))
+
+
+def test_singleton_candidate_clamps_to_its_node():
+    """A one-node candidate reads its node's value and marginal at and above it.
+
+    A candidate whose valid prefix is a single coh node is a constant-clamp
+    branch from that node on: at and above the node it publishes the node's
+    value and marginal, and below the node it is infeasible `(-inf, 0)` as for
+    any candidate.
+    """
+    candidate_endog = jnp.array([[1.0, jnp.nan, jnp.nan]])
+    candidate_value = jnp.array([[5.0, jnp.nan, jnp.nan]])
+    candidate_marginal = jnp.array([[2.0, jnp.nan, jnp.nan]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([0.5, 1.0, 2.0]),
+    )
+
+    np.testing.assert_array_equal(np.asarray(value), [-np.inf, 5.0, 5.0])
+    np.testing.assert_array_equal(np.asarray(marginal), [0.0, 2.0, 2.0])
+
+
 def test_exact_candidate_tie_publishes_the_right_continuous_marginal():
     """At an exact crossing the winner is the candidate that wins to the right.
 

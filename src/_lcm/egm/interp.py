@@ -37,6 +37,10 @@ def interp_on_padded_grid(
     - A `-inf` endpoint (an infeasible value) forces the bracket's interior
       to `-inf` instead of NaN; a query exactly on a finite neighbor returns
       that neighbor's value.
+    - A row with a single valid node is a constant clamp: every query returns
+      that node's value.
+    - An all-NaN row (an already-poisoned carry) returns NaN at every query,
+      so the poison surfaces fail-loud instead of reading as a finite value.
 
     Without `fp_slopes` the interpolant is piecewise linear. With `fp_slopes`
     — the derivatives $f'(x)$ at the `xp` nodes, *exact at the nodes* (for an
@@ -136,10 +140,6 @@ def interp_on_prepared_grid(
         Interpolated values with the shape of `x_query`.
 
     """
-    # An empty valid prefix (`valid_length == 0`) can only arise from an
-    # already-poisoned carry; the index clamp below keeps the gather in bounds,
-    # and the result stays NaN so the runtime NaN diagnostics surface the
-    # poisoned carry rather than masking it with an edge-clamped constant.
     # The bracket indices span the full query mesh (the dominant egm_step
     # working buffer at scale), and never exceed the grid length (a few
     # hundred), so int32 holds them with vast headroom. Under x64 `searchsorted`
@@ -151,7 +151,7 @@ def interp_on_prepared_grid(
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
     lower = upper - 1
-    return _interp_between_nodes(
+    result = _interp_between_nodes(
         x_query=x_query,
         xp_lower=xp[lower],
         xp_upper=xp[upper],
@@ -160,6 +160,14 @@ def interp_on_prepared_grid(
         slope_lower=None if fp_slopes is None else fp_slopes[lower],
         slope_upper=None if fp_slopes is None else fp_slopes[upper],
     )
+    # Degenerate valid prefixes bypass the bracket arithmetic (whose gathered
+    # upper node is NaN there, which the zero-weight guards would silently turn
+    # into 0.0):
+    # - one valid node ⇒ the edge clamp on both sides is that node's value,
+    # - an empty prefix (only from an already-poisoned carry) ⇒ NaN, so the
+    #   runtime NaN diagnostics surface the poison instead of a finite constant.
+    result = jnp.where(valid_length == 1, fp[0], result)
+    return jnp.where(valid_length == 0, jnp.nan, result)
 
 
 def interp_right_derivative_on_padded_grid(

@@ -151,7 +151,11 @@ def outer_envelope_at_query(
         right_slope_at_query = interp_right_derivative_on_padded_grid(
             x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
         )
-        below_support = x_query < cand_lower
+        # The support mask applies only where a finite first node exists:
+        # `cand_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read
+        # must reach the maximum fail-loud instead of becoming an ordinary
+        # infeasible `(-inf, 0)` pair.
+        below_support = (x_query < cand_lower) & jnp.isfinite(cand_lower)
         value_at_query = jnp.where(below_support, -jnp.inf, value_at_query)
         marginal_at_query = jnp.where(below_support, 0.0, marginal_at_query)
         right_slope_at_query = jnp.where(below_support, 0.0, right_slope_at_query)

@@ -946,7 +946,11 @@ def _aggregate_child_choices(
         row_lower = jnp.min(
             jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1
         )
-        below_row_support = queries_flat < row_lower
+        # Only rows with a finite first node have a support to fall below;
+        # `row_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read
+        # must reach the candidate maximum fail-loud instead of becoming an
+        # ordinary infeasible `(-inf, 0)` pair.
+        below_row_support = (queries_flat < row_lower) & jnp.isfinite(row_lower)
         value_at_child = jnp.where(below_row_support, -jnp.inf, value_at_child)
         right_slope_at_child = jnp.where(below_row_support, 0.0, right_slope_at_child)
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
@@ -1048,9 +1052,11 @@ def _collapse_stacked_candidates(
         -jnp.inf,
     )
     winner = jnp.argmax(rank, axis=-1, keepdims=True)
-    winner_value = jnp.take_along_axis(value_at_child, winner, axis=-1)[..., 0]
     winner_marginal = jnp.take_along_axis(marginal_at_child, winner, axis=-1)[..., 0]
-    return winner_value, winner_marginal
+    # The published value is the maximum itself: identical to the winner's read
+    # at any tie, and NaN-propagating when a poisoned candidate row (whose NaN
+    # empties the tie set) must surface fail-loud.
+    return best_value[..., 0], winner_marginal
 
 
 def _build_child_reads(
