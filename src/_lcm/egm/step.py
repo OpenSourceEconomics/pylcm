@@ -617,6 +617,7 @@ def _get_egm_step(
                 endog_grid=grid_stack,
                 policy=policy_stack,
                 value=value_stack,
+                marginal_utility=marginal_stack,
                 row_discrete_state_names=own_discrete_state_names,
                 row_passive_state_names=own_passive_state_names,
                 row_discrete_action_names=tuple(own_discrete_action_values),
@@ -630,7 +631,10 @@ def _get_egm_step(
                 taste_shock_scale=own_taste_shock_scale,
             )
             sim_policy = EGMSimPolicy(
-                endog_grid=grid_row, policy=policy_row, value=value_row
+                endog_grid=grid_row,
+                policy=policy_row,
+                value=value_row,
+                marginal_utility=marginal_row,
             )
         return V_arr, carry, sim_policy
 

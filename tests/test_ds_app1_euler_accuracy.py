@@ -10,11 +10,14 @@ the Euler equation along the working-regime path. The same harness scores the RF
 column (the paper's fourth method) by passing `upper_envelope="rfc"`.
 
 The backend choice moves the metric by orders of magnitude, because it decides
-what simulation may read back: FUES rows carry the envelope crossings and so
-qualify for the off-grid policy read, while RFC rows do not and keep the
-grid-argmax path. The scored residual is therefore policy-interpolation error
-under FUES and action-grid quantization error under RFC — two different
-quantities, not two estimates of one.
+what simulation may read back: MSS rows certify every envelope crossing and so
+qualify for the off-grid policy read, while FUES rows do not (segment identity
+is a slope-threshold heuristic) and keep the grid-argmax path, like RFC/LTM.
+The scored residual is therefore policy-interpolation error under MSS and
+action-grid quantization error under the other backends — two different
+quantities, not two estimates of one. The MSS-versus-FUES comparison below
+verifies the two backends solve to the same value arrays before attributing
+the accuracy gap to the read.
 
 These tests run a single small solve at a time (asset grid <= 1000, shortened
 horizon) so they stay local-safe; the full paper grids {1000..10000} at T=50 are a
@@ -29,6 +32,8 @@ from benchmarks.ds_replication.app1_retirement_accuracy import (
     app1_accuracy_table,
     app1_euler_error,
     app1_timing,
+    build_app1_model,
+    build_app1_params,
     sample_path_euler_error,
 )
 
@@ -39,17 +44,15 @@ _LOCAL_N_PERIODS = 20
 _LOCAL_N_SUBJECTS = 300
 
 
-def test_app1_euler_error_is_finite_and_below_the_grid_quantization_floor():
-    """The FUES Euler error at tau=1, n_grid=1000 clears the action-grid floor.
+def test_app1_fues_euler_error_sits_at_the_action_grid_floor():
+    """The FUES Euler error at tau=1, n_grid=1000 is the action-grid floor.
 
     The mean log10 consumption Euler error is a negative number (more negative =
-    more accurate). The working regime qualifies for the off-grid policy read:
-    FUES publishes crossing-complete rows, so simulation re-decides the
-    retirement branch at the subject's own resources and interpolates the
-    winning branch's consumption off the action grid. The metric then measures
-    the policy row's interpolation error rather than the action-grid spacing,
-    and sits well below the -1.0 to -4.0 quantization band a grid argmax floors
-    at.
+    more accurate); the paper reports roughly -1.6 for tau=1 at the full grids.
+    FUES rows are not certified crossing-complete (segment identity is a
+    slope-threshold heuristic), so the regime keeps the grid-argmax simulate
+    path and the metric sits at the action-grid quantization floor, in the
+    -1.0 to -4.0 band.
     """
     error = app1_euler_error(
         tau=1.0,
@@ -59,16 +62,39 @@ def test_app1_euler_error_is_finite_and_below_the_grid_quantization_floor():
         seed=0,
     )
     assert np.isfinite(error)
+    assert -4.0 < error < -1.0
+
+
+def test_app1_mss_euler_error_is_below_the_grid_quantization_floor():
+    """The MSS Euler error at tau=1, n_grid=1000 clears the action-grid floor.
+
+    MSS rows certify every envelope crossing, so the working regime qualifies
+    for the off-grid policy read: simulation re-decides the retirement branch
+    at the subject's own resources and interpolates the winning branch's
+    consumption off the action grid. The metric then measures the policy row's
+    interpolation error rather than the action-grid spacing, and sits well
+    below the -1.0 to -4.0 quantization band a grid argmax floors at.
+    """
+    error = app1_euler_error(
+        tau=1.0,
+        n_grid=1000,
+        n_periods=_LOCAL_N_PERIODS,
+        n_subjects=_LOCAL_N_SUBJECTS,
+        seed=0,
+        upper_envelope="mss",
+    )
+    assert np.isfinite(error)
     assert error < -4.0
 
 
-def test_app1_euler_error_improves_under_grid_refinement():
-    """A finer asset grid yields a more accurate (more negative) FUES Euler error.
+def test_app1_mss_euler_error_improves_under_grid_refinement():
+    """A finer asset grid yields a more accurate (more negative) MSS Euler error.
 
     The endogenous grid method nulls the Euler residual at the endogenous nodes;
-    interpolating the policy back onto the coarse exogenous grid reintroduces it,
-    so refining the grid drives the residual down. Going from 300 to 1000 asset
-    points must shrink the mean log10 error by a clear margin.
+    the off-grid read reintroduces it only through interpolation between the
+    refined nodes, so refining the grid drives the residual down. Going from
+    300 to 1000 asset points must shrink the mean log10 error by a clear
+    margin.
     """
     coarse = app1_euler_error(
         tau=1.0,
@@ -76,6 +102,7 @@ def test_app1_euler_error_improves_under_grid_refinement():
         n_periods=_LOCAL_N_PERIODS,
         n_subjects=_LOCAL_N_SUBJECTS,
         seed=0,
+        upper_envelope="mss",
     )
     fine = app1_euler_error(
         tau=1.0,
@@ -83,6 +110,7 @@ def test_app1_euler_error_improves_under_grid_refinement():
         n_periods=_LOCAL_N_PERIODS,
         n_subjects=_LOCAL_N_SUBJECTS,
         seed=0,
+        upper_envelope="mss",
     )
     assert coarse < -4.0
     assert fine < -4.0
@@ -100,7 +128,7 @@ def test_app1_accuracy_table_has_one_row_per_cell():
     )
     assert list(table.columns) == ["tau", "n_grid", "fues_euler_error"]
     assert len(table) == 2
-    assert (table["fues_euler_error"] < -4.0).all()
+    assert table["fues_euler_error"].between(-4.0, -1.0).all()
 
 
 def test_sample_path_euler_error_recovers_a_planted_residual():
@@ -130,16 +158,19 @@ def test_sample_path_euler_error_recovers_a_planted_residual():
     assert error == pytest.approx(np.log10(0.1), abs=1e-9)
 
 
-def test_app1_rfc_euler_error_sits_at_the_action_grid_floor_above_fues():
-    """RFC-1D scores the action-grid floor; FUES clears it by orders of magnitude.
+def test_app1_mss_read_gap_dwarfs_the_measured_solve_disagreement():
+    """The MSS-FUES Euler-error gap is orders of magnitude beyond the solve gap.
 
-    The rooftop-cut (`upper_envelope="rfc"`) leaves each envelope switch between
-    two retained nodes, so its rows carry no crossing topology and the regime
-    keeps the grid-argmax simulate path — its consumption is quantized to the
-    action grid and the Euler residual floors at that spacing. FUES publishes
-    the crossings, qualifies for the off-grid read, and lands in a different
-    accuracy regime entirely. The two backends agree on the solved value; they
-    differ in what simulation is allowed to read back.
+    Each backend builds and solves its own model, so backend differences enter
+    through the solve as well as through the read. This comparison measures
+    both: the two backends' solved value arrays agree within `1e-3` relative
+    (they refine envelopes differently at isolated kink nodes; most entries
+    are identical), while the Euler-error metric differs by more than a full
+    log10 unit — MSS qualifies for the off-grid policy read and scores
+    policy-interpolation error, FUES keeps the grid argmax and floors at the
+    action-grid spacing. The comparison is joint (backend plus simulation
+    path); the verified solve agreement bounds how much of the gap the solve
+    side can carry.
     """
     config = {
         "tau": 1.0,
@@ -148,11 +179,29 @@ def test_app1_rfc_euler_error_sits_at_the_action_grid_floor_above_fues():
         "n_subjects": _LOCAL_N_SUBJECTS,
         "seed": 0,
     }
+    params = build_app1_params(tau=1.0)
+    v_by_backend = {}
+    for backend in ("fues", "mss"):
+        model = build_app1_model(
+            n_grid=1000, n_periods=_LOCAL_N_PERIODS, upper_envelope=backend
+        )
+        v_by_backend[backend] = model.solve(params=params, log_level="off")
+    for period, regime_to_v in v_by_backend["fues"].items():
+        for regime_name, v_fues in regime_to_v.items():
+            v_mss = v_by_backend["mss"][period][regime_name]
+            finite = np.isfinite(np.asarray(v_fues))
+            np.testing.assert_allclose(
+                np.asarray(v_fues)[finite],
+                np.asarray(v_mss)[finite],
+                rtol=1e-3,
+                err_msg=f"solved V differs at period {period}, {regime_name}",
+            )
+
     fues = app1_euler_error(upper_envelope="fues", **config)
-    rfc = app1_euler_error(upper_envelope="rfc", **config)
-    assert np.isfinite(rfc)
-    assert -4.0 < rfc < -1.0
-    assert fues < rfc - 1.0
+    mss = app1_euler_error(upper_envelope="mss", **config)
+    assert np.isfinite(fues)
+    assert -4.0 < fues < -1.0
+    assert mss < fues - 1.0
 
 
 def test_app1_timing_separates_compile_from_runtime():

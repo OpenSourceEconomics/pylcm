@@ -999,12 +999,12 @@ def _build_simulation_phase(
     #   keeper and adjuster candidates but publishes only the keeper's inner
     #   consumption function, so replaying it would pair an adjuster-won
     #   value with the keeper's policy;
-    # - a crossing-inserting upper-envelope backend — RFC and LTM leave the
-    #   envelope switch between two retained nodes, so linear policy
-    #   interpolation across the switch would mix two branch policies. MSS
-    #   inserts the exact crossing by construction; FUES does so only under the
-    #   exhaustive scan, so a bounded `fues_n_points_to_scan` is excluded too
-    #   (see `_envelope_publishes_crossings`);
+    # - a crossing-certifying upper-envelope backend (MSS only) — RFC and LTM
+    #   leave the envelope switch between two retained nodes, and FUES decides
+    #   segment identity by a slope-threshold heuristic with no labels from
+    #   the kernel, so its row can bridge a missed switch; only MSS inserts
+    #   the exact crossing by construction (see
+    #   `_envelope_publishes_crossings`);
     # - the single-post-state kernel (not asset-row mode) — when a
     #   savings-stage function reads the Euler state, DC-EGM solves per
     #   exogenous asset node and publishes one optimal point per node, not a
@@ -1066,21 +1066,22 @@ def _build_simulation_phase(
 
 
 def _envelope_publishes_crossings(solver: DCEGM) -> bool:
-    """Whether the solver's upper envelope inserts every segment crossing.
+    """Whether the solver's upper envelope certifies every segment crossing.
 
     A branch-faithful policy read interpolates a row whose envelope switches sit
     at duplicated abscissae carrying both branch policies:
-    - `"mss"` ⇒ always: it inserts the exact crossing by construction.
-    - `"fues"` ⇒ only under the exhaustive scan
-      (`fues_n_points_to_scan is None`). A bounded window may miss a segment's
-      continuation past the window's worth of interleaved off-segment
-      candidates, dropping that crossing and retaining the dominated
-      interlopers.
-    - `"rfc"` / `"ltm"` ⇒ never: the switch lands between retained nodes.
+    - `"mss"` ⇒ yes: the sweep inserts the exact crossing by construction.
+    - `"fues"` ⇒ no: segment identity is decided by thresholding the
+      implied-savings slope (`fues_jump_thresh`) — a heuristic — and the
+      DC-EGM kernel supplies no segment labels. Two value branches whose
+      cross-segment slope stays below the threshold merge into one row with
+      no crossing inserted; the row then bridges the switch, and neither an
+      exhaustive scan nor a wider window repairs that, because the scan can
+      only search within the segment identity it was given. A FUES row is
+      therefore not certified crossing-complete for the read.
+    - `"rfc"` / `"ltm"` ⇒ no: the switch lands between retained nodes.
     """
-    if solver.upper_envelope == "mss":
-        return True
-    return solver.upper_envelope == "fues" and solver.fues_n_points_to_scan is None
+    return solver.upper_envelope == "mss"
 
 
 def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:

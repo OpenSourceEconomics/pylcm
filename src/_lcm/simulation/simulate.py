@@ -853,19 +853,34 @@ def _interp_rows_with_support(
     The live support runs from the row's first abscissa to its last finite one
     (rows are NaN-padded in the tail). Outside it the interpolant extends an
     edge secant (below) or clamps (above) — feasible values that need not
-    approximate the published function.
+    approximate the published function. Reads by field:
+    - `"value"` ⇒ cubic Hermite with the marginal-utility row as exact node
+      slopes — the convention the solve publishes values under, so the branch
+      ranking the re-decision sees is the solve convention's ranking;
+    - `"policy"` ⇒ piecewise linear (the policy row carries no slope data).
     """
     rows_f = getattr(sim_policy, field)
     rows_x = sim_policy.endog_grid
+    rows_slope = sim_policy.marginal_utility if field == "value" else None
     if index:
         rows_x = rows_x[index]
         rows_f = rows_f[index]
+        rows_slope = rows_slope[index] if rows_slope is not None else None
     if rows_x.ndim == 1:
         rows_x = jnp.broadcast_to(rows_x, (n_subjects, *rows_x.shape))
         rows_f = jnp.broadcast_to(rows_f, (n_subjects, *rows_f.shape))
-    values = vmap(
-        lambda x_query, xp, fp: interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
-    )(resources, rows_x, rows_f)
+        if rows_slope is not None:
+            rows_slope = jnp.broadcast_to(rows_slope, (n_subjects, *rows_slope.shape))
+    if rows_slope is None:
+        values = vmap(
+            lambda x_query, xp, fp: interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
+        )(resources, rows_x, rows_f)
+    else:
+        values = vmap(
+            lambda x_query, xp, fp, fp_slopes: interp_on_padded_grid(
+                x_query=x_query, xp=xp, fp=fp, fp_slopes=fp_slopes
+            )
+        )(resources, rows_x, rows_f, rows_slope)
     valid_length = jnp.sum(jnp.isfinite(rows_x), axis=-1)
     last_live = jnp.take_along_axis(rows_x, (valid_length - 1)[:, None], axis=-1)[:, 0]
     in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)

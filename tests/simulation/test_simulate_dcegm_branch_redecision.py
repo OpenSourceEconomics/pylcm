@@ -8,6 +8,8 @@ off-grid. Discrete-only user constraints exclude infeasible branches from the
 comparison, exactly as they mask the grid argmax.
 """
 
+import dataclasses
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -24,6 +26,7 @@ from lcm.typing import (
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
+    DCEGM_SOLVER,
     dcegm_retirement,
     get_retirement_only_params,
 )
@@ -65,8 +68,12 @@ def _bequest_utility(wealth: ContinuousState, age: float) -> FloatND:
 
 
 def _bonus_model(constraints: dict | None = None) -> Model:
+    # MSS is the only backend whose rows certify every envelope crossing, so
+    # it is the only one that qualifies for the off-grid read.
+    solver = dataclasses.replace(DCEGM_SOLVER, upper_envelope="mss")
     alive = dcegm_retirement.replace(
         active=lambda age: age < 50,
+        solver=solver,
         actions={
             "consumption": dcegm_retirement.actions["consumption"],
             "take_bonus": DiscreteGrid(BonusChoice),
