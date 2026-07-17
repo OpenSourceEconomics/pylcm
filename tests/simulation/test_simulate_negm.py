@@ -71,8 +71,9 @@ def test_negm_simulate_enforces_inner_budget_constraint():
     resources = np.asarray(
         negm_kinked_toy.resources(
             wealth=df["wealth"].to_numpy(),
-            illiquid=illiquid,
-            next_illiquid=next_illiquid,
+            credited=negm_kinked_toy.credited(
+                illiquid=illiquid, next_illiquid=next_illiquid
+            ),
         )
     )
     borrowing_limit = float(negm_kinked_toy.SAVINGS_GRID.to_jax()[0])

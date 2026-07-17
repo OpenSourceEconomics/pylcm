@@ -402,6 +402,7 @@ def build_model(
         outer_post_decision="next_housing",
         outer_grid=outer_grid,
         outer_no_adjustment_candidate="keep_housing",
+        outer_cost="housing_cost",
         outer_batch_size=outer_batch_size,
     )
 

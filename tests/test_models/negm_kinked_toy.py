@@ -75,19 +75,14 @@ def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> Float
     )
 
 
-def resources(
-    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: ContinuousState
-) -> FloatND:
+def resources(wealth: ContinuousState, credited: FloatND) -> FloatND:
     """Liquid resources consumption is paid out of, given the fixed outer node.
 
-    `next_illiquid` (`s'`) is bound to one outer-grid node, so the credited
-    durable move is a constant in the inner Euler inversion.
+    Reads the outer margin exclusively through the `credited` cost function —
+    the NEGM outer-cost contract — so the credited durable move (bound to one
+    outer-grid node) is a constant in the inner Euler inversion.
     """
-    return (
-        wealth
-        + LABOUR_INCOME
-        - credited(illiquid=illiquid, next_illiquid=next_illiquid)
-    )
+    return wealth + LABOUR_INCOME - credited
 
 
 def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
@@ -169,6 +164,7 @@ NEGM_SOLVER = NEGM(
     outer_post_decision="next_illiquid",
     outer_grid=OUTER_GRID,
     outer_no_adjustment_candidate="keep_illiquid",
+    outer_cost="credited",
 )
 
 

@@ -35,7 +35,16 @@ only the *outer*/nesting contract. The rules, in the order they are checked:
 - carry layout: the stacked outer continuation carry addresses the durable as
   the last passive row axis, so a (hard) discrete action or a passive
   continuous state declared after the durable is rejected — the per-durable
-  candidate lift would otherwise address the wrong axis.
+  candidate lift would otherwise address the wrong axis,
+- outer-cost contract: the inner resources may depend on the outer
+  post-decision only through the declared `NEGM.outer_cost` function, which
+  itself may read only the durable state, the outer post-decision, and params
+  (with `outer_cost=None`, resources must be independent of the outer
+  post-decision) — otherwise no constant credited-cost translation onto a
+  common cash-on-hand axis exists and the stacked lift would be wrong,
+- the no-adjustment candidate is a unary function of the durable state — it is
+  evaluated as `keep(durable)` in the credited-cost lift and the
+  child-resources query map.
 
 The coupled-2-Euler detector is structural and deliberately over-rejects:
 catching the DS pension coupling (the outer post-decision feeding the inner
@@ -119,6 +128,15 @@ def _validate_negm_regime(
     )
     _fail_if_carry_layout_unsupported(
         regime_name=regime_name, user_regime=user_regime, solver=solver, inner=inner
+    )
+    _fail_if_outer_cost_contract_violated(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=functions,
+        solver=solver,
+    )
+    _fail_if_no_adjustment_candidate_not_unary(
+        regime_name=regime_name, functions=functions, solver=solver
     )
 
 
@@ -325,6 +343,134 @@ def _fail_if_taste_shock_ordering_violated(
             "(max over the durable margin of logsumexp over the discrete choice "
             "is not logsumexp of the max). Remove the taste shocks or use the "
             "grid-search solver for this regime."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _fail_if_outer_cost_contract_violated(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: NEGM,
+) -> None:
+    """The declared outer cost must be the sole outer-margin channel of resources.
+
+    The stacked-carry lift places every outer candidate on the keeper's
+    cash-on-hand axis by crediting a constant per (durable, outer-node) cell.
+    That constant exists exactly when the inner resources depend on the outer
+    post-decision through a single additive cost term that itself varies only
+    with the durable margin. The structural half of that contract is enforced
+    here, fail-closed:
+
+    - `NEGM.outer_cost` declared ⇒ it must be a regime function; its DAG
+      ancestors may contain no state or action other than the durable state and
+      the outer post-decision (params are fine); and the inner resources — with
+      the cost function made opaque — must not reach the outer post-decision
+      through any other channel,
+    - `NEGM.outer_cost=None` ⇒ the inner resources must be independent of the
+      outer post-decision altogether (every candidate already shares the
+      keeper's axis; the shift is zero).
+
+    The additive *use* of the cost inside resources (coefficient exactly `-1`,
+    no nonlinear wrapping) is not a graph property; the shift builder probes it
+    at runtime and raises `InvalidParamsError` on a mismatch.
+    """
+    inner = solver.inner
+    durable_state = solver.outer_post_decision.removeprefix("next_")
+    resources_func = functions.get(inner.resources)
+    if resources_func is None:
+        return
+
+    if solver.outer_cost is None:
+        resources_ancestors = _dag_ancestors(
+            functions=functions, target_func=resources_func
+        )
+        if solver.outer_post_decision in resources_ancestors:
+            msg = (
+                f"In regime '{regime_name}', the inner resources "
+                f"'{inner.resources}' reads the outer post-decision "
+                f"'{solver.outer_post_decision}' but the solver declares no "
+                "outer cost (`NEGM.outer_cost=None`). Declare the credited-cost "
+                "function via `NEGM.outer_cost` so the stacked-carry lift can "
+                "place every candidate on a common cash-on-hand axis, or use "
+                "`GridSearch` for this regime."
+            )
+            raise ModelInitializationError(msg)
+        return
+
+    cost_func = functions.get(solver.outer_cost)
+    if cost_func is None:
+        msg = (
+            f"NEGM.outer_cost '{solver.outer_cost}' is not a declared function "
+            f"of regime '{regime_name}'. The credited outer cost must be a "
+            "regime function reading only the durable state, the outer "
+            "post-decision, and params."
+        )
+        raise ModelInitializationError(msg)
+
+    cost_ancestors = _dag_ancestors(functions=functions, target_func=cost_func)
+    state_and_action_names = set(user_regime.states) | set(user_regime.actions)
+    offenders = sorted((cost_ancestors & state_and_action_names) - {durable_state})
+    if offenders:
+        msg = (
+            f"NEGM.outer_cost '{solver.outer_cost}' of regime '{regime_name}' "
+            f"reads {offenders}. The declared outer cost may read only the "
+            f"durable state '{durable_state}', the outer post-decision "
+            f"'{solver.outer_post_decision}', and params: the credited-cost "
+            "lift is a constant per (durable, outer-node) cell, so a cost that "
+            "varies with the Euler state or a ride-along state/action has no "
+            "constant translation onto a common cash-on-hand axis. Restructure "
+            "the cost, or use `GridSearch` for this regime."
+        )
+        raise ModelInitializationError(msg)
+
+    opaque_functions = _without(functions=functions, names={solver.outer_cost})
+    resources_ancestors = _dag_ancestors(
+        functions=opaque_functions, target_func=resources_func
+    )
+    if solver.outer_post_decision in resources_ancestors:
+        msg = (
+            f"In regime '{regime_name}', the inner resources "
+            f"'{inner.resources}' reads the outer post-decision "
+            f"'{solver.outer_post_decision}' outside the declared outer cost "
+            f"'{solver.outer_cost}'. The NEGM lift requires all outer-margin "
+            "dependence of resources to flow through `NEGM.outer_cost` — route "
+            f"it through '{solver.outer_cost}', or use `GridSearch` for this "
+            "regime."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _fail_if_no_adjustment_candidate_not_unary(
+    *,
+    regime_name: RegimeName,
+    functions: dict[FunctionName, UserFunction],
+    solver: NEGM,
+) -> None:
+    """The no-adjustment candidate must be a unary function of the durable state.
+
+    The keeper's no-adjustment level is evaluated as `keep(durable)` in the
+    credited-cost lift and in the parent's child-resources query map, so a
+    candidate whose signature reads anything else — another state, an action,
+    or a param — cannot be bound at those call sites.
+    """
+    if solver.outer_no_adjustment_candidate is None:
+        return
+    candidate_func = functions.get(solver.outer_no_adjustment_candidate)
+    if candidate_func is None:
+        return
+    durable_state = solver.outer_post_decision.removeprefix("next_")
+    arg_names = set(inspect.signature(candidate_func).parameters)
+    if arg_names != {durable_state}:
+        msg = (
+            f"NEGM.outer_no_adjustment_candidate "
+            f"'{solver.outer_no_adjustment_candidate}' of regime "
+            f"'{regime_name}' must be a unary function of the durable state "
+            f"'{durable_state}' (its signature reads {sorted(arg_names)}). The "
+            "keeper's no-adjustment level is evaluated as `keep(durable)` in "
+            "the credited-cost lift and the child-resources query map, so no "
+            "other state, action, or param can be bound there."
         )
         raise ModelInitializationError(msg)
 

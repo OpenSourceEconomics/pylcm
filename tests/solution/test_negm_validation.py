@@ -232,3 +232,103 @@ def test_passive_state_after_the_durable_is_rejected_with_layout_explanation():
     )
     with pytest.raises(ModelInitializationError, match="last"):
         _validate(regime)
+
+
+def _credited_reading_the_euler_state(
+    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: ContinuousState
+) -> FloatND:
+    """A cost whose wedge scales with liquid wealth — no constant lift exists."""
+    return (1.0 + 0.01 * wealth) * (next_illiquid - illiquid)
+
+
+def test_outer_cost_reading_the_euler_state_is_rejected():
+    """The declared outer cost may read only the durable, the target, and params.
+
+    A cost that reads the liquid Euler state varies along the cash-on-hand axis,
+    so no constant per-(durable, outer-node) translation exists and the stacked
+    lift would place candidates on the wrong axis. The regime is rejected at
+    model build.
+    """
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "credited": _credited_reading_the_euler_state,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="may read only the durable"):
+        _validate(regime)
+
+
+def _resources_reading_the_outer_margin(
+    wealth: ContinuousState, credited: FloatND, next_illiquid: ContinuousState
+) -> FloatND:
+    """A resources function reading the outer margin around the declared cost."""
+    return wealth + 5.0 - credited + 0.01 * next_illiquid
+
+
+def test_resources_reading_the_outer_margin_around_the_cost_is_rejected():
+    """All outer-margin dependence of resources must flow through the cost.
+
+    A resources function that reads the outer post-decision directly, alongside
+    the declared cost, has outer-margin dependence the credited-cost lift cannot
+    represent; the regime is rejected at model build.
+    """
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "resources": _resources_reading_the_outer_margin,
+        },
+    )
+    with pytest.raises(
+        ModelInitializationError, match="outside the declared outer cost"
+    ):
+        _validate(regime)
+
+
+def test_missing_outer_cost_with_costful_resources_is_rejected():
+    """Omitting `NEGM.outer_cost` while resources reads the outer margin fails.
+
+    Without a declared cost the lift would have nothing to credit, so a
+    resources function that depends on the outer post-decision (here through
+    the `credited` function it reads) is rejected with a pointer to
+    `NEGM.outer_cost`.
+    """
+    solver = dataclasses.replace(negm_kinked_toy.NEGM_SOLVER, outer_cost=None)
+    regime = _VALID.replace(solver=solver)
+    with pytest.raises(ModelInitializationError, match="declares no outer cost"):
+        _validate(regime)
+
+
+def test_undeclared_outer_cost_function_is_rejected():
+    """An `outer_cost` name that is not a regime function fails at model build."""
+    solver = dataclasses.replace(
+        negm_kinked_toy.NEGM_SOLVER, outer_cost="not_a_function"
+    )
+    regime = _VALID.replace(solver=solver)
+    with pytest.raises(ModelInitializationError, match="not a declared function"):
+        _validate(regime)
+
+
+def _keep_reading_the_euler_state(
+    illiquid: ContinuousState, wealth: ContinuousState
+) -> FloatND:
+    """A no-adjustment candidate that reads more than the durable state."""
+    return illiquid + 0.0 * wealth
+
+
+def test_no_adjustment_candidate_with_extra_arguments_is_rejected():
+    """The no-adjustment candidate must be a unary function of the durable.
+
+    The keeper's no-adjustment level is evaluated as `keep(durable)` in both
+    the credited-cost lift and the child-resources query map, so a candidate
+    whose signature reads anything else cannot be bound there and is rejected
+    at model build.
+    """
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "keep_illiquid": _keep_reading_the_euler_state,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="unary function of the durable"):
+        _validate(regime)

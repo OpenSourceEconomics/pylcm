@@ -90,6 +90,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
         outer_post_decision="next_illiquid",
         outer_grid=_grid(0.0, _ILLIQUID_MAX, outer_n),
         outer_no_adjustment_candidate="keep_illiquid",
+        outer_cost="credited",
     )
     alive = Regime(
         active=lambda age, n=_FINAL_AGE_ALIVE: age <= n,

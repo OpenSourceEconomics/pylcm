@@ -76,15 +76,13 @@ def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> Float
     )
 
 
-def resources(
-    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: ContinuousState
-) -> FloatND:
-    """Liquid resources consumption is paid out of, given the fixed outer node."""
-    return (
-        wealth
-        + LABOUR_INCOME
-        - credited(illiquid=illiquid, next_illiquid=next_illiquid)
-    )
+def resources(wealth: ContinuousState, credited: FloatND) -> FloatND:
+    """Liquid resources consumption is paid out of, given the fixed outer node.
+
+    Reads the outer margin exclusively through the `credited` cost function —
+    the NEGM outer-cost contract.
+    """
+    return wealth + LABOUR_INCOME - credited
 
 
 def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
@@ -226,6 +224,7 @@ NEGM_SOLVER = NEGM(
     outer_post_decision="next_illiquid",
     outer_grid=OUTER_GRID,
     outer_no_adjustment_candidate="keep_illiquid",
+    outer_cost="credited",
 )
 
 
