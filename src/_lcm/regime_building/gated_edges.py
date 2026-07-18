@@ -54,6 +54,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 
 # Suffix under which a target regime's dissolution flag `D` (cast to float) is passed
@@ -267,6 +268,73 @@ def _pad_reader_to_state_names(
     return padded
 
 
+def _target_function_param_leaves(
+    dag_pool: Mapping[str, Callable[..., FloatND]], state_names: frozenset[str]
+) -> frozenset[str]:
+    """Dynamic parameter leaves introduced by the TARGET regime's own functions.
+
+    The gate/projection DAG concatenates the target regime's functions and
+    deterministic transitions (``dag_pool``) with the source-declared gate.
+    A *leaf* of that DAG is a free argument produced by no node in it; removing
+    the state coordinates leaves the genuine parameters the target regime binds
+    from ``flat_params[target]`` -- distinct from a parameter the source edge
+    declares directly.
+    """
+    produced = set(dag_pool.keys())
+    leaves: set[str] = set()
+    for fn in dag_pool.values():
+        leaves |= set(get_union_of_args([fn]))
+    leaves -= produced
+    leaves -= set(state_names)
+    return frozenset(leaves)
+
+
+def _reject_target_function_params(
+    *,
+    dag_pool: Mapping[str, Callable[..., FloatND]],
+    consumer_arg_names: tuple[str, ...],
+    state_names: frozenset[str],
+    edge_target: str,
+    context: str,
+) -> None:
+    """Fence for round-4 audit F2 (a target helper param mis-owned as source).
+
+    Collective-edge provenance binds every non-injected gate/projection argument
+    from ``flat_params[source]`` -- the solve-side fold does the same, so solve
+    and simulate stay mutually consistent. But that is NOT consistent with the
+    *target* regime's own kernel, which binds a target function's parameter from
+    ``flat_params[target]``: a gate (or projection) that reaches a target-regime
+    function with a free dynamic parameter would therefore evaluate that
+    parameter from the wrong namespace, and would COLLAPSE with a same-named
+    source parameter (a gate reversal, reproduced by the round-4 review).
+
+    Origin-preserving edge compilation (carrying the target/source origin through
+    the concatenated DAG, and passing target params as a distinct input to the
+    solve-side fold) is not yet implemented. Until it is, reject the topology
+    rather than silently misbind it. Source-declared projection parameters are
+    NOT affected: they enter through the edge's own gate/projection, not through
+    ``dag_pool`` (the target's functions), so they are not leaves of the target
+    DAG and this fence does not fire on them.
+    """
+    contested = sorted(
+        _target_function_param_leaves(dag_pool, state_names) & set(consumer_arg_names)
+    )
+    if contested:
+        msg = (
+            f"{context}: the edge to regime '{edge_target}' reaches parameter(s) "
+            f"{contested} that are introduced by the TARGET regime's own functions "
+            "/ deterministic transitions. Collective-edge provenance binds every "
+            "non-injected argument from flat_params[source], which would evaluate a "
+            "target-regime function parameter from the wrong namespace (and collapse "
+            "it with any same-named source parameter). Origin-preserving edge "
+            "compilation is not yet implemented, so this topology is rejected rather "
+            "than silently misbound. Compute the quantity outside the target regime's "
+            "functions (e.g. as a source-declared gate-ref projection), or give the "
+            "parameter a source-unique name."
+        )
+        raise ModelInitializationError(msg)
+
+
 def get_edge_fold(
     *,
     edge: ResolvedGatedEdge,
@@ -399,6 +467,13 @@ def get_edge_fold(
         set_annotations=True,
     )
     gate_arg_names = tuple(get_union_of_args([gate_evaluator]))
+    _reject_target_function_params(
+        dag_pool=dag_pool,
+        consumer_arg_names=gate_arg_names,
+        state_names=frozenset(state_names),
+        edge_target=edge.target,
+        context="get_edge_fold (solve-side gate)",
+    )
 
     target_component_names = (
         [f"V_target_{s}" for s in target_stakeholders]
@@ -691,6 +766,13 @@ def get_edge_simulate_gate_evaluator(
         set_annotations=True,
     )
     gate_arg_names = tuple(get_union_of_args([gate_evaluator]))
+    _reject_target_function_params(
+        dag_pool=dag_pool,
+        consumer_arg_names=gate_arg_names,
+        state_names=frozenset(state_names),
+        edge_target=edge.target,
+        context="get_edge_simulate_gate_evaluator (simulate-side gate)",
+    )
     reads_d_target = "D_target" in gate_arg_names
 
     target_component_names = (
@@ -721,12 +803,20 @@ def get_edge_simulate_gate_evaluator(
     #    solve-side counterpart. They interpolate over the TARGET's grid, hence
     #    the target's params.
     # 2. SOURCE_PARAMS — the gate predicate's own free params, and the free
-    #    params of the SOURCE-declared gate-ref projections (including those of
-    #    any target helper FUNCTION a projection routes through). This is not a
+    #    params of the SOURCE-declared gate-ref projections. This is not a
     #    choice: `backward_induction._evaluate_edge_fold` binds every one of the
     #    fold's params from `flat_params[source]`, so binding them anywhere else
     #    here would make simulate evaluate a different predicate than the Wbar
     #    the source's own solved policy was optimized against.
+    #    ROUND-4 AUDIT F2: a param introduced by the TARGET regime's OWN
+    #    functions/transitions is NOT source-owned — the target regime binds it
+    #    from `flat_params[target]` in its own kernel, so attributing it to source
+    #    here (and to source in the fold) evaluates it from the wrong namespace and
+    #    collapses it with any same-named source param. Origin-preserving edge
+    #    compilation is deferred; until then `_reject_target_function_params`
+    #    (called above, after `gate_arg_names`) rejects that topology rather than
+    #    silently misbinding it, so no target-function param ever reaches this
+    #    SOURCE bucket.
     # 3. The REFERENCE regimes' own interpolation grids — resolved inside
     #    `_build_same_period_ref_reader` against `SAME_PERIOD_PARAMS_ARG` (F4),
     #    so they never reach this signature.
@@ -888,11 +978,17 @@ def build_fallback_state_projector(
     merges but the only choice that makes the simulated coordinate equal the one
     the fold projected.
 
-    Note that "everything else" is deliberately not "the source's free
-    parameters, but target helpers from the target": a projection DAG may route
-    through a target helper FUNCTION, and that helper's own free params are
-    likewise bound from the source at the fold. The provenance follows the fold,
-    argument by argument, whatever the DAG's shape.
+    ROUND-4 AUDIT F2 corrects the earlier reasoning here. A projection DAG CAN
+    route through a target helper FUNCTION whose own free params the target regime
+    binds from `flat_params[target]`; binding them from the source at the fold (as
+    the old code did on both sides) evaluates them from the wrong namespace and
+    collapses them with any same-named source param. That is not a valid provenance
+    for a target-owned parameter, so `_reject_target_function_params` (called after
+    `arg_names` below) FENCES a projection that reaches such a param rather than
+    misbinding it. Source-declared projection params (a `shift` the edge itself
+    names) are unaffected: they are not leaves of the target DAG. Origin-preserving
+    edge compilation (carrying target/source origin through the DAG and passing
+    target params to the solve-side fold) would lift the fence; it is deferred.
 
     Unlike `get_edge_simulate_gate_evaluator`, this callable exposes both kinds
     of argument under their PLAIN names: it holds no interpolator of its own, so
@@ -936,6 +1032,13 @@ def build_fallback_state_projector(
         )
     arg_names = tuple(
         sorted({arg for args in projection_args.values() for arg in args})
+    )
+    _reject_target_function_params(
+        dag_pool=dag_pool,
+        consumer_arg_names=arg_names,
+        state_names=frozenset(target_state_names),
+        edge_target=ref.regime,
+        context="build_fallback_state_projector",
     )
 
     provenance_builder = _ProvenanceBuilder(

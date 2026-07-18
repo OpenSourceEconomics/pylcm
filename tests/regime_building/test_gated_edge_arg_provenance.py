@@ -74,6 +74,7 @@ from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
 from lcm.ages import AgeGrid
+from lcm.exceptions import ModelInitializationError
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
@@ -1097,3 +1098,85 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     # nothing else.
     assert _ref_value(_MARRIED_POINTS) > 5.0
     assert _ref_value(_SINGLE_POINTS) <= 5.0
+
+
+# ----------------------------------------------------------------------------------
+# Round-4 audit F2: a param introduced by the TARGET regime's OWN functions, read
+# by a source-declared gate, is mis-owned as source (and would collapse with a
+# same-named source param). Origin-preserving edge compilation is deferred, so the
+# builder FENCES this topology instead of silently misbinding it.
+# ----------------------------------------------------------------------------------
+_HELPER_TARGET_SCALE = 0.9
+
+
+def _target_scaled_x(x: ContinuousState, target_scale: FloatND) -> FloatND:
+    """A helper declared in the TARGET regime's functions.
+
+    `target_scale` is a parameter the TARGET regime binds from
+    `flat_params[target]` — NOT a parameter the source edge declares. The current
+    collective-edge provenance binds every non-injected gate argument from
+    `flat_params[source]`, so this leaf would be evaluated from the wrong
+    namespace; the builder must reject the topology rather than misbind it.
+    """
+    return x * target_scale
+
+
+def _gate_reads_target_helper(V_target: FloatND, target_scaled_x: FloatND) -> BoolND:
+    """A source gate that routes through the target regime's `target_scaled_x`."""
+    return V_target > target_scaled_x
+
+
+def _make_target_helper_regimes() -> dict[str, Regime]:
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_reads_target_helper,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    return {"src": src, "target": target, "fallback": fallback}
+
+
+def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
+    """Round-4 F2 fence: building an edge whose gate reads a target-regime function
+    with a free dynamic parameter must raise, rather than silently binding that
+    parameter from the source namespace."""
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "target": MappingProxyType(
+                {"target_scale": jnp.asarray(_HELPER_TARGET_SCALE)}
+            ),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"target_scale.*introduced by the TARGET regime's own functions",
+    ):
+        _solve_fixture(_make_target_helper_regimes(), flat_params)
