@@ -142,10 +142,6 @@ def interp_on_prepared_grid(
         Interpolated values with the shape of `x_query`.
 
     """
-    # An empty valid prefix (`valid_length == 0`) can only arise from an
-    # already-poisoned carry; the index clamp below keeps the gather in bounds,
-    # and the result stays NaN so the runtime NaN diagnostics surface the
-    # poisoned carry rather than masking it with an edge-clamped constant.
     # The bracket indices span the full query mesh (the dominant egm_step
     # working buffer at scale), and never exceed the grid length (a few
     # hundred), so int32 holds them with vast headroom. Under x64 `searchsorted`
@@ -157,7 +153,7 @@ def interp_on_prepared_grid(
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
     lower = upper - 1
-    return _interp_between_nodes(
+    value = _interp_between_nodes(
         x_query=x_query,
         xp_lower=xp[lower],
         xp_upper=xp[upper],
@@ -166,6 +162,15 @@ def interp_on_prepared_grid(
         slope_lower=None if fp_slopes is None else fp_slopes[lower],
         slope_upper=None if fp_slopes is None else fp_slopes[upper],
     )
+    # Degenerate valid prefixes never reach the two-node arithmetic (whose
+    # zero-weight short-circuits would otherwise read a NaN bracket as a
+    # finite 0):
+    # - a singleton row is the constant `fp[0]` (clamped on both sides);
+    # - an empty row can only arise from an already-poisoned carry, and
+    #   `fp[0]` is NaN there, so the read carries the poison to the runtime
+    #   NaN diagnostics instead of letting it lose a downstream maximum
+    #   silently.
+    return jnp.where(valid_length <= 1, fp[0], value)
 
 
 def _interp_between_nodes(
@@ -285,15 +290,25 @@ def interp_and_derivative_on_padded_grid(
       bracket (`side="right"`), so the derivative is the right piece's
       left-endpoint slope — the node's limited slope under Hermite, the right
       secant under linear;
-    - at the last non-NaN node the read clamps into the last bracket, so the
-      derivative is that piece's right-endpoint slope (left-side derivative);
+    - at the EXACT last non-NaN node the read clamps into the last bracket
+      and the derivative is that piece's right-endpoint slope — the node's
+      own limited slope, the economic marginal a parent Euler inversion
+      consumes there. The clamped interpolant is constant only STRICTLY
+      above the last node, where the derivative is zero: the zero is a
+      grid-truncation artifact and must not leak onto the node itself. (A
+      right-germ ranking of the clamped interpolant reads zero AT the node —
+      a deliberate two-object split: the germ describes the published
+      interpolant's right behavior for tie selection, this channel publishes
+      the economics.);
     - at a duplicated jump abscissa the right piece applies, matching the
       value read's one-sided convention;
     - below support the derivative is the first bracket's secant (the slope
-      of the value read's linear extension); at or above the last node it is
-      zero (the value clamps);
+      of the value read's linear extension);
     - zero-width and `-inf` brackets read a zero derivative, keeping the
-      (value, derivative) pair consistent with the value conventions.
+      (value, derivative) pair consistent with the value conventions;
+    - a singleton row is the constant pair `(fp[0], 0)`; an empty row is
+      `(NaN, NaN)` — the NaN value carries a poisoned carry to the runtime
+      diagnostics and the derivative is non-authoritative.
 
     Args:
         x_query: Points at which to evaluate; any shape.
@@ -358,6 +373,16 @@ def interp_and_derivative_on_prepared_grid(
         fp_upper=fp[upper],
         slope_lower=None if fp_slopes is None else fp_slopes[lower],
         slope_upper=None if fp_slopes is None else fp_slopes[upper],
+    )
+    # Degenerate valid prefixes share the value channel's contract (see
+    # `interp_on_prepared_grid`): a singleton row is the constant pair
+    # `(fp[0], 0)`; an empty row is `(NaN, NaN)` — the NaN value carries the
+    # poison and the derivative is non-authoritative.
+    value = jnp.where(valid_length <= 1, fp[0], value)
+    derivative = jnp.where(
+        valid_length == 0,
+        jnp.nan,
+        jnp.where(valid_length == 1, 0.0, derivative),
     )
     return value, derivative
 

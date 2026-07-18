@@ -13,7 +13,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.continuation import _aggregate_child_choices
+from _lcm.egm.continuation import (
+    _aggregate_child_choices,
+    _collapse_outer_candidate_axis,
+)
 from _lcm.egm.interp import interp_on_padded_grid, prepare_padded_grid
 from tests.conftest import X64_ENABLED
 
@@ -245,3 +248,23 @@ def test_stacked_read_matches_host_max_of_reads_on_curved_rows():
     np.testing.assert_allclose(
         float(smoothed_marginal), expected_marginal, rtol=_READ_RTOL, atol=_READ_ATOL
     )
+
+
+def test_a_poisoned_candidate_at_a_nonzero_index_keeps_the_collapse_nan():
+    """A NaN candidate value survives the stacked collapse as NaN.
+
+    A poisoned carry row (loud upper-envelope overflow) reads as a NaN
+    candidate value. The candidate collapse must propagate that NaN to the
+    published value — a finite competitor at another index must not win the
+    maximum silently — and the published marginal must not pretend the pair
+    is healthy.
+    """
+
+    value, marginal = _collapse_outer_candidate_axis(
+        value_at_child=jnp.array([[1.0, jnp.nan]]),
+        marginal_at_child=jnp.array([[1.0, jnp.nan]]),
+        candidate_right_available=jnp.array([[True, False]]),
+    )
+
+    assert bool(jnp.isnan(value[0]))
+    assert bool(jnp.isnan(marginal[0]))

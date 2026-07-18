@@ -1521,9 +1521,17 @@ def _collapse_outer_candidate_axis(
         -jnp.inf,
     )
     winner = jnp.argmax(rank, axis=-1, keepdims=True)
+    # The published value is the maximum itself: identical to the winner's
+    # read at any tie, and NaN-propagating — a poisoned candidate row (loud
+    # upper-envelope overflow) must surface fail-loud instead of losing the
+    # rank comparison to a finite competitor. The marginal is pinned to NaN
+    # alongside so the published pair never looks healthy over a poisoned
+    # cell.
+    collapsed_value = best_value[..., 0]
+    collapsed_marginal = jnp.take_along_axis(marginal_at_child, winner, axis=-1)[..., 0]
     return (
-        jnp.take_along_axis(value_at_child, winner, axis=-1)[..., 0],
-        jnp.take_along_axis(marginal_at_child, winner, axis=-1)[..., 0],
+        collapsed_value,
+        jnp.where(jnp.isnan(collapsed_value), jnp.nan, collapsed_marginal),
     )
 
 

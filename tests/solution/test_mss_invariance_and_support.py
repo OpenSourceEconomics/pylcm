@@ -250,3 +250,114 @@ def test_non_certified_backends_report_no_read_support():
     )
 
     assert not bool(read_supported)
+
+
+def test_a_common_value_shift_leaves_winner_and_policy_unchanged():
+    """Adding a constant to every candidate value cannot change the read.
+
+    The Bellman value is cardinal only up to a common additive normalization:
+    two branch lines `0.5 + (R - 2000)/1000` (policy 1000) and
+    `(R - 2000)/800` (policy 800) keep the same winner at `R = 2050` under
+    any common value shift. In float32 a shift of `1e5` puts a few-ulp
+    representational window at ~0.001 while the branch gap stays ~0.5, so the
+    records must remain distinct and the read must track the true envelope.
+    """
+
+    def read_at_midpoint(shift: float) -> tuple[float, float, float, float]:
+        origin, width = 2000.0, 100.0
+        policies = np.array([1000.0, 800.0], dtype=np.float32)
+        slopes = 1.0 / policies
+        intercepts = np.array([0.5, 0.0], dtype=np.float32) + np.float32(shift)
+        grid, policy, value = [], [], []
+        for slope, intercept, action in zip(slopes, intercepts, policies, strict=True):
+            grid += [origin, origin + width]
+            policy += [action, action]
+            value += [intercept, intercept + slope * width]
+        got_grid, got_policy, got_value, _ = refine_envelope(
+            endog_grid=jnp.asarray(grid, dtype=jnp.float32),
+            policy=jnp.asarray(policy, dtype=jnp.float32),
+            value=jnp.asarray(value, dtype=jnp.float32),
+            n_refined=16,
+        )
+        query = jnp.asarray(origin + 50, dtype=jnp.float32)
+        read_value = float(
+            interp_on_padded_grid(x_query=query, xp=got_grid, fp=got_value)
+        )
+        read_policy = float(
+            interp_on_padded_grid(x_query=query, xp=got_grid, fp=got_policy)
+        )
+        truth = intercepts + slopes * 50
+        return (
+            read_value,
+            read_policy,
+            float(truth.max()),
+            float(policies[truth.argmax()]),
+        )
+
+    base = read_at_midpoint(0.0)
+    shifted = read_at_midpoint(100000.0)
+    np.testing.assert_allclose(base[0], base[2], rtol=0, atol=1e-6)
+    np.testing.assert_allclose(base[1], base[3], rtol=0, atol=0)
+    np.testing.assert_allclose(shifted[0], shifted[2], rtol=0, atol=0.02)
+    np.testing.assert_allclose(shifted[1], shifted[3], rtol=0, atol=0)
+
+
+def test_a_dominating_point_at_a_large_value_level_overflows_loudly():
+    """The spike detector fires at any common value level.
+
+    The zero-width dominating candidate `(10, 1000002)` exceeds both one-sided
+    records by a full unit; at value level `1e6` in float32 a few-ulp margin
+    is ~0.5, so the excess must still trigger `n_kept > n_refined`.
+    """
+    *_, n_kept, _ = refine_envelope_with_support(
+        endog_grid=jnp.array([9.0, 10.0, 10.0], dtype=jnp.float32),
+        policy=jnp.array([1.0, 1.0, 0.5], dtype=jnp.float32),
+        value=jnp.array([1000000.0, 1000001.0, 1000002.0], dtype=jnp.float32),
+        n_refined=12,
+    )
+
+    assert int(n_kept) > 12
+
+
+def test_two_distinct_representable_crossings_are_both_emitted():
+    """Close but representable crossings in a wide interval are all emitted.
+
+    Three branches cross at local offsets 1 and 2 inside a `1e6`-wide float32
+    interval. Both abscissae are exactly representable, so the switch
+    sequence has two crossings (each duplicated) and the read strictly
+    between them must follow the middle branch — a tie window proportional
+    to the interval width would skip it.
+    """
+    origin, width = 4000000.0, 1000000.0
+    policies = np.array([3100000.0, 2000000.0, 900000.0], dtype=np.float32)
+    slopes = 1.0 / policies
+    intercepts = np.array(
+        [
+            0.0,
+            slopes[0] - slopes[1],
+            slopes[0] - slopes[1] + 2.0 * (slopes[1] - slopes[2]),
+        ],
+        dtype=np.float32,
+    )
+    grid, policy, value = [], [], []
+    for slope, intercept, action in zip(slopes, intercepts, policies, strict=True):
+        grid += [origin, origin + width]
+        policy += [action, action]
+        value += [intercept, intercept + slope * width]
+
+    got_grid, got_policy, _, n_kept = refine_envelope(
+        endog_grid=jnp.asarray(grid, dtype=jnp.float32),
+        policy=jnp.asarray(policy, dtype=jnp.float32),
+        value=jnp.asarray(value, dtype=jnp.float32),
+        n_refined=32,
+    )
+
+    local_grid = np.asarray(got_grid)[: int(n_kept)] - np.float32(origin)
+    assert np.isclose(local_grid, 1.0, atol=0.25).sum() == 2
+    assert np.isclose(local_grid, 2.0, atol=0.25).sum() == 2
+    query = jnp.asarray(origin + 1.25, dtype=jnp.float32)
+    read_policy = float(
+        interp_on_padded_grid(x_query=query, xp=got_grid, fp=got_policy)
+    )
+    truth = intercepts + slopes * 1.25
+    np.testing.assert_allclose(read_policy, float(policies[truth.argmax()]), rtol=1e-5)

@@ -490,3 +490,46 @@ def test_paired_read_linear_derivative_at_a_node_is_the_right_secant():
 
     np.testing.assert_allclose(np.asarray(at_interior), 2.0, atol=1e-12)
     np.testing.assert_allclose(np.asarray(at_last), 2.0, atol=1e-12)
+
+
+def test_value_read_on_a_singleton_row_is_the_constant_node_value():
+    """A one-node row reads as the constant `fp[0]` at any query."""
+    xp = jnp.array([0.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+
+    value = interp.interp_on_padded_grid(x_query=jnp.asarray(0.25), xp=xp, fp=fp)
+
+    np.testing.assert_allclose(np.asarray(value), 5.0, atol=1e-12)
+
+
+def test_paired_read_on_a_singleton_row_is_the_node_value_with_zero_slope():
+    """A one-node row's paired read is the constant pair `(fp[0], 0)`."""
+    xp = jnp.array([0.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+    fp_slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+
+    value, derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.25), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(np.asarray(value), 5.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(derivative), 0.0, atol=1e-12)
+
+
+def test_reads_on_an_empty_row_propagate_nan():
+    """An all-NaN (poisoned) row reads as NaN, never as a finite constant.
+
+    A poisoned carry row must surface in the runtime NaN diagnostics; a read
+    that converts it to a finite value would let a poisoned candidate lose a
+    downstream maximum silently instead of failing loudly.
+    """
+    empty = jnp.full(3, jnp.nan)
+
+    value = interp.interp_on_padded_grid(x_query=jnp.asarray(0.25), xp=empty, fp=empty)
+    paired_value, paired_derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.25), xp=empty, fp=empty, fp_slopes=empty
+    )
+
+    assert bool(jnp.isnan(value))
+    assert bool(jnp.isnan(paired_value))
+    assert bool(jnp.isnan(paired_derivative))
