@@ -1,3 +1,4 @@
+import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
@@ -682,10 +683,25 @@ def _get_deterministic_transitions(
         for name, func in bundle.items():
             if name in stochastic_transition_names:
                 continue
-            if name in merged and merged[name] is not func:
+            if name in merged and _law_source(merged[name]) is not _law_source(func):
                 conflicting.add(name)
             merged.setdefault(name, func)
     return MappingProxyType(merged), frozenset(conflicting)
+
+
+def _law_source(func: TransitionFunction) -> object:
+    """The raw user law behind a processed transition, for provenance comparison.
+
+    A single BARE (coarse) state law carried by several targets is canonicalized
+    into one cell per target, and `_rename_params_to_qnames` then renames each with
+    its own qualified parameter names — producing DISTINCT wrapper objects that are
+    nonetheless the same user law. `rename_arguments` sets `__wrapped__`, so
+    `inspect.unwrap` recovers that shared source; two wrappers of one coarse law
+    unwrap to the same object, while genuinely different per-target laws unwrap to
+    different ones. Comparing processed wrapper identity (`is`) instead would flag
+    the coarse-broadcast case as a spurious target-dependent conflict.
+    """
+    return inspect.unwrap(func)
 
 
 def _get_U_and_F(

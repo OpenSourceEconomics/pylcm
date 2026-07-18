@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import jax.numpy as jnp
 import numpy as np
-from dags import concatenate_functions
+from dags import concatenate_functions, get_ancestors
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
@@ -76,9 +76,43 @@ def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     if regime.solution.solves_via_dcegm:
         excluded.add("inverse_marginal_utility")
     sim = regime.simulation
-    return {name for name in sim.functions if name not in excluded} | {
+    candidates = {name for name in sim.functions if name not in excluded} | {
         name for name in sim.constraints if name not in excluded
     }
+    return candidates - _transition_dependent_target_names(regime, candidates)
+
+
+def _transition_dependent_target_names(
+    regime: Regime, candidates: set[str]
+) -> set[str]:
+    """Names whose dependency ancestry reads a chosen `next_<state>`.
+
+    Such a function (the NEGM service-flow `utility(next_<durable>, ...)`, or a
+    constraint reading a chosen next state) is a DECISION-only quantity: the
+    chosen next state exists only inside the argmax, not in realized simulation
+    data. The realized-target pool (`_build_functions_pool`) deliberately omits
+    state transitions, so exposing these as realized targets would fail with an
+    unsupplied `next_<state>` argument. Excluding them means
+    `additional_targets="all"` skips them and an explicit request gets a clean
+    "not available" error instead of a confusing missing-argument failure deep in
+    the target DAG.
+    """
+    transition_names = {
+        transition_name
+        for bundle in regime.simulation.transitions.values()
+        for transition_name in bundle
+    }
+    if not transition_names:
+        return set()
+    pool = _build_functions_pool(regime)
+    dependent: set[str] = set()
+    for name in candidates:
+        if name not in pool:
+            continue
+        ancestors = get_ancestors(pool, targets=[name], include_targets=False)
+        if ancestors & transition_names:
+            dependent.add(name)
+    return dependent
 
 
 def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
