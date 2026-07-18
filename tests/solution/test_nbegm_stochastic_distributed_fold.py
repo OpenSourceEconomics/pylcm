@@ -5,7 +5,9 @@ axis, so the continuation reads a carry with that axis peeled. The stochastic
 income node's intrinsic-weight fold must target the income axis *in that peeled
 carry*, not its pre-peel position. Because the income node (5 nodes) and `kind`
 (2) differ in size, a mis-targeted fold axis is a hard broadcasting error, so the
-distributed solve must both build and reproduce the non-distributed value exactly.
+distributed solve must both build and reproduce the non-distributed value at
+reassociation level: XLA fuses the read arithmetic differently per axis layout,
+so the two solves agree to a few ulp of the value scale, not bit-for-bit.
 """
 
 import numpy as np
@@ -35,4 +37,4 @@ def test_stochastic_fold_is_invariant_to_distributing_a_ride_state():
         # is `(kind, income, liquid)` where the plain solve is `(income, kind,
         # liquid)`; align the two before the exact-value comparison.
         distributed_v = np.moveaxis(np.asarray(distributed[period]["alive"]), 0, 1)
-        np.testing.assert_array_equal(distributed_v, plain_v)
+        np.testing.assert_allclose(distributed_v, plain_v, rtol=1e-15, atol=0.0)

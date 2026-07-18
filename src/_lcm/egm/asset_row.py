@@ -516,6 +516,18 @@ def publish_node_from_bracket(
         fp_lower=bracket.lower_policy,
         fp_upper=bracket.upper_policy,
     )
+    # Degenerate envelopes mirror the row read's contract exactly
+    # (`interp_on_prepared_grid`): a single kept node — always the bracket's
+    # lower slot, the upper is a NaN pad — is a constant clamp on both sides,
+    # and an empty envelope reads NaN.
+    single_node = bracket.n_kept == 1
+    empty_envelope = bracket.n_kept == 0
+    value_interpolated = jnp.where(single_node, bracket.lower_value, value_interpolated)
+    value_interpolated = jnp.where(empty_envelope, jnp.nan, value_interpolated)
+    policy_interpolated = jnp.where(
+        single_node, bracket.lower_policy, policy_interpolated
+    )
+    policy_interpolated = jnp.where(empty_envelope, jnp.nan, policy_interpolated)
 
     closed_form_action = resources_at_node - borrowing_limit
     value_constrained = jnp.where(
