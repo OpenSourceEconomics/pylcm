@@ -101,18 +101,44 @@ merely jaxlib-version or weight-shape dependent. That is the real content of the
 finding: `raw jnp.average` is ITSELF not bit-portable across CPUs, so "bit-identical
 to raw" was never a portable contract.
 
+ROUND-6 CAVEAT (reproduce-first on a divergence-reproducing GPU; RETIRES the
+"durable whole-expression branch" as unachievable and names the real resolution).
+The round-4/5 caveats floated a whole-expression branch — raw `sum(w*a)` on all-
+positive slices, masked only where an exact zero occurs — as the durable fix that
+would be "exact-to-raw BY CONSTRUCTION." It was BUILT and MEASURED on gb10 (aarch64,
+jax 0.11.0, GPU backend, which DOES reproduce the divergence: raw `jnp.average` bits
+1035386569 vs masked 1035386568 on the 32x32x8-carried K=5 vector). Result: under the
+solve's nested `vmap` the branch does NOT recover the raw bits. Mechanism, isolated
+by a 4-way probe on the SAME backend: the raw reduction returns 1035386569 ONLY when
+it is the sole reduction in the graph (`n=sum(w*a); d=sum(w); n/d`, no mask); the
+moment the value-masked reduction is materialised on any co-path — as it must be for
+zero-mass safety — XLA co-fuses the two reductions and the raw one COLLAPSES onto the
+masked 1035386568. `jax.lax.optimization_barrier` on the reduced numerators does not
+isolate them (it independently yields the masked bits); `jax.lax.cond` vmaps to the
+same select. So every safety-preserving structure lands on the masked bits under
+vmap — confirming the reviewer's list (cond / select-after-both / lax.map /
+optimization_barrier all fail) by direct MEASUREMENT, not report.
+
+The same probe fixes the resolution: in float64 the masked average is BIT-IDENTICAL
+to the exact `jnp.average` (relative diff 0.00e+00, both 0.089231097529865119) on the
+very carrier that diverges 1 ULP in float32. The divergence is therefore a float32
+rounding-FLOOR artifact, not an expression-structure bug — and `raw jnp.average` is
+itself not bit-portable across CPUs (ROUND-5), so "match raw in float32" was never a
+well-posed target. An action whose choice flips under a <=few-ULP perturbation is tied
+at float32 precision; the sound remedy is to solve the collective core in FLOAT64
+(the test conftest already enables x64 — precision is part of the model spec), which
+removes the divergence entirely. No expression rewrite is pursued.
+
 HONEST CONTRACT (supersedes every unconditional "bit-identical" statement below).
 `zero_safe_average` / `zero_safe_weighted_term` are (i) exact-zero-mass-SAFE
-(guaranteed, the load-bearing property) and (ii) equal to the naive raw reduction
-up to floating-point reduction error — a few ULP whose sign/magnitude depend on the
-XLA lowering and CPU, the SAME order of non-determinism raw float reductions carry
-across CPUs. A ULP difference can flip a GENUINE near-tie in the downstream argmax /
-IR comparison, at ULP-level value cost. The durable WHOLE-EXPRESSION branch (raw on
-all-positive slices, safe only where an exact zero occurs) is the only way to make
-the all-positive path exact-to-raw BY CONSTRUCTION; it needs a custom primitive /
-batching rule (the reviewer confirmed vmap(lax.cond), select-after-both, lax.map,
-and optimization_barrier do NOT reproduce the raw bits) and remains DEFERRED behind
-this approximate contract, not behind a bit-identity claim.
+(guaranteed, the load-bearing property) and (ii) in float32, equal to the naive raw
+reduction up to a few ULP of reduction error whose sign/magnitude depend on the XLA
+lowering and CPU/GPU — the SAME order of non-determinism raw float reductions carry
+across backends, NOT removable by any vmap-safe expression restructuring (ROUND-6);
+and (iii) in float64, bit-identical to the exact average on the cases measured. A
+float32 ULP difference can flip a GENUINE near-tie in the downstream argmax / IR
+comparison at ULP-level value cost; run the collective core in float64 if any such
+near-tie must be resolved deterministically.
 """
 
 import jax
@@ -225,6 +251,17 @@ def zero_safe_average(
 
     total_weight = jnp.sum(weights_arr, axis=axis)
     _raise_if_concretely_zero(total_weight, context="zero_safe_average")
+    # The masked numerator is used unconditionally -- see the ROUND-6 note below and
+    # the module CAVEAT. A whole-expression branch that keeps a RAW `sum(w*a)`
+    # reduction for all-positive slices was BUILT and MEASURED on a divergence-
+    # reproducing backend (gb10 GPU): under the solve's nested vmap it does NOT
+    # recover the raw bits. Once the value-masked reduction is materialised on any
+    # co-path, XLA co-fuses the two reductions and the raw one collapses onto the
+    # masked bits; `optimization_barrier` does not isolate them (it independently
+    # yields the masked bits); `lax.cond` vmaps to the same select. The ~1-ULP gap
+    # from the exact `jnp.average` expression is a float32 rounding-floor artifact
+    # (bit-IDENTICAL in float64), not an expression-structure bug, so there is
+    # nothing to gain by the extra reductions.
     numerator = jnp.sum(zero_safe_weighted_term(weights_arr, a_arr), axis=axis)
     return numerator / total_weight
 
