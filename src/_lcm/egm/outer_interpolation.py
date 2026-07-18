@@ -1,0 +1,285 @@
+"""Validated interpolation of candidate surfaces across the outer-node axis.
+
+The continuous-outer solver evaluates exact inner solves only at a shared set
+of outer nodes; everything between the nodes is this module's job. It builds
+a *local cubic Hermite* interpolant along the leading candidate axis of a
+stacked surface (value, inner policy, or liquid marginal), vectorized over
+all trailing state axes, and it is explicit about where interpolation is not
+trustworthy:
+
+- an interval with a nonfinite endpoint value is **invalid** — the read
+  reports `-inf` (`fmax` semantics: an infeasible candidate must lose every
+  comparison) instead of fabricating a bridge across an infeasible gap;
+- the caller can declare additional invalid intervals (solver-declared
+  discontinuities, intervals whose midpoint validation failed);
+- out-of-domain queries are invalid, never extrapolated;
+- a nonfinite neighbor cannot poison an adjacent *valid* interval: node
+  slopes fall back to the one-sided secant of the finite side.
+
+Slopes are the classic non-uniform three-point (parabolic) estimates, so the
+interpolant reproduces quadratics exactly and is C¹ across shared nodes.
+Interval location uses `jnp.searchsorted`; nodes must be strictly increasing
+(validated eagerly — the mesh is static under JIT).
+"""
+
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+import jax.numpy as jnp
+
+from lcm.typing import BoolND, FloatND
+
+
+@runtime_checkable
+class OuterInterpolant(Protocol):
+    """Evaluates a stacked candidate surface between shared outer nodes."""
+
+    def evaluate(
+        self,
+        *,
+        nodes: FloatND,
+        values: FloatND,
+        query: FloatND,
+    ) -> FloatND:
+        """Interpolated surface at `query`; `-inf` where invalid."""
+        ...
+
+    def evaluate_with_derivative(
+        self,
+        *,
+        nodes: FloatND,
+        values: FloatND,
+        query: FloatND,
+    ) -> tuple[FloatND, FloatND]:
+        """Interpolated surface and its outer derivative at `query`."""
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class LocalCubicOuterInterpolant:
+    """Local cubic Hermite interpolation with explicit validity diagnostics.
+
+    `nodes` has shape `(C,)` (strictly increasing); `values` has shape
+    `(C, *S)` with arbitrary trailing state axes; `query` must broadcast
+    against `S`. Reads outside `[nodes[0], nodes[-1]]`, inside an interval
+    with a nonfinite endpoint, or inside a caller-declared invalid interval
+    report `-inf` (and derivative `0`) rather than a fabricated bridge.
+    """
+
+    def evaluate(
+        self,
+        *,
+        nodes: FloatND,
+        values: FloatND,
+        query: FloatND,
+        interval_valid: BoolND | None = None,
+    ) -> FloatND:
+        """Interpolated surface at `query`; `-inf` where invalid.
+
+        Args:
+            nodes: Shared outer nodes, shape `(C,)`, strictly increasing.
+            values: Stacked candidate surface, shape `(C, *S)`.
+            query: Outer abscissae to read, broadcastable against `S`.
+            interval_valid: Optional extra per-interval validity, shape
+                broadcastable against `(C - 1, *S)`; `False` marks an
+                interval the interpolant must not bridge.
+
+        Returns:
+            The interpolated read, shape `broadcast(query, S)`.
+
+        """
+        value, _, valid = self._evaluate(
+            nodes=nodes, values=values, query=query, interval_valid=interval_valid
+        )
+        return jnp.where(valid, value, -jnp.inf)
+
+    def evaluate_with_derivative(
+        self,
+        *,
+        nodes: FloatND,
+        values: FloatND,
+        query: FloatND,
+        interval_valid: BoolND | None = None,
+    ) -> tuple[FloatND, FloatND]:
+        """Interpolated surface and its outer derivative at `query`.
+
+        Invalid reads report `(-inf, 0.0)`.
+
+        Args:
+            nodes: Shared outer nodes, shape `(C,)`, strictly increasing.
+            values: Stacked candidate surface, shape `(C, *S)`.
+            query: Outer abscissae to read, broadcastable against `S`.
+            interval_valid: Optional extra per-interval validity, shape
+                broadcastable against `(C - 1, *S)`.
+
+        Returns:
+            The pair `(value, d value / d outer)`.
+
+        """
+        value, derivative, valid = self._evaluate(
+            nodes=nodes, values=values, query=query, interval_valid=interval_valid
+        )
+        return (
+            jnp.where(valid, value, -jnp.inf),
+            jnp.where(valid, derivative, 0.0),
+        )
+
+    def evaluate_validity(
+        self,
+        *,
+        nodes: FloatND,
+        values: FloatND,
+        query: FloatND,
+        interval_valid: BoolND | None = None,
+    ) -> BoolND:
+        """Where a read at `query` would be trustworthy (see `evaluate`)."""
+        _, _, valid = self._evaluate(
+            nodes=nodes, values=values, query=query, interval_valid=interval_valid
+        )
+        return valid
+
+    def _evaluate(
+        self,
+        *,
+        nodes: FloatND,
+        values: FloatND,
+        query: FloatND,
+        interval_valid: BoolND | None,
+    ) -> tuple[FloatND, FloatND, BoolND]:
+        nodes = jnp.asarray(nodes)
+        values = jnp.asarray(values)
+        _validate_nodes(nodes=nodes, values=values)
+        n_nodes = nodes.shape[0]
+        state_shape = values.shape[1:]
+        query = jnp.asarray(query)
+        out_shape = jnp.broadcast_shapes(query.shape, state_shape)
+        query_b = jnp.broadcast_to(query, out_shape)
+        values_b = jnp.broadcast_to(
+            _pad_state_axes(values, out_ndim=len(out_shape)),
+            (n_nodes, *out_shape),
+        )
+
+        # Containing interval per read; reads at the last node land in the
+        # final interval (t = 1), out-of-domain reads are flagged below.
+        interval = jnp.clip(
+            jnp.searchsorted(nodes, query_b, side="right") - 1, 0, n_nodes - 2
+        )
+        in_domain = (query_b >= nodes[0]) & (query_b <= nodes[-1])
+
+        slopes = _node_slopes(nodes=nodes, values=values_b)
+        y0 = jnp.take_along_axis(values_b, interval[None], axis=0)[0]
+        y1 = jnp.take_along_axis(values_b, interval[None] + 1, axis=0)[0]
+        m0 = jnp.take_along_axis(slopes, interval[None], axis=0)[0]
+        m1 = jnp.take_along_axis(slopes, interval[None] + 1, axis=0)[0]
+        x0 = nodes[interval]
+        h = nodes[interval + 1] - x0
+        t = (query_b - x0) / h
+
+        # Cubic Hermite basis in the local coordinate t = (f - f_j) / h.
+        t2 = t * t
+        t3 = t2 * t
+        h00 = 2.0 * t3 - 3.0 * t2 + 1.0
+        h10 = t3 - 2.0 * t2 + t
+        h01 = -2.0 * t3 + 3.0 * t2
+        h11 = t3 - t2
+        value = h00 * y0 + h10 * h * m0 + h01 * y1 + h11 * h * m1
+        derivative = (
+            (6.0 * t2 - 6.0 * t) * (y0 - y1) / h
+            + (3.0 * t2 - 4.0 * t + 1.0) * m0
+            + (3.0 * t2 - 2.0 * t) * m1
+        )
+
+        endpoint_finite = jnp.isfinite(y0) & jnp.isfinite(y1)
+        valid = in_domain & endpoint_finite
+        if interval_valid is not None:
+            declared = jnp.broadcast_to(
+                _pad_state_axes(jnp.asarray(interval_valid), out_ndim=len(out_shape)),
+                (n_nodes - 1, *out_shape),
+            )
+            valid = valid & jnp.take_along_axis(declared, interval[None], axis=0)[0]
+        return value, derivative, valid
+
+
+def _pad_state_axes(stacked: FloatND | BoolND, *, out_ndim: int) -> FloatND | BoolND:
+    """Insert singleton state axes after the leading candidate axis.
+
+    Broadcasting aligns from the right, so a stacked `(C, *S)` array must
+    have `S` padded on its left to the output rank before the whole array
+    can broadcast against `(C, *out_shape)`.
+    """
+    state_ndim = stacked.ndim - 1
+    pad = (1,) * (out_ndim - state_ndim)
+    return stacked.reshape(stacked.shape[0], *pad, *stacked.shape[1:])
+
+
+def _node_slopes(*, nodes: FloatND, values: FloatND) -> FloatND:
+    """Non-uniform three-point slope estimates at every node.
+
+    Interior nodes use the parabolic (quadratic-exact) weighted average of
+    the two adjacent secants; the ends use the one-sided three-point
+    parabolic estimate, so the read is quadratic-exact on *every* interval.
+    Where a stencil touches a nonfinite value, the slope falls back to the
+    finite adjacent secant (else `0`) so a nonfinite neighbor cannot poison
+    a valid interval — that interval's own endpoints are checked separately.
+    """
+    h = (nodes[1:] - nodes[:-1]).reshape((-1,) + (1,) * (values.ndim - 1))
+    secants = (values[1:] - values[:-1]) / h
+    left = secants[:-1]
+    right = secants[1:]
+    h_left = h[:-1]
+    h_right = h[1:]
+    parabolic = (h_right * left + h_left * right) / (h_left + h_right)
+    interior = jnp.where(
+        jnp.isfinite(left) & jnp.isfinite(right),
+        parabolic,
+        jnp.where(
+            jnp.isfinite(left),
+            left,
+            jnp.where(jnp.isfinite(right), right, 0.0),
+        ),
+    )
+    if secants.shape[0] == 1:
+        first = jnp.where(jnp.isfinite(secants[:1]), secants[:1], 0.0)
+        last = first
+    else:
+        first = _one_sided_parabolic_slope(
+            near=secants[:1], far=secants[1:2], h_near=h[:1], h_far=h[1:2]
+        )
+        last = _one_sided_parabolic_slope(
+            near=secants[-1:], far=secants[-2:-1], h_near=h[-1:], h_far=h[-2:-1]
+        )
+    return jnp.concatenate([first, interior, last], axis=0)
+
+
+def _one_sided_parabolic_slope(
+    *, near: FloatND, far: FloatND, h_near: FloatND, h_far: FloatND
+) -> FloatND:
+    """Quadratic-fit endpoint slope from the two nearest secants.
+
+    `near` is the secant of the interval touching the endpoint, `far` the
+    next one in; nonfinite stencils fall back to the finite secant (else 0).
+    """
+    parabolic = ((2.0 * h_near + h_far) * near - h_near * far) / (h_near + h_far)
+    return jnp.where(
+        jnp.isfinite(near) & jnp.isfinite(far),
+        parabolic,
+        jnp.where(jnp.isfinite(near), near, 0.0),
+    )
+
+
+def _validate_nodes(*, nodes: FloatND, values: FloatND) -> None:
+    if nodes.ndim != 1:
+        msg = f"nodes must be one-dimensional, got shape {nodes.shape}."
+        raise ValueError(msg)
+    if nodes.shape[0] < 2:  # noqa: PLR2004
+        msg = f"need at least two nodes, got {nodes.shape[0]}."
+        raise ValueError(msg)
+    if values.shape[0] != nodes.shape[0]:
+        msg = (
+            "leading axis of values must match the number of nodes, got "
+            f"values {values.shape} for {nodes.shape[0]} nodes."
+        )
+        raise ValueError(msg)
+    if not bool(jnp.all(nodes[1:] > nodes[:-1])):
+        msg = "nodes must be strictly increasing."
+        raise ValueError(msg)
