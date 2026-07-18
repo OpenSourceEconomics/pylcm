@@ -37,6 +37,7 @@ from _lcm.egm.interp import (
     interp_right_germ_on_padded_grid,
     prepare_padded_grid,
 )
+from _lcm.egm.outer_envelope import outer_envelope_at_query
 
 
 def test_exact_node_continuation_gradient_matches_carry_marginal():
@@ -187,6 +188,32 @@ def test_value_tangents_survive_the_query_derivative_contract():
     assert bool(jnp.isfinite(weights).all())
     np.testing.assert_allclose(float(jnp.sum(weights[:2])), 1.0, rtol=1e-12)
     np.testing.assert_allclose(float(weights[2]), 0.0, atol=1e-12)
+
+
+def test_terminal_tie_between_right_identical_candidates_is_owned_by_index():
+    """A tie exactly at a shared terminal abscissa follows the index convention.
+
+    Two candidates ending at the same abscissa with equal terminal values are
+    right-identical there (both clamp: right-finite, all germ derivatives
+    zero), even when their left-neighborhood economics differ — the boundary
+    subgradient is not unique, so ownership is the documented deterministic
+    convention: the lowest index wins and its marginal is published. This pins
+    the convention so a future change cannot silently reinterpret the
+    terminal boundary.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.array([[0.0, 1.0, 2.0], [-2.0, 0.0, 2.0]])
+    candidate_marginal = jnp.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([2.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 2.0, atol=1e-12)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-12)
 
 
 def test_singleton_query_gradient_stays_zero_under_the_analytic_rule():
