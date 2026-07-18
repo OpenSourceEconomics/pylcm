@@ -361,3 +361,113 @@ def test_two_distinct_representable_crossings_are_both_emitted():
     )
     truth = intercepts + slopes * 1.25
     np.testing.assert_allclose(read_policy, float(policies[truth.argmax()]), rtol=1e-5)
+
+
+def _read_two_branch_row_at_origin(shift: float) -> tuple[float, float]:
+    """Refine a two-branch f32 correspondence and read value/policy at the origin.
+
+    Branch values at the origin node differ by four units — a genuinely
+    representable gap at every level used by the callers — so the published
+    read must be the higher branch (value `4 + shift`, policy 1000) no matter
+    what common cardinal level `shift` puts the values at.
+    """
+    origin = np.float32(2000.0)
+    width = np.float32(100.0)
+    policies = np.array([1000.0, 800.0], dtype=np.float32)
+    slopes = np.float32(10000.0) / policies
+    intercepts = np.array([4.0, 0.0], dtype=np.float32) + np.float32(shift)
+
+    grid, policy, value = [], [], []
+    for slope, intercept, action in zip(slopes, intercepts, policies, strict=True):
+        grid.extend([origin, origin + width])
+        policy.extend([action, action])
+        value.extend([intercept, intercept + slope * width])
+
+    refined_grid, refined_policy, refined_value, _ = refine_envelope(
+        endog_grid=jnp.asarray(np.asarray(grid, dtype=np.float32)),
+        policy=jnp.asarray(np.asarray(policy, dtype=np.float32)),
+        value=jnp.asarray(np.asarray(value, dtype=np.float32)),
+        n_refined=16,
+    )
+    query = jnp.asarray(origin, dtype=jnp.float32)
+    got_value = float(
+        interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_value)
+    )
+    got_policy = float(
+        interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_policy)
+    )
+    return got_value, got_policy
+
+
+def test_a_large_common_value_shift_cannot_lower_the_published_maximum():
+    """The published value is the exact stored maximum at any cardinal level.
+
+    A representable four-unit branch gap survives a common shift of `1e7` in
+    f32 (both shifted values are distinct floats), so the read must publish
+    the higher branch's value and policy — never a near-maximal competitor's
+    lower record.
+    """
+    base_value, base_policy = _read_two_branch_row_at_origin(0.0)
+    shifted_value, shifted_policy = _read_two_branch_row_at_origin(10_000_000.0)
+
+    np.testing.assert_allclose(base_value, 4.0, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(base_policy, 1000.0, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(shifted_value, 10_000_004.0, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(shifted_policy, 1000.0, rtol=0.0, atol=0.0)
+
+
+def test_two_distinct_crossings_at_large_local_offsets_are_both_emitted():
+    """Crossings one unit apart at local offset `1e6` are enumerated in order.
+
+    At that offset f32 spacing is `0.0625`, so the two crossing abscissae are
+    sixteen ulp apart — genuinely distinct points whose middle branch owns the
+    envelope between them. A tie may coalesce crossings only when the lines
+    actually meet at the same numerical point; here the third line sits about
+    twenty ulp of the value scale below the winner at the first crossing, so
+    the scan must emit both switches and the strictly-between read must
+    follow the middle branch.
+    """
+    origin = np.float32(5_000_000.0)
+    width = np.float32(1_000_010.0)
+    policies = np.array([4_000_000.0, 2_500_000.0, 1_000_000.0], dtype=np.float32)
+    slopes = 1.0 / policies
+    first_crossing = np.float32(1_000_000.0)
+    second_crossing = np.float32(1_000_001.0)
+    intercepts = np.array(
+        [
+            0.0,
+            (slopes[0] - slopes[1]) * first_crossing,
+            (slopes[0] - slopes[1]) * first_crossing
+            + (slopes[1] - slopes[2]) * second_crossing,
+        ],
+        dtype=np.float32,
+    )
+
+    grid, policy, value = [], [], []
+    for slope, intercept, action in zip(slopes, intercepts, policies, strict=True):
+        grid.extend([origin, origin + width])
+        policy.extend([action, action])
+        value.extend([intercept, intercept + slope * width])
+
+    refined_grid, refined_policy, refined_value, n_kept = refine_envelope(
+        endog_grid=jnp.asarray(np.asarray(grid, dtype=np.float32)),
+        policy=jnp.asarray(np.asarray(policy, dtype=np.float32)),
+        value=jnp.asarray(np.asarray(value, dtype=np.float32)),
+        n_refined=32,
+    )
+    local_grid = np.asarray(refined_grid)[: int(n_kept)] - origin
+
+    assert np.isclose(local_grid, first_crossing, rtol=0.0, atol=0.25).sum() == 2
+    assert np.isclose(local_grid, second_crossing, rtol=0.0, atol=0.25).sum() == 2
+
+    local_query = np.float32(1_000_000.5)
+    query = jnp.asarray(origin + local_query, dtype=jnp.float32)
+    got_value = float(
+        interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_value)
+    )
+    got_policy = float(
+        interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_policy)
+    )
+    truth = intercepts + slopes * local_query
+    np.testing.assert_allclose(got_value, float(truth.max()), rtol=1e-5, atol=1e-9)
+    np.testing.assert_allclose(got_policy, float(policies[truth.argmax()]))

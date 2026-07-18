@@ -11,6 +11,7 @@ independent host computation through the same interpolation primitive.
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import (
@@ -491,3 +492,34 @@ def test_non_stacking_solvers_declare_zero_stacked_candidates():
     phantom axis.
     """
     assert GridSearch().n_stacked_carry_candidates == 0
+
+
+def test_a_carry_without_the_declared_candidate_axis_fails_with_a_contract_error():
+    """A stacking declaration that disagrees with the carry shape names itself.
+
+    When the declared candidate count is positive but the carry block carries
+    no matching candidate axis, the read must raise a solver-contract error
+    that names the declaration — not fall through to an opaque vmap axis-size
+    mismatch deep in the batched interpolation.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.broadcast_to(jnp.array([0.0, 5.0, 10.0]), (2, 3)),
+        value=jnp.ones((2, 3)),
+        marginal_utility=jnp.zeros((2, 3)),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    with pytest.raises(ValueError, match="n_stacked_carry_candidates"):
+        _aggregate_child_choices(
+            carry=carry,
+            prepared_search_grid=prepared_search_grid,
+            prepared_valid_length=prepared_valid_length,
+            has_taste_shocks=False,
+            child_index=(),
+            child_passive_values=(jnp.asarray(0.0),),
+            child_passive_grids=(jnp.asarray([0.0]),),
+            row_queries=jnp.asarray([4.0, 4.0]),
+            row_gradients=jnp.asarray([1.0, 1.0]),
+            n_outer_candidates=2,
+        )
