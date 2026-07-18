@@ -465,6 +465,12 @@ def test_a_poisoned_candidate_at_a_nonzero_index_keeps_the_collapse_nan():
             jnp.array([[0.0, 0.0]]),
             jnp.array([[0.0, 0.0]]),
         ),
+        left_germ_at_child=(
+            jnp.array([[True, False]]),
+            jnp.array([[0.0, 0.0]]),
+            jnp.array([[0.0, 0.0]]),
+            jnp.array([[0.0, 0.0]]),
+        ),
     )
 
     assert bool(jnp.isnan(value[0]))
@@ -523,3 +529,43 @@ def test_a_carry_without_the_declared_candidate_axis_fails_with_a_contract_error
             row_gradients=jnp.asarray([1.0, 1.0]),
             n_outer_candidates=2,
         )
+
+
+def test_stacked_read_terminal_tie_is_owned_by_the_left_envelope_owner():
+    """At a shared terminal abscissa the production read publishes the left owner.
+
+    Both candidates end at the query `q = 2` with value 2 and identical clamp
+    right germs, so right-side ownership cannot discriminate. The stacked
+    envelope's left neighborhood belongs to the flatter candidate (marginal
+    row 1); the steeper candidate (index 0, marginal row 2) touches the
+    envelope only at the terminal point. The published marginal must be the
+    left owner's, scaled by the composed gradient (`1.0 * 2.0`), not the
+    lower-index candidate's `2.0 * 2.0`.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.broadcast_to(jnp.array([0.0, 1.0, 2.0]), (1, 2, 3)),
+        value=jnp.stack([jnp.array([-2.0, 0.0, 2.0]), jnp.array([0.0, 1.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([2.0, 2.0, 2.0]), jnp.array([1.0, 1.0, 1.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([2.0]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)

@@ -378,7 +378,15 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
         1.0,
         bracket.upper_grid - bracket.lower_grid,
     )
-    weight = jnp.minimum((query - bracket.lower_grid) / width, 1.0)
+    # Mirror the row read's boundary rules: below the first node the read
+    # extends the bracket's secant (an unclamped negative weight), at or
+    # above the last node it clamps; a zero-width bracket takes the right
+    # value.
+    weight = jnp.where(
+        bracket.upper_grid == bracket.lower_grid,
+        1.0,
+        jnp.minimum((query - bracket.lower_grid) / width, 1.0),
+    )
     bracket_value = bracket.lower_value + weight * (
         bracket.upper_value - bracket.lower_value
     )

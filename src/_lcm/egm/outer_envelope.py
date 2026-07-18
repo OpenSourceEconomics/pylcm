@@ -30,6 +30,7 @@ import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import (
+    interp_left_germ_on_padded_grid,
     interp_on_padded_grid,
     interp_right_germ_on_padded_grid,
 )
@@ -116,8 +117,13 @@ def outer_envelope_at_query(
     read on a right neighborhood exactly, and the branch whose read actually
     wins immediately to the right of the query owns the published (economic)
     marginal, matching the one-sided convention the parent's Euler inversion
-    expects. Only candidates whose local pieces literally coincide fall back
-    to the lowest index, a deterministic choice among identical branches.
+    expects. Candidates whose right germs coincide — at a shared terminal
+    abscissa every candidate clamps, so the right germ cannot discriminate —
+    are compared by their *left* germs: the branch that carries the envelope
+    on the left neighborhood wins, keeping the published marginal inside the
+    envelope's generalized gradient at the boundary. Only candidates whose
+    local pieces literally coincide on both sides fall back to the lowest
+    index, a deterministic choice among identical branches.
 
     Taking the maximum at the query — rather than at a shared node grid and
     republishing a single interpolated row — is exact for the finite candidate set
@@ -140,7 +146,12 @@ def outer_envelope_at_query(
 
     def read_one(
         endog: Float1D, value: Float1D, marginal: Float1D
-    ) -> tuple[Float1D, Float1D, tuple[Bool1D, Float1D, Float1D, Float1D]]:
+    ) -> tuple[
+        Float1D,
+        Float1D,
+        tuple[Bool1D, Float1D, Float1D, Float1D],
+        tuple[Bool1D, Float1D, Float1D, Float1D],
+    ]:
         cand_lower = jnp.min(jnp.where(jnp.isfinite(endog), endog, jnp.inf))
         value_at_query = interp_on_padded_grid(
             x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
@@ -151,6 +162,9 @@ def outer_envelope_at_query(
         right_germ_at_query = interp_right_germ_on_padded_grid(
             x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
         )
+        left_germ_at_query = interp_left_germ_on_padded_grid(
+            x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
+        )
         # The support mask applies only where a finite first node exists:
         # `cand_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read
         # must reach the maximum fail-loud instead of becoming an ordinary
@@ -158,13 +172,20 @@ def outer_envelope_at_query(
         below_support = (x_query < cand_lower) & jnp.isfinite(cand_lower)
         value_at_query = jnp.where(below_support, -jnp.inf, value_at_query)
         marginal_at_query = jnp.where(below_support, 0.0, marginal_at_query)
-        return value_at_query, marginal_at_query, right_germ_at_query
+        return (
+            value_at_query,
+            marginal_at_query,
+            right_germ_at_query,
+            left_germ_at_query,
+        )
 
-    values, marginals, right_germ = jax.vmap(read_one)(
+    values, marginals, right_germ, left_germ = jax.vmap(read_one)(
         candidate_endog, candidate_value, candidate_marginal
     )
     winner = right_germ_winner(
-        value=values.T, right_germ=tuple(component.T for component in right_germ)
+        value=values.T,
+        right_germ=tuple(component.T for component in right_germ),
+        left_germ=tuple(component.T for component in left_germ),
     )
     envelope_marginal = jnp.take_along_axis(marginals.T, winner, axis=-1)[..., 0]
     # The published value is the maximum itself: identical to the winner's read
@@ -177,6 +198,7 @@ def right_germ_winner(
     *,
     value: FloatND,
     right_germ: tuple[BoolND, FloatND, FloatND, FloatND],
+    left_germ: tuple[BoolND, FloatND, FloatND, FloatND],
 ) -> IntND:
     """Select the tie-owning candidate index along the trailing candidate axis.
 
@@ -188,13 +210,21 @@ def right_germ_winner(
     - then the first, second, and third right derivatives in turn (the local
       pieces are cubics or constant clamps, so agreement through the third
       derivative means the pieces coincide on a right neighborhood),
+    - candidates still tied are right-identical — at a shared terminal
+      abscissa every candidate clamps right — so the left germ decides:
+      left-finite first, then the branch maximizing the read at `q - ε`
+      (lexicographically the *smallest* first, *largest* second, *smallest*
+      third left derivative), keeping the published marginal inside the
+      envelope's generalized gradient at such a boundary,
     - `argmax` resolves what remains to the lowest index, a deterministic
-      choice among locally identical branches.
+      choice among branches identical on both sides.
 
     Args:
         value: Candidate value reads; the candidate axis is last.
         right_germ: Tuple of the right-finiteness flag and the first three
             right derivatives of the candidate value reads, same shape.
+        left_germ: Tuple of the left-finiteness flag and the first three
+            left derivatives of the candidate value reads, same shape.
 
     Returns:
         Index of the winning candidate per query cell, with the candidate axis
@@ -202,8 +232,19 @@ def right_germ_winner(
 
     """
     right_finite, first, second, third = right_germ
+    left_finite, left_first, left_second, left_third = left_germ
     survivors = value >= jnp.max(value, axis=-1, keepdims=True)
-    for stage_key in (right_finite.astype(value.dtype), first, second, third):
+    stage_keys = (
+        right_finite.astype(value.dtype),
+        first,
+        second,
+        third,
+        left_finite.astype(value.dtype),
+        -left_first,
+        left_second,
+        -left_third,
+    )
+    for stage_key in stage_keys:
         stage = jnp.where(survivors, stage_key, -jnp.inf)
         survivors = survivors & (stage >= jnp.max(stage, axis=-1, keepdims=True))
     # int32 winner indices: the candidate axis has at most a few hundred

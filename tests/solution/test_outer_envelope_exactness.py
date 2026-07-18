@@ -24,6 +24,7 @@ that has its own spec (with an independent scalar reference) in
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import interp_on_padded_grid
@@ -415,3 +416,35 @@ def test_tie_at_a_support_edge_prefers_the_candidate_that_continues_right():
 
     np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
     np.testing.assert_allclose(float(marginal[0]), 0.5, atol=1e-9)
+
+
+@pytest.mark.parametrize("steep_loser_index", [0, 1])
+def test_terminal_tie_is_owned_by_the_left_envelope_owner(steep_loser_index: int):
+    """At a shared terminal abscissa the left-neighborhood owner's marginal wins.
+
+    Both candidates end at `x = 2` with value 2 and identical clamp right germs
+    (right-finite, all derivatives zero), so the right germ cannot discriminate.
+    The envelope's left neighborhood is owned by the flatter candidate (values
+    `[0, 1, 2]`, marginal 1); the steeper candidate (`[-2, 0, 2]`, marginal 2)
+    touches the envelope only at the terminal point itself. The envelope's
+    generalized gradient at `q = 2` is `[0, 1]`, so publishing the steep
+    candidate's 2 would hand a parent Euler inversion a marginal outside that
+    set — the published marginal must be the left owner's 1.0, in either
+    candidate order.
+    """
+    flat = (jnp.array([0.0, 1.0, 2.0]), jnp.array([1.0, 1.0, 1.0]))
+    steep = (jnp.array([-2.0, 0.0, 2.0]), jnp.array([2.0, 2.0, 2.0]))
+    ordered = [steep, flat] if steep_loser_index == 0 else [flat, steep]
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.stack([pair[0] for pair in ordered])
+    candidate_marginal = jnp.stack([pair[1] for pair in ordered])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([2.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 2.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)

@@ -32,6 +32,7 @@ from _lcm.egm.ez_kernel import (
 )
 from _lcm.egm.interp import (
     interp_and_derivative_on_prepared_grid,
+    interp_left_germ_on_prepared_grid,
     interp_on_prepared_grid,
     interp_right_germ_on_prepared_grid,
     locate_on_grid,
@@ -1437,44 +1438,17 @@ def _aggregate_child_choices(
             search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
         )
     if n_outer_candidates:
-        # Below a candidate's own first finite coh node its support has not
-        # started: mask the read to `-inf` so the edge clamp cannot hand an
-        # infeasible lifted candidate a boundary value that wins the max. The
-        # `-inf` also pins the marginal to zero below. The right germ of each
-        # candidate's value read feeds the tie rule at the candidate max; it
-        # needs no support mask of its own — a below-support candidate enters
-        # the tie set only when every candidate is below support, where all
-        # published marginals are exactly zero regardless of the winner.
-        def right_germ_row(
-            search_grid: Float1D,
-            valid_length: ScalarInt,
-            xp: Float1D,
-            fp: Float1D,
-            fp_slopes: Float1D,
-            x_query: ScalarFloat,
-        ) -> tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat]:
-            """Right germ of one value row at its query; positional per `jax.vmap`."""
-            return interp_right_germ_on_prepared_grid(
-                x_query=x_query,
-                search_grid=search_grid,
-                valid_length=valid_length,
-                xp=xp,
-                fp=fp,
-                fp_slopes=fp_slopes,
+        right_germ_at_child, left_germ_at_child, value_at_child = (
+            _candidate_germs_and_support_mask(
+                search_rows=search_rows,
+                valid_rows=valid_rows,
+                grid_rows=grid_rows,
+                value_rows=value_rows,
+                marginal_rows=marginal_rows,
+                queries_flat=queries_flat,
+                value_at_child=value_at_child,
             )
-
-        right_germ_at_child = jax.vmap(right_germ_row)(
-            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
         )
-        row_lower = jnp.min(
-            jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1
-        )
-        # Only rows with a finite first node have a support to fall below;
-        # `row_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read
-        # must reach the candidate maximum fail-loud instead of becoming an
-        # ordinary infeasible `(-inf, 0)` pair.
-        below_row_support = (queries_flat < row_lower) & jnp.isfinite(row_lower)
-        value_at_child = jnp.where(below_row_support, -jnp.inf, value_at_child)
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as
     # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
@@ -1494,8 +1468,11 @@ def _aggregate_child_choices(
         value_at_child, marginal_at_child = _collapse_stacked_candidates(
             value_at_child=value_at_child,
             marginal_at_child=marginal_at_child,
-            right_germ_at_child=tuple(
-                component.reshape(block_shape) for component in right_germ_at_child
+            right_germ_at_child=_reshape_germ(
+                germ=right_germ_at_child, block_shape=block_shape
+            ),
+            left_germ_at_child=_reshape_germ(
+                germ=left_germ_at_child, block_shape=block_shape
             ),
         )
 
@@ -1572,6 +1549,96 @@ def _blend_passive_axes(
     return value_at_child, marginal_at_child
 
 
+def _candidate_germs_and_support_mask(
+    *,
+    search_rows: FloatND,
+    valid_rows: IntND,
+    grid_rows: FloatND,
+    value_rows: FloatND,
+    marginal_rows: FloatND,
+    queries_flat: Float1D,
+    value_at_child: Float1D,
+) -> tuple[
+    tuple[BoolND, FloatND, FloatND, FloatND],
+    tuple[BoolND, FloatND, FloatND, FloatND],
+    Float1D,
+]:
+    """Compute per-candidate value-read germs and mask reads below support.
+
+    Below a candidate's own first finite coh node its support has not
+    started: the read is masked to `-inf` so the edge clamp cannot hand an
+    infeasible lifted candidate a boundary value that wins the max (the
+    `-inf` also pins the marginal to zero below). The germs of each
+    candidate's value read feed the tie rule at the candidate max; they need
+    no support mask of their own — the left germ is dead at or below the
+    first finite node by construction, and a below-support candidate enters
+    the tie set only when every candidate is below support, where all
+    published marginals are exactly zero regardless of the winner.
+
+    Returns:
+        Tuple of the right germs, the left germs, and the support-masked
+        value reads, all aligned with the flat candidate-row axis.
+
+    """
+
+    def germ_rows(
+        search_grid: Float1D,
+        valid_length: ScalarInt,
+        xp: Float1D,
+        fp: Float1D,
+        fp_slopes: Float1D,
+        x_query: ScalarFloat,
+    ) -> tuple[
+        tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
+        tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
+    ]:
+        """Right and left germs of one value row at its query; per `jax.vmap`."""
+        right_germ = interp_right_germ_on_prepared_grid(
+            x_query=x_query,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=xp,
+            fp=fp,
+            fp_slopes=fp_slopes,
+        )
+        left_germ = interp_left_germ_on_prepared_grid(
+            x_query=x_query,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=xp,
+            fp=fp,
+            fp_slopes=fp_slopes,
+        )
+        return right_germ, left_germ
+
+    right_germ_at_child, left_germ_at_child = jax.vmap(germ_rows)(
+        search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+    )
+    row_lower = jnp.min(jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1)
+    # Only rows with a finite first node have a support to fall below;
+    # `row_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read
+    # must reach the candidate maximum fail-loud instead of becoming an
+    # ordinary infeasible `(-inf, 0)` pair.
+    below_row_support = (queries_flat < row_lower) & jnp.isfinite(row_lower)
+    value_at_child = jnp.where(below_row_support, -jnp.inf, value_at_child)
+    return right_germ_at_child, left_germ_at_child, value_at_child
+
+
+def _reshape_germ(
+    *,
+    germ: tuple[BoolND, FloatND, FloatND, FloatND],
+    block_shape: tuple[int, ...],
+) -> tuple[BoolND, FloatND, FloatND, FloatND]:
+    """Reshape each germ component from the flat row axis to the row block."""
+    finite_flag, first, second, third = germ
+    return (
+        finite_flag.reshape(block_shape),
+        first.reshape(block_shape),
+        second.reshape(block_shape),
+        third.reshape(block_shape),
+    )
+
+
 def _fail_if_carry_shape_mismatches_declaration(
     *,
     block_shape: tuple[int, ...],
@@ -1606,6 +1673,7 @@ def _collapse_stacked_candidates(
     value_at_child: FloatND,
     marginal_at_child: FloatND,
     right_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
+    left_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
 ) -> tuple[FloatND, FloatND]:
     """Collapse the candidate axis by the exact hard max at the query.
 
@@ -1614,10 +1682,13 @@ def _collapse_stacked_candidates(
     tie resolves right-continuously in the value read itself: the tied
     candidates are compared by the complete right germ of their own value
     interpolants (`right_germ_winner` — right-finiteness, then the first three
-    one-sided derivatives, then the lowest index among locally identical
-    pieces), so the branch whose read actually wins immediately to the right
-    owns the (economic) marginal the parent's Euler inversion consumes. (The
-    germ uses the unscaled interpolant derivatives: the composed gradient is
+    one-sided derivatives), so the branch whose read actually wins immediately
+    to the right owns the (economic) marginal the parent's Euler inversion
+    consumes; right-identical candidates (a shared terminal abscissa, where
+    every candidate clamps) are separated by their left germs so the marginal
+    stays inside the envelope's generalized gradient at the boundary, and only
+    branches identical on both sides fall back to the lowest index. (The
+    germs use the unscaled interpolant derivatives: the composed gradient is
     shared by all candidates of a cell and positive, so scaling could never
     reorder them.) A cell whose candidates are all `-inf` (no live support)
     keeps the `(-inf, 0)` infeasible contract: every masked marginal is
@@ -1628,13 +1699,19 @@ def _collapse_stacked_candidates(
         marginal_at_child: Gradient-scaled candidate marginal reads, same shape.
         right_germ_at_child: Tuple of the right-finiteness flag and the first
             three right derivatives of the candidate value reads, same shape.
+        left_germ_at_child: Tuple of the left-finiteness flag and the first
+            three left derivatives of the candidate value reads, same shape.
 
     Returns:
         Tuple of the winner's value and marginal, with the candidate axis
         collapsed.
 
     """
-    winner = right_germ_winner(value=value_at_child, right_germ=right_germ_at_child)
+    winner = right_germ_winner(
+        value=value_at_child,
+        right_germ=right_germ_at_child,
+        left_germ=left_germ_at_child,
+    )
     winner_marginal = jnp.take_along_axis(marginal_at_child, winner, axis=-1)[..., 0]
     # The published value is the maximum itself: identical to the winner's read
     # at any tie, and NaN-propagating when a poisoned candidate row (whose NaN
