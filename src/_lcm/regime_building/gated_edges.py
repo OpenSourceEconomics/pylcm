@@ -407,6 +407,86 @@ def _reject_injected_name_collision(
         raise ModelInitializationError(msg)
 
 
+def _reject_gate_projection_target_node_read(
+    *,
+    dag_pool: Mapping[str, Callable[..., FloatND]],
+    seed_args: Iterable[str],
+    edge_target: str,
+    context: str,
+) -> None:
+    """Fence a gate/projection arg that DIRECTLY names a target DAG node (round-6 F1).
+
+    ``_reject_target_function_params`` fences a consumer that REACHES a target-owned
+    *dynamic parameter*. But a target function / deterministic-transition node that
+    depends only on target STATES contributes no dynamic leaf, so that fence stays
+    silent -- while ``concatenate_functions({**dag_pool, "__consumer__": ...})`` still
+    resolves a same-named consumer argument to the target NODE. If that name was meant
+    as a source parameter (bound from ``flat_params[source]``), the source value is
+    silently dropped from the compiled signature and replaced by the node's output: a
+    gate reversal, a changed solve-side ``Wbar``, or a wrong projected fallback state
+    (round-6 audit F1, reproduced).
+
+    Whether the author meant the source value or the target node is NOT decidable at
+    construction (the source's edge-param set is not carried in the params template),
+    so this fence enforces the only build-time-checkable contract: a gate/projection
+    argument must not name a target function / deterministic-transition node at all.
+    Compute a target-derived quantity as a source-declared gate-ref PROJECTION (read
+    through ``_build_same_period_ref_reader``, whose params ARE bound from the source)
+    instead of naming the target node directly. This is STRICTER than only rejecting a
+    proven source/target collision -- the structural repair, namespace-qualified
+    source/target leaves before concatenation, is deferred. Injected operands are
+    excluded upstream: ``_reject_injected_name_collision`` runs first and guarantees no
+    injected name is in ``dag_pool``, so those never trip this fence.
+    """
+    entered = sorted(set(seed_args) & set(dag_pool))
+    if entered:
+        msg = (
+            f"{context}: the edge to regime '{edge_target}' declares gate/projection "
+            f"argument(s) {entered} that name the TARGET regime's own function / "
+            "deterministic-transition node(s). Name-based DAG concatenation would bind "
+            "the argument to the target NODE, silently dropping a same-named source "
+            "parameter and reversing the gate / changing Wbar / writing the wrong "
+            "projected fallback state. Read a target-derived quantity through a "
+            "source-declared gate-ref projection (its params bind from the source) "
+            "rather than naming the target node directly; origin-preserving edge "
+            "compilation, which would make a direct read unambiguous, is not yet "
+            "implemented."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _reject_gate_ref_operand_alias(
+    *,
+    gate_ref_names: Iterable[str],
+    reserved_operand_names: frozenset[str],
+    edge_target: str,
+    context: str,
+) -> None:
+    """Fence a gate-ref key that aliases a built-in injected operand (round-6 F2).
+
+    The injected gate operands are assembled into ONE kwargs namespace
+    (`_assemble_gate_kwargs`): the target value component(s) ``V_target`` /
+    ``V_target_<s>``, the regime-level ``D_target``, and every gate-ref value. That
+    assembly resolves a name to the target component / ``D_target`` BEFORE the gate
+    refs, and the ``injected_names`` SET silently collapses a duplicate -- so a public
+    ``gate_refs`` key spelled ``V_target`` (or ``D_target``, or a collective
+    ``V_target_<s>``) is computed but then discarded, and the built-in operand wins (a
+    silent gate reversal). ``_reject_injected_name_collision`` only checks the injected
+    names against ``dag_pool``, never the injected categories against EACH OTHER, so it
+    misses this. The categories must be disjoint; reject the alias.
+    """
+    collisions = sorted(set(gate_ref_names) & reserved_operand_names)
+    if collisions:
+        msg = (
+            f"{context}: the edge to regime '{edge_target}' declares gate-ref key(s) "
+            f"{collisions} that alias a built-in injected gate operand "
+            "(V_target / V_target_<stakeholder> / D_target). The gate assembly would "
+            "read the built-in operand and silently discard the computed reference "
+            "value. Rename the colliding gate-ref key(s)."
+        )
+        raise ModelInitializationError(msg)
+
+
 def get_edge_fold(
     *,
     edge: ResolvedGatedEdge,
@@ -546,30 +626,50 @@ def get_edge_fold(
         edge_target=edge.target,
         context="get_edge_fold (solve-side gate)",
     )
-    # Round-4 F2 + round-5 F1/F2: fence EVERY target-DAG-concatenating consumer
-    # (the gate and each gate-ref / fallback projection), ancestry-aware from each
-    # consumer's own declared args.
-    _reject_target_function_params(
-        dag_pool=dag_pool,
-        seed_args=get_union_of_args([edge.gate]),
-        state_names=frozenset(state_names),
+    # Round-6 F2: a gate-ref KEY aliasing a built-in injected operand (V_target /
+    # D_target) is silently preempted by that operand -- the injected categories
+    # must be disjoint, which `_reject_injected_name_collision` does not check.
+    _reject_gate_ref_operand_alias(
+        gate_ref_names=edge.gate_refs,
+        reserved_operand_names=frozenset({*target_component_names, "D_target"}),
         edge_target=edge.target,
         context="get_edge_fold (solve-side gate)",
     )
-    for ref_name, ref in edge.gate_refs.items():
+
+    # Round-4 F2 + round-5 F1/F2: fence EVERY target-DAG-concatenating consumer
+    # (the gate and each gate-ref / fallback projection), ancestry-aware from each
+    # consumer's own declared args -- rejects reaching a target-owned DYNAMIC param.
+    # Round-6 F1: a consumer arg naming a STATE-ONLY target node reaches no dynamic
+    # leaf, so that fence stays silent while concatenation still rebinds the arg to
+    # the node and drops a same-named source parameter. The second fence closes that
+    # by rejecting any direct target-node read. Both run on every consumer.
+    def _fence_consumer(*, seed_args: Iterable[str], context: str) -> None:
         _reject_target_function_params(
             dag_pool=dag_pool,
-            seed_args=_projection_seed_args(ref),
+            seed_args=seed_args,
             state_names=frozenset(state_names),
             edge_target=edge.target,
+            context=context,
+        )
+        _reject_gate_projection_target_node_read(
+            dag_pool=dag_pool,
+            seed_args=seed_args,
+            edge_target=edge.target,
+            context=context,
+        )
+
+    _fence_consumer(
+        seed_args=get_union_of_args([edge.gate]),
+        context="get_edge_fold (solve-side gate)",
+    )
+    for ref_name, ref in edge.gate_refs.items():
+        _fence_consumer(
+            seed_args=_projection_seed_args(ref),
             context=f"get_edge_fold (solve-side gate-ref '{ref_name}' projection)",
         )
     for leg in edge.legs:
-        _reject_target_function_params(
-            dag_pool=dag_pool,
+        _fence_consumer(
             seed_args=_projection_seed_args(leg.fallback),
-            state_names=frozenset(state_names),
-            edge_target=edge.target,
             context="get_edge_fold (solve-side leg fallback projection)",
         )
     gate_evaluator = concatenate_functions(
@@ -873,19 +973,35 @@ def get_edge_simulate_gate_evaluator(
         edge_target=edge.target,
         context="get_edge_simulate_gate_evaluator (simulate-side gate)",
     )
-    _reject_target_function_params(
-        dag_pool=dag_pool,
-        seed_args=get_union_of_args([edge.gate]),
-        state_names=frozenset(state_names),
+    _reject_gate_ref_operand_alias(
+        gate_ref_names=edge.gate_refs,
+        reserved_operand_names=frozenset({*target_component_names, "D_target"}),
         edge_target=edge.target,
         context="get_edge_simulate_gate_evaluator (simulate-side gate)",
     )
-    for ref_name, ref in edge.gate_refs.items():
+
+    def _fence_consumer(*, seed_args: Iterable[str], context: str) -> None:
         _reject_target_function_params(
             dag_pool=dag_pool,
-            seed_args=_projection_seed_args(ref),
+            seed_args=seed_args,
             state_names=frozenset(state_names),
             edge_target=edge.target,
+            context=context,
+        )
+        _reject_gate_projection_target_node_read(
+            dag_pool=dag_pool,
+            seed_args=seed_args,
+            edge_target=edge.target,
+            context=context,
+        )
+
+    _fence_consumer(
+        seed_args=get_union_of_args([edge.gate]),
+        context="get_edge_simulate_gate_evaluator (simulate-side gate)",
+    )
+    for ref_name, ref in edge.gate_refs.items():
+        _fence_consumer(
+            seed_args=_projection_seed_args(ref),
             context=(
                 f"get_edge_simulate_gate_evaluator (gate-ref '{ref_name}' projection)"
             ),
@@ -1154,6 +1270,16 @@ def build_fallback_state_projector(
         dag_pool=dag_pool,
         seed_args=_projection_seed_args(ref),
         state_names=frozenset(target_state_names),
+        edge_target=ref.regime,
+        context="build_fallback_state_projector",
+    )
+    # Round-6 F1: a projection arg naming a STATE-ONLY target node reaches no dynamic
+    # leaf, so the fence above stays silent while concatenation still rebinds it to
+    # the node and writes the wrong projected fallback state. Reject any direct
+    # target-node read.
+    _reject_gate_projection_target_node_read(
+        dag_pool=dag_pool,
+        seed_args=_projection_seed_args(ref),
         edge_target=ref.regime,
         context="build_fallback_state_projector",
     )

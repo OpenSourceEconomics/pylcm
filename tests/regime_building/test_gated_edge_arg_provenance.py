@@ -1425,3 +1425,168 @@ def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
         match=r"outside.*collide",
     ):
         _solve_fixture(_make_gate_ref_name_collision_regimes(), flat_params)
+
+
+# ----------------------------------------------------------------------------------
+# Round-6 audit. Two residual namespace defects survived the round-5 fences:
+#   F1 - a gate/projection arg naming a STATE-ONLY target node reaches no dynamic
+#        leaf, so `_reject_target_function_params` stays silent -- but name-based
+#        concatenation still rebinds the arg to the node and drops a same-named
+#        source parameter (a silent gate reversal / wrong projected fallback state).
+#   F2 - a gate-ref KEY spelled `V_target` / `D_target` aliases a built-in injected
+#        operand; the `injected_names` SET collapses the duplicate and the built-in
+#        wins, silently discarding the computed reference value.
+# The fixtures give the two candidate bindings different meanings so each is a
+# genuine repro, and each fence rejects the topology at construction.
+# ----------------------------------------------------------------------------------
+
+
+def _target_threshold(x: ContinuousState) -> FloatND:
+    """A STATE-ONLY target node (reaches no dynamic param) whose name collides with
+    a parameter the SOURCE gate declares (`threshold`)."""
+    return 0.9 + 0.0 * x
+
+
+def _gate_reads_shadowed_threshold(V_target: FloatND, threshold: FloatND) -> BoolND:
+    """The source MEANS `threshold` as its own param (0.1); the target declares a
+    state-only node `threshold(x)=0.9`, which name-based concatenation binds instead,
+    silently reversing the gate (round-6 F1)."""
+    return V_target > threshold
+
+
+def _make_threshold_shadow_regimes() -> dict[str, Regime]:
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_reads_shadowed_threshold,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity, "threshold": _target_threshold},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    return {"src": src, "target": target, "fallback": fallback}
+
+
+def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
+    """Round-6 F1: a gate arg naming a STATE-ONLY target node must be rejected.
+
+    `_reject_target_function_params` sees no dynamic leaf (the node reads only the
+    target state `x`), so it stays silent -- but `concatenate_functions` still binds
+    the gate's `threshold` to `_target_threshold`, dropping the source's `threshold`
+    parameter and evaluating `V_target > 0.9` where the source meant `> 0.1`. The
+    build must raise rather than silently misbind.
+    """
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType(
+                {
+                    "H__discount_factor": jnp.asarray(_BETA),
+                    "threshold": jnp.asarray(0.1),
+                }
+            ),
+            "target": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"threshold.*TARGET regime's own function",
+    ):
+        _solve_fixture(_make_threshold_shadow_regimes(), flat_params)
+
+
+def _gate_uses_v_target(V_target: FloatND) -> BoolND:
+    return V_target > 0.5
+
+
+def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_uses_v_target,
+                gate_refs={
+                    # Aliases the built-in target-value operand `V_target`.
+                    "V_target": SamePeriodRef(
+                        regime="refregime", projection={"x": _identity_x}
+                    )
+                },
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    refregime = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    return {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+
+
+def test_gate_ref_key_aliasing_v_target_is_rejected():
+    """Round-6 F2: a gate-ref key that aliases a built-in injected operand.
+
+    `injected_names` is a SET, so a `gate_refs` key spelled `V_target` collapses onto
+    the target value component; `_assemble_gate_kwargs` resolves the target component
+    first and silently discards the computed reference. The build must raise.
+    """
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "target": MappingProxyType({}),
+            "refregime": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"V_target.*alias a built-in injected gate operand",
+    ):
+        _solve_fixture(_make_gate_ref_v_target_alias_regimes(), flat_params)
