@@ -55,6 +55,7 @@ from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
     ResolvedSamePeriodRef,
+    _reached_target_param_leaves,
 )
 from _lcm.regime_building.Q_and_F import (
     _REF_STATE_PREFIX,
@@ -1180,3 +1181,247 @@ def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
         match=r"target_scale.*introduced by the TARGET regime's own functions",
     ):
         _solve_fixture(_make_target_helper_regimes(), flat_params)
+
+
+# ----------------------------------------------------------------------------------
+# Round-5 audit. The round-4 fence covered only the concatenated gate predicate and
+# was keyed on GLOBAL target-DAG leaf names, so three topologies slipped through:
+#   F1 - a gate-REFERENCE projection reaches a target helper param (never fenced:
+#        the readers are compiled on a separate path from the gate predicate).
+#   F2 - the fence over-rejects a valid DIRECT source param merely because an
+#        UNRELATED target helper reuses the qname (global union, not the consumer's
+#        own ancestor closure).
+#   F3 - a target function/transition NODE whose name collides with an injected
+#        gate-ref key shadows the injected reference value in the concatenated DAG.
+# The fix makes the fence ancestry-aware (seeded on each consumer's OWN args) and
+# applies it to every gate-ref / fallback projection, plus an injected-name
+# collision guard. Fixtures give the two candidate bindings DIFFERENT values so the
+# misbinding each finding describes is a genuine repro, not a coincidence.
+# ----------------------------------------------------------------------------------
+
+
+def _project_through_target_helper(target_scaled_x: FloatND) -> FloatND:
+    """A gate-REFERENCE projection routed through the target regime's own helper.
+
+    The projected coordinate is `target_scaled_x(x, target_scale)`, so
+    `target_scale` is a TARGET-owned param reached by a gate-ref READER — the
+    fourth target-DAG-concatenating path the round-4 direct-gate fence never
+    inspected (round-5 F1).
+    """
+    return target_scaled_x
+
+
+def _gate_ref_value_only(V_target: FloatND, scaled_ref: FloatND) -> BoolND:
+    return V_target > scaled_ref
+
+
+def _make_gate_ref_target_helper_regimes() -> dict[str, Regime]:
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_ref_value_only,
+                gate_refs={
+                    "scaled_ref": SamePeriodRef(
+                        regime="refregime",
+                        projection={"x": _project_through_target_helper},
+                    )
+                },
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
+    )
+    refregime = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    return {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+
+
+def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
+    """Round-5 F1: a gate-ref projection reaching a target helper's param must raise.
+
+    The round-4 fence only inspected the concatenated gate predicate; a gate-ref
+    reader is compiled separately (`_build_same_period_ref_reader`) and its args
+    were classified source-owned, so the target-owned `target_scale` was bound
+    from the source in both the solve fold and the simulate gate. Fail-pre the
+    edge builds silently; post-fix construction raises.
+    """
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "target": MappingProxyType(
+                {"target_scale": jnp.asarray(_HELPER_TARGET_SCALE)}
+            ),
+            "refregime": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"target_scale.*introduced by the TARGET regime's own functions",
+    ):
+        _solve_fixture(_make_gate_ref_target_helper_regimes(), flat_params)
+
+
+# F2: the fence must be ancestry-aware — it must not reject a valid direct source
+# param merely because an UNRELATED target helper reuses the name. This is a
+# property of the leaf-set computation itself, so it is pinned as a unit test on
+# `_reached_target_param_leaves` (a full-solve fixture would instead exercise
+# pylcm's function-param qualification `helper__param`, which cannot collide with
+# a bare source qname and so cannot reproduce the finding at all).
+def _reached_helper(x: ContinuousState, target_scale: FloatND) -> FloatND:
+    """A target node the consumer DOES reach — contributes `target_scale`."""
+    return x * target_scale
+
+
+def _unrelated_helper(y: ContinuousState, shift: FloatND) -> FloatND:
+    """A target node the consumer does NOT reach — its `shift` must stay clean."""
+    return y * shift
+
+
+def test_fence_leaf_set_is_ancestry_aware_not_global_name_matching():
+    """Round-5 F2: the fence returns only the target params a consumer REACHES.
+
+    The round-4 fence unioned the free args of every target-DAG function and
+    rejected on a bare name match, so a gate declaring `shift` directly was
+    rejected merely because an unrelated target helper also had a `shift`. The
+    ancestry-aware replacement walks the consumer's own closure: a gate that
+    reaches `reached_helper` (hence `target_scale`) but declares `shift` as its
+    OWN source param yields exactly `{target_scale}` — never `shift`.
+    """
+    dag_pool = {
+        "reached_helper": _reached_helper,
+        "unrelated_helper": _unrelated_helper,
+    }
+    state_names = frozenset({"x", "y"})
+
+    # A gate reaching `reached_helper` and declaring `shift` directly.
+    reached = _reached_target_param_leaves(
+        dag_pool, ("V_target", "reached_helper", "shift"), state_names
+    )
+    assert reached == frozenset({"target_scale"})
+    assert "shift" not in reached  # the unrelated helper's param is NOT contested
+
+    # A gate declaring only `shift` directly reaches no target node at all.
+    assert (
+        _reached_target_param_leaves(dag_pool, ("V_target", "shift"), state_names)
+        == frozenset()
+    )
+
+    # Fail-pre proof: the removed global-union fence WOULD have flagged `shift`,
+    # because `unrelated_helper` contributes it to the whole-pool leaf set.
+    global_leaves: set[str] = set()
+    for fn in dag_pool.values():
+        global_leaves |= set(get_union_of_args([fn]))
+    global_leaves -= set(dag_pool) | state_names
+    assert "shift" in global_leaves
+
+
+# F3: an injected gate-ref key that collides with a target function name must be
+# rejected, not silently shadowed by the target node in the concatenated DAG.
+def _target_outside(x: ContinuousState) -> FloatND:
+    return jnp.full_like(jnp.asarray(x, dtype=float), 0.9)
+
+
+def _gate_reads_outside(V_target: FloatND, outside: FloatND) -> BoolND:
+    return V_target > outside
+
+
+def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_reads_outside,
+                gate_refs={
+                    # Injected operand named exactly like the target's `outside`
+                    # function below: the concatenated DAG resolves the gate's
+                    # `outside` arg to the target NODE (0.9), not this ref (~0.6).
+                    "outside": SamePeriodRef(
+                        regime="refregime", projection={"x": _project_realized}
+                    )
+                },
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity, "outside": _target_outside},
+    )
+    refregime = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    return {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+
+
+def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
+    """Round-5 F3: a gate-ref key equal to a target function/transition name must
+    raise, rather than let the target node shadow the injected reference value.
+
+    `concatenate_functions({**dag_pool, "__gate__": gate})` resolves the gate's
+    `outside` argument to the target's `outside` function (0.9) instead of the
+    declared gate-ref (~0.6), silently reversing the gate. Fail-pre the model
+    builds with the wrong operand; post-fix construction raises on the collision.
+    """
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "target": MappingProxyType({}),
+            "refregime": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"outside.*collide",
+    ):
+        _solve_fixture(_make_gate_ref_name_collision_regimes(), flat_params)
