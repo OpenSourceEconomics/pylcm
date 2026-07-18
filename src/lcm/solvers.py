@@ -33,14 +33,24 @@ from _lcm.solution.solvers import (
     OneAssetEGM,
     TwoDimEGM,
 )
+from lcm.outer_search import (
+    AdaptiveOuterMesh,
+    FiniteOuterGrid,
+    LegacyGoldenSection,
+    OuterSearch,
+)
 
 __all__ = [
     "DCEGM",
     "NBEGM",
     "NEGM",
     "NNBEGM",
+    "AdaptiveOuterMesh",
+    "FiniteOuterGrid",
     "GridSearch",
+    "LegacyGoldenSection",
     "OneAssetEGM",
+    "OuterSearch",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",

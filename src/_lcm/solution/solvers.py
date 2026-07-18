@@ -42,6 +42,7 @@ from _lcm.egm.outer_candidates import (
     build_outer_candidate_bank,
 )
 from _lcm.egm.outer_envelope import build_stacked_outer_carry
+from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
@@ -2325,8 +2326,19 @@ class NNBEGM(Solver):
     (`next_<durable>`); the inner budget reads it as a bound constant.
     """
 
-    outer_grid: ContinuousGrid
-    """Exogenous candidate grid for the outer post-decision margin."""
+    outer_search: OuterSearch | None = None
+    """How the outer margin's candidates are generated and refined.
+
+    `FiniteOuterGrid` reproduces the historical finite-candidate behavior;
+    `AdaptiveOuterMesh` is the canonical continuous-outer approximation.
+    Exactly one of `outer_search` and the legacy `outer_grid` must be set."""
+
+    outer_grid: ContinuousGrid | None = None
+    """Legacy exogenous candidate grid for the outer post-decision margin.
+
+    Shorthand for `outer_search=FiniteOuterGrid(grid=...,
+    batch_size=outer_batch_size)`; scheduled for deprecation once downstream
+    models migrate to `outer_search`."""
 
     outer_no_adjustment_candidate: FunctionName | None = None
     """State-dependent no-adjustment map `s' = keep(s)` the keeper holds.
@@ -2334,18 +2346,58 @@ class NNBEGM(Solver):
     `None` keeps the durable stock unchanged (identity)."""
 
     outer_batch_size: int = 0
-    """Outer-grid nodes solved per chunk before folding into the running
-    maximum; `0` solves every node at once. A memory knob only —
-    value-invariant."""
+    """Legacy companion to `outer_grid`: nodes solved per chunk before
+    folding into the running maximum; `0` solves every node at once. A memory
+    knob only — value-invariant. With `outer_search`, set the strategy's own
+    `batch_size` instead."""
 
     def __post_init__(self) -> None:
         spec = get_nnbegm_inner_spec(inner=self.inner)
-        _fail_if_outer_grid_is_stochastic(self.outer_grid)
+        _fail_if_outer_batch_size_negative(self.outer_batch_size)
+        search = self.resolved_outer_search
+        match search:
+            case FiniteOuterGrid():
+                _fail_if_outer_grid_is_stochastic(search.grid)
+            case AdaptiveOuterMesh():
+                _fail_if_outer_grid_is_stochastic(search.initial_grid)
+            case _:
+                pass
         _fail_if_nnbegm_outer_post_decision_is_inner(
             outer_post_decision=self.outer_post_decision,
             inner_post_decision=spec.post_decision_function,
         )
-        _fail_if_outer_batch_size_negative(self.outer_batch_size)
+
+    @property
+    def resolved_outer_search(self) -> OuterSearch:
+        """The normalized outer-search strategy, legacy fields folded in.
+
+        Raises:
+            RegimeInitializationError: If neither or both of `outer_search`
+                and `outer_grid` are set, or a nonzero `outer_batch_size`
+                accompanies `outer_search`.
+
+        """
+        if self.outer_search is None:
+            if self.outer_grid is None:
+                msg = (
+                    "NNBEGM requires an outer search: pass `outer_search=` "
+                    "(canonical) or the legacy `outer_grid=`."
+                )
+                raise RegimeInitializationError(msg)
+            return FiniteOuterGrid(
+                grid=self.outer_grid, batch_size=self.outer_batch_size
+            )
+        if self.outer_grid is not None:
+            msg = "Pass either `outer_search` or the legacy `outer_grid`, not both."
+            raise RegimeInitializationError(msg)
+        if self.outer_batch_size != 0:
+            msg = (
+                "`outer_batch_size` belongs to the legacy `outer_grid` "
+                "interface; set the strategy's own `batch_size` on "
+                "`outer_search` instead."
+            )
+            raise RegimeInitializationError(msg)
+        return self.outer_search
 
     @property
     def requires_continuation_carries(self) -> bool:
@@ -2403,7 +2455,15 @@ class NNBEGM(Solver):
         keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
         template = keeper_kernels.continuation_template
         _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
-        outer_grid_values = self.outer_grid.to_jax()
+        search = self.resolved_outer_search
+        if not isinstance(search, FiniteOuterGrid):
+            msg = (
+                f"NNBEGM outer search strategy {type(search).__name__} is "
+                "not yet wired into the period kernels; use FiniteOuterGrid "
+                "(or the legacy `outer_grid` field)."
+            )
+            raise RegimeInitializationError(msg)
+        outer_grid_values = search.grid.to_jax()
         period_kernels = MappingProxyType(
             {
                 period: _NNBEGMPeriodKernel(
@@ -2412,7 +2472,7 @@ class NNBEGM(Solver):
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_post_decision=self.outer_post_decision,
-                    outer_batch_size=self.outer_batch_size,
+                    outer_batch_size=search.batch_size,
                 )
                 for period, adjuster_kernel in (adjuster_kernels.period_kernels.items())
             }
