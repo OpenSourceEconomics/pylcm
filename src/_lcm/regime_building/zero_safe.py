@@ -16,9 +16,15 @@ Both helpers below apply the same fix pattern: replace the VALUE with an
 explicit `0.0` wherever the weight is exactly zero, via ``jnp.where``, BEFORE
 multiplying. `weight * where(weight==0, 0, value)` annihilates a zero-weight
 ``+-inf`` (the multiply sees ``w * 0 = 0``, never ``0 * -inf``) AND leaves the
-multiply as a bare operation feeding the downstream reduction, which XLA fuses
-into an FMA — so the all-positive-weight path is **bit-identical** to the naive
-``jnp.average`` / raw corner sum.
+multiply as a bare operation feeding the downstream reduction, which XLA CAN fuse
+into an FMA — so the all-positive-weight path is bit-identical to the naive
+``jnp.average`` / raw corner sum **on the currently pinned jaxlib**. That identity
+is NOT guaranteed: it rests on XLA choosing to contract the multiply into the
+reduction's FMA identically for both expressions, which JAX's compatibility
+policy explicitly does not promise across releases, backends, or jit contexts
+(ROUND-4 CAVEAT below). Where the reduction MUST tolerate an exact zero (the
+runtime call sites), that is a safety requirement, not a bit-exactness one; the
+bit-exactness is a convenient property of the current toolchain, not a contract.
 
 HISTORY (this docstring was wrong twice; both errors are recorded because each
 was a confident claim no test could contradict, and an external re-review broke
@@ -55,8 +61,24 @@ Statically-known weights were always constant-folded and matched bit-for-bit;
 the FOLD reduction remains the one call site that binds `jnp.average` vs
 `zero_safe_average` at build time via `max_Q_over_a._select_fold_reducer` (its
 weights are the process quadrature marginal, concrete before tracing). Runtime
-call sites use `zero_safe_average` unconditionally and now get bit-exactness for
-free from the value-masking order.
+call sites use `zero_safe_average` unconditionally and get bit-exactness from the
+value-masking order ON THE PINNED TOOLCHAIN — see the round-4 caveat.
+
+ROUND-4 CAVEAT (external re-review, corrects the (c) claim above). The "0 drift
+across K in {2,3,4,7,8,16}" sweep OMITTED K=5, and that is exactly where the
+identity can fail: the re-review exhibited a K=5 float32 all-positive vector on
+which `jit(vmap(zero_safe_average))` drifts SEVEN ULP from `jit(vmap(jnp.average))`
+on CPU jax 0.9.0.1, reversing a constructed non-tied argmax. Reproduce-first on
+the currently pinned jaxlib (0.10.1, this CPU) did NOT reproduce it — 0 drift on
+the exact K=5 counterexample, the five-target mixture, and a nested 32x32x32 vmap
+— so there is no live decision reversal here. But the drift IS reachable on
+another supported toolchain, so the bit-identity is a property of the current XLA
+lowering, not a guarantee. The durable fix (unnecessary while no live reversal
+exists) is a WHOLE-EXPRESSION branch: raw expression on all-positive slices, safe
+expression when any exact zero occurs, mirroring `_select_fold_reducer`'s
+build-time selection so the all-positive path is exact-to-raw BY CONSTRUCTION,
+independent of FMA behavior. Do NOT restore an unconditional "bit-identical"
+claim: measure, per (K, dtype, jaxlib, backend), before asserting identity.
 """
 
 import jax

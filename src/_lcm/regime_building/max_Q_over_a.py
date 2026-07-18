@@ -366,8 +366,19 @@ def _select_fold_reducer(*, weight: FloatND, name: StateName) -> Callable[..., F
     exactly how the fold calls it — the guard costs 1.04x, since XLA
     constant-folds the `select` away; 1.20x for traced weights. Only the
     EAGER path pays materially (5.3x), because nothing folds the `select`
-    there. So this branch buys real time only for `enable_jit=False`, and its
-    value on the production jitted path is bit-exactness alone.
+    there. So this branch buys real time only for `enable_jit=False`.
+
+    ROUND-3 CAVEAT (external re-review). Selecting `jnp.average` restores
+    bit-exactness against the unfolded-then-averaged oracle on the NON-JITTED
+    path, but it does NOT make the JITTED fold bit-identical to that oracle:
+    under `jit` the fold's average is fused into the mapped value kernel while
+    the oracle averages a materialized unfolded array, so XLA may reassociate
+    the two reductions differently (the re-review measured a 2-ULP gap on an
+    all-positive 3-node example). The jitted contract is therefore numerical
+    equivalence within a small tolerance, not bit-identity — do not describe
+    the jitted fold as bit-identical. (This branch is still correct and
+    necessary: it removes the LARGER `zero_safe_average` drift on all-positive
+    axes and keeps the zero-weight guard where a zero can occur.)
 
     This is a per-AXIS decision on that axis's own weights, so a model that
     folds one zero-weight axis and one all-positive axis gets the right
