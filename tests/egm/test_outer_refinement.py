@@ -160,15 +160,31 @@ def test_adaptive_mesh_converges_on_a_smooth_surface() -> None:
     assert not result.unresolved
     assert result.rounds_used >= 1
     assert result.nodes.shape[0] == result.node_values.shape[0]
-    # The final interpolant reproduces exact solves at fresh probes.
-    probes = jnp.array([0.111, 0.333, 0.555, 0.777, 0.999])
-    read = LocalCubicOuterInterpolant().evaluate(
+    # The decision-relevant contract: the safeguarded search on the refined
+    # mesh recovers each cell's continuum optimum (validation only tightens
+    # the interpolant where the search trusts it, not globally).
+    interpolant = LocalCubicOuterInterpolant()
+
+    def objective(query: FloatND) -> FloatND:
+        return interpolant.evaluate(
+            nodes=result.nodes, values=result.node_values, query=query
+        )
+
+    search = safeguarded_continuous_argmax(
+        objective,
         nodes=result.nodes,
-        values=result.node_values,
-        query=probes[:, None],
+        node_values=result.node_values,
+        golden_iterations=_GOLDEN_ITERATIONS,
+    )
+    dense_grid = jnp.linspace(0.0, 1.0, 200_001)
+    dense = _smooth_surface(dense_grid)
+    np.testing.assert_allclose(
+        np.asarray(search.value), np.asarray(jnp.max(dense, axis=0)), atol=1e-6
     )
     np.testing.assert_allclose(
-        np.asarray(read), np.asarray(_smooth_surface(probes)), atol=1e-5
+        np.asarray(search.x),
+        np.asarray(dense_grid[jnp.argmax(dense, axis=0)]),
+        atol=1e-4,
     )
 
 

@@ -28,6 +28,7 @@ under JIT).
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+import jax.errors
 import jax.numpy as jnp
 
 from lcm.typing import BoolND, FloatND
@@ -339,6 +340,14 @@ def _validate_nodes(*, nodes: FloatND, values: FloatND) -> None:
             f"values {values.shape} for {nodes.shape[0]} nodes."
         )
         raise ValueError(msg)
-    if not bool(jnp.all(nodes[1:] > nodes[:-1])):
+    # Under an active trace (e.g. this read is the golden-section objective
+    # inside `fori_loop`) even constant-derived comparisons are abstract and
+    # cannot be checked; the eager top-level calls on the same mesh (mesh
+    # driver, bank build, the pre-loop probes) have already validated it.
+    try:
+        increasing = bool(jnp.all(nodes[1:] > nodes[:-1]))
+    except jax.errors.ConcretizationTypeError:
+        return
+    if not increasing:
         msg = "nodes must be strictly increasing."
         raise ValueError(msg)

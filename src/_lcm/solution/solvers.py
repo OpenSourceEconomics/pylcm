@@ -28,6 +28,7 @@ from typing import Any, Literal, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from beartype import beartype
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
@@ -41,7 +42,9 @@ from _lcm.egm.outer_candidates import (
     OuterCandidateResult,
     build_outer_candidate_bank,
 )
+from _lcm.egm.outer_carry import collapse_continuous_candidate_bank
 from _lcm.egm.outer_envelope import build_stacked_outer_carry
+from _lcm.egm.outer_refinement import refine_outer_mesh
 from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
@@ -56,6 +59,7 @@ from _lcm.solution.contract import (
     Solver,
     SolverBuildContext,
 )
+from _lcm.solution.diagnostics import SolverDiagnostics
 from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
@@ -2456,14 +2460,20 @@ class NNBEGM(Solver):
         template = keeper_kernels.continuation_template
         _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
         search = self.resolved_outer_search
-        if not isinstance(search, FiniteOuterGrid):
-            msg = (
-                f"NNBEGM outer search strategy {type(search).__name__} is "
-                "not yet wired into the period kernels; use FiniteOuterGrid "
-                "(or the legacy `outer_grid` field)."
-            )
-            raise RegimeInitializationError(msg)
-        outer_grid_values = search.grid.to_jax()
+        match search:
+            case FiniteOuterGrid():
+                outer_grid_values = search.grid.to_jax()
+                outer_batch_size = search.batch_size
+            case AdaptiveOuterMesh():
+                outer_grid_values = search.initial_grid.to_jax()
+                outer_batch_size = search.batch_size
+            case _:
+                msg = (
+                    f"NNBEGM outer search strategy {type(search).__name__} "
+                    "is not wired into the period kernels; use "
+                    "FiniteOuterGrid or AdaptiveOuterMesh."
+                )
+                raise RegimeInitializationError(msg)
         period_kernels = MappingProxyType(
             {
                 period: _NNBEGMPeriodKernel(
@@ -2472,7 +2482,8 @@ class NNBEGM(Solver):
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_post_decision=self.outer_post_decision,
-                    outer_batch_size=search.batch_size,
+                    outer_batch_size=outer_batch_size,
+                    outer_search=search,
                 )
                 for period, adjuster_kernel in (adjuster_kernels.period_kernels.items())
             }
@@ -2521,6 +2532,11 @@ class _NNBEGMPeriodKernel:
     outer_batch_size: int
     """Outer-grid nodes solved per chunk before folding into the running
     maximum; `0` solves every node at once."""
+
+    outer_search: OuterSearch
+    """The resolved outer-search strategy: `FiniteOuterGrid` collapses the
+    exact finite candidate set, `AdaptiveOuterMesh` adaptively refines the
+    shared mesh and collapses continuously."""
 
     @property
     def core(self) -> Callable:
@@ -2636,6 +2652,18 @@ class _NNBEGMPeriodKernel:
             period=period,
             ages=ages,
         )
+        if isinstance(self.outer_search, AdaptiveOuterMesh):
+            return self._solve_continuous(
+                keeper_result=keeper_result,
+                config=self.outer_search,
+                compiled_cores=compiled_cores,
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+            )
         bank = self._build_candidate_bank(
             compiled_cores=compiled_cores,
             state_action_space=state_action_space,
@@ -2646,6 +2674,89 @@ class _NNBEGMPeriodKernel:
             ages=ages,
         )
         return _collapse_finite_candidate_bank(keeper=keeper_result, bank=bank)
+
+    def _solve_continuous(
+        self,
+        *,
+        keeper_result: KernelResult,
+        config: AdaptiveOuterMesh,
+        compiled_cores: Mapping[str, Callable],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Adaptively refine the shared outer mesh, then collapse continuously.
+
+        The mesh driver's exact-solve callback runs the adjuster's inner
+        solve per requested node (chunked by the strategy's `batch_size`)
+        and caches every `OuterCandidateResult` by node value, so the final
+        bank reuses the refinement solves instead of re-solving. The keeper
+        stays a separate exact branch throughout; its `sim_policy` rides
+        through unchanged until the continuous simulation reader lands.
+        """
+        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
+        cache: dict[float, OuterCandidateResult] = {}
+
+        def solve_nodes(nodes_arr: Float1D) -> FloatND:
+            requested = [float(node) for node in np.asarray(nodes_arr)]
+            pending = [node for node in requested if node not in cache]
+            chunk_size = config.batch_size or max(len(pending), 1)
+            for chunk_start in range(0, len(pending), chunk_size):
+                chunk = pending[chunk_start : chunk_start + chunk_size]
+                chunk_results = [
+                    self._solve_adjuster_node(
+                        node=jnp.asarray(node),
+                        adjuster_cores=adjuster_cores,
+                        state_action_space=state_action_space,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_egm_carry=next_regime_to_egm_carry,
+                        flat_params=flat_params,
+                        period=period,
+                        ages=ages,
+                    )
+                    for node in chunk
+                ]
+                jax.block_until_ready(
+                    [(result.V_arr, result.carry) for result in chunk_results]
+                )
+                cache.update(zip(chunk, chunk_results, strict=True))
+            return jnp.stack([cache[node].V_arr for node in requested])
+
+        mesh = refine_outer_mesh(
+            initial_nodes=self.outer_grid_values,
+            solve_at=solve_nodes,
+            config=config,
+        )
+        bank = build_outer_candidate_bank(
+            outer_nodes=mesh.nodes,
+            results=[cache[float(node)] for node in np.asarray(mesh.nodes)],
+        )
+        collapse = collapse_continuous_candidate_bank(
+            keeper_v_arr=keeper_result.V_arr,
+            keeper_carry=cast("EGMCarry", keeper_result.carry),
+            bank=bank,
+            config=config,
+        )
+        diagnostics = SolverDiagnostics(
+            max_outer_interpolation_error=jnp.asarray(mesh.max_validation_error),
+            max_outer_bracket_width=jnp.max(collapse.value_search.bracket_width),
+            outer_nodes_used=jnp.asarray(bank.n_candidates, dtype=jnp.int32),
+            outer_at_lower_bound=collapse.value_search.at_lower_bound,
+            outer_at_upper_bound=collapse.value_search.at_upper_bound,
+            keeper_adjuster_margin=collapse.keeper_adjuster_margin,
+            best_second_best_margin=collapse.best_second_best_margin,
+            policy_fallback_mask=jnp.asarray(False),  # noqa: FBT003
+            unresolved_mask=jnp.asarray(mesh.unresolved),
+        )
+        return KernelResult(
+            V_arr=collapse.V_arr,
+            carry=collapse.carry,
+            sim_policy=keeper_result.sim_policy,
+            diagnostics=diagnostics,
+        )
 
     def _solve_keeper(
         self,

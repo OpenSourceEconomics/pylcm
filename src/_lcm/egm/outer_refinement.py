@@ -18,11 +18,20 @@ beyond tolerance, until every interval validates or the budget is exhausted.
 Inference-grade runs fail closed (`OuterSearchConvergenceError`); development
 runs may return the partial mesh flagged `unresolved`.
 
-One deliberate deviation from a literal reading of the design document: an
-optimum-containing interval is *not* marked unconditionally (that could never
-terminate) — it is held to a 10x tighter validation standard, and to the
-margin rule (marked while the cell's best/second-best margin is within ten
-times the interval's absolute validation error).
+Three deliberate deviations from a literal reading of the design document,
+each because the literal rule cannot terminate:
+
+- an optimum-containing interval is *not* marked unconditionally — it is
+  held to a 10x tighter validation standard plus the margin rule (marked
+  while the cell's best/second-best margin exceeds the acceptance band yet
+  sits within ten times the interval's absolute validation error; a margin
+  below the band is a structural tie no refinement can rank);
+- validation is *search-relevant*: errors are scored only on intervals
+  flanking a node-local maximum — exactly where the safeguarded search
+  trusts the interpolant (see `_mark_intervals`);
+- intervals with a nonfinite read (feasibility boundaries) are never
+  marked — the boundary persists inside every split and its location
+  varies per state cell.
 """
 
 from collections.abc import Callable
@@ -128,23 +137,7 @@ def safeguarded_continuous_argmax(
     state_shape = node_values.shape[1:]
     finite_values = jnp.where(jnp.isfinite(node_values), node_values, -jnp.inf)
     valid = jnp.any(jnp.isfinite(node_values), axis=0)
-
-    # --- Node-local maxima (boundary nodes compare one-sided). ---
-    up = jnp.concatenate(
-        [
-            finite_values[:1] >= finite_values[1:2],
-            finite_values[1:] >= finite_values[:-1],
-        ],
-        axis=0,
-    )
-    down = jnp.concatenate(
-        [
-            finite_values[:-1] >= finite_values[1:],
-            finite_values[-1:] >= finite_values[-2:-1],
-        ],
-        axis=0,
-    )
-    is_local_max = up & down & jnp.isfinite(finite_values)
+    is_local_max = _node_local_max_mask(finite_values)
 
     # --- Top-K local maxima per cell; unused slots masked invalid. ---
     n_brackets = min(n_nodes, max_brackets)
@@ -211,6 +204,31 @@ def safeguarded_continuous_argmax(
         at_upper_bound=valid & (best_x == nodes[-1]),
         valid=valid,
     )
+
+
+def _node_local_max_mask(finite_values: FloatND) -> BoolND:
+    """Node-local maxima per cell (boundary nodes compare one-sided).
+
+    The single source of truth for \"where does the continuous search
+    refine\": the safeguarded argmax brackets exactly these nodes, and mesh
+    validation trusts the interpolant exactly on the intervals flanking
+    them — the two definitions must never drift apart.
+    """
+    up = jnp.concatenate(
+        [
+            finite_values[:1] >= finite_values[1:2],
+            finite_values[1:] >= finite_values[:-1],
+        ],
+        axis=0,
+    )
+    down = jnp.concatenate(
+        [
+            finite_values[:-1] >= finite_values[1:],
+            finite_values[-1:] >= finite_values[-2:-1],
+        ],
+        axis=0,
+    )
+    return up & down & jnp.isfinite(finite_values)
 
 
 def _consider(
@@ -378,10 +396,21 @@ def _mark_intervals(
 ) -> tuple[BoolND, float]:
     """Which intervals fail midpoint validation, and the largest error.
 
-    The normalized error is `|exact - interp| / (atol + rtol * scale)`; a
-    midpoint where exactly one of the two is nonfinite scores `inf` (the
-    interpolant misjudged feasibility), both-nonfinite scores `0` (a
-    genuinely infeasible region needs no resolution).
+    The normalized error is `|exact - interp| / (atol + rtol * scale)`,
+    scored only where the *search will trust the interpolant*: on intervals
+    flanking a node-local maximum of that cell (exactly the golden-section
+    brackets — everywhere else the surrogate never wins against the exact
+    nodes, so its error is decision-irrelevant; steep but far-from-optimal
+    regions, e.g. a value crash toward a feasibility edge, must not eat the
+    node budget). Cells where either read is nonfinite also score `0`: a
+    genuinely infeasible region needs no resolution, and an interval
+    straddling a *feasibility boundary* (one nonfinite endpoint) can never
+    validate — the boundary persists inside every split, and its location
+    varies per state cell, so refining it globally would grow the mesh
+    without bound. The interpolant already refuses to bridge such intervals
+    (`-inf` read), the exact nodes bound the loss there at finite-grid
+    resolution, and optimum-at-boundary cells stay visible through the
+    at-bound and margin diagnostics.
     """
     state_ndim = values.ndim - 1
     query = midpoints.reshape(midpoints.shape[0], *([1] * state_ndim))
@@ -393,17 +422,15 @@ def _mark_intervals(
     normalized = jnp.abs(exact - interpolated) / (
         config.value_atol + config.value_rtol * scale
     )
-    error = jnp.where(
-        exact_finite & interp_finite,
-        normalized,
-        jnp.where(exact_finite ^ interp_finite, jnp.inf, 0.0),
-    )
+    finite_values = jnp.where(jnp.isfinite(values), values, -jnp.inf)
+    local_max = _node_local_max_mask(finite_values)
+    search_relevant = local_max[:-1] | local_max[1:]  # (C-1, *S)
+    error = jnp.where(exact_finite & interp_finite & search_relevant, normalized, 0.0)
     state_axes = tuple(range(1, error.ndim))
     interval_error = jnp.max(error, axis=state_axes) if state_axes else error  # (C-1,)
 
     # Optimum-containing intervals: the two intervals flanking each cell's
     # best node, held to a tighter standard plus the margin rule.
-    finite_values = jnp.where(jnp.isfinite(values), values, -jnp.inf)
     best_idx = jnp.argmax(finite_values, axis=0)  # (*S,)
     n_intervals = nodes.shape[0] - 1
     interval_ids = jnp.arange(n_intervals).reshape(n_intervals, *([1] * state_ndim))
@@ -412,9 +439,14 @@ def _mark_intervals(
     sorted_values = jnp.sort(finite_values, axis=0)
     margin = sorted_values[-1] - sorted_values[-2]  # (*S,)
     abs_error = jnp.where(
-        exact_finite & interp_finite, jnp.abs(exact - interpolated), jnp.inf
+        exact_finite & interp_finite, jnp.abs(exact - interpolated), 0.0
     )
-    margin_at_risk = margin < _MARGIN_SAFETY * abs_error
+    # A margin below the acceptance band is a structural tie: no amount of
+    # refinement can rank the branches at the requested accuracy, the
+    # deterministic tie rule decides, and the margin diagnostic exposes it —
+    # marking it would refine forever.
+    band = config.value_atol + config.value_rtol * jnp.abs(sorted_values[-1])
+    margin_at_risk = (margin > band) & (margin < _MARGIN_SAFETY * abs_error)
 
     per_cell_marked = (
         (error > 1.0)
