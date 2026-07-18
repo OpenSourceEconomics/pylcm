@@ -1787,14 +1787,14 @@ def _build_child_reads(
         else:
             row_values = ()
             row_block_shape = ()
-        # A NEGM child carries a stacked candidate axis (keeper + one per outer
-        # node). Detected structurally off the solver spec — `outer_grid` is the
-        # NEGM outer margin's grid — because importing the solver class here
-        # would cycle through the kernel-builder modules that import this one.
-        outer_grid = getattr(target_regime.solver, "outer_grid", None)
-        n_outer_candidates = (
-            int(outer_grid.to_jax().shape[0]) + 1 if outer_grid is not None else 0
-        )
+        # The candidate-axis length comes from the child solver's own
+        # declaration: only a solver whose published carry actually stacks
+        # outer candidates (NEGM's keeper + per-node rows) reports a nonzero
+        # count. Merely having an outer margin is not enough — a solver that
+        # folds its outer axis before publishing (the nested N-NB-EGM upper
+        # envelope) carries no candidate axis, and broadcasting queries over a
+        # phantom axis would desync rows and queries in the read.
+        n_outer_candidates = target_regime.solver.n_stacked_carry_candidates
         reads[target] = _ChildRead(
             next_state_func=get_next_state_function_for_solution(
                 transitions=transitions[target],

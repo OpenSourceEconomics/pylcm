@@ -484,6 +484,11 @@ class NEGM(Solver):
         """NEGM nests a DC-EGM solve that inverts the Euler equation."""
         return True
 
+    @property
+    def n_stacked_carry_candidates(self) -> int:
+        """The published carry stacks the keeper plus one row per outer node."""
+        return int(self.outer_grid.to_jax().shape[0]) + 1
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
 

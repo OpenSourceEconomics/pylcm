@@ -18,7 +18,9 @@ from _lcm.egm.continuation import (
     _collapse_stacked_candidates,
 )
 from _lcm.egm.interp import interp_on_padded_grid, prepare_padded_grid
+from lcm.solvers import GridSearch
 from tests.conftest import X64_ENABLED
+from tests.test_models import negm_kinked_toy as negm_toy
 
 # The host comparison reruns the identical interpolation arithmetic, so the two
 # sides agree to the active float precision's roundoff, not better.
@@ -466,3 +468,26 @@ def test_a_poisoned_candidate_at_a_nonzero_index_keeps_the_collapse_nan():
 
     assert bool(jnp.isnan(value[0]))
     assert bool(jnp.isnan(marginal[0]))
+
+
+def test_negm_solver_declares_its_stacked_candidate_count():
+    """A NEGM solver's published carry stacks one row per outer node plus keeper.
+
+    The parent's continuation read sizes its candidate axis off this
+    declaration, so it must equal the outer-grid length plus the keeper slot.
+    """
+    assert (
+        negm_toy.NEGM_SOLVER.n_stacked_carry_candidates
+        == negm_toy.OUTER_GRID.n_points + 1
+    )
+
+
+def test_non_stacking_solvers_declare_zero_stacked_candidates():
+    """A solver that publishes an already-collapsed carry declares no candidates.
+
+    An outer margin folded inside the solver (or no outer margin at all)
+    leaves the carry without a candidate axis; the parent read must then
+    query each carry row once instead of broadcasting queries over a
+    phantom axis.
+    """
+    assert GridSearch().n_stacked_carry_candidates == 0
