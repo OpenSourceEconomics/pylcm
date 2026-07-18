@@ -214,18 +214,18 @@ def refine_envelope_with_support(
         [jnp.full((1,), -jnp.inf, dtype=query_grid.dtype), query_grid[:-1]]
     )
     is_new = query_grid > prev_grid
-    # Record equality is a few-ulp window: two computations of the same
-    # quantity agree to within a handful of rounding steps of the stored
-    # magnitude, and gaps below that scale are indistinguishable in storage.
-    # A wider cushion would swallow genuinely representable gaps whenever a
-    # common cardinal shift raises the value level — the winner would then
-    # depend on an arbitrary value normalization. A missed tie merely
-    # duplicates the node, which the read resolves by its side convention.
+    # Record equality is exact: when both side winners are the same branch,
+    # its value and policy at the node come from the same link evaluated at
+    # the same query — identical arithmetic, so genuinely one record is
+    # bitwise equal. Any tolerance window here scales with the absolute value
+    # level and would merge representable records under a common cardinal
+    # shift. A missed merge merely duplicates the node, which the read
+    # resolves by its side convention.
     tolerance = 8.0 * float(jnp.finfo(query_grid.dtype).eps)
     same_record = (
         (left_side.branch == right_side.branch)
-        & jnp.isclose(left_side.value, right_side.value, rtol=tolerance, atol=0.0)
-        & jnp.isclose(left_side.policy, right_side.policy, rtol=tolerance, atol=0.0)
+        & (left_side.value == right_side.value)
+        & (left_side.policy == right_side.policy)
     )
     node_left_valid = left_side.exists & is_new
     node_right_valid = right_side.exists & is_new & ~(left_side.exists & same_record)
@@ -493,23 +493,25 @@ def _lexicographic_winner(
     masked_value = jnp.where(covers, value_at, -jnp.inf)
     best_value = jnp.max(masked_value, axis=1)
     exists = jnp.isfinite(best_value)
-    # Value ties are a few-ulp window of the stored magnitude — the scale at
-    # which two computations of the same envelope value are indistinguishable.
-    # A wider cushion would let a common cardinal value shift merge branches
-    # whose gap is genuinely representable. A missed tie merely skips the
+    # A value tie is exact stored equality — the only translation-invariant
+    # tie set: any tolerance window scales with the absolute value level, so
+    # a common cardinal shift would pull genuinely representable gaps inside
+    # it and let a lower record own the node. A missed tie (two computations
+    # of the same crossing value a rounding step apart) merely skips the
     # slope tie-break and duplicates the node downstream — never merges
     # records.
-    tolerance = 8.0 * jnp.finfo(value_at.dtype).eps
-    tie = covers & jnp.isclose(
-        masked_value, best_value[:, None], rtol=tolerance, atol=0.0
-    )
+    tie = covers & (masked_value == best_value[:, None])
     slope_score = jnp.where(tie, slope_sign * links.value_slope[None, :], -jnp.inf)
     link = jnp.argmax(slope_score, axis=1).astype(jnp.int32)
+    # The published value is the exact maximum itself, not the tie winner's
+    # own read: the winner owns the policy and the slope convention, but a
+    # numerical tie rule must never replace the hard maximum of the stored
+    # records by a near-maximal competitor's lower value.
     return _SideWinner(
         exists=exists,
         link=link,
         branch=jnp.where(exists, links.segment[link], -1).astype(jnp.int32),
-        value=jnp.take_along_axis(value_at, link[:, None], axis=1)[:, 0],
+        value=best_value,
         policy=jnp.take_along_axis(policy_at, link[:, None], axis=1)[:, 0],
     )
 
@@ -617,7 +619,28 @@ def _enumerate_interval_crossings(
         offset_next = jnp.min(offset_masked, axis=1)
         found = jnp.isfinite(offset_next)
         offset_tolerance = crossing_ulp * jnp.where(found, offset_next, 0.0)
-        tie = valid & (offset <= (offset_next + offset_tolerance)[:, None])
+        near_minimal = valid & (offset <= (offset_next + offset_tolerance)[:, None])
+        # Offset proximity alone cannot certify a simultaneous crossing: the
+        # window scales with the offset itself, so inside it two crossings can
+        # sit many representable positions apart, and handing the group to the
+        # steepest line would skip the branch that wins between them. A line
+        # joins the tie only if it also passes through the same numerical
+        # point — its value at the crossing agrees with the winner line's to a
+        # few ulp of the locally computed magnitudes (the cancellation-error
+        # scale of evaluating the difference). A genuinely distinct crossing
+        # fails the residual test and is enumerated on a later step instead.
+        x_next_safe = x_current + jnp.where(found, offset_next, 0.0)
+        value_at_next = links.value_at(x_next_safe[:, None])
+        winner_value_next = jnp.take_along_axis(value_at_next, winner[:, None], axis=1)
+        residual_scale = jnp.maximum(jnp.abs(value_at_next), jnp.abs(winner_value_next))
+        same_point = jnp.abs(value_at_next - winner_value_next) <= (
+            8.0 * jnp.finfo(query_grid.dtype).eps * residual_scale
+        )
+        # The exact-minimum line(s) define the crossing being emitted, so they
+        # belong to the tie unconditionally — the residual test only decides
+        # which *other* near-minimal lines genuinely pass through the point.
+        is_earliest = valid & (offset <= offset_next[:, None])
+        tie = (near_minimal & same_point) | is_earliest
         incoming = jnp.argmax(
             jnp.where(tie, links.value_slope[None, :], -jnp.inf), axis=1
         ).astype(jnp.int32)

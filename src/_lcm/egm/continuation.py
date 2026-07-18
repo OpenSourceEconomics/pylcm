@@ -1331,6 +1331,11 @@ def _aggregate_child_choices(
     # Leading axes of the blocks: the child's passive nodes, then its
     # discrete-action combos (then the candidate axis of a stacked NEGM child).
     block_shape = value_block.shape[:-1]
+    _fail_if_carry_shape_mismatches_declaration(
+        block_shape=block_shape,
+        row_queries_shape=row_queries.shape,
+        n_outer_candidates=n_outer_candidates,
+    )
     if n_outer_candidates:
         # The stacked candidates share the lifted common-coh axis, so every
         # candidate row of a block cell is read at that cell's single query and
@@ -1565,6 +1570,35 @@ def _blend_passive_axes(
     # finite marginal of an infeasible cell reaches the Euler inversion.
     marginal_at_child = jnp.where(jnp.isneginf(value_at_child), 0.0, marginal_at_child)
     return value_at_child, marginal_at_child
+
+
+def _fail_if_carry_shape_mismatches_declaration(
+    *,
+    block_shape: tuple[int, ...],
+    row_queries_shape: tuple[int, ...],
+    n_outer_candidates: int,
+) -> None:
+    """Check the carry block's leading shape against the stacking declaration.
+
+    The declaration and the published carry must agree before any
+    broadcasting: a mismatch would otherwise surface as an opaque vmap
+    axis-size error deep in the batched interpolation instead of naming the
+    violated solver contract.
+    """
+    expected_block_shape = (
+        (*row_queries_shape, n_outer_candidates)
+        if n_outer_candidates
+        else row_queries_shape
+    )
+    if block_shape != expected_block_shape:
+        msg = (
+            "The child's published carry block has leading shape "
+            f"{block_shape}, but its solver declares "
+            f"n_stacked_carry_candidates={n_outer_candidates}, which requires "
+            f"{expected_block_shape}. The solver's declaration must match the "
+            "candidate-axis structure of the carry it publishes."
+        )
+        raise ValueError(msg)
 
 
 def _collapse_stacked_candidates(
