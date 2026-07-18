@@ -523,13 +523,18 @@ def _validate_state_transition_single(
             # grid nor a param. Skip numerical validation for this
             # transition rather than raising — a raise here would conceal
             # the real error the solve step surfaces. Warn so the skip is
-            # not silent.
+            # not silent. Name the phase: a `Phased` law has two variants under
+            # one state name, and only one of them may be hitting this branch.
+            phase_suffix = (
+                f" ({transition.phase} phase)" if transition.phase is not None else ""
+            )
             logger.warning(
-                "MarkovTransition for state '%s' in regime '%s' not numerically "
+                "MarkovTransition for state '%s' in regime '%s'%s not numerically "
                 "validated: parameter '%s' is not a recognized grid or model "
                 "parameter.",
                 transition.state_name,
                 regime_name,
+                phase_suffix,
                 name,
             )
             return

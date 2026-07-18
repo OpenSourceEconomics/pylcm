@@ -977,6 +977,15 @@ def _build_simulation_phase(
         # is neither phase. The same `next_<state>` name therefore legitimately resolves
         # to different callables in the two halves. The realized next state stays on the
         # simulate laws — see `next_state`/`compute_regime_transition_probs` below.
+        #
+        # ONE EXCEPTION to "flow = simulate truth": `functions` here is the
+        # imputation-augmented decision pool built above — for a carried-only state
+        # it carries the solve IMPUTATION, not the realized carried value. So flow
+        # utility/feasibility that reads a carried state decides on the imputation,
+        # by design (the continuation was solved there; policy-consistency). The
+        # realized carried value is used for the forward transition via
+        # `simulate_functions`. See the carried-state comment at the top of this
+        # function and the `Phased` semantics contract in `lcm/phased.py`.
         Q_and_F_functions = _build_Q_and_F_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
             functions=functions,

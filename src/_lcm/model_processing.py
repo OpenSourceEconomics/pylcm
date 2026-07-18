@@ -228,6 +228,7 @@ def validate_model_inputs(
             user_regimes, broadcast_variables=broadcast_variables
         )
     )
+    error_messages.extend(_validate_constraint_phase_invariance(user_regimes))
 
     for name, user_regime in user_regimes.items():
         if user_regime.taste_shocks is not None and not any(
@@ -327,6 +328,69 @@ def _validate_all_variables_used(
                 f"utility, constraints, or transition functions."
             )
 
+    return error_messages
+
+
+def _validate_constraint_phase_invariance(
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> list[str]:
+    """Reject a constraint whose dependency ancestry contains a phase-varying node.
+
+    `Regime.constraints` are contractually phase-invariant: a *direct* `Phased`
+    constraint is rejected at regime init (`_callable_mapping_errors`), because a
+    phase-specific feasible set would let the simulated argmax range over actions
+    the value function was never computed for. But that check only inspects the
+    top-level constraint object. A *bare* constraint can reach a `Phased` helper
+    or a `Phased` `next_<state>` transitively; the solve and simulate feasibility
+    DAGs then resolve that dependency from different phase pools, so the feasible
+    set is phase-specific anyway -- silently reintroducing exactly the hazard the
+    direct ban forbids. This walks each constraint's dependency ancestry and
+    closes the gap.
+
+    A name is phase-varying iff its `solve` and `simulate` resolutions are
+    distinct objects. Identity is safe here because `get_all_functions` returns
+    the raw user callables (a `Phased` yields its two genuinely-distinct variants;
+    a bare value is the same object in both phases) -- not the parameter-renamed
+    wrappers that make object identity unreliable elsewhere. Carried-only states
+    are therefore *not* phase-varying: their imputation resolves to the same
+    `solve` variant in both phases, so a constraint reading a carried state has
+    the same feasible set in both -- consistent with the decision using the
+    imputation (policy-consistency), not the realized carried value.
+
+    Args:
+        user_regimes: Mapping of finalized regime names to `Regime` instances.
+
+    Returns:
+        A list of error messages. Empty list if validation passes.
+
+    """
+    error_messages = []
+    for regime_name, user_regime in user_regimes.items():
+        solve_funcs = dict(user_regime.get_all_functions(phase="solve"))
+        sim_funcs = user_regime.get_all_functions(phase="simulate")
+        phase_varying = frozenset(
+            name for name in solve_funcs if solve_funcs[name] is not sim_funcs.get(name)
+        )
+        if not phase_varying:
+            continue
+        for constraint_name in user_regime.constraints:
+            ancestors = get_ancestors(
+                solve_funcs, targets=[constraint_name], include_targets=False
+            )
+            offending = sorted(ancestors & phase_varying)
+            if offending:
+                error_messages.append(
+                    f"Constraint '{constraint_name}' in regime '{regime_name}' "
+                    f"depends on phase-varying function(s) {offending}. "
+                    f"Constraints must be phase-invariant through their whole "
+                    f"dependency ancestry: a phase-specific feasible set would "
+                    f"let the simulated argmax range over actions the value "
+                    f"function was never computed for. The direct `Phased` "
+                    f"constraint ban is bypassed when a bare constraint reaches a "
+                    f"`Phased` helper or `Phased` `next_<state>` transitively. "
+                    f"Make the constraint's dependencies phase-invariant, or keep "
+                    f"the phase variance out of the feasibility path."
+                )
     return error_messages
 
 

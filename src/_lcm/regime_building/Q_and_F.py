@@ -138,6 +138,7 @@ def get_Q_and_F(
         conflicting_deterministic_transition_names=(
             conflicting_deterministic_transition_names
         ),
+        stochastic_transition_names=flow_stochastic_names,
     )
     state_transitions = {}
     next_stochastic_states_weights = {}
@@ -366,6 +367,7 @@ def get_compute_intermediates(
         conflicting_deterministic_transition_names=(
             conflicting_deterministic_transition_names
         ),
+        stochastic_transition_names=stochastic_transition_names,
     )
     state_transitions = {}
     next_stochastic_states_weights = {}
@@ -696,6 +698,7 @@ def _get_U_and_F(
     conflicting_deterministic_transition_names: frozenset[
         TransitionFunctionName
     ] = frozenset(),
+    stochastic_transition_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -739,6 +742,11 @@ def _get_U_and_F(
             conflicting_deterministic_transition_names
         ),
     )
+    _fail_if_stochastic_transition_is_read(
+        combined=combined,
+        targets=["utility", "feasibility"],
+        stochastic_transition_names=stochastic_transition_names,
+    )
     return concatenate_functions(
         functions=combined,
         targets=["utility", "feasibility"],
@@ -781,6 +789,50 @@ def _fail_if_conflicting_transition_is_read(
             "disagree silently. Make the law identical across all targets that "
             "carry the state, or stop reading the chosen next state in the "
             "within-period utility/feasibility."
+        )
+        raise ValueError(msg)
+
+
+def _fail_if_stochastic_transition_is_read(
+    *,
+    combined: Mapping[str, Callable[..., Any]],
+    targets: list[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
+) -> None:
+    """Reject a decision that reads an unrealised stochastic next state.
+
+    A within-period utility or feasibility cannot read a `next_<state>` that is
+    stochastic in this phase: its value is not known when the action is chosen,
+    so `_get_deterministic_transitions` deliberately omits it from the flow DAG.
+    `dags` then leaves that `next_<state>` an unresolved external argument of the
+    decision, which fails much later with a confusing missing-argument error
+    (and only in the phase where the law is stochastic). Fail early and clearly,
+    naming each such state actually read by `targets`.
+
+    Mixed stochasticity makes the phase matter: a state that is deterministic in
+    one phase and stochastic in the other is readable in the deterministic phase
+    and rejected here in the stochastic one -- so `stochastic_transition_names`
+    is the *flow phase's* set, not a phase-invariant one.
+
+    Args:
+        combined: Mapping of function names assembled for the decision DAG.
+        targets: The decision target names (`utility`, `feasibility`).
+        stochastic_transition_names: `next_<state>` names stochastic in the flow
+            phase.
+    """
+    if not stochastic_transition_names:
+        return
+    read_names = get_ancestors(combined, targets, include_targets=True)
+    offending = sorted(stochastic_transition_names & read_names)
+    if offending:
+        names = ", ".join(offending)
+        msg = (
+            "Within-period utility or feasibility reads a stochastic state "
+            f"transition ({names}). The value of an unrealised stochastic next "
+            "state is not known when the action is chosen, so it cannot enter "
+            "the within-period decision. Read the CURRENT state instead, or make "
+            "this transition deterministic in the phase where utility or "
+            "feasibility reads it."
         )
         raise ValueError(msg)
 

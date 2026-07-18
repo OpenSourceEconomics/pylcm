@@ -108,26 +108,42 @@ def _add_raw_transition(
     callable resolve it for their phase (`Regime.get_all_functions`), while
     the params-template collector unions both variants' parameters.
 
-    An outer `Phased` of two per-target dicts is NORMALIZED into the inner form —
-    one qualified key per target, each carrying a `Phased` of that target's two
-    laws. `Phased` of dicts is not a value any consumer understands: registered
-    as-is it would reach `Regime.get_all_functions` as a raw dict where a callable
-    is required. The two forms mean the same thing, and the per-key one is what the
-    engine already consumes. Target key sets are validated to match beforehand, so
-    indexing the simulate mapping by the solve mapping's keys cannot fail here.
+    An outer `Phased` with a per-target dict on at least one side is NORMALIZED
+    into the inner form — one qualified key per target, each carrying a `Phased` of
+    that target's two laws. `Phased` of dicts is not a value any consumer
+    understands: registered as-is it would reach `Regime.get_all_functions` as a
+    raw dict where a callable is required. The two forms mean the same thing, and
+    the per-key one is what the engine already consumes.
+
+    A **bare** law on one side (map-vs-bare) BROADCASTS over the per-target side's
+    targets — the same meaning a bare state law has outside `Phased`. The
+    per-target side's key set defines the targets; the shape validator has already
+    rejected two per-target dicts over different targets, so when both sides are
+    dicts their keys match and either set works.
 
     Note this produces a `Phased` value *under a per-target key*, which is exactly
     what `_validate_per_target_dict` forbids a USER to write (`Phased` is
     outermost-only). No contradiction: that rule governs the user's spelling, this
     is the internal normal form the outer spelling is rewritten INTO.
     """
-    if isinstance(raw, Phased) and isinstance(raw.solve, Mapping):
-        solve_by_target = cast("Mapping[RegimeName, UserFunction]", raw.solve)
-        simulate_by_target = cast("Mapping[RegimeName, UserFunction]", raw.simulate)
-        for target_regime_name, solve_law in solve_by_target.items():
+    if isinstance(raw, Phased) and (
+        isinstance(raw.solve, Mapping) or isinstance(raw.simulate, Mapping)
+    ):
+
+        def _cell(side: object, target: RegimeName) -> UserFunction:
+            # A per-target dict yields its cell; a bare law broadcasts over targets.
+            if isinstance(side, Mapping):
+                by_target = cast("Mapping[RegimeName, object]", side)
+                return cast("UserFunction", by_target[target])
+            return cast("UserFunction", side)
+
+        target_source = raw.solve if isinstance(raw.solve, Mapping) else raw.simulate
+        targets = cast("Mapping[RegimeName, object]", target_source)
+        for target_regime_name in targets:
             key = f"next_{name}{QNAME_DELIMITER}{target_regime_name}"
             transitions[key] = Phased(
-                solve=solve_law, simulate=simulate_by_target[target_regime_name]
+                solve=_cell(raw.solve, target_regime_name),
+                simulate=_cell(raw.simulate, target_regime_name),
             )
     elif callable(raw) or isinstance(raw, Phased):
         transitions[f"next_{name}"] = cast("UserFunction", raw)

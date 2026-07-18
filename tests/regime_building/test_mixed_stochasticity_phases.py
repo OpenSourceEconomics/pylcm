@@ -1,10 +1,11 @@
-"""PROBE (scratch): does the engine handle a phase-mixed stochasticity law?
+"""A state law may be stochastic in one phase and deterministic in the other.
 
-Not a keeper. Answers one question: with the coherence rule disabled, does
-`Phased(solve=MarkovTransition(...), simulate=<deterministic>)` -- and the reverse --
-actually build, solve, and simulate with the right belief/truth split? If yes, the rule
-is an unnecessary restriction and should go. If it blows up, the rule stays, documented
-as an implementation limitation rather than a state-kind necessity.
+The earlier coherence rule required both phases to agree on stochasticity; it was
+deleted because a deterministic law is a degenerate kernel, not a different kind of
+state. This regression pins both mixed directions:
+`Phased(solve=MarkovTransition(...), simulate=<deterministic>)` and the reverse must
+build, solve, and simulate with the right belief/truth split -- Q priced under the
+BELIEF, the draw following the TRUTH.
 """
 
 from typing import Any

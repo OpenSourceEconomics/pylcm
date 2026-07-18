@@ -614,9 +614,11 @@ class _StochasticStateTransition:
     outcome-axis size, lies in [0, 1], and has rows summing to 1.
 
     A `Phased` law contributes one entry PER PHASE. Both must be kept: they are
-    different functions, and a malformed perceived law is just as fatal as a
-    malformed true one — it prices every action in backward induction. Collapsing
-    them onto one key would silently validate only whichever was inserted last.
+    different functions and each is fatal if malformed, but for DIFFERENT reasons —
+    the perceived (solve) law prices every action in backward induction, while the
+    true (simulate) law governs the realized draw and the simulation-side checks.
+    Collapsing them onto one key would silently validate only whichever was
+    inserted last.
     """
 
     func: Callable[..., FloatND]

@@ -551,43 +551,41 @@ def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
 
 
 def _phased_per_target_shape_mismatch(*, name: StateName, value: Phased) -> list[str]:
-    """Inside `Phased`, a per-target dict must be in both phases, over one target set.
+    """Inside `Phased`, two per-target dicts must declare the same target set.
 
     `Phased(solve={...}, simulate={...})` is normalized at collection into one entry per
     target, each holding a `Phased` of that target's two laws — the form the engine
-    actually consumes. That rewrite is only well defined when both variants are dicts
-    over the same targets. A dict paired with a bare law has no meaningful rewrite (the
-    bare law would have to be duplicated onto a target list only the other phase
-    declares), and differing target sets leave a target with a law in one phase and none
-    in the other.
+    actually consumes (`transitions._add_raw_transition`).
 
-    This constrains the SHAPE of the declaration, not the model. `Phased` is
-    outermost-only (`_validate_per_target_dict` rejects a `Phased` cell), so the outer
-    form IS the spelling for a per-target law that varies by phase — the guidance is to
-    complete the other side, never to push `Phased` into the dict.
+    Two shapes normalize cleanly and are both allowed:
+
+    - **both per-target** over the SAME targets — paired cell by cell;
+    - **one per-target, the other a bare law** — the bare law BROADCASTS over the
+      per-target side's targets, exactly as a bare state law broadcasts outside
+      `Phased`. The per-target side's key set defines the targets, and per-target
+      coverage validation independently requires that set to be the full reachable
+      set — so the broadcast target list is authoritative, not arbitrary.
+
+    Only the remaining shape is rejected: two per-target dicts over DIFFERENT
+    targets, which would leave a target with a law in one phase and none in the
+    other. (`Phased` is outermost-only — `_validate_per_target_dict` rejects a
+    `Phased` cell — so the outer form is the only spelling for a per-target law
+    that varies by phase.)
     """
     solve_per_target = isinstance(value.solve, Mapping)
     simulate_per_target = isinstance(value.simulate, Mapping)
-    if not solve_per_target and not simulate_per_target:
+    if not (solve_per_target and simulate_per_target):
+        # neither per-target (a plain phased law), or map-vs-bare (broadcast):
+        # both normalize cleanly, so nothing to reject here.
         return []
-    if solve_per_target != simulate_per_target:
-        per_target, bare = (
-            ("solve", "simulate") if solve_per_target else ("simulate", "solve")
-        )
-        return [
-            f"state_transitions['{name}']: the {per_target} variant is a per-target "
-            f"dict but the {bare} variant is a single law. Give the {bare} variant a "
-            f"per-target dict over the same targets — `Phased(solve={{...}}, "
-            f"simulate={{...}})` is the spelling for a per-target law that varies by "
-            f"phase (`Phased` cannot go inside the dict).",
-        ]
     solve_targets = set(cast("Mapping[RegimeName, object]", value.solve))
     simulate_targets = set(cast("Mapping[RegimeName, object]", value.simulate))
     if solve_targets != simulate_targets:
         return [
             f"state_transitions['{name}']: the per-target dicts inside `Phased` "
             f"declare different targets — solve has {sorted(solve_targets)}, simulate "
-            f"has {sorted(simulate_targets)}. Both phases must cover the same targets.",
+            f"has {sorted(simulate_targets)}. Both phases must cover the same targets, "
+            f"or give one phase a single law to broadcast over the other's targets.",
         ]
     return []
 
