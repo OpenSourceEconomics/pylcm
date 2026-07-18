@@ -134,20 +134,21 @@ def housing_cost(
     return jnp.where(next_housing == housing, 0.0, round_trip_cost)
 
 
-def resources(
+def resources_before_outer_cost(
     liquid: ContinuousState,
-    housing_cost: FloatND,
     income: FloatND,
     return_liquid: float,
 ) -> FloatND:
-    """Liquid resources consumption is paid out of, given the fixed outer node.
+    """Cost-free base of the liquid resources consumption is paid out of.
 
-    `(1 + r)·a + y - housing_cost`. The housing cost is bound to one outer-grid
-    node, so it enters the inner Euler inversion as a constant. Strictly
-    increasing in the liquid Euler state `liquid`; independent of the inner
-    consumption action.
+    `(1 + r)·a + y`. With `NEGM.outer_cost` declared, pylcm composes the
+    resources function as `resources_before_outer_cost - housing_cost` at
+    model build; the housing cost is bound to one outer-grid node, so it
+    enters the inner Euler inversion as a constant. Strictly increasing in
+    the liquid Euler state `liquid`; independent of the inner consumption
+    action.
     """
-    return (1.0 + return_liquid) * liquid + income - housing_cost
+    return (1.0 + return_liquid) * liquid + income
 
 
 def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
@@ -402,13 +403,14 @@ def build_model(
         outer_post_decision="next_housing",
         outer_grid=outer_grid,
         outer_no_adjustment_candidate="keep_housing",
+        outer_cost="housing_cost",
         outer_batch_size=outer_batch_size,
     )
 
     shared_functions = {
         "utility": utility,
         "housing_cost": housing_cost,
-        "resources": resources,
+        "resources_before_outer_cost": resources_before_outer_cost,
         "savings": savings,
         "keep_housing": keep_housing,
         "serviced_housing": serviced_housing,
@@ -524,7 +526,7 @@ def build_params(
         "working": {
             "utility": utility_params,
             HOUSING_COST_FUNCTION_NAME: housing_cost_params,
-            "resources": {"return_liquid": return_liquid},
+            "resources_before_outer_cost": {"return_liquid": return_liquid},
             "next_liquid": {},
             "inverse_marginal_utility": {"gamma_c": gamma_c, "alpha": alpha},
             "wage": wage_params,
@@ -532,7 +534,7 @@ def build_params(
         "retired": {
             "utility": utility_params,
             HOUSING_COST_FUNCTION_NAME: housing_cost_params,
-            "resources": {"return_liquid": return_liquid},
+            "resources_before_outer_cost": {"return_liquid": return_liquid},
             "next_liquid": {},
             "inverse_marginal_utility": {"gamma_c": gamma_c, "alpha": alpha},
         },

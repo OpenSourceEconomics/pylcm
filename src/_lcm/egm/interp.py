@@ -12,6 +12,7 @@ ordinary (unpadded) grids, e.g. the passive-state grids of the mixed carry
 read.
 """
 
+import jax
 import jax.numpy as jnp
 
 from lcm.typing import BoolND, Float1D, FloatND, ScalarFloat, ScalarInt
@@ -43,6 +44,10 @@ def interp_on_padded_grid(
     - A `-inf` endpoint (an infeasible value) forces the bracket's interior
       to `-inf` instead of NaN; a query exactly on a finite neighbor returns
       that neighbor's value.
+    - A row with a single valid node is a constant clamp: every query returns
+      that node's value.
+    - An all-NaN row (an already-poisoned carry) returns NaN at every query,
+      so the poison surfaces fail-loud instead of reading as a finite value.
 
     Without `fp_slopes` the interpolant is piecewise linear. With `fp_slopes`
     — the derivatives $f'(x)$ at the `xp` nodes, *exact at the nodes* (for an
@@ -142,10 +147,208 @@ def interp_on_prepared_grid(
         Interpolated values with the shape of `x_query`.
 
     """
-    # An empty valid prefix (`valid_length == 0`) can only arise from an
-    # already-poisoned carry; the index clamp below keeps the gather in bounds,
-    # and the result stays NaN so the runtime NaN diagnostics surface the
-    # poisoned carry rather than masking it with an edge-clamped constant.
+    if fp_slopes is None:
+        return _linear_prepared_read(x_query, search_grid, valid_length, xp, fp)
+    return _hermite_prepared_read(x_query, search_grid, valid_length, xp, fp, fp_slopes)
+
+
+def _hermite_prepared_read_primal(
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+) -> FloatND:
+    """Hermite value read whose query tangent is defined analytically.
+
+    Plain autodiff of the branch program (clip boundaries, zero-weight
+    guards, the right-continuous bracket search) returns a query derivative
+    at exact grid nodes that is neither one-sided slope of the interpolant —
+    and asset-row mode consumes `jax.grad` of this read in its Euler
+    marginal, with deterministic grid alignments placing queries exactly on
+    nodes. The custom JVP replaces only the query channel with the analytic
+    derivative of the selected piece (`_hermite_query_derivative` — see its
+    docstring for the published convention, including the node-slope rule at
+    the exact last valid node); all other channels keep the primal program's
+    tangents.
+    """
+    return _read_prepared_row(x_query, search_grid, valid_length, xp, fp, fp_slopes)
+
+
+def _hermite_prepared_read_jvp(primals, tangents):  # noqa: ANN001, ANN202
+    x_query, search_grid, valid_length, xp, fp, fp_slopes = primals
+    x_query_dot, _, _, xp_dot, fp_dot, fp_slopes_dot = tangents
+
+    def read_at_fixed_query(
+        xp_in: Float1D, fp_in: Float1D, fp_slopes_in: Float1D
+    ) -> FloatND:
+        return _read_prepared_row(
+            x_query, search_grid, valid_length, xp_in, fp_in, fp_slopes_in
+        )
+
+    primal_out, passive_tangent = jax.jvp(
+        read_at_fixed_query, (xp, fp, fp_slopes), (xp_dot, fp_dot, fp_slopes_dot)
+    )
+    query_derivative = _hermite_query_derivative(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+    return primal_out, passive_tangent + query_derivative * x_query_dot
+
+
+# Explicit wrapping instead of `@jax.custom_jvp` decorator syntax: the
+# beartype import hook wraps every decorated `def` outermost, and wrapping a
+# `custom_jvp` instance binds it to its `__call__`, losing `defjvp`.
+_hermite_prepared_read = jax.custom_jvp(_hermite_prepared_read_primal)
+_hermite_prepared_read.defjvp(_hermite_prepared_read_jvp)
+
+
+def _hermite_query_derivative(
+    *,
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+) -> FloatND:
+    """Published query derivative of the Hermite value read.
+
+    The economics object the parent Euler inversion consumes — the second of
+    the two derivative objects sharing `_hermite_bracket_derivatives` (the
+    first is the right germ, the tie selector). Convention:
+
+    - strictly below the first node, and strictly above the last valid node:
+      zero (the read clamps to a constant),
+    - inside a bracket: the limited-Hermite piece's derivative (the secant
+      where the correction is inapplicable),
+    - exactly on an interior node: the right piece's derivative (the bracket
+      search is right-continuous),
+    - exactly on the *last* valid node: the node's own limited slope — NOT
+      zero. Publishing zero at the top wealth node would feed `u'(c) = 0`
+      into a parent Euler inversion at a reachable grid alignment; the germ's
+      clamp semantics (`0` at and above the node) apply to tie *selection*
+      only,
+    - a zero-width located bracket (an end duplicate): zero — no slope is
+      defined on it,
+    - singleton row: zero (constant clamp); empty row: NaN (the read is NaN —
+      the derivative is non-authoritative and carries the poison).
+    """
+    first, _, _, _, zero_width = _hermite_bracket_derivatives(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+    first_node = search_grid[0]
+    last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
+    outside = (x_query < first_node) | (x_query > last_node)
+    derivative = jnp.where(outside | zero_width, 0.0, first)
+    derivative = jnp.where(valid_length == 1, 0.0, derivative)
+    return jnp.where(valid_length == 0, jnp.nan, derivative)
+
+
+def _linear_prepared_read_primal(
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+) -> FloatND:
+    """Linear value read whose query tangent is defined analytically.
+
+    Same contract as `_hermite_prepared_read`, with the analytic query
+    derivative of the piecewise-linear interpolant: the located bracket's
+    secant inside brackets and at nodes (right bracket), zero on both clamp
+    rays and on degenerate rows.
+    """
+    return _read_prepared_row(x_query, search_grid, valid_length, xp, fp, None)
+
+
+def _linear_prepared_read_jvp(primals, tangents):  # noqa: ANN001, ANN202
+    x_query, search_grid, valid_length, xp, fp = primals
+    x_query_dot, _, _, xp_dot, fp_dot = tangents
+
+    def read_at_fixed_query(xp_in: Float1D, fp_in: Float1D) -> FloatND:
+        return _read_prepared_row(
+            x_query, search_grid, valid_length, xp_in, fp_in, None
+        )
+
+    primal_out, passive_tangent = jax.jvp(
+        read_at_fixed_query, (xp, fp), (xp_dot, fp_dot)
+    )
+    query_derivative = _linear_query_derivative(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+    )
+    return primal_out, passive_tangent + query_derivative * x_query_dot
+
+
+# Same explicit wrapping as the Hermite pair (the beartype hook would bind a
+# decorated `custom_jvp` instance to its `__call__`).
+_linear_prepared_read = jax.custom_jvp(_linear_prepared_read_primal)
+_linear_prepared_read.defjvp(_linear_prepared_read_jvp)
+
+
+def _linear_query_derivative(
+    *,
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+) -> FloatND:
+    """Analytic query derivative of the linear padded-row read.
+
+    Same bracket location as the read (`side="right"`, so a node query gets
+    its right bracket) and the same published-derivative convention as
+    `_hermite_query_derivative`, with the bracket's secant in place of the
+    limited-Hermite derivative:
+
+    - strictly below the first node and strictly above the last valid node:
+      zero; exactly on the last node: the last bracket's secant,
+    - a non-finite value difference (a `-inf` endpoint): zero (the secant
+      fallback convention),
+    - a zero-width located bracket: zero,
+    - singleton row: zero; empty row: NaN (poison-carrying).
+    """
+    upper = jnp.clip(
+        jnp.searchsorted(search_grid, x_query, side="right"),
+        1,
+        jnp.maximum(valid_length - 1, 1),
+    ).astype(jnp.int32)
+    lower = upper - 1
+    bracket_width = xp[upper] - xp[lower]
+    safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
+    df = fp[upper] - fp[lower]
+    secant = jnp.where(jnp.isfinite(df), df, 0.0) / safe_width
+    first_node = search_grid[0]
+    last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
+    outside = (x_query < first_node) | (x_query > last_node)
+    derivative = jnp.where(outside | (bracket_width == 0.0), 0.0, secant)
+    derivative = jnp.where(valid_length == 1, 0.0, derivative)
+    return jnp.where(valid_length == 0, jnp.nan, derivative)
+
+
+def _read_prepared_row(
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D | None,
+) -> FloatND:
+    """Evaluate the padded-row interpolant (the primal branch program)."""
     # The bracket indices span the full query mesh (the dominant egm_step
     # working buffer at scale), and never exceed the grid length (a few
     # hundred), so int32 holds them with vast headroom. Under x64 `searchsorted`
@@ -157,15 +360,237 @@ def interp_on_prepared_grid(
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
     lower = upper - 1
-    return _interp_between_nodes(
+    # Degenerate valid prefixes (fewer than two nodes) gather NaN padding into
+    # the bracket. `jnp.where` propagates cotangents through BOTH of its
+    # branches, so NaN partials in the discarded bracket arithmetic would
+    # poison the selected constant's derivative (`0 · NaN = NaN`) — and the
+    # readers are differentiated (asset-row mode grads the continuation read).
+    # Feed the arithmetic a finite dummy bracket on those rows; the overrides
+    # below still publish the contract values.
+    degenerate = valid_length < 2  # noqa: PLR2004
+
+    def _sanitized(gathered: FloatND, dummy: float) -> FloatND:
+        return jnp.where(degenerate, dummy, gathered)
+
+    result = _interp_between_nodes(
         x_query=x_query,
-        xp_lower=xp[lower],
-        xp_upper=xp[upper],
-        fp_lower=fp[lower],
-        fp_upper=fp[upper],
-        slope_lower=None if fp_slopes is None else fp_slopes[lower],
-        slope_upper=None if fp_slopes is None else fp_slopes[upper],
+        xp_lower=_sanitized(xp[lower], 0.0),
+        xp_upper=_sanitized(xp[upper], 1.0),
+        fp_lower=_sanitized(fp[lower], 0.0),
+        fp_upper=_sanitized(fp[upper], 0.0),
+        slope_lower=None if fp_slopes is None else _sanitized(fp_slopes[lower], 0.0),
+        slope_upper=None if fp_slopes is None else _sanitized(fp_slopes[upper], 0.0),
     )
+    # Degenerate-row contract:
+    # - one valid node ⇒ the edge clamp on both sides is that node's value
+    #   (constant in the query, identity in the node's value — also under
+    #   autodiff),
+    # - an empty prefix (only from an already-poisoned carry) ⇒ NaN, so the
+    #   runtime NaN diagnostics surface the poison instead of a finite constant.
+    result = jnp.where(valid_length == 1, fp[0], result)
+    result = jnp.where(valid_length == 0, jnp.nan, result)
+    # A NaN query marks an upstream failure. Regular rows propagate it through
+    # the bracket arithmetic; the degenerate-row constants above would mask it,
+    # so re-pin it explicitly — fail-loud on every row shape.
+    return jnp.where(jnp.isnan(x_query), jnp.nan, result)
+
+
+def interp_right_germ_on_padded_grid(
+    *,
+    x_query: FloatND,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+) -> tuple[BoolND, FloatND, FloatND, FloatND]:
+    """Compute the right germ of the Hermite value read on a padded row.
+
+    Same row contract as `interp_on_padded_grid`; see
+    `interp_right_germ_on_prepared_grid` for the germ semantics.
+
+    Args:
+        x_query: Points at which to evaluate the right germ; any shape.
+        xp: Weakly ascending grid row with NaNs only in the tail.
+        fp: Function values on `xp`, NaN-padded in lockstep with `xp`.
+        fp_slopes: Derivatives of `fp` with respect to `xp` at the `xp` nodes,
+            NaN-padded in lockstep.
+
+    Returns:
+        Tuple of the right-finiteness flag and the first, second, and third
+        right derivatives, each with the shape of `x_query`.
+
+    """
+    search_grid, valid_length = prepare_padded_grid(xp)
+    return interp_right_germ_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+
+def interp_right_germ_on_prepared_grid(
+    *,
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+) -> tuple[BoolND, FloatND, FloatND, FloatND]:
+    """Compute the right germ of the Hermite value read at each query.
+
+    The germ is the complete local description of the *value interpolant* that
+    `interp_on_prepared_grid` evaluates with `fp_slopes` immediately to the
+    right of the query — not a read of the slope row itself. Each local piece
+    is a cubic (or a constant clamp), so the germ is finite-dimensional: a
+    right-finiteness flag plus the first, second, and third one-sided
+    derivatives determine the read on a right neighborhood exactly. The germ
+    differs from the raw slope row exactly where a tie-owner decision needs the
+    truth: the Fritsch-Carlson limiter may cap a node's raw slope, the edge
+    clamps flatten the read outside the valid range, and a `-inf` bracket
+    endpoint kills the read immediately right of a finite node. Semantics:
+
+    - Strictly inside a bracket: the derivatives of that bracket's limited
+      cubic Hermite (the secant and zero curvature where the correction is
+      inapplicable — the linear fallback).
+    - Exactly on a node: the derivatives at the left edge of the node's *right*
+      bracket (the bracket search is right-continuous).
+    - Strictly below the first node, and at or above the last valid node: the
+      read clamps to a constant — right-finite with all derivatives zero.
+    - A bracket with a non-finite endpoint value: not right-finite (the read
+      is `-inf` on the bracket's interior), derivatives zero.
+
+    Args:
+        x_query: Points at which to evaluate the right germ; any shape.
+        search_grid: The row's `+inf`-padded search key from
+            `prepare_padded_grid`.
+        valid_length: The row's non-NaN prefix length from
+            `prepare_padded_grid`.
+        xp: The original NaN-padded grid row (the abscissa gather source).
+        fp: Function values on `xp`, NaN-padded in lockstep.
+        fp_slopes: Node derivatives, NaN-padded in lockstep.
+
+    Returns:
+        Tuple of the right-finiteness flag and the first, second, and third
+        right derivatives, each with the shape of `x_query`.
+
+    The germ is the *tie selector* over the published interpolants, one of two
+    derivative objects with a deliberately different terminal convention: the
+    germ's first derivative is zero at and above the last valid node (the read
+    clamps right of it), while the published query derivative of the value
+    read (`interp_on_prepared_grid` under autodiff) is the node's own limited
+    slope *at* the last node and zero only strictly above — the economics the
+    parent Euler inversion consumes. The two objects agree everywhere else and
+    share one bracket/limiter implementation.
+
+    """
+    first, second, third, endpoint_finite, _ = _hermite_bracket_derivatives(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+    # The read clamps to a constant strictly below the first node and at or
+    # above the last valid one; the germ there is right-finite with all
+    # derivatives exactly zero. (`search_grid` is `+inf` on the pad, so a
+    # poisoned all-NaN row lands on the lower clamp.)
+    first_node = search_grid[0]
+    last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
+    on_clamp_ray = (x_query < first_node) | (x_query >= last_node)
+    right_finite = on_clamp_ray | endpoint_finite
+    return (
+        right_finite,
+        jnp.where(on_clamp_ray, 0.0, first),
+        jnp.where(on_clamp_ray, 0.0, second),
+        jnp.where(on_clamp_ray, 0.0, third),
+    )
+
+
+def _hermite_bracket_derivatives(
+    *,
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+) -> tuple[FloatND, FloatND, FloatND, BoolND, BoolND]:
+    """Derivatives of the located bracket's limited-Hermite piece.
+
+    The single bracket/limiter implementation behind both derivative objects —
+    the right germ (tie selection) and the published query derivative (the
+    value read's custom JVP): identical bracket location to
+    `interp_on_prepared_grid` (`side="right"` puts an on-node query into the
+    node's right bracket) and the same limiter as `_hermite_correction`, so
+    these are the derivatives of exactly the polynomial the value read
+    evaluates. In the bracket's local coordinate `t` the read is
+    `p(t) = f_l + Δf t + c_l t + (c_u - 2 c_l) t² + (c_l - c_u) t³`.
+
+    Returns:
+        Tuple of the first, second, and third derivatives of the located
+        piece (the secant and zeros where the Hermite correction is
+        inapplicable — the linear fallback), the bracket's
+        endpoint-finiteness flag, and the zero-width-bracket flag.
+
+    """
+    upper = jnp.clip(
+        jnp.searchsorted(search_grid, x_query, side="right"),
+        1,
+        jnp.maximum(valid_length - 1, 1),
+    ).astype(jnp.int32)
+    lower = upper - 1
+    xp_lower = xp[lower]
+    xp_upper = xp[upper]
+    fp_lower = fp[lower]
+    fp_upper = fp[upper]
+    slope_lower = fp_slopes[lower]
+    slope_upper = fp_slopes[upper]
+
+    bracket_width = xp_upper - xp_lower
+    safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
+    relative_position = jnp.where(
+        bracket_width == 0.0,
+        1.0,
+        jnp.clip((x_query - xp_lower) / safe_width, 0.0, 1.0),
+    )
+    df = fp_upper - fp_lower
+    safe_df = jnp.where(jnp.isfinite(df), df, 0.0)
+    secant = safe_df / safe_width
+
+    def limit(slope: FloatND) -> FloatND:
+        same_sign = slope * secant > 0.0
+        limited = jnp.sign(secant) * jnp.minimum(jnp.abs(slope), 3.0 * jnp.abs(secant))
+        return jnp.where(same_sign, limited, 0.0)
+
+    coeff_lower = safe_width * limit(slope_lower) - safe_df
+    coeff_upper = safe_df - safe_width * limit(slope_upper)
+    hermite_first = (
+        safe_df
+        + (1.0 - 2.0 * relative_position)
+        * ((1.0 - relative_position) * coeff_lower + relative_position * coeff_upper)
+        + relative_position * (1.0 - relative_position) * (coeff_upper - coeff_lower)
+    ) / safe_width
+    hermite_second = (
+        2.0 * (coeff_upper - 2.0 * coeff_lower)
+        + 6.0 * (coeff_lower - coeff_upper) * relative_position
+    ) / safe_width**2
+    hermite_third = 6.0 * (coeff_lower - coeff_upper) / safe_width**3
+    applicable = (
+        (bracket_width > 0.0)
+        & jnp.isfinite(fp_lower)
+        & jnp.isfinite(fp_upper)
+        & jnp.isfinite(slope_lower)
+        & jnp.isfinite(slope_upper)
+    )
+    first = jnp.where(applicable, hermite_first, secant)
+    second = jnp.where(applicable, hermite_second, 0.0)
+    third = jnp.where(applicable, hermite_third, 0.0)
+    endpoint_finite = jnp.isfinite(fp_lower) & jnp.isfinite(fp_upper)
+    return first, second, third, endpoint_finite, bracket_width == 0.0
 
 
 def _interp_between_nodes(
@@ -285,15 +710,25 @@ def interp_and_derivative_on_padded_grid(
       bracket (`side="right"`), so the derivative is the right piece's
       left-endpoint slope — the node's limited slope under Hermite, the right
       secant under linear;
-    - at the last non-NaN node the read clamps into the last bracket, so the
-      derivative is that piece's right-endpoint slope (left-side derivative);
+    - at the EXACT last non-NaN node the read clamps into the last bracket
+      and the derivative is that piece's right-endpoint slope — the node's
+      own limited slope, the economic marginal a parent Euler inversion
+      consumes there. The clamped interpolant is constant only STRICTLY
+      above the last node, where the derivative is zero: the zero is a
+      grid-truncation artifact and must not leak onto the node itself. (A
+      right-germ ranking of the clamped interpolant reads zero AT the node —
+      a deliberate two-object split: the germ describes the published
+      interpolant's right behavior for tie selection, this channel publishes
+      the economics.);
     - at a duplicated jump abscissa the right piece applies, matching the
       value read's one-sided convention;
     - below support the derivative is the first bracket's secant (the slope
-      of the value read's linear extension); at or above the last node it is
-      zero (the value clamps);
+      of the value read's linear extension);
     - zero-width and `-inf` brackets read a zero derivative, keeping the
-      (value, derivative) pair consistent with the value conventions.
+      (value, derivative) pair consistent with the value conventions;
+    - a singleton row is the constant pair `(fp[0], 0)`; an empty row is
+      `(NaN, NaN)` — the NaN value carries a poisoned carry to the runtime
+      diagnostics and the derivative is non-authoritative.
 
     Args:
         x_query: Points at which to evaluate; any shape.
@@ -341,25 +776,51 @@ def interp_and_derivative_on_prepared_grid(
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
     lower = upper - 1
+    # Degenerate valid prefixes gather NaN padding into the bracket; feed the
+    # arithmetic a finite dummy bracket on those rows (mirroring
+    # `interp_on_prepared_grid`, AD-safe under a further differentiation) and
+    # publish the contract values through the overrides below.
+    degenerate = valid_length < 2  # noqa: PLR2004
+
+    def _sanitized(gathered: FloatND, dummy: float) -> FloatND:
+        return jnp.where(degenerate, dummy, gathered)
+
     value = _interp_between_nodes(
         x_query=x_query,
-        xp_lower=xp[lower],
-        xp_upper=xp[upper],
-        fp_lower=fp[lower],
-        fp_upper=fp[upper],
-        slope_lower=None if fp_slopes is None else fp_slopes[lower],
-        slope_upper=None if fp_slopes is None else fp_slopes[upper],
+        xp_lower=_sanitized(xp[lower], 0.0),
+        xp_upper=_sanitized(xp[upper], 1.0),
+        fp_lower=_sanitized(fp[lower], 0.0),
+        fp_upper=_sanitized(fp[upper], 0.0),
+        slope_lower=None if fp_slopes is None else _sanitized(fp_slopes[lower], 0.0),
+        slope_upper=None if fp_slopes is None else _sanitized(fp_slopes[upper], 0.0),
     )
     derivative = _derivative_between_nodes(
         x_query=x_query,
-        xp_lower=xp[lower],
-        xp_upper=xp[upper],
-        fp_lower=fp[lower],
-        fp_upper=fp[upper],
-        slope_lower=None if fp_slopes is None else fp_slopes[lower],
-        slope_upper=None if fp_slopes is None else fp_slopes[upper],
+        xp_lower=_sanitized(xp[lower], 0.0),
+        xp_upper=_sanitized(xp[upper], 1.0),
+        fp_lower=_sanitized(fp[lower], 0.0),
+        fp_upper=_sanitized(fp[upper], 0.0),
+        slope_lower=None if fp_slopes is None else _sanitized(fp_slopes[lower], 0.0),
+        slope_upper=None if fp_slopes is None else _sanitized(fp_slopes[upper], 0.0),
     )
-    return value, derivative
+    # Degenerate valid prefixes share the value channel's contract (see
+    # `interp_on_prepared_grid`): a singleton row is the constant pair
+    # `(fp[0], 0)`; an empty row is `(NaN, NaN)` — the NaN value carries the
+    # poison and the derivative is non-authoritative.
+    value = jnp.where(valid_length <= 1, fp[0], value)
+    derivative = jnp.where(
+        valid_length == 0,
+        jnp.nan,
+        jnp.where(valid_length == 1, 0.0, derivative),
+    )
+    # A NaN query marks an upstream failure; re-pin both channels so the
+    # degenerate-row constants above cannot mask it (the value reader's
+    # fail-loud contract).
+    query_is_nan = jnp.isnan(x_query)
+    return (
+        jnp.where(query_is_nan, jnp.nan, value),
+        jnp.where(query_is_nan, jnp.nan, derivative),
+    )
 
 
 def locate_on_grid(

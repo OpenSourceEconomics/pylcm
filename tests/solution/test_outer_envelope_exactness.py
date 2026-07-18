@@ -10,11 +10,16 @@ interval strictly between two nodes is read at its true value there instead of
 being bridged upward, which interpolating an already-maximized row would do
 (`thm:aggregate-bridge`).
 
-The exactness gate reads an event-complete query set — every candidate knot,
-every pairwise crossing on an overlap interval, every support boundary, and one
-midpoint per inter-event gap — through both `outer_envelope_at_query` and an
-independent host max-of-reads, and requires exact agreement, so a sub-spacing
-island cannot hide between mesh points.
+The exactness gate reads a query set that is event-complete *for the affine
+candidate rows it constructs* — every candidate knot, every pairwise crossing,
+every support boundary, and one midpoint per inter-event gap — through both
+`outer_envelope_at_query` and an independent host max-of-reads, and requires
+exact agreement, so for those rows a sub-spacing island cannot hide between
+mesh points. The host loops candidates in plain NumPy but reads each one
+through the same interpolation primitive, so the gate certifies the
+candidate-axis maximum and tie plumbing, not the Hermite primitive itself —
+that has its own spec (with an independent scalar reference) in
+`test_egm_interp.py`.
 """
 
 import jax.numpy as jnp
@@ -197,6 +202,52 @@ def test_query_below_every_candidate_support_is_masked_out():
     assert float(marginal[0]) == 0.0
 
 
+def test_poisoned_candidate_row_propagates_nan_through_the_envelope():
+    """An all-NaN (poisoned) candidate row makes the envelope value NaN.
+
+    A poisoned carry row marks an upstream overflow; the envelope must surface
+    it fail-loud through the maximum instead of converting it into an ordinary
+    infeasible `(-inf, 0)` candidate that a live candidate then silently wins
+    over.
+    """
+    poisoned = jnp.full((3,), jnp.nan)
+    live_endog = jnp.array([0.0, 1.0, 2.0])
+    live_value = jnp.array([0.0, 1.0, 2.0])
+    live_marginal = jnp.array([1.0, 1.0, 1.0])
+
+    value, _ = outer_envelope_at_query(
+        candidate_endog=jnp.stack([poisoned, live_endog]),
+        candidate_value=jnp.stack([poisoned, live_value]),
+        candidate_marginal=jnp.stack([poisoned, live_marginal]),
+        x_query=jnp.array([1.0]),
+    )
+
+    assert bool(jnp.isnan(value[0]))
+
+
+def test_singleton_candidate_clamps_to_its_node():
+    """A one-node candidate reads its node's value and marginal at and above it.
+
+    A candidate whose valid prefix is a single coh node is a constant-clamp
+    branch from that node on: at and above the node it publishes the node's
+    value and marginal, and below the node it is infeasible `(-inf, 0)` as for
+    any candidate.
+    """
+    candidate_endog = jnp.array([[1.0, jnp.nan, jnp.nan]])
+    candidate_value = jnp.array([[5.0, jnp.nan, jnp.nan]])
+    candidate_marginal = jnp.array([[2.0, jnp.nan, jnp.nan]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([0.5, 1.0, 2.0]),
+    )
+
+    np.testing.assert_array_equal(np.asarray(value), [-np.inf, 5.0, 5.0])
+    np.testing.assert_array_equal(np.asarray(marginal), [0.0, 2.0, 2.0])
+
+
 def test_exact_candidate_tie_publishes_the_right_continuous_marginal():
     """At an exact crossing the winner is the candidate that wins to the right.
 
@@ -219,6 +270,128 @@ def test_exact_candidate_tie_publishes_the_right_continuous_marginal():
 
     np.testing.assert_allclose(float(value[0]), 0.5, atol=1e-9)
     np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
+
+
+def test_tie_owner_follows_the_limited_value_slope_not_the_raw_marginal():
+    """At a tie the winner is decided by the value read's actual right slope.
+
+    Candidate A carries a raw node marginal of `100` at the tie, but its value
+    row rises only by `0.1` per bracket, so the Fritsch-Carlson limiter caps the
+    value read's right slope at three times the secant (`0.3`). Candidate B's
+    value rises by `1.0` per bracket (right slope `1.0 > 0.3`), so B is the
+    branch that actually wins immediately right of the tie and B's marginal must
+    be published — ranking by the raw marginal would hand the Euler inversion
+    A's `100`.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.array([[0.9, 1.0, 1.1], [0.0, 1.0, 2.0]])
+    candidate_marginal = jnp.array([[0.1, 100.0, 0.1], [1.0, 1.0, 1.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
+
+
+def test_tie_at_the_upper_clamp_keeps_the_clamped_candidate_available():
+    """A candidate clamped constant above its last knot still competes at a tie.
+
+    Candidate A ends exactly at the tie query and clamps to the constant `1.0`
+    to the right (right slope zero); candidate B continues right but declines
+    (right slope `-1`). The clamp ray beats the declining branch immediately
+    right of the query, so A owns the tie and A's marginal is published —
+    treating A's last knot as the end of its support would hand the tie to the
+    losing branch B.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0], [1.0, 2.0]])
+    candidate_value = jnp.array([[0.0, 1.0], [1.0, 0.0]])
+    candidate_marginal = jnp.array([[1.0, 1.0], [-1.0, -1.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
+
+
+def test_tie_rank_orders_extreme_slopes_exactly_at_float32():
+    """Extreme right slopes at a tie are compared exactly, not through a squash.
+
+    Two candidates tie in value at their shared first node with float32 right
+    slopes `1e20` and `2e20` (each equal to its own secant, so the limiter is
+    inactive). The comparison must order them exactly and pick the steeper
+    candidate B; squashing slopes through `arctan` collapses both to `pi/2` in
+    float32 and silently falls back to first-index ownership.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0], [0.0, 1.0]], dtype=jnp.float32)
+    candidate_value = jnp.array([[0.0, 1e20], [0.0, 2e20]], dtype=jnp.float32)
+    candidate_marginal = jnp.array([[1e20, 1e20], [2e20, 2e20]], dtype=jnp.float32)
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([0.0], dtype=jnp.float32),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 0.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), float(np.float32(2e20)))
+
+
+def test_tie_with_equal_right_slopes_is_owned_by_the_higher_curvature():
+    """Equal first right derivatives at a tie resolve by the read's curvature.
+
+    Both candidates tie at `q = 1` with limited right derivative exactly 3 (A's
+    raw node slope 100 is limiter-capped, B's slope 3 passes), but B's Hermite
+    piece curves less steeply downward, so B's read is strictly larger for
+    every `q > 1`. The published marginal must be B's (3.0), not the
+    lower-index candidate A's raw 100.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.array([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0]])
+    candidate_marginal = jnp.array([[1.0, 100.0, 1.0], [2.0, 3.0, 2.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 0.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 3.0, atol=1e-9)
+
+
+def test_tie_against_a_dying_right_bracket_is_owned_by_the_finite_branch():
+    """A candidate whose read dies to `-inf` immediately right loses the tie.
+
+    Both candidates read value 1 at `q = 1`, but A's right bracket ends in
+    `-inf` (its read is `-inf` for every `q > 1`) while B stays finite. B owns
+    the tie regardless of derivative order, so the published marginal is B's
+    0.0, never the dying branch's 10.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.array([[0.0, 1.0, -jnp.inf], [0.0, 1.0, 1.0]])
+    candidate_marginal = jnp.array([[1.0, 10.0, 10.0], [1.0, 0.0, 0.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 0.0, atol=1e-9)
 
 
 def test_tie_at_a_support_edge_prefers_the_candidate_that_continues_right():

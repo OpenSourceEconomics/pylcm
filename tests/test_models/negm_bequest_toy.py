@@ -65,15 +65,14 @@ def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> Float
     )
 
 
-def resources(
-    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: ContinuousState
-) -> FloatND:
-    """Liquid resources consumption is paid out of, given the fixed outer node."""
-    return (
-        wealth
-        + LABOUR_INCOME
-        - credited(illiquid=illiquid, next_illiquid=next_illiquid)
-    )
+def resources_before_outer_cost(wealth: ContinuousState) -> FloatND:
+    """Cost-free base of the liquid resources consumption is paid out of.
+
+    With `NEGM.outer_cost` declared, pylcm composes the resources function as
+    `resources_before_outer_cost - credited` at model build, so the credited
+    durable move enters resources additively by construction.
+    """
+    return wealth + LABOUR_INCOME
 
 
 def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
@@ -146,6 +145,7 @@ NEGM_SOLVER = NEGM(
     outer_post_decision="next_illiquid",
     outer_grid=OUTER_GRID,
     outer_no_adjustment_candidate="keep_illiquid",
+    outer_cost="credited",
 )
 
 
@@ -172,7 +172,7 @@ def build_negm_model() -> Model:
         transition=next_regime,
         functions={
             "utility": utility,
-            "resources": resources,
+            "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,
             "keep_illiquid": keep_illiquid,
             "credited": credited,

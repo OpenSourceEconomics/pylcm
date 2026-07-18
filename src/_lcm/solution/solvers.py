@@ -196,6 +196,10 @@ class DCEGM(Solver):
     in R-space. Required even in the classic case, where it is the identity
     (e.g. `"resources": lambda wealth: wealth`). Must not depend on the
     continuous action and must be non-decreasing in the continuous state.
+    In an `NEGM` regime with a declared `outer_cost`, the function of this
+    name is composed by pylcm at model build
+    (`<resources>_before_outer_cost - <outer_cost>`) and must not be defined
+    by the regime.
     """
 
     post_decision_function: FunctionName
@@ -424,19 +428,45 @@ class NEGM(Solver):
     kink.
     """
 
+    outer_cost: FunctionName | None = None
+    """The credited outer-cost function in `Regime.functions`, or `None`.
+
+    The declared contract behind the stacked-carry lift. With a cost declared,
+    the regime must NOT define the inner resources function itself: it defines
+    the cost-free base `<inner.resources>_before_outer_cost`, and pylcm
+    composes `resources = base - cost` at model build — so the resources'
+    affine use of the cost (coefficient exactly `-1`) holds by construction,
+    not by inference. Model build additionally enforces that the cost reads
+    only the durable state, the outer post-decision, and params, and that the
+    base does not read the outer post-decision. The per-cell cash-on-hand
+    shift then derives directly from the declaration
+    (`cost(z, z') - cost(z, keep(z))`). `None` declares the regime
+    outer-cost-free: the regime defines the resources function directly, it
+    must be independent of the outer post-decision (enforced), and every
+    candidate already shares the keeper's cash-on-hand axis.
+    """
+
     outer_batch_size: int = 0
     """Number of outer-grid nodes solved per chunk of the outer sweep.
 
-    Bounds the *solve-side* peak only: each chunk's per-node intermediate
-    buffers are materialised and released together, so they never grow with
-    the whole outer grid. The candidate *carries* are all retained regardless
-    — the published stacked continuation holds every outer candidate
-    (`(A+1) * n_pad` grid slots per leading cell), which is inherent to the
-    exact query-side outer maximum, not a chunking artifact. A positive value
-    processes that many nodes at once (their independent solves overlap);
-    `0` (the default) solves every node at once — fastest, but its solve-side
-    peak grows with the outer-grid size. It is a memory-vs-parallelism knob
-    only: the solved value function is identical across batch sizes.
+    Bounds the *solve-side* chunk transients only: each chunk's per-node
+    intermediate buffers are materialised and released together, so they never
+    grow with the whole outer grid. It does not bound the period's peak, whose
+    remaining candidate-scaled contributions chunking cannot remove:
+
+    - the candidate *carries* are all retained — the published stacked
+      continuation holds every outer candidate (`(A+1) * n_pad` grid slots per
+      leading cell), inherent to the exact query-side outer maximum,
+    - while the stack is built, the unstacked candidate carries and the
+      stacked output coexist transiently,
+    - the parent's continuation read prepares a search key of the full stacked
+      shape and evaluates every candidate per query.
+
+    A positive value processes that many nodes at once (their independent
+    solves overlap); `0` (the default) solves every node at once — fastest,
+    but its solve-side peak grows with the outer-grid size. It is a
+    memory-vs-parallelism knob only: the solved value function is identical
+    across batch sizes.
     """
 
     def __post_init__(self) -> None:
@@ -520,11 +550,10 @@ class NEGM(Solver):
         durable_state = self.outer_post_decision.removeprefix("next_")
         coh_shift_func = _build_coh_shift_function(
             functions=context.functions,
-            resources_name=self.inner.resources,
-            euler_state_name=self.inner.continuous_state,
             durable_state_name=durable_state,
             outer_post_decision=self.outer_post_decision,
             no_adjustment_func=no_adjustment_func,
+            outer_cost_name=self.outer_cost,
         )
         durable_grid_values = context.grids[durable_state].to_jax()
         period_kernels = MappingProxyType(
@@ -803,10 +832,14 @@ class _NEGMPeriodKernel:
     """
 
     outer_batch_size: int
-    """Outer-grid nodes solved per chunk before folding into the running maximum.
+    """Outer-grid nodes solved per chunk of the outer sweep.
 
-    `0` solves every node at once; a positive value bounds the peak memory to one
-    chunk of candidates. A memory-vs-parallelism knob only — value-invariant.
+    `0` solves every node at once; a positive value bounds the *solve-side*
+    chunk transients only. It does not bound the period's peak: every candidate
+    carry stays resident for the stacked continuation, the unstacked candidate
+    list and the stacked output coexist while the stack is built, and the
+    parent read evaluates the full candidate axis per query. A
+    memory-vs-parallelism knob only — value-invariant.
     """
 
     @property
@@ -1039,140 +1072,105 @@ def _stack_carry_template(
 def _build_coh_shift_function(
     *,
     functions: EconFunctionsMapping,
-    resources_name: FunctionName,
-    euler_state_name: StateName,
     durable_state_name: StateName,
     outer_post_decision: FunctionName,
     no_adjustment_func: EconFunction | None,
+    outer_cost_name: FunctionName | None,
 ) -> Callable[..., FloatND]:
     """Build the per-(durable, outer-node) cash-on-hand shift of each adjuster.
 
     Adjuster `j`'s inner endogenous grid lives in resources space `R_j = coh -
-    credited(z, z'_j)`; mapping it into the keeper's cash-on-hand axis adds back
-    `credited(z, z'_j)`. That credited cost is the keeper-minus-adjuster
-    difference of the regime's own inner resources at any fixed liquid wealth
-    (`resources` is affine in wealth, so wealth cancels):
+    cost(z, z'_j)`; mapping it into the keeper's cash-on-hand axis adds back
+    the credited cost relative to the free keep:
 
-    `shift(z, z'_j) = resources(w0, z, next=keep(z)) - resources(w0, z, next=z'_j)`,
+    `shift(z, z'_j) = cost(z, z'_j) - cost(z, keep(z))`,
 
-    where `keep` is the keeper's no-adjustment map (`no_adjustment_func`; the
-    identity when the regime declares none). The keeper leg holds the outer
-    post-decision at exactly the level the keeper core realises — `keep(z)`,
-    e.g. the depreciated stock `z (1 - delta)` — so the lift is the adjuster's
-    full credited cost relative to the free keep. The axis change has
-    derivative 1, so each candidate's value and resource-marginal transfer
-    into coh space unchanged; with an identity keeper the two legs coincide.
+    evaluated directly on the regime's declared outer-cost DAG
+    (`NEGM.outer_cost`), whose inputs are only the durable state, the outer
+    post-decision, and params. Nothing about the shift is inferred from the
+    wider resources function — with a declared cost the resources are composed
+    at model build as `<resources>_before_outer_cost - <outer_cost>`, so their
+    affine use of the cost (coefficient exactly `-1`) holds by construction
+    and the credited difference is exactly the resources translation. `keep`
+    is the keeper's no-adjustment map (`no_adjustment_func`; the identity when
+    the regime declares none) — the level whose credited cost is zero, e.g.
+    the depreciated stock `z (1 - delta)`. The axis change has derivative 1,
+    so each candidate's value and resource-marginal transfer into coh space
+    unchanged. With `outer_cost_name=None` — validated at model build to mean
+    the resources never read the outer post-decision — the shift is
+    identically zero.
 
     The returned callable takes the durable grid (`durable_values`), the outer
     grid (`outer_values`), and the regime's flat params, and returns the shift
     matrix of shape `(n_durable, n_outer)`.
     """
-    resources_func = concatenate_functions(
-        functions={name: func for name, func in functions.items() if name != "H"},
-        targets=resources_name,
+    if outer_cost_name is None:
+
+        def zero_shifts(
+            *, durable_values: FloatND, outer_values: FloatND, **params: object
+        ) -> FloatND:
+            del params
+            return jnp.zeros(
+                (durable_values.shape[0], outer_values.shape[0]),
+                dtype=durable_values.dtype,
+            )
+
+        return zero_shifts
+
+    non_h_functions = {name: func for name, func in functions.items() if name != "H"}
+    cost_func = concatenate_functions(
+        functions=non_h_functions,
+        targets=outer_cost_name,
         enforce_signature=False,
         set_annotations=True,
     )
-    resources_arg_names = set(get_annotations(resources_func)) - {"return"}
-    bound_arg_names = {euler_state_name, durable_state_name, outer_post_decision}
+    cost_arg_names = set(get_annotations(cost_func)) - {"return"}
+
+    def keeper_level(durable: FloatND) -> FloatND:
+        # The keeper core realises the outer post-decision at its own
+        # no-adjustment level `keep(durable)` — the level whose credited cost
+        # is zero. With an identity keeper this is `durable` itself.
+        return durable if no_adjustment_func is None else no_adjustment_func(durable)
 
     def coh_shifts(
         *, durable_values: FloatND, outer_values: FloatND, **params: object
     ) -> FloatND:
-        zero_reference = jnp.zeros((), dtype=durable_values.dtype)
-        one_reference = jnp.ones((), dtype=durable_values.dtype)
-        # Every resources leaf other than the Euler state, the durable state, the
-        # outer post-decision, and the regime params is constant in the outer
-        # choice (the credited cost reads only the durable margin), so it appears
-        # identically in the keeper and adjuster legs and cancels in their
-        # difference. Hold each at a fixed reference — exactly as the Euler state
-        # is held at zero — so the shift is the pure credited-cost difference.
-        separable_arg_names = resources_arg_names - bound_arg_names - set(params)
-
-        def shift_one(
-            durable: FloatND,
-            outer: FloatND,
-            euler_reference: FloatND,
-            separable_reference: FloatND,
-        ) -> FloatND:
-            # The keeper leg holds the outer post-decision at the keeper core's
-            # own no-adjustment level `keep(durable)` — the level whose credited
-            # cost is zero — so the shift is the adjuster's full credited cost
-            # relative to the free keep. With an identity keeper this is
-            # `durable` itself.
-            keeper_next = (
-                durable if no_adjustment_func is None else no_adjustment_func(durable)
-            )
-            separable_references = dict.fromkeys(
-                separable_arg_names, separable_reference
-            )
-            keeper_resources = resources_func(
-                **{
-                    euler_state_name: euler_reference,
-                    durable_state_name: durable,
-                    outer_post_decision: keeper_next,
-                },
-                **separable_references,
-                **params,
-            )
-            adjuster_resources = resources_func(
-                **{
-                    euler_state_name: euler_reference,
-                    durable_state_name: durable,
-                    outer_post_decision: outer,
-                },
-                **separable_references,
-                **params,
-            )
-            return keeper_resources - adjuster_resources
-
-        def shift_matrix(
-            euler_reference: FloatND, separable_reference: FloatND
-        ) -> FloatND:
-            return jax.vmap(
-                lambda durable: jax.vmap(
-                    lambda outer: shift_one(
-                        durable, outer, euler_reference, separable_reference
-                    )
-                )(outer_values)
-            )(durable_values)
-
-        # The stacked lift is a *constant translation* per (durable, outer)
-        # cell: it exists only if the keeper-adjuster resources difference is
-        # independent of the Euler state (equal liquid slopes) and of every
-        # separable leaf held at a reference. Probe both directions and fail
-        # loudly on a mismatch — a silent broadcast would place candidates on
-        # the wrong cash-on-hand axis.
-        shifts = shift_matrix(zero_reference, zero_reference)
-        euler_probe = shift_matrix(one_reference, zero_reference)
-        separable_probe = shift_matrix(zero_reference, one_reference)
-        tolerance = float(10 * jnp.sqrt(jnp.finfo(shifts.dtype).eps))
-        euler_ok = bool(
-            jnp.allclose(shifts, euler_probe, rtol=tolerance, atol=tolerance)
+        # Defense in depth behind the model-build ancestor check: a cost DAG
+        # demanding any binding other than the durable, the outer
+        # post-decision, and params cannot be evaluated per (durable, outer)
+        # cell.
+        cost_extra_arg_names = (
+            cost_arg_names - {durable_state_name, outer_post_decision} - set(params)
         )
-        separable_ok = bool(
-            jnp.allclose(shifts, separable_probe, rtol=tolerance, atol=tolerance)
-        )
-        if not (euler_ok and separable_ok):
-            offender = (
-                f"the Euler state '{euler_state_name}'"
-                if not euler_ok
-                else f"a resources leaf other than '{durable_state_name}' and "
-                f"'{outer_post_decision}'"
-            )
+        if cost_extra_arg_names:
             msg = (
-                "The NEGM cash-on-hand lift requires the keeper-adjuster "
-                "resources difference to be an additive constant per "
-                "(durable, outer-node) cell, but under the supplied params it "
-                f"depends on {offender}. No constant translation onto a common "
-                "cash-on-hand axis exists for this model, so the stacked outer "
-                "carry would be lifted onto the wrong axis. Restructure the "
-                "outer cost to be additively separable from the other states "
-                "(and leave the Euler-state coefficient identical across outer "
-                "choices), or use `GridSearch` for this regime."
+                f"The declared NEGM outer cost '{outer_cost_name}' reads "
+                f"{sorted(cost_extra_arg_names)}. It may read only the durable "
+                f"state '{durable_state_name}', the outer post-decision "
+                f"'{outer_post_decision}', and params — the credited-cost lift "
+                "is a constant per (durable, outer-node) cell, so no other "
+                "state or action can vary inside it."
             )
             raise InvalidParamsError(msg)
-        return shifts
+
+        def cost_at(durable: FloatND, outer: FloatND) -> FloatND:
+            bindings = {durable_state_name: durable, outer_post_decision: outer}
+            return cost_func(
+                **{
+                    name: value
+                    for name, value in bindings.items()
+                    if name in cost_arg_names
+                },
+                **params,
+            )
+
+        return jax.vmap(
+            lambda durable: jax.vmap(
+                lambda outer: (
+                    cost_at(durable, outer) - cost_at(durable, keeper_level(durable))
+                )
+            )(outer_values)
+        )(durable_values)
 
     return coh_shifts
 

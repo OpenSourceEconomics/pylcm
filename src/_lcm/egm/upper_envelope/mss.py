@@ -44,11 +44,13 @@ rows for off-grid policy reads; the crossing-completeness guarantee applies on
 the live-covered domain.
 
 Crossing arithmetic runs in interval-local coordinates (offsets from the
-interval's left endpoint), so the enumeration is invariant to translating the
-resource grid or shifting all values by a common constant. Tolerances are
-scale-relative only: crossing ties use a fixed multiple of machine epsilon
-times the interval width, and value/policy record ties use a relative
-tolerance with no absolute floor.
+interval's left endpoint), so no absolute-coordinate product enters the
+enumeration. Tolerances are few-ulp windows of the compared quantity itself:
+crossing ties coalesce only offsets that are numerically the same point (a
+pencil of lines through one intersection), and value/policy record ties
+merge only gaps at the storage-indistinguishability scale of the value
+magnitude — so neither a translation of the resource grid nor a common shift
+of all values can merge distinct representable crossings or records.
 
 A live candidate *point* whose value exceeds both one-sided winners at its
 abscissa beyond representational rounding (a zero-width dominating link that
@@ -212,12 +214,14 @@ def refine_envelope_with_support(
         [jnp.full((1,), -jnp.inf, dtype=query_grid.dtype), query_grid[:-1]]
     )
     is_new = query_grid > prev_grid
-    # Record equality is representational: two computations of the same
-    # quantity agree up to rounding proportional to its magnitude, so the
-    # comparison is relative-only (`atol=0`). No tolerance here depends on the
-    # coordinate origin — a genuinely distinct pair merely duplicates the
-    # node, which the read resolves by its side convention.
-    tolerance = 64.0 * float(jnp.finfo(query_grid.dtype).eps)
+    # Record equality is a few-ulp window: two computations of the same
+    # quantity agree to within a handful of rounding steps of the stored
+    # magnitude, and gaps below that scale are indistinguishable in storage.
+    # A wider cushion would swallow genuinely representable gaps whenever a
+    # common cardinal shift raises the value level — the winner would then
+    # depend on an arbitrary value normalization. A missed tie merely
+    # duplicates the node, which the read resolves by its side convention.
+    tolerance = 8.0 * float(jnp.finfo(query_grid.dtype).eps)
     same_record = (
         (left_side.branch == right_side.branch)
         & jnp.isclose(left_side.value, right_side.value, rtol=tolerance, atol=0.0)
@@ -489,11 +493,13 @@ def _lexicographic_winner(
     masked_value = jnp.where(covers, value_at, -jnp.inf)
     best_value = jnp.max(masked_value, axis=1)
     exists = jnp.isfinite(best_value)
-    # Value ties are representational (two computations of the same envelope
-    # value agree up to rounding proportional to its magnitude): relative-only,
-    # no origin-dependent absolute slack. A missed tie merely skips the slope
-    # tie-break and duplicates the node downstream — never merges records.
-    tolerance = 64.0 * jnp.finfo(value_at.dtype).eps
+    # Value ties are a few-ulp window of the stored magnitude — the scale at
+    # which two computations of the same envelope value are indistinguishable.
+    # A wider cushion would let a common cardinal value shift merge branches
+    # whose gap is genuinely representable. A missed tie merely skips the
+    # slope tie-break and duplicates the node downstream — never merges
+    # records.
+    tolerance = 8.0 * jnp.finfo(value_at.dtype).eps
     tie = covers & jnp.isclose(
         masked_value, best_value[:, None], rtol=tolerance, atol=0.0
     )
@@ -565,12 +571,13 @@ def _enumerate_interval_crossings(
     )
     interval_active = is_new & init_exists & jnp.isfinite(prev_grid)
     link_index = jnp.arange(links.lower.shape[0], dtype=jnp.int32)
-    # The crossing-coincidence window is interval-local: comparisons happen on
-    # offsets from the current position, so the tolerance scales with the
-    # interval's width — never with the absolute resource coordinate — and a
-    # translation of the resource origin cannot merge distinct crossings.
-    interval_width = jnp.where(jnp.isfinite(prev_grid), query_grid - prev_grid, 0.0)
-    offset_tolerance = 16.0 * jnp.finfo(query_grid.dtype).eps * interval_width
+    # The crossing-coincidence window scales with the computed offset itself
+    # (a few ulp of the crossing's own local position), so only crossings
+    # that are numerically the same point coalesce (a pencil of lines through
+    # one intersection). Scaling by the whole interval width instead would
+    # merge crossings that are far apart at ulp scale inside a wide interval
+    # and silently skip the branch that wins between them.
+    crossing_ulp = 16.0 * jnp.finfo(query_grid.dtype).eps
 
     def overtaking(winner: Int1D, x_current: Float1D) -> tuple[FloatND, BoolND]:
         """Overtake offsets from `x_current` for each bracketing line.
@@ -609,6 +616,7 @@ def _enumerate_interval_crossings(
         offset_masked = jnp.where(valid, offset, jnp.inf)
         offset_next = jnp.min(offset_masked, axis=1)
         found = jnp.isfinite(offset_next)
+        offset_tolerance = crossing_ulp * jnp.where(found, offset_next, 0.0)
         tie = valid & (offset <= (offset_next + offset_tolerance)[:, None])
         incoming = jnp.argmax(
             jnp.where(tie, links.value_slope[None, :], -jnp.inf), axis=1
