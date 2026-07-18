@@ -16,10 +16,13 @@ trustworthy:
 - a nonfinite neighbor cannot poison an adjacent *valid* interval: node
   slopes fall back to the one-sided secant of the finite side.
 
-Slopes are the classic non-uniform three-point (parabolic) estimates, so the
-interpolant reproduces quadratics exactly and is C¹ across shared nodes.
-Interval location uses `jnp.searchsorted`; nodes must be strictly increasing
-(validated eagerly — the mesh is static under JIT).
+Node slopes differentiate the local cubic Lagrange fit through four
+consecutive nodes (three-point parabolic fallback near nonfinite values), so
+the interpolant reproduces cubics exactly, is C¹ across shared nodes, and
+keeps `O(h^4)` accuracy on *graded* meshes — which adaptive refinement
+depends on (see `_node_slopes`). Interval location uses `jnp.searchsorted`;
+nodes must be strictly increasing (validated eagerly — the mesh is static
+under JIT).
 """
 
 from dataclasses import dataclass
@@ -213,14 +216,70 @@ def _pad_state_axes(stacked: FloatND | BoolND, *, out_ndim: int) -> FloatND | Bo
 
 
 def _node_slopes(*, nodes: FloatND, values: FloatND) -> FloatND:
-    """Non-uniform three-point slope estimates at every node.
+    """Slope estimates at every node: 4-point where finite, 3-point fallback.
 
-    Interior nodes use the parabolic (quadratic-exact) weighted average of
-    the two adjacent secants; the ends use the one-sided three-point
-    parabolic estimate, so the read is quadratic-exact on *every* interval.
-    Where a stencil touches a nonfinite value, the slope falls back to the
-    finite adjacent secant (else `0`) so a nonfinite neighbor cannot poison
-    a valid interval — that interval's own endpoints are checked separately.
+    The primary estimate differentiates the cubic Lagrange fit through four
+    consecutive nodes containing the target (cubic-exact, `O(h^3)` slope
+    error). That order matters on *graded* meshes: with the cheaper
+    parabolic slopes the interval midpoint error is `O(h^4)` on uniform
+    spacing (symmetric slope errors cancel) but degrades to `O(h^3)` at a
+    grading boundary, which makes adaptive refinement creep one interval
+    per round; the 4-point estimate keeps `O(h^4)` everywhere.
+
+    Where the 4-point stencil touches a nonfinite value the slope falls
+    back to the 3-point parabolic estimate, then to the finite adjacent
+    secant, then to `0` — so a nonfinite neighbor cannot poison a valid
+    interval; that interval's own endpoints are checked separately.
+    """
+    four_point = (
+        _four_point_slopes(nodes=nodes, values=values)
+        if nodes.shape[0] >= 4  # noqa: PLR2004
+        else None
+    )
+    three_point = _three_point_slopes(nodes=nodes, values=values)
+    if four_point is None:
+        return three_point
+    return jnp.where(jnp.isfinite(four_point), four_point, three_point)
+
+
+def _four_point_slopes(*, nodes: FloatND, values: FloatND) -> FloatND:
+    """Derivative at each node of the cubic Lagrange fit through the four
+    consecutive nodes surrounding it (near-centered; clipped at the ends).
+
+    A nonfinite value anywhere in a stencil makes that node's estimate
+    nonfinite — the caller falls back to a shorter stencil.
+    """
+    n_nodes = nodes.shape[0]
+    base = jnp.clip(jnp.arange(n_nodes) - 1, 0, n_nodes - 4)
+    stencil = base[:, None] + jnp.arange(4)[None, :]  # (C, 4)
+    target = jnp.arange(n_nodes) - base  # position of the node in its stencil
+    xs = nodes[stencil]  # (C, 4)
+    xt = nodes[:, None]  # (C, 1)
+    is_target = jnp.arange(4)[None, :] == target[:, None]  # (C, 4)
+
+    # Lagrange-basis derivatives at the target abscissa. For i != t:
+    # l_i'(x_t) = prod_{j != i,t}(x_t - x_j) / prod_{j != i}(x_i - x_j);
+    # for the target itself: l_t'(x_t) = sum_{j != t} 1 / (x_t - x_j).
+    d = jnp.where(is_target, 1.0, xt - xs)  # (C, 4); target slot neutralized
+    product = jnp.prod(d, axis=1, keepdims=True)  # prod over j != t
+    numerator = product / d
+    pair_diffs = xs[:, :, None] - xs[:, None, :]  # (C, 4, 4)
+    pair_diffs = jnp.where(jnp.eye(4, dtype=bool)[None], 1.0, pair_diffs)
+    denominator = jnp.prod(pair_diffs, axis=2)  # (C, 4): prod_{j != i}
+    weights = numerator / denominator
+    target_weight = jnp.sum(jnp.where(is_target, 0.0, 1.0 / d), axis=1)
+    weights = jnp.where(is_target, target_weight[:, None], weights)
+
+    ys = values[stencil]  # (C, 4, *S)
+    weights_b = weights.reshape(*weights.shape, *([1] * (values.ndim - 1)))
+    return jnp.sum(weights_b * ys, axis=1)
+
+
+def _three_point_slopes(*, nodes: FloatND, values: FloatND) -> FloatND:
+    """Non-uniform three-point (parabolic) slope estimates at every node.
+
+    Quadratic-exact; one-sided at the ends. Nonfinite stencils fall back to
+    the finite adjacent secant, then to `0`.
     """
     h = (nodes[1:] - nodes[:-1]).reshape((-1,) + (1,) * (values.ndim - 1))
     secants = (values[1:] - values[:-1]) / h

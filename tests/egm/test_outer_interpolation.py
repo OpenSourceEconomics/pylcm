@@ -47,6 +47,25 @@ def test_quadratic_is_recovered_exactly_with_derivative() -> None:
     )
 
 
+def test_cubic_is_recovered_exactly() -> None:
+    """4-point Lagrange slopes make the Hermite read cubic-exact."""
+    nodes = jnp.array([0.0, 0.35, 0.6, 1.15, 1.9, 2.4])
+
+    def f(x: jnp.ndarray) -> jnp.ndarray:
+        return x**3 - 2.0 * x**2 + 0.5 * x - 1.0
+
+    query = jnp.array([0.1, 0.5, 0.99, 1.5, 2.2])
+    value, derivative = _INTERP.evaluate_with_derivative(
+        nodes=nodes, values=f(nodes), query=query
+    )
+    np.testing.assert_allclose(np.asarray(value), np.asarray(f(query)), atol=1e-12)
+    np.testing.assert_allclose(
+        np.asarray(derivative),
+        np.asarray(3.0 * query**2 - 4.0 * query + 0.5),
+        atol=1e-11,
+    )
+
+
 def test_derivative_matches_central_finite_difference() -> None:
     nodes = jnp.linspace(0.0, 1.0, 33)
     values = jnp.sin(3.0 * nodes)

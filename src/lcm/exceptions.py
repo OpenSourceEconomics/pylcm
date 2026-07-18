@@ -73,6 +73,15 @@ class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
 
 
+class OuterSearchConvergenceError(PyLCMError):
+    """Raised when an adaptive outer mesh cannot resolve within its budget.
+
+    Inference-grade continuous-outer solves must fail closed: reaching the
+    node or round budget while validation-marked intervals remain raises
+    instead of silently degrading the solution.
+    """
+
+
 class NBEGMCaseError(PyLCMError):
     """Raised when a NBEGM case-boundary or formula-piece declaration is invalid.
 
