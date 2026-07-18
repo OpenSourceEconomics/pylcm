@@ -1606,12 +1606,19 @@ def _fail_if_conflicting_transition_is_read(
         names = ", ".join(offending)
         msg = (
             "Within-period utility or feasibility reads a target-dependent "
-            f"deterministic state law ({names}), but its implementation differs "
-            "across target regimes. The decision DAG would bind one target's law "
-            "while the simulate state-update uses the right one, so they would "
-            "disagree silently. Make the law identical across all targets that "
-            "carry the state, or stop reading the chosen next state in the "
-            "within-period utility/feasibility."
+            f"deterministic state law ({names}), but the targets that carry the "
+            "state supply DIFFERENT callable OBJECTS for it (the conflict test is "
+            "Python object identity, `merged[name] is not func` -- see "
+            "`_get_deterministic_transitions`; two separately-declared but "
+            "extensionally-equal functions are conservatively treated as a "
+            "conflict, never merged silently). The decision DAG would bind one "
+            "target's law while the simulate state-update uses the right one, so "
+            "they would disagree silently. Target-independent laws must currently "
+            "REUSE ONE callable object across every target that carries the state "
+            "(assign the function once and reference it, do not redefine it per "
+            "target); or stop reading the chosen next state in the within-period "
+            "utility/feasibility. A registry-backed law identity that accepts "
+            "extensionally-equal declarations is a future refinement."
         )
         raise ValueError(msg)
 

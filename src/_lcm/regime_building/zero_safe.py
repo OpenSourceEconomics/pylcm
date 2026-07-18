@@ -61,8 +61,11 @@ Statically-known weights were always constant-folded and matched bit-for-bit;
 the FOLD reduction remains the one call site that binds `jnp.average` vs
 `zero_safe_average` at build time via `max_Q_over_a._select_fold_reducer` (its
 weights are the process quadrature marginal, concrete before tracing). Runtime
-call sites use `zero_safe_average` unconditionally and get bit-exactness from the
-value-masking order ON THE PINNED TOOLCHAIN — see the round-4 caveat.
+call sites use `zero_safe_average` unconditionally; they do NOT get guaranteed
+bit-exactness — the value-masking order recovers raw bits on SOME toolchains/CPUs
+and not others (ROUND-5 CAVEAT: a dynamic-per-cell reversal was reproduced on one
+0.10.1 CPU and not another). Read the runtime contract as the HONEST CONTRACT
+below, not as bit-identity.
 
 ROUND-4 CAVEAT (external re-review, corrects the (c) claim above). The "0 drift
 across K in {2,3,4,7,8,16}" sweep OMITTED K=5, and that is exactly where the
@@ -79,6 +82,37 @@ expression when any exact zero occurs, mirroring `_select_fold_reducer`'s
 build-time selection so the all-positive path is exact-to-raw BY CONSTRUCTION,
 independent of FMA behavior. Do NOT restore an unconditional "bit-identical"
 claim: measure, per (K, dtype, jaxlib, backend), before asserting identity.
+
+ROUND-5 CAVEAT (external re-review, corrects the round-4 "no live reversal here").
+The round-4 non-reproduction (and a within-session re-check) exercised SHARED /
+closed-over weight vectors, which XLA constant-folds — so they cannot exhibit the
+runtime path, where each product-map cell carries its own DYNAMICALLY computed
+weight vector. The re-review reproduced a SEVEN-ULP reversal on official jax/jaxlib
+0.10.1 CPU by broadcasting the K=5 all-positive vector over a 32x32x8 carrier and
+compiling raw vs `zero_safe_average` through nested `vmap`s with the WEIGHTS as
+mapped inputs: raw 0.08923107385635376 vs guarded 0.08923112601041794, with the
+exact real mean on the raw side and every one of the 8192 cells flipping a non-tied
+argmax. HOWEVER, reproduce-first on THIS machine (jax/jaxlib 0.10.1, hmg-office CPU)
+with the reviewer's EXACT dynamic-per-cell nested-vmap setup still gives 0 drift:
+raw `jnp.average`, the explicit `sum(w*v)/sum(w)`, and `zero_safe_average` ALL
+return bits 1035386575 here. So raw and guarded agree on this CPU and disagree on
+the reviewer's — the drift is CPU-microarchitecture / XLA-lowering dependent, NOT
+merely jaxlib-version or weight-shape dependent. That is the real content of the
+finding: `raw jnp.average` is ITSELF not bit-portable across CPUs, so "bit-identical
+to raw" was never a portable contract.
+
+HONEST CONTRACT (supersedes every unconditional "bit-identical" statement below).
+`zero_safe_average` / `zero_safe_weighted_term` are (i) exact-zero-mass-SAFE
+(guaranteed, the load-bearing property) and (ii) equal to the naive raw reduction
+up to floating-point reduction error — a few ULP whose sign/magnitude depend on the
+XLA lowering and CPU, the SAME order of non-determinism raw float reductions carry
+across CPUs. A ULP difference can flip a GENUINE near-tie in the downstream argmax /
+IR comparison, at ULP-level value cost. The durable WHOLE-EXPRESSION branch (raw on
+all-positive slices, safe only where an exact zero occurs) is the only way to make
+the all-positive path exact-to-raw BY CONSTRUCTION; it needs a custom primitive /
+batching rule (the reviewer confirmed vmap(lax.cond), select-after-both, lax.map,
+and optimization_barrier do NOT reproduce the raw bits) and remains DEFERRED behind
+this approximate contract, not behind a bit-identity claim.
 """
 
 import jax
@@ -98,10 +132,14 @@ def zero_safe_weighted_term(
     VALUE with `0.0` at a zero-weight node BEFORE the multiply, so the product
     is ``weight * 0 = 0`` there and never a `nan`. Because the `select` is on
     the value (an operand of the multiply) rather than on the product, the
-    multiply stays FMA-contractible into a downstream reduction, so the
-    all-positive-weight path is **bit-identical** to plain ``weight * value``
-    (see the module docstring for why the previous product-masking order was
-    not, and the decision reversals that cost).
+    multiply stays FMA-contractible into a downstream reduction, so on many
+    toolchains the all-positive-weight path recovers the exact bits of plain
+    ``weight * value`` — but this is NOT guaranteed (it depends on XLA choosing
+    to contract the multiply into the reduction's FMA, which varies by
+    release/backend/CPU; the module ROUND-5 CAVEAT records a reproduced
+    dynamic-per-cell divergence on one 0.10.1 CPU). The load-bearing property is
+    zero-mass safety; treat the all-positive path as raw-up-to-a-few-ULP, per the
+    module's HONEST CONTRACT, not as bit-identity.
 
     Args:
         weight: The weight (Pareto weight, regime-transition probability,
@@ -125,9 +163,12 @@ def zero_safe_weighted_term(
     # naive `jnp.average` / raw corner sum -- MEASURED up to 6 ULP, enough to
     # REVERSE a non-tied action or an individual-rationality / dissolution flag
     # (see the regression tests). Masking the value leaves `w * safe_value` as a
-    # bare multiply feeding the reduce, which XLA fuses, so the all-positive path
-    # is bit-identical to the naive computation while the zero-weight path stays
-    # `+-inf`-safe.
+    # bare multiply feeding the reduce, which XLA CAN fuse -- recovering the naive
+    # bits on many toolchains -- while the zero-weight path stays `+-inf`-safe. The
+    # fusion (hence the bit recovery) is observed and CPU/backend-dependent, NOT a
+    # property of this source expression: the module ROUND-5 CAVEAT reproduces a
+    # dynamic-per-cell divergence on one 0.10.1 CPU. Do not read this as guaranteed
+    # bit-identity.
     safe_value = jnp.where(weight_arr == 0, jnp.zeros((), value_arr.dtype), value_arr)
     return weight_arr * safe_value
 
