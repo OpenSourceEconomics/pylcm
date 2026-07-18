@@ -605,9 +605,10 @@ def _state_transition_value_errors(*, name: StateName, value: object) -> list[st
     a point-valued truth, and the reverse, both build and carry the intended meaning
     (`tests/regime_building/test_mixed_stochasticity_phases.py`).
 
-    They must, however, agree on the SHAPE of the declaration: per-target in both
-    phases over the same targets, or per-target in neither. That is not a modelling
-    restriction but a normalization precondition — see
+    The two variants may differ in shape: per-target on one side and a bare law on
+    the other broadcasts the bare law over the per-target side's targets (map-vs-bare).
+    What is rejected is two per-target dicts over DIFFERENT target sets — an ambiguous
+    normalization with no single authoritative key set — see
     `_phased_per_target_shape_mismatch`.
 
     `None` is not a law of motion; the error points to `fixed_transition`.

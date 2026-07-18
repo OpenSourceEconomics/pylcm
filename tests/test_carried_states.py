@@ -24,7 +24,7 @@ from lcm import (
     Phased,
     categorical,
 )
-from lcm.exceptions import InvalidInitialConditionsError
+from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
 
@@ -450,4 +450,45 @@ def test_initial_feasibility_checks_seeded_carried_value() -> None:
                 "age": jnp.full(1, 60.0),
                 "regime_id": jnp.array([RegimeId.working]),
             },
+        )
+
+
+def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
+    """F5: a carried state is imputed in solve, so its next value has no solve-phase
+    producer -- the canonical solve slice omits the carried law of motion. A
+    constraint reading `next_<carried>` would leave the solve feasibility DAG with an
+    unsupplied argument and fail with a cryptic missing-argument error deep in the
+    solve build. It must be rejected early at model construction, clearly naming the
+    carried next-state. (Reading the CURRENT carried value stays valid -- covered by
+    `test_initial_feasibility_checks_seeded_carried_value`.)
+    """
+
+    def _cap_on_next_pension(next_pension_wealth: float) -> bool:
+        return next_pension_wealth >= 0.0
+
+    working = UserRegime(
+        transition=_next_regime,
+        active=lambda age: age < 64,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
+            "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
+            "pension_wealth": Phased(
+                solve=_impute_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
+            ),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "aime": _next_aime,
+            "pension_wealth": _evolve_pension_wealth,
+        },
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        constraints={"cap_on_next_pension": _cap_on_next_pension},
+        functions={"utility": _utility},
+    )
+    with pytest.raises(ModelInitializationError, match="next value of a carried state"):
+        Model(
+            regimes={"working": working, "dead": _DEAD},
+            ages=AgeGrid(start=60, stop=64, step="2Y"),
+            regime_id_class=RegimeId,
         )

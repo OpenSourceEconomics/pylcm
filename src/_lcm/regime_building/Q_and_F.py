@@ -1,4 +1,3 @@
-import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
@@ -690,18 +689,25 @@ def _get_deterministic_transitions(
 
 
 def _law_source(func: TransitionFunction) -> object:
-    """The raw user law behind a processed transition, for provenance comparison.
+    """The user law behind a processed transition, for provenance comparison.
 
     A single BARE (coarse) state law carried by several targets is canonicalized
     into one cell per target, and `_rename_params_to_qnames` then renames each with
     its own qualified parameter names — producing DISTINCT wrapper objects that are
-    nonetheless the same user law. `rename_arguments` sets `__wrapped__`, so
-    `inspect.unwrap` recovers that shared source; two wrappers of one coarse law
-    unwrap to the same object, while genuinely different per-target laws unwrap to
-    different ones. Comparing processed wrapper identity (`is`) instead would flag
-    the coarse-broadcast case as a spurious target-dependent conflict.
+    nonetheless the same user law. That rename is the engine's own, applied as the
+    OUTERMOST layer and exactly once (`rename_arguments` sets `__wrapped__`; a
+    parameter-free law is returned unwrapped). Stripping exactly that one engine
+    layer recovers the user law: two engine-renamed cells of one coarse law reach
+    the *same* shared user object (no conflict), while genuinely different per-target
+    laws reach *different* user objects (a real conflict).
+
+    A full `inspect.unwrap` would over-strip: if the user built two per-target laws
+    with `dags.rename_arguments` off one base function (binding different parameter
+    names — a legitimate, distinct pair of laws), unwrapping the whole `__wrapped__`
+    chain collapses both to the shared base and silently suppresses the conflict.
+    So peel exactly one level, never the whole chain.
     """
-    return inspect.unwrap(func)
+    return getattr(func, "__wrapped__", func)
 
 
 def _get_U_and_F(
@@ -742,6 +748,31 @@ def _get_U_and_F(
         The instantaneous utility and feasibility function.
 
     """
+    # Run the conflict/stochastic guards on the RAW decision graph -- utility plus
+    # the INDIVIDUAL constraints -- BEFORE `_get_feasibility` concatenates them.
+    # `_get_feasibility` resolves a chosen `next_<state>` *into* the compiled
+    # feasibility callable, erasing it from that callable's external ancestry; a
+    # conflict or stochastic read reached only through a constraint would then be
+    # invisible to a guard that inspects the compiled `feasibility`. The raw graph
+    # keeps every `next_<state>` visible in the constraints' own ancestry.
+    raw_decision_graph = {
+        **dict(deterministic_transitions),
+        **dict(constraints),
+        **{k: v for k, v in functions.items() if k != "H"},
+    }
+    guard_targets = ["utility", *constraints]
+    _fail_if_conflicting_transition_is_read(
+        combined=raw_decision_graph,
+        targets=guard_targets,
+        conflicting_deterministic_transition_names=(
+            conflicting_deterministic_transition_names
+        ),
+    )
+    _fail_if_stochastic_transition_is_read(
+        combined=raw_decision_graph,
+        targets=guard_targets,
+        stochastic_transition_names=stochastic_transition_names,
+    )
     combined = {
         "feasibility": _get_feasibility(
             functions=functions,
@@ -751,18 +782,6 @@ def _get_U_and_F(
         **dict(deterministic_transitions),
         **{k: v for k, v in functions.items() if k != "H"},
     }
-    _fail_if_conflicting_transition_is_read(
-        combined=combined,
-        targets=["utility", "feasibility"],
-        conflicting_deterministic_transition_names=(
-            conflicting_deterministic_transition_names
-        ),
-    )
-    _fail_if_stochastic_transition_is_read(
-        combined=combined,
-        targets=["utility", "feasibility"],
-        stochastic_transition_names=stochastic_transition_names,
-    )
     return concatenate_functions(
         functions=combined,
         targets=["utility", "feasibility"],

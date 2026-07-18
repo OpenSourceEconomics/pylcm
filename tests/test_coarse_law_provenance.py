@@ -10,6 +10,7 @@ different per-target laws read by utility must still be rejected.
 
 import jax.numpy as jnp
 import pytest
+from dags.signature import rename_arguments
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
 from lcm.regime import Regime
@@ -124,6 +125,52 @@ def test_genuinely_different_per_target_laws_read_by_utility_still_rejected():
     )
     # The conflict is caught while the Q-and-F decision DAG is assembled, at model
     # build (before any solve).
+    with pytest.raises(ValueError, match="target-dependent deterministic state law"):
+        Model(
+            regimes={"work": work, "retired": retired, "dead": _dead()},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
+        )
+
+
+def test_rename_argument_wrappers_of_one_base_read_by_utility_still_rejected():
+    """F2: two per-target `next_wealth` laws built with `dags.rename_arguments` off
+    ONE base (binding DIFFERENT param names) are genuinely different laws. Provenance
+    must peel only the engine's own one qname-rename layer, reaching the two distinct
+    user wrappers -- so the conflict is preserved. A full `inspect.unwrap` would
+    follow the whole `__wrapped__` chain through the user wrappers to the shared base
+    and silently merge them, binding one target's law into the decision.
+    """
+
+    def next_wealth(wealth: float, consumption: float, growth: float) -> float:
+        return (wealth - consumption) * growth
+
+    law_work = rename_arguments(next_wealth, mapper={"growth": "growth_work"})
+    law_retired = rename_arguments(next_wealth, mapper={"growth": "growth_retired"})
+
+    work = Regime(
+        transition={
+            "work": MarkovTransition(_prob),
+            "retired": MarkovTransition(_prob),
+        },
+        active=lambda age: age < 2,
+        states={"wealth": _WEALTH},
+        actions={"consumption": _CONS},
+        # same base, different bound params -> genuinely different per-target laws
+        state_transitions={"wealth": {"work": law_work, "retired": law_retired}},
+        functions={"utility": _utility_reads_next},
+    )
+    retired = Regime(
+        transition={
+            "retired": MarkovTransition(_prob),
+            "dead": MarkovTransition(_prob),
+        },
+        active=lambda age: age < 2,
+        states={"wealth": _WEALTH},
+        actions={"consumption": _CONS},
+        state_transitions={"wealth": {"retired": law_work, "dead": law_work}},
+        functions={"utility": _utility_reads_next},
+    )
     with pytest.raises(ValueError, match="target-dependent deterministic state law"):
         Model(
             regimes={"work": work, "retired": retired, "dead": _dead()},

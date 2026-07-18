@@ -44,6 +44,7 @@ from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.typing import UserParams
 
@@ -331,6 +332,29 @@ def _validate_all_variables_used(
     return error_messages
 
 
+def _law_phase_varies(solve_obj: object, sim_obj: object) -> bool:
+    """Whether a name's `solve` and `simulate` resolutions are different laws.
+
+    Object identity is the base test: `get_all_functions` returns raw user
+    callables, so a bare law is the same object in both phases and a `Phased`
+    yields its two genuinely-distinct variants. The one exception is
+    `fixed_transition`: its `_IdentityTransition` is rebuilt fresh on every
+    collection (`_make_identity_fn`), so the two phases hold distinct objects that
+    are nonetheless the same phase-invariant identity law. Treat them as equal when
+    both are the auto-identity law for the same state, else a constraint reading a
+    fixed `next_<state>` would be falsely rejected.
+    """
+    if solve_obj is sim_obj:
+        return False
+    if getattr(solve_obj, "_is_auto_identity", False) and getattr(
+        sim_obj, "_is_auto_identity", False
+    ):
+        return getattr(solve_obj, "_state_name", None) != getattr(
+            sim_obj, "_state_name", object()
+        )
+    return True
+
+
 def _validate_constraint_phase_invariance(
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> list[str]:
@@ -348,14 +372,17 @@ def _validate_constraint_phase_invariance(
     closes the gap.
 
     A name is phase-varying iff its `solve` and `simulate` resolutions are
-    distinct objects. Identity is safe here because `get_all_functions` returns
-    the raw user callables (a `Phased` yields its two genuinely-distinct variants;
-    a bare value is the same object in both phases) -- not the parameter-renamed
-    wrappers that make object identity unreliable elsewhere. Carried-only states
-    are therefore *not* phase-varying: their imputation resolves to the same
-    `solve` variant in both phases, so a constraint reading a carried state has
-    the same feasible set in both -- consistent with the decision using the
-    imputation (policy-consistency), not the realized carried value.
+    different laws (`_law_phase_varies`): object identity is the base test because
+    `get_all_functions` returns raw user callables (a `Phased` yields its two
+    genuinely-distinct variants; a bare value is the same object in both phases),
+    with `fixed_transition`'s freshly-rebuilt identity law treated as equal. A
+    per-target state law is keyed under `next_<state>__<target>`, so its
+    phase-varying entries are aliased to the unqualified `next_<state>` a
+    constraint actually reads. Carried-only states are *not* phase-varying: their
+    imputation resolves to the same `solve` variant in both phases, so a
+    constraint reading a carried state has the same feasible set in both --
+    consistent with the decision using the imputation (policy-consistency), not
+    the realized carried value.
 
     Args:
         user_regimes: Mapping of finalized regime names to `Regime` instances.
@@ -369,9 +396,35 @@ def _validate_constraint_phase_invariance(
         solve_funcs = dict(user_regime.get_all_functions(phase="solve"))
         sim_funcs = user_regime.get_all_functions(phase="simulate")
         phase_varying = frozenset(
-            name for name in solve_funcs if solve_funcs[name] is not sim_funcs.get(name)
+            name
+            for name in solve_funcs
+            if _law_phase_varies(solve_funcs[name], sim_funcs.get(name))
         )
-        if not phase_varying:
+        # A per-target state (or regime) law is keyed as `next_<state>__<target>`,
+        # one entry per target regime, but a constraint reads the unqualified
+        # decision-DAG name `next_<state>`: the compiled per-target bundle resolves
+        # that name to the current target's law. So if ANY target's law is
+        # phase-varying, a constraint reading the unqualified name still sees a
+        # phase-specific feasible set. Alias each phase-varying qualified transition
+        # to its unqualified name so the unqualified ancestry read is caught.
+        phase_varying = phase_varying | frozenset(
+            name.rsplit(QNAME_DELIMITER, 1)[0]
+            for name in phase_varying
+            if QNAME_DELIMITER in name
+        )
+        # A carried state (`Phased(solve=callable, simulate=Grid)`) is imputed in
+        # the solve phase, so its *next* value has no solve-phase producer: the
+        # canonical solve slice omits the carried law of motion. A constraint that
+        # reads `next_<carried>` would leave the solve feasibility DAG with an
+        # unsupplied argument -- a cryptic missing-argument failure deep in the
+        # solve build. Reject it early and clearly. (Reading the carried state's
+        # CURRENT value is fine: it resolves to the solve imputation.)
+        carried_next = frozenset(
+            f"next_{name}"
+            for name, spec in user_regime.states.items()
+            if isinstance(spec, Phased)
+        )
+        if not phase_varying and not carried_next:
             continue
         for constraint_name in user_regime.constraints:
             ancestors = get_ancestors(
@@ -390,6 +443,17 @@ def _validate_constraint_phase_invariance(
                     f"`Phased` helper or `Phased` `next_<state>` transitively. "
                     f"Make the constraint's dependencies phase-invariant, or keep "
                     f"the phase variance out of the feasibility path."
+                )
+            offending_carried = sorted(ancestors & carried_next)
+            if offending_carried:
+                error_messages.append(
+                    f"Constraint '{constraint_name}' in regime '{regime_name}' "
+                    f"reads the next value of a carried state {offending_carried}. "
+                    f"A carried state is imputed in the solve phase, so its next "
+                    f"value has no solve-phase producer and the solve feasibility "
+                    f"DAG would be left with an unsupplied argument. Read the "
+                    f"carried state's current value instead, or make it an "
+                    f"ordinary (non-carried) state."
                 )
     return error_messages
 
