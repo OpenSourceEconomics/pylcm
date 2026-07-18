@@ -228,6 +228,191 @@ def test_equal_sigma_simulates_one_law():
     assert low.std() == pytest.approx(high.std(), rel=0.15)
 
 
+_AR1_RHO = 0.6
+
+
+def _ar1_model(sigma_low: float, sigma_high: float) -> Model:
+    """The alive/dead model with a state-conditioned Tauchen AR(1) income process."""
+    income = TauchenAR1Process(
+        n_points=15,
+        gauss_hermite=False,
+        rho=_AR1_RHO,
+        sigma=max(sigma_low, sigma_high),  # fixed common grid = widest regime
+        mu=0.0,
+        n_std=4.0,
+        state_conditioned=StateConditioned(
+            on="uncertainty", by={"low": sigma_low, "high": sigma_high}
+        ),
+    )
+    alive = Regime(
+        active=lambda age: age <= 60,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=40.0, n_points=8),
+            "income": income,
+            "uncertainty": DiscreteGrid(Uncertainty),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "uncertainty": MarkovTransition(next_uncertainty),
+        },
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
+        transition=next_regime,
+        constraints={"wealth_constraint": wealth_constraint},
+        functions={"utility": utility},
+    )
+    dead = Regime(
+        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        regime_id_class=RegimeId,
+        ages=AgeGrid(start=20, stop=70, step="10Y"),
+        fixed_params={"final_age_alive": 60},
+    )
+
+
+def test_ar1_simulated_innovation_std_follows_the_conditioned_sigma():
+    """Round-2 F4: the AR(1) *draw* wrapper must use the current regime's sigma.
+
+    Every other simulate test rides the IID family, so the F1 repair to the Tauchen
+    branch (`_create_ar1_next_func` threads the conditioning state into `draw_shock`)
+    was source-verified but never exercised end to end. For an AR(1) the level variance
+    mixes rho and sigma; the innovation is what the conditioned sigma scales, so the
+    discriminating statistic is the residual `income_t - rho*income_{t-1}` (the
+    reviewer's own suggestion). `uncertainty` is absorbing here, so each agent's
+    residuals are a clean draw from one regime's innovation law.
+    """
+    sigma_low, sigma_high, n = 0.05, 0.30, 6000
+    half = n // 2
+    result = (
+        _ar1_model(sigma_low, sigma_high)
+        .simulate(
+            params=_params(),
+            log_level="warning",
+            initial_conditions={
+                "wealth": jnp.full(n, 20.0),
+                "income": jnp.zeros(n),
+                "uncertainty": jnp.array(
+                    [Uncertainty.low] * half + [Uncertainty.high] * half
+                ),
+                "age": jnp.full(n, 20.0),
+                "regime_id": jnp.array([RegimeId.alive] * n),
+            },
+            period_to_regime_to_V_arr=None,
+            seed=7,
+        )
+        .to_dataframe()
+    )
+    panel = result.sort_values(["subject_id", "period"]).copy()
+    panel["inc_lag"] = panel.groupby("subject_id")["income"].shift(1)
+    panel["resid"] = panel["income"] - _AR1_RHO * panel["inc_lag"]
+    drawn = panel[
+        (panel["age"] > 20) & panel["income"].notna() & panel["inc_lag"].notna()
+    ]
+    low = drawn[drawn["uncertainty"] == "low"]["resid"].to_numpy()
+    high = drawn[drawn["uncertainty"] == "high"]["resid"].to_numpy()
+    assert low.size > 100
+    assert high.size > 100
+    # The F1 defect drew both regimes at the common grid sigma (0.30), so the low
+    # residual std collapsed to ~0.30 rather than 0.05.
+    assert low.std() == pytest.approx(sigma_low, rel=0.15)
+    assert high.std() == pytest.approx(sigma_high, rel=0.15)
+
+
+def next_uncertainty_switching(age: int, uncertainty: DiscreteState) -> FloatND:
+    """Switch low -> high once `age` reaches 30; `high` is absorbing (so NOT static)."""
+    to_high = jnp.asarray((age >= 30) | (uncertainty == Uncertainty.high))[..., None]
+    return jnp.where(to_high, jnp.array([0.0, 1.0]), jnp.array([1.0, 0.0]))
+
+
+@functools.cache
+def _get_switching_model(sigma_low: float, sigma_high: float) -> Model:
+    """The `_get_model` twin whose `uncertainty` MOVES over the life cycle."""
+    final_age_alive = 50
+    alive = Regime(
+        active=lambda age, n=final_age_alive: age <= n,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=6),
+            "income": _income_process(sigma_low, sigma_high),
+            "uncertainty": DiscreteGrid(Uncertainty),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "uncertainty": MarkovTransition(next_uncertainty_switching),
+        },
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
+        transition=next_regime,
+        constraints={"wealth_constraint": wealth_constraint},
+        functions={"utility": utility},
+    )
+    dead = Regime(
+        transition=None,
+        active=lambda age, n=final_age_alive: age > n,
+        functions={"utility": lambda: 0.0},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        regime_id_class=RegimeId,
+        ages=AgeGrid(start=20, stop=60, step="10Y"),
+        fixed_params={"final_age_alive": final_age_alive},
+    )
+
+
+def test_simulated_sigma_tracks_the_conditioning_state_THROUGH_TIME():
+    """The gather must read the CURRENT period's `uncertainty`, not a frozen one.
+
+    Every other simulate test here rides `next_uncertainty`, which is ABSORBING: each
+    agent keeps its regime for life, so `uncertainty_t == uncertainty_{t+1}` and the
+    draw's *timing* is unobservable. Gathering sigma at the current state, at the
+    initial state, or one period stale all produce identical output — so none of those
+    tests can tell a correctly-timed gather from a frozen one.
+
+    Here `uncertainty` MOVES: all agents start `low` and switch to `high` at age 30.
+    `income_{t+1}` is drawn from the state at `t`, so with ages 20/30/40/50 the law is
+
+        income@30 ~ sigma(u@20=low)    income@40 ~ sigma(u@30=low)
+        income@50 ~ sigma(u@40=high)
+
+    Pairing each draw with the LAGGED `uncertainty` therefore separates the two sigmas,
+    and it fails under both realistic mis-wirings: a gather frozen at the initial state
+    leaves income@50 at sigma_low, while an off-by-one (contemporaneous) gather draws
+    income@40 at sigma_high and inflates the low group.
+    """
+    sigma_low, sigma_high, n = 0.05, 0.30, 4000
+    result = (
+        _get_switching_model(sigma_low, sigma_high)
+        .simulate(
+            params=_params(),
+            log_level="warning",
+            initial_conditions={
+                "wealth": jnp.full(n, 10.0),
+                "income": jnp.zeros(n),
+                "uncertainty": jnp.array([Uncertainty.low] * n),
+                "age": jnp.full(n, 20.0),
+                "regime_id": jnp.array([RegimeId.alive] * n),
+            },
+            period_to_regime_to_V_arr=None,
+            seed=20260717,
+        )
+        .to_dataframe()
+    )
+
+    panel = result.sort_values(["subject_id", "period"]).copy()
+    # The sigma that drew `income_t` is the one keyed by `uncertainty_{t-1}`.
+    panel["sigma_state"] = panel.groupby("subject_id")["uncertainty"].shift(1)
+    drawn = panel[(panel["age"] > 20) & panel["income"].notna()]
+
+    # Pin the switch actually happened, so a degenerate panel cannot pass this test.
+    assert set(drawn["sigma_state"].dropna()) == {"low", "high"}
+
+    low = drawn[drawn["sigma_state"] == "low"]["income"].to_numpy()
+    high = drawn[drawn["sigma_state"] == "high"]["income"].to_numpy()
+    assert low.size > 100
+    assert high.size > 100
+    assert low.std() == pytest.approx(sigma_low, rel=0.15)
+    assert high.std() == pytest.approx(sigma_high, rel=0.15)
+
+
 def _model_with_income(income_proc) -> Model:
     """Build the same alive/dead model with a swapped-in income process."""
     alive = Regime(
@@ -378,6 +563,156 @@ def test_runtime_grid_param_rejected():
         _model_with_income(income).solve(params=_params(), log_level="warning")
 
 
+def next_uncertainty_age_only(age: int) -> FloatND:
+    """`uncertainty` driven by age alone, so `state_conditioned` is its ONLY reader."""
+    return jnp.where(
+        jnp.asarray(age >= 30)[..., None],
+        jnp.array([0.0, 1.0]),
+        jnp.array([1.0, 0.0]),
+    )
+
+
+def _alive_regime_without_local_uncertainty() -> Regime:
+    """The alive regime with NO `uncertainty` of its own (it arrives model-level)."""
+    return Regime(
+        active=lambda age: age <= 50,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=6),
+            "income": _income_process(0.05, 0.30),
+        },
+        state_transitions={"wealth": next_wealth},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
+        transition=next_regime,
+        constraints={"wealth_constraint": wealth_constraint},
+        functions={"utility": utility},
+    )
+
+
+def _dead_regime() -> Regime:
+    return Regime(
+        transition=None, active=lambda age: age > 50, functions={"utility": lambda: 0.0}
+    )
+
+
+def test_model_level_conditioning_state_survives_pruning():
+    """Round-2 F1: a broadcast conditioning state must not be pruned before use.
+
+    `state_conditioned.on` is grid METADATA, not a user function, so the broadcast
+    pruner's callable-DAG ancestry could not see it. A model-level `uncertainty` that
+    reaches nothing else was therefore pruned, and the conditioned builder then rejected
+    the model with the actively misleading "must name a DiscreteGrid state in the same
+    regime as the process" — for a state the user *had* declared.
+
+    It must also stay pruned where nothing reads it, so this pins both directions.
+    """
+    model = Model(
+        regimes={
+            "alive": _alive_regime_without_local_uncertainty(),
+            "dead": _dead_regime(),
+        },
+        regime_id_class=RegimeId,
+        ages=AgeGrid(start=20, stop=60, step="10Y"),
+        fixed_params={"final_age_alive": 50},
+        states={"uncertainty": DiscreteGrid(Uncertainty)},
+        state_transitions={"uncertainty": MarkovTransition(next_uncertainty)},
+    )
+    assert (
+        "uncertainty" not in model.pruned_variables["alive"]
+    )  # kept: the process reads it
+    assert "uncertainty" in model.pruned_variables["dead"]  # pruned: nothing reads it
+
+
+def test_conditioning_only_state_is_not_reported_unused():
+    """Round-2: the usage validator shared the pruner's blind spot.
+
+    A state read ONLY through `state_conditioned` was rejected as "defined but never
+    used", even though the generated weights function takes it as an argument. Every
+    other test masked this by having the transition read `uncertainty` for an unrelated
+    reason; here the law depends on `age` alone. This is the natural use case: sigma
+    conditioned on an exogenous volatility regime.
+    """
+    alive = Regime(
+        active=lambda age: age <= 50,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=6),
+            "income": _income_process(0.05, 0.30),
+            "uncertainty": DiscreteGrid(Uncertainty),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "uncertainty": MarkovTransition(next_uncertainty_age_only),
+        },
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
+        transition=next_regime,
+        constraints={"wealth_constraint": wealth_constraint},
+        functions={"utility": utility},
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": _dead_regime()},
+        regime_id_class=RegimeId,
+        ages=AgeGrid(start=20, stop=60, step="10Y"),
+        fixed_params={"final_age_alive": 50},
+    )
+    assert model is not None
+
+
+def _conditioned_income(**kwargs) -> NormalIIDProcess:
+    """A conditioned IID income process with the grid geometry under test."""
+    return NormalIIDProcess(
+        gauss_hermite=False,
+        state_conditioned=StateConditioned(
+            on="uncertainty", by={"low": 0.1, "high": 0.3}
+        ),
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        # `sigma`/`n_std` are NOT required to be positive by the process itself, so a
+        # sign slip silently reverses the axis rather than failing.
+        pytest.param(
+            {"n_points": 5, "sigma": -0.3, "n_std": 3.0}, id="descending-neg-sigma"
+        ),
+        pytest.param(
+            {"n_points": 5, "sigma": 0.3, "n_std": -3.0}, id="descending-neg-n_std"
+        ),
+        pytest.param(
+            {"n_points": 5, "sigma": 0.0, "n_std": 3.0}, id="collapsed-sigma-0"
+        ),
+        pytest.param(
+            {"n_points": 5, "sigma": 0.3, "n_std": 0.0}, id="collapsed-n_std-0"
+        ),
+    ],
+)
+def test_non_increasing_node_axis_rejected(kwargs):
+    """Round-2 F2: a finite axis is not necessarily a *usable* one.
+
+    The row bins on node midpoints, so only a strictly increasing axis makes the CDF
+    differences probabilities. A DESCENDING axis is the dangerous case: measured on the
+    real builder, nodes [3, 1.5, 0, -1.5, -3] give the row
+
+        [1.0, -0.00620967, -0.98758066, -0.00620967, 1.0]
+
+    which **sums to exactly 1.0** — so a row-sum or normalization check passes — while
+    carrying negative mass, and a payoff of 1 at the zero node flips from +0.9876 to
+    -0.9876, reversing a comparison against a sure 0.5. All four configurations here are
+    reachable from the public constructor; before this guard every one was accepted.
+    """
+    income = _conditioned_income(mu=0.0, **kwargs)
+    with pytest.raises(ModelInitializationError, match="strictly increasing"):
+        _model_with_income(income).solve(params=_params(), log_level="warning")
+
+
+def test_singleton_node_axis_rejected():
+    """Round-2 F2: one node leaves no midpoint edges, so the row assembler returns an
+    EMPTY (shape `(0,)`) vector rather than the only coherent one-state row `[1.0]`."""
+    income = _conditioned_income(n_points=1, mu=0.0, sigma=0.3, n_std=3.0)
+    with pytest.raises(ModelInitializationError, match="at least 2 nodes"):
+        _model_with_income(income).solve(params=_params(), log_level="warning")
+
+
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
 def test_nonfinite_sigma_rejected(bad):
     """F3: NaN/inf sail through a bare `v <= 0` test and poison every row silently."""
@@ -409,3 +744,221 @@ def test_nonpositive_sigma_rejected():
     )
     with pytest.raises(ModelInitializationError, match="finite positive sigmas"):
         _model_with_income(income).solve(params=_params(), log_level="warning")
+
+
+# --- Cross-regime conditioning (round-3 review F1) ------------------------------- #
+#
+# A conditioned process in a TARGET regime has its transition weight built into every
+# SOURCE regime that can reach it, evaluated at the source's own `on` state. So the
+# conditioner is a dependency of the source too — invisible to the broadcast pruner and
+# the usage validator, which walk only the callable DAG and only local processes. Before
+# the fix a source regime carrying the conditioner (used solely via that cross-regime
+# transition) was pruned / reported unused, and the model failed to build or solve.
+
+
+@categorical(ordered=False)
+class Phase:
+    young: ScalarInt
+    old: ScalarInt
+    gone: ScalarInt
+
+
+def next_phase(age: int) -> ScalarInt:
+    return jnp.where(
+        age >= 40, jnp.where(age >= 60, Phase.gone, Phase.old), Phase.young
+    )
+
+
+def next_uncertainty_phase_age(age: int) -> FloatND:
+    """Age-only law: `uncertainty` is used ONLY through the conditioned process."""
+    return jnp.where(
+        jnp.asarray(age >= 30)[..., None],
+        jnp.array([0.0, 1.0]),
+        jnp.array([1.0, 0.0]),
+    )
+
+
+def next_uncertainty_phase_absorbing(uncertainty: DiscreteState) -> FloatND:
+    return jnp.where(
+        uncertainty == Uncertainty.low,
+        jnp.array([1.0, 0.0]),
+        jnp.array([0.0, 1.0]),
+    )
+
+
+def _uncond_income(n_points: int = 5) -> NormalIIDProcess:
+    return NormalIIDProcess(
+        n_points=n_points, gauss_hermite=False, mu=0.0, sigma=0.30, n_std=4.0
+    )
+
+
+def _cond_income(
+    sigma_low: float, sigma_high: float, n_points: int = 5
+) -> NormalIIDProcess:
+    return NormalIIDProcess(
+        n_points=n_points,
+        gauss_hermite=False,
+        mu=0.0,
+        sigma=max(sigma_low, sigma_high),
+        n_std=4.0,
+        state_conditioned=StateConditioned(
+            on="uncertainty", by={"low": sigma_low, "high": sigma_high}
+        ),
+    )
+
+
+def _cross_regime_alive(active, income_proc, uncertainty_law, *, local_uncertainty):
+    """An alive regime with income `income_proc`; `uncertainty` local or model-level."""
+    states = {
+        "wealth": LinSpacedGrid(start=1.0, stop=30.0, n_points=6),
+        "income": income_proc,
+    }
+    transitions = {"wealth": next_wealth}
+    if local_uncertainty:
+        states["uncertainty"] = DiscreteGrid(Uncertainty)
+        transitions["uncertainty"] = MarkovTransition(uncertainty_law)
+    return Regime(
+        active=active,
+        states=states,
+        state_transitions=transitions,
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
+        transition=next_phase,
+        constraints={"wealth_constraint": wealth_constraint},
+        functions={"utility": utility},
+    )
+
+
+def _cross_params():
+    return {
+        "discount_factor": 0.95,
+        "young": {"next_wealth": {"interest_rate": 0.03}},
+        "old": {"next_wealth": {"interest_rate": 0.03}},
+    }
+
+
+def test_cross_regime_regime_local_conditioner_builds_and_solves():
+    """F1 (usage validator): source income UNconditioned, target income conditioned, and
+    `uncertainty` (regime-local, age-only law) used only via the target's process.
+
+    Before the fix the usage validator reported young's `uncertainty` as "defined but
+    never used" — it is a real input to `weight_old__next_income` built into young's Q.
+    """
+    young = _cross_regime_alive(
+        lambda age: age <= 40,
+        _uncond_income(),
+        next_uncertainty_phase_age,
+        local_uncertainty=True,
+    )
+    old = _cross_regime_alive(
+        lambda age: (age > 40) & (age <= 60),
+        _cond_income(0.05, 0.30),
+        next_uncertainty_phase_age,
+        local_uncertainty=True,
+    )
+    gone = Regime(
+        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+    )
+    model = Model(
+        regimes={"young": young, "old": old, "gone": gone},
+        regime_id_class=Phase,
+        ages=AgeGrid(start=20, stop=70, step="10Y"),
+        fixed_params={},
+    )
+    V = model.solve(params=_cross_params(), log_level="warning")
+    for leaf in jax.tree_util.tree_leaves(V):
+        assert np.all(np.isfinite(np.asarray(leaf)))
+
+
+def test_cross_regime_model_level_conditioner_survives_pruning():
+    """F1 (broadcast pruner): the conditioner is a MODEL-LEVEL state used only via a
+    reachable target's process.
+
+    The pruner must keep it in every source reaching the process (young, old) and may
+    prune it from the terminal `gone`. Before the fix it was pruned from young and the
+    solve then failed for a missing DAG argument.
+    """
+    young = _cross_regime_alive(
+        lambda age: age <= 40,
+        _uncond_income(),
+        next_uncertainty_phase_age,
+        local_uncertainty=False,
+    )
+    old = _cross_regime_alive(
+        lambda age: (age > 40) & (age <= 60),
+        _cond_income(0.05, 0.30),
+        next_uncertainty_phase_age,
+        local_uncertainty=False,
+    )
+    gone = Regime(
+        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+    )
+    model = Model(
+        regimes={"young": young, "old": old, "gone": gone},
+        regime_id_class=Phase,
+        ages=AgeGrid(start=20, stop=70, step="10Y"),
+        fixed_params={},
+        states={"uncertainty": DiscreteGrid(Uncertainty)},
+        state_transitions={"uncertainty": MarkovTransition(next_uncertainty_phase_age)},
+    )
+    assert "uncertainty" not in model.pruned_variables["young"]  # source: reaches old
+    assert "uncertainty" not in model.pruned_variables["old"]  # carries the process
+    assert "uncertainty" in model.pruned_variables["gone"]  # terminal: reaches nothing
+    V = model.solve(params=_cross_params(), log_level="warning")
+    for leaf in jax.tree_util.tree_leaves(V):
+        assert np.all(np.isfinite(np.asarray(leaf)))
+
+
+def test_cross_regime_conditioned_draw_uses_the_source_sigma():
+    """The cross-regime draw must gather the SOURCE's conditioning code, not a default.
+
+    Build+solve+finite-V does not prove the conditioning is *correct*. Here income is
+    conditioned only in `old`; `uncertainty` is absorbing so each agent keeps its start
+    value. The income drawn on entry to `old` is transitioned using old's conditioned
+    spec at the current (source) uncertainty, so its spread must follow sigma_low /
+    sigma_high — otherwise the cross-regime gather silently used one common sigma.
+    """
+    sigma_low, sigma_high, n = 0.05, 0.30, 6000
+    half = n // 2
+    young = _cross_regime_alive(
+        lambda age: age <= 40,
+        _uncond_income(9),
+        next_uncertainty_phase_absorbing,
+        local_uncertainty=True,
+    )
+    old = _cross_regime_alive(
+        lambda age: (age > 40) & (age <= 60),
+        _cond_income(sigma_low, sigma_high, 9),
+        next_uncertainty_phase_absorbing,
+        local_uncertainty=True,
+    )
+    gone = Regime(
+        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+    )
+    model = Model(
+        regimes={"young": young, "old": old, "gone": gone},
+        regime_id_class=Phase,
+        ages=AgeGrid(start=20, stop=70, step="10Y"),
+        fixed_params={},
+    )
+    result = model.simulate(
+        params=_cross_params(),
+        log_level="warning",
+        initial_conditions={
+            "wealth": jnp.full(n, 15.0),
+            "income": jnp.zeros(n),
+            "uncertainty": jnp.array(
+                [Uncertainty.low] * half + [Uncertainty.high] * half
+            ),
+            "age": jnp.full(n, 20.0),
+            "regime_id": jnp.array([Phase.young] * n),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=11,
+    ).to_dataframe()
+    drawn = result[(result["regime_name"] == "old") & result["income"].notna()]
+    low = drawn[drawn["uncertainty"] == "low"]["income"].to_numpy()
+    high = drawn[drawn["uncertainty"] == "high"]["income"].to_numpy()
+    assert low.size > 100
+    assert high.size > 100
+    assert low.std() == pytest.approx(sigma_low, rel=0.15)
+    assert high.std() == pytest.approx(sigma_high, rel=0.15)

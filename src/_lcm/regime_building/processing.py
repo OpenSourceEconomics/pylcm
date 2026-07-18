@@ -1680,6 +1680,13 @@ def _validate_conditioning_codes_agree_across_regimes(
     do; a regime that relabels `{low: 0, high: 1}` to `{high: 0, low: 1}` would silently
     swap the two volatilities (code-review F4). Rather than thread the source grid
     through every seam, v1 requires one shared map and rejects otherwise.
+
+    Round-2 review F3 noted this global scan is not edge-precise (it fails a
+    state-less reachable source late rather than at the guard, and over-rejects
+    disconnected components reusing the name), but established **no silent policy
+    error**. Kept deliberately for v1: the conservative rule is safe, and the
+    per-edge alternative would need source-reachability plumbing that could itself
+    introduce the sigma-swap this prevents. Accepted limitation, not an oversight.
     """
     maps = {
         regime: dict(zip(grid.categories, grid.codes, strict=True))
@@ -1712,6 +1719,10 @@ def _validate_conditioned_sigmas(by: Mapping[str, float]) -> None:
         raise ModelInitializationError(msg)
 
 
+#: A CDF row bins on node midpoints, so it needs at least one interior edge.
+_MIN_CONDITIONED_NODES = 2
+
+
 def _validate_conditioned_grid_is_fixed(
     *, name: str, grid: _ContinuousStochasticProcess
 ) -> None:
@@ -1733,6 +1744,30 @@ def _validate_conditioned_grid_is_fixed(
     if not bool(jnp.all(jnp.isfinite(nodes))):
         msg = (
             f"state-conditioned process '{name}' resolved to non-finite nodes: {nodes}"
+        )
+        raise ModelInitializationError(msg)
+    # Finiteness is not enough. The direct-CDF row bins on the MIDPOINTS of these nodes,
+    # so a strictly increasing axis of >= 2 points is what makes the CDF differences
+    # probabilities at all (code-review round 2, F2). All of this is reachable from the
+    # public API: `sigma=-0.3` or `n_std=-3.0` yields a DESCENDING axis (pylcm does not
+    # require a positive sigma), `sigma=0.0` collapses every node, and a large `mu` in
+    # float32 rounds them together. The descending case is the dangerous one — the row
+    # still sums to 1.0, so a row-sum check passes while masses go negative and a
+    # continuation decision flips sign.
+    if nodes.ndim != 1 or nodes.shape[0] < _MIN_CONDITIONED_NODES:
+        msg = (
+            f"state-conditioned process '{name}' needs a 1-D axis of at least "
+            f"{_MIN_CONDITIONED_NODES} nodes; got shape {nodes.shape}. A single node "
+            f"leaves the CDF row no bin edges."
+        )
+        raise ModelInitializationError(msg)
+    if not bool(jnp.all(jnp.diff(nodes) > 0)):
+        msg = (
+            f"state-conditioned process '{name}' resolved to a node axis that is not "
+            f"strictly increasing: {nodes}. Midpoint-CDF binning would return negative "
+            f"transition masses (which still sum to 1.0, so this fails silently). "
+            f"Check for a negative or zero sigma / n_std, or nodes collapsed by "
+            f"float32 precision at a large mu."
         )
         raise ModelInitializationError(msg)
 
