@@ -703,23 +703,119 @@ def test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected
         )
 
 
-def test_coarse_regime_transition_does_not_fabricate_process_reachability():
-    """A coarse `transition=func` must NOT be read as reaching every regime.
+def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
+    """A coarse `transition=func`'s candidate universe is admitted as reachable
+    EXCEPT the source regime itself, so it never fabricates a self-transition.
 
-    The F2 repair widens reachability with the regime transition's own target
-    cells, so it has to distinguish the two transition forms. A coarse
-    `transition=func` emits a `next_regime` cell for EVERY regime — routing is
-    decided at runtime from the returned id — so its cell keys are the
-    CANDIDATE universe, not reachability. Treating them as reachable wires
-    spurious process transitions between every regime pair, including a false
-    `period0 -> period0` self-transition, which makes this very model (the
-    module's primary supported fold topology, whose shock is declared only in
-    `period0`) fail with a bogus "structurally persists" error.
+    A coarse `transition=func` emits a `next_regime` cell for EVERY regime —
+    routing is decided at runtime from the returned id — so its cell keys are
+    the CANDIDATE universe. Those candidates ARE admitted to `reachable_targets`
+    (fold-round3 F1: omitting a genuinely-routed candidate silently drops its
+    continuation), but two things keep that from fabricating a spurious
+    continuation here: (1) the SOURCE regime is excluded, so no false
+    `period0 -> period0` self-transition wires `period0`'s own folded
+    `wage_shock` back into itself and trips a bogus "structurally persists";
+    (2) process transitions are still scoped to the source's own processes, and
+    `terminal` shares none, so admitting it builds nothing. This is the module's
+    primary supported fold topology (shock declared and folded only in
+    `period0`); it must still solve cleanly to `E[10 + shock] = 10`.
 
-    MEASURED: the reviewer's proposed `reachable_targets |=
-    set(next_regime_cells_by_target)` does exactly that. This test pins the
-    per-target/coarse distinction that avoids it.
+    MEASURED: the reviewer's original `reachable_targets |=
+    set(next_regime_cells_by_target)` (candidates INCLUDING self) fabricates the
+    self-transition and fails this model with a bogus persistence error; the
+    minus-self admission does not.
     """
     solution = _solve(_make_regimes(fold=True))
     assert solution[0]["period0"].shape == ()
     np.testing.assert_allclose(np.asarray(solution[0]["period0"]), 10.0, atol=1e-5)
+
+
+def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
+    """A COARSE `transition=func` that can route to a process-only folded target
+    whose shock persists from the source is rejected by the persistence guard,
+    exactly as the per-target form is (fold-round3 F1).
+
+    Before the coarse-candidate reachability fix, a coarse transition's
+    candidate cells were ALL excluded from `reachable_targets`, so this target —
+    reached only via coarse routing, folding a `wage_shock` that also lives in
+    the source — was silently dropped: `process_regimes` returned NORMALLY with
+    an empty `period0` transitions bundle, and the folded target's continuation
+    vanished from E[V], while the byte-identical PER-TARGET model raised
+    "structurally persists". Admitting coarse candidates (minus the source)
+    routes the two forms into the same guard.
+
+    The per-target twin of this model is
+    `test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected`.
+    """
+    period0 = Regime(
+        transition=_next_regime,
+        active=lambda age: age < 1,
+        states={"wage_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wage_shock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    with pytest.raises(ModelInitializationError, match="structurally persists"):
+        process_regimes(
+            user_regimes=finalize_regimes(
+                user_regimes={"period0": period0, "terminal": terminal},
+                derived_categoricals={},
+            ),
+            ages=_AGES,
+            regime_names_to_ids=_REGIME_NAMES_TO_IDS,
+            enable_jit=False,
+        )
+
+
+def test_coarse_regime_transition_to_shared_process_target_builds_continuation():
+    """A coarse transition to a target that shares a NON-folded process with the
+    source now BUILDS that target's continuation into E[V] — the positive half of
+    the fold-round3 F1 fix — matching the per-target form value-for-value.
+
+    `wage_shock` is live (not folded) in both regimes, so it persists
+    source->target and the continuation must interpolate over it. Pre-fix the
+    coarse form dropped `terminal` entirely (empty `period0` bundle, continuation
+    = 0); post-fix it equals the per-target form, which never dropped it.
+    """
+    from lcm.transition import MarkovTransition  # noqa: PLC0415
+
+    def _terminal() -> Regime:
+        return Regime(
+            transition=None,
+            active=lambda age: age >= 1,
+            states={"wage_shock": _shock(fold=False)},
+            actions={"work": DiscreteGrid(Work)},
+            functions={"utility": lambda wage_shock, work: work * (2.0 + wage_shock)},
+        )
+
+    def _period0(transition: object) -> Regime:
+        return Regime(
+            transition=transition,
+            active=lambda age: age < 1,
+            states={"wage_shock": _shock(fold=False)},
+            actions={"work": DiscreteGrid(Work)},
+            functions={"utility": _utility},
+        )
+
+    coarse = _solve({"period0": _period0(_next_regime), "terminal": _terminal()})
+    per_target = _solve(
+        {
+            "period0": _period0(
+                {"terminal": MarkovTransition(lambda: jnp.asarray(1.0))}
+            ),
+            "terminal": _terminal(),
+        }
+    )
+    # Guard the guard: the per-target continuation is genuinely present (the
+    # discounted terminal value lifts period0 above its own shock-only ~10).
+    assert float(jnp.mean(per_target[0]["period0"])) > 11.0
+    # The coarse form no longer drops it: value-for-value equal to per-target.
+    np.testing.assert_allclose(
+        np.asarray(coarse[0]["period0"]), np.asarray(per_target[0]["period0"])
+    )

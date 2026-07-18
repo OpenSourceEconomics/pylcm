@@ -1177,6 +1177,7 @@ def _build_solution_phase(
 
     """
     core = _process_regime_core(
+        source_regime_name=regime_name,
         functions=spec.solution.functions,
         constraints=spec.solution.constraints,
         state_transitions=spec.solution.state_transitions,
@@ -1690,6 +1691,7 @@ def _build_simulation_phase(
         name: spec.solution.functions[name] for name in carried_only
     }
     core = _process_regime_core(
+        source_regime_name=regime_name,
         functions=decision_functions,
         constraints=spec.simulation.constraints,
         state_transitions=spec.simulation.state_transitions,
@@ -1892,6 +1894,7 @@ class _CoreResult:
 
 def _process_regime_core(
     *,
+    source_regime_name: RegimeName,
     functions: Mapping[FunctionName, UserFunction],
     constraints: Mapping[FunctionName, UserFunction],
     state_transitions: Mapping[StateName, object],
@@ -1907,6 +1910,11 @@ def _process_regime_core(
     classify and process transitions.
 
     Args:
+        source_regime_name: The name of the regime being processed (the
+            transition SOURCE). Used to exclude the source itself from a
+            coarse transition's candidate-target reachability set (a coarse
+            self-transition must not wire a spurious continuation back into
+            the source — see the reachability construction below).
         functions: Phase-resolved regime functions for this build.
         constraints: Phase-resolved constraint functions.
         state_transitions: This phase's `state_transitions` slice, used to
@@ -2019,22 +2027,45 @@ def _process_regime_core(
     # alone left it with no process transitions — silently dropping it from
     # `get_period_targets`, and hence its continuation from E[V].
     #
-    # Only PER-TARGET cells count. A coarse `transition=func` emits a
-    # `next_regime` cell for EVERY regime (the routing is decided at runtime
-    # from the returned id), so its cell keys are the candidate universe, not
-    # canonical reachability — admitting them would wire spurious process
-    # transitions between every regime pair, including a false self-transition.
+    # A coarse `transition=func` emits a `next_regime` cell for EVERY regime
+    # (the routing is decided at runtime from the returned id), so its cell keys
+    # are the candidate universe. Each candidate CAN be routed to, so its
+    # continuation must be built: a candidate the function never actually
+    # returns simply carries zero regime-transition probability and contributes
+    # nothing to E[V], whereas OMITTING a candidate that IS routed to silently
+    # drops its whole continuation from E[V] (fold-round3 F1). Process
+    # transitions are still scoped to processes the SOURCE declares (via
+    # `process_names` below), so admitting a candidate only wires a continuation
+    # for a process that genuinely persists source->target — and a folded such
+    # process is then correctly rejected by `_fail_if_folded_state_persists`,
+    # exactly as the per-target form is.
+    #
+    # The ONE candidate to exclude is the source regime itself: a coarse
+    # self-transition would wire a spurious `next_<process>` continuation back
+    # into the source, tripping the persistence guard on the primary supported
+    # (self-folded, non-persisting) topology — the false `period0 -> period0`
+    # self-transition. A genuinely persisting self-fold is unsupported by this
+    # slice regardless.
     process_names = variables.process_names
     per_target_regime_targets = {
         target
         for target, cell in next_regime_cells_by_target.items()
         if not isinstance(cell, _CoarseTransitionCell)
     }
-    reachable_targets = {
-        tree_path_from_qname(k)[0]
-        for k in flat_nested_transitions
-        if QNAME_DELIMITER in k
-    } | per_target_regime_targets
+    coarse_candidate_targets = {
+        target
+        for target, cell in next_regime_cells_by_target.items()
+        if isinstance(cell, _CoarseTransitionCell) and target != source_regime_name
+    }
+    reachable_targets = (
+        {
+            tree_path_from_qname(k)[0]
+            for k in flat_nested_transitions
+            if QNAME_DELIMITER in k
+        }
+        | per_target_regime_targets
+        | coarse_candidate_targets
+    )
     target_process_grids: dict[
         tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
     ] = {
