@@ -319,6 +319,20 @@ class Solver(ABC):
         """
         return False
 
+    @property
+    def n_stacked_carry_candidates(self) -> int:
+        """Length of the published carry's stacked outer-candidate axis.
+
+        A solver that publishes one carry row per outer durable candidate
+        (keeper plus one per outer-grid node), stacked on an axis before the
+        grid axis, declares that axis length here; a reading parent broadcasts
+        its queries over exactly that many candidates and collapses them by
+        the hard max. A solver whose carry has no candidate axis — no outer
+        margin, or an outer margin already folded inside the solve — declares
+        `0`, and the parent queries each carry row once.
+        """
+        return 0
+
     def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Check the regime is in scope for this solver. Default: no-op."""
 
