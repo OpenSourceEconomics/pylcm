@@ -10,6 +10,8 @@ ordinary (unpadded) grids, e.g. the passive-state grids of the mixed carry
 read.
 """
 
+from typing import Literal
+
 import jax
 import jax.numpy as jnp
 
@@ -30,7 +32,11 @@ def interp_on_padded_grid(
     influences the result. Behavior at the boundaries and at duplicated
     abscissae:
 
-    - Queries outside the non-NaN range are clamped to the boundary values.
+    - Queries below the first node continue the first bracket's secant
+      (linear extrapolation, matching the canonical state-grid read); queries
+      at or above the last non-NaN node are clamped to the boundary value,
+      because a refined row's last bracket can be a crossing-inserted
+      near-duplicate whose secant is no usable extrapolant.
     - At a duplicated abscissa (an envelope kink carrying left and right
       values), queries strictly below the duplicate interpolate toward the
       left value; queries at or above it use the right value. The zero-width
@@ -118,7 +124,8 @@ def interp_on_prepared_grid(
     """Interpolate on a row whose search key and valid length are prepared.
 
     The interpolation contract is identical to `interp_on_padded_grid` (linear
-    or Hermite, edge-clamped, tie-safe at kinks, `-inf`-propagating); this form
+    or Hermite, secant-extended below the first node, clamped at and above the
+    last, tie-safe at kinks, `-inf`-propagating); this form
     only takes the row's `search_grid` and `valid_length` precomputed (via
     `prepare_padded_grid`) instead of deriving them from `xp` per call.
     `search_grid` is used solely to locate brackets; the abscissae, values, and
@@ -217,8 +224,11 @@ def _hermite_query_derivative(
     the two derivative objects sharing `_hermite_bracket_derivatives` (the
     first is the right germ, the tie selector). Convention:
 
-    - strictly below the first node, and strictly above the last valid node:
-      zero (the read clamps to a constant),
+    - strictly below the first node: the first bracket's secant — the slope
+      of the value read's linear extension there (zero where the bracket is
+      zero-width or holds a non-finite endpoint, matching the value's clamp
+      fallback),
+    - strictly above the last valid node: zero (the read clamps),
     - inside a bracket: the limited-Hermite piece's derivative (the secant
       where the correction is inapplicable),
     - exactly on an interior node: the right piece's derivative (the bracket
@@ -233,18 +243,21 @@ def _hermite_query_derivative(
     - singleton row: zero (constant clamp); empty row: NaN (the read is NaN —
       the derivative is non-authoritative and carries the poison).
     """
-    first, _, _, _, zero_width = _hermite_bracket_derivatives(
+    first, _, _, endpoint_finite, zero_width, secant = _hermite_bracket_derivatives(
         x_query=x_query,
         search_grid=search_grid,
         valid_length=valid_length,
         xp=xp,
         fp=fp,
         fp_slopes=fp_slopes,
+        side="right",
     )
     first_node = search_grid[0]
     last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
-    outside = (x_query < first_node) | (x_query > last_node)
-    derivative = jnp.where(outside | zero_width, 0.0, first)
+    extension_slope = jnp.where(endpoint_finite & ~zero_width, secant, 0.0)
+    derivative = jnp.where(zero_width, 0.0, first)
+    derivative = jnp.where(x_query < first_node, extension_slope, derivative)
+    derivative = jnp.where(x_query > last_node, 0.0, derivative)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
     return jnp.where(valid_length == 0, jnp.nan, derivative)
 
@@ -260,8 +273,9 @@ def _linear_prepared_read_primal(
 
     Same contract as `_hermite_prepared_read`, with the analytic query
     derivative of the piecewise-linear interpolant: the located bracket's
-    secant inside brackets and at nodes (right bracket), zero on both clamp
-    rays and on degenerate rows.
+    secant inside brackets, at nodes (right bracket), and below the first
+    node (the read extends the first bracket's secant there), zero strictly
+    above the last valid node and on degenerate rows.
     """
     return _read_prepared_row(x_query, search_grid, valid_length, xp, fp, None)
 
@@ -309,10 +323,12 @@ def _linear_query_derivative(
     `_hermite_query_derivative`, with the bracket's secant in place of the
     limited-Hermite derivative:
 
-    - strictly below the first node and strictly above the last valid node:
-      zero; exactly on the last node: the last bracket's secant,
+    - strictly below the first node: the first bracket's secant (the slope
+      of the value read's linear extension); strictly above the last valid
+      node: zero; exactly on the last node: the last bracket's secant,
     - a non-finite value difference (a `-inf` endpoint): zero (the secant
-      fallback convention),
+      fallback convention, matching the value's clamp fallback below
+      support),
     - a zero-width located bracket: zero,
     - singleton row: zero; empty row: NaN (poison-carrying).
     """
@@ -326,10 +342,9 @@ def _linear_query_derivative(
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
     df = fp[upper] - fp[lower]
     secant = jnp.where(jnp.isfinite(df), df, 0.0) / safe_width
-    first_node = search_grid[0]
     last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
-    outside = (x_query < first_node) | (x_query > last_node)
-    derivative = jnp.where(outside | (bracket_width == 0.0), 0.0, secant)
+    above = x_query > last_node
+    derivative = jnp.where(above | (bracket_width == 0.0), 0.0, secant)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
     return jnp.where(valid_length == 0, jnp.nan, derivative)
 
@@ -480,13 +495,14 @@ def interp_right_germ_on_prepared_grid(
     share one bracket/limiter implementation.
 
     """
-    first, second, third, endpoint_finite, _ = _hermite_bracket_derivatives(
+    first, second, third, endpoint_finite, _, _ = _hermite_bracket_derivatives(
         x_query=x_query,
         search_grid=search_grid,
         valid_length=valid_length,
         xp=xp,
         fp=fp,
         fp_slopes=fp_slopes,
+        side="right",
     )
     # The read clamps to a constant strictly below the first node and at or
     # above the last valid one; the germ there is right-finite with all
@@ -504,6 +520,115 @@ def interp_right_germ_on_prepared_grid(
     )
 
 
+def interp_left_germ_on_padded_grid(
+    *,
+    x_query: FloatND,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+) -> tuple[BoolND, FloatND, FloatND, FloatND]:
+    """Compute the left germ of the Hermite value read on a padded row.
+
+    Same row contract as `interp_on_padded_grid`; see
+    `interp_left_germ_on_prepared_grid` for the germ semantics.
+
+    Args:
+        x_query: Points at which to evaluate the left germ; any shape.
+        xp: Weakly ascending grid row with NaNs only in the tail.
+        fp: Function values on `xp`, NaN-padded in lockstep with `xp`.
+        fp_slopes: Derivatives of `fp` with respect to `xp` at the `xp` nodes,
+            NaN-padded in lockstep.
+
+    Returns:
+        Tuple of the left-finiteness flag and the first, second, and third
+        left derivatives, each with the shape of `x_query`.
+
+    """
+    search_grid, valid_length = prepare_padded_grid(xp)
+    return interp_left_germ_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+
+def interp_left_germ_on_prepared_grid(
+    *,
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+) -> tuple[BoolND, FloatND, FloatND, FloatND]:
+    """Compute the left germ of the Hermite value read at each query.
+
+    The mirror of `interp_right_germ_on_prepared_grid`: the complete local
+    description of the value interpolant immediately to the *left* of the
+    query, as a tie-selection object for the stacked candidate readers. A tie
+    whose right germs are identical (both candidates clamp at a shared
+    terminal abscissa) is owned by the branch that carries the envelope on the
+    left neighborhood, so its published marginal stays inside the envelope's
+    generalized gradient at the boundary. Semantics:
+
+    - Strictly inside a bracket: the derivatives of that bracket's limited
+      cubic Hermite (the secant and zero curvature where the correction is
+      inapplicable — the linear fallback).
+    - Exactly on a node: the derivatives at the right edge of the node's
+      *left* bracket.
+    - At or below the first valid node: not left-finite, derivatives zero —
+      the stacked readers mask a candidate to `-inf` below its first finite
+      node, so as an envelope candidate the branch is dead immediately left.
+    - Strictly above the last valid node: the read clamps to a constant —
+      left-finite with all derivatives zero.
+    - A bracket with a non-finite endpoint value: not left-finite (the read
+      is `-inf` on the bracket's interior), derivatives zero.
+    - A zero-width located bracket (a duplicated first abscissa): derivatives
+      zero — no piece is defined on it.
+
+    Args:
+        x_query: Points at which to evaluate the left germ; any shape.
+        search_grid: The row's `+inf`-padded search key from
+            `prepare_padded_grid`.
+        valid_length: The row's non-NaN prefix length from
+            `prepare_padded_grid`.
+        xp: The original NaN-padded grid row (the abscissa gather source).
+        fp: Function values on `xp`, NaN-padded in lockstep.
+        fp_slopes: Node derivatives, NaN-padded in lockstep.
+
+    Returns:
+        Tuple of the left-finiteness flag and the first, second, and third
+        left derivatives, each with the shape of `x_query`.
+
+    """
+    first, second, third, endpoint_finite, zero_width, _ = _hermite_bracket_derivatives(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        side="left",
+    )
+    first_node = search_grid[0]
+    last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
+    # (`search_grid` is `+inf` on the pad, so a poisoned all-NaN row is dead
+    # left at every query: `first_node` is `+inf`.)
+    dead_left = x_query <= first_node
+    on_clamp_ray = x_query > last_node
+    left_finite = (on_clamp_ray | endpoint_finite) & ~dead_left
+    suppressed = dead_left | on_clamp_ray | zero_width
+    return (
+        left_finite,
+        jnp.where(suppressed, 0.0, first),
+        jnp.where(suppressed, 0.0, second),
+        jnp.where(suppressed, 0.0, third),
+    )
+
+
 def _hermite_bracket_derivatives(
     *,
     x_query: FloatND,
@@ -512,27 +637,36 @@ def _hermite_bracket_derivatives(
     xp: Float1D,
     fp: Float1D,
     fp_slopes: Float1D,
-) -> tuple[FloatND, FloatND, FloatND, BoolND, BoolND]:
+    side: Literal["left", "right"],
+) -> tuple[FloatND, FloatND, FloatND, BoolND, BoolND, FloatND]:
     """Derivatives of the located bracket's limited-Hermite piece.
 
-    The single bracket/limiter implementation behind both derivative objects —
-    the right germ (tie selection) and the published query derivative (the
-    value read's custom JVP): identical bracket location to
-    `interp_on_prepared_grid` (`side="right"` puts an on-node query into the
-    node's right bracket) and the same limiter as `_hermite_correction`, so
-    these are the derivatives of exactly the polynomial the value read
-    evaluates. In the bracket's local coordinate `t` the read is
+    The single bracket/limiter implementation behind every derivative object —
+    the right and left germs (tie selection) and the published query
+    derivative (the value read's custom JVP): the same clip and the same
+    limiter as `_hermite_correction`, so these are the derivatives of exactly
+    the polynomial the value read evaluates. `side` selects which bracket an
+    exactly-on-node query lands in:
+
+    - `"right"` — the node's right bracket (the value read's own convention),
+      evaluated at the bracket's left edge,
+    - `"left"` — the node's left bracket, evaluated at the bracket's right
+      edge; strictly interior queries locate the same bracket either way.
+
+    In the bracket's local coordinate `t` the read is
     `p(t) = f_l + Δf t + c_l t + (c_u - 2 c_l) t² + (c_l - c_u) t³`.
 
     Returns:
         Tuple of the first, second, and third derivatives of the located
         piece (the secant and zeros where the Hermite correction is
         inapplicable — the linear fallback), the bracket's
-        endpoint-finiteness flag, and the zero-width-bracket flag.
+        endpoint-finiteness flag, the zero-width-bracket flag, and the
+        bracket's secant (the slope of the value read's below-support linear
+        extension; zero where the value difference is non-finite).
 
     """
     upper = jnp.clip(
-        jnp.searchsorted(search_grid, x_query, side="right"),
+        jnp.searchsorted(search_grid, x_query, side=side),
         1,
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
@@ -584,7 +718,7 @@ def _hermite_bracket_derivatives(
     second = jnp.where(applicable, hermite_second, 0.0)
     third = jnp.where(applicable, hermite_third, 0.0)
     endpoint_finite = jnp.isfinite(fp_lower) & jnp.isfinite(fp_upper)
-    return first, second, third, endpoint_finite, bracket_width == 0.0
+    return first, second, third, endpoint_finite, bracket_width == 0.0, secant
 
 
 def _interp_between_nodes(
@@ -634,13 +768,14 @@ def _interp_between_nodes(
     """
     bracket_width = xp_upper - xp_lower
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
+    raw_position = (x_query - xp_lower) / safe_width
     # Zero-width brackets arise only when a duplicated abscissa sits at the end
     # of the non-NaN prefix; queries there are at or above the duplicate, so
     # the right value applies.
     relative_position = jnp.where(
         bracket_width == 0.0,
         1.0,
-        jnp.clip((x_query - xp_lower) / safe_width, 0.0, 1.0),
+        jnp.clip(raw_position, 0.0, 1.0),
     )
     weight_lower = 1.0 - relative_position
     # Blend on results with zero-weight short-circuits: a `-inf` endpoint
@@ -650,6 +785,26 @@ def _interp_between_nodes(
     linear = jnp.where(weight_lower > 0.0, weight_lower * fp_lower, 0.0) + jnp.where(
         relative_position > 0.0, relative_position * fp_upper, 0.0
     )
+    # Out-of-range reads are asymmetric:
+    # - Below the first node the query continues the first bracket's secant —
+    #   the convention of the canonical state-grid value read
+    #   (`map_coordinates` extrapolates linearly) — so a transition landing
+    #   under the carry's support (a borrowing corner undershooting the grid
+    #   start) is priced on the edge slope, not credited with a boundary value
+    #   no action attains.
+    # - At or above the last node the clamped boundary value applies: refined
+    #   envelope rows can end in a crossing-inserted near-duplicate bracket
+    #   whose secant slope is arbitrarily steep, so extending it would let one
+    #   degenerate pair poison every above-support read.
+    # Brackets with a non-finite endpoint (`-inf` infeasible values) keep the
+    # clamped read, and a zero-width kink bracket never extends.
+    finite_pair = jnp.isfinite(fp_lower) & jnp.isfinite(fp_upper)
+    extension = jnp.where(
+        finite_pair & (bracket_width != 0.0) & (raw_position < 0.0),
+        (raw_position - relative_position) * (fp_upper - fp_lower),
+        0.0,
+    )
+    linear = linear + extension
     if slope_lower is None or slope_upper is None:
         return linear
     return linear + _hermite_correction(

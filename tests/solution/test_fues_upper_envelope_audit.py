@@ -106,8 +106,9 @@ def test_f3_interpolated_function_is_correct_despite_retained_duplicate():
     x_query = jnp.array([-0.5, 0.0, 0.25, 0.5, 1.0])
     got_value = interp_on_padded_grid(x_query=x_query, xp=grid, fp=value)
     got_policy = interp_on_padded_grid(x_query=x_query, xp=grid, fp=policy)
-    # Envelope over [0, 1] is the line through (0, 1)-(1, 2); policy is 1.
-    expected_value = 1.0 + np.clip(np.asarray(x_query), 0.0, None)
+    # Envelope over [0, 1] is the line through (0, 1)-(1, 2); the read
+    # continues its secant below the first node; policy is 1.
+    expected_value = 1.0 + np.asarray(x_query)
     np.testing.assert_allclose(np.asarray(got_value), expected_value, atol=_ATOL)
     np.testing.assert_allclose(np.asarray(got_policy), 1.0, atol=_ATOL)
 

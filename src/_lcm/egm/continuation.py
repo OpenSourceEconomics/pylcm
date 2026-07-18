@@ -25,6 +25,7 @@ from dags import concatenate_functions
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import (
+    interp_left_germ_on_prepared_grid,
     interp_on_prepared_grid,
     interp_right_germ_on_prepared_grid,
     locate_on_grid,
@@ -923,21 +924,26 @@ def _aggregate_child_choices(
         # Below a candidate's own first finite coh node its support has not
         # started: mask the read to `-inf` so the edge clamp cannot hand an
         # infeasible lifted candidate a boundary value that wins the max. The
-        # `-inf` also pins the marginal to zero below. The right germ of each
-        # candidate's value read feeds the tie rule at the candidate max; it
-        # needs no support mask of its own — a below-support candidate enters
-        # the tie set only when every candidate is below support, where all
-        # published marginals are exactly zero regardless of the winner.
-        def right_germ_row(
+        # `-inf` also pins the marginal to zero below. The germs of each
+        # candidate's value read feed the tie rule at the candidate max; they
+        # need no support mask of their own — the left germ is dead at or
+        # below the first finite node by construction, and a below-support
+        # candidate enters the tie set only when every candidate is below
+        # support, where all published marginals are exactly zero regardless
+        # of the winner.
+        def germ_rows(
             search_grid: Float1D,
             valid_length: ScalarInt,
             xp: Float1D,
             fp: Float1D,
             fp_slopes: Float1D,
             x_query: ScalarFloat,
-        ) -> tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat]:
-            """Right germ of one value row at its query; positional per `jax.vmap`."""
-            return interp_right_germ_on_prepared_grid(
+        ) -> tuple[
+            tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
+            tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
+        ]:
+            """Right and left germs of one value row at its query; per `jax.vmap`."""
+            right_germ = interp_right_germ_on_prepared_grid(
                 x_query=x_query,
                 search_grid=search_grid,
                 valid_length=valid_length,
@@ -945,8 +951,17 @@ def _aggregate_child_choices(
                 fp=fp,
                 fp_slopes=fp_slopes,
             )
+            left_germ = interp_left_germ_on_prepared_grid(
+                x_query=x_query,
+                search_grid=search_grid,
+                valid_length=valid_length,
+                xp=xp,
+                fp=fp,
+                fp_slopes=fp_slopes,
+            )
+            return right_germ, left_germ
 
-        right_germ_at_child = jax.vmap(right_germ_row)(
+        right_germ_at_child, left_germ_at_child = jax.vmap(germ_rows)(
             search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
         )
         row_lower = jnp.min(
@@ -975,6 +990,9 @@ def _aggregate_child_choices(
             marginal_at_child=marginal_at_child,
             right_germ_at_child=tuple(
                 component.reshape(block_shape) for component in right_germ_at_child
+            ),
+            left_germ_at_child=tuple(
+                component.reshape(block_shape) for component in left_germ_at_child
             ),
         )
 
@@ -1024,6 +1042,7 @@ def _collapse_stacked_candidates(
     value_at_child: FloatND,
     marginal_at_child: FloatND,
     right_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
+    left_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
 ) -> tuple[FloatND, FloatND]:
     """Collapse the candidate axis by the exact hard max at the query.
 
@@ -1032,10 +1051,13 @@ def _collapse_stacked_candidates(
     tie resolves right-continuously in the value read itself: the tied
     candidates are compared by the complete right germ of their own value
     interpolants (`right_germ_winner` — right-finiteness, then the first three
-    one-sided derivatives, then the lowest index among locally identical
-    pieces), so the branch whose read actually wins immediately to the right
-    owns the (economic) marginal the parent's Euler inversion consumes. (The
-    germ uses the unscaled interpolant derivatives: the composed gradient is
+    one-sided derivatives), so the branch whose read actually wins immediately
+    to the right owns the (economic) marginal the parent's Euler inversion
+    consumes; right-identical candidates (a shared terminal abscissa, where
+    every candidate clamps) are separated by their left germs so the marginal
+    stays inside the envelope's generalized gradient at the boundary, and only
+    branches identical on both sides fall back to the lowest index. (The
+    germs use the unscaled interpolant derivatives: the composed gradient is
     shared by all candidates of a cell and positive, so scaling could never
     reorder them.) A cell whose candidates are all `-inf` (no live support)
     keeps the `(-inf, 0)` infeasible contract: every masked marginal is
@@ -1046,13 +1068,19 @@ def _collapse_stacked_candidates(
         marginal_at_child: Gradient-scaled candidate marginal reads, same shape.
         right_germ_at_child: Tuple of the right-finiteness flag and the first
             three right derivatives of the candidate value reads, same shape.
+        left_germ_at_child: Tuple of the left-finiteness flag and the first
+            three left derivatives of the candidate value reads, same shape.
 
     Returns:
         Tuple of the winner's value and marginal, with the candidate axis
         collapsed.
 
     """
-    winner = right_germ_winner(value=value_at_child, right_germ=right_germ_at_child)
+    winner = right_germ_winner(
+        value=value_at_child,
+        right_germ=right_germ_at_child,
+        left_germ=left_germ_at_child,
+    )
     winner_marginal = jnp.take_along_axis(marginal_at_child, winner, axis=-1)[..., 0]
     # The published value is the maximum itself: identical to the winner's read
     # at any tie, and NaN-propagating when a poisoned candidate row (whose NaN
