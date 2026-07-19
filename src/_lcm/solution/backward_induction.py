@@ -13,6 +13,7 @@ import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.solution.contract import (
+    BackwardInductionResult,
     ContinuationPayload,
     KernelResult,
     SimulationPolicy,
@@ -42,10 +43,7 @@ def solve(
     logger: logging.Logger,
     enable_jit: bool,
     max_compilation_workers: int | None = None,
-) -> tuple[
-    MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    MappingProxyType[int, MappingProxyType[RegimeName, SimulationPolicy]],
-]:
+) -> BackwardInductionResult:
     """Solve a model using grid search.
 
     Args:
@@ -63,10 +61,11 @@ def solve(
             Defaults to `os.cpu_count()`.
 
     Returns:
-        Tuple of (the immutable mapping of periods to regime value-function
-        arrays, the immutable mapping of periods to each regime's published
-        simulation policy — the off-grid policy artifact simulation can
-        interpolate; regimes whose kernels publish none have no entry).
+        The named backward-induction outputs: the immutable mapping of periods
+        to regime value-function arrays, and the immutable mapping of periods
+        to each regime's published simulation policy — the off-grid policy
+        artifact simulation can interpolate; regimes whose kernels publish
+        none have no entry.
 
     """
     next_regime_to_V_arr, next_regime_to_continuation = _build_continuation_templates(
@@ -269,7 +268,10 @@ def solve(
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
-    return MappingProxyType(solution), MappingProxyType(simulation_policies)
+    return BackwardInductionResult(
+        value_functions=MappingProxyType(solution),
+        simulation_policies=MappingProxyType(simulation_policies),
+    )
 
 
 def _release_rolled_continuations(

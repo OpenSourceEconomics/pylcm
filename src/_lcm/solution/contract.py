@@ -42,6 +42,8 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatParams,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToVArr,
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
@@ -188,6 +190,24 @@ class KernelResult:
 
     simulation_policy: SimulationPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class BackwardInductionResult:
+    """The generic outputs of one backward-induction run.
+
+    Internal to the engine: the public `Model.solve` unpacks it into its
+    documented mapping-or-tuple return shape.
+    """
+
+    value_functions: PeriodToRegimeToVArr
+    """Immutable mapping of period to each regime's value-function array."""
+
+    simulation_policies: PeriodToRegimeToSimulationPolicy
+    """Immutable mapping of period to each regime's published simulation policy.
+
+    Sparse over regimes: only kernels that publish a policy contribute entries.
+    """
 
 
 @runtime_checkable
