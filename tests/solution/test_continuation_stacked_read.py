@@ -518,3 +518,43 @@ def test_stacked_read_terminal_duplicate_left_owner_publishes_left_record():
 
     np.testing.assert_allclose(float(smoothed_value), 1.0, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
+
+
+def test_stacked_read_earlier_clamp_winner_publishes_zero_marginal():
+    """The production read zeroes a winner's marginal past its own support.
+
+    The winning candidate's support ends at coh 1 (its value clamps at 2); the
+    other candidate rises to 2 exactly at the query `q = 2`. The stacked
+    envelope is locally constant at the query, so the published marginal must
+    be exactly zero — not the winner's stale terminal record scaled by the
+    composed gradient (`2.0 * 2.0`).
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [jnp.array([0.0, 1.0, jnp.nan]), jnp.array([0.0, 1.0, 2.0])]
+        )[None, :, :],
+        value=jnp.stack([jnp.array([0.0, 2.0, jnp.nan]), jnp.array([0.0, 1.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([2.0, 2.0, jnp.nan]), jnp.array([1.0, 1.0, 1.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([2.0]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)

@@ -910,6 +910,21 @@ def _aggregate_child_choices(
         # ordinary infeasible `(-inf, 0)` pair.
         below_row_support = (queries_flat < row_lower) & jnp.isfinite(row_lower)
         value_at_child = jnp.where(below_row_support, -jnp.inf, value_at_child)
+        # Strictly above a candidate's own last finite node its value read is
+        # a constant clamp: re-pin both marginal payloads to zero per
+        # candidate, BEFORE the collapse, so an earlier-ending clamp winner
+        # publishes the locally constant envelope's zero slope instead of a
+        # terminal record from a node strictly below the query. At exact
+        # equality the node's own record stands; `row_upper` is `-inf` on an
+        # all-NaN row (mask off — the NaN read stays poisonous).
+        row_upper = jnp.max(
+            jnp.where(jnp.isfinite(grid_rows), grid_rows, -jnp.inf), axis=1
+        )
+        above_row_support = (queries_flat > row_upper) & jnp.isfinite(row_upper)
+        marginal_at_child = jnp.where(above_row_support, 0.0, marginal_at_child)
+        left_marginal_at_child = jnp.where(
+            above_row_support, 0.0, left_marginal_at_child
+        )
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as
     # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a

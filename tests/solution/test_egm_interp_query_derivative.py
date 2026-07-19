@@ -30,6 +30,7 @@ The published derivative contract, everywhere:
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import _aggregate_child_choices
@@ -339,3 +340,29 @@ def test_singleton_linear_read_is_smooth_to_second_order_in_the_query():
     np.testing.assert_allclose(
         float(jax.grad(jax.grad(read))(jnp.asarray(1.0))), 0.0, atol=1e-12
     )
+
+
+@pytest.mark.parametrize(
+    ("fp_slopes", "xp"),
+    [
+        (jnp.array([1.0, 2.0, 3.0]), jnp.array([0.0, 1.0, 2.0])),
+        (None, jnp.array([0.0, 1.0, 2.0])),
+        (jnp.array([2.0, jnp.nan, jnp.nan]), jnp.array([0.0, jnp.nan, jnp.nan])),
+        (None, jnp.array([0.0, jnp.nan, jnp.nan])),
+    ],
+    ids=["hermite", "linear", "hermite-singleton", "linear-singleton"],
+)
+def test_nan_query_gradient_is_nan_on_every_row_shape(fp_slopes, xp):
+    """`jax.grad` at a NaN query is NaN — fail-loud, matching the value read.
+
+    A NaN query marks an upstream failure; the value read re-pins it to NaN on
+    every row shape. The analytic query tangent must carry the same poison —
+    linear and Hermite reads, regular and singleton rows alike — instead of
+    the located bracket's finite secant or the degenerate-row constant.
+    """
+    fp = jnp.where(jnp.isnan(xp), jnp.nan, jnp.array([0.0, 1.0, 4.0]))
+
+    def read(query):
+        return interp_on_padded_grid(x_query=query, xp=xp, fp=fp, fp_slopes=fp_slopes)
+
+    assert bool(jnp.isnan(jax.grad(read)(jnp.asarray(jnp.nan))))

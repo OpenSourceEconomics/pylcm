@@ -107,7 +107,11 @@ def outer_envelope_at_query(
     and the value masked to `-inf` below the candidate's first finite coh node
     (its borrowing-constrained support has not started, and its marginal is
     zeroed alongside, so an all-infeasible query publishes the `(-inf, 0)`
-    infeasible pair). The published value is the pointwise maximum over
+    infeasible pair). Strictly above a candidate's own last finite node the
+    value read clamps to a constant, so both marginal payloads are re-pinned to
+    zero there per candidate — a winner queried past its own support publishes
+    the locally constant envelope's zero slope, never its terminal record.
+    The published value is the pointwise maximum over
     candidates; the published marginal is the *winning* candidate's resource
     slope (Danskin), so it is winner-consistent and never averaged across a
     branch crossing. At an exact value tie the winner is right-continuous in
@@ -183,6 +187,18 @@ def outer_envelope_at_query(
         value_at_query = jnp.where(below_support, -jnp.inf, value_at_query)
         marginal_at_query = jnp.where(below_support, 0.0, marginal_at_query)
         left_marginal_at_query = jnp.where(below_support, 0.0, left_marginal_at_query)
+        # Strictly above a candidate's own last finite node its value read is
+        # a constant clamp, so its marginal payload is exactly zero there —
+        # the separate linear marginal read would republish the terminal
+        # record of a node strictly below the query. Re-pinned per candidate,
+        # BEFORE the collapse, so an earlier-ending clamp winner cannot
+        # publish a stale record; at exact equality the node's own record
+        # stands. `cand_upper` is `-inf` on an all-NaN row (mask off — the
+        # NaN read stays poisonous).
+        cand_upper = jnp.max(jnp.where(jnp.isfinite(endog), endog, -jnp.inf))
+        above_support = (x_query > cand_upper) & jnp.isfinite(cand_upper)
+        marginal_at_query = jnp.where(above_support, 0.0, marginal_at_query)
+        left_marginal_at_query = jnp.where(above_support, 0.0, left_marginal_at_query)
         return (
             value_at_query,
             marginal_at_query,

@@ -310,7 +310,9 @@ def _hermite_query_derivative(
     - a zero-width located bracket (an end duplicate): zero — no slope is
       defined on it,
     - singleton row: zero (constant clamp); empty row: NaN (the read is NaN —
-      the derivative is non-authoritative and carries the poison).
+      the derivative is non-authoritative and carries the poison),
+    - a NaN query: NaN on every row shape — the value read re-pins a NaN query
+      fail-loud, and the tangent carries the same poison.
     """
     first, _, _, endpoint_finite, zero_width, secant = _hermite_bracket_derivatives(
         x_query=x_query,
@@ -328,7 +330,8 @@ def _hermite_query_derivative(
     derivative = jnp.where(x_query < first_node, extension_slope, derivative)
     derivative = jnp.where(x_query > last_node, 0.0, derivative)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
-    return jnp.where(valid_length == 0, jnp.nan, derivative)
+    derivative = jnp.where(valid_length == 0, jnp.nan, derivative)
+    return jnp.where(jnp.isnan(x_query), jnp.nan, derivative)
 
 
 def _linear_prepared_read_primal(
@@ -399,7 +402,9 @@ def _linear_query_derivative(
       fallback convention, matching the value's clamp fallback below
       support),
     - a zero-width located bracket: zero,
-    - singleton row: zero; empty row: NaN (poison-carrying).
+    - singleton row: zero; empty row: NaN (poison-carrying),
+    - a NaN query: NaN on every row shape — the value read re-pins a NaN query
+      fail-loud, and the located bracket's finite secant must not mask it.
     """
     upper = jnp.clip(
         jnp.searchsorted(search_grid, x_query, side="right"),
@@ -415,7 +420,8 @@ def _linear_query_derivative(
     above = x_query > last_node
     derivative = jnp.where(above | (bracket_width == 0.0), 0.0, secant)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
-    return jnp.where(valid_length == 0, jnp.nan, derivative)
+    derivative = jnp.where(valid_length == 0, jnp.nan, derivative)
+    return jnp.where(jnp.isnan(x_query), jnp.nan, derivative)
 
 
 def _read_prepared_row(
