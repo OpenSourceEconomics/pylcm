@@ -55,6 +55,7 @@ from _lcm.regime_building.phases import (
     RegimePhaseSpec,
 )
 from _lcm.regime_building.Q_and_F import (
+    LAW_SOURCE_ATTR,
     get_period_targets,
     get_Q_and_F,
     get_Q_and_F_terminal,
@@ -1455,10 +1456,18 @@ def _rename_params_to_qnames(
         branch = cast("Mapping[str, object]", branch[part])
     param_names = list(branch)
     if not param_names:
+        # No engine wrapper is added, so no provenance stamp: the cell's own object
+        # identity distinguishes one coarse law (the same object broadcast to every
+        # target) from distinct per-target laws. See `_law_source`.
         return cast("EconFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
-
-    return cast("EconFunction", rename_arguments(func, mapper=mapper))
+    renamed = rename_arguments(func, mapper=mapper)
+    # Stamp the engine-created wrapper with the user law it wraps, so the
+    # deterministic-transition conflict guard compares user-law provenance rather
+    # than unwrapping (which cannot tell the engine's rename layer from a user's own
+    # `rename_arguments` wrapper). Propagate an existing stamp through nested renames.
+    setattr(renamed, LAW_SOURCE_ATTR, getattr(func, LAW_SOURCE_ATTR, func))
+    return cast("EconFunction", renamed)
 
 
 def _engine_flat_param_names(

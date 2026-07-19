@@ -688,26 +688,30 @@ def _get_deterministic_transitions(
     return MappingProxyType(merged), frozenset(conflicting)
 
 
+# Attribute stamped by `_rename_params_to_qnames` onto an engine-renamed
+# transition cell, naming the user law it wraps. See `_law_source`.
+LAW_SOURCE_ATTR = "_lcm_law_source"
+
+
 def _law_source(func: TransitionFunction) -> object:
     """The user law behind a processed transition, for provenance comparison.
 
     A single BARE (coarse) state law carried by several targets is canonicalized
     into one cell per target, and `_rename_params_to_qnames` then renames each with
     its own qualified parameter names — producing DISTINCT wrapper objects that are
-    nonetheless the same user law. That rename is the engine's own, applied as the
-    OUTERMOST layer and exactly once (`rename_arguments` sets `__wrapped__`; a
-    parameter-free law is returned unwrapped). Stripping exactly that one engine
-    layer recovers the user law: two engine-renamed cells of one coarse law reach
-    the *same* shared user object (no conflict), while genuinely different per-target
-    laws reach *different* user objects (a real conflict).
+    nonetheless the same user law. To tell that coarse-broadcast case apart from
+    genuinely different per-target laws, the engine STAMPS every cell it renames with
+    `LAW_SOURCE_ATTR` pointing at the user law it wrapped: cells of one coarse law
+    share that source object, per-target cells carry different ones.
 
-    A full `inspect.unwrap` would over-strip: if the user built two per-target laws
-    with `dags.rename_arguments` off one base function (binding different parameter
-    names — a legitimate, distinct pair of laws), unwrapping the whole `__wrapped__`
-    chain collapses both to the shared base and silently suppresses the conflict.
-    So peel exactly one level, never the whole chain.
+    Provenance is explicit rather than inferred from `__wrapped__`, because unwrapping
+    cannot distinguish the engine's own rename layer from a user's `rename_arguments`
+    wrapper. A parameter-free law receives no engine wrapper (and no stamp) — there is
+    then nothing to unwrap, and the cells' own object identity already separates one
+    coarse law (the same object broadcast to every target) from distinct per-target
+    laws. So read the stamp when present, else compare the cell itself; never peel.
     """
-    return getattr(func, "__wrapped__", func)
+    return getattr(func, LAW_SOURCE_ATTR, func)
 
 
 def _get_U_and_F(
