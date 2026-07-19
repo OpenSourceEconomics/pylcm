@@ -1889,6 +1889,7 @@ class NBEGM(Solver):
                 context=context,
                 budget_target=self.budget_target,
                 post_decision_function=self.post_decision_function,
+                continuous_state=self.continuous_state,
             )
             if is_discrete
             else None
@@ -6541,8 +6542,15 @@ def _collect_nbegm_discrete_spec(
     context: SolverBuildContext,
     budget_target: str = "resources",
     post_decision_function: str | None = None,
+    continuous_state: str | None = None,
 ) -> _NBEGMDiscreteSpec:
-    """Collect the single binary/multi-valued discrete action of a smooth regime."""
+    """Collect the single binary/multi-valued discrete action of a smooth regime.
+
+    `continuous_state` names the Euler (liquid) axis explicitly; without it
+    the single-state inference `state_names[0]` applies — wrong for a regime
+    with ride-along states (discrete states order first), so a multi-state
+    config must pass its declared axis.
+    """
     import inspect  # noqa: PLC0415
 
     space = context.state_action_space
@@ -6554,7 +6562,9 @@ def _collect_nbegm_discrete_spec(
         raise RegimeInitializationError(msg)
     discrete_action_name = next(iter(space.discrete_actions))
     codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
-    liquid_state_name = space.state_names[0]
+    liquid_state_name = (
+        continuous_state if continuous_state is not None else space.state_names[0]
+    )
     _fail_if_discrete_action_feeds_continuation(
         context=context,
         action_name=discrete_action_name,
