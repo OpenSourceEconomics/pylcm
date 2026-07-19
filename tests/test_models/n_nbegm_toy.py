@@ -30,6 +30,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.branch_aggregation import OuterBranchAggregator
 from lcm.outer_search import OuterSearch
 from lcm.solvers import NBEGM, Solver
 from lcm.typing import (
@@ -143,16 +144,23 @@ def budget_feasible(liquid_savings: FloatND) -> FloatND:
     return liquid_savings >= 0.0
 
 
+def adjustment_scale(period: int) -> FloatND:
+    """Per-period scale of the uniform observed fixed adjustment cost."""
+    return jnp.asarray(0.3 + 0.05 * period)
+
+
 def build_solver(
     *,
     variant: str,
     outer_batch_size: int = 0,
     outer_search: OuterSearch | None = None,
+    branch_aggregator: OuterBranchAggregator | None = None,
 ) -> Solver:
     """Build the requested solver flavour for the alive regime.
 
     `outer_search` (n_nbegm only) replaces the legacy finite `OUTER_GRID`
     with an explicit strategy — the continuous-outer entry point.
+    `branch_aggregator` (n_nbegm only) selects the keeper/adjuster fold.
     """
     if variant == "brute":
         return GridSearch()
@@ -172,6 +180,11 @@ def build_solver(
             outer_batch_size=outer_batch_size,
         )
     if variant == "n_nbegm":
+        aggregator_kwargs = (
+            {}
+            if branch_aggregator is None
+            else {"branch_aggregator": branch_aggregator}
+        )
         return NNBEGM(
             inner=NBEGM(
                 continuous_state="wealth",
@@ -185,6 +198,7 @@ def build_solver(
             outer_grid=None if outer_search is not None else OUTER_GRID,
             outer_no_adjustment_candidate="keep_illiquid",
             outer_batch_size=0 if outer_search is not None else outer_batch_size,
+            **aggregator_kwargs,
         )
     msg = f"unknown variant: {variant}"
     raise ValueError(msg)
@@ -196,6 +210,7 @@ def build_model(
     outer_batch_size: int = 0,
     n_periods: int = N_PERIODS,
     outer_search: OuterSearch | None = None,
+    branch_aggregator: OuterBranchAggregator | None = None,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -213,6 +228,8 @@ def build_model(
     }
     if variant == "negm":
         functions["inverse_marginal_utility"] = inverse_marginal_utility
+    if branch_aggregator is not None:
+        functions["adjustment_scale"] = adjustment_scale
     constraints = (
         {"illiquid_feasible": illiquid_feasible, "budget_feasible": budget_feasible}
         if variant == "brute"
@@ -233,6 +250,7 @@ def build_model(
             variant=variant,
             outer_batch_size=outer_batch_size,
             outer_search=outer_search,
+            branch_aggregator=branch_aggregator,
         ),
     )
     dead = Regime(

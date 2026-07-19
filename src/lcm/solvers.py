@@ -33,6 +33,12 @@ from _lcm.solution.solvers import (
     OneAssetEGM,
     TwoDimEGM,
 )
+from lcm.branch_aggregation import (
+    BranchAggregateResult,
+    DeterministicOuterMaximum,
+    OuterBranchAggregator,
+    UniformObservedFixedCost,
+)
 from lcm.outer_search import (
     AdaptiveOuterMesh,
     FiniteOuterGrid,
@@ -46,13 +52,17 @@ __all__ = [
     "NEGM",
     "NNBEGM",
     "AdaptiveOuterMesh",
+    "BranchAggregateResult",
+    "DeterministicOuterMaximum",
     "FiniteOuterGrid",
     "GridSearch",
     "LegacyGoldenSection",
     "OneAssetEGM",
+    "OuterBranchAggregator",
     "OuterSearch",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
     "TwoDimEGM",
+    "UniformObservedFixedCost",
 ]

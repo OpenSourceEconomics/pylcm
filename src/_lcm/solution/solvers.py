@@ -22,7 +22,7 @@ import functools
 import math
 import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
@@ -35,6 +35,11 @@ from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm.branch_aggregation import (
+    DeterministicOuterMaximum,
+    OuterBranchAggregator,
+    UniformObservedFixedCost,
+)
 from _lcm.egm.carry import EGMCarry, shard_carry_template
 from _lcm.egm.nbegm import NBEGMRegistry
 from _lcm.egm.nested_published_policy import (
@@ -2363,6 +2368,17 @@ class NNBEGM(Solver):
     knob only — value-invariant. With `outer_search`, set the strategy's own
     `batch_size` instead."""
 
+    branch_aggregator: OuterBranchAggregator = field(
+        default_factory=DeterministicOuterMaximum
+    )
+    """How the keeper and adjuster branch values combine per state cell.
+
+    `DeterministicOuterMaximum()` (default) is the historical hard maximum.
+    `UniformObservedFixedCost(...)` integrates a uniform observed fixed
+    adjustment cost analytically into the fold — continuous-outer
+    (`AdaptiveOuterMesh`) only, and the shock must not appear as a solve
+    state (its integration is exact, no grid needed)."""
+
     def __post_init__(self) -> None:
         spec = get_nnbegm_inner_spec(inner=self.inner)
         _fail_if_outer_batch_size_negative(self.outer_batch_size)
@@ -2378,6 +2394,15 @@ class NNBEGM(Solver):
             outer_post_decision=self.outer_post_decision,
             inner_post_decision=spec.post_decision_function,
         )
+        if isinstance(
+            self.branch_aggregator, UniformObservedFixedCost
+        ) and not isinstance(search, AdaptiveOuterMesh):
+            msg = (
+                "UniformObservedFixedCost aggregates the keeper/adjuster "
+                "branches through the continuous collapse; it requires "
+                "`outer_search=AdaptiveOuterMesh(...)`."
+            )
+            raise RegimeInitializationError(msg)
 
     @property
     def resolved_outer_search(self) -> OuterSearch:
@@ -2507,6 +2532,9 @@ class NNBEGM(Solver):
             inner_action=inner_action,
             savings_top=float(spec.savings_grid.to_jax()[-1]),
         )
+        branch_fixed_cost, branch_scale_function = _resolve_branch_fixed_cost(
+            aggregator=self.branch_aggregator, context=context
+        )
         period_kernels = MappingProxyType(
             {
                 period: _NNBEGMPeriodKernel(
@@ -2527,6 +2555,8 @@ class NNBEGM(Solver):
                     inverse_marginal=inverse_marginal,
                     row_discrete_state_names=row_discrete_state_names,
                     row_passive_state_names=row_passive_state_names,
+                    branch_fixed_cost=branch_fixed_cost,
+                    branch_scale_function=branch_scale_function,
                 )
                 for period, adjuster_kernel in (adjuster_kernels.period_kernels.items())
             }
@@ -2623,6 +2653,14 @@ class _NNBEGMPeriodKernel:
     """Names of the carry rows' passive continuous-state axes (every
     continuous state except the inner Euler state), after the discrete
     states."""
+
+    branch_fixed_cost: UniformObservedFixedCost | None
+    """The uniform observed fixed-cost aggregator, or `None` for the
+    deterministic keeper/adjuster maximum."""
+
+    branch_scale_function: Callable[..., FloatND] | None
+    """The fixed cost's scale function, arguments restricted to
+    `period`/`age`/flat params (resolved per period at call time)."""
 
     @property
     def core(self) -> Callable:
@@ -2820,11 +2858,27 @@ class _NNBEGMPeriodKernel:
             outer_nodes=mesh.nodes,
             results=[cache[float(node)] for node in np.asarray(mesh.nodes)],
         )
+        if self.branch_fixed_cost is None:
+            fixed_cost_scale = None
+            fixed_cost_support = None
+        else:
+            fixed_cost_scale = _resolve_branch_scale(
+                scale_function=self.branch_scale_function,
+                regime_params=flat_params[self.regime_name],
+                period=period,
+                ages=ages,
+            )
+            fixed_cost_support = (
+                self.branch_fixed_cost.lower,
+                self.branch_fixed_cost.upper,
+            )
         collapse = collapse_continuous_candidate_bank(
             keeper_v_arr=keeper_result.V_arr,
             keeper_carry=cast("EGMCarry", keeper_result.carry),
             bank=bank,
             config=config,
+            fixed_cost_scale=fixed_cost_scale,
+            fixed_cost_support=fixed_cost_support,
         )
         diagnostics = SolverDiagnostics(
             max_outer_interpolation_error=jnp.asarray(mesh.max_validation_error),
@@ -2836,6 +2890,7 @@ class _NNBEGMPeriodKernel:
             best_second_best_margin=collapse.best_second_best_margin,
             policy_fallback_mask=jnp.asarray(False),  # noqa: FBT003
             unresolved_mask=jnp.asarray(mesh.unresolved),
+            adjustment_probability=collapse.adjustment_probability,
         )
         # Publish the nested payload whenever both branches' inner policies
         # are available — the continuous simulation reader replays keeper vs
@@ -2869,7 +2924,14 @@ class _NNBEGMPeriodKernel:
             )
         )
         sim_policy: SimulationPolicyPayload | None = keeper_result.sim_policy
-        if keeper_policy is not None and adjuster_policies is not None:
+        if (
+            keeper_policy is not None
+            and adjuster_policies is not None
+            # The nested read replays the deterministic hard maximum; under a
+            # fixed-cost aggregation the realized branch depends on the drawn
+            # cost, so no nested payload is published (grid-argmax simulate).
+            and self.branch_fixed_cost is None
+        ):
             sim_policy = NestedEGMSimPolicy(
                 keeper=keeper_policy,
                 adjuster=OuterPolicyBank(
@@ -3148,6 +3210,82 @@ def _nested_inverse_marginal(
         return roots.reshape(jnp.shape(marginal_continuation))
 
     return inverse_marginal
+
+
+def _resolve_branch_fixed_cost(
+    *,
+    aggregator: OuterBranchAggregator,
+    context: SolverBuildContext,
+) -> tuple[UniformObservedFixedCost | None, Callable[..., FloatND] | None]:
+    """Validate and resolve a fixed-cost branch aggregator at build time.
+
+    Returns `(None, None)` for the deterministic maximum. For
+    `UniformObservedFixedCost`, checks the analytic-integration contract:
+
+    - the shock must *not* be a solve state (the closed form replaces its
+      grid; a leftover state would integrate the cost twice);
+    - the scale function must exist and read only `period`, `age`, and flat
+      params — the collapse applies one scalar scale per period, so a state-
+      dependent scale is out of the supported scope.
+    """
+    import inspect  # noqa: PLC0415
+
+    if not isinstance(aggregator, UniformObservedFixedCost):
+        return None, None
+    if aggregator.shock_name in context.state_action_space.states:
+        msg = (
+            f"UniformObservedFixedCost integrates the shock "
+            f"'{aggregator.shock_name}' analytically; remove its solve-state "
+            f"grid from regime '{context.regime_name}' (keeping it would "
+            "integrate the cost twice)."
+        )
+        raise RegimeInitializationError(msg)
+    scale_function = context.functions.get(aggregator.scale_function)
+    if scale_function is None:
+        msg = (
+            f"UniformObservedFixedCost.scale_function "
+            f"'{aggregator.scale_function}' is not a function of regime "
+            f"'{context.regime_name}'."
+        )
+        raise RegimeInitializationError(msg)
+    unresolvable = [
+        name
+        for name in inspect.signature(scale_function).parameters
+        if name not in ("period", "age") and name not in context.flat_param_names
+    ]
+    if unresolvable:
+        msg = (
+            f"UniformObservedFixedCost.scale_function "
+            f"'{aggregator.scale_function}' reads {sorted(unresolvable)}; the "
+            "per-period scalar scale may only read `period`, `age`, and flat "
+            "params (a state-dependent scale is outside the supported scope)."
+        )
+        raise RegimeInitializationError(msg)
+    return aggregator, scale_function
+
+
+def _resolve_branch_scale(
+    *,
+    scale_function: Callable[..., FloatND] | None,
+    regime_params: Mapping[str, object],
+    period: int,
+    ages: AgeGrid,
+) -> FloatND:
+    """Evaluate the fixed cost's per-period scalar scale at kernel-call time."""
+    import inspect  # noqa: PLC0415
+
+    if scale_function is None:  # pragma: no cover - guarded at build time
+        msg = "branch_fixed_cost set without a resolved scale function"
+        raise RegimeInitializationError(msg)
+    kwargs: dict[str, object] = {}
+    for name in inspect.signature(scale_function).parameters:
+        if name == "period":
+            kwargs[name] = jnp.asarray(period)
+        elif name == "age":
+            kwargs[name] = jnp.asarray(ages.values[period])
+        else:
+            kwargs[name] = regime_params[name]
+    return jnp.asarray(scale_function(**kwargs))
 
 
 def _fail_if_nnbegm_outer_post_decision_is_inner(

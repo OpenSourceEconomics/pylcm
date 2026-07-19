@@ -25,6 +25,7 @@ from dataclasses import dataclass, replace
 
 import jax.numpy as jnp
 
+from _lcm.egm.branch_aggregation import aggregate_uniform_observed_fixed_cost
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.outer_candidates import OuterCandidateBank
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
@@ -61,6 +62,10 @@ class ContinuousCollapse:
     best_second_best_margin: FloatND
     """Smallest finite best/second-best margin over cells (0-d)."""
 
+    adjustment_probability: FloatND | None = None
+    """Analytic per-cell probability of the adjuster branch under a uniform
+    observed fixed cost, or `None` under the deterministic maximum."""
+
 
 def collapse_continuous_candidate_bank(
     *,
@@ -68,6 +73,8 @@ def collapse_continuous_candidate_bank(
     keeper_carry: EGMCarry,
     bank: OuterCandidateBank,
     config: AdaptiveOuterMesh,
+    fixed_cost_scale: FloatND | None = None,
+    fixed_cost_support: tuple[float, float] | None = None,
 ) -> ContinuousCollapse:
     """Collapse the bank into the keeper via the continuous outer optimum.
 
@@ -76,6 +83,13 @@ def collapse_continuous_candidate_bank(
         keeper_carry: The keeper's exact carry rows.
         bank: Exact adjuster solves stacked on the shared (refined) mesh.
         config: The `AdaptiveOuterMesh` strategy (refiner budgets).
+        fixed_cost_scale: Scale `B` of a uniform observed fixed adjustment
+            cost, integrated analytically into the keeper/adjuster fold
+            (`None` keeps the deterministic maximum). Must broadcast against
+            both the value array and the carry rows — in the supported scope
+            it is a 0-d per-period scalar.
+        fixed_cost_support: The cost draw's support `(lower, upper)`;
+            required with `fixed_cost_scale`.
 
     Returns:
         The collapsed surfaces plus the search diagnostics' ingredients.
@@ -84,12 +98,25 @@ def collapse_continuous_candidate_bank(
     value_search = _continuous_outer_argmax(
         nodes=bank.outer_nodes, stacked=bank.V_arr, config=config
     )
-    V_arr = _fold_continuous(
-        running=keeper_v_arr,
-        stacked=bank.V_arr,
-        search=value_search,
-        candidate=value_search.value,
-    )
+    if fixed_cost_scale is None:
+        V_arr = _fold_continuous(
+            running=keeper_v_arr,
+            stacked=bank.V_arr,
+            search=value_search,
+            candidate=value_search.value,
+        )
+        adjustment_probability = None
+    else:
+        if fixed_cost_support is None:
+            msg = "fixed_cost_scale requires fixed_cost_support"
+            raise ValueError(msg)
+        V_arr, adjustment_probability = _fold_expected_fixed_cost(
+            running=keeper_v_arr,
+            stacked=bank.V_arr,
+            search=value_search,
+            scale=fixed_cost_scale,
+            support=fixed_cost_support,
+        )
 
     stacked_carry = bank.carry
     carry_search = _continuous_outer_argmax(
@@ -100,21 +127,41 @@ def collapse_continuous_candidate_bank(
         values=stacked_carry.marginal_utility,
         query=carry_search.x,
     )
-    collapsed_value = _fold_continuous(
-        running=keeper_carry.value,
-        stacked=stacked_carry.value,
-        search=carry_search,
-        candidate=carry_search.value,
-    )
-    collapsed_marginal = _fold_continuous(
-        running=keeper_carry.marginal_utility,
-        stacked=stacked_carry.value,
-        search=carry_search,
-        candidate=adjuster_marginal,
-        take_from=keeper_carry.value,
-        take_candidate=carry_search.value,
-        invalid_fill=0.0,
-    )
+    if fixed_cost_scale is None:
+        collapsed_value = _fold_continuous(
+            running=keeper_carry.value,
+            stacked=stacked_carry.value,
+            search=carry_search,
+            candidate=carry_search.value,
+        )
+        collapsed_marginal = _fold_continuous(
+            running=keeper_carry.marginal_utility,
+            stacked=stacked_carry.value,
+            search=carry_search,
+            candidate=adjuster_marginal,
+            take_from=keeper_carry.value,
+            take_candidate=carry_search.value,
+            invalid_fill=0.0,
+        )
+    else:
+        if fixed_cost_support is None:
+            msg = "fixed_cost_scale requires fixed_cost_support"
+            raise ValueError(msg)
+        collapsed_value, row_probability = _fold_expected_fixed_cost(
+            running=keeper_carry.value,
+            stacked=stacked_carry.value,
+            search=carry_search,
+            scale=fixed_cost_scale,
+            support=fixed_cost_support,
+        )
+        # Envelope: the cutoff's own derivative drops, so the expected
+        # marginal is the probability-weighted blend of the two branches'
+        # conditional marginals (each already `0.0` on its dead rows).
+        collapsed_marginal = (
+            row_probability
+            * jnp.where(jnp.isfinite(carry_search.value), adjuster_marginal, 0.0)
+            + (1.0 - row_probability) * keeper_carry.marginal_utility
+        )
     carry = replace(
         keeper_carry,
         value=collapsed_value,
@@ -129,7 +176,48 @@ def collapse_continuous_candidate_bank(
         best_second_best_margin=_min_finite_margin(
             value_search.value, value_search.second_best_value
         ),
+        adjustment_probability=adjustment_probability,
     )
+
+
+def _fold_expected_fixed_cost(
+    *,
+    running: FloatND,
+    stacked: FloatND,
+    search: SafeguardedSearchResult,
+    scale: FloatND,
+    support: tuple[float, float],
+) -> tuple[FloatND, FloatND]:
+    """Fold keeper vs continuous-adjuster through the analytic expectation.
+
+    Keeps the deterministic fold's degeneracy vocabulary: a search-invalid
+    candidate cell is restored to NaN when its whole stacked column is NaN
+    (aligned padding rides through) and to `-inf` otherwise; a NaN-dead side
+    then acts as `-inf` in the closed form (the live side's own expectation
+    wins), and a cell dead on both sides keeps the keeper's original entry
+    with adjustment probability `0.0`.
+    """
+    all_nan = jnp.all(jnp.isnan(stacked), axis=0)
+    candidate = jnp.where(
+        search.valid,
+        search.value,
+        jnp.where(all_nan, jnp.nan, -jnp.inf),
+    )
+    keeper_dead = jnp.isnan(running)
+    candidate_dead = jnp.isnan(candidate)
+    result = aggregate_uniform_observed_fixed_cost(
+        keeper_value=jnp.where(keeper_dead, -jnp.inf, running),
+        adjuster_value=jnp.where(candidate_dead, -jnp.inf, candidate),
+        scale=jnp.broadcast_to(
+            scale, jnp.broadcast_shapes(running.shape, candidate.shape)
+        ),
+        lower=support[0],
+        upper=support[1],
+    )
+    both_dead = keeper_dead & candidate_dead
+    value = jnp.where(both_dead, running, result.expected_value)
+    probability = jnp.where(both_dead, 0.0, result.adjustment_probability)
+    return value, probability
 
 
 def _continuous_outer_argmax(

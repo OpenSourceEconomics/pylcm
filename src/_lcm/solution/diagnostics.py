@@ -60,3 +60,9 @@ class SolverDiagnostics:
 
     unresolved_mask: BoolND
     """Where the solve could not certify its outer optimum to tolerance."""
+
+    adjustment_probability: FloatND | None = None
+    """Analytic per-cell adjuster-branch probability under a uniform observed
+    fixed cost (`UniformObservedFixedCost`), or `None` under the
+    deterministic maximum. An analytic moment: the moment engine reads it
+    directly instead of estimating adjustment frequencies from draws."""
