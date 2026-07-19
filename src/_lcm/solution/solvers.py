@@ -264,7 +264,7 @@ class DCEGM(Solver):
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
 
     @property
-    def requires_continuation_carries(self) -> bool:
+    def requires_continuation(self) -> bool:
         """DC-EGM inverts the Euler equation against its targets' marginals."""
         return True
 
@@ -442,7 +442,7 @@ class NEGM(Solver):
         _fail_if_outer_batch_size_negative(self.outer_batch_size)
 
     @property
-    def requires_continuation_carries(self) -> bool:
+    def requires_continuation(self) -> bool:
         """NEGM nests a DC-EGM solve that inverts the Euler equation."""
         return True
 
@@ -584,7 +584,7 @@ class _GridSearchPeriodKernel:
         core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -605,7 +605,7 @@ class _GridSearchPeriodKernel:
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -676,7 +676,7 @@ class _DCEGMPeriodKernel:
         core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -684,8 +684,8 @@ class _DCEGMPeriodKernel:
         """Build the core's lowering arguments: states, carries, EGM params."""
         return {
             **dict(state_action_space.states),
-            "next_regime_to_egm_carry": _reachable_carry_subset(
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
+            "next_regime_to_continuation": _reachable_carry_subset(
+                next_regime_to_continuation=next_regime_to_continuation,
                 reachable_targets=self.reachable_targets,
             ),
             "next_regime_to_V_arr": next_regime_to_V_arr,
@@ -700,7 +700,7 @@ class _DCEGMPeriodKernel:
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -709,15 +709,17 @@ class _DCEGMPeriodKernel:
         V_arr, egm_carry, sim_policy = compiled_cores["main"](
             **state_action_space.states,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=_reachable_carry_subset(
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=_reachable_carry_subset(
+                next_regime_to_continuation=next_regime_to_continuation,
                 reachable_targets=self.reachable_targets,
             ),
             **self._egm_kernel_params(flat_params=flat_params),
             period=jnp.int32(period),
             age=ages.values[period],
         )
-        return KernelResult(V_arr=V_arr, carry=egm_carry, sim_policy=sim_policy)
+        return KernelResult(
+            V_arr=V_arr, continuation=egm_carry, simulation_policy=sim_policy
+        )
 
     def _egm_kernel_params(self, *, flat_params: FlatParams) -> dict[str, object]:
         """Flat params fed into the DC-EGM core: the source's plus its targets'.
@@ -855,7 +857,7 @@ class _NEGMPeriodKernel:
         core_key: str,
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -875,7 +877,7 @@ class _NEGMPeriodKernel:
                 core_key="main",
                 state_action_space=state_action_space,
                 next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                next_regime_to_continuation=next_regime_to_continuation,
                 flat_params=flat_params,
                 period=period,
                 ages=ages,
@@ -884,7 +886,7 @@ class _NEGMPeriodKernel:
             core_key="main",
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             flat_params=_with_outer_post_decision(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
@@ -901,7 +903,7 @@ class _NEGMPeriodKernel:
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -920,7 +922,7 @@ class _NEGMPeriodKernel:
             compiled_cores={"main": compiled_cores["keeper"]},
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             flat_params=flat_params,
             period=period,
             ages=ages,
@@ -944,7 +946,7 @@ class _NEGMPeriodKernel:
         # `(A+1) * n_pad` resident width is inherent to the exact query-side
         # maximum, not a fold artifact. The keeper and every adjuster are
         # DC-EGM kernels, so each always publishes a continuation carry.
-        keeper_carry = cast("EGMCarry", keeper_result.carry)
+        keeper_carry = cast("EGMCarry", keeper_result.continuation)
         V_arr = keeper_result.V_arr
         nodes = self._outer_nodes()
         adjuster_carries: list[EGMCarry] = []
@@ -955,7 +957,7 @@ class _NEGMPeriodKernel:
                     compiled_cores={"main": compiled_cores["adjuster"]},
                     state_action_space=state_action_space,
                     next_regime_to_V_arr=next_regime_to_V_arr,
-                    next_regime_to_egm_carry=next_regime_to_egm_carry,
+                    next_regime_to_continuation=next_regime_to_continuation,
                     flat_params=_with_outer_post_decision(
                         flat_params=flat_params,
                         regime_name=self.regime_name,
@@ -969,7 +971,7 @@ class _NEGMPeriodKernel:
             ]
             for adjuster_result in chunk_results:
                 V_arr = jnp.maximum(V_arr, adjuster_result.V_arr)
-                adjuster_carries.append(cast("EGMCarry", adjuster_result.carry))
+                adjuster_carries.append(cast("EGMCarry", adjuster_result.continuation))
             # Force the chunk's results to device before the next chunk. Without
             # this the lazy sweep accumulates a dependency on every chunk's
             # solves at once — the solve-side peak would grow with the whole
@@ -987,8 +989,8 @@ class _NEGMPeriodKernel:
         # drives simulated durable choice; it rides through unchanged.
         return KernelResult(
             V_arr=V_arr,
-            carry=carry,
-            sim_policy=keeper_result.sim_policy,
+            continuation=carry,
+            simulation_policy=keeper_result.simulation_policy,
         )
 
     def _outer_nodes(self) -> list[FloatND]:
@@ -1320,12 +1322,12 @@ def _with_outer_post_decision(
 
 def _reachable_carry_subset(
     *,
-    next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
     reachable_targets: frozenset[RegimeName],
 ) -> MappingProxyType[RegimeName, EGMCarry]:
     """The carries a regime's EGM core actually reads.
 
-    Each core only ever indexes `next_regime_to_egm_carry[target]` for its
+    Each core only ever indexes `next_regime_to_continuation[target]` for its
     reachable targets, so the full all-regimes mapping is needlessly large.
     Filtering to the reachable subset keeps the core's carry pytree input
     minimal — only this subset is passed per call rather than every regime's
@@ -1337,8 +1339,8 @@ def _reachable_carry_subset(
     """
     return MappingProxyType(
         {
-            name: next_regime_to_egm_carry[name]
-            for name in next_regime_to_egm_carry
+            name: next_regime_to_continuation[name]
+            for name in next_regime_to_continuation
             if name in reachable_targets
         }
     )
@@ -1466,7 +1468,7 @@ class OneAssetEGM(Solver):
     """Exogenous post-decision savings grid `s = liquid - consumption` (>= 0)."""
 
     @property
-    def requires_continuation_carries(self) -> bool:
+    def requires_continuation(self) -> bool:
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
         return True
 
@@ -1546,7 +1548,7 @@ class TwoDimEGM(Solver):
     """
 
     @property
-    def requires_continuation_carries(self) -> bool:
+    def requires_continuation(self) -> bool:
         """The boundary step reads the retired regime's marginal value of liquid."""
         return True
 
@@ -1643,7 +1645,7 @@ class _OneAssetEGMPeriodKernel:
         core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,  # noqa: ARG002
         ages: AgeGrid,  # noqa: ARG002
@@ -1652,7 +1654,7 @@ class _OneAssetEGMPeriodKernel:
         return {
             **dict(state_action_space.states),
             "next_value": next_regime_to_V_arr[self.continuation_target],
-            "next_marginal": next_regime_to_egm_carry[
+            "next_marginal": next_regime_to_continuation[
                 self.continuation_target
             ].marginal_utility,
             **_union_free_params(
@@ -1668,7 +1670,7 @@ class _OneAssetEGMPeriodKernel:
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,  # noqa: ARG002
         ages: AgeGrid,  # noqa: ARG002
@@ -1677,7 +1679,7 @@ class _OneAssetEGMPeriodKernel:
         V_arr, carry = compiled_cores["main"](
             **state_action_space.states,
             next_value=next_regime_to_V_arr[self.continuation_target],
-            next_marginal=next_regime_to_egm_carry[
+            next_marginal=next_regime_to_continuation[
                 self.continuation_target
             ].marginal_utility,
             **_union_free_params(
@@ -1686,7 +1688,7 @@ class _OneAssetEGMPeriodKernel:
                 transition_target_names=self.transition_target_names,
             ),
         )
-        return KernelResult(V_arr=V_arr, carry=carry)
+        return KernelResult(V_arr=V_arr, continuation=carry)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1739,7 +1741,7 @@ class _TwoDimEGMPeriodKernel:
         core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,  # noqa: ARG002
         ages: AgeGrid,  # noqa: ARG002
@@ -1748,7 +1750,7 @@ class _TwoDimEGMPeriodKernel:
         return self._core_args(
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             flat_params=flat_params,
         )
 
@@ -1758,7 +1760,7 @@ class _TwoDimEGMPeriodKernel:
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,  # noqa: ARG002
         ages: AgeGrid,  # noqa: ARG002
@@ -1768,7 +1770,7 @@ class _TwoDimEGMPeriodKernel:
             **self._core_args(
                 state_action_space=state_action_space,
                 next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                next_regime_to_continuation=next_regime_to_continuation,
                 flat_params=flat_params,
             )
         )
@@ -1779,7 +1781,7 @@ class _TwoDimEGMPeriodKernel:
         *,
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
     ) -> dict[str, object]:
         """Assemble the core's keyword arguments for one period.
@@ -1796,7 +1798,7 @@ class _TwoDimEGMPeriodKernel:
         if self.is_boundary:
             continuation = {
                 "next_value_retired": next_regime_to_V_arr[self.continuation_target],
-                "next_marginal_retired": next_regime_to_egm_carry[
+                "next_marginal_retired": next_regime_to_continuation[
                     self.continuation_target
                 ].marginal_utility,
             }

@@ -285,7 +285,7 @@ def bind_continuation(
     *,
     plan: ContinuationPlan,
     combo_pool: dict[str, Any],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
@@ -321,14 +321,14 @@ def bind_continuation(
     # (must be model-level), a model-level sharded state pruned from a non-terminal
     # regime is rejected, and a sharded discrete state surviving on a DCEGM regime is
     # rejected by grid hygiene. Lifting the restriction is not infeasible: extend the
-    # continuation-V co-map to `next_regime_to_egm_carry` (map each carry's leading
+    # continuation-V co-map to `next_regime_to_continuation` (map each carry's leading
     # discrete axis device-local, as for the V-array); or gather carry rows
     # shard-aware before indexing (an all-gather on just the carry's leading axis);
     # or carve out sharded axes that appear in no carry via a validation check.
     child_readers = {
         target: _get_child_carry_reader(
             read=plan.child_reads[target],
-            carry=next_regime_to_egm_carry[target],
+            carry=next_regime_to_continuation[target],
             combo_pool=combo_pool,
             post_decision_name=plan.post_decision_name,
             stochastic_node_batch_size=plan.stochastic_node_batch_size,
@@ -360,7 +360,7 @@ def bind_continuation(
             )
         for target in plan.scalar_targets:
             prob = regime_transition_probs[target]
-            constant_value = next_regime_to_egm_carry[target].value[0]
+            constant_value = next_regime_to_continuation[target].value[0]
             expected_value = expected_value + jnp.where(
                 prob > 0.0, prob * constant_value, prob * 0.0
             )

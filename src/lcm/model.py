@@ -58,7 +58,7 @@ from _lcm.typing import (
     FlatParams,
     FunctionName,
     ParamsTemplate,
-    PeriodToRegimeToSimPolicy,
+    PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
@@ -352,7 +352,7 @@ class Model:
         log_path: str | Path | None = ...,
         log_keep_n_latest: int = ...,
         return_simulation_policy: Literal[True],
-    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]: ...
+    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]: ...
 
     @overload
     def solve(
@@ -365,7 +365,8 @@ class Model:
         log_keep_n_latest: int = ...,
         return_simulation_policy: bool,
     ) -> (
-        PeriodToRegimeToVArr | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]
+        PeriodToRegimeToVArr
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
     ): ...
 
     @beartype(conf=PARAMS_CONF)
@@ -378,7 +379,10 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         return_simulation_policy: bool = False,
-    ) -> PeriodToRegimeToVArr | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]:
+    ) -> (
+        PeriodToRegimeToVArr
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
+    ):
         """Solve the model using the pre-computed functions.
 
         Args:
@@ -432,7 +436,7 @@ class Model:
             ages=self.ages,
             logger=log,
         )
-        period_to_regime_to_V_arr, period_to_regime_to_sim_policy = (
+        period_to_regime_to_V_arr, period_to_regime_to_simulation_policy = (
             self._solve_compiled(
                 flat_params=flat_params,
                 params=params,
@@ -443,7 +447,7 @@ class Model:
             )
         )
         if return_simulation_policy:
-            return period_to_regime_to_V_arr, period_to_regime_to_sim_policy
+            return period_to_regime_to_V_arr, period_to_regime_to_simulation_policy
         return period_to_regime_to_V_arr
 
     def _solve_compiled(
@@ -455,7 +459,7 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
-    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]:
+    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
         Returns the value-function arrays and the per-period DC-EGM simulation
@@ -466,7 +470,7 @@ class Model:
         `log_keep_n_latest`.
         """
         try:
-            period_to_regime_to_V_arr, period_to_regime_to_sim_policy = solve(
+            period_to_regime_to_V_arr, period_to_regime_to_simulation_policy = solve(
                 flat_params=flat_params,
                 ages=self.ages,
                 regimes=self._regimes,
@@ -497,7 +501,7 @@ class Model:
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
             )
-        return period_to_regime_to_V_arr, period_to_regime_to_sim_policy
+        return period_to_regime_to_V_arr, period_to_regime_to_simulation_policy
 
     def _resolve_simulate_regimes(
         self,
@@ -675,7 +679,7 @@ class Model:
             # Simulation is grid-restricted: it interpolates only the value
             # functions, so the published DC-EGM policy is unpacked and dropped.
             # Off-grid simulation would interpolate the policy instead.
-            period_to_regime_to_V_arr, _period_to_regime_to_sim_policy = (
+            period_to_regime_to_V_arr, _period_to_regime_to_simulation_policy = (
                 self._solve_compiled(
                     flat_params=flat_params,
                     params=params,

@@ -11,10 +11,12 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.carry import EGMCarry
-from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
-from _lcm.solution.contract import KernelResult
+from _lcm.solution.contract import (
+    ContinuationPayload,
+    KernelResult,
+    SimulationPolicy,
+)
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.logging import (
@@ -42,7 +44,7 @@ def solve(
     max_compilation_workers: int | None = None,
 ) -> tuple[
     MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    MappingProxyType[int, MappingProxyType[RegimeName, EGMSimPolicy]],
+    MappingProxyType[int, MappingProxyType[RegimeName, SimulationPolicy]],
 ]:
     """Solve a model using grid search.
 
@@ -62,12 +64,12 @@ def solve(
 
     Returns:
         Tuple of (the immutable mapping of periods to regime value-function
-        arrays, the immutable mapping of periods to each DC-EGM regime's
-        published `EGMSimPolicy` — the off-grid consumption function simulation
-        interpolates; empty for periods/regimes with no DC-EGM kernel).
+        arrays, the immutable mapping of periods to each regime's published
+        simulation policy — the off-grid policy artifact simulation can
+        interpolate; regimes whose kernels publish none have no entry).
 
     """
-    next_regime_to_V_arr, next_regime_to_egm_carry = _build_continuation_templates(
+    next_regime_to_V_arr, next_regime_to_continuation = _build_continuation_templates(
         regimes=regimes, flat_params=flat_params
     )
 
@@ -77,14 +79,14 @@ def solve(
         flat_params=flat_params,
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
-        next_regime_to_egm_carry=next_regime_to_egm_carry,
+        next_regime_to_continuation=next_regime_to_continuation,
         enable_jit=enable_jit,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
-    sim_policies: dict[int, MappingProxyType[RegimeName, EGMSimPolicy]] = {}
+    simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -135,18 +137,19 @@ def solve(
         regimes=regimes, flat_params=flat_params
     )
 
-    # Simulation policies are a DC-EGM solve *output*, accumulated for every
-    # period; no backward step reads them. Their `endog_grid` aliases the
-    # period's carry buffer, so leaving them on device pins one carry-sized
-    # buffer per period for the whole induction. Evict each period's policies
-    # to host as they are produced; simulation re-materializes them on device.
+    # A published simulation policy is a solve *output*, accumulated for
+    # every period; no backward step reads it. Its buffers can alias the
+    # period's continuation buffer, so leaving policies on device pins one
+    # continuation-sized buffer per period for the whole induction. Evict each
+    # period's policies to host as they are produced; simulation
+    # re-materializes them on device.
     host_device = jax.devices("cpu")[0]
 
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}
-        period_egm_carries: dict[RegimeName, EGMCarry] = {}
-        period_sim_policies: dict[RegimeName, EGMSimPolicy] = {}
+        period_continuations: dict[RegimeName, ContinuationPayload] = {}
+        period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
 
         active_regimes = {
             regime_name: regime
@@ -169,13 +172,13 @@ def solve(
                 flat_params=flat_params,
                 ages=ages,
                 next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                next_regime_to_continuation=next_regime_to_continuation,
             )
             V_arr = result.V_arr
-            if result.carry is not None:
-                period_egm_carries[regime_name] = result.carry
-            if result.sim_policy is not None:
-                period_sim_policies[regime_name] = result.sim_policy
+            if result.continuation is not None:
+                period_continuations[regime_name] = result.continuation
+            if result.simulation_policy is not None:
+                period_simulation_policies[regime_name] = result.simulation_policy
             running_any_nan, running_any_inf = _fold_period_diagnostics(
                 V_arr=V_arr,
                 regime_name=regime_name,
@@ -208,20 +211,20 @@ def solve(
                 # implies a finished `min`/`max` too.
                 diagnostic_mean[-1].block_until_ready()
 
-        next_regime_to_V_arr, next_regime_to_egm_carry = _roll_continuation_inputs(
+        next_regime_to_V_arr, next_regime_to_continuation = _roll_continuation_inputs(
             regimes=regimes,
             period_solution=period_solution,
-            period_egm_carries=period_egm_carries,
+            period_continuations=period_continuations,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
         )
         solution[period] = MappingProxyType(period_solution)
-        sim_policies[period] = MappingProxyType(
+        simulation_policies[period] = MappingProxyType(
             {
                 regime_name: jax.block_until_ready(
-                    jax.device_put(sim_policy, host_device)
+                    jax.device_put(simulation_policy, host_device)
                 )
-                for regime_name, sim_policy in period_sim_policies.items()
+                for regime_name, simulation_policy in period_simulation_policies.items()
             }
         )
 
@@ -242,7 +245,7 @@ def solve(
         if validation_raises(logger) and running_any_nan.item():
             break
 
-        _collect_rolled_carries(period_egm_carries=period_egm_carries)
+        _release_rolled_continuations(period_continuations=period_continuations)
 
     if diagnostics_enabled:
         try:
@@ -266,26 +269,28 @@ def solve(
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
-    return MappingProxyType(solution), MappingProxyType(sim_policies)
+    return MappingProxyType(solution), MappingProxyType(simulation_policies)
 
 
-def _collect_rolled_carries(*, period_egm_carries: dict[RegimeName, EGMCarry]) -> None:
+def _release_rolled_continuations(
+    *, period_continuations: dict[RegimeName, ContinuationPayload]
+) -> None:
     """Return the device buffers rolled off the period just solved.
 
-    The superseded continuation V/carry and the period's transient working set
-    are unreferenced once the period rolls, but a rolled continuation carry sits
-    in a registered pytree that CPython's cyclic collector frees only when it
-    next runs — forcing a collection here returns the device pool promptly,
-    capping peak resident across the loop (mirrors the forward-sim memory rework
-    in `result.py`).
+    The superseded continuation inputs and the period's transient working set
+    are unreferenced once the period rolls, but a rolled continuation payload
+    sits in a registered pytree that CPython's cyclic collector frees only when
+    it next runs — forcing a collection here returns the device pool promptly,
+    capping peak resident across the loop (mirrors the forward-sim memory
+    rework in `result.py`).
 
-    Gated on whether this period actually produced a carry (the generic
+    Gated on whether this period actually produced a continuation (the generic
     per-period kernel output the loop already tracks), not on the solver type:
-    a period whose kernels publish no carry rolls no such buffer, so the
-    collection — which otherwise dominates small warm solves with no memory
-    gain — is skipped for it.
+    a period whose kernels publish none rolls no such buffer, so the collection
+    — which otherwise dominates small warm solves with no memory gain — is
+    skipped for it.
     """
-    if period_egm_carries:
+    if period_continuations:
         gc.collect()
 
 
@@ -372,7 +377,7 @@ def _run_period_kernel(
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
 ) -> KernelResult:
     """Invoke one regime's period adapter for one period.
 
@@ -380,7 +385,7 @@ def _run_period_kernel(
     solver type. The adapter wraps the regime's shared jitted core(s) (passed in
     AOT-compiled as `compiled_cores`), calls them with the solver's own argument
     layout, and returns a `KernelResult` — the value-function array plus the
-    optional generic outputs (`carry`, `sim_policy`), which the
+    optional generic outputs (`continuation`, `simulation_policy`), which the
     backward-induction loop accumulates.
 
     `period`/`age` are passed as JAX arrays (not Python scalars) so a shared
@@ -400,7 +405,7 @@ def _run_period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
-        next_regime_to_egm_carry=next_regime_to_egm_carry,
+        next_regime_to_continuation=next_regime_to_continuation,
         flat_params=flat_params,
         period=period,
         ages=ages,
@@ -411,11 +416,12 @@ def _roll_continuation_inputs(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     period_solution: dict[RegimeName, FloatND],
-    period_egm_carries: dict[RegimeName, EGMCarry],
+    period_continuations: dict[RegimeName, ContinuationPayload],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
 ) -> tuple[
-    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EGMCarry]
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, ContinuationPayload],
 ]:
     """Roll the per-period continuation mappings forward by one period.
 
@@ -435,15 +441,15 @@ def _roll_continuation_inputs(
             for regime_name in regimes
         }
     )
-    rolled_egm_carry = MappingProxyType(
+    rolled_continuation = MappingProxyType(
         {
-            regime_name: period_egm_carries.get(
-                regime_name, next_regime_to_egm_carry[regime_name]
+            regime_name: period_continuations.get(
+                regime_name, next_regime_to_continuation[regime_name]
             )
-            for regime_name in next_regime_to_egm_carry
+            for regime_name in next_regime_to_continuation
         }
     )
-    return rolled_V_arr, rolled_egm_carry
+    return rolled_V_arr, rolled_continuation
 
 
 def _build_continuation_templates(
@@ -451,7 +457,8 @@ def _build_continuation_templates(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
 ) -> tuple[
-    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EGMCarry]
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, ContinuationPayload],
 ]:
     """Build the period-invariant continuation-input templates.
 
@@ -460,9 +467,8 @@ def _build_continuation_templates(
 
     - the V template holds a zero array per regime, shaped (and sharded) like
       the regime's V array;
-    - the EGM-carry template holds entries only for carry-producing regimes
-      (DC-EGM regimes and, in models with one, terminal regimes), in the key
-      order reused every period.
+    - the continuation template holds entries only for continuation-publishing
+      regimes, in the key order reused every period.
     """
     regime_V_topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
@@ -474,14 +480,14 @@ def _build_continuation_templates(
             for regime_name, topology in regime_V_topology.items()
         }
     )
-    next_regime_to_egm_carry = MappingProxyType(
+    next_regime_to_continuation = MappingProxyType(
         {
             regime_name: regime.solution.continuation_template
             for regime_name, regime in regimes.items()
             if regime.solution.continuation_template is not None
         }
     )
-    return next_regime_to_V_arr, next_regime_to_egm_carry
+    return next_regime_to_V_arr, next_regime_to_continuation
 
 
 def _build_base_state_action_spaces(
@@ -525,7 +531,7 @@ def _compile_all_functions(
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     enable_jit: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
@@ -551,7 +557,7 @@ def _compile_all_functions(
         ages: Age grid for the model.
         next_regime_to_V_arr: Template with consistent keys and V array shapes
             for constructing lowering arguments.
-        next_regime_to_egm_carry: Template with consistent keys and carry
+        next_regime_to_continuation: Template with consistent keys and carry
             shapes for constructing lowering arguments.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum threads for parallel compilation.
@@ -614,7 +620,7 @@ def _compile_all_functions(
                 regime_params=flat_params[regime_name],
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             flat_params=flat_params,
             period=period,
             ages=ages,
@@ -925,12 +931,13 @@ def _raise_at(
         flat_params=flat_params,
         solution=solution,
     )
-    # The intermediates closure mirrors the brute-force Q evaluation; for a row
-    # solved by a DC-EGM kernel it cannot reproduce the failing computation, so
-    # the error is raised without the U/F/E/Q breakdown.
+    # The intermediates closure mirrors the brute-force Q evaluation; for a
+    # regime solved from interpolated continuations it cannot reproduce the
+    # failing computation, so the error is raised without the U/F/E/Q
+    # breakdown.
     compute_intermediates = (
         None
-        if regime.solution.solves_via_dcegm
+        if regime.solution.solves_from_continuation
         else regime.solution.compute_intermediates.get(row.period)
     )
     V_arr = solution[row.period][row.regime_name]

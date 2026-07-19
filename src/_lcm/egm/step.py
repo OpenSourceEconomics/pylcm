@@ -501,7 +501,7 @@ def _get_egm_step(
 
     def egm_step(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
-        next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+        next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         """Run the DC-EGM step and publish V on the exogenous grid.
@@ -510,7 +510,7 @@ def _get_egm_step(
             next_regime_to_V_arr: The next period's value-function arrays;
                 accepted so solve treats all kernels uniformly (continuation
                 values come from the carries).
-            next_regime_to_egm_carry: The next period's EGM carries.
+            next_regime_to_continuation: The next period's EGM carries.
             **kwargs: The regime's state grids, flat params, `period`, and
                 `age`.
 
@@ -544,7 +544,7 @@ def _get_egm_step(
             pieces=pieces,
             pool=pool,
             state_grid=state_grid,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             euler_batch_size=euler_batch_size,
             savings_batch_size=savings_batch_size,
             resolved_process_grids=resolved_process_grids,
@@ -830,7 +830,7 @@ def _get_raising_egm_step(*, reason: str) -> EGMStepFunction:
 
     def raising_egm_step(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+        next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         raise NotImplementedError(reason)

@@ -344,7 +344,7 @@ class SolutionPhase:
 
     Populated for every continuation-producing regime (DC-EGM regimes and
     terminal regimes in a model with a DC-EGM regime). Initializes the rolling
-    `next_regime_to_egm_carry` mapping and serves as the lowering argument when
+    `next_regime_to_continuation` mapping and serves as the lowering argument when
     AOT-compiling a parent's kernel; `None` for a regime that publishes none.
     """
 
@@ -367,12 +367,18 @@ class SolutionPhase:
     """Base state-action space before runtime grid substitution."""
 
     @property
-    def solves_via_dcegm(self) -> bool:
-        """Whether this regime is solved by the DC-EGM kernel.
+    def solves_from_continuation(self) -> bool:
+        """Whether this regime's V is built from interpolated continuations.
 
-        A DC-EGM regime is the non-terminal regime that publishes a
-        continuation: a grid-search regime publishes none, and a terminal
-        carry-producing regime is terminal (no regime-transition probs).
+        True exactly for a non-terminal regime that publishes a continuation
+        payload — such a regime's kernels solve by reading its targets'
+        continuations rather than by the compiled Q-and-F grid program. A
+        grid-search regime publishes no continuation, and a terminal
+        carry-producing regime publishes one without reading any (no
+        regime-transition probs). Downstream consumers ask this capability —
+        the brute U/F/E/Q breakdown cannot reproduce such a regime's failure
+        rows, and its inversion-internal functions are not simulate-readable
+        targets — instead of asking which solver produced the regime.
         """
         return (
             self.compute_regime_transition_probs is not None

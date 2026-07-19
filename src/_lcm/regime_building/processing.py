@@ -200,7 +200,7 @@ def process_regimes(
     )
 
     model_has_egm_regime = any(
-        user_regime.solver.requires_continuation_carries
+        user_regime.solver.requires_continuation
         for user_regime in user_regimes.values()
     )
 
@@ -613,7 +613,7 @@ class _TerminalCarryPeriodKernel:
         core_key: str = "main",
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -624,7 +624,7 @@ class _TerminalCarryPeriodKernel:
             core_key=core_key,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             flat_params=flat_params,
             period=period,
             ages=ages,
@@ -636,7 +636,7 @@ class _TerminalCarryPeriodKernel:
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -646,7 +646,7 @@ class _TerminalCarryPeriodKernel:
             compiled_cores=compiled_cores,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             flat_params=flat_params,
             period=period,
             ages=ages,
@@ -658,7 +658,7 @@ class _TerminalCarryPeriodKernel:
             period=jnp.int32(period),
             age=ages.values[period],
         )
-        return KernelResult(V_arr=result.V_arr, carry=carry)
+        return KernelResult(V_arr=result.V_arr, continuation=carry)
 
 
 def _build_terminal_carry_producer(

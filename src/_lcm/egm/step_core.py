@@ -123,7 +123,7 @@ def _get_solve_one_combo(
     pieces: _EgmKernelPieces,
     pool: dict[str, Any],
     state_grid: Float1D,
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
     savings_batch_size: int,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
@@ -176,7 +176,7 @@ def _get_solve_one_combo(
             combo_pool=combo_pool,
             discount_factor=discount_factor,
             utility_of_action=utility_of_action,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             dtype=dtype,
             resolved_process_grids=resolved_process_grids,
         )
@@ -304,7 +304,7 @@ def _get_compute_node(
     combo_pool: dict[str, Any],
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
@@ -312,7 +312,7 @@ def _get_compute_node(
     continuation = bind_continuation(
         plan=pieces.continuation_plan,
         combo_pool=combo_pool,
-        next_regime_to_egm_carry=next_regime_to_egm_carry,
+        next_regime_to_continuation=next_regime_to_continuation,
         dtype=dtype,
         resolved_process_grids=resolved_process_grids,
     )

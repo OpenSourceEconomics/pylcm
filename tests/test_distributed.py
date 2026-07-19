@@ -234,7 +234,7 @@ def _compiled_solve_kernel_hlo(model: Model, *, regime_name: str, period: int) -
                 regime_params=flat_params[regime_name]
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=MappingProxyType({}),
+            next_regime_to_continuation=MappingProxyType({}),
             flat_params=flat_params,
             period=period,
             ages=model.ages,

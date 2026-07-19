@@ -4,7 +4,7 @@ Backward induction with DC-EGM threads more than the value-function array
 between adjacent periods: the parent's Euler inversion needs the child's
 value and marginal utility on the child's endogenous (resources-space) grid.
 `EGMCarry` bundles these rows; the solve loop rolls a
-`next_regime_to_egm_carry` mapping alongside `next_regime_to_V_arr`, with one
+`next_regime_to_continuation` mapping alongside `next_regime_to_V_arr`, with one
 entry per carry-producing regime (DC-EGM regimes and terminal regimes a
 DC-EGM regime can target).
 """
@@ -89,7 +89,7 @@ def build_template_egm_carry(
 ) -> EGMCarry:
     """Build a benign all-finite carry template with `n_rows` grid slots.
 
-    Used to initialize the rolling `next_regime_to_egm_carry` mapping before
+    Used to initialize the rolling `next_regime_to_continuation` mapping before
     a regime has been solved, and as the lowering argument when AOT-compiling
     EGM kernels. The endogenous grid is strictly ascending and every row is
     finite, so a parent kernel evaluated against the template produces finite
