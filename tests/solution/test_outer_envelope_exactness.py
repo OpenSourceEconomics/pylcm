@@ -448,3 +448,39 @@ def test_terminal_tie_is_owned_by_the_left_envelope_owner(steep_loser_index: int
 
     np.testing.assert_allclose(float(value[0]), 2.0, atol=1e-9)
     np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
+
+
+@pytest.mark.parametrize("left_owner_index", [0, 1])
+def test_terminal_duplicate_left_owner_publishes_its_left_record_marginal(
+    left_owner_index: int,
+):
+    """A left-germ winner ending in a duplicated abscissa publishes its left record.
+
+    The left owner's terminal abscissa is duplicated (left and right marginal
+    records 1 and 100); the other candidate touches the envelope only at the
+    terminal point. Ownership is decided on the left neighborhood, so the
+    published marginal must be the winner's *left* record (1.0) — the right
+    duplicate's 100 lies outside the envelope's generalized gradient `[0, 1]`
+    at the boundary — in either candidate order.
+    """
+    owner = (
+        jnp.array([0.0, 1.0, 1.0]),
+        jnp.array([0.0, 1.0, 1.0]),
+        jnp.array([1.0, 1.0, 100.0]),
+    )
+    toucher = (
+        jnp.array([0.0, 1.0, jnp.nan]),
+        jnp.array([-1.0, 1.0, jnp.nan]),
+        jnp.array([2.0, 2.0, jnp.nan]),
+    )
+    ordered = [owner, toucher] if left_owner_index == 0 else [toucher, owner]
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=jnp.stack([c[0] for c in ordered]),
+        candidate_value=jnp.stack([c[1] for c in ordered]),
+        candidate_marginal=jnp.stack([c[2] for c in ordered]),
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
