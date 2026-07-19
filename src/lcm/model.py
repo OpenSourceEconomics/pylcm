@@ -384,7 +384,7 @@ class Model:
         PeriodToRegimeToVArr
         | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
     ):
-        """Solve the model using the pre-computed functions.
+        """Solve the model by backward induction, using each regime's solver.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -416,17 +416,18 @@ class Model:
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
 
             return_simulation_policy: When `True`, also return the per-period
-                DC-EGM simulation policies (the off-grid consumption functions),
-                as `(value_functions, policies)`. The policies are the artifact
-                a future off-grid `simulate` will interpolate; the current
-                `simulate` is grid-restricted and consumes only the value
-                functions, so it does not yet take the policies back. Defaults
-                to `False` (value functions only).
+                simulation-policy artifacts published by the configured
+                solvers, as `(value_functions, policies)`. A policy is the
+                artifact a future off-grid `simulate` will interpolate; the
+                current `simulate` is grid-restricted and consumes only the
+                value functions, so it does not yet take the policies back.
+                Regimes whose solver publishes no policy have no entry in the
+                policy mapping. Defaults to `False` (value functions only).
 
         Returns:
             Immutable mapping of period to a value function array for each
             regime; or, when `return_simulation_policy=True`, that mapping
-            paired with the per-period DC-EGM simulation-policy mapping.
+            paired with the per-period simulation-policy mapping.
 
         """
         log = get_logger(log_level=log_level)
