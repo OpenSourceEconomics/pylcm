@@ -4026,7 +4026,12 @@ def _fail_if_flow_not_single_power(
             "restructure the flow or use GridSearch() for this regime."
         )
         raise RegimeInitializationError(msg)
-    tol = 1e-8
+    # The probe's elasticities come out of `jax.grad` at the active float
+    # dtype, so their roundoff scatter scales with that dtype's precision:
+    # sqrt(eps) covers the accumulated error of the flow/marginal quotient
+    # in both float64 and float32 while staying far below any genuine
+    # elasticity variation.
+    tol = math.sqrt(float(jnp.finfo(canonical_float_dtype()).eps))
     spread = max(elasticities) - min(elasticities)
     scale = max(1.0, abs(elasticities[0]))
     if spread > tol * scale or min(elasticities) <= 0.0:

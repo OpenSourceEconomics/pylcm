@@ -541,7 +541,9 @@ def test_paired_read_derivative_uses_node_slopes_at_first_and_last_node():
     np.testing.assert_allclose(np.asarray(at_last), 12.0, rtol=1e-12)
 
 
-def test_paired_read_derivative_matches_finite_differences_off_node():
+def test_paired_read_derivative_matches_finite_differences_off_node(
+    x64_enabled: None,
+):
     """Between nodes the paired derivative is the value read's exact slope."""
     xp = jnp.array([1.0, 1.5, 2.0])
     fp = xp**3

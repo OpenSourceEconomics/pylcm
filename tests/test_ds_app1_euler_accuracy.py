@@ -37,6 +37,11 @@ from benchmarks.ds_replication.app1_retirement_accuracy import (
     sample_path_euler_error,
 )
 
+# The replication scores float64 accuracy floors (log10 Euler errors below the
+# float32 quantization level), so the module runs with x64 enabled regardless
+# of the suite's `--precision` flag.
+pytestmark = pytest.mark.usefixtures("x64_enabled")
+
 # Local-safe horizon: shorter than the paper's T=50 so a single solve+simulate is
 # fast, but long enough that workers retire mid-path and the working-regime Euler
 # equation has interior, non-switch points to score.

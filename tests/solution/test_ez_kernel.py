@@ -10,6 +10,7 @@ the inverse has exponent `1/[phi(1-rho)-1]`. The basic single-good flow is
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.ez_kernel import (
     ez_blend_partials,
@@ -22,6 +23,11 @@ from _lcm.egm.ez_kernel import (
     ez_transform_scalar,
 )
 from _lcm.egm.nbegm_step import _ez_flow_power_structure
+
+# These are float64 specs of the kernel algebra (closed-form identities,
+# finite-difference checks, and float32-versus-float64 comparisons), so the
+# module runs with x64 enabled regardless of the suite's `--precision` flag.
+pytestmark = pytest.mark.usefixtures("x64_enabled")
 
 
 def test_basic_flow_consumption_matches_the_crra_power_inversion() -> None:

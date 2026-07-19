@@ -1438,7 +1438,7 @@ def _aggregate_child_choices(
             search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
         )
     if n_outer_candidates:
-        right_germ_at_child, left_germ_at_child, value_at_child = (
+        right_germ_at_child, left_germ_at_child, value_at_child, above_row_support = (
             _candidate_germs_and_support_mask(
                 search_rows=search_rows,
                 valid_rows=valid_rows,
@@ -1449,6 +1449,12 @@ def _aggregate_child_choices(
                 value_at_child=value_at_child,
             )
         )
+        # Strictly above a candidate's own last finite node its represented
+        # value is the constant clamp, so the generalized gradient of that
+        # extension is zero: an earlier-ending candidate that wins the max
+        # must not publish its stale terminal node slope through the
+        # separately read marginal row.
+        marginal_at_child = jnp.where(above_row_support, 0.0, marginal_at_child)
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as
     # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
@@ -1562,22 +1568,30 @@ def _candidate_germs_and_support_mask(
     tuple[BoolND, FloatND, FloatND, FloatND],
     tuple[BoolND, FloatND, FloatND, FloatND],
     Float1D,
+    BoolND,
 ]:
-    """Compute per-candidate value-read germs and mask reads below support.
+    """Compute per-candidate value-read germs and both support masks.
 
     Below a candidate's own first finite coh node its support has not
     started: the read is masked to `-inf` so the edge clamp cannot hand an
     infeasible lifted candidate a boundary value that wins the max (the
-    `-inf` also pins the marginal to zero below). The germs of each
-    candidate's value read feed the tie rule at the candidate max; they need
-    no support mask of their own — the left germ is dead at or below the
-    first finite node by construction, and a below-support candidate enters
-    the tie set only when every candidate is below support, where all
-    published marginals are exactly zero regardless of the winner.
+    `-inf` also pins the marginal to zero below). Strictly above a
+    candidate's own last finite coh node its represented value is the
+    constant clamp, whose derivative is zero — the returned above-support
+    mask lets the caller pin the separately read marginal row there, so an
+    earlier-ending candidate that wins the max cannot publish its stale
+    terminal node slope; at the exact last node the declared node slope
+    stays. The germs of each candidate's value read feed the tie rule at
+    the candidate max; they need no support mask of their own — the left
+    germ is dead at or below the first finite node by construction, and a
+    below-support candidate enters the tie set only when every candidate is
+    below support, where all published marginals are exactly zero
+    regardless of the winner.
 
     Returns:
-        Tuple of the right germs, the left germs, and the support-masked
-        value reads, all aligned with the flat candidate-row axis.
+        Tuple of the right germs, the left germs, the support-masked value
+        reads, and the strictly-above-own-support mask, all aligned with
+        the flat candidate-row axis.
 
     """
 
@@ -1615,13 +1629,15 @@ def _candidate_germs_and_support_mask(
         search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
     )
     row_lower = jnp.min(jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1)
-    # Only rows with a finite first node have a support to fall below;
-    # `row_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read
-    # must reach the candidate maximum fail-loud instead of becoming an
-    # ordinary infeasible `(-inf, 0)` pair.
+    row_upper = jnp.max(jnp.where(jnp.isfinite(grid_rows), grid_rows, -jnp.inf), axis=1)
+    # Only rows with finite endpoints have a support to fall outside;
+    # `row_lower` is `+inf` (and `row_upper` `-inf`) on an all-NaN
+    # (poisoned) row, whose NaN read must reach the candidate maximum
+    # fail-loud instead of becoming an ordinary infeasible `(-inf, 0)` pair.
     below_row_support = (queries_flat < row_lower) & jnp.isfinite(row_lower)
+    above_row_support = (queries_flat > row_upper) & jnp.isfinite(row_upper)
     value_at_child = jnp.where(below_row_support, -jnp.inf, value_at_child)
-    return right_germ_at_child, left_germ_at_child, value_at_child
+    return right_germ_at_child, left_germ_at_child, value_at_child, above_row_support
 
 
 def _reshape_germ(

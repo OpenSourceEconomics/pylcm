@@ -52,7 +52,9 @@ def test_power_certainty_equivalent_param_names():
     assert PowerMean().param_names == frozenset({"risk_aversion"})
 
 
-def test_power_mean_aggregate_stays_finite_for_small_values_high_risk_aversion():
+def test_power_mean_aggregate_stays_finite_for_small_values_high_risk_aversion(
+    x64_enabled: None,
+):
     """`aggregate` returns the finite power mean where naive transform overflows.
 
     With `risk_aversion > 1` and continuation values near the borrowing
@@ -77,7 +79,9 @@ def test_power_mean_aggregate_stays_finite_for_small_values_high_risk_aversion()
     assert np.asarray(aggregated) > 0.0
 
 
-def test_power_mean_aggregate_matches_naive_form_on_well_scaled_values():
+def test_power_mean_aggregate_matches_naive_form_on_well_scaled_values(
+    x64_enabled: None,
+):
     """On well-scaled values the fused aggregation equals `g⁻¹(Σ w·g(v))`."""
     ce = PowerMean()
     values = jnp.array([0.5, 1.0, 2.0, 4.0])
@@ -91,7 +95,7 @@ def test_power_mean_aggregate_matches_naive_form_on_well_scaled_values():
     np.testing.assert_allclose(np.asarray(aggregated), np.asarray(naive), rtol=1e-10)
 
 
-def test_power_mean_aggregate_log_limit_is_geometric_mean():
+def test_power_mean_aggregate_log_limit_is_geometric_mean(x64_enabled: None):
     """At `risk_aversion = 1` the aggregation is the weighted geometric mean."""
     ce = PowerMean()
     values = jnp.array([1.0, 2.0, 4.0])
@@ -483,6 +487,82 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
             ages=AgeGrid(start=40, stop=41, step="Y"),
             regime_id_class=_RegimeId,
         )
+
+
+def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
+    x64_disabled,
+):
+    """A genuinely single-power flow builds under 32-bit precision.
+
+    The elasticity probe differentiates the flow with `jax.grad`, whose
+    roundoff scales with the active float dtype — under float32 the probed
+    elasticities of `q = c` scatter by a few float32 ulps around one. The
+    constancy window must scale with the dtype's precision so the probe keeps
+    accepting the flows it is specified to accept.
+
+    Grids capture the canonical float dtype at construction, so every grid is
+    built inside the 32-bit scope — mirroring a process that runs in float32
+    throughout.
+    """
+
+    @categorical(ordered=False)
+    class _Kind:
+        lo: ScalarInt
+        hi: ScalarInt
+
+    def _u(consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
+        return consumption * jnp.exp(0.1 * kind)
+
+    def _ride_resources(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return wealth + 0.5 * kind
+
+    def _next_wealth_from_savings(savings: FloatND) -> ContinuousState:
+        return savings
+
+    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return jnp.sqrt(wealth) + 0.0 * kind
+
+    nbegm = NBEGM(
+        post_decision_function="savings",
+        budget_target="resources",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    alive = Regime(
+        transition=_next_regime,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
+            "kind": DiscreteGrid(_Kind),
+        },
+        state_transitions={
+            "wealth": _next_wealth_from_savings,
+            "kind": fixed_transition("kind"),
+        },
+        actions={"consumption": LinSpacedGrid(start=0.5, stop=5.0, n_points=5)},
+        functions={
+            "utility": _u,
+            "resources": _ride_resources,
+            "savings": _savings,
+            "H": H_epstein_zin,
+        },
+        certainty_equivalent=PowerMean(),
+        solver=nbegm,
+        active=lambda age: age < 41,
+    )
+    dead = Regime(
+        transition=None,
+        states={
+            "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+            "kind": DiscreteGrid(_Kind),
+        },
+        functions={"utility": _dead_utility},
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=40, stop=41, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+    template = model.get_params_template()
+    assert template["alive"]["certainty_equivalent"] == {"risk_aversion": "float"}
 
 
 def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
@@ -899,7 +979,9 @@ def test_nnbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
         )
 
 
-def test_power_mean_is_stable_one_ulp_from_unit_risk_aversion() -> None:
+def test_power_mean_is_stable_one_ulp_from_unit_risk_aversion(
+    x64_enabled: None,
+) -> None:
     """One float64 step from `gamma = 1` the power mean sits on the geometric mean.
 
     `PowerMean.aggregate` divides a rounded log-sum by `1 - gamma`; at the
@@ -921,7 +1003,9 @@ def test_power_mean_is_stable_one_ulp_from_unit_risk_aversion() -> None:
         np.testing.assert_allclose(float(got), geometric, rtol=1e-8)
 
 
-def test_power_mean_is_stable_near_unit_gamma_for_quadrature_roundoff_mass() -> None:
+def test_power_mean_is_stable_near_unit_gamma_for_quadrature_roundoff_mass(
+    x64_enabled: None,
+) -> None:
     """Quadrature weights whose float sum is one ULP below one hit the limit.
 
     A mathematically normalized lottery need not sum to one bit-exactly —

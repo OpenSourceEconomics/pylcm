@@ -79,12 +79,16 @@ def test_crossing_enumeration_is_invariant_to_the_resource_origin():
     np.testing.assert_allclose(float(got_policy), 0.5, rtol=1e-4)
 
 
-def test_crossing_enumeration_is_invariant_to_a_common_value_shift():
+def test_crossing_enumeration_is_invariant_to_a_common_value_shift(
+    x64_enabled: None,
+):
     """A cardinal value shift must not change crossings or winners.
 
     The three-branch multi-switch correspondence with `1e6` added to every
     value keeps its switches at `R = 10.3` and `R = 10.7` and the same policy
-    read — the envelope is ordinal in value levels.
+    read — the envelope is ordinal in value levels. The shifted geometry
+    (sub-unit offsets at a `1e6` value level) is float64-representable only,
+    so the test pins the x64 mode.
     """
     slopes = np.array([1.0 / 3.0, 2.0 / 3.0, 4.0])
     policies = 1.0 / slopes
@@ -471,3 +475,99 @@ def test_two_distinct_crossings_at_large_local_offsets_are_both_emitted():
     truth = intercepts + slopes * local_query
     np.testing.assert_allclose(got_value, float(truth.max()), rtol=1e-5, atol=1e-9)
     np.testing.assert_allclose(got_policy, float(policies[truth.argmax()]))
+
+
+def test_two_distinct_crossings_survive_a_common_value_baseline():
+    """A common value baseline must not merge distinct crossings.
+
+    The two-switch correspondence with crossings at local offsets `1e6` and
+    `1e6 + 1` carries a `1e6` baseline on every value. Simultaneity
+    certification is translation-invariant — it is formed from local value
+    gaps, where the baseline cancels before rounding — so both switches stay
+    emitted and the strictly-between read follows the middle branch, exactly
+    as in the unshifted geometry.
+    """
+    origin = np.float32(5_000_000.0)
+    width = np.float32(1_000_010.0)
+    policies = np.array([4_000_000.0, 2_500_000.0, 1_000_000.0], dtype=np.float32)
+    slopes = np.float32(1_000_000.0) / policies
+    first_crossing = np.float32(1_000_000.0)
+    second_crossing = np.float32(1_000_001.0)
+    intercepts = np.array(
+        [
+            0.0,
+            (slopes[0] - slopes[1]) * first_crossing,
+            (slopes[0] - slopes[1]) * first_crossing
+            + (slopes[1] - slopes[2]) * second_crossing,
+        ],
+        dtype=np.float32,
+    ) + np.float32(1_000_000.0)
+
+    grid, policy, value = [], [], []
+    for slope, intercept, action in zip(slopes, intercepts, policies, strict=True):
+        grid.extend([origin, origin + width])
+        policy.extend([action, action])
+        value.extend([intercept, intercept + slope * width])
+
+    refined_grid, refined_policy, _refined_value, n_kept = refine_envelope(
+        endog_grid=jnp.asarray(np.asarray(grid, dtype=np.float32)),
+        policy=jnp.asarray(np.asarray(policy, dtype=np.float32)),
+        value=jnp.asarray(np.asarray(value, dtype=np.float32)),
+        n_refined=32,
+    )
+    local_grid = np.asarray(refined_grid)[: int(n_kept)] - origin
+
+    assert np.isclose(local_grid, first_crossing, rtol=0.0, atol=0.25).sum() == 2
+    assert np.isclose(local_grid, second_crossing, rtol=0.0, atol=0.25).sum() == 2
+
+    local_query = np.float32(1_000_000.5)
+    query = jnp.asarray(origin + local_query, dtype=jnp.float32)
+    got_policy = float(
+        interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_policy)
+    )
+    np.testing.assert_allclose(got_policy, 2_500_000.0)
+
+
+def test_a_point_spike_a_few_ulp_above_an_exact_side_record_overflows():
+    """A representable strict point maximum overflows, never vanishes.
+
+    The terminal candidate at `R = 10` sits four float32 ULP (at the value
+    level) above the covering link's stored endpoint record. The row cannot
+    carry a single-abscissa spike, and the stored gap is representable, so
+    the kernel signals `n_kept > n_refined` instead of publishing the lower
+    side record as if the point did not exist.
+    """
+    *_, n_kept, _ = refine_envelope_with_support(
+        endog_grid=jnp.array([9.0, 10.0, 10.0], dtype=jnp.float32),
+        policy=jnp.array([1.0, 1.0, 0.5], dtype=jnp.float32),
+        value=jnp.array([10_000_000.0, 10_000_100.0, 10_000_104.0], dtype=jnp.float32),
+        n_refined=12,
+    )
+
+    assert int(n_kept) > 12
+
+
+def test_a_long_span_link_publishes_its_stored_endpoint_exactly():
+    """A candidate endpoint is read from its stored record, bit-exactly.
+
+    One live float32 link spans `[2e7, 3e7]` with values `[-3e7, 3]`.
+    Reconstructing the upper endpoint as `anchor + slope * span` loses the
+    stored `3.0` to cancellation, so endpoint queries snap to the stored
+    endpoint records instead of the affine reconstruction.
+    """
+    grid = jnp.array([20_000_000.0, 30_000_000.0], dtype=jnp.float32)
+    refined_grid, refined_policy, refined_value, _ = refine_envelope(
+        endog_grid=grid,
+        policy=jnp.array([10_000_000.0, 1.0], dtype=jnp.float32),
+        value=jnp.array([-30_000_000.0, 3.0], dtype=jnp.float32),
+        n_refined=8,
+    )
+    got_value = float(
+        interp_on_padded_grid(x_query=grid[-1], xp=refined_grid, fp=refined_value)
+    )
+    got_policy = float(
+        interp_on_padded_grid(x_query=grid[-1], xp=refined_grid, fp=refined_policy)
+    )
+
+    assert got_value == 3.0
+    assert got_policy == 1.0

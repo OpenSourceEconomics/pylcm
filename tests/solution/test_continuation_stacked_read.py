@@ -149,6 +149,50 @@ def test_stacked_read_masks_a_candidate_below_its_lifted_support():
     np.testing.assert_allclose(float(smoothed_marginal), 1.5, atol=_READ_ATOL)
 
 
+def test_stacked_read_pins_an_earlier_clamp_winners_marginal_to_zero():
+    """Strictly above a winner's own support the published marginal is zero.
+
+    One durable node, two candidates. Candidate A's support ends at coh 1
+    (value 2, node marginal 2); candidate B reaches value 2 exactly at coh 2
+    with marginal 1. At query 2 both represented values are 2 and the
+    represented maximum is locally constant on both sides, so its only
+    generalized gradient is zero. Candidate A owns the left neighborhood
+    (constant 2 versus B rising to 2) and wins the tie; the published
+    marginal must be zero — the clamped extension's derivative — not A's
+    stale terminal node slope. At A's exact last node its declared node
+    slope still applies.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [jnp.array([0.0, 1.0, jnp.nan]), jnp.array([0.0, 1.0, 2.0])]
+        )[None, :, :],
+        value=jnp.stack([jnp.array([0.0, 2.0, jnp.nan]), jnp.array([0.0, 1.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([2.0, 2.0, jnp.nan]), jnp.array([1.0, 1.0, 1.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([2.0]),
+        row_gradients=jnp.asarray([1.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
+
+
 def test_stacked_read_propagates_a_poisoned_candidate_row():
     """An all-NaN (poisoned) candidate row poisons the stacked read's value.
 

@@ -222,8 +222,8 @@ def test_stochastic_node_batching_matches_the_fused_expectation() -> None:
         )
     ).solve(params=_PARAMS, log_level="off")
     for period in (0, 1):
-        np.testing.assert_allclose(
-            np.asarray(batched[period]["alive"]),
-            np.asarray(fused[period]["alive"]),
-            rtol=1e-10,
-        )
+        batched_arr = np.asarray(batched[period]["alive"])
+        fused_arr = np.asarray(fused[period]["alive"])
+        # Reassociation noise scales with the active float dtype's precision.
+        rtol = 64.0 * float(np.finfo(batched_arr.dtype).eps)
+        np.testing.assert_allclose(batched_arr, fused_arr, rtol=rtol)
