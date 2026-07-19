@@ -1819,9 +1819,15 @@ class NBEGM(Solver):
         # piecewise-affine schedules either, the partition is empty — a single
         # interval covering the whole liquid axis, solved as plain EGM — so a
         # declaration-free budget is in scope. A declaration-free regime with a
-        # discrete action keeps the dedicated discrete path below.
+        # discrete action keeps the dedicated discrete path below — unless it
+        # carries a ride-along co-state: the dedicated path is a single-target
+        # one-asset kernel, while the ride-along route solves per discrete
+        # branch through the transition-aware (multi-target) continuation
+        # readers, which such regimes need (e.g. stochastic survival).
         has_schedule = not registry.piece_sets and (
-            bool(registry.piecewise_affine_schedules) or not has_discrete
+            bool(registry.piecewise_affine_schedules)
+            or not has_discrete
+            or self._schedule_has_ride_along(context=context)
         )
         # A discrete action over a cliffed single-liquid budget composes the
         # discrete upper envelope with the schedule's per-branch intervals. A
