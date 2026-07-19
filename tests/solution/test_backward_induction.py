@@ -11,7 +11,7 @@ from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import solve
 from _lcm.solution.contract import PeriodKernel
-from _lcm.solution.solvers import _GridSearchPeriodKernel
+from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from _lcm.typing import MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid

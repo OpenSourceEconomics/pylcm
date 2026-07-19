@@ -13,15 +13,19 @@ backward induction:
   Computational Economics 58(3), 747-775,
   [doi:10.1007/s10614-020-10045-x](https://doi.org/10.1007/s10614-020-10045-x)).
 
-The solvers are defined engine-side in `_lcm.solution.solvers`; this module is a
-thin re-export so user code (and `lcm.regime`) can name them, and the `Solver`
-contract, without eagerly importing the numerical engine. The engine dispatches
-polymorphically on the solver instance (`solver.build_period_kernels(context)`),
-not on its type.
+The solvers are defined engine-side in per-solver modules under
+`_lcm.solution`; this module is a thin re-export so user code (and
+`lcm.regime`) can name them, and the `Solver` contract, without eagerly
+importing the numerical engine. The engine dispatches polymorphically on the
+solver instance (`solver.build_period_kernels(context)`), not on its type.
 """
 
 from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
-from _lcm.solution.solvers import DCEGM, NEGM, GridSearch, OneAssetEGM, TwoDimEGM
+from _lcm.solution.dcegm import DCEGM
+from _lcm.solution.grid_search import GridSearch
+from _lcm.solution.negm import NEGM
+from _lcm.solution.one_asset_egm import OneAssetEGM
+from _lcm.solution.two_dim_egm import TwoDimEGM
 
 __all__ = [
     "DCEGM",
