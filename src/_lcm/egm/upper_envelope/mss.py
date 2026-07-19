@@ -190,9 +190,14 @@ def refine_envelope_with_support(
         link_segment = segment_id[:-1].astype(jnp.int32)
         segment_live = ~dead[:-1] & ~dead[1:] & same_segment
 
+    left_is_lower = left_grid <= right_grid
     links = _LinkLines(
         lower=jnp.minimum(left_grid, right_grid),
         upper=jnp.maximum(left_grid, right_grid),
+        lower_value=jnp.where(left_is_lower, left_value, value[1:]),
+        upper_value=jnp.where(left_is_lower, value[1:], left_value),
+        lower_policy=jnp.where(left_is_lower, left_policy, policy[1:]),
+        upper_policy=jnp.where(left_is_lower, policy[1:], left_policy),
         anchor_grid=left_grid,
         anchor_value=left_value,
         anchor_policy=left_policy,
@@ -221,7 +226,6 @@ def refine_envelope_with_support(
     # level and would merge representable records under a common cardinal
     # shift. A missed merge merely duplicates the node, which the read
     # resolves by its side convention.
-    tolerance = 8.0 * float(jnp.finfo(query_grid.dtype).eps)
     same_record = (
         (left_side.branch == right_side.branch)
         & (left_side.value == right_side.value)
@@ -237,7 +241,6 @@ def refine_envelope_with_support(
         left_side=left_side,
         right_side=right_side,
         links=links,
-        tolerance=tolerance,
     )
 
     crossings, interval_overflow = _enumerate_interval_crossings(
@@ -312,7 +315,6 @@ def _unsupported_read_verdicts(
     left_side: _SideWinner,
     right_side: _SideWinner,
     links: _LinkLines,
-    tolerance: float,
 ) -> tuple[ScalarBool, ScalarBool]:
     """Detect envelope features a linearly-read compacted row cannot carry.
 
@@ -340,13 +342,13 @@ def _unsupported_read_verdicts(
         jnp.where(left_side.exists, left_side.value, -jnp.inf),
         jnp.where(right_side.exists, right_side.value, -jnp.inf),
     )
-    dominance_margin = tolerance * jnp.maximum(
-        jnp.abs(point_value),
-        jnp.where(jnp.isfinite(best_side_value), jnp.abs(best_side_value), 0.0),
-    )
-    unrepresented_point = jnp.any(
-        ~query_dead & (point_value - best_side_value > dominance_margin)
-    )
+    # The comparison is exact: side records at a candidate abscissa are
+    # stored endpoint records (the link reads snap exact endpoint queries),
+    # so a strict excess is a representable stored gap, not arithmetic noise.
+    # Any magnitude-relative margin here would scale with the absolute value
+    # level and silently absorb representable strict maxima a few stored ulp
+    # above the side record.
+    unrepresented_point = jnp.any(~query_dead & (point_value > best_side_value))
 
     emits = (left_side.exists | right_side.exists) & ~query_dead
     previous_emitted_grid = jnp.concatenate(
@@ -375,7 +377,11 @@ class _LinkLines:
 
     Each consecutive candidate pair defines one link; within any interval
     between adjacent candidate abscissae a live link is a full line, described
-    by its anchor point and slopes.
+    by its anchor point and slopes. The stored endpoint records are kept
+    alongside the line: an exact endpoint query returns the stored record, so
+    a candidate node is never reconstructed through the affine product (whose
+    cancellation error scales with the span times the slope and can lose the
+    stored value entirely on a long link).
     """
 
     def __init__(
@@ -383,6 +389,10 @@ class _LinkLines:
         *,
         lower: Float1D,
         upper: Float1D,
+        lower_value: Float1D,
+        upper_value: Float1D,
+        lower_policy: Float1D,
+        upper_policy: Float1D,
         anchor_grid: Float1D,
         anchor_value: Float1D,
         anchor_policy: Float1D,
@@ -393,6 +403,10 @@ class _LinkLines:
     ) -> None:
         self.lower = lower
         self.upper = upper
+        self.lower_value = lower_value
+        self.upper_value = upper_value
+        self.lower_policy = lower_policy
+        self.upper_policy = upper_policy
         self.anchor_grid = anchor_grid
         self.anchor_value = anchor_value
         self.anchor_policy = anchor_policy
@@ -402,12 +416,30 @@ class _LinkLines:
         self.live = live
 
     def value_at(self, x: FloatND) -> FloatND:
-        """Evaluate every link's value line at `x` (broadcast on the last axis)."""
-        return self.anchor_value + self.value_slope * (x - self.anchor_grid)
+        """Evaluate every link's value at `x`, snapping exact endpoint queries.
+
+        Broadcasts on the last axis. Interior queries use the anchored line;
+        a query equal to a link endpoint returns the stored endpoint record.
+        """
+        line = self.anchor_value + self.value_slope * (x - self.anchor_grid)
+        return jnp.where(
+            x == self.lower,
+            self.lower_value,
+            jnp.where(x == self.upper, self.upper_value, line),
+        )
 
     def policy_at(self, x: FloatND) -> FloatND:
-        """Evaluate every link's policy line at `x` (broadcast on the last axis)."""
-        return self.anchor_policy + self.policy_slope * (x - self.anchor_grid)
+        """Evaluate every link's policy at `x`, snapping exact endpoint queries.
+
+        Broadcasts on the last axis. Interior queries use the anchored line;
+        a query equal to a link endpoint returns the stored endpoint record.
+        """
+        line = self.anchor_policy + self.policy_slope * (x - self.anchor_grid)
+        return jnp.where(
+            x == self.lower,
+            self.lower_policy,
+            jnp.where(x == self.upper, self.upper_policy, line),
+        )
 
 
 class _SideWinner:
@@ -625,16 +657,34 @@ def _enumerate_interval_crossings(
         # sit many representable positions apart, and handing the group to the
         # steepest line would skip the branch that wins between them. A line
         # joins the tie only if it also passes through the same numerical
-        # point — its value at the crossing agrees with the winner line's to a
-        # few ulp of the locally computed magnitudes (the cancellation-error
-        # scale of evaluating the difference). A genuinely distinct crossing
-        # fails the residual test and is enumerated on a later step instead.
+        # point — the line-difference at the crossing vanishes to roundoff of
+        # the locally computed terms. The difference is formed from the stored
+        # anchor-value gap plus the slope terms on interval-local offsets, so
+        # a common value baseline cancels in one correctly-rounded subtraction
+        # before any rounding at the absolute level can enter; a residual
+        # scaled by the absolute line values instead would widen with the
+        # baseline and merge genuinely distinct crossings under a cardinal
+        # shift. The window is deliberately tight (two ulp of the largest
+        # term): a false negative over-emits a duplicated crossing, which the
+        # side convention reads correctly, while a false positive skips the
+        # branch that wins between two representable crossings.
         x_next_safe = x_current + jnp.where(found, offset_next, 0.0)
-        value_at_next = links.value_at(x_next_safe[:, None])
-        winner_value_next = jnp.take_along_axis(value_at_next, winner[:, None], axis=1)
-        residual_scale = jnp.maximum(jnp.abs(value_at_next), jnp.abs(winner_value_next))
-        same_point = jnp.abs(value_at_next - winner_value_next) <= (
-            8.0 * jnp.finfo(query_grid.dtype).eps * residual_scale
+        anchor_value_gap = (
+            links.anchor_value[None, :] - links.anchor_value[winner][:, None]
+        )
+        local_line = links.value_slope[None, :] * (
+            x_next_safe[:, None] - links.anchor_grid[None, :]
+        )
+        local_winner = (
+            links.value_slope[winner] * (x_next_safe - links.anchor_grid[winner])
+        )[:, None]
+        gap_at_next = anchor_value_gap + local_line - local_winner
+        residual_scale = jnp.maximum(
+            jnp.abs(anchor_value_gap),
+            jnp.maximum(jnp.abs(local_line), jnp.abs(local_winner)),
+        )
+        same_point = jnp.abs(gap_at_next) <= (
+            2.0 * jnp.finfo(query_grid.dtype).eps * residual_scale
         )
         # The exact-minimum line(s) define the crossing being emitted, so they
         # belong to the tie unconditionally — the residual test only decides
