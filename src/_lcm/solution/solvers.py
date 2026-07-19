@@ -2522,6 +2522,8 @@ class NNBEGM(Solver):
                     resources_target=spec.budget_target,
                     savings_lower_bound=float(spec.savings_grid.to_jax()[0]),
                     liquid_grid_values=context.grids[spec.continuous_state].to_jax(),
+                    liquid_state_name=spec.continuous_state,
+                    outer_no_adjustment_name=self.outer_no_adjustment_candidate,
                     inverse_marginal=inverse_marginal,
                     row_discrete_state_names=row_discrete_state_names,
                     row_passive_state_names=row_passive_state_names,
@@ -2598,6 +2600,15 @@ class _NNBEGMPeriodKernel:
     """The inner Euler (liquid) state grid — the shared abscissae the inner
     NB-EGM's published carry rows are re-read on
     (`carry_rows_share_state_grid`)."""
+
+    liquid_state_name: StateName
+    """Name of the inner Euler (liquid) state (published for the nested
+    simulation reader's row query)."""
+
+    outer_no_adjustment_name: FunctionName | None
+    """The keeper's no-adjustment candidate function name, or `None` when
+    keeping holds the current durable unchanged (published for the nested
+    simulation reader's keeper-action recovery)."""
 
     inverse_marginal: Callable[..., FloatND] | None
     """The regime's closed-form inverse marginal utility with
@@ -2868,6 +2879,8 @@ class _NNBEGMPeriodKernel:
                 outer_action_name=self.outer_action,
                 outer_post_decision_name=self.outer_post_decision,
                 inner_action_name=self.inner_action,
+                liquid_state_name=self.liquid_state_name,
+                outer_no_adjustment_name=self.outer_no_adjustment_name,
                 resources_target_name=self.resources_target,
                 savings_lower_bound=self.savings_lower_bound,
                 golden_iterations=config.golden_iterations,

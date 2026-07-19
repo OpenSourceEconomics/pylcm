@@ -82,6 +82,15 @@ def derive_inner_sim_policy(
         or carry.breakpoints is not None
     ):
         return None
+    try:
+        hard_max = bool(jnp.all(carry.taste_shock_scale == 0.0))
+    except jax.errors.ConcretizationTypeError:
+        return None
+    if not hard_max:
+        # A taste shock perturbs the realized decision away from the hard
+        # maximum the reader replays; publish nothing rather than a policy
+        # the simulated draws would contradict.
+        return None
     node_valid = jnp.isfinite(carry.value) & (carry.marginal_utility > 0.0)
     policy = jnp.where(
         node_valid,
@@ -171,8 +180,18 @@ class NestedEGMSimPolicy:
     inner_action_name: ActionName
     """The inner continuous action (consumption) the reader replaces."""
 
+    liquid_state_name: StateName
+    """The inner Euler (liquid) state — the abscissa every branch's rows are
+    read at (the rows share the liquid state grid)."""
+
+    outer_no_adjustment_name: FunctionName | None
+    """The keeper's no-adjustment candidate function (`s' = keep(Z)`), or
+    `None` when keeping means holding the current durable unchanged."""
+
     resources_target_name: FunctionName
-    """DAG function computing the resources each row is read at."""
+    """DAG function computing the accepted subject's resources for the
+    intrinsic budget check (the rows themselves are read at the liquid
+    state, not at resources)."""
 
     savings_lower_bound: float
     """Inner savings-grid lower bound for the intrinsic budget check."""
@@ -186,6 +205,8 @@ _NESTED_STATIC_FIELDS = (
     "outer_action_name",
     "outer_post_decision_name",
     "inner_action_name",
+    "liquid_state_name",
+    "outer_no_adjustment_name",
     "resources_target_name",
     "savings_lower_bound",
     "golden_iterations",
