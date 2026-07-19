@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
+from _lcm.solution.contract import KernelResult
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.logging import (
@@ -160,9 +161,8 @@ def solve(
         )
 
         for regime_name, regime in active_regimes.items():
-            V_arr = _solve_regime_period(
+            result = _run_period_kernel(
                 regime=regime,
-                regime_name=regime_name,
                 period=period,
                 compiled_cores=compiled_functions[(regime_name, period)],
                 state_action_space=base_state_action_spaces[regime_name],
@@ -170,31 +170,26 @@ def solve(
                 ages=ages,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_egm_carry=next_regime_to_egm_carry,
-                period_egm_carries=period_egm_carries,
-                period_sim_policies=period_sim_policies,
             )
-            # Async reductions: gated on log level. `"off"` skips
-            # everything — no kernel launches, no host syncs, no
-            # NaN fail-fast. `"warning"` / `"progress"` folds two
-            # cheap isnan/isinf reductions into the running scalars;
-            # `"debug"` adds the min/max/mean trio. Each extra full-V
-            # read is a memory-bandwidth tax on the larger models, so
-            # the default keeps it to two reductions per (regime,
-            # period).
-            if diagnostics_enabled:
-                if stats_enabled:
-                    diagnostic_min.append(jnp.min(V_arr))
-                    diagnostic_max.append(jnp.max(V_arr))
-                    diagnostic_mean.append(jnp.mean(V_arr))
-                running_any_nan = running_any_nan | v_array_has_nan(V_arr)
-                running_any_inf = running_any_inf | v_array_has_inf(V_arr)
-                diagnostic_rows.append(
-                    _DiagnosticRow(
-                        regime_name=regime_name,
-                        period=period,
-                        age=float(ages.values[period]),
-                    )
-                )
+            V_arr = result.V_arr
+            if result.carry is not None:
+                period_egm_carries[regime_name] = result.carry
+            if result.sim_policy is not None:
+                period_sim_policies[regime_name] = result.sim_policy
+            running_any_nan, running_any_inf = _fold_period_diagnostics(
+                V_arr=V_arr,
+                regime_name=regime_name,
+                period=period,
+                ages=ages,
+                diagnostics_enabled=diagnostics_enabled,
+                stats_enabled=stats_enabled,
+                diagnostic_rows=diagnostic_rows,
+                diagnostic_min=diagnostic_min,
+                diagnostic_max=diagnostic_max,
+                diagnostic_mean=diagnostic_mean,
+                running_any_nan=running_any_nan,
+                running_any_inf=running_any_inf,
+            )
 
             period_solution[regime_name] = V_arr
 
@@ -317,10 +312,60 @@ def _init_diagnostic_accumulators() -> tuple[
     return rows, mins, maxs, means, zero, zero
 
 
-def _solve_regime_period(
+def _fold_period_diagnostics(
+    *,
+    V_arr: FloatND,
+    regime_name: RegimeName,
+    period: int,
+    ages: AgeGrid,
+    diagnostics_enabled: bool,
+    stats_enabled: bool,
+    diagnostic_rows: list[_DiagnosticRow],
+    diagnostic_min: list[FloatND],
+    diagnostic_max: list[FloatND],
+    diagnostic_mean: list[FloatND],
+    running_any_nan: BoolND,
+    running_any_inf: BoolND,
+) -> tuple[BoolND, BoolND]:
+    """Fold one regime-period's V array into the diagnostics accumulators.
+
+    Async reductions: gated on the public log level.
+
+    - validation `"off"` (`diagnostics_enabled=False`) ⇒ nothing; the flags pass
+      through unchanged
+    - `"warning"` / `"progress"` ⇒ folds two cheap isnan/isinf reductions into
+      the running scalars
+    - `"debug"` (`stats_enabled`) ⇒ adds the min/max/mean trio
+
+    Each extra full-V read is a memory-bandwidth tax on the larger models, so
+    the default keeps it to two reductions per (regime, period).
+
+    Returns:
+        Tuple of the updated running NaN and Inf flag scalars.
+
+    """
+    if not diagnostics_enabled:
+        return running_any_nan, running_any_inf
+    if stats_enabled:
+        diagnostic_min.append(jnp.min(V_arr))
+        diagnostic_max.append(jnp.max(V_arr))
+        diagnostic_mean.append(jnp.mean(V_arr))
+    diagnostic_rows.append(
+        _DiagnosticRow(
+            regime_name=regime_name,
+            period=period,
+            age=float(ages.values[period]),
+        )
+    )
+    return (
+        running_any_nan | v_array_has_nan(V_arr),
+        running_any_inf | v_array_has_inf(V_arr),
+    )
+
+
+def _run_period_kernel(
     *,
     regime: Regime,
-    regime_name: RegimeName,
     period: int,
     compiled_cores: MappingProxyType[str, Callable],
     state_action_space: StateActionSpace,
@@ -328,21 +373,15 @@ def _solve_regime_period(
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
-    period_egm_carries: dict[RegimeName, EGMCarry],
-    period_sim_policies: dict[RegimeName, EGMSimPolicy],
-) -> FloatND:
+) -> KernelResult:
     """Invoke one regime's period adapter for one period.
 
     Every regime exposes the same kind of adapter; the loop never branches on
     solver type. The adapter wraps the regime's shared jitted core(s) (passed in
     AOT-compiled as `compiled_cores`), calls them with the solver's own argument
-    layout, and returns a `KernelResult`. The only branches here are on the
-    optional generic outputs — `carry` (the continuation a DC-EGM parent
-    interpolates) and `sim_policy` (the off-grid simulation policy) — which a
-    grid-search regime with no continuation simply leaves `None`.
-
-    Produced carries and sim-policies are stored in `period_egm_carries` /
-    `period_sim_policies` in place.
+    layout, and returns a `KernelResult` — the value-function array plus the
+    optional generic outputs (`carry`, `sim_policy`), which the
+    backward-induction loop accumulates.
 
     `period`/`age` are passed as JAX arrays (not Python scalars) so a shared
     `jax.jit` function is traced once with abstract shapes, not recompiled
@@ -353,11 +392,11 @@ def _solve_regime_period(
     and `["adjuster"]`.
 
     Returns:
-        The regime's value-function array.
+        The kernel's result for this regime-period.
 
     """
     period_kernel = regime.solution.period_kernels[period]
-    result = period_kernel(
+    return period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -366,11 +405,6 @@ def _solve_regime_period(
         period=period,
         ages=ages,
     )
-    if result.carry is not None:
-        period_egm_carries[regime_name] = result.carry
-    if result.sim_policy is not None:
-        period_sim_policies[regime_name] = result.sim_policy
-    return result.V_arr
 
 
 def _roll_continuation_inputs(
