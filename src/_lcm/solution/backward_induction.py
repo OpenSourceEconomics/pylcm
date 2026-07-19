@@ -12,8 +12,8 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
+from _lcm.solution.contract import SimulationPolicyPayload
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.logging import (
@@ -41,7 +41,7 @@ def solve(
     max_compilation_workers: int | None = None,
 ) -> tuple[
     MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    MappingProxyType[int, MappingProxyType[RegimeName, EGMSimPolicy]],
+    MappingProxyType[int, MappingProxyType[RegimeName, SimulationPolicyPayload]],
 ]:
     """Solve a model using grid search.
 
@@ -61,9 +61,10 @@ def solve(
 
     Returns:
         Tuple of (the immutable mapping of periods to regime value-function
-        arrays, the immutable mapping of periods to each DC-EGM regime's
-        published `EGMSimPolicy` — the off-grid consumption function simulation
-        interpolates; empty for periods/regimes with no DC-EGM kernel).
+        arrays, the immutable mapping of periods to each publishing regime's
+        simulation-policy payload — the off-grid consumption function
+        simulation interpolates; empty for periods/regimes whose kernel
+        publishes none).
 
     """
     next_regime_to_V_arr, next_regime_to_egm_carry = _build_continuation_templates(
@@ -83,7 +84,7 @@ def solve(
     )
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
-    sim_policies: dict[int, MappingProxyType[RegimeName, EGMSimPolicy]] = {}
+    sim_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicyPayload]] = {}
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -145,7 +146,7 @@ def solve(
         period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}
         period_egm_carries: dict[RegimeName, EGMCarry] = {}
-        period_sim_policies: dict[RegimeName, EGMSimPolicy] = {}
+        period_sim_policies: dict[RegimeName, SimulationPolicyPayload] = {}
 
         active_regimes = {
             regime_name: regime
@@ -339,7 +340,7 @@ def _solve_regime_period(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
     period_egm_carries: dict[RegimeName, EGMCarry],
-    period_sim_policies: dict[RegimeName, EGMSimPolicy],
+    period_sim_policies: dict[RegimeName, SimulationPolicyPayload],
 ) -> FloatND:
     """Invoke one regime's period adapter for one period.
 

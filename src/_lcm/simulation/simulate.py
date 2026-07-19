@@ -13,6 +13,7 @@ from jax import vmap
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.egm.interp import interp_on_padded_grid
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import (
     EGMPolicyRead,
@@ -435,7 +436,7 @@ def _simulate_regime_in_period(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
-    sim_policy: EGMSimPolicy | None = None,
+    sim_policy: EGMSimPolicy | NestedEGMSimPolicy | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -607,7 +608,7 @@ def _replace_continuous_action_with_policy_read(
     *,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     regime: Regime,
-    sim_policy: EGMSimPolicy | None,
+    sim_policy: EGMSimPolicy | NestedEGMSimPolicy | None,
     states: Mapping[StateOrActionName, FloatND | IntND],
     flat_params: FlatRegimeParams,
     period: int,
@@ -637,6 +638,10 @@ def _replace_continuous_action_with_policy_read(
     """
     read = regime.simulation.egm_policy_read
     if sim_policy is None or read is None:
+        return optimal_actions
+    if isinstance(sim_policy, NestedEGMSimPolicy):
+        # The nested (continuous-outer) payload has its own reader seam; the
+        # flat EGM read below cannot interpret it.
         return optimal_actions
     if sim_policy.row_passive_state_names:
         return optimal_actions

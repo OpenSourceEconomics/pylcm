@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
@@ -62,8 +63,8 @@ type ContinuationPayload = EGMCarry
 # the seam for the same reason as `ContinuationPayload`: the engine threads it
 # without knowing its concrete type, and a solver-supplied reader (see
 # `Solver.build_simulation_policy_reader`) is the only consumer that looks
-# inside. The nested continuous-outer payload widens this union.
-type SimulationPolicyPayload = EGMSimPolicy
+# inside.
+type SimulationPolicyPayload = EGMSimPolicy | NestedEGMSimPolicy
 
 if TYPE_CHECKING:
     from _lcm.regime_building.V import VInterpolationInfo

@@ -19,6 +19,7 @@ import pytest
 from jax import config as jax_config
 
 import _lcm.solution.solvers as solvers_mod
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from lcm import AdaptiveOuterMesh
 from tests.test_models import n_nbegm_toy as toy
 
@@ -100,6 +101,27 @@ def test_continuous_outer_never_loses_to_the_finite_grid(
             n_losers = int((gain < -1e-10).sum())
             assert n_winners > n_losers
     assert set(recorded) == set(_ALIVE_PERIODS)
+
+
+def test_continuous_solve_publishes_the_nested_sim_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The kernel publishes keeper + candidate-stacked adjuster policies."""
+    if not jax_config.read("jax_enable_x64"):
+        pytest.skip("x64 run only")
+    _, recorded = _solve(outer_search=_MESH, monkeypatch=monkeypatch)
+    for period in _ALIVE_PERIODS:
+        payload = recorded[period].sim_policy
+        assert isinstance(payload, NestedEGMSimPolicy)
+        diagnostics = recorded[period].diagnostics
+        assert diagnostics is not None
+        assert payload.adjuster.n_candidates == int(diagnostics.outer_nodes_used)
+        assert payload.outer_action_name == "illiquid_investment"
+        assert payload.inner_action_name == "consumption"
+        assert payload.resources_target_name == "resources"
+        assert (
+            payload.adjuster.policies.policy.shape[0] == payload.adjuster.n_candidates
+        )
 
 
 def test_continuous_solve_publishes_converged_diagnostics(

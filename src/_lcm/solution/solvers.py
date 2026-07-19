@@ -37,6 +37,12 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
 from _lcm.egm.nbegm import NBEGMRegistry
+from _lcm.egm.nested_published_policy import (
+    NestedEGMSimPolicy,
+    OuterPolicyBank,
+    derive_inner_sim_policy,
+)
+from _lcm.egm.numeric_inverse import numeric_inverse_marginal_utility
 from _lcm.egm.outer_candidates import (
     OuterCandidateBank,
     OuterCandidateResult,
@@ -46,6 +52,7 @@ from _lcm.egm.outer_carry import collapse_continuous_candidate_bank
 from _lcm.egm.outer_envelope import build_stacked_outer_carry
 from _lcm.egm.outer_refinement import refine_outer_mesh
 from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
@@ -55,6 +62,7 @@ from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
     PeriodKernel,
+    SimulationPolicyPayload,
     SolutionKernels,
     Solver,
     SolverBuildContext,
@@ -2474,6 +2482,31 @@ class NNBEGM(Solver):
                     "FiniteOuterGrid or AdaptiveOuterMesh."
                 )
                 raise RegimeInitializationError(msg)
+        spec = get_nnbegm_inner_spec(inner=self.inner)
+        inner_action = _nnbegm_inner_action(
+            context=context, outer_action=self.outer_action
+        )
+        # Carry-row axis names, in the carry contract's order: discrete states
+        # first (V state order), then passive continuous states (every
+        # continuous state except the inner Euler axis). Used to derive the
+        # published inner policies for the nested simulation reader.
+        row_discrete_state_names = tuple(
+            name
+            for name in context.state_action_space.state_names
+            if isinstance(context.grids[name], DiscreteGrid)
+        )
+        row_passive_state_names = tuple(
+            name
+            for name in context.state_action_space.state_names
+            if isinstance(context.grids[name], ContinuousGrid)
+            and name != spec.continuous_state
+        )
+        inverse_marginal = _nested_inverse_marginal(
+            context=context,
+            rows_on_state_grid=self.carry_rows_share_state_grid,
+            inner_action=inner_action,
+            savings_top=float(spec.savings_grid.to_jax()[-1]),
+        )
         period_kernels = MappingProxyType(
             {
                 period: _NNBEGMPeriodKernel(
@@ -2484,6 +2517,14 @@ class NNBEGM(Solver):
                     outer_post_decision=self.outer_post_decision,
                     outer_batch_size=outer_batch_size,
                     outer_search=search,
+                    outer_action=self.outer_action,
+                    inner_action=inner_action,
+                    resources_target=spec.budget_target,
+                    savings_lower_bound=float(spec.savings_grid.to_jax()[0]),
+                    liquid_grid_values=context.grids[spec.continuous_state].to_jax(),
+                    inverse_marginal=inverse_marginal,
+                    row_discrete_state_names=row_discrete_state_names,
+                    row_passive_state_names=row_passive_state_names,
                 )
                 for period, adjuster_kernel in (adjuster_kernels.period_kernels.items())
             }
@@ -2537,6 +2578,40 @@ class _NNBEGMPeriodKernel:
     """The resolved outer-search strategy: `FiniteOuterGrid` collapses the
     exact finite candidate set, `AdaptiveOuterMesh` adaptively refines the
     shared mesh and collapses continuously."""
+
+    outer_action: ActionName
+    """The regime's outer continuous action (published for the nested
+    simulation reader)."""
+
+    inner_action: ActionName
+    """The regime's inner continuous action (the consumption the published
+    inner policies map resources to)."""
+
+    resources_target: FunctionName
+    """The inner budget node the published policy rows are read at."""
+
+    savings_lower_bound: float
+    """Lower bound of the inner savings grid (the intrinsic budget check of
+    the simulation policy read)."""
+
+    liquid_grid_values: Float1D
+    """The inner Euler (liquid) state grid — the shared abscissae the inner
+    NB-EGM's published carry rows are re-read on
+    (`carry_rows_share_state_grid`)."""
+
+    inverse_marginal: Callable[..., FloatND] | None
+    """The regime's closed-form inverse marginal utility with
+    `marginal_continuation` as its only free parameter, or `None` when
+    unavailable — then no nested simulation payload is derived and simulate
+    keeps the grid-argmax path."""
+
+    row_discrete_state_names: tuple[StateName, ...]
+    """Names of the carry rows' leading discrete-state axes, in axis order."""
+
+    row_passive_state_names: tuple[StateName, ...]
+    """Names of the carry rows' passive continuous-state axes (every
+    continuous state except the inner Euler state), after the discrete
+    states."""
 
     @property
     def core(self) -> Callable:
@@ -2751,10 +2826,56 @@ class _NNBEGMPeriodKernel:
             policy_fallback_mask=jnp.asarray(False),  # noqa: FBT003
             unresolved_mask=jnp.asarray(mesh.unresolved),
         )
+        # Publish the nested payload whenever both branches' inner policies
+        # are available — the continuous simulation reader replays keeper vs
+        # adjuster off-grid from exactly these conditional ingredients. An
+        # NB-EGM inner publishes no `EGMSimPolicy` of its own; on the smooth
+        # v1 scope its unrefined carry rows determine the policy exactly
+        # (`consumption = resources - savings` node by node), so derive both
+        # sides from the carries and fail closed (no nested payload, grid
+        # simulation unchanged) whenever the rows are not derivation-safe.
+        keeper_policy = (
+            keeper_result.sim_policy
+            if isinstance(keeper_result.sim_policy, EGMSimPolicy)
+            else derive_inner_sim_policy(
+                carry=cast("EGMCarry", keeper_result.carry),
+                state_grid_values=self.liquid_grid_values,
+                inverse_marginal=self.inverse_marginal,
+                row_discrete_state_names=self.row_discrete_state_names,
+                row_passive_state_names=self.row_passive_state_names,
+            )
+        )
+        adjuster_policies = (
+            bank.sim_policy
+            if bank.sim_policy is not None
+            else derive_inner_sim_policy(
+                carry=bank.carry,
+                state_grid_values=self.liquid_grid_values,
+                inverse_marginal=self.inverse_marginal,
+                row_discrete_state_names=self.row_discrete_state_names,
+                row_passive_state_names=self.row_passive_state_names,
+                extra_leading_axes=1,
+            )
+        )
+        sim_policy: SimulationPolicyPayload | None = keeper_result.sim_policy
+        if keeper_policy is not None and adjuster_policies is not None:
+            sim_policy = NestedEGMSimPolicy(
+                keeper=keeper_policy,
+                adjuster=OuterPolicyBank(
+                    outer_nodes=mesh.nodes,
+                    policies=adjuster_policies,
+                ),
+                outer_action_name=self.outer_action,
+                outer_post_decision_name=self.outer_post_decision,
+                inner_action_name=self.inner_action,
+                resources_target_name=self.resources_target,
+                savings_lower_bound=self.savings_lower_bound,
+                golden_iterations=config.golden_iterations,
+            )
         return KernelResult(
             V_arr=collapse.V_arr,
             carry=collapse.carry,
-            sim_policy=keeper_result.sim_policy,
+            sim_policy=sim_policy,
             diagnostics=diagnostics,
         )
 
@@ -2811,7 +2932,13 @@ class _NNBEGMPeriodKernel:
             outer_node=node,
             V_arr=result.V_arr,
             carry=cast("EGMCarry", result.carry),
-            sim_policy=result.sim_policy,
+            # An inner 1-D kernel publishes a flat policy or nothing; the
+            # isinstance narrows the widened payload union for the bank.
+            sim_policy=(
+                result.sim_policy
+                if isinstance(result.sim_policy, EGMSimPolicy)
+                else None
+            ),
         )
 
     def _build_candidate_bank(
@@ -2930,6 +3057,84 @@ def _fold_bridged_outer_carry(*, running: EGMCarry, candidate: EGMCarry) -> EGMC
             take, candidate.marginal_utility, running.marginal_utility
         ),
     )
+
+
+def _nnbegm_inner_action(
+    *, context: SolverBuildContext, outer_action: ActionName
+) -> ActionName:
+    """The regime's single inner continuous action (not the outer one).
+
+    The v1 nested scope carries exactly one inner continuous action; its
+    name identifies which recorded action the published inner policy
+    replaces in simulation.
+    """
+    names = [
+        name
+        for name in context.state_action_space.continuous_actions
+        if name != outer_action
+    ]
+    if len(names) != 1:
+        msg = (
+            "NNBEGM supports exactly one inner continuous action besides "
+            f"the outer action '{outer_action}', found {sorted(names)}."
+        )
+        raise RegimeInitializationError(msg)
+    return names[0]
+
+
+def _nested_inverse_marginal(
+    *,
+    context: SolverBuildContext,
+    rows_on_state_grid: bool,
+    inner_action: ActionName,
+    savings_top: float,
+) -> Callable[..., FloatND] | None:
+    """The regime's inverse marginal utility, if payload-derivation-safe.
+
+    The nested simulation payload derives the inner consumption rows from the
+    carry's marginal via the envelope theorem, which requires (a) the inner
+    carry rows to live on the shared liquid state grid and (b) an inverse of
+    `u'` free of state/param bindings (a state-dependent utility would need
+    per-row bindings the kernel-level derivation does not perform). Mirrors
+    the inner solve's own choice: the model's closed-form
+    `inverse_marginal_utility` when its only parameter is
+    `marginal_continuation`, else the iEGM numeric inversion of the utility's
+    action-derivative under the same bracket convention as the solve
+    (`step_core`), provided utility is a function of the inner action alone.
+    Anything else returns `None`: the solve is unaffected and simulation
+    keeps the grid-argmax path.
+    """
+    import inspect  # noqa: PLC0415
+
+    if not rows_on_state_grid:
+        return None
+    closed_form = context.functions.get("inverse_marginal_utility")
+    if closed_form is not None and tuple(inspect.signature(closed_form).parameters) == (
+        "marginal_continuation",
+    ):
+        return closed_form
+    utility = context.functions.get("utility")
+    if utility is None or tuple(inspect.signature(utility).parameters) != (
+        inner_action,
+    ):
+        return None
+    marginal_utility = jax.grad(lambda c: utility(**{inner_action: c}))
+    action_upper = jnp.asarray(savings_top * 1000.0 + 1000.0)
+    action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+
+    def inverse_marginal(*, marginal_continuation: FloatND) -> FloatND:
+        flat = jnp.ravel(jnp.asarray(marginal_continuation))
+        roots = jax.vmap(
+            lambda m: numeric_inverse_marginal_utility(
+                marginal_continuation=m,
+                marginal_utility=marginal_utility,
+                c_lower=action_lower,
+                c_upper=action_upper,
+            )
+        )(flat)
+        return roots.reshape(jnp.shape(marginal_continuation))
+
+    return inverse_marginal
 
 
 def _fail_if_nnbegm_outer_post_decision_is_inner(
