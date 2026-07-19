@@ -29,6 +29,8 @@ brute-force module, so the two configurations cannot drift apart silently.
 
 from functools import partial
 
+import jax.numpy as jnp
+
 from lcm import (
     NBEGM,
     NNBEGM,
@@ -42,10 +44,15 @@ from lcm import (
     UniformObservedFixedCost,
     fixed_transition,
 )
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, Period
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    Period,
+)
 from lcm_examples.mahler_yum_2024 import (
     _WEALTH_GRID_POINTS,
-    DEAD_REGIME,
     DiscountType,
     Education,
     Health,
@@ -60,6 +67,7 @@ from lcm_examples.mahler_yum_2024 import (
     benefits,
     college_coefficient,
     consumption_utility,
+    dead_is_active,
     discount_factor,
     effort_cost,
     good_health_coefficient,
@@ -142,6 +150,34 @@ def next_wealth(saving: FloatND) -> ContinuousState:
 def adjustment_cost_scale(period: Period, adjustment_cost_envelope: FloatND) -> FloatND:
     """Scale `B` of the uniform observed fixed adjustment cost, per period."""
     return adjustment_cost_envelope[period]
+
+
+def dead_utility(
+    wealth: ContinuousState,
+    discount_type: DiscreteState,  # noqa: ARG001
+) -> FloatND:
+    """Dead-regime utility: identically zero, on an explicit wealth axis.
+
+    An EGM parent reads its terminal target's *carry* — value and marginal
+    on the target's Euler axis — so unlike the brute-force dead regime this
+    one must declare `wealth` (marginal is exactly zero: no bequests).
+    `discount_type` mirrors the alive regime's fixed state, as in the brute
+    module.
+    """
+    return jnp.zeros_like(wealth)
+
+
+def build_dead_regime() -> Regime:
+    """The paper-mode dead regime (terminal, with the Euler axis declared)."""
+    return Regime(
+        transition=None,
+        active=partial(dead_is_active, initial_age=int(ages.values[0])),
+        states={
+            "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+            "discount_type": DiscreteGrid(DiscountType),
+        },
+        functions={"utility": dead_utility},
+    )
 
 
 def build_paper_solver(*, outer_search: AdaptiveOuterMesh | None = None) -> NNBEGM:
@@ -253,7 +289,7 @@ def create_mahler_yum_model(
     return Model(
         regimes={
             "alive": build_alive_regime(outer_search=outer_search),
-            "dead": DEAD_REGIME,
+            "dead": build_dead_regime(),
         },
         ages=ages,
         regime_id_class=RegimeId,
