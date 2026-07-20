@@ -51,7 +51,11 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
-from _lcm.solution.backward_induction import solve
+from _lcm.solution.backward_induction import (
+    _build_base_state_action_spaces,
+    _reject_edge_fold_state_param_collisions,
+    solve,
+)
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -735,6 +739,23 @@ class Model:
             multiple=alignment,
         )
         flat_params = self._process_params(params)
+        # simulate-round8 F1 (re-review): the edge-fold state/source-param collision
+        # guard also runs on the SIMULATE entry, not only in `solve()`. The public
+        # simulate API accepts a precomputed / cached `period_to_regime_to_V_arr`
+        # and skips `solve()` entirely (see below), so a guard installed only in
+        # `solve()` would leave the simulate gate and fallback-state projector to
+        # read a colliding leaf (a name that is both a target state and a
+        # `flat_params[source]` key) unchecked. Run it here before any simulation
+        # compilation or routing, regardless of how the value arrays are obtained.
+        # A cheap no-op when no regime declares gated edges.
+        if any(regime.gated_edges for regime in self._regimes.values()):
+            _reject_edge_fold_state_param_collisions(
+                regimes=self._regimes,
+                base_state_action_spaces=_build_base_state_action_spaces(
+                    regimes=self._regimes, flat_params=flat_params
+                ),
+                flat_params=flat_params,
+            )
         if validation_enabled(log):
             try:
                 validate_initial_conditions(

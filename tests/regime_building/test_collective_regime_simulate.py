@@ -39,6 +39,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import lcm.model as model_module
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.simulation.simulate import simulate
@@ -1139,6 +1140,60 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
     np.testing.assert_allclose(np.asarray(married_ir.V_arr)[2], [6.0, 3.0], rtol=1e-6)
     assert np.all(np.isfinite(np.asarray(single_f.V_arr)[[0, 1, 2]]))
     assert np.all(np.isfinite(np.asarray(married_ir.V_arr)[[0, 2]]))
+
+
+def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_values(
+    monkeypatch,
+):
+    """simulate-round8 F1 (re-review): the edge-fold state/source-param collision
+    guard must run on the SIMULATE entry, not only in `solve()`.
+
+    The public `Model.simulate` accepts a precomputed / cached
+    `period_to_regime_to_V_arr` and skips `solve()` entirely, so a guard installed
+    only in `solve()` (the round-8 placement) would let the simulate gate and
+    fallback-state projector read a colliding leaf unchecked. This asserts the
+    guard is invoked on exactly that precomputed-value path — for a gated model,
+    even though `solve()` never runs. Correctness of the guard itself (that it
+    rejects a genuine collision) is pinned by the round-8 tests in
+    `test_gated_edge_arg_provenance.py`; this pins its PLACEMENT.
+    """
+    model = _make_dissolution_model()
+    solution, dissolution_flags = model.solve(
+        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
+    )
+
+    calls: list[frozenset[str]] = []
+    real = model_module._reject_edge_fold_state_param_collisions
+
+    def _spy(**kwargs):
+        calls.append(frozenset(kwargs))
+        return real(**kwargs)
+
+    monkeypatch.setattr(
+        model_module, "_reject_edge_fold_state_param_collisions", _spy
+    )
+
+    initial_conditions = MappingProxyType(
+        {
+            "wage": jnp.array([1.0, 2.0, 3.0]),
+            "age": jnp.array([0.0, 0.0, 0.0]),
+            "regime_id": jnp.array(
+                [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
+            ),
+        }
+    )
+    model.simulate(
+        params=_DISSOLUTION_PARAMS,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=solution,  # precomputed -> solve() is skipped
+        period_to_regime_to_dissolution_flags=dissolution_flags,
+        log_level="off",
+        seed=0,
+    )
+    assert calls, (
+        "the edge-fold collision guard was not invoked on the precomputed-value "
+        "simulate path (it would run only inside the skipped solve())"
+    )
 
 
 def test_public_model_simulate_without_dissolution_flags_raises_clearly():
