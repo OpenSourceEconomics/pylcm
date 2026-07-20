@@ -222,11 +222,11 @@ class PeriodKernel(Protocol):
     per-kernel name so AOT compilation can deduplicate and lower each;
     `build_lower_args` builds a named core's lowering kwargs.
 
-    Most kernels carry exactly one core (`{"main": ...}`); the NEGM kernel
-    carries two (`{"keeper": ..., "adjuster": ...}`), a per-durable-state passive
-    DC-EGM keeper alongside the adjuster sweep. The AOT contract lowers, compiles,
-    and dispatches each core by its key, so a multi-core kernel never collapses
-    into one program.
+    Most kernels carry exactly one core (`{"main": ...}`); a multi-core kernel
+    carries several under its own keys, one per distinct traced program it must
+    lower (for example a passive keeper alongside an adjuster sweep). The AOT
+    contract lowers, compiles, and dispatches each core by its key, so a
+    multi-core kernel never collapses into one program.
     """
 
     def cores(self) -> Mapping[str, Callable]:
@@ -269,8 +269,8 @@ class PeriodKernel(Protocol):
     ) -> Mapping[str, object]:
         """Build the named core's lowering arguments for this period.
 
-        Single-core kernels ignore `core_key`; the NEGM kernel dispatches the
-        keeper-vs-adjuster lowering off it.
+        Single-core kernels ignore `core_key`; a multi-core kernel dispatches
+        its per-core lowering off it.
         """
         ...
 
@@ -287,8 +287,8 @@ class PeriodKernel(Protocol):
     ) -> KernelResult:
         """Invoke the compiled core(s) and assemble the period's `KernelResult`.
 
-        Single-core kernels read `compiled_cores["main"]`; the NEGM kernel reads
-        `["keeper"]` and `["adjuster"]`.
+        Single-core kernels read `compiled_cores["main"]`; a multi-core kernel
+        reads each of its own core keys.
         """
         ...
 

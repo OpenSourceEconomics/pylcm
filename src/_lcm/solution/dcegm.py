@@ -63,10 +63,6 @@ class DCEGM(Solver):
     and an `inverse_marginal_utility` regime function — which is validated at
     `Model` construction time.
 
-    The configuration is published so a model can name the solver and its
-    parameters, but the solver engine is not yet wired in: `validate` rejects a
-    regime requesting it. `GridSearch` is the only available solver.
-
     Forward simulation works but is *grid-restricted*: `simulate` recomputes
     the argmax over the regime's gridded continuous action against the
     stored value function, rather than interpolating the exact EGM policy.
@@ -388,7 +384,7 @@ def _reachable_carry_subset(
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
     reachable_targets: frozenset[RegimeName],
 ) -> MappingProxyType[RegimeName, EGMCarry]:
-    """The carries a regime's EGM core actually reads.
+    """Return the carries a regime's EGM core actually reads.
 
     Each core only ever indexes `next_regime_to_continuation[target]` for its
     reachable targets, so the full all-regimes mapping is needlessly large.

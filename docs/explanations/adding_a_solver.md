@@ -132,9 +132,12 @@ over regimes). Internal — `Model.solve` unpacks it into the public return shap
   `requires_continuation` does) — never as an `isinstance` in generic code. Note the
   existing engine-side predicate `solves_from_continuation` deliberately requires *both*
   a regime transition and a continuation template: a terminal regime that merely
-  *produces* a closed-form continuation payload does not solve from one, and the two
-  consumers (the diagnostics' U/F/E/Q breakdown skip and the `inverse_marginal_utility`
-  exclusion in simulation targets) rely on that distinction.
+  *produces* a closed-form continuation payload does not solve from one. The consumer
+  that depends on this strictness is the `inverse_marginal_utility` exclusion in
+  simulation targets — a bare template check would wrongly exclude a terminal
+  carry-producer's targets. The diagnostics' U/F/E/Q breakdown skip is robust to either
+  check (a terminal carry producer exposes an empty intermediates map, so the skip is a
+  no-op there regardless).
 - **Fail loud at build time.** `validate` is the place to reject regimes outside the
   solver's scope (wrong number of continuous states, missing declared functions, a
   certainty equivalent a linear-expectation method cannot honor). A solver that silently

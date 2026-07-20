@@ -66,9 +66,17 @@ def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     Internal machinery is excluded: the Bellman aggregator `H`, the
     stochastic weight functions, and the budget mask synthesized for DC-EGM
     regimes (an implementation detail of the simulate-phase argmax, not a
-    user-declared constraint). A DC-EGM regime's `inverse_marginal_utility`
-    is excluded as well — its `marginal_continuation` argument exists only
-    inside the Euler inversion, so it is not computable from simulation data.
+    user-declared constraint). A regime that solves from a continuation also
+    excludes `inverse_marginal_utility` — its `marginal_continuation` argument
+    exists only inside the Euler inversion, so it is not computable from
+    simulation data; the exclusion is gated on the `solves_from_continuation`
+    capability, not the solver type.
+
+    The two names (`DCEGM_BUDGET_CONSTRAINT_NAME`, `"inverse_marginal_utility"`)
+    are name-based couplings to the EGM step's internal functions — the one spot
+    the generic simulation layer must know them. A new continuation solver that
+    reuses those internal names inherits the exemption; one that introduces
+    differently-named internal machinery extends this exclusion set here.
     """
     excluded = {"H", DCEGM_BUDGET_CONSTRAINT_NAME} | (
         _get_stochastic_weight_function_names(regime)

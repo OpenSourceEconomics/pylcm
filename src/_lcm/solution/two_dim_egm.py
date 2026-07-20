@@ -36,6 +36,7 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm.ages import AgeGrid
+from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
     Float1D,
     FloatND,
@@ -108,6 +109,17 @@ class TwoDimEGM(Solver):
         boundary_targets = {
             target for target in period_to_target.values() if target != own_name
         }
+        # The boundary step reads exactly one target regime's continuation (the
+        # retirement boundary). More than one distinct boundary target has no
+        # single well-defined prefix, so fail loud rather than pick one by set
+        # iteration order.
+        if len(boundary_targets) > 1:
+            msg = (
+                f"TwoDimEGM regime '{own_name}' leaves to more than one target "
+                f"regime ({sorted(boundary_targets)}); the boundary step "
+                f"supports a single continuation target."
+            )
+            raise RegimeInitializationError(msg)
         boundary_prefix = next(iter(boundary_targets), own_name)
         cores: dict[bool, Callable] = {}
         period_kernels: dict[int, PeriodKernel] = {}

@@ -3,7 +3,7 @@ import gc
 import logging
 import os
 import time
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from types import MappingProxyType
 
@@ -178,6 +178,12 @@ def solve(
                 next_regime_to_continuation=next_regime_to_continuation,
             )
             V_arr = result.V_arr
+            _fail_if_continuation_publisher_returned_none(
+                result=result,
+                regime_name=regime_name,
+                period=period,
+                continuation_publishers=next_regime_to_continuation,
+            )
             if result.continuation is not None:
                 period_continuations[regime_name] = result.continuation
             if result.simulation_policy is not None:
@@ -281,12 +287,12 @@ def solve(
 def _release_rolled_continuations(
     *, period_continuations: dict[RegimeName, ContinuationPayload]
 ) -> None:
-    """Return the device buffers rolled off the period just solved.
+    """Free the device buffers rolled off the period just solved.
 
     The superseded continuation inputs and the period's transient working set
     are unreferenced once the period rolls, but a rolled continuation payload
     sits in a registered pytree that CPython's cyclic collector frees only when
-    it next runs — forcing a collection here returns the device pool promptly,
+    it next runs — forcing a collection here frees the device pool promptly,
     capping peak resident across the loop (mirrors the forward-sim memory
     rework in `result.py`).
 
@@ -325,8 +331,8 @@ def _run_period_kernel(
     for every distinct (period, age) pair.
 
     The adapter is handed its full per-key compiled-core map (`compiled_cores`):
-    a single-core kernel reads `["main"]`, the NEGM kernel reads `["keeper"]`
-    and `["adjuster"]`.
+    a single-core kernel reads `["main"]`, a multi-core kernel reads each of its
+    own core keys.
 
     Returns:
         The kernel's result for this regime-period.
@@ -361,6 +367,12 @@ def _roll_continuation_inputs(
     carries for every carry-producing regime — and update only the entries
     solved this period, so the pytree structure stays JIT-stable.
 
+    The `.get(..., prior)` fallback is for regimes *inactive* this period: they
+    keep the prior period's entry. It relies on the invariant that every
+    continuation-publishing regime publishes on each of its active periods — the
+    solve loop enforces this before rolling, so an active publisher can never
+    fall through to the stale prior carry here.
+
     Returns:
         Tuple of the rolled V mapping and the rolled carry mapping.
 
@@ -382,6 +394,30 @@ def _roll_continuation_inputs(
         }
     )
     return rolled_V_arr, rolled_continuation
+
+
+def _fail_if_continuation_publisher_returned_none(
+    *,
+    result: KernelResult,
+    regime_name: RegimeName,
+    period: int,
+    continuation_publishers: Mapping[RegimeName, ContinuationPayload],
+) -> None:
+    """Fail loud if a continuation-publishing regime published nothing.
+
+    A regime with a continuation template MUST publish a continuation on every
+    active period. If its kernel returns None, `_roll_continuation_inputs` would
+    silently roll the stale prior period's carry forward — wrong numbers, not a
+    crash — so surface the offending (regime, period) instead.
+    """
+    if result.continuation is None and regime_name in continuation_publishers:
+        msg = (
+            f"Regime '{regime_name}' declares a continuation template but its "
+            f"kernel returned no continuation in active period {period}. A "
+            f"continuation-based solver must publish a continuation on every "
+            f"active period."
+        )
+        raise RuntimeError(msg)
 
 
 def _build_continuation_templates(
@@ -472,8 +508,8 @@ def _compile_all_functions(
 
     Each regime exposes one period adapter per period; the adapter wraps one or
     more shared jitted cores, keyed by a stable per-kernel name (`cores()`).
-    Most kernels carry a single `"main"` core; the NEGM kernel carries a
-    `"keeper"` and an `"adjuster"` core, each a distinct traced program. Many
+    Most kernels carry a single `"main"` core; a multi-core kernel carries
+    several named cores, each a distinct traced program. Many
     periods share the same core object, so this deduplicates the cores by
     identity, lowers each unique core once (sequential — tracing is
     single-threaded) with the adapter's per-key lowering arguments, then compiles
@@ -609,8 +645,8 @@ def _group_cores_by_regime_period(
     """Group (regime, period, core_key) -> core into (regime, period) -> {key: core}.
 
     The solve loop dispatches each period adapter with its full per-key core map,
-    so a multi-core kernel (NEGM's keeper/adjuster) receives both compiled cores
-    while a single-core kernel receives `{"main": ...}`.
+    so a multi-core kernel receives all its compiled cores while a single-core
+    kernel receives `{"main": ...}`.
     """
     grouped: dict[tuple[RegimeName, int], dict[str, Callable]] = {}
     for (regime_name, period, core_key), core in cores_by_triple.items():
