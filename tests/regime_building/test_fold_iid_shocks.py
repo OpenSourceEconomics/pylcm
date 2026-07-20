@@ -570,22 +570,25 @@ def test_fold_is_bit_exact_against_unfolded_then_averaged():
     assert _bits(folded_V) == _bits(oracle)
 
 
-def test_fold_jitted_matches_unfolded_then_averaged_within_one_ulp():
-    """The JITTED fold matches the unfolded-then-averaged oracle to ~1 ULP,
-    but is NOT held to bit-equality.
+def test_fold_jitted_matches_unfolded_then_averaged_to_summand_scale_tolerance():
+    """The JITTED fold matches the unfolded-then-averaged oracle to a SCALE-AWARE
+    tolerance measured against the summand magnitude, NOT a fixed ULP count.
 
-    Not a weaker version of the test above out of laziness: under `jit` the
-    fold reduction is compiled INTO the surrounding solve kernel, and XLA's
-    fusion/FMA decisions there depend on the whole graph — they are not
-    reproducible by any standalone oracle, jitted or not. MEASURED: with the
-    fix in place and `--precision=32`, this model's jitted folded V is
-    `10.0` against an isolated-jitted oracle's `10.000001`. That is XLA's
-    fusion policy, not the fold's arithmetic, so pinning bits here would pin
-    the compiler.
+    Under `jit` the fold reduction is compiled INTO the surrounding solve kernel,
+    and XLA's fusion/FMA/reassociation decisions there depend on the whole graph —
+    not reproducible by any standalone oracle. The gap is the float32 REDUCTION
+    error of the summands, so the correct bound is `atol + rtol * max|summand|`,
+    where the summands are the unfolded node values.
 
-    The non-jitted test above is where the fold's exactness contract is
-    actually enforced; this one guards the jitted path against a real
-    (much-larger-than-ULP) regression.
+    Do NOT pin this to a fixed few-ULP count of the RESULT (fold-round4 F3): ULP
+    is a result-space spacing metric and becomes unstable near CANCELLATION. The
+    round-4 review exhibited a supported 18-node uniform-IID float32 fold whose
+    fused value and materialized oracle differed by only ~2.62e-7 in absolute
+    terms — a floor-level summand-scale error — yet 287,557 ULP in the small
+    (~1e-5) cancelled result, so a `<= 2 * spacing(oracle)` contract fails there by
+    five orders of magnitude while the summand-scale bound below still holds. This
+    model's node values are ~10 (no cancellation), so both metrics pass here; the
+    summand-scale bound is the one that is also correct under cancellation.
     """
     kwargs = {"n_points": _DRIFT_N_POINTS, "sigma": _DRIFT_SIGMA}
     weights = _shock(fold=False, **kwargs).get_transition_probs()[0]
@@ -598,8 +601,11 @@ def test_fold_jitted_matches_unfolded_then_averaged_within_one_ulp():
     ]
     oracle = jnp.average(unfolded_V, weights=weights)
 
-    ulp = float(np.spacing(np.asarray(oracle)))
-    assert abs(float(folded_V) - float(oracle)) <= 2 * ulp
+    # Summand-scale absolute+relative tolerance (stable under cancellation),
+    # not a fixed ULP count of the possibly-cancelled result.
+    summand_scale = float(jnp.max(jnp.abs(unfolded_V)))
+    tol = 1e-6 + 1e-6 * summand_scale
+    assert abs(float(folded_V) - float(oracle)) <= tol
 
 
 def test_select_fold_reducer_takes_the_guard_only_when_a_weight_is_zero():
@@ -731,21 +737,21 @@ def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
 
 
 def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
-    """A COARSE `transition=func` that can route to a process-only folded target
-    whose shock persists from the source is rejected by the persistence guard,
-    exactly as the per-target form is (fold-round3 F1).
+    """A COARSE `transition=func` that can route to a folded target whose shock
+    persists from the source is rejected at build time, requiring per-target
+    cells (fold-round3 F1 / fold-round4 F1+F2).
 
-    Before the coarse-candidate reachability fix, a coarse transition's
-    candidate cells were ALL excluded from `reachable_targets`, so this target —
-    reached only via coarse routing, folding a `wage_shock` that also lives in
-    the source — was silently dropped: `process_regimes` returned NORMALLY with
-    an empty `period0` transitions bundle, and the folded target's continuation
-    vanished from E[V], while the byte-identical PER-TARGET model raised
-    "structurally persists". Admitting coarse candidates (minus the source)
-    routes the two forms into the same guard.
-
-    The per-target twin of this model is
-    `test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected`.
+    Before the coarse-candidate reachability fix, this target — reached only via
+    coarse routing, folding a `wage_shock` that also lives in the source — was
+    silently dropped from E[V], while the byte-identical PER-TARGET model raised
+    "structurally persists". A coarse transition's actual support is unknown at
+    build time, so rather than build a `next_wage_shock` edge whose persistence
+    the structural guard would then judge on an UNKNOWN-support candidate (which
+    would wrongly accept a real self-fold or wrongly reject a never-returned one),
+    the ambiguous folded-coarse topology is rejected here with a clear
+    "use per-target transitions" scope error. Declaring the per-target form then
+    routes it into the exact persistence guard
+    (`test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected`).
     """
     period0 = Regime(
         transition=_next_regime,
@@ -761,7 +767,7 @@ def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _utility},
     )
-    with pytest.raises(ModelInitializationError, match="structurally persists"):
+    with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
         process_regimes(
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
@@ -769,6 +775,150 @@ def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
             ),
             ages=_AGES,
             regime_names_to_ids=_REGIME_NAMES_TO_IDS,
+            enable_jit=False,
+        )
+
+
+def test_coarse_self_transition_retains_the_self_continuation():
+    """A coarse transition that returns its OWN regime keeps the self-continuation
+    in E[V] (fold-round4 F1: excluding the source by name dropped it).
+
+    `stay` is active for two periods and coarse-routes to itself over a live
+    (non-folded) `wage_shock`; its next-period self-value must enter E[V]. Pre-fix
+    (source excluded) the `stay` self-target was dropped and its continuation was
+    zero; now `stay` is admitted and appears as its own transition target.
+    """
+    ages3 = AgeGrid(start=0, stop=3, step="Y")
+    ids = MappingProxyType({"stay": jnp.int32(0), "done": jnp.int32(1)})
+    params = MappingProxyType(
+        {
+            "stay": MappingProxyType({"H__discount_factor": jnp.asarray(0.9)}),
+            "done": MappingProxyType({}),
+        }
+    )
+
+    def _next_self() -> ScalarInt:
+        return jnp.int32(0)  # always return "stay"
+
+    stay = Regime(
+        transition=_next_self,
+        active=lambda age: age < 2,
+        states={"wage_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    done = Regime(
+        transition=None,
+        active=lambda age: age >= 2,
+        functions={"utility": lambda: 0.0},
+    )
+    processed = process_regimes(
+        user_regimes=finalize_regimes(
+            user_regimes={"stay": stay, "done": done}, derived_categoricals={}
+        ),
+        ages=ages3,
+        regime_names_to_ids=ids,
+        enable_jit=False,
+    )
+    core = getattr(processed["stay"], "solution", processed["stay"])
+    assert "stay" in dict(getattr(core, "transitions", {}) or {}), (
+        "the coarse self-transition must retain 'stay' as its own continuation target"
+    )
+    solution, _s, _d = solve(
+        flat_params=params,
+        ages=ages3,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    )
+    # A live self-continuation lifts the value above the one-period utility (~10).
+    assert float(jnp.mean(solution[0]["stay"])) > 10.5
+
+
+def test_coarse_self_fold_is_rejected():
+    """A coarse transition that can return its own regime while that regime FOLDS
+    a shock is rejected (fold-round4 F1: it must not silently bypass the
+    persistence guard).
+
+    `stay` is active two periods, folds `wage_shock`, and coarse-routes to itself,
+    so the folded shock could persist across the self-edge. Support is unknown at
+    build time, so this is rejected with the per-target scope error.
+    """
+    ages3 = AgeGrid(start=0, stop=3, step="Y")
+    ids = MappingProxyType({"stay": jnp.int32(0), "done": jnp.int32(1)})
+
+    def _next_self() -> ScalarInt:
+        return jnp.int32(0)
+
+    stay = Regime(
+        transition=_next_self,
+        active=lambda age: age < 2,
+        states={"wage_shock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    done = Regime(
+        transition=None,
+        active=lambda age: age >= 2,
+        functions={"utility": lambda: 0.0},
+    )
+    with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
+        process_regimes(
+            user_regimes=finalize_regimes(
+                user_regimes={"stay": stay, "done": done}, derived_categoricals={}
+            ),
+            ages=ages3,
+            regime_names_to_ids=ids,
+            enable_jit=False,
+        )
+
+
+def test_unreachable_folded_coarse_candidate_is_rejected_with_scope_error():
+    """A coarse function that never returns a folded candidate is still rejected
+    with the per-target scope error, NOT a misleading 'structurally persists'
+    (fold-round4 F2).
+
+    The persistence guard is structural and cannot see that the coarse function
+    always returns `stay` (so folded candidate `alt` has probability zero). Rather
+    than build a spurious `next_wage_shock` edge into `alt` and let the guard
+    manufacture a persistence error, the ambiguous folded-coarse topology is
+    rejected up front with the actionable per-target message.
+    """
+    ages3 = AgeGrid(start=0, stop=3, step="Y")
+    ids = MappingProxyType(
+        {"src": jnp.int32(0), "stay": jnp.int32(1), "alt": jnp.int32(2)}
+    )
+
+    def _always_stay() -> ScalarInt:
+        return jnp.int32(1)  # always "stay", never "alt"
+
+    src = Regime(
+        transition=_always_stay,
+        active=lambda age: age < 1,
+        states={"wage_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    stay = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        functions={"utility": lambda: 0.0},
+    )
+    alt = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wage_shock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
+        process_regimes(
+            user_regimes=finalize_regimes(
+                user_regimes={"src": src, "stay": stay, "alt": alt},
+                derived_categoricals={},
+            ),
+            ages=ages3,
+            regime_names_to_ids=ids,
             enable_jit=False,
         )
 

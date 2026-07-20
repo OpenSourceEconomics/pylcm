@@ -368,17 +368,24 @@ def _select_fold_reducer(*, weight: FloatND, name: StateName) -> Callable[..., F
     EAGER path pays materially (5.3x), because nothing folds the `select`
     there. So this branch buys real time only for `enable_jit=False`.
 
-    ROUND-3 CAVEAT (external re-review). Selecting `jnp.average` restores
+    ROUND-3/4 CAVEAT (external re-review). Selecting `jnp.average` restores
     bit-exactness against the unfolded-then-averaged oracle on the NON-JITTED
     path, but it does NOT make the JITTED fold bit-identical to that oracle:
     under `jit` the fold's average is fused into the mapped value kernel while
     the oracle averages a materialized unfolded array, so XLA may reassociate
-    the two reductions differently (the re-review measured a 2-ULP gap on an
-    all-positive 3-node example). The jitted contract is therefore numerical
-    equivalence within a small tolerance, not bit-identity — do not describe
-    the jitted fold as bit-identical. (This branch is still correct and
-    necessary: it removes the LARGER `zero_safe_average` drift on all-positive
-    axes and keeps the zero-weight guard where a zero can occur.)
+    the two reductions differently. The jitted contract is therefore numerical
+    equivalence within a SCALE-AWARE tolerance, not bit-identity, and NOT a
+    fixed ULP count: ULP is a result-space spacing metric and is unstable near
+    CANCELLATION. Round 4 exhibited a supported 18-node uniform-IID float32 fold
+    whose fused value and materialized oracle differ by only ~2.62e-7 in absolute
+    terms (a summand-scale float32 reduction floor) yet 287,557 ULP in the small
+    (~1e-5) cancelled result — so a `<= 2 * spacing(oracle)` claim is false there.
+    The honest contract is `|fold - oracle| <= atol + rtol * max|summand|`
+    (see `test_fold_jitted_matches_unfolded_then_averaged_to_summand_scale_
+    tolerance`). Do not describe the jitted fold as bit-identical or few-ULP.
+    (This branch is still correct and necessary: it removes the LARGER
+    `zero_safe_average` drift on all-positive axes and keeps the zero-weight
+    guard where a zero can occur.)
 
     This is a per-AXIS decision on that axis's own weights, so a model that
     folds one zero-weight axis and one all-positive axis gets the right

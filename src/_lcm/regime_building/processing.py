@@ -1178,6 +1178,7 @@ def _build_solution_phase(
     """
     core = _process_regime_core(
         source_regime_name=regime_name,
+        active_periods_by_regime=regimes_to_active_periods,
         functions=spec.solution.functions,
         constraints=spec.solution.constraints,
         state_transitions=spec.solution.state_transitions,
@@ -1692,6 +1693,7 @@ def _build_simulation_phase(
     }
     core = _process_regime_core(
         source_regime_name=regime_name,
+        active_periods_by_regime=regimes_to_active_periods,
         functions=decision_functions,
         constraints=spec.simulation.constraints,
         state_transitions=spec.simulation.state_transitions,
@@ -1895,6 +1897,7 @@ class _CoreResult:
 def _process_regime_core(
     *,
     source_regime_name: RegimeName,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     functions: Mapping[FunctionName, UserFunction],
     constraints: Mapping[FunctionName, UserFunction],
     state_transitions: Mapping[StateName, object],
@@ -1911,10 +1914,14 @@ def _process_regime_core(
 
     Args:
         source_regime_name: The name of the regime being processed (the
-            transition SOURCE). Used to exclude the source itself from a
-            coarse transition's candidate-target reachability set (a coarse
-            self-transition must not wire a spurious continuation back into
-            the source — see the reachability construction below).
+            transition SOURCE). Used, with `active_periods_by_regime`, to
+            decide coarse-transition candidate reachability and to reject an
+            ambiguous folded-coarse topology (see the reachability
+            construction below).
+        active_periods_by_regime: Active-period tuples for every regime. A
+            coarse candidate `T` is "reachable next" from the source when `T`
+            is active in some period immediately after a period the source is
+            active — the test that gates the folded-coarse scope error.
         functions: Phase-resolved regime functions for this build.
         constraints: Phase-resolved constraint functions.
         state_transitions: This phase's `state_transitions` slice, used to
@@ -2029,23 +2036,30 @@ def _process_regime_core(
     #
     # A coarse `transition=func` emits a `next_regime` cell for EVERY regime
     # (the routing is decided at runtime from the returned id), so its cell keys
-    # are the candidate universe. Each candidate CAN be routed to, so its
-    # continuation must be built: a candidate the function never actually
-    # returns simply carries zero regime-transition probability and contributes
-    # nothing to E[V], whereas OMITTING a candidate that IS routed to silently
-    # drops its whole continuation from E[V] (fold-round3 F1). Process
-    # transitions are still scoped to processes the SOURCE declares (via
-    # `process_names` below), so admitting a candidate only wires a continuation
-    # for a process that genuinely persists source->target — and a folded such
-    # process is then correctly rejected by `_fail_if_folded_state_persists`,
-    # exactly as the per-target form is.
+    # are the candidate UNIVERSE, not the transition's actual support -- which is
+    # unknowable at build time. Each candidate CAN be routed to (INCLUDING the
+    # source itself: a coarse transition may legitimately return its own regime
+    # when that regime is still active next period), so its continuation must be
+    # built: a candidate the function never returns simply carries zero
+    # regime-transition probability and contributes nothing to E[V], whereas
+    # OMITTING a genuinely-routed candidate silently drops its whole continuation
+    # (fold-round3 F1). So the source is NOT excluded (fold-round4 F1: excluding
+    # it by name erased real coarse self-transitions).
     #
-    # The ONE candidate to exclude is the source regime itself: a coarse
-    # self-transition would wire a spurious `next_<process>` continuation back
-    # into the source, tripping the persistence guard on the primary supported
-    # (self-folded, non-persisting) topology — the false `period0 -> period0`
-    # self-transition. A genuinely persisting self-fold is unsupported by this
-    # slice regardless.
+    # The one thing `target != source` cannot stand in for is transition SUPPORT,
+    # and support is load-bearing for a FOLDED process: `_fail_if_folded_state_
+    # persists` is STRUCTURAL (it inspects built `next_<process>` edges, not
+    # transition probability), so if we built a `next_<process>` continuation for
+    # a folded candidate we would either accept a real persisting self-fold that
+    # deletes the fold axis (F1) or reject a folded candidate the function never
+    # returns (fold-round4 F2). We therefore (a) do NOT build a continuation for a
+    # candidate's FOLDED process -- a folded process is consumed in its own period
+    # and its stored `V` has no such axis, so no continuation is needed; and
+    # (b) REJECT the ambiguous case at build time: a coarse candidate that folds a
+    # process AND is active in a period immediately after the source (so the
+    # coarse edge could carry that fold into a period where it persists) must be
+    # declared with explicit PER-TARGET transition cells, whose support IS known,
+    # so the persistence guard can validate it exactly.
     process_names = variables.process_names
     per_target_regime_targets = {
         target
@@ -2055,8 +2069,14 @@ def _process_regime_core(
     coarse_candidate_targets = {
         target
         for target, cell in next_regime_cells_by_target.items()
-        if isinstance(cell, _CoarseTransitionCell) and target != source_regime_name
+        if isinstance(cell, _CoarseTransitionCell)
     }
+    _fail_if_coarse_candidate_folds_ambiguously(
+        source_regime_name=source_regime_name,
+        coarse_candidate_targets=coarse_candidate_targets,
+        all_grids=all_grids,
+        active_periods_by_regime=active_periods_by_regime,
+    )
     reachable_targets = (
         {
             tree_path_from_qname(k)[0]
@@ -2074,6 +2094,15 @@ def _process_regime_core(
         if user_regime in reachable_targets
         for process in process_names
         if isinstance(grid := grids.get(process), _ContinuousStochasticProcess)
+        # A folded process on a COARSE candidate gets no continuation transition:
+        # its stored V has no such axis, and building one would trip the
+        # structural persistence guard on a candidate whose support is unknown
+        # (fold-round4 F2). The ambiguous persisting case was already rejected
+        # above; this skips the benign non-persisting one (e.g. a source that
+        # folds its own shock and is not active next period).
+        if not (
+            user_regime in coarse_candidate_targets and getattr(grid, "fold", False)
+        )
     }
     processed_functions |= {
         f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
@@ -3010,6 +3039,57 @@ def _fold_state_names(
         for name in state_names
         if isinstance(grid := grids.get(name), _IIDProcess) and grid.fold
     )
+
+
+def _fail_if_coarse_candidate_folds_ambiguously(
+    *,
+    source_regime_name: RegimeName,
+    coarse_candidate_targets: set[RegimeName],
+    all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]],
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+) -> None:
+    """Reject an ambiguous folded-coarse topology; require per-target cells.
+
+    A coarse `transition=func` decides its target at runtime, so its candidate
+    universe is every regime but its actual SUPPORT is unknown at build time.
+    That is fine for a non-folded continuation (a never-returned candidate just
+    carries zero probability), but not for a FOLDED process: whether a fold
+    genuinely persists across the coarse edge -- which `_fail_if_folded_state_
+    persists` must decide STRUCTURALLY, without seeing probabilities -- depends
+    on the unknown support. Admitting such a candidate would either accept a real
+    persisting self-fold (fold-round4 F1) or reject a folded candidate the
+    function never returns (fold-round4 F2). So a coarse candidate that folds a
+    process AND is active in a period immediately after the source (so the coarse
+    edge could carry that fold into a period where it persists) is rejected here:
+    the modeller must declare it with explicit per-target transition cells, whose
+    support IS known, so the persistence guard can validate it exactly.
+    """
+    source_active = active_periods_by_regime.get(source_regime_name, ())
+    next_periods = {p + 1 for p in source_active}
+    error_messages: list[str] = []
+    for target in sorted(coarse_candidate_targets):
+        if not next_periods.intersection(active_periods_by_regime.get(target, ())):
+            continue
+        target_grids = all_grids.get(target, {})
+        folded = sorted(
+            name
+            for name, grid in target_grids.items()
+            if isinstance(grid, _ContinuousStochasticProcess)
+            and getattr(grid, "fold", False)
+        )
+        error_messages.extend(
+            f"regime '{source_regime_name}' uses a COARSE `transition=func`, "
+            f"and candidate target '{target}' folds process '{process}' and is "
+            f"active in the period immediately after '{source_regime_name}'. A "
+            f"coarse transition's actual support is unknown at build time, so a "
+            f"folded process that could persist across it cannot be validated: "
+            f"declare the transition into '{target}' with an explicit PER-TARGET "
+            f"cell (`transition={{'{target}': ...}}`) so its reachability is "
+            f"known and the fold-persistence check can be applied exactly."
+            for process in folded
+        )
+    if error_messages:
+        raise ModelInitializationError(format_messages(error_messages))
 
 
 def _fail_if_folded_state_persists(
