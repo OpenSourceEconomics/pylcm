@@ -762,10 +762,13 @@ def _inspect_candidate(
     # legitimately fall (the winning segment changes at a crossing), so a switch is
     # judged geometrically by `below_j_segment`, not by the raw value comparison —
     # otherwise the genuine crossing point of two branches is dropped as dominated.
+    savings_decrease = _savings_decrease_past_noise(
+        grid_i=grid_i, policy_i=policy_i, grid_j=grid_j, policy_j=policy_j
+    )
     dropped = (
         ~candidate_valid
         | ((value_i < value_j) & ~switches)
-        | (((grid_i - policy_i) < (grid_j - policy_j)) & (secant < grad_before))
+        | (savings_decrease & (secant < grad_before))
         | below_j_segment
     )
 
@@ -946,6 +949,42 @@ def _inspect_candidate(
     carry_new = jnp.where(dropped, carry, carry_accepted)
 
     return carry_new, (row_grid, row_policy, row_value, count)
+
+
+def _savings_decrease_past_noise(
+    *,
+    grid_i: ScalarFloat,
+    policy_i: ScalarFloat,
+    grid_j: ScalarFloat,
+    policy_j: ScalarFloat,
+) -> ScalarBool:
+    """Indicate a genuine decrease in implied savings between two candidates.
+
+    Judges a decrease only past a noise floor: each implied saving $A = R - c$
+    is a difference of like-magnitude grid and policy values, so its rounding
+    error scales with those magnitudes, not with the saving itself. Candidates
+    whose savings are tied in exact arithmetic (one exogenous savings point
+    feeding consecutive candidates) would otherwise be kept or dropped by the
+    sign of pure rounding noise — which varies with the backend's reduction
+    order and makes the kept set platform-dependent.
+
+    Args:
+        grid_i: Endogenous grid point of the later candidate.
+        policy_i: Policy value of the later candidate.
+        grid_j: Endogenous grid point of the earlier candidate.
+        policy_j: Policy value of the earlier candidate.
+
+    Returns:
+        Boolean indicator, true iff the later candidate's implied savings lie
+        below the earlier candidate's by more than the noise floor.
+
+    """
+    savings_scale = jnp.maximum(
+        jnp.maximum(jnp.abs(grid_i), jnp.abs(policy_i)),
+        jnp.maximum(jnp.abs(grid_j), jnp.abs(policy_j)),
+    )
+    noise_floor = 16.0 * jnp.finfo(grid_i.dtype).eps * savings_scale
+    return (grid_i - policy_i) < (grid_j - policy_j) - noise_floor
 
 
 def _find_same_segment_point(

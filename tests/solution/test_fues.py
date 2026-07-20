@@ -89,6 +89,35 @@ def test_concave_input_passes_through_unchanged():
     np.testing.assert_allclose(_drop_nan(got_value), np.asarray(value), atol=1e-12)
 
 
+def test_tied_savings_keep_all_nodes_under_ulp_perturbation():
+    """Rounding noise in exactly tied implied savings never drops an envelope node.
+
+    On a rising concave segment where every candidate saves the same amount
+    (`A = R - c` constant), the savings-monotonicity dominance test compares
+    quantities that are equal in exact arithmetic; their floating-point
+    difference is pure rounding noise whose sign varies with backend reduction
+    order. A one-ulp perturbation of a single policy value must not change the
+    kept set — all candidates lie on the envelope either way.
+    """
+    grid = jnp.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
+    policy = grid - 0.01
+    value = jnp.log(grid)
+
+    # Nudge one interior consumption up by one ulp: its implied savings drops
+    # one ulp below the (exactly tied) predecessor's.
+    policy_perturbed = policy.at[4].set(jnp.nextafter(policy[4], jnp.inf))
+
+    _, _, _, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=12
+    )
+    _, _, _, n_kept_perturbed = fues.refine_envelope(
+        endog_grid=grid, policy=policy_perturbed, value=value, n_refined=12
+    )
+
+    assert int(n_kept) == 8
+    assert int(n_kept_perturbed) == 8
+
+
 def test_steep_but_continuous_policy_is_not_treated_as_a_switch():
     """`|ΔA/ΔR|` just below the threshold leaves a single segment untouched."""
     grid = jnp.linspace(1.0, 5.0, 9)
