@@ -1460,7 +1460,7 @@ def _rename_params_to_qnames(
         # identity distinguishes one coarse law (the same object broadcast to every
         # target) from distinct per-target laws. A parameter-free law reused across
         # per-target cells is genuinely identical (no parameter can differ), so
-        # shared identity is the right verdict here. See `_law_source`.
+        # shared identity is the right verdict here. See `_law_sources_differ`.
         return cast("EconFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
     renamed = rename_arguments(func, mapper=mapper)

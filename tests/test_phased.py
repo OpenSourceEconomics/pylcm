@@ -712,45 +712,39 @@ def test_mixed_per_target_dict_phased_law_is_accepted() -> None:
     )
 
 
-def test_per_target_dict_with_bare_other_phase_broadcasts() -> None:
-    """A per-target dict on one side and a bare law on the other BROADCASTS.
+def test_per_target_dict_with_bare_other_phase_is_rejected() -> None:
+    """A per-target dict on one side and a bare law on the other is REJECTED.
 
-    The bare law is duplicated onto each of the per-target side's targets, exactly as
-    a bare state law broadcasts outside `Phased`. Per-target coverage validation
-    independently requires the dict side to cover every reachable target, so the
-    broadcast target list is authoritative. Observable through the normalized
-    per-target keys: each resolves to the dict cell in one phase and the bare law in
-    the other.
+    Although the bare law broadcasts cleanly at the function level, the params template
+    is a union across phases and keys a param's coarseness by whether a
+    `template[target]` branch exists. The per-target side fabricates such branches, so
+    the bare side's coarse param is silently collapsed onto the per-target leaves and
+    the two phases can no longer be parameterized independently (belief ≠ truth
+    becomes unexpressible). The supported spelling is two per-target dicts over the
+    same targets.
     """
-    regime = _build_regime(
-        state_transitions={
-            "wealth": Phased(
-                solve={"working": MarkovTransition(_markov_law)},
-                simulate=_next_wealth,
-            )
-        }
-    )
-    solve_funcs = regime.get_all_functions(phase="solve")
-    simulate_funcs = regime.get_all_functions(phase="simulate")
-    assert "next_wealth__working" in solve_funcs
-    # the bare simulate law is broadcast onto the solve dict's target.
-    assert simulate_funcs["next_wealth__working"] is _next_wealth
+    with pytest.raises(RegimeInitializationError, match="different shapes"):
+        _build_regime(
+            state_transitions={
+                "wealth": Phased(
+                    solve={"working": MarkovTransition(_markov_law)},
+                    simulate=_next_wealth,
+                )
+            }
+        )
 
 
-def test_bare_solve_per_target_simulate_broadcasts() -> None:
-    """The symmetric spelling: bare solve law, per-target simulate dict."""
-    regime = _build_regime(
-        state_transitions={
-            "wealth": Phased(
-                solve=_next_wealth,
-                simulate={"working": _next_wealth},
-            )
-        }
-    )
-    solve_funcs = regime.get_all_functions(phase="solve")
-    simulate_funcs = regime.get_all_functions(phase="simulate")
-    assert "next_wealth__working" in simulate_funcs
-    assert solve_funcs["next_wealth__working"] is _next_wealth
+def test_bare_solve_per_target_simulate_is_rejected() -> None:
+    """The mirror spelling — bare solve, per-target simulate dict — is REJECTED too."""
+    with pytest.raises(RegimeInitializationError, match="different shapes"):
+        _build_regime(
+            state_transitions={
+                "wealth": Phased(
+                    solve=_next_wealth,
+                    simulate={"working": _next_wealth},
+                )
+            }
+        )
 
 
 def test_per_target_dicts_with_different_targets_are_rejected() -> None:

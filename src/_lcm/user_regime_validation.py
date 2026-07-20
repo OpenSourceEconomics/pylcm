@@ -551,32 +551,52 @@ def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
 
 
 def _phased_per_target_shape_mismatch(*, name: StateName, value: Phased) -> list[str]:
-    """Inside `Phased`, two per-target dicts must declare the same target set.
+    """Inside `Phased`, both sides must share a declaration shape (bare, or per-target).
 
     `Phased(solve={...}, simulate={...})` is normalized at collection into one entry per
     target, each holding a `Phased` of that target's two laws — the form the engine
     actually consumes (`transitions._add_raw_transition`).
 
-    Two shapes normalize cleanly and are both allowed:
+    Two shapes are allowed:
 
-    - **both per-target** over the SAME targets — paired cell by cell;
-    - **one per-target, the other a bare law** — the bare law BROADCASTS over the
-      per-target side's targets, exactly as a bare state law broadcasts outside
-      `Phased`. The per-target side's key set defines the targets, and per-target
-      coverage validation independently requires that set to be the full reachable
-      set — so the broadcast target list is authoritative, not arbitrary.
+    - **both bare** — one coarse `next_<state>` node whose params sit at a single
+      coarse template leaf (a plain phased law);
+    - **both per-target** over the SAME targets — paired cell by cell, each target
+      carrying its own template branch.
 
-    Only the remaining shape is rejected: two per-target dicts over DIFFERENT
-    targets, which would leave a target with a law in one phase and none in the
-    other. (`Phased` is outermost-only — `_validate_per_target_dict` rejects a
-    `Phased` cell — so the outer form is the only spelling for a per-target law
-    that varies by phase.)
+    Rejected shapes:
+
+    - **map-vs-bare** — one side per-target, the other a bare law. Although the bare
+      law broadcasts cleanly at the *function* level, the params template is a UNION
+      across phases and keys a param's coarseness by whether a `template[target]` branch
+      exists. A per-target side fabricates such branches, so the bare side's coarse
+      param is silently collapsed onto the per-target side's leaves — the two phases can
+      no longer be parameterized independently (belief ≠ truth is unexpressible). Write
+      BOTH sides as per-target dicts over the same targets (repeat the bare law in each
+      cell); use distinct param names when the two phases must differ.
+    - **two per-target dicts over DIFFERENT targets** — a target would carry a law in
+      one phase and none in the other, with no single authoritative key set.
+
+    (`Phased` is outermost-only — `_validate_per_target_dict` rejects a `Phased` cell —
+    so the outer form is the only spelling for a per-target law that varies by phase.)
     """
     solve_per_target = isinstance(value.solve, Mapping)
     simulate_per_target = isinstance(value.simulate, Mapping)
+    if solve_per_target != simulate_per_target:
+        bare_phase = "simulate" if solve_per_target else "solve"
+        return [
+            f"state_transitions['{name}']: the two `Phased` sides declare different "
+            f"shapes — one is a per-target dict and the other ({bare_phase}) is a "
+            f"single bare law. A bare law broadcasts at the function level, but the "
+            f"params template is a union across phases: the per-target side "
+            f"fabricates per-target parameter branches that silently absorb the bare "
+            f"side's coarse parameter, so the two phases cannot be parameterized "
+            f"independently. Write BOTH sides as per-target dicts over the same "
+            f"targets (repeat the bare law in each cell), using distinct parameter "
+            f"names where the phases differ.",
+        ]
     if not (solve_per_target and simulate_per_target):
-        # neither per-target (a plain phased law), or map-vs-bare (broadcast):
-        # both normalize cleanly, so nothing to reject here.
+        # both bare — a plain phased law with one coarse node; nothing to reject.
         return []
     solve_targets = set(cast("Mapping[RegimeName, object]", value.solve))
     simulate_targets = set(cast("Mapping[RegimeName, object]", value.simulate))
@@ -584,8 +604,7 @@ def _phased_per_target_shape_mismatch(*, name: StateName, value: Phased) -> list
         return [
             f"state_transitions['{name}']: the per-target dicts inside `Phased` "
             f"declare different targets — solve has {sorted(solve_targets)}, simulate "
-            f"has {sorted(simulate_targets)}. Both phases must cover the same targets, "
-            f"or give one phase a single law to broadcast over the other's targets.",
+            f"has {sorted(simulate_targets)}. Both phases must cover the same targets.",
         ]
     return []
 
@@ -605,11 +624,12 @@ def _state_transition_value_errors(*, name: StateName, value: object) -> list[st
     a point-valued truth, and the reverse, both build and carry the intended meaning
     (`tests/regime_building/test_mixed_stochasticity_phases.py`).
 
-    The two variants may differ in shape: per-target on one side and a bare law on
-    the other broadcasts the bare law over the per-target side's targets (map-vs-bare).
-    What is rejected is two per-target dicts over DIFFERENT target sets — an ambiguous
-    normalization with no single authoritative key set — see
-    `_phased_per_target_shape_mismatch`.
+    The two variants must share a declaration shape: both bare (one coarse node) or
+    both per-target dicts over the SAME targets. A map-vs-bare mix (per-target on one
+    side, a bare law on the other) is rejected because the union params template
+    silently collapses the bare side's coarse param onto the per-target side's leaves;
+    two per-target dicts over DIFFERENT target sets are rejected as an ambiguous
+    normalization — see `_phased_per_target_shape_mismatch`.
 
     `None` is not a law of motion; the error points to `fixed_transition`.
     """

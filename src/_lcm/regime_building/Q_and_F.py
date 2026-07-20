@@ -682,43 +682,49 @@ def _get_deterministic_transitions(
         for name, func in bundle.items():
             if name in stochastic_transition_names:
                 continue
-            if name in merged and _law_source(merged[name]) != _law_source(func):
+            if name in merged and _law_sources_differ(merged[name], func):
                 conflicting.add(name)
             merged.setdefault(name, func)
     return MappingProxyType(merged), frozenset(conflicting)
 
 
 # Attribute stamped by `_rename_params_to_qnames` onto an engine-renamed
-# transition cell, naming the user law it wraps. See `_law_source`.
+# transition cell as `(user_law, qualified_param_location)`. See `_law_sources_differ`.
 LAW_SOURCE_ATTR = "_lcm_law_source"
 
 
-def _law_source(func: TransitionFunction) -> object:
-    """Provenance token of a processed transition, compared BY VALUE (`==`).
+def _law_sources_differ(a: TransitionFunction, b: TransitionFunction) -> bool:
+    """Whether two processed cells of one `next_<state>` name wrap different user laws.
 
-    A single BARE (coarse) state law carried by several targets is canonicalized
-    into one cell per target, and `_rename_params_to_qnames` then renames each with
-    qualified parameter names. To tell that coarse-broadcast case apart from
-    genuinely different per-target laws, the engine STAMPS every parameterized cell
-    it renames with `(user_law, qualified_param_names)`:
+    Compared WITHOUT invoking user-defined equality: the base user law is compared by
+    object IDENTITY (`is`) and the parameter LOCATION by string equality. A user law
+    may be an array-backed callable whose `==`/`!=` builds an array or raises, so a
+    value comparison of the whole token is unsafe (an array-backed callable's `!=`
+    yields a non-bool). Identity on the base plus string equality on the location is
+    the exact distinction the token encodes and touches no user `__eq__`.
 
-    - A COARSE law binds ONE shared parameter branch across all its target cells, so
-      every cell gets the SAME token and the cells merge (no false conflict).
-    - A PER-TARGET dict binds a TARGET-QUALIFIED branch per cell, so cells get
-      DIFFERENT tokens — even when the user reuses the SAME callable object across
-      targets. The reused-callable case is the one raw callable identity missed.
+    The engine STAMPS every parameterized cell it renames with
+    `(user_law, qualified_param_location)`:
 
-    Provenance is explicit rather than inferred from `__wrapped__`, because unwrapping
-    cannot distinguish the engine's own rename layer from a user's `rename_arguments`
-    wrapper. A parameter-free law receives no engine wrapper (and no stamp): its cell's
-    own object identity already separates one coarse law (the same object broadcast to
-    every target) from distinct per-target laws, and a reused parameter-free callable is
+    - A COARSE law binds ONE shared parameter branch across its target cells, so every
+      cell carries the SAME base object and the SAME (bare) location — the cells merge.
+    - A PER-TARGET dict binds a TARGET-QUALIFIED branch per cell, so cells carry
+      DIFFERENT locations even when the user reuses the SAME callable object across
+      targets — the reused-callable case raw identity missed.
+
+    A parameter-free law receives no engine wrapper (and no stamp): its cell's own
+    object identity separates one coarse law (the same object broadcast to every
+    target) from distinct per-target laws, and a reused parameter-free callable is
     genuinely identical (no parameter can differ), so shared identity is correct there.
-    So read the stamp when present, else the cell itself, and compare with `==`; the
-    tuple stamp makes value-equality the right comparison and it degrades to identity
-    for bare callables.
+    When either cell is unstamped, fall back to object identity of the cells themselves.
     """
-    return getattr(func, LAW_SOURCE_ATTR, func)
+    src_a = getattr(a, LAW_SOURCE_ATTR, None)
+    src_b = getattr(b, LAW_SOURCE_ATTR, None)
+    if src_a is None or src_b is None:
+        return a is not b
+    base_a, location_a = src_a
+    base_b, location_b = src_b
+    return base_a is not base_b or location_a != location_b
 
 
 def _get_U_and_F(
