@@ -30,6 +30,7 @@ The published derivative contract, everywhere:
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import _aggregate_child_choices
@@ -276,3 +277,92 @@ def test_singleton_query_gradient_stays_zero_under_the_analytic_rule():
     derivative = float(jax.grad(read)(jnp.asarray(1.0)))
 
     np.testing.assert_allclose(derivative, 0.0, atol=1e-12)
+
+
+def test_singleton_read_is_smooth_to_second_order_in_the_query():
+    """A singleton row's constant clamp is constant under second-order AD too.
+
+    The read is a constant in the query on a one-node row, so both the first
+    and the second query derivatives are exactly zero — never NaN from the
+    padded bracket the derivative rule does not use.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+    slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+
+    def read(query):
+        return interp_on_padded_grid(x_query=query, xp=xp, fp=fp, fp_slopes=slopes)
+
+    query = jnp.asarray(1.0)
+
+    np.testing.assert_allclose(float(read(query)), 5.0, atol=1e-12)
+    np.testing.assert_allclose(float(jax.grad(read)(query)), 0.0, atol=1e-12)
+    np.testing.assert_allclose(float(jax.grad(jax.grad(read))(query)), 0.0, atol=1e-12)
+
+
+def test_singleton_query_gradient_has_finite_mixed_derivatives():
+    """Mixed derivatives of a singleton's query gradient stay finite zeros.
+
+    The query gradient of a one-node row is identically zero, so its
+    derivatives with respect to the node's value, slope, and abscissa are
+    exactly zero as well — the padded bracket must not leak NaN into them.
+    """
+
+    def query_gradient(fp0, slope0, x0):
+        row_xp = jnp.array([1.0, jnp.nan, jnp.nan]).at[0].set(x0)
+        row_fp = jnp.array([5.0, jnp.nan, jnp.nan]).at[0].set(fp0)
+        row_slopes = jnp.array([2.0, jnp.nan, jnp.nan]).at[0].set(slope0)
+
+        def read(query):
+            return interp_on_padded_grid(
+                x_query=query, xp=row_xp, fp=row_fp, fp_slopes=row_slopes
+            )
+
+        return jax.grad(read)(jnp.asarray(1.0))
+
+    mixed = jax.grad(query_gradient, argnums=(0, 1, 2))(
+        jnp.asarray(5.0), jnp.asarray(2.0), jnp.asarray(1.0)
+    )
+
+    np.testing.assert_allclose(
+        [float(component) for component in mixed], [0.0, 0.0, 0.0], atol=1e-12
+    )
+
+
+def test_singleton_linear_read_is_smooth_to_second_order_in_the_query():
+    """The linear singleton clamp is also second-order AD-safe."""
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+
+    def read(query):
+        return interp_on_padded_grid(x_query=query, xp=xp, fp=fp)
+
+    np.testing.assert_allclose(
+        float(jax.grad(jax.grad(read))(jnp.asarray(1.0))), 0.0, atol=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    ("fp_slopes", "xp"),
+    [
+        (jnp.array([1.0, 2.0, 3.0]), jnp.array([0.0, 1.0, 2.0])),
+        (None, jnp.array([0.0, 1.0, 2.0])),
+        (jnp.array([2.0, jnp.nan, jnp.nan]), jnp.array([0.0, jnp.nan, jnp.nan])),
+        (None, jnp.array([0.0, jnp.nan, jnp.nan])),
+    ],
+    ids=["hermite", "linear", "hermite-singleton", "linear-singleton"],
+)
+def test_nan_query_gradient_is_nan_on_every_row_shape(fp_slopes, xp):
+    """`jax.grad` at a NaN query is NaN — fail-loud, matching the value read.
+
+    A NaN query marks an upstream failure; the value read re-pins it to NaN on
+    every row shape. The analytic query tangent must carry the same poison —
+    linear and Hermite reads, regular and singleton rows alike — instead of
+    the located bracket's finite secant or the degenerate-row constant.
+    """
+    fp = jnp.where(jnp.isnan(xp), jnp.nan, jnp.array([0.0, 1.0, 4.0]))
+
+    def read(query):
+        return interp_on_padded_grid(x_query=query, xp=xp, fp=fp, fp_slopes=fp_slopes)
+
+    assert bool(jnp.isnan(jax.grad(read)(jnp.asarray(jnp.nan))))

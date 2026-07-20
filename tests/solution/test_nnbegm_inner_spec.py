@@ -9,7 +9,7 @@ explicit spec so the outer kernel code never dispatches on the inner type.
 
 import pytest
 
-from _lcm.solution.solvers import get_nnbegm_inner_spec
+from _lcm.solution.nnbegm import get_nnbegm_inner_spec
 from lcm import LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import DCEGM, NBEGM, GridSearch

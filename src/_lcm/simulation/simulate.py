@@ -38,7 +38,7 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
-    PeriodToRegimeToSimPolicy,
+    PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
     RegimeIdsToNames,
     RegimeName,
@@ -82,7 +82,7 @@ def simulate(
     ],
     ages: AgeGrid,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
-    period_to_regime_to_sim_policy: PeriodToRegimeToSimPolicy | None = None,
+    period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
     seed: int | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
@@ -259,7 +259,7 @@ def _simulate_subject_chunk(
     ages: AgeGrid,
     seed: int,
     logger: logging.Logger,
-    period_to_regime_to_sim_policy: PeriodToRegimeToSimPolicy | None = None,
+    period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 

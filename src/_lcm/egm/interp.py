@@ -155,6 +155,75 @@ def interp_on_prepared_grid(
     return _hermite_prepared_read(x_query, search_grid, valid_length, xp, fp, fp_slopes)
 
 
+def interp_left_record_on_padded_grid(
+    *,
+    x_query: FloatND,
+    xp: Float1D,
+    fp: Float1D,
+) -> FloatND:
+    """Linear read that publishes the *left* record at a duplicated abscissa.
+
+    Same row contract as `interp_on_padded_grid`; see
+    `interp_left_record_on_prepared_grid` for the read semantics.
+
+    Args:
+        x_query: Points at which to evaluate; any shape.
+        xp: Weakly ascending grid row with NaNs only in the tail.
+        fp: Function values on `xp`, NaN-padded in lockstep with `xp`.
+
+    Returns:
+        Interpolated values with the shape of `x_query`.
+
+    """
+    search_grid, valid_length = prepare_padded_grid(xp)
+    return interp_left_record_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+    )
+
+
+def interp_left_record_on_prepared_grid(
+    *,
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+) -> FloatND:
+    """Linear read that publishes the *left* record at a duplicated abscissa.
+
+    The payload companion of the left germ: when a tie is owned on the left
+    neighborhood, the winner's published marginal must be the record that
+    justified ownership — at a duplicated kink abscissa (left and right
+    records of an envelope kink) that is the *left* duplicate's value, where
+    the ordinary read (`side="right"`) publishes the right one. Away from
+    duplicated abscissae the two reads coincide: an exactly-on-node query
+    reads the node's value either way, and off-node queries locate the same
+    bracket. Boundary and degenerate rules are those of
+    `interp_on_prepared_grid` (secant-extended below the first node, clamped
+    at and above the last, singleton constant, empty NaN, NaN query re-pin).
+
+    Args:
+        x_query: Points at which to evaluate; any shape.
+        search_grid: The row's `+inf`-padded search key from
+            `prepare_padded_grid`.
+        valid_length: The row's non-NaN prefix length from
+            `prepare_padded_grid`.
+        xp: The original NaN-padded grid row (the abscissa gather source).
+        fp: Function values on `xp`, NaN-padded in lockstep.
+
+    Returns:
+        Interpolated values with the shape of `x_query`.
+
+    """
+    return _read_prepared_row(
+        x_query, search_grid, valid_length, xp, fp, None, side="left"
+    )
+
+
 def _hermite_prepared_read_primal(
     x_query: FloatND,
     search_grid: Float1D,
@@ -243,7 +312,9 @@ def _hermite_query_derivative(
     - a zero-width located bracket (an end duplicate): zero — no slope is
       defined on it,
     - singleton row: zero (constant clamp); empty row: NaN (the read is NaN —
-      the derivative is non-authoritative and carries the poison).
+      the derivative is non-authoritative and carries the poison),
+    - a NaN query: NaN on every row shape — the value read re-pins a NaN query
+      fail-loud, and the tangent carries the same poison.
     """
     first, _, _, endpoint_finite, zero_width, secant = _hermite_bracket_derivatives(
         x_query=x_query,
@@ -261,7 +332,8 @@ def _hermite_query_derivative(
     derivative = jnp.where(x_query < first_node, extension_slope, derivative)
     derivative = jnp.where(x_query > last_node, 0.0, derivative)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
-    return jnp.where(valid_length == 0, jnp.nan, derivative)
+    derivative = jnp.where(valid_length == 0, jnp.nan, derivative)
+    return jnp.where(jnp.isnan(x_query), jnp.nan, derivative)
 
 
 def _linear_prepared_read_primal(
@@ -332,7 +404,9 @@ def _linear_query_derivative(
       fallback convention, matching the value's clamp fallback below
       support),
     - a zero-width located bracket: zero,
-    - singleton row: zero; empty row: NaN (poison-carrying).
+    - singleton row: zero; empty row: NaN (poison-carrying),
+    - a NaN query: NaN on every row shape — the value read re-pins a NaN query
+      fail-loud, and the located bracket's finite secant must not mask it.
     """
     upper = jnp.clip(
         jnp.searchsorted(search_grid, x_query, side="right"),
@@ -348,7 +422,8 @@ def _linear_query_derivative(
     above = x_query > last_node
     derivative = jnp.where(above | (bracket_width == 0.0), 0.0, secant)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
-    return jnp.where(valid_length == 0, jnp.nan, derivative)
+    derivative = jnp.where(valid_length == 0, jnp.nan, derivative)
+    return jnp.where(jnp.isnan(x_query), jnp.nan, derivative)
 
 
 def _read_prepared_row(
@@ -358,15 +433,23 @@ def _read_prepared_row(
     xp: Float1D,
     fp: Float1D,
     fp_slopes: Float1D | None,
+    side: Literal["left", "right"] = "right",
 ) -> FloatND:
-    """Evaluate the padded-row interpolant (the primal branch program)."""
+    """Evaluate the padded-row interpolant (the primal branch program).
+
+    `side` selects the bracket an exactly-on-node query lands in: `"right"`
+    (the value read's own convention — at a duplicated abscissa the right
+    record applies) or `"left"` (the left record applies; see
+    `interp_left_record_on_prepared_grid`). Off-node queries locate the same
+    bracket either way.
+    """
     # The bracket indices span the full query mesh (the dominant egm_step
     # working buffer at scale), and never exceed the grid length (a few
     # hundred), so int32 holds them with vast headroom. Under x64 `searchsorted`
     # would default to int64 and double these gather-index buffers; the cast
     # halves them with no effect on the gathered values.
     upper = jnp.clip(
-        jnp.searchsorted(search_grid, x_query, side="right"),
+        jnp.searchsorted(search_grid, x_query, side=side),
         1,
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
@@ -673,12 +756,23 @@ def _hermite_bracket_derivatives(
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
     lower = upper - 1
-    xp_lower = xp[lower]
-    xp_upper = xp[upper]
-    fp_lower = fp[lower]
-    fp_upper = fp[upper]
-    slope_lower = fp_slopes[lower]
-    slope_upper = fp_slopes[upper]
+    # Degenerate valid prefixes (fewer than two nodes) gather NaN padding into
+    # the bracket. The consumers override the published derivative on those
+    # rows, but `jnp.where` propagates tangents through BOTH branches, so the
+    # NaN bracket arithmetic would poison *higher-order* autodiff of the query
+    # derivative (`0 · NaN = NaN` in the second-order tangents). Feed the
+    # arithmetic a finite dummy bracket, exactly as the primal row read does.
+    degenerate = valid_length < 2  # noqa: PLR2004
+
+    def _sanitized(gathered: FloatND, dummy: float) -> FloatND:
+        return jnp.where(degenerate, dummy, gathered)
+
+    xp_lower = _sanitized(xp[lower], 0.0)
+    xp_upper = _sanitized(xp[upper], 1.0)
+    fp_lower = _sanitized(fp[lower], 0.0)
+    fp_upper = _sanitized(fp[upper], 0.0)
+    slope_lower = _sanitized(fp_slopes[lower], 0.0)
+    slope_upper = _sanitized(fp_slopes[upper], 0.0)
 
     bracket_width = xp_upper - xp_lower
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)

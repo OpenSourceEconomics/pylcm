@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import jax.numpy as jnp
 import pytest
 
-from _lcm.solution.solvers import (
+from _lcm.solution.nbegm import (
     _fail_if_liquid_reading_next_state_varies_within_interval,
 )
 from lcm.exceptions import RegimeInitializationError

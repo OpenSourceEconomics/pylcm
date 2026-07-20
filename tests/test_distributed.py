@@ -1,3 +1,4 @@
+import dataclasses
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.solution import backward_induction
-from _lcm.solution.backward_induction import (
+from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
 )
@@ -271,7 +272,7 @@ def _compiled_solve_kernel_hlo(model: Model, *, regime_name: str, period: int) -
                 regime_params=flat_params[regime_name]
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=MappingProxyType({}),
+            next_regime_to_continuation=MappingProxyType({}),
             flat_params=flat_params,
             period=period,
             ages=model.ages,
@@ -310,19 +311,23 @@ def test_solve_returns_template_sharded_V_even_when_kernel_output_is_replicated(
     replicated kernel output must be placed back on the template's mesh before
     it is published.
     """
-    original_solve_regime_period = backward_induction._solve_regime_period
+    original_run_period_kernel = backward_induction._run_period_kernel
     replicated_outputs: list[str] = []
 
     def emit_replicated_V(**kwargs):
-        V_arr = original_solve_regime_period(**kwargs)
-        if isinstance(V_arr.sharding, NamedSharding):
-            replicated_outputs.append(kwargs["regime_name"])
-            return jax.device_put(
-                V_arr, NamedSharding(V_arr.sharding.mesh, PartitionSpec())
+        result = original_run_period_kernel(**kwargs)
+        if isinstance(result.V_arr.sharding, NamedSharding):
+            replicated_outputs.append(kwargs["regime"].name)
+            return dataclasses.replace(
+                result,
+                V_arr=jax.device_put(
+                    result.V_arr,
+                    NamedSharding(result.V_arr.sharding.mesh, PartitionSpec()),
+                ),
             )
-        return V_arr
+        return result
 
-    monkeypatch.setattr(backward_induction, "_solve_regime_period", emit_replicated_V)
+    monkeypatch.setattr(backward_induction, "_run_period_kernel", emit_replicated_V)
 
     period_to_regime_to_V_arr = correct_distributed_model.solve(
         log_level="off",

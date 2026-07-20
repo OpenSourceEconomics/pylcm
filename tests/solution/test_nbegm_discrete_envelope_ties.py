@@ -11,7 +11,7 @@ choice-indifference point.
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.solution.solvers import _discrete_envelope_over_branches
+from _lcm.solution.nbegm import _discrete_envelope_over_branches
 
 
 def test_hard_max_envelope_at_a_value_tie_takes_the_lower_index_branch_marginal():

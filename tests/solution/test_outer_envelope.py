@@ -19,7 +19,7 @@ import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.outer_envelope import build_stacked_outer_carry, outer_envelope_at_query
-from _lcm.solution.solvers import _build_coh_shift_function
+from _lcm.solution.negm import _build_coh_shift_function
 from _lcm.typing import EconFunction, EconFunctionsMapping
 from lcm.exceptions import InvalidParamsError
 from lcm.typing import Float1D, FloatND

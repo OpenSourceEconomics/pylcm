@@ -21,7 +21,7 @@ import pytest
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.grids import ContinuousGrid
-from _lcm.solution.solvers import (
+from _lcm.solution.negm import (
     _durable_keeper_transition,
     _with_no_adjustment_outer_function,
 )
