@@ -617,9 +617,7 @@ def _two_product(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
     the rounded product is recovered exactly in working precision.
     """
     mantissa_digits = jnp.finfo(a.dtype).nmant + 1
-    split_factor = jnp.asarray(
-        2.0 ** ((mantissa_digits + 1) // 2) + 1.0, dtype=a.dtype
-    )
+    split_factor = jnp.asarray(2.0 ** ((mantissa_digits + 1) // 2) + 1.0, dtype=a.dtype)
 
     def split(x: FloatND) -> tuple[FloatND, FloatND]:
         scaled = split_factor * x
@@ -785,9 +783,7 @@ def _enumerate_interval_crossings(
             winner_slope=links.value_slope[winner][:, None],
         )
         abscissa_ulp = jnp.finfo(query_grid.dtype).eps * jnp.abs(x_next_safe[:, None])
-        same_point = jnp.abs(gap_at_next) <= (
-            jnp.abs(slope_gap_at_next) * abscissa_ulp
-        )
+        same_point = jnp.abs(gap_at_next) <= (jnp.abs(slope_gap_at_next) * abscissa_ulp)
         # The exact-minimum line(s) define the crossing being emitted, so they
         # belong to the tie unconditionally — the residual test only decides
         # which *other* near-minimal lines genuinely pass through the point.
