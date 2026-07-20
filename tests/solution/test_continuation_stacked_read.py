@@ -558,3 +558,57 @@ def test_stacked_read_earlier_clamp_winner_publishes_zero_marginal():
 
     np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
+
+
+def test_passive_blend_publishes_a_marginal_inside_the_clarke_interval():
+    """A passive blend of heterogeneous-support nodes stays a subgradient.
+
+    Two passive nodes are read at the same query `q = 2`. Node 0 is a
+    shared-terminal envelope (the query sits on its last valid node, so its
+    value read is flat to the right — one-sided derivatives 10 left, 0 right).
+    Node 1 is an interior tie (one-sided derivatives 1 left, 2 right). At the
+    passive weight `1/2` the blended value read has one-sided derivatives 5.5
+    (left) and 1 (right), so every subgradient — the published marginal
+    included — lies in the Clarke generalized gradient `[1, 5.5]`. Committing a
+    side per node *before* the blend (node 0 left-owned marginal 10, node 1
+    right-owned marginal 2) publishes `0.5*10 + 0.5*2 = 6`, outside the
+    interval; blending both side payloads and choosing the side after the blend
+    keeps it inside.
+    """
+    x_terminal = jnp.array([0.0, 1.0, 2.0, jnp.nan])
+    x_interior = jnp.array([0.0, 1.0, 2.0, 3.0])
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [jnp.stack([x_terminal, x_terminal]), jnp.stack([x_interior, x_interior])]
+        ),
+        value=jnp.array(
+            [
+                [[80.0, 90.0, 100.0, jnp.nan], [60.0, 80.0, 100.0, jnp.nan]],
+                [[98.0, 99.0, 100.0, 101.0], [96.0, 98.0, 100.0, 102.0]],
+            ]
+        ),
+        marginal_utility=jnp.array(
+            [
+                [[10.0, 10.0, 10.0, jnp.nan], [20.0, 20.0, 20.0, jnp.nan]],
+                [[1.0, 1.0, 1.0, 1.0], [2.0, 2.0, 2.0, 2.0]],
+            ]
+        ),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    search, valid = _prepare(carry)
+
+    value, marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=search,
+        prepared_valid_length=valid,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.5),),
+        child_passive_grids=(jnp.array([0.0, 1.0]),),
+        row_queries=jnp.array([2.0, 2.0]),
+        row_gradients=jnp.array([1.0, 1.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(value), 100.0, atol=_READ_ATOL)
+    assert 1.0 - _READ_ATOL <= float(marginal) <= 5.5 + _READ_ATOL
