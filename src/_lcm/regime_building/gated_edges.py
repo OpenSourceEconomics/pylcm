@@ -446,11 +446,20 @@ def _reject_gate_projection_target_node_read(
             "deterministic-transition node(s). Name-based DAG concatenation would bind "
             "the argument to the target NODE, silently dropping a same-named source "
             "parameter and reversing the gate / changing Wbar / writing the wrong "
-            "projected fallback state. Read a target-derived quantity through a "
-            "source-declared gate-ref projection (its params bind from the source) "
-            "rather than naming the target node directly; origin-preserving edge "
-            "compilation, which would make a direct read unambiguous, is not yet "
-            "implemented."
+            "projected fallback state. This fence is deliberately STRICTER than a "
+            "proven source/target collision: whether the name was meant as a source "
+            "parameter or the target node is not decidable at build time (the source's "
+            "edge-param set is not carried in the params template), so a direct "
+            "target-node read is rejected outright. Workaround depends on what you "
+            "need: for a target-derived VALUE, add a source-declared gate-ref "
+            "projection (its params bind from the source) -- but note a gate ref "
+            "returns a REFERENCE REGIME's V at the projected coordinates, not an "
+            "arbitrary target helper's output; for a state-only quantity (or a "
+            "fallback STATE coordinate, which a gate ref cannot supply) inline the "
+            "helper/transition formula directly in the gate/projection using the "
+            "target STATES as arguments. General direct target-node reads need either "
+            "origin-preserving edge compilation or an explicit per-argument "
+            "target-node declaration; neither is implemented yet."
         )
         raise ModelInitializationError(msg)
 
@@ -485,6 +494,50 @@ def _reject_gate_ref_operand_alias(
             "value. Rename the colliding gate-ref key(s)."
         )
         raise ModelInitializationError(msg)
+
+
+def _reject_gate_operand_state_name_collision(
+    *,
+    state_names: Iterable[str],
+    reserved_operand_names: frozenset[str],
+    gate_ref_names: Iterable[str],
+    edge_target: str,
+    context: str,
+) -> None:
+    """Fence a target STATE name that aliases a built-in operand / gate-ref (round-7).
+
+    ``_assemble_gate_kwargs`` resolves each gate argument in a fixed PRECEDENCE order:
+    target value component(s) ``V_target`` / ``V_target_<s>`` first, then ``D_target``,
+    then the gate-ref values, and only THEN the target ``state_mesh``. So a target
+    regime whose own STATE is named ``V_target`` / ``D_target`` / ``V_target_<s>`` has
+    that state silently preempted by the injected VALUE operand -- ``gate(V_target)``
+    reads the target's continuation VALUE, not its realized STATE -- and a gate-ref key
+    equal to a target state name silently preempts the state with the projected
+    reference value. Either reverses target-vs-fallback routing with no error.
+    ``_reject_gate_ref_operand_alias`` makes the built-ins and gate-ref keys disjoint
+    but never checks EITHER category against the target state names, which enter the
+    same namespace. Close the gap: the value/D operands, the gate-ref keys, and the
+    target state names must be pairwise disjoint.
+    """
+    state_set = set(state_names)
+    reserved_collisions = sorted(state_set & reserved_operand_names)
+    gate_ref_collisions = sorted(state_set & set(gate_ref_names))
+    if reserved_collisions or gate_ref_collisions:
+        parts = [
+            f"{context}: the edge to regime '{edge_target}' has target state name(s) "
+            "that alias a higher-precedence gate operand in `_assemble_gate_kwargs`, "
+            "so the gate would silently read the operand instead of the state and "
+            "reverse routing."
+        ]
+        if reserved_collisions:
+            parts.append(
+                f" State(s) {reserved_collisions} alias a built-in injected value/D "
+                "operand (V_target / V_target_<stakeholder> / D_target)."
+            )
+        if gate_ref_collisions:
+            parts.append(f" State(s) {gate_ref_collisions} alias a gate-ref key.")
+        parts.append(" Rename the colliding target state(s) or gate-ref key(s).")
+        raise ModelInitializationError("".join(parts))
 
 
 def get_edge_fold(
@@ -534,10 +587,16 @@ def get_edge_fold(
     Args:
         edge: The resolved edge declaration.
         target_v_info: The target regime's V-interpolation info (its grid).
-        target_functions: The target regime's processed functions, so the
-            projections and the gate resolve target states / helper functions.
+        target_functions: The target regime's processed functions, used to build
+            the target DAG the gate/projections resolve against. Gates and
+            projections read target STATES directly; a target helper or
+            deterministic-transition NODE may NOT be named directly as a gate/
+            projection argument (``_reject_gate_projection_target_node_read`` --
+            build-time undecidable source/target name collision), so inline its
+            formula over the target states or read a VALUE via a gate-ref projection.
         target_deterministic_transitions: The target regime's merged
-            deterministic ``next_<state>`` laws (available to projections).
+            deterministic ``next_<state>`` laws (used to build the target DAG; not
+            directly nameable as a projection argument -- see ``target_functions``).
         reference_v_info: V-interpolation info per reference regime.
         target_stakeholders: The target regime's stakeholders, or `None`.
 
@@ -632,6 +691,16 @@ def get_edge_fold(
     _reject_gate_ref_operand_alias(
         gate_ref_names=edge.gate_refs,
         reserved_operand_names=frozenset({*target_component_names, "D_target"}),
+        edge_target=edge.target,
+        context="get_edge_fold (solve-side gate)",
+    )
+    # Round-7 F2: a target STATE name aliasing a built-in value/D operand or a gate-ref
+    # key is silently preempted by `_assemble_gate_kwargs` precedence (value/D and
+    # gate-ref both resolve before the state mesh) -- the gate reads the wrong operand.
+    _reject_gate_operand_state_name_collision(
+        state_names=state_names,
+        reserved_operand_names=frozenset({*target_component_names, "D_target"}),
+        gate_ref_names=edge.gate_refs,
         edge_target=edge.target,
         context="get_edge_fold (solve-side gate)",
     )
@@ -979,6 +1048,16 @@ def get_edge_simulate_gate_evaluator(
         edge_target=edge.target,
         context="get_edge_simulate_gate_evaluator (simulate-side gate)",
     )
+    # Round-7 F2: same disjointness the solve builder enforces -- a target state name
+    # aliasing a value/D operand or a gate-ref key is silently preempted by
+    # `_assemble_gate_kwargs` precedence, so solve and simulate reject it identically.
+    _reject_gate_operand_state_name_collision(
+        state_names=state_names,
+        reserved_operand_names=frozenset({*target_component_names, "D_target"}),
+        gate_ref_names=edge.gate_refs,
+        edge_target=edge.target,
+        context="get_edge_simulate_gate_evaluator (simulate-side gate)",
+    )
 
     def _fence_consumer(*, seed_args: Iterable[str], context: str) -> None:
         _reject_target_function_params(
@@ -1175,6 +1254,7 @@ def build_fallback_state_projector(
     *,
     ref: ResolvedSamePeriodRef,
     fallback_v_info: VInterpolationInfo,
+    target_regime_name: RegimeName,
     target_state_names: tuple[str, ...],
     target_functions: EconFunctionsMapping,
     target_deterministic_transitions: Mapping[
@@ -1266,11 +1346,16 @@ def build_fallback_state_projector(
     arg_names = tuple(
         sorted({arg for args in projection_args.values() for arg in args})
     )
+    # `dag_pool` is the GATED TARGET's nodes (`target_functions` /
+    # `target_deterministic_transitions`), so the fence's `edge_target` names the gated
+    # target whose node would capture a projection arg -- NOT `ref.regime`, which is the
+    # FALLBACK regime the projection maps INTO (round-7 minor: the old `ref.regime` here
+    # mislabeled the diagnostic).
     _reject_target_function_params(
         dag_pool=dag_pool,
         seed_args=_projection_seed_args(ref),
         state_names=frozenset(target_state_names),
-        edge_target=ref.regime,
+        edge_target=target_regime_name,
         context="build_fallback_state_projector",
     )
     # Round-6 F1: a projection arg naming a STATE-ONLY target node reaches no dynamic
@@ -1280,7 +1365,7 @@ def build_fallback_state_projector(
     _reject_gate_projection_target_node_read(
         dag_pool=dag_pool,
         seed_args=_projection_seed_args(ref),
-        edge_target=ref.regime,
+        edge_target=target_regime_name,
         context="build_fallback_state_projector",
     )
 

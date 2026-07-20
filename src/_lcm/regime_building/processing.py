@@ -486,6 +486,7 @@ def _attach_gated_edge_folds(
                 build_fallback_state_projector(
                     ref=leg.fallback,
                     fallback_v_info=regime_to_v_interpolation_info[leg.fallback.regime],
+                    target_regime_name=target_name,
                     target_state_names=regime_to_v_interpolation_info[
                         target_name
                     ].state_names,

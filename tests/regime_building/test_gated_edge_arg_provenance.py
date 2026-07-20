@@ -56,6 +56,7 @@ from _lcm.regime_building.gated_edges import (
     TARGET_PARAMS,
     ResolvedSamePeriodRef,
     _reached_target_param_leaves,
+    _reject_gate_operand_state_name_collision,
 )
 from _lcm.regime_building.Q_and_F import (
     _REF_STATE_PREFIX,
@@ -1590,3 +1591,135 @@ def test_gate_ref_key_aliasing_v_target_is_rejected():
         match=r"V_target.*alias a built-in injected gate operand",
     ):
         _solve_fixture(_make_gate_ref_v_target_alias_regimes(), flat_params)
+
+
+# ----------------------------------------------------------------------------------
+# Round-7 F2 - the gate-operand namespace is still not disjoint from target STATE
+# names. `_assemble_gate_kwargs` resolves target value component(s) and gate-ref
+# values BEFORE the target state mesh, so a target state named `V_target` (or a
+# gate-ref key equal to a target state name) is silently preempted -- the gate reads
+# the injected value / reference instead of the realized state, reversing routing
+# with no error. `_reject_gate_operand_state_name_collision` closes both.
+# ----------------------------------------------------------------------------------
+
+
+def test_reject_gate_operand_state_name_collision_flags_a_value_operand_alias():
+    """Unit: a target state named like a built-in value/D operand is rejected."""
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"alias a built-in injected value/D operand",
+    ):
+        _reject_gate_operand_state_name_collision(
+            state_names=("V_target", "x"),
+            reserved_operand_names=frozenset({"V_target", "D_target"}),
+            gate_ref_names=(),
+            edge_target="target",
+            context="unit",
+        )
+
+
+def test_reject_gate_operand_state_name_collision_flags_a_gate_ref_alias():
+    """Unit: a gate-ref key equal to a target state name is rejected."""
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"alias a gate-ref key",
+    ):
+        _reject_gate_operand_state_name_collision(
+            state_names=("x", "z"),
+            reserved_operand_names=frozenset({"V_target", "D_target"}),
+            gate_ref_names=("x",),
+            edge_target="target",
+            context="unit",
+        )
+
+
+def test_reject_gate_operand_state_name_collision_passes_when_disjoint():
+    """Unit: disjoint operand/gate-ref/state namespaces raise nothing."""
+    _reject_gate_operand_state_name_collision(
+        state_names=("x", "z"),
+        reserved_operand_names=frozenset({"V_target", "D_target"}),
+        gate_ref_names=("ref_v",),
+        edge_target="target",
+        context="unit",
+    )
+
+
+def _gate_reads_x_operand(V_target: FloatND, x: FloatND) -> BoolND:
+    """The source MEANS `x` as the target's realized STATE. A gate-ref keyed `x`
+    injects the projected reference value under the SAME name; `_assemble_gate_kwargs`
+    resolves the gate ref BEFORE the state mesh, so the gate silently reads the
+    reference value instead of the state (round-7 F2)."""
+    return V_target > x
+
+
+def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_reads_x_operand,
+                gate_refs={
+                    # Aliases the TARGET STATE `x` (not a value/D operand, so the
+                    # round-6 gate-ref alias fence stays silent).
+                    "x": SamePeriodRef(
+                        regime="refregime", projection={"x": _identity_x}
+                    )
+                },
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    refregime = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    return {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+
+
+def test_gate_ref_key_aliasing_a_target_state_is_rejected():
+    """Round-7 F2 (integration): the builder must wire the state-collision fence.
+
+    A gate-ref key `x` equals the target state `x`. `_reject_gate_ref_operand_alias`
+    only checks gate-ref keys against the value/D built-ins, so it stays silent; but
+    `_assemble_gate_kwargs` resolves the gate-ref value before the state mesh, so
+    `gate(x)` would read the projected reference instead of the realized state and
+    silently change routing. Pre-fix the model built; the build must now raise.
+    """
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "target": MappingProxyType({}),
+            "refregime": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"alias a gate-ref key",
+    ):
+        _solve_fixture(_make_gate_ref_key_aliases_target_state_regimes(), flat_params)
