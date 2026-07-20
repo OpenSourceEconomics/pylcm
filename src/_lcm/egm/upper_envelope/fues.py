@@ -33,7 +33,15 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D, FloatND, ScalarBool, ScalarFloat, ScalarInt
+from lcm.typing import (
+    Bool1D,
+    BoolND,
+    Float1D,
+    FloatND,
+    ScalarBool,
+    ScalarFloat,
+    ScalarInt,
+)
 
 
 class QueryBracket(NamedTuple):
@@ -320,27 +328,26 @@ def _branch_value_slopes(
     )
 
 
-def _insert_node_crossings(
+def _node_crossing_geometry(
     *,
-    refined_grid: Float1D,
-    refined_policy: Float1D,
-    refined_value: Float1D,
-    n_kept: ScalarInt,
     presort_grid: Float1D,
     presort_policy: Float1D,
     presort_value: Float1D,
     segment_sorted: Float1D,
-    n_refined: int,
     n_points_to_scan: int,
     jump_thresh: float,
-) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-    """Re-insert on-node crossing kinks dropped by the coincident-node dedup.
+) -> tuple[Bool1D, Float1D, Float1D, Float1D]:
+    """Locate node-aligned crossings and their left/right branch policies.
 
-    A coincident pair of candidates with equal value but a branch switch is a
-    node-aligned crossing the dedup collapses to one branch. Recover both branch
-    policies (left then right, ordered by branch slope: the steeper branch wins
-    to the right), set the kept node to the left policy, and insert the right
-    copy at the same abscissa so the refined row carries the kink.
+    A coincident pair of presort candidates with equal value but a branch switch
+    is a node-aligned crossing the pre-scan dedup collapses to one branch. This
+    is the single source of truth for that geometry, shared by the full-row
+    re-insertion (`_insert_node_crossings`) and the streamed bracket correction
+    (`refine_to_bracket`).
+
+    Returns, per adjacent presort pair, a boolean crossing indicator, the
+    crossing abscissa (`NaN` off a crossing), and the left/right branch policies
+    with the steeper value branch assigned to the right.
     """
     slope = _branch_value_slopes(
         grid=presort_grid,
@@ -370,6 +377,39 @@ def _insert_node_crossings(
     left_policy = jnp.where(right_is_upper, policy_left, policy_right)
     right_policy = jnp.where(right_is_upper, policy_right, policy_left)
     crossing_grid = jnp.where(is_crossing, grid_left, jnp.nan)
+    return is_crossing, crossing_grid, left_policy, right_policy
+
+
+def _insert_node_crossings(
+    *,
+    refined_grid: Float1D,
+    refined_policy: Float1D,
+    refined_value: Float1D,
+    n_kept: ScalarInt,
+    presort_grid: Float1D,
+    presort_policy: Float1D,
+    presort_value: Float1D,
+    segment_sorted: Float1D,
+    n_refined: int,
+    n_points_to_scan: int,
+    jump_thresh: float,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    """Re-insert on-node crossing kinks dropped by the coincident-node dedup.
+
+    A coincident pair of candidates with equal value but a branch switch is a
+    node-aligned crossing the dedup collapses to one branch. Recover both branch
+    policies (left then right, ordered by branch slope: the steeper branch wins
+    to the right), set the kept node to the left policy, and insert the right
+    copy at the same abscissa so the refined row carries the kink.
+    """
+    is_crossing, crossing_grid, left_policy, right_policy = _node_crossing_geometry(
+        presort_grid=presort_grid,
+        presort_policy=presort_policy,
+        presort_value=presort_value,
+        segment_sorted=segment_sorted,
+        n_points_to_scan=n_points_to_scan,
+        jump_thresh=jump_thresh,
+    )
 
     # Set each kept crossing node's policy to the left branch's policy. When more
     # than one crossing coincides at the node (three or more branches meeting at one
@@ -384,9 +424,9 @@ def _insert_node_crossings(
     refined_policy = jnp.where(matched, matched_left_policy, refined_policy)
 
     # Append the right copies and stable-sort so each lands just after its node.
-    insert_grid = jnp.where(is_crossing, grid_left, jnp.nan)
+    insert_grid = crossing_grid
     insert_policy = jnp.where(is_crossing, right_policy, jnp.nan)
-    insert_value = jnp.where(is_crossing, value_left, jnp.nan)
+    insert_value = jnp.where(is_crossing, presort_value[:-1], jnp.nan)
     all_grid = jnp.concatenate([refined_grid, insert_grid])
     all_policy = jnp.concatenate([refined_policy, insert_policy])
     all_value = jnp.concatenate([refined_value, insert_value])
@@ -474,6 +514,19 @@ def refine_to_bracket(
     n_input = grid_sorted.shape[0]
     n_points_to_scan = _resolve_n_points_to_scan(n_points_to_scan, n_input=n_input)
 
+    segment_sorted = (
+        jnp.zeros_like(grid_sorted)
+        if segment_id is None
+        else segment_id[order].astype(grid_sorted.dtype)
+    )
+
+    # Pre-dedup copies: the dedup below collapses a coincident crossing to one
+    # branch, so the streamed bracket recovers the dropped branch's policy from
+    # this geometry after the scan (mirrors `refine_envelope`'s re-insertion).
+    presort_grid = grid_sorted
+    presort_policy = policy_sorted
+    presort_value = value_sorted
+
     duplicate = jnp.concatenate(
         [
             jnp.zeros((1,), dtype=bool),
@@ -483,12 +536,6 @@ def refine_to_bracket(
     grid_sorted = jnp.where(duplicate, jnp.nan, grid_sorted)
     policy_sorted = jnp.where(duplicate, jnp.nan, policy_sorted)
     value_sorted = jnp.where(duplicate, jnp.nan, value_sorted)
-
-    segment_sorted = (
-        jnp.zeros_like(grid_sorted)
-        if segment_id is None
-        else segment_id[order].astype(grid_sorted.dtype)
-    )
 
     first_point = jnp.stack([grid_sorted[0], policy_sorted[0], value_sorted[0]])
     first_segment = segment_sorted[0]
@@ -545,7 +592,27 @@ def refine_to_bracket(
         x_query=x_query,
     )
 
-    return _assemble_bracket(bracket_carry=bracket_carry, dtype=grid_sorted.dtype)
+    bracket = _assemble_bracket(bracket_carry=bracket_carry, dtype=grid_sorted.dtype)
+
+    # The scan runs on deduped candidates, so a node-aligned crossing survives as
+    # only its left-branch copy. `refine_envelope` re-inserts the right copy just
+    # after the node; the streamed bracket instead patches the copy into whichever
+    # slot the query brackets. Same crossing geometry, same source of truth.
+    is_crossing, crossing_grid, _, right_policy = _node_crossing_geometry(
+        presort_grid=presort_grid,
+        presort_policy=presort_policy,
+        presort_value=presort_value,
+        segment_sorted=segment_sorted,
+        n_points_to_scan=n_points_to_scan,
+        jump_thresh=jump_thresh,
+    )
+    return _apply_node_crossing_to_bracket(
+        bracket=bracket,
+        x_query=x_query,
+        is_crossing=is_crossing,
+        crossing_grid=crossing_grid,
+        right_policy=right_policy,
+    )
 
 
 # Bracket-capture carry layout (flat Float1D so it threads through `lax.scan`):
@@ -681,6 +748,48 @@ def _assemble_bracket(*, bracket_carry: Float1D, dtype: jnp.dtype) -> QueryBrack
         upper_value=upper[2].astype(dtype),
         first_grid=first[0].astype(dtype),
         n_kept=n_kept,
+    )
+
+
+def _apply_node_crossing_to_bracket(
+    *,
+    bracket: QueryBracket,
+    x_query: ScalarFloat,
+    is_crossing: Bool1D,
+    crossing_grid: Float1D,
+    right_policy: Float1D,
+) -> QueryBracket:
+    """Patch a bracket node sitting on a node-aligned crossing to its right copy.
+
+    `refine_envelope` re-inserts the right branch just after each crossing node,
+    so a query at or right of the crossing abscissa brackets the right copy. The
+    streamed scan keeps only the left copy, so a bracket node whose abscissa is a
+    crossing and lies at or left of the query (`grid <= x_query`) must carry the
+    right branch's policy instead. The two crossing copies share a value, so only
+    the policy needs patching; the below-first clamp keeps the left branch (the
+    natural left extrapolation). `n_kept` gains the crossing count so the overflow
+    test matches the re-inserted row.
+    """
+
+    def right_branch_policy(grid_node: ScalarFloat) -> ScalarFloat:
+        match = (crossing_grid == grid_node) & is_crossing
+        return jnp.where(
+            jnp.any(match) & (grid_node <= x_query),
+            right_policy[jnp.argmax(match)],
+            jnp.nan,
+        )
+
+    lower_right = right_branch_policy(bracket.lower_grid)
+    upper_right = right_branch_policy(bracket.upper_grid)
+    n_crossings = jnp.sum(is_crossing, dtype=jnp.int32)
+    return bracket._replace(
+        lower_policy=jnp.where(
+            jnp.isnan(lower_right), bracket.lower_policy, lower_right
+        ),
+        upper_policy=jnp.where(
+            jnp.isnan(upper_right), bracket.upper_policy, upper_right
+        ),
+        n_kept=(bracket.n_kept + n_crossings).astype(jnp.int32),
     )
 
 
@@ -1075,7 +1184,12 @@ def _has_policy_jump(
     """Indicate whether two points lie on different value-function segments.
 
     Points lie on different segments iff the gradient of the implied savings
-    $A = R - c$ between them exceeds `jump_thresh` in absolute value.
+    $A = R - c$ between them exceeds `jump_thresh` in absolute value. At a
+    coincident abscissa the gradient is undefined — `_slope` returns 0 there —
+    so a branch switch landing exactly on a grid node would be invisible to the
+    threshold test. A differing implied saving at a coincident abscissa is an
+    infinite savings gradient, i.e. a genuine discontinuity, and counts as a
+    jump directly; equal implied savings (a true duplicate point) do not.
 
     Args:
         grid_a: Endogenous grid point(s) of the first point.
@@ -1088,13 +1202,14 @@ def _has_policy_jump(
         Boolean indicator(s), broadcast over the inputs.
 
     """
-    savings_slope = _slope(
-        x_a=grid_a,
-        y_a=grid_a - policy_a,
-        x_b=grid_b,
-        y_b=grid_b - policy_b,
+    savings_a = grid_a - policy_a
+    savings_b = grid_b - policy_b
+    savings_slope = _slope(x_a=grid_a, y_a=savings_a, x_b=grid_b, y_b=savings_b)
+    return jnp.where(
+        grid_a == grid_b,
+        savings_a != savings_b,
+        jnp.abs(savings_slope) > jump_thresh,
     )
-    return jnp.abs(savings_slope) > jump_thresh
 
 
 def _slope(*, x_a: FloatND, y_a: FloatND, x_b: FloatND, y_b: FloatND) -> FloatND:

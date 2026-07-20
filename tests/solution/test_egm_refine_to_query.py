@@ -95,10 +95,25 @@ def _single_live_candidate():
     return grid, policy, value
 
 
+def _node_aligned_crossing_candidates():
+    """Two linear branches crossing exactly on the grid node R = 10.
+
+    Branch A (v = 1 + 0.4 R, c = 4 + 0.5 R) and branch B (v = -3 + 0.8 R,
+    c = -1 + 0.5 R) meet at R = 10 with equal value 5.0 but different policy;
+    supplied in exogenous-savings order on a non-monotone grid. The streamed
+    bracket must reproduce the full row's reinserted right-branch policy.
+    """
+    grid = jnp.asarray([9.0, 10.0, 12.0, 10.0, 11.0])
+    policy = jnp.asarray([8.5, 9.0, 9.0, 4.0, 4.5])
+    value = jnp.asarray([4.6, 5.0, -100.0, 5.0, 5.8])
+    return grid, policy, value
+
+
 _CANDIDATE_SETS = {
     "smooth": _smooth_candidates(),
     "kinked": _crossing_segments_candidates(),
     "multi_crossing": _multi_crossing_candidates(),
+    "node_aligned_crossing": _node_aligned_crossing_candidates(),
     "all_dead": _all_dead_candidates(),
     "single_live": _single_live_candidate(),
 }
@@ -195,7 +210,7 @@ def test_streamed_matches_row_then_interp_above_last_point(name):
     _assert_equivalent(grid, policy, value, x_query, n_pad=16)
 
 
-@pytest.mark.parametrize("name", ["kinked", "multi_crossing"])
+@pytest.mark.parametrize("name", ["kinked", "multi_crossing", "node_aligned_crossing"])
 def test_streamed_matches_row_then_interp_exactly_on_kink(name):
     """A query exactly on a duplicated kink abscissa resolves the right-copy.
 

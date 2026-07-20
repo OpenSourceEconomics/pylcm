@@ -176,6 +176,48 @@ def test_crossing_segments_drop_dominated_points():
         assert not np.any(np.isclose(clean_grid, dominated, atol=1e-8))
 
 
+def _node_aligned_crossing_candidates():
+    """Two linear value branches crossing exactly on the grid node R = 10.
+
+    - Branch A: v = 1 + 0.4 R, c = 4 + 0.5 R — optimal for R < 10.
+    - Branch B: v = -3 + 0.8 R, c = -1 + 0.5 R — optimal for R > 10.
+
+    They meet at R = 10 with equal value 5.0 but different policy (9.0 vs 4.0).
+    Candidates are supplied in exogenous-savings order (implied savings
+    `A = R - c = [0.5, 1, 3, 6, 6.5]` ascending) on a non-monotone endogenous
+    grid; the R = 12 point (v = -100) is dominated.
+    """
+    grid = jnp.asarray([9.0, 10.0, 12.0, 10.0, 11.0])
+    policy = jnp.asarray([8.5, 9.0, 9.0, 4.0, 4.5])
+    value = jnp.asarray([4.6, 5.0, -100.0, 5.0, 5.8])
+    return grid, policy, value
+
+
+def test_node_aligned_crossing_publishes_right_policy_on_default_path():
+    """A branch switch exactly on a grid node keeps the right branch's policy.
+
+    With `segment_id=None` (the production FUES dispatch) and candidates in
+    exogenous-savings order, a crossing that lands on the grid node R = 10 must
+    reinsert both branch policies, so the refined policy just right of the node
+    is the right branch's `c = -1 + 0.5 R`: c(10.1) = 4.05. Collapsing the node
+    to only its left copy would instead interpolate across the policy
+    discontinuity — from the left copy 9.0 down to the next node 4.5 — giving a
+    spurious 8.55. The envelope value is 5.08 either way.
+    """
+    grid, policy, value = _node_aligned_crossing_candidates()
+
+    got_grid, got_policy, got_value, _ = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=12
+    )
+
+    np.testing.assert_allclose(
+        _envelope_interp(got_grid, got_policy, 10.1), 4.05, atol=_COMPUTED_ATOL
+    )
+    np.testing.assert_allclose(
+        _envelope_interp(got_grid, got_value, 10.1), 5.08, atol=_COMPUTED_ATOL
+    )
+
+
 def test_refined_grid_is_weakly_ascending_with_nan_tail():
     """Non-NaN prefix is weakly ascending; NaNs appear only as a suffix."""
     grid, policy, value = _crossing_segments_candidates()
