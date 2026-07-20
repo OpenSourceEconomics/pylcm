@@ -25,7 +25,7 @@ _SCRIPT = textwrap.dedent(
     assert jax.device_count() == 2, jax.devices()
 
     from _lcm.grids import DiscreteGrid
-    from _lcm.solution.solvers import (
+    from _lcm.solution.nbegm import (
         _build_ride_along_carry_template,
         _shard_ride_carry_template,
     )

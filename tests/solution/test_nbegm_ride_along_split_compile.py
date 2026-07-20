@@ -31,7 +31,7 @@ def _ride_along_kernel(
 ) -> tuple[Any, dict[str, Any]]:
     """Return a representative ride-along period kernel and its lowering context."""
     flat_params = model._process_params(params)
-    next_regime_to_V_arr, next_regime_to_egm_carry = _build_continuation_templates(
+    next_regime_to_V_arr, next_regime_to_continuation = _build_continuation_templates(
         regimes=model._regimes, flat_params=flat_params
     )
     regime = model._regimes["alive"]
@@ -43,7 +43,7 @@ def _ride_along_kernel(
     return kernel, {
         "state_action_space": state_action_space,
         "next_regime_to_V_arr": next_regime_to_V_arr,
-        "next_regime_to_egm_carry": next_regime_to_egm_carry,
+        "next_regime_to_continuation": next_regime_to_continuation,
         "flat_params": flat_params,
         "period": period,
         "ages": model.ages,
