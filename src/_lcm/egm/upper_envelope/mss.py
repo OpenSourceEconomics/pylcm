@@ -470,8 +470,22 @@ def _evaluate_envelope(
     )
 
     masked_value = jnp.where(brackets, value_interp, -jnp.inf)
-    best_link = jnp.argmax(masked_value, axis=1).astype(jnp.int32)
     envelope_value = jnp.max(masked_value, axis=1)
+    # Select the winning segment deterministically: among segments whose
+    # interpolated value sits within a scale-aware band of the max, take the
+    # lowest index. A raw first-index `argmax` over independently interpolated
+    # values flips on a 1-ulp tie (two segments crossing at a node, with the
+    # bracket endpoints carrying upstream reduction noise), which would make the
+    # kept segment — hence `winner_segment`, the crossing decision, and `n_kept`
+    # — backend-dependent. The band makes the near-tie choice reduction-order
+    # independent.
+    tie_floor = (
+        16.0
+        * jnp.finfo(value_interp.dtype).eps
+        * jnp.maximum(1.0, jnp.abs(envelope_value))
+    )
+    in_tie = brackets & (masked_value >= envelope_value[:, None] - tie_floor[:, None])
+    best_link = jnp.argmax(in_tie, axis=1).astype(jnp.int32)
     any_bracket = jnp.any(brackets, axis=1)
     envelope_policy = jnp.take_along_axis(policy_interp, best_link[:, None], axis=1)[
         :, 0
