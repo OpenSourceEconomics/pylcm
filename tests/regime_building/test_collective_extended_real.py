@@ -452,6 +452,48 @@ def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ul
     assert abs(got - exact) <= 1e-15 + 1e-14 * summand_scale
 
 
+def test_sum_regime_mixture_weights_the_target_axis_not_the_stakeholder_axis():
+    """F3 (round-9): at the COLLECTIVE site each per-target continuation is a
+    STAKEHOLDER vector, so stacking gives values (K, S) while the scalar regime
+    probabilities stack to (K,). The reduction must weight the TARGET axis (axis 0)
+    and hold the weight constant across the trailing stakeholder axis. Without the
+    rank-align, trailing-axis broadcasting weights the stakeholder axis instead:
+    K=S=2 with p=[0.25, 0.75] and values=[[0, 4], [4, 0]] returns [1, 3] (fail-pre)
+    rather than the correct [3, 1] -- silently reversing the household action.
+    """
+    terms = [
+        ("r0", jnp.asarray(0.25), jnp.asarray([0.0, 4.0])),
+        ("r1", jnp.asarray(0.75), jnp.asarray([4.0, 0.0])),
+    ]
+    out = _sum_regime_mixture(terms, like=jnp.zeros(2))
+    assert [float(x) for x in out] == pytest.approx([3.0, 1.0])
+
+
+def test_sum_regime_mixture_is_zero_mass_safe_on_the_stakeholder_axis():
+    """F3 (round-9): a zero-probability target with an admissible -inf stakeholder
+    vector must contribute exactly 0 across ALL stakeholders, not leak -inf through
+    a misaligned broadcast (fail-pre returned [-inf, 0])."""
+    terms = [
+        ("r0", jnp.asarray(1.0), jnp.asarray([1.0, 2.0])),
+        ("r1", jnp.asarray(0.0), jnp.asarray([-jnp.inf, -jnp.inf])),
+    ]
+    out = _sum_regime_mixture(terms, like=jnp.zeros(2))
+    assert bool(jnp.all(jnp.isfinite(out)))
+    assert [float(x) for x in out] == pytest.approx([1.0, 2.0])
+
+
+def test_sum_regime_mixture_collective_allows_unequal_target_and_stakeholder_counts():
+    """F3 (round-9): K != S must not raise -- the misaligned trailing-axis broadcast
+    crashed with a ValueError when K=3, S=2."""
+    terms = [
+        ("r0", jnp.asarray(0.2), jnp.asarray([1.0, 1.0])),
+        ("r1", jnp.asarray(0.3), jnp.asarray([2.0, 2.0])),
+        ("r2", jnp.asarray(0.5), jnp.asarray([3.0, 3.0])),
+    ]
+    out = _sum_regime_mixture(terms, like=jnp.zeros(2))
+    assert [float(x) for x in out] == pytest.approx([2.3, 2.3])
+
+
 def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
     """F2: the real interpolation path is bit-exact vs the raw `w*v` corner sum.
 

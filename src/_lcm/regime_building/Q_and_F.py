@@ -69,6 +69,16 @@ def _sum_regime_mixture(
     ordered = sorted(mixture_terms, key=lambda term: term[0])
     probs = jnp.stack([prob for _, prob, _ in ordered], axis=0)
     values = jnp.stack([value for _, _, value in ordered], axis=0)
+    # Right-pad the probability rank to the value rank so the per-target weight
+    # broadcasts over the TARGET axis (leading, axis 0) and is constant across any
+    # trailing value-only axes. The collective site carries a trailing stakeholder
+    # axis on the continuation (`values` is (K, *cell, S)) that the scalar regime
+    # probability (K, *cell) does not: without this alignment `zero_safe_weighted_
+    # term` right-aligns and weights the STAKEHOLDER axis instead of the target axis
+    # -- silently reversing a household action when K==S, leaking a zero-mass -inf,
+    # or raising when K!=S. A no-op at the scalar/singleton sites (equal ranks).
+    if probs.ndim < values.ndim:
+        probs = probs.reshape(probs.shape + (1,) * (values.ndim - probs.ndim))
     return jnp.sum(zero_safe_weighted_term(probs, values), axis=0)
 
 
