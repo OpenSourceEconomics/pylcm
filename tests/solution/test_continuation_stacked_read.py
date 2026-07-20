@@ -193,6 +193,51 @@ def test_stacked_read_pins_an_earlier_clamp_winners_marginal_to_zero():
     np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
 
 
+def test_paired_read_publishes_the_left_derivative_at_a_left_owned_terminal_tie():
+    """The paired (Epstein-Zin) marginal follows tie ownership to the left side.
+
+    One durable node, two candidates tying at value 12 exactly at query 2.
+    Candidate A carries a duplicated terminal abscissa (values `[10, 11, 12,
+    12]`, Hermite node slopes `[1, 1, 1, 100]`); candidate B rises to 12 with
+    slope 2. Both right germs are the constant clamp, so the left germ
+    decides ownership: A's left neighborhood (slope 1) beats B's (slope 2 —
+    lower value just below the tie). The published paired marginal must be
+    the derivative of A's value interpolant from the left — its left
+    duplicate's node slope 1 — not the right/clamp derivative of the ordinary
+    paired read.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [jnp.array([0.0, 1.0, 2.0, 2.0]), jnp.array([0.0, 1.0, 2.0, jnp.nan])]
+        )[None, :, :],
+        value=jnp.stack(
+            [jnp.array([10.0, 11.0, 12.0, 12.0]), jnp.array([8.0, 10.0, 12.0, jnp.nan])]
+        )[None, :, :],
+        marginal_utility=jnp.stack(
+            [jnp.array([1.0, 1.0, 1.0, 100.0]), jnp.array([2.0, 2.0, 2.0, jnp.nan])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([2.0]),
+        row_gradients=jnp.asarray([1.0]),
+        paired_marginal_read=True,
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 12.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 1.0, atol=_READ_ATOL)
+
+
 def test_stacked_read_propagates_a_poisoned_candidate_row():
     """An all-NaN (poisoned) candidate row poisons the stacked read's value.
 

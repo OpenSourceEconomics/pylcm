@@ -1417,12 +1417,23 @@ def _aggregate_child_choices(
             above_row_support, 0.0, left_marginal_at_child
         )
         # The paired (Epstein-Zin) marginal is the value interpolant's own
-        # derivative; its left-record payload follows the same convention, so
-        # the ordinary paired read stands in for the linear left record. A
-        # side-aware paired read at duplicated terminal abscissae remains an
-        # open unification obligation against the shared bracket primitive.
+        # derivative; its left-record payload follows the same convention as a
+        # side-aware paired read: the derivative of the value object seen from
+        # the LEFT of the query, so a left-owned tie at a duplicated terminal
+        # abscissa publishes the left duplicate's piece slope, not the
+        # ordinary right/clamp derivative.
         if paired_marginal_read:
-            left_marginal_at_child = marginal_at_child
+            left_marginal_at_child = jax.vmap(_left_slope_row)(
+                search_rows,
+                valid_rows,
+                grid_rows,
+                value_rows,
+                marginal_rows,
+                queries_flat,
+            )
+            left_marginal_at_child = jnp.where(
+                above_row_support, 0.0, left_marginal_at_child
+            )
     # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
     # exactly-zero marginal utility, so an infeasible-everywhere row reads as
     # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
@@ -1615,6 +1626,33 @@ def _value_and_slope_row(
         fp=fp,
         fp_slopes=fp_slopes,
     )
+
+
+def _left_slope_row(
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+    x_query: ScalarFloat,
+) -> ScalarFloat:
+    """Left-side analytic derivative of the value read; positional per `jax.vmap`.
+
+    The paired left payload: an on-node query lands in its LEFT bracket
+    (evaluated at the bracket's right edge), so a duplicated terminal abscissa
+    publishes the left duplicate's piece slope — the derivative of the value
+    object a left-owned tie selected — instead of the ordinary right/clamp
+    derivative.
+    """
+    return interp_and_derivative_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        side="left",
+    )[1]
 
 
 def _germ_and_left_record_rows(
