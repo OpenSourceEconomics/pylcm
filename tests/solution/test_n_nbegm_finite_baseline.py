@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from jax import config as jax_config
 
-import _lcm.solution.solvers as solvers_mod
+import _lcm.solution.nnbegm as solvers_mod
 from _lcm.egm.outer_candidates import OuterCandidateBank
 from tests.test_models import n_nbegm_toy as toy
 
@@ -100,7 +100,7 @@ def test_candidate_bank_collapse_matches_frozen_prerefactor_baseline(
             atol=1e-12,
             err_msg=f"V_arr at period {period}, batch {outer_batch_size}",
         )
-        leaves = jax.tree_util.tree_leaves(result.carry)
+        leaves = jax.tree_util.tree_leaves(result.continuation)
         assert len(leaves) == len(_CARRY_LEAVES)
         for index, leaf in enumerate(leaves):
             name, rtol, atol = _CARRY_LEAVES[index]

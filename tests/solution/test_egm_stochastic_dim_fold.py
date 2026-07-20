@@ -59,10 +59,15 @@ def test_stochastic_dim_of_a_state_space_carry_child_is_foldable(monkeypatch):
 
 
 def test_stochastic_dim_of_an_endogenous_grid_child_is_not_foldable(monkeypatch):
-    """A DC-EGM child's per-row abscissae keep every dim in the node loop."""
+    """A DC-EGM child's per-row abscissae keep every dim in the node loop.
+
+    The spy observes reads at trace time, so the model is built fresh
+    (bypassing the fixture cache) — a cached model whose solve was already
+    traced earlier in the process would re-run without tracing.
+    """
     reads = _capture_child_reads(
         monkeypatch,
-        lambda: dcegm_fixture._get_model("dcegm", "iid").solve(
+        lambda: dcegm_fixture._get_model.__wrapped__("dcegm", "iid").solve(
             params=dcegm_fixture._get_params("iid"), log_level="off"
         ),
     )

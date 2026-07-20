@@ -50,7 +50,7 @@ def test_default_H_is_H_linear():
     assert toy.user_regimes["alive"].functions["H"] is H_linear
 
 
-def test_H_epstein_zin_is_stable_where_raw_powers_underflow() -> None:
+def test_H_epstein_zin_is_stable_where_raw_powers_underflow(x64_enabled: None) -> None:
     """The aggregator stays exact where raw CES powers leave float64's range.
 
     With `psi = 1/25` and inputs near `1e-14`, the raw terms `U^(1-rho)` are

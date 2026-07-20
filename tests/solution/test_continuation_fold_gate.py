@@ -154,11 +154,11 @@ def test_fold_commutes_with_the_linear_expected_utility_read() -> None:
             params=_linear_params(), log_level="off"
         )
     for period in (0, 1):
-        np.testing.assert_allclose(
-            np.asarray(folded[period]["alive"]),
-            np.asarray(unfolded[period]["alive"]),
-            rtol=1e-10,
-        )
+        folded_arr = np.asarray(folded[period]["alive"])
+        unfolded_arr = np.asarray(unfolded[period]["alive"])
+        # Reassociation noise scales with the active float dtype's precision.
+        rtol = 64.0 * float(np.finfo(folded_arr.dtype).eps)
+        np.testing.assert_allclose(folded_arr, unfolded_arr, rtol=rtol)
 
 
 def test_fold_engages_for_linear_but_never_for_a_certainty_equivalent() -> None:

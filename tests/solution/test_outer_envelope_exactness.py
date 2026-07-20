@@ -24,6 +24,7 @@ that has its own spec (with an independent scalar reference) in
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import interp_on_padded_grid
@@ -42,9 +43,11 @@ def _host_envelope(
     """Independent host max-of-reads: value and winner's marginal per query.
 
     Each candidate is read one at a time through the same interpolation primitive
-    the parent uses, masked to `-inf` below its own support, then the pointwise
-    maximum and the winning candidate's marginal are taken in a plain loop — no
-    shared vmap/argmax plumbing, so a bug in the reader under test cannot hide.
+    the parent uses, masked to `-inf` below its own support and with its marginal
+    zeroed strictly above its own last node (the value read is a constant clamp
+    there), then the pointwise maximum and the winning candidate's marginal are
+    taken in a plain loop — no shared vmap/argmax plumbing, so a bug in the
+    reader under test cannot hide.
     """
     n_candidates = candidate_endog.shape[0]
     reads = np.full((n_candidates, x_query.shape[0]), -np.inf)
@@ -52,6 +55,7 @@ def _host_envelope(
     for j in range(n_candidates):
         endog = candidate_endog[j]
         lower = np.min(endog[np.isfinite(endog)])
+        upper = np.max(endog[np.isfinite(endog)])
         value_read = np.asarray(
             interp_on_padded_grid(
                 x_query=jnp.asarray(x_query),
@@ -60,13 +64,14 @@ def _host_envelope(
                 fp_slopes=jnp.asarray(candidate_marginal[j]),
             )
         )
-        marginal_reads[j] = np.asarray(
+        marginal_read = np.asarray(
             interp_on_padded_grid(
                 x_query=jnp.asarray(x_query),
                 xp=jnp.asarray(endog),
                 fp=jnp.asarray(candidate_marginal[j]),
             )
         )
+        marginal_reads[j] = np.where(x_query > upper, 0.0, marginal_read)
         reads[j] = np.where(x_query < lower, -np.inf, value_read)
     winner = np.argmax(reads, axis=0)
     return reads.max(axis=0), marginal_reads[winner, np.arange(x_query.shape[0])]
@@ -226,12 +231,14 @@ def test_poisoned_candidate_row_propagates_nan_through_the_envelope():
 
 
 def test_singleton_candidate_clamps_to_its_node():
-    """A one-node candidate reads its node's value and marginal at and above it.
+    """A one-node candidate reads its node's pair at the node and clamps above.
 
     A candidate whose valid prefix is a single coh node is a constant-clamp
-    branch from that node on: at and above the node it publishes the node's
-    value and marginal, and below the node it is infeasible `(-inf, 0)` as for
-    any candidate.
+    branch from that node on: exactly at the node it publishes the node's value
+    and marginal record; strictly above, the value stays the clamped constant
+    and the marginal is exactly zero (the branch is locally constant, so its
+    slope — not the node's stale record — is what a parent Euler inversion must
+    see); below the node it is infeasible `(-inf, 0)` as for any candidate.
     """
     candidate_endog = jnp.array([[1.0, jnp.nan, jnp.nan]])
     candidate_value = jnp.array([[5.0, jnp.nan, jnp.nan]])
@@ -245,7 +252,7 @@ def test_singleton_candidate_clamps_to_its_node():
     )
 
     np.testing.assert_array_equal(np.asarray(value), [-np.inf, 5.0, 5.0])
-    np.testing.assert_array_equal(np.asarray(marginal), [0.0, 2.0, 2.0])
+    np.testing.assert_array_equal(np.asarray(marginal), [0.0, 2.0, 0.0])
 
 
 def test_exact_candidate_tie_publishes_the_right_continuous_marginal():
@@ -415,3 +422,107 @@ def test_tie_at_a_support_edge_prefers_the_candidate_that_continues_right():
 
     np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
     np.testing.assert_allclose(float(marginal[0]), 0.5, atol=1e-9)
+
+
+@pytest.mark.parametrize("steep_loser_index", [0, 1])
+def test_terminal_tie_is_owned_by_the_left_envelope_owner(steep_loser_index: int):
+    """At a shared terminal abscissa the left-neighborhood owner's marginal wins.
+
+    Both candidates end at `x = 2` with value 2 and identical clamp right germs
+    (right-finite, all derivatives zero), so the right germ cannot discriminate.
+    The envelope's left neighborhood is owned by the flatter candidate (values
+    `[0, 1, 2]`, marginal 1); the steeper candidate (`[-2, 0, 2]`, marginal 2)
+    touches the envelope only at the terminal point itself. The envelope's
+    generalized gradient at `q = 2` is `[0, 1]`, so publishing the steep
+    candidate's 2 would hand a parent Euler inversion a marginal outside that
+    set — the published marginal must be the left owner's 1.0, in either
+    candidate order.
+    """
+    flat = (jnp.array([0.0, 1.0, 2.0]), jnp.array([1.0, 1.0, 1.0]))
+    steep = (jnp.array([-2.0, 0.0, 2.0]), jnp.array([2.0, 2.0, 2.0]))
+    ordered = [steep, flat] if steep_loser_index == 0 else [flat, steep]
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.stack([pair[0] for pair in ordered])
+    candidate_marginal = jnp.stack([pair[1] for pair in ordered])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([2.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 2.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
+
+
+@pytest.mark.parametrize("left_owner_index", [0, 1])
+def test_terminal_duplicate_left_owner_publishes_its_left_record_marginal(
+    left_owner_index: int,
+):
+    """A left-germ winner ending in a duplicated abscissa publishes its left record.
+
+    The left owner's terminal abscissa is duplicated (left and right marginal
+    records 1 and 100); the other candidate touches the envelope only at the
+    terminal point. Ownership is decided on the left neighborhood, so the
+    published marginal must be the winner's *left* record (1.0) — the right
+    duplicate's 100 lies outside the envelope's generalized gradient `[0, 1]`
+    at the boundary — in either candidate order.
+    """
+    owner = (
+        jnp.array([0.0, 1.0, 1.0]),
+        jnp.array([0.0, 1.0, 1.0]),
+        jnp.array([1.0, 1.0, 100.0]),
+    )
+    toucher = (
+        jnp.array([0.0, 1.0, jnp.nan]),
+        jnp.array([-1.0, 1.0, jnp.nan]),
+        jnp.array([2.0, 2.0, jnp.nan]),
+    )
+    ordered = [owner, toucher] if left_owner_index == 0 else [toucher, owner]
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=jnp.stack([c[0] for c in ordered]),
+        candidate_value=jnp.stack([c[1] for c in ordered]),
+        candidate_marginal=jnp.stack([c[2] for c in ordered]),
+        x_query=jnp.array([1.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-9)
+
+
+@pytest.mark.parametrize("early_index", [0, 1])
+def test_earlier_ending_clamp_winner_publishes_zero_marginal(early_index):
+    """A winner queried past its own support publishes marginal 0, not a stale record.
+
+    One candidate's support ends at coh 1, where its value clamps at 2; the
+    other extends to coh 2, where its value also reaches 2. At the query
+    `q = 2` the clamped candidate owns the envelope's left neighborhood (its
+    constant 2 exceeds the rising branch), and to the right both clamp — the
+    envelope is locally constant, so its generalized gradient is `{0}`. The
+    winner's terminal marginal record (2.0) belongs to a node strictly below
+    the query and must not be published.
+    """
+    early = {
+        "endog": jnp.array([0.0, 1.0, jnp.nan]),
+        "value": jnp.array([0.0, 2.0, jnp.nan]),
+        "marginal": jnp.array([2.0, 2.0, jnp.nan]),
+    }
+    full = {
+        "endog": jnp.array([0.0, 1.0, 2.0]),
+        "value": jnp.array([0.0, 1.0, 2.0]),
+        "marginal": jnp.array([1.0, 1.0, 1.0]),
+    }
+    rows = (early, full) if early_index == 0 else (full, early)
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=jnp.stack([row["endog"] for row in rows]),
+        candidate_value=jnp.stack([row["value"] for row in rows]),
+        candidate_marginal=jnp.stack([row["marginal"] for row in rows]),
+        x_query=jnp.array([2.0]),
+    )
+
+    np.testing.assert_allclose(
+        np.asarray([value[0], marginal[0]]), [2.0, 0.0], atol=1e-12
+    )

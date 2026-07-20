@@ -12,8 +12,9 @@ exactly on carry nodes, so the node case is reachable, not measure-zero.
 
 The published derivative contract, everywhere:
 
-- strictly below the first node, and strictly above the last valid node: `0`
-  (the read clamps to a constant),
+- strictly below the first node: the first bracket's secant (the read
+  extends it linearly there, so a below-support query is priced on the edge
+  slope); strictly above the last valid node: `0` (the read clamps),
 - inside a bracket: the limited-Hermite (or linear-secant) derivative,
 - exactly on an interior node: the *right* piece's derivative (the bracket
   search is right-continuous),
@@ -29,6 +30,7 @@ The published derivative contract, everywhere:
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import _aggregate_child_choices
@@ -86,10 +88,11 @@ def test_query_gradient_follows_the_two_object_contract_on_a_node_grid():
     """`jax.grad` equals the germ's first derivative except at the last node.
 
     On exact-`x²` data the read reproduces the polynomial, so the derivative
-    is `2q` off nodes and the right piece's slope at interior nodes — equal to
-    the germ everywhere except the exact last valid node, where the published
-    derivative is the node's own limited slope while the germ (the tie
-    selector) stays at its clamp value zero.
+    is `2q` off nodes and the right piece's slope at interior nodes — equal
+    to the germ everywhere except at the boundaries: below the first node
+    the published derivative is the first bracket's secant (the read extends
+    it) and at the exact last valid node it is the node's own limited slope,
+    while the germ (the tie selector) is zero at both.
     """
     xp = jnp.array([1.0, 2.0, 3.0, jnp.nan])
     fp = jnp.array([1.0, 4.0, 9.0, jnp.nan])
@@ -101,7 +104,7 @@ def test_query_gradient_follows_the_two_object_contract_on_a_node_grid():
 
     got = [float(jax.grad(read)(jnp.asarray(q))) for q in queries]
 
-    np.testing.assert_allclose(got, [0.0, 2.0, 3.0, 4.0, 5.5, 6.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(got, [3.0, 2.0, 3.0, 4.0, 5.5, 6.0, 0.0], atol=1e-12)
     _, germ_first, _, _ = interp_right_germ_on_padded_grid(
         x_query=jnp.asarray(queries), xp=xp, fp=fp, fp_slopes=slopes
     )
@@ -132,9 +135,10 @@ def test_query_gradient_at_a_duplicated_abscissa_uses_the_right_piece():
 def test_linear_read_query_gradient_is_the_bracket_secant():
     """Without slopes the query derivative is the located bracket's secant.
 
-    Off nodes that is the surrounding secant; exactly on an interior node it
-    is the right bracket's secant; exactly on the last node it is the last
-    bracket's secant; strictly outside the valid range it is zero.
+    Off nodes that is the surrounding secant; below the first node it is the
+    first bracket's secant (the read extends it); exactly on an interior node
+    it is the right bracket's secant; exactly on the last node it is the last
+    bracket's secant; strictly above the valid range it is zero.
     """
     xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
@@ -146,7 +150,28 @@ def test_linear_read_query_gradient_is_the_bracket_secant():
         float(jax.grad(read)(jnp.asarray(q))) for q in (0.5, 1.5, 2.0, 3.0, 4.0, 5.0)
     ]
 
-    np.testing.assert_allclose(got, [0.0, 3.0, 1.0, 1.0, 1.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(got, [3.0, 3.0, 1.0, 1.0, 1.0, 0.0], atol=1e-12)
+
+
+def test_below_support_read_extends_the_first_bracket_secant():
+    """Below the first node the read and its `jax.grad` follow the secant.
+
+    The first node's own slope (1) differs from the first bracket's secant
+    (10), pinning that the extension is priced on the secant of the value
+    read's linear continuation — the value at `q = 0` is `0 + (0 - 1)·10`,
+    and the query gradient is the secant, not the node slope and not zero.
+    """
+    xp = jnp.array([1.0, 2.0, 3.0])
+    fp = jnp.array([0.0, 10.0, 20.0])
+    slopes = jnp.array([1.0, 10.0, 10.0])
+
+    def read(query):
+        return interp_on_padded_grid(x_query=query, xp=xp, fp=fp, fp_slopes=slopes)
+
+    query = jnp.asarray(0.0)
+
+    np.testing.assert_allclose(float(read(query)), -10.0, atol=1e-12)
+    np.testing.assert_allclose(float(jax.grad(read)(query)), 10.0, atol=1e-12)
 
 
 def test_empty_row_query_gradient_is_nan():
@@ -190,16 +215,16 @@ def test_value_tangents_survive_the_query_derivative_contract():
     np.testing.assert_allclose(float(weights[2]), 0.0, atol=1e-12)
 
 
-def test_terminal_tie_between_right_identical_candidates_is_owned_by_index():
-    """A tie exactly at a shared terminal abscissa follows the index convention.
+def test_terminal_tie_between_right_identical_candidates_is_owned_by_the_left_owner():
+    """A tie exactly at a shared terminal abscissa belongs to the left owner.
 
     Two candidates ending at the same abscissa with equal terminal values are
-    right-identical there (both clamp: right-finite, all germ derivatives
-    zero), even when their left-neighborhood economics differ — the boundary
-    subgradient is not unique, so ownership is the documented deterministic
-    convention: the lowest index wins and its marginal is published. This pins
-    the convention so a future change cannot silently reinterpret the
-    terminal boundary.
+    right-identical there (both clamp: right-finite, all right-germ
+    derivatives zero), so ownership falls to the branch that carries the
+    envelope on the left neighborhood — here the flatter candidate whose
+    published marginal (1.0) lies inside the envelope's generalized gradient
+    at the boundary. The steeper candidate's 2.0 does not, in either
+    candidate order.
     """
     candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
     candidate_value = jnp.array([[0.0, 1.0, 2.0], [-2.0, 0.0, 2.0]])
@@ -216,6 +241,30 @@ def test_terminal_tie_between_right_identical_candidates_is_owned_by_index():
     np.testing.assert_allclose(float(marginal[0]), 1.0, atol=1e-12)
 
 
+def test_terminal_tie_between_locally_identical_candidates_falls_back_to_index():
+    """Candidates identical in value on both sides of a terminal tie tie by index.
+
+    Both candidates share the value row, and both raw marginal rows exceed
+    three times every bracket secant, so the Fritsch-Carlson limiter caps both
+    value reads to the *same* cubic — germs on both sides agree to third
+    order, no local information separates the branches, and the deterministic
+    fallback applies: the lowest index wins and its marginal row is published.
+    """
+    candidate_endog = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_value = jnp.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
+    candidate_marginal = jnp.array([[100.0, 100.0, 100.0], [50.0, 50.0, 50.0]])
+
+    value, marginal = outer_envelope_at_query(
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=jnp.array([2.0]),
+    )
+
+    np.testing.assert_allclose(float(value[0]), 2.0, atol=1e-12)
+    np.testing.assert_allclose(float(marginal[0]), 100.0, atol=1e-12)
+
+
 def test_singleton_query_gradient_stays_zero_under_the_analytic_rule():
     """A singleton row keeps its zero query derivative under the analytic rule."""
     xp = jnp.array([1.0, jnp.nan, jnp.nan])
@@ -228,3 +277,92 @@ def test_singleton_query_gradient_stays_zero_under_the_analytic_rule():
     derivative = float(jax.grad(read)(jnp.asarray(1.0)))
 
     np.testing.assert_allclose(derivative, 0.0, atol=1e-12)
+
+
+def test_singleton_read_is_smooth_to_second_order_in_the_query():
+    """A singleton row's constant clamp is constant under second-order AD too.
+
+    The read is a constant in the query on a one-node row, so both the first
+    and the second query derivatives are exactly zero — never NaN from the
+    padded bracket the derivative rule does not use.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+    slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+
+    def read(query):
+        return interp_on_padded_grid(x_query=query, xp=xp, fp=fp, fp_slopes=slopes)
+
+    query = jnp.asarray(1.0)
+
+    np.testing.assert_allclose(float(read(query)), 5.0, atol=1e-12)
+    np.testing.assert_allclose(float(jax.grad(read)(query)), 0.0, atol=1e-12)
+    np.testing.assert_allclose(float(jax.grad(jax.grad(read))(query)), 0.0, atol=1e-12)
+
+
+def test_singleton_query_gradient_has_finite_mixed_derivatives():
+    """Mixed derivatives of a singleton's query gradient stay finite zeros.
+
+    The query gradient of a one-node row is identically zero, so its
+    derivatives with respect to the node's value, slope, and abscissa are
+    exactly zero as well — the padded bracket must not leak NaN into them.
+    """
+
+    def query_gradient(fp0, slope0, x0):
+        row_xp = jnp.array([1.0, jnp.nan, jnp.nan]).at[0].set(x0)
+        row_fp = jnp.array([5.0, jnp.nan, jnp.nan]).at[0].set(fp0)
+        row_slopes = jnp.array([2.0, jnp.nan, jnp.nan]).at[0].set(slope0)
+
+        def read(query):
+            return interp_on_padded_grid(
+                x_query=query, xp=row_xp, fp=row_fp, fp_slopes=row_slopes
+            )
+
+        return jax.grad(read)(jnp.asarray(1.0))
+
+    mixed = jax.grad(query_gradient, argnums=(0, 1, 2))(
+        jnp.asarray(5.0), jnp.asarray(2.0), jnp.asarray(1.0)
+    )
+
+    np.testing.assert_allclose(
+        [float(component) for component in mixed], [0.0, 0.0, 0.0], atol=1e-12
+    )
+
+
+def test_singleton_linear_read_is_smooth_to_second_order_in_the_query():
+    """The linear singleton clamp is also second-order AD-safe."""
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+
+    def read(query):
+        return interp_on_padded_grid(x_query=query, xp=xp, fp=fp)
+
+    np.testing.assert_allclose(
+        float(jax.grad(jax.grad(read))(jnp.asarray(1.0))), 0.0, atol=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    ("fp_slopes", "xp"),
+    [
+        (jnp.array([1.0, 2.0, 3.0]), jnp.array([0.0, 1.0, 2.0])),
+        (None, jnp.array([0.0, 1.0, 2.0])),
+        (jnp.array([2.0, jnp.nan, jnp.nan]), jnp.array([0.0, jnp.nan, jnp.nan])),
+        (None, jnp.array([0.0, jnp.nan, jnp.nan])),
+    ],
+    ids=["hermite", "linear", "hermite-singleton", "linear-singleton"],
+)
+def test_nan_query_gradient_is_nan_on_every_row_shape(fp_slopes, xp):
+    """`jax.grad` at a NaN query is NaN — fail-loud, matching the value read.
+
+    A NaN query marks an upstream failure; the value read re-pins it to NaN on
+    every row shape. The analytic query tangent must carry the same poison —
+    linear and Hermite reads, regular and singleton rows alike — instead of
+    the located bracket's finite secant or the degenerate-row constant.
+    """
+    fp = jnp.where(jnp.isnan(xp), jnp.nan, jnp.array([0.0, 1.0, 4.0]))
+
+    def read(query):
+        return interp_on_padded_grid(x_query=query, xp=xp, fp=fp, fp_slopes=fp_slopes)
+
+    assert bool(jnp.isnan(jax.grad(read)(jnp.asarray(jnp.nan))))

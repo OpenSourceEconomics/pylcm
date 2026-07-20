@@ -190,9 +190,14 @@ def refine_envelope_with_support(
         link_segment = segment_id[:-1].astype(jnp.int32)
         segment_live = ~dead[:-1] & ~dead[1:] & same_segment
 
+    left_is_lower = left_grid <= right_grid
     links = _LinkLines(
         lower=jnp.minimum(left_grid, right_grid),
         upper=jnp.maximum(left_grid, right_grid),
+        lower_value=jnp.where(left_is_lower, left_value, value[1:]),
+        upper_value=jnp.where(left_is_lower, value[1:], left_value),
+        lower_policy=jnp.where(left_is_lower, left_policy, policy[1:]),
+        upper_policy=jnp.where(left_is_lower, policy[1:], left_policy),
         anchor_grid=left_grid,
         anchor_value=left_value,
         anchor_policy=left_policy,
@@ -214,18 +219,17 @@ def refine_envelope_with_support(
         [jnp.full((1,), -jnp.inf, dtype=query_grid.dtype), query_grid[:-1]]
     )
     is_new = query_grid > prev_grid
-    # Record equality is a few-ulp window: two computations of the same
-    # quantity agree to within a handful of rounding steps of the stored
-    # magnitude, and gaps below that scale are indistinguishable in storage.
-    # A wider cushion would swallow genuinely representable gaps whenever a
-    # common cardinal shift raises the value level — the winner would then
-    # depend on an arbitrary value normalization. A missed tie merely
-    # duplicates the node, which the read resolves by its side convention.
-    tolerance = 8.0 * float(jnp.finfo(query_grid.dtype).eps)
+    # Record equality is exact: when both side winners are the same branch,
+    # its value and policy at the node come from the same link evaluated at
+    # the same query — identical arithmetic, so genuinely one record is
+    # bitwise equal. Any tolerance window here scales with the absolute value
+    # level and would merge representable records under a common cardinal
+    # shift. A missed merge merely duplicates the node, which the read
+    # resolves by its side convention.
     same_record = (
         (left_side.branch == right_side.branch)
-        & jnp.isclose(left_side.value, right_side.value, rtol=tolerance, atol=0.0)
-        & jnp.isclose(left_side.policy, right_side.policy, rtol=tolerance, atol=0.0)
+        & (left_side.value == right_side.value)
+        & (left_side.policy == right_side.policy)
     )
     node_left_valid = left_side.exists & is_new
     node_right_valid = right_side.exists & is_new & ~(left_side.exists & same_record)
@@ -237,7 +241,6 @@ def refine_envelope_with_support(
         left_side=left_side,
         right_side=right_side,
         links=links,
-        tolerance=tolerance,
     )
 
     crossings, interval_overflow = _enumerate_interval_crossings(
@@ -312,7 +315,6 @@ def _unsupported_read_verdicts(
     left_side: _SideWinner,
     right_side: _SideWinner,
     links: _LinkLines,
-    tolerance: float,
 ) -> tuple[ScalarBool, ScalarBool]:
     """Detect envelope features a linearly-read compacted row cannot carry.
 
@@ -340,13 +342,13 @@ def _unsupported_read_verdicts(
         jnp.where(left_side.exists, left_side.value, -jnp.inf),
         jnp.where(right_side.exists, right_side.value, -jnp.inf),
     )
-    dominance_margin = tolerance * jnp.maximum(
-        jnp.abs(point_value),
-        jnp.where(jnp.isfinite(best_side_value), jnp.abs(best_side_value), 0.0),
-    )
-    unrepresented_point = jnp.any(
-        ~query_dead & (point_value - best_side_value > dominance_margin)
-    )
+    # The comparison is exact: side records at a candidate abscissa are
+    # stored endpoint records (the link reads snap exact endpoint queries),
+    # so a strict excess is a representable stored gap, not arithmetic noise.
+    # Any magnitude-relative margin here would scale with the absolute value
+    # level and silently absorb representable strict maxima a few stored ulp
+    # above the side record.
+    unrepresented_point = jnp.any(~query_dead & (point_value > best_side_value))
 
     emits = (left_side.exists | right_side.exists) & ~query_dead
     previous_emitted_grid = jnp.concatenate(
@@ -375,7 +377,11 @@ class _LinkLines:
 
     Each consecutive candidate pair defines one link; within any interval
     between adjacent candidate abscissae a live link is a full line, described
-    by its anchor point and slopes.
+    by its anchor point and slopes. The stored endpoint records are kept
+    alongside the line: an exact endpoint query returns the stored record, so
+    a candidate node is never reconstructed through the affine product (whose
+    cancellation error scales with the span times the slope and can lose the
+    stored value entirely on a long link).
     """
 
     def __init__(
@@ -383,6 +389,10 @@ class _LinkLines:
         *,
         lower: Float1D,
         upper: Float1D,
+        lower_value: Float1D,
+        upper_value: Float1D,
+        lower_policy: Float1D,
+        upper_policy: Float1D,
         anchor_grid: Float1D,
         anchor_value: Float1D,
         anchor_policy: Float1D,
@@ -393,6 +403,10 @@ class _LinkLines:
     ) -> None:
         self.lower = lower
         self.upper = upper
+        self.lower_value = lower_value
+        self.upper_value = upper_value
+        self.lower_policy = lower_policy
+        self.upper_policy = upper_policy
         self.anchor_grid = anchor_grid
         self.anchor_value = anchor_value
         self.anchor_policy = anchor_policy
@@ -402,12 +416,30 @@ class _LinkLines:
         self.live = live
 
     def value_at(self, x: FloatND) -> FloatND:
-        """Evaluate every link's value line at `x` (broadcast on the last axis)."""
-        return self.anchor_value + self.value_slope * (x - self.anchor_grid)
+        """Evaluate every link's value at `x`, snapping exact endpoint queries.
+
+        Broadcasts on the last axis. Interior queries use the anchored line;
+        a query equal to a link endpoint returns the stored endpoint record.
+        """
+        line = self.anchor_value + self.value_slope * (x - self.anchor_grid)
+        return jnp.where(
+            x == self.lower,
+            self.lower_value,
+            jnp.where(x == self.upper, self.upper_value, line),
+        )
 
     def policy_at(self, x: FloatND) -> FloatND:
-        """Evaluate every link's policy line at `x` (broadcast on the last axis)."""
-        return self.anchor_policy + self.policy_slope * (x - self.anchor_grid)
+        """Evaluate every link's policy at `x`, snapping exact endpoint queries.
+
+        Broadcasts on the last axis. Interior queries use the anchored line;
+        a query equal to a link endpoint returns the stored endpoint record.
+        """
+        line = self.anchor_policy + self.policy_slope * (x - self.anchor_grid)
+        return jnp.where(
+            x == self.lower,
+            self.lower_policy,
+            jnp.where(x == self.upper, self.upper_policy, line),
+        )
 
 
 class _SideWinner:
@@ -493,23 +525,25 @@ def _lexicographic_winner(
     masked_value = jnp.where(covers, value_at, -jnp.inf)
     best_value = jnp.max(masked_value, axis=1)
     exists = jnp.isfinite(best_value)
-    # Value ties are a few-ulp window of the stored magnitude — the scale at
-    # which two computations of the same envelope value are indistinguishable.
-    # A wider cushion would let a common cardinal value shift merge branches
-    # whose gap is genuinely representable. A missed tie merely skips the
+    # A value tie is exact stored equality — the only translation-invariant
+    # tie set: any tolerance window scales with the absolute value level, so
+    # a common cardinal shift would pull genuinely representable gaps inside
+    # it and let a lower record own the node. A missed tie (two computations
+    # of the same crossing value a rounding step apart) merely skips the
     # slope tie-break and duplicates the node downstream — never merges
     # records.
-    tolerance = 8.0 * jnp.finfo(value_at.dtype).eps
-    tie = covers & jnp.isclose(
-        masked_value, best_value[:, None], rtol=tolerance, atol=0.0
-    )
+    tie = covers & (masked_value == best_value[:, None])
     slope_score = jnp.where(tie, slope_sign * links.value_slope[None, :], -jnp.inf)
     link = jnp.argmax(slope_score, axis=1).astype(jnp.int32)
+    # The published value is the exact maximum itself, not the tie winner's
+    # own read: the winner owns the policy and the slope convention, but a
+    # numerical tie rule must never replace the hard maximum of the stored
+    # records by a near-maximal competitor's lower value.
     return _SideWinner(
         exists=exists,
         link=link,
         branch=jnp.where(exists, links.segment[link], -1).astype(jnp.int32),
-        value=jnp.take_along_axis(value_at, link[:, None], axis=1)[:, 0],
+        value=best_value,
         policy=jnp.take_along_axis(policy_at, link[:, None], axis=1)[:, 0],
     )
 
@@ -617,7 +651,46 @@ def _enumerate_interval_crossings(
         offset_next = jnp.min(offset_masked, axis=1)
         found = jnp.isfinite(offset_next)
         offset_tolerance = crossing_ulp * jnp.where(found, offset_next, 0.0)
-        tie = valid & (offset <= (offset_next + offset_tolerance)[:, None])
+        near_minimal = valid & (offset <= (offset_next + offset_tolerance)[:, None])
+        # Offset proximity alone cannot certify a simultaneous crossing: the
+        # window scales with the offset itself, so inside it two crossings can
+        # sit many representable positions apart, and handing the group to the
+        # steepest line would skip the branch that wins between them. A line
+        # joins the tie only if it also passes through the same numerical
+        # point — the line-difference at the crossing vanishes to roundoff of
+        # the locally computed terms. The difference is formed from the stored
+        # anchor-value gap plus the slope terms on interval-local offsets, so
+        # a common value baseline cancels in one correctly-rounded subtraction
+        # before any rounding at the absolute level can enter; a residual
+        # scaled by the absolute line values instead would widen with the
+        # baseline and merge genuinely distinct crossings under a cardinal
+        # shift. The window is deliberately tight (two ulp of the largest
+        # term): a false negative over-emits a duplicated crossing, which the
+        # side convention reads correctly, while a false positive skips the
+        # branch that wins between two representable crossings.
+        x_next_safe = x_current + jnp.where(found, offset_next, 0.0)
+        anchor_value_gap = (
+            links.anchor_value[None, :] - links.anchor_value[winner][:, None]
+        )
+        local_line = links.value_slope[None, :] * (
+            x_next_safe[:, None] - links.anchor_grid[None, :]
+        )
+        local_winner = (
+            links.value_slope[winner] * (x_next_safe - links.anchor_grid[winner])
+        )[:, None]
+        gap_at_next = anchor_value_gap + local_line - local_winner
+        residual_scale = jnp.maximum(
+            jnp.abs(anchor_value_gap),
+            jnp.maximum(jnp.abs(local_line), jnp.abs(local_winner)),
+        )
+        same_point = jnp.abs(gap_at_next) <= (
+            2.0 * jnp.finfo(query_grid.dtype).eps * residual_scale
+        )
+        # The exact-minimum line(s) define the crossing being emitted, so they
+        # belong to the tie unconditionally — the residual test only decides
+        # which *other* near-minimal lines genuinely pass through the point.
+        is_earliest = valid & (offset <= offset_next[:, None])
+        tie = (near_minimal & same_point) | is_earliest
         incoming = jnp.argmax(
             jnp.where(tie, links.value_slope[None, :], -jnp.inf), axis=1
         ).astype(jnp.int32)

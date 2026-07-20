@@ -1,3 +1,7 @@
+import dataclasses
+import subprocess
+import sys
+from pathlib import Path
 from types import MappingProxyType
 
 import jax
@@ -12,7 +16,7 @@ from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.solution import backward_induction
-from _lcm.solution.backward_induction import (
+from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
 )
@@ -25,11 +29,17 @@ from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.typing import ScalarInt
 
-# Run these tests on the CPU for parallelization, does not work if pytest runs
-# multiple workers, because jax will be initialized already
+# Run these tests on a four-CPU-device topology. The pin only applies in a
+# process whose JAX backends are not yet initialized (a serial run importing
+# this module early); otherwise the tests skip. The device-count update is
+# attempted FIRST because it is the one that raises after initialization —
+# this keeps the pin atomic. The reverse order would flip the default
+# platform to CPU (that update succeeds at any time) and then skip, leaving
+# every later model build in the process compiled for CPU while arrays from
+# earlier accelerator computations stay committed to their device.
 try:
-    jax.config.update("jax_platform_name", "cpu")
     jax.config.update("jax_num_cpu_devices", 4)
+    jax.config.update("jax_platform_name", "cpu")
     _PYTEST_PARALLEL = False
 except RuntimeError:
     _PYTEST_PARALLEL = True
@@ -37,6 +47,33 @@ except RuntimeError:
 _skip_pytest_parallel = pytest.mark.skipif(
     _PYTEST_PARALLEL, reason="Can't set num cpus in pytest paralellel"
 )
+
+
+def test_importing_this_module_after_jax_init_leaves_the_platform_unpinned():
+    """The CPU-topology pin is atomic: all of it applies, or none of it.
+
+    Once any JAX backend is initialized, this module's four-CPU-device pin
+    can no longer apply and its tests skip. The platform default must then
+    stay untouched: a partially applied pin (platform flipped to CPU, device
+    count unchanged) would silently retarget every model built later in the
+    process onto the CPU, while arrays produced by earlier accelerator
+    computations stay committed to their device — a sharding mismatch at the
+    first compiled call that mixes them.
+    """
+    code = (
+        "import jax; jax.numpy.zeros(1); "
+        "import tests.test_distributed; "
+        "print(repr(jax.config.read('jax_platform_name')))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=Path(__file__).parent.parent,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "''"
 
 
 def _make_correct_distributed_model(
@@ -235,7 +272,7 @@ def _compiled_solve_kernel_hlo(model: Model, *, regime_name: str, period: int) -
                 regime_params=flat_params[regime_name]
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=MappingProxyType({}),
+            next_regime_to_continuation=MappingProxyType({}),
             flat_params=flat_params,
             period=period,
             ages=model.ages,
@@ -274,19 +311,23 @@ def test_solve_returns_template_sharded_V_even_when_kernel_output_is_replicated(
     replicated kernel output must be placed back on the template's mesh before
     it is published.
     """
-    original_solve_regime_period = backward_induction._solve_regime_period
+    original_run_period_kernel = backward_induction._run_period_kernel
     replicated_outputs: list[str] = []
 
     def emit_replicated_V(**kwargs):
-        V_arr = original_solve_regime_period(**kwargs)
-        if isinstance(V_arr.sharding, NamedSharding):
-            replicated_outputs.append(kwargs["regime_name"])
-            return jax.device_put(
-                V_arr, NamedSharding(V_arr.sharding.mesh, PartitionSpec())
+        result = original_run_period_kernel(**kwargs)
+        if isinstance(result.V_arr.sharding, NamedSharding):
+            replicated_outputs.append(kwargs["regime"].name)
+            return dataclasses.replace(
+                result,
+                V_arr=jax.device_put(
+                    result.V_arr,
+                    NamedSharding(result.V_arr.sharding.mesh, PartitionSpec()),
+                ),
             )
-        return V_arr
+        return result
 
-    monkeypatch.setattr(backward_induction, "_solve_regime_period", emit_replicated_V)
+    monkeypatch.setattr(backward_induction, "_run_period_kernel", emit_replicated_V)
 
     period_to_regime_to_V_arr = correct_distributed_model.solve(
         log_level="off",

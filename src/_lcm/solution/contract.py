@@ -12,7 +12,8 @@ Each entry of `SolutionKernels.period_kernels` is a `PeriodKernel`: a single
 non-jitted period adapter that wraps the solver's shared jitted core, calls it
 with the solver's own argument layout, and assembles a `KernelResult` outside
 JIT. The solve loop invokes the same adapter for every solver, branching only on
-which optional outputs (`carry`, `sim_policy`) are present, never on solver type.
+which optional outputs (`continuation`, `simulation_policy`) are present, never
+on solver type.
 
 This module is an engine leaf. Reaching `lcm.regime` would close an import
 cycle — it imports the `lcm.solvers` façade, which re-exports `Solver` from
@@ -38,11 +39,13 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
-from _lcm.solution.diagnostics import SolverDiagnostics
+from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatParams,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToVArr,
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
@@ -54,17 +57,17 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.typing import FloatND
 
-# The cross-period continuation channel a DC-EGM parent interpolates. Named
-# solver-agnostically on the seam so the engine threads it without knowing it is
-# an EGM carry; today the only continuation payload is the EGM carry itself.
+# The cross-period continuation channel a continuation-based parent
+# interpolates. Named solver-agnostically on the seam so the engine threads it
+# without knowing it is an EGM carry; today the only continuation payload is
+# the EGM carry itself.
 type ContinuationPayload = EGMCarry
 
-# The published off-grid simulation-policy channel. Named solver-agnostically on
-# the seam for the same reason as `ContinuationPayload`: the engine threads it
-# without knowing its concrete type, and a solver-supplied reader (see
-# `Solver.build_simulation_policy_reader`) is the only consumer that looks
-# inside.
-type SimulationPolicyPayload = EGMSimPolicy | NestedEGMSimPolicy
+# The published off-grid simulation-policy artifact, under the same rule: the
+# engine stores and returns it opaquely — a solver-supplied reader is the only
+# consumer that looks inside (DC-EGM's flat `EGMSimPolicy`, the
+# continuous-outer NNBEGM's `NestedEGMSimPolicy`).
+type SimulationPolicy = EGMSimPolicy | NestedEGMSimPolicy
 
 if TYPE_CHECKING:
     from _lcm.regime_building.V import VInterpolationInfo
@@ -176,10 +179,10 @@ class KernelResult:
     The solve loop reads `V_arr` from every kernel and branches only on whether
     the optional generic outputs are present — never on solver type:
 
-    - `carry` is the cross-period continuation a DC-EGM parent interpolates;
-      `None` for a regime that publishes no continuation.
-    - `sim_policy` is the off-grid policy forward simulation can interpolate;
-      `None` for a regime that publishes none.
+    - `continuation` is the cross-period payload a continuation-based parent
+      interpolates; `None` for a regime that publishes no continuation.
+    - `simulation_policy` is the off-grid policy forward simulation can
+      interpolate; `None` for a regime that publishes none.
     - `diagnostics` is the solver's numerical self-report; `None` for a solver
       that measures nothing (every finite-grid solver today).
     """
@@ -187,14 +190,32 @@ class KernelResult:
     V_arr: FloatND
     """The regime's value-function array on its exogenous state grid."""
 
-    carry: ContinuationPayload | None = None
-    """Continuation payload for a DC-EGM parent, or `None`."""
+    continuation: ContinuationPayload | None = None
+    """Continuation payload for a continuation-based parent, or `None`."""
 
-    sim_policy: SimulationPolicyPayload | None = None
+    simulation_policy: SimulationPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
 
     diagnostics: SolverDiagnostics | None = None
     """Published numerical diagnostics, or `None`."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class BackwardInductionResult:
+    """The generic outputs of one backward-induction run.
+
+    Internal to the engine: the public `Model.solve` unpacks it into its
+    documented mapping-or-tuple return shape.
+    """
+
+    value_functions: PeriodToRegimeToVArr
+    """Immutable mapping of period to each regime's value-function array."""
+
+    simulation_policies: PeriodToRegimeToSimulationPolicy
+    """Immutable mapping of period to each regime's published simulation policy.
+
+    Sparse over regimes: only kernels that publish a policy contribute entries.
+    """
 
 
 @runtime_checkable
@@ -249,7 +270,7 @@ class PeriodKernel(Protocol):
         core_key: str,
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -267,7 +288,7 @@ class PeriodKernel(Protocol):
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -296,7 +317,7 @@ class SimulationPolicyReader(Protocol):
     def __call__(
         self,
         *,
-        payload: SimulationPolicyPayload,
+        payload: SimulationPolicy,
         optimal_actions: MappingProxyType[StateOrActionName, FloatND],
         states: Mapping[StateOrActionName, FloatND],
         flat_params: FlatParams,
@@ -318,7 +339,7 @@ class SolutionKernels:
     """All-finite template continuation with the regime's static shapes.
 
     `None` for a regime that publishes no continuation. Initializes the rolling
-    `next_regime_to_egm_carry` mapping and serves as the lowering argument when
+    `next_regime_to_continuation` mapping and serves as the lowering argument when
     AOT-compiling a parent's kernel.
     """
 
@@ -395,15 +416,15 @@ class Solver(ABC):
         return None
 
     @property
-    def requires_continuation_carries(self) -> bool:
-        """Whether this solver reads a continuation carry from its targets.
+    def requires_continuation(self) -> bool:
+        """Whether this solver reads a continuation payload from its targets.
 
         An endogenous-grid solver inverts the Euler equation against its
         target regimes' value *and marginal* on a continuation grid, so each
-        target — including a terminal one — must publish a carry the engine
-        rolls alongside `next_regime_to_V_arr`. Grid search reads only the
-        value array, so it needs no carry. The engine reads this off every
+        target — including a terminal one — must publish a continuation the
+        engine rolls alongside `next_regime_to_V_arr`. Grid search reads only
+        the value array, so it needs none. The engine reads this off every
         regime's solver to decide whether terminal regimes produce their
-        closed-form carries, without forking on the solver type.
+        closed-form continuations, without forking on the solver type.
         """
         return False

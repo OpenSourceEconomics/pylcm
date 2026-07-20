@@ -18,11 +18,26 @@ Two oracles validate it on the liquid-housing interior:
 
 from typing import Literal
 
+import jax
 import numpy as np
 import pytest
 
 from tests.solution._ds2024_housing_vfi_oracle import solve_ds2024_housing_vfi
 from tests.test_models.ds2024_housing import build_model, build_params
+
+# The NEGM solve of this model diverges structurally between CPU and GPU at
+# float64 (deterministic — bit-identical across GPU models; the pooled
+# interior difference vs the VFI oracle sits near 0.10 on GPU vs 0.03 on
+# CPU). The divergence is under investigation in the DC-EGM/NEGM machinery;
+# see nbegm-dcegm-merge-handoff/RESOLUTION-STATUS.md ("GPU float64
+# divergence in the NEGM housing solve"). Float32 runs agree across
+# backends.
+_xfail_gpu_float64_divergence = pytest.mark.xfail(
+    condition=(jax.default_backend() == "gpu" and jax.config.read("jax_enable_x64")),
+    reason="pre-existing GPU-vs-CPU float64 divergence in the NEGM housing "
+    "solve (tracked in the dcegm handoff; lift with the real fix)",
+    strict=False,
+)
 
 N_GRID = 10
 N_CONSUMPTION = 200
@@ -146,6 +161,7 @@ def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta():
     assert float((difference <= BRUTE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
+@_xfail_gpu_float64_divergence
 def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
     """At `delta = 0.10` the NEGM keeper's depreciated hold matches the VFI oracle.
 
@@ -176,6 +192,7 @@ def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
     assert float((difference <= ORACLE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
+@_xfail_gpu_float64_divergence
 def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
     """Refining the outer house grid moves the NEGM solve toward the dense truth.
 

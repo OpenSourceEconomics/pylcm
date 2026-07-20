@@ -256,7 +256,19 @@ per-file-ignores."tests/*" = [
   "S301",    # Use of pickle
   "SLF001",  # Private member access
 ]
+per-file-ignores."tests/solution/test_egm_interp.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
+]
+per-file-ignores."tests/solution/test_mss_invariance_and_support.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
+]
+per-file-ignores."tests/test_certainty_equivalent.py" = [
+  "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
+]
 per-file-ignores."tests/test_compilation_cache.py" = [
+  "S603", # subprocess call with test-controlled input
+]
+per-file-ignores."tests/test_distributed.py" = [
   "S603", # subprocess call with test-controlled input
 ]
 per-file-ignores."tests/test_dtypes.py" = [
@@ -277,6 +289,9 @@ per-file-ignores."tests/test_Q_and_F.py" = [
   "ARG001", # Unused function argument
   "ARG005", # Unused lambda argument
   "E731",   # Do not assign a `lambda` expression, use a `def`
+]
+per-file-ignores."tests/test_temporal_aggregation.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
 ]
 pydocstyle.convention = "google"
 [tool.ruff.lint.flake8-bugbear]

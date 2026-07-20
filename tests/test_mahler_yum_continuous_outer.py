@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import _lcm.solution.solvers as _solvers
+import _lcm.solution.nnbegm as _solvers
 from lcm import AdaptiveOuterMesh, LinSpacedGrid, UniformObservedFixedCost
 from lcm_examples.mahler_yum_2024 import (
     START_PARAMS,

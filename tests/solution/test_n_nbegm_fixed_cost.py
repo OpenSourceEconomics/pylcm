@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from jax import config as jax_config
 
-import _lcm.solution.solvers as solvers_mod
+import _lcm.solution.nnbegm as solvers_mod
 from lcm import AdaptiveOuterMesh, UniformObservedFixedCost
 from lcm.exceptions import RegimeInitializationError
 from tests.test_models import n_nbegm_toy as toy
@@ -129,10 +129,10 @@ def test_aggregated_solve_publishes_probabilities_and_bounded_values(
 
     # No nested simulation payload under a fixed-cost aggregation: the read
     # would replay a hard maximum the solve did not use.
-    assert agg.sim_policy is None
+    assert agg.simulation_policy is None
 
     # The expected marginal stays finite and the carry keeps its shape.
-    carry = cast("EGMCarry", agg.carry)
+    carry = cast("EGMCarry", agg.continuation)
     assert np.all(np.isfinite(np.asarray(carry.marginal_utility)))
 
 

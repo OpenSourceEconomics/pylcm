@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from jax import config as jax_config
 
-import _lcm.solution.solvers as solvers_mod
+import _lcm.solution.nnbegm as solvers_mod
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from lcm import AdaptiveOuterMesh
 from tests.test_models import n_nbegm_toy as toy
@@ -111,7 +111,7 @@ def test_continuous_solve_publishes_the_nested_sim_policy(
         pytest.skip("x64 run only")
     _, recorded = _solve(outer_search=_MESH, monkeypatch=monkeypatch)
     for period in _ALIVE_PERIODS:
-        payload = recorded[period].sim_policy
+        payload = recorded[period].simulation_policy
         assert isinstance(payload, NestedEGMSimPolicy)
         diagnostics = recorded[period].diagnostics
         assert diagnostics is not None

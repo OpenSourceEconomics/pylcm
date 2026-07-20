@@ -6,7 +6,7 @@ those solves, but the continuous-outer extension needs *all* of them at once:
 the outer interpolant reads value/marginal/policy across the candidate axis,
 and the adaptive mesh decides refinement from the full bank. This module holds
 the bank data structures; the finite collapse that consumes them lives beside
-the fold it replaces in `_lcm.solution.solvers` (the `egm` layer never imports
+the fold it replaces in `_lcm.solution.nnbegm` (the `egm` layer never imports
 the `solution` layer).
 
 The bank stores the stacked payloads as pytrees (`EGMCarry`, `EGMSimPolicy`)
