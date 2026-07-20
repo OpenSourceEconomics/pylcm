@@ -89,6 +89,7 @@ from lcm_examples.mahler_yum_2024 import (
     health_type_coefficient,
     income,
     lagged_health_effort_coefficient,
+    legacy,
     net_income,
     next_health,
     next_regime,
@@ -299,23 +300,53 @@ def create_mahler_yum_model(
     *,
     implementation: str = "paper",
     outer_search: AdaptiveOuterMesh | None = None,
+    compatibility: legacy.MahlerLegacyCompatibility | None = None,
 ) -> Model:
     """Build the Mahler-Yum model in the requested implementation.
 
-    `"paper"` is the canonical continuous-outer configuration;
-    `"brute"` returns the historical grid-search model unchanged;
-    `"legacy_fortran"` (historical-algorithm compatibility) is not yet
-    implemented.
+    `"paper"` is the canonical continuous-outer configuration; `"brute"`
+    returns the historical grid-search model unchanged; `"legacy_fortran"`
+    builds toward the historical-algorithm compatibility set in
+    `compatibility` (defaulting to the full `legacy.LEGACY_FORTRAN`).
+
+    Legacy support is per switch and honest: the historical finite-grid
+    effort/saving searches over the five-node adjustment-cost grid ARE the
+    brute configuration and are returned for that switch subset; a request
+    enabling any solver switch the engine cannot yet build (the old-habit
+    continuation needs solve-phase-only transition support) raises
+    `NotImplementedError` naming exactly those switches instead of
+    returning a model that does not implement its own manifest.
+    Measurement-side switches never affect the model object and are
+    consumed by the replication's `legacy_fortran` module.
     """
     if implementation == "brute":
         from lcm_examples.mahler_yum_2024 import MAHLER_YUM_MODEL  # noqa: PLC0415
 
         return MAHLER_YUM_MODEL
     if implementation == "legacy_fortran":
-        msg = "the legacy_fortran configuration is not implemented yet"
-        raise NotImplementedError(msg)
+        compat = legacy.LEGACY_FORTRAN if compatibility is None else compatibility
+        unbuildable = legacy.unimplemented_solver_switches(compat)
+        if unbuildable:
+            msg = (
+                "legacy_fortran solver switches not implemented yet: "
+                + ", ".join(unbuildable)
+                + " (the historical finite-grid searches ARE implemented; "
+                "restrict the compatibility object to those switches for a "
+                "partial historical build)"
+            )
+            raise NotImplementedError(msg)
+        from lcm_examples.mahler_yum_2024 import MAHLER_YUM_MODEL  # noqa: PLC0415
+
+        return MAHLER_YUM_MODEL
     if implementation != "paper":
         msg = f"unknown implementation: {implementation!r}"
+        raise ValueError(msg)
+    if compatibility is not None and compatibility != legacy.CANONICAL:
+        msg = (
+            "the paper implementation is canonical by definition; historical "
+            "switches require implementation='legacy_fortran': "
+            + ", ".join(legacy.enabled_switches(compatibility))
+        )
         raise ValueError(msg)
     return Model(
         regimes={
