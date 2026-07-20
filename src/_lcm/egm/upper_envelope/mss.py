@@ -418,27 +418,51 @@ class _LinkLines:
     def value_at(self, x: FloatND) -> FloatND:
         """Evaluate every link's value at `x`, snapping exact endpoint queries.
 
-        Broadcasts on the last axis. Interior queries use the anchored line;
-        a query equal to a link endpoint returns the stored endpoint record.
+        Broadcasts on the last axis. An exact endpoint query returns the
+        stored endpoint record; an interior query evaluates the line from the
+        *nearer* stored endpoint. Anchoring at the nearer endpoint keeps the
+        slope-times-offset term small relative to the far-anchored form, whose
+        cancellation against the anchor value grows with the span times the
+        slope and can round a covering chord clear past a stored point
+        candidate near the far end of a long link.
         """
-        line = self.anchor_value + self.value_slope * (x - self.anchor_grid)
-        return jnp.where(
-            x == self.lower,
-            self.lower_value,
-            jnp.where(x == self.upper, self.upper_value, line),
+        return self._at(
+            x=x,
+            lower_record=self.lower_value,
+            upper_record=self.upper_value,
+            slope=self.value_slope,
         )
 
     def policy_at(self, x: FloatND) -> FloatND:
         """Evaluate every link's policy at `x`, snapping exact endpoint queries.
 
-        Broadcasts on the last axis. Interior queries use the anchored line;
-        a query equal to a link endpoint returns the stored endpoint record.
+        Broadcasts on the last axis. Same evaluation contract as `value_at`:
+        stored records at exact endpoints, nearer-endpoint anchoring for
+        interior queries.
         """
-        line = self.anchor_policy + self.policy_slope * (x - self.anchor_grid)
+        return self._at(
+            x=x,
+            lower_record=self.lower_policy,
+            upper_record=self.upper_policy,
+            slope=self.policy_slope,
+        )
+
+    def _at(
+        self,
+        *,
+        x: FloatND,
+        lower_record: Float1D,
+        upper_record: Float1D,
+        slope: Float1D,
+    ) -> FloatND:
+        from_lower = lower_record + slope * (x - self.lower)
+        from_upper = upper_record + slope * (x - self.upper)
+        nearer_is_lower = (x - self.lower) <= (self.upper - x)
+        line = jnp.where(nearer_is_lower, from_lower, from_upper)
         return jnp.where(
             x == self.lower,
-            self.lower_policy,
-            jnp.where(x == self.upper, self.upper_policy, line),
+            lower_record,
+            jnp.where(x == self.upper, upper_record, line),
         )
 
 

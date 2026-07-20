@@ -547,6 +547,30 @@ def test_a_point_spike_a_few_ulp_above_an_exact_side_record_overflows():
     assert int(n_kept) > 12
 
 
+def test_a_point_spike_above_a_long_link_interior_read_overflows():
+    """A stored point strictly above a covering link's chord overflows, never vanishes.
+
+    The third candidate's abscissa lies two grid units inside a float32 link
+    spanning `[2e7, 3e7]` with values `[-3e7, 3]`. The link's exact chord at
+    that abscissa is below the stored point value `-3`, so the point is a
+    strict unrepresented maximum. Evaluating the chord from the link's far
+    endpoint cancels catastrophically and rounds the line read a full unit
+    above the point; the interior read is anchored at the nearer stored
+    endpoint instead, so the strict stored excess is detected and the kernel
+    signals `n_kept > n_refined`.
+    """
+    *_, n_kept, _ = refine_envelope_with_support(
+        endog_grid=jnp.array(
+            [20_000_000.0, 30_000_000.0, 29_999_998.0], dtype=jnp.float32
+        ),
+        policy=jnp.array([19_000_000.0, 20_000_000.0, 1.0], dtype=jnp.float32),
+        value=jnp.array([-30_000_000.0, 3.0, -3.0], dtype=jnp.float32),
+        n_refined=12,
+    )
+
+    assert int(n_kept) > 12
+
+
 def test_a_long_span_link_publishes_its_stored_endpoint_exactly():
     """A candidate endpoint is read from its stored record, bit-exactly.
 
