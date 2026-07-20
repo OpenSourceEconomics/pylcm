@@ -17,10 +17,20 @@ discretizations of the brute-force example with their exact counterparts:
   diagnostics.
 - **Consumption as the Euler action.** The savings-grid action becomes an
   inner NB-EGM consumption-saving solve on `wealth`: `cash_on_hand` is the
-  budget target, `saving = cash_on_hand - consumption` the post-decision,
-  and the `min_consumption` clamp of the brute budget (a grid artifact — it
-  silently rewrote infeasible grid pairs) is dropped in favor of the exact
-  credit-constrained corner.
+  budget target and `saving = cash_on_hand - consumption` the post-decision.
+  The paper's guaranteed minimum consumption (transfers top consumption up
+  to 10% of average earnings; Section 3.1 and `mincon` in the authors'
+  Fortran) is a *declared* flat budget piece:
+  `cash_on_hand = max(raw_cash_on_hand, min_consumption)`, kinked in the
+  derived `raw_cash_on_hand` at the `min_consumption` threshold.
+  KNOWN DEVIATION from the Fortran's
+  `c = max(coh - a', mincon)`: on the floor the Fortran tops up consumption
+  no matter how much is saved (saving capped at own resources), while the
+  floored budget here lets the agent split `min_consumption` between
+  consumption and saving. The two differ only at states with
+  `net_income + R*wealth < min_consumption` (bottom wealth node, zero-income
+  branches); resolving the floor exactly needs a kinked-utility (case-piece)
+  Euler action, which the ride-along route does not yet compose with.
 
 Everything else — income, taxes, pensions, benefits, health transitions,
 survival, preference heterogeneity — is imported unchanged from the
@@ -42,7 +52,9 @@ from lcm import (
     Model,
     Regime,
     UniformObservedFixedCost,
+    affine_breakpoint,
     fixed_transition,
+    piecewise_affine,
 )
 from lcm.typing import (
     ContinuousAction,
@@ -129,13 +141,31 @@ def utility(
     return consumption_utility - work_disutility - effort_cost
 
 
-def cash_on_hand(
+def raw_cash_on_hand(
     net_income: FloatND,
     wealth: ContinuousState,
     gross_interest_rate: FloatND,
 ) -> FloatND:
-    """Liquid resources the inner consumption-saving problem divides."""
+    """Own liquid resources before transfers — affine in wealth per branch."""
     return net_income + wealth * gross_interest_rate
+
+
+@piecewise_affine(
+    "cash_on_hand",
+    variable="raw_cash_on_hand",
+    breakpoints=(affine_breakpoint("min_consumption", kind="continuous_kink"),),
+)
+def cash_on_hand(
+    raw_cash_on_hand: FloatND,
+    min_consumption: FloatND,
+) -> FloatND:
+    """Liquid resources the inner problem divides, floored by transfers.
+
+    The paper's guaranteed minimum consumption enters as a flat budget piece
+    where own resources fall below `min_consumption` (see the module
+    docstring for the exact Fortran-semantics deviation).
+    """
+    return jnp.maximum(raw_cash_on_hand, min_consumption)
 
 
 def saving(cash_on_hand: FloatND, consumption: ContinuousAction) -> FloatND:
@@ -248,6 +278,7 @@ def build_alive_regime(*, outer_search: AdaptiveOuterMesh | None = None) -> Regi
             "effort_cost": effort_cost,
             "consumption_utility": consumption_utility,
             "cash_on_hand": cash_on_hand,
+            "raw_cash_on_hand": raw_cash_on_hand,
             "saving": saving,
             "base_income": base_income,
             "income": income,
@@ -317,13 +348,12 @@ def create_mahler_yum_model(
 def adapt_params_to_paper_mode(model_params: dict) -> dict:
     """Rewrite brute-mode `create_inputs` params for the paper configuration.
 
-    Three mechanical changes: the `min_consumption` clamp has no consumer
-    (the exact credit-constrained corner replaces it), the adjustment-cost
-    envelope moves from the dropped `adjustment_cost_penalty` function to
-    `adjustment_cost_scale`, and everything else passes through unchanged.
+    One mechanical change: the adjustment-cost envelope moves from the
+    dropped `adjustment_cost_penalty` function to `adjustment_cost_scale`.
+    Everything else — including `min_consumption`, consumed here by the
+    floored `cash_on_hand` schedule — passes through unchanged.
     """
     adapted = dict(model_params)
-    adapted.pop("min_consumption", None)
     penalty = adapted.pop("adjustment_cost_penalty", None)
     if penalty is not None:
         adapted["adjustment_cost_scale"] = {
