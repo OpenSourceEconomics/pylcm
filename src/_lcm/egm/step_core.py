@@ -208,6 +208,18 @@ def _get_solve_one_combo(
         )
         candidate_policy = jnp.concatenate([constrained_actions, actions])
         candidate_value = jnp.concatenate([constrained_values, values])
+        # Exogenous source savings per candidate: the savings node for each Euler
+        # candidate (`endog_grid = savings_node + action`, so the implied
+        # `endog_grid - policy` equals it in exact arithmetic), the borrowing
+        # limit for the constrained candidates (their savings is pinned there).
+        # FUES compares these pristine sources instead of the lossy implied
+        # difference, so a same-source tie is never dropped by rounding.
+        candidate_savings = jnp.concatenate(
+            [
+                jnp.full_like(constrained_actions, pieces.borrowing_limit),
+                pieces.savings_nodes,
+            ]
+        )
         # A `-inf`-valued candidate (e.g. a corner whose continuation is
         # `-inf`) is dominated by every finite candidate and would inject
         # `-inf - (-inf) = NaN` into the envelope scan's gradient arithmetic.
@@ -234,6 +246,7 @@ def _get_solve_one_combo(
             policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
             value=jnp.where(candidate_dead, jnp.nan, candidate_value),
             marginal_utility=candidate_marginal,
+            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
         )
 
         V_row, value_row, marginal_utility_row = _publish_V_and_carry_rows(

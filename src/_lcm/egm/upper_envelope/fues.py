@@ -98,6 +98,26 @@ def _resolve_n_points_to_scan(n_points_to_scan: int | None, *, n_input: int) -> 
     return n_points_to_scan
 
 
+def _init_fues_carry(
+    *, first_point: Float1D, first_segment: ScalarFloat, first_savings: ScalarFloat
+) -> Float1D:
+    """Seed the FUES scan carry: k and j both the first sorted candidate.
+
+    Carry layout (flat `Float1D` so it threads through `jax.lax.scan`): the two
+    most recent envelope points, k then j, each as (grid, policy, value); their
+    segment labels (seg_k, seg_j); and the exogenous source savings of j
+    (`savings_j`, ignored on the noise-floor path). Initially k and j are the
+    first sorted candidate.
+    """
+    return jnp.concatenate(
+        [
+            first_point,
+            first_point,
+            jnp.stack([first_segment, first_segment, first_savings]),
+        ]
+    )
+
+
 def refine_envelope(
     *,
     endog_grid: Float1D,
@@ -107,6 +127,7 @@ def refine_envelope(
     jump_thresh: float = 2.0,
     n_points_to_scan: int | None = None,
     segment_id: Float1D | None = None,
+    savings: Float1D | None = None,
     scan_unroll: int = 1,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its upper envelope.
@@ -151,6 +172,16 @@ def refine_envelope(
             kink, not a value-segment switch, so labelling it would insert a
             spurious crossing; this parameter is the hook for a future
             notch/bracket model.
+        savings: Optional per-candidate exogenous source savings, aligned with
+            `endog_grid` — the exogenous savings grid point that generated each
+            candidate (equal to the implied savings `R - c` in exact arithmetic).
+            When supplied, the savings-monotonicity dominance clause compares
+            these true sources directly (`s_i < s_j` is a genuine decrease; equal
+            sources are ties, never dropped), which is exact and backend-stable.
+            `None` (the default) falls back to the magnitude-scaled noise floor on
+            the implied difference, which protects same-source ties against
+            rounding but can mask a real cross-source decrease when the resources
+            dwarf the savings span.
         scan_unroll: Loop-unroll factor for the sequential `jax.lax.scan` over
             candidates. Unrolling trades compile time for fewer loop-carry round
             trips on accelerators; the refined output is identical across values.
@@ -189,6 +220,12 @@ def refine_envelope(
         if segment_id is None
         else segment_id[order].astype(grid_sorted.dtype)
     )
+    use_savings = savings is not None
+    savings_sorted = (
+        savings[order].astype(grid_sorted.dtype)
+        if use_savings
+        else jnp.zeros_like(grid_sorted)
+    )
 
     # Pre-dedup copies: the dedup below collapses a coincident crossing to one
     # branch, so the post-pass recovers the dropped branch's policy/slope here to
@@ -206,14 +243,14 @@ def refine_envelope(
     grid_sorted = jnp.where(duplicate, jnp.nan, grid_sorted)
     policy_sorted = jnp.where(duplicate, jnp.nan, policy_sorted)
     value_sorted = jnp.where(duplicate, jnp.nan, value_sorted)
+    savings_sorted = jnp.where(duplicate, jnp.nan, savings_sorted)
 
     first_point = jnp.stack([grid_sorted[0], policy_sorted[0], value_sorted[0]])
     first_segment = segment_sorted[0]
-    # Carry layout: the two most recent envelope points, k then j, each as
-    # (grid, policy, value), then their segment labels (seg_k, seg_j). Initially
-    # both points are the first sorted candidate.
-    carry_init = jnp.concatenate(
-        [first_point, first_point, jnp.stack([first_segment, first_segment])]
+    carry_init = _init_fues_carry(
+        first_point=first_point,
+        first_segment=first_segment,
+        first_savings=savings_sorted[0],
     )
 
     def step(
@@ -227,6 +264,8 @@ def refine_envelope(
             policy_sorted=policy_sorted,
             value_sorted=value_sorted,
             segment_sorted=segment_sorted,
+            savings_sorted=savings_sorted,
+            use_savings=use_savings,
             jump_thresh=jump_thresh,
             n_points_to_scan=n_points_to_scan,
         )
@@ -454,6 +493,7 @@ def refine_to_bracket(
     jump_thresh: float = 2.0,
     n_points_to_scan: int | None = None,
     segment_id: Float1D | None = None,
+    savings: Float1D | None = None,
     scan_unroll: int = 1,
 ) -> QueryBracket:
     """Refine to the two envelope nodes bracketing a single query, streaming.
@@ -501,6 +541,9 @@ def refine_to_bracket(
             the stream exactly as `refine_envelope` recovers it. No production
             caller passes labels, so labelled strictly-between crossings are not
             asserted bracket-for-bracket against the full row.
+        savings: Optional per-candidate exogenous source savings (see
+            `refine_envelope`); the savings-monotonicity clause compares true
+            sources when supplied, else the noise floor.
         scan_unroll: Loop-unroll factor for the sequential `jax.lax.scan` over
             candidates (see `refine_envelope`); the captured bracket is identical
             across values.
@@ -523,6 +566,12 @@ def refine_to_bracket(
         if segment_id is None
         else segment_id[order].astype(grid_sorted.dtype)
     )
+    use_savings = savings is not None
+    savings_sorted = (
+        savings[order].astype(grid_sorted.dtype)
+        if use_savings
+        else jnp.zeros_like(grid_sorted)
+    )
 
     # Pre-dedup copies: the dedup below collapses a coincident crossing to one
     # branch, so the streamed bracket recovers the dropped branch's policy from
@@ -540,11 +589,14 @@ def refine_to_bracket(
     grid_sorted = jnp.where(duplicate, jnp.nan, grid_sorted)
     policy_sorted = jnp.where(duplicate, jnp.nan, policy_sorted)
     value_sorted = jnp.where(duplicate, jnp.nan, value_sorted)
+    savings_sorted = jnp.where(duplicate, jnp.nan, savings_sorted)
 
     first_point = jnp.stack([grid_sorted[0], policy_sorted[0], value_sorted[0]])
     first_segment = segment_sorted[0]
-    fues_carry_init = jnp.concatenate(
-        [first_point, first_point, jnp.stack([first_segment, first_segment])]
+    fues_carry_init = _init_fues_carry(
+        first_point=first_point,
+        first_segment=first_segment,
+        first_savings=savings_sorted[0],
     )
     bracket_carry_init = _empty_bracket_carry(dtype=grid_sorted.dtype)
 
@@ -560,6 +612,8 @@ def refine_to_bracket(
             policy_sorted=policy_sorted,
             value_sorted=value_sorted,
             segment_sorted=segment_sorted,
+            savings_sorted=savings_sorted,
+            use_savings=use_savings,
             jump_thresh=jump_thresh,
             n_points_to_scan=n_points_to_scan,
         )
@@ -797,6 +851,31 @@ def _apply_node_crossing_to_bracket(
     )
 
 
+def _judge_savings_decrease(
+    *,
+    use_savings: bool,
+    savings_i: ScalarFloat,
+    savings_j: ScalarFloat,
+    grid_i: ScalarFloat,
+    policy_i: ScalarFloat,
+    grid_j: ScalarFloat,
+    policy_j: ScalarFloat,
+) -> ScalarBool:
+    """Judge a savings decrease between two candidates.
+
+    With exogenous source savings the decrease is exact and backend-stable
+    (`s_i < s_j`; equal sources are ties, never dropped). Without them, the
+    noise floor on the implied difference `R - c` protects same-source ties from
+    rounding at the cost of masking a real cross-source decrease when resources
+    dwarf the savings span.
+    """
+    if use_savings:
+        return savings_i < savings_j
+    return _savings_decrease_past_noise(
+        grid_i=grid_i, policy_i=policy_i, grid_j=grid_j, policy_j=policy_j
+    )
+
+
 def _inspect_candidate(
     *,
     carry: Float1D,
@@ -805,6 +884,8 @@ def _inspect_candidate(
     policy_sorted: Float1D,
     value_sorted: Float1D,
     segment_sorted: Float1D,
+    savings_sorted: Float1D,
+    use_savings: bool,
     jump_thresh: float,
     n_points_to_scan: int,
 ) -> tuple[Float1D, tuple[Float1D, Float1D, Float1D, ScalarInt]]:
@@ -822,6 +903,11 @@ def _inspect_candidate(
         grid_sorted: Sorted candidate endogenous grid points.
         policy_sorted: Candidate policy values at `grid_sorted`.
         value_sorted: Candidate value-correspondence points at `grid_sorted`.
+        segment_sorted: Sorted candidate segment labels.
+        savings_sorted: Sorted candidate exogenous source savings (dummy zeros
+            when `use_savings` is false).
+        use_savings: When true, the savings-monotonicity clause compares
+            exogenous sources; otherwise it uses the noise-floor heuristic.
         jump_thresh: Threshold on $|\\Delta A / \\Delta R|$ above which two
             points lie on different segments.
         n_points_to_scan: Number of candidates the bounded scans inspect.
@@ -832,11 +918,14 @@ def _inspect_candidate(
         rows.
 
     """
-    grid_k, policy_k, value_k, grid_j, policy_j, value_j, seg_k, seg_j = carry
+    grid_k, policy_k, value_k, grid_j, policy_j, value_j, seg_k, seg_j, savings_j = (
+        carry
+    )
     grid_i = grid_sorted[idx]
     policy_i = policy_sorted[idx]
     value_i = value_sorted[idx]
     seg_i = segment_sorted[idx]
+    savings_i = savings_sorted[idx]
 
     candidate_valid = ~jnp.isnan(grid_i) & ~jnp.isnan(value_i)
     # Two points lie on different segments if the implied-savings policy jumps
@@ -875,8 +964,15 @@ def _inspect_candidate(
     # legitimately fall (the winning segment changes at a crossing), so a switch is
     # judged geometrically by `below_j_segment`, not by the raw value comparison —
     # otherwise the genuine crossing point of two branches is dropped as dominated.
-    savings_decrease = _savings_decrease_past_noise(
-        grid_i=grid_i, policy_i=policy_i, grid_j=grid_j, policy_j=policy_j
+    #
+    savings_decrease = _judge_savings_decrease(
+        use_savings=use_savings,
+        savings_i=savings_i,
+        savings_j=savings_j,
+        grid_i=grid_i,
+        policy_i=policy_i,
+        grid_j=grid_j,
+        policy_j=policy_j,
     )
     dropped = (
         ~candidate_valid
@@ -1047,6 +1143,9 @@ def _inspect_candidate(
     # segment), a plain accept carries the finalized `j`'s segment, and a
     # retained k keeps its own. New j is the accepted candidate `i`.
     new_k_seg = jnp.where(keeps_k, seg_k, jnp.where(kink_5 | kink_6, seg_i, seg_j))
+    # New j is the accepted candidate `i`, so its source savings become
+    # `savings_i`. Only `savings_j` is carried (the clause never reads a `k`
+    # source), so no `k` savings slot is threaded.
     carry_accepted = jnp.stack(
         [
             new_k_grid,
@@ -1057,6 +1156,7 @@ def _inspect_candidate(
             value_i,
             new_k_seg,
             seg_i,
+            savings_i,
         ]
     )
     carry_new = jnp.where(dropped, carry, carry_accepted)

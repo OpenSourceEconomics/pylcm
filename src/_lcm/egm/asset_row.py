@@ -179,6 +179,17 @@ def _get_solve_one_combo_asset_rows(
             )
             candidate_policy = jnp.concatenate([constrained_actions, actions])
             candidate_value = jnp.concatenate([constrained_values, values])
+            # Exogenous source savings per candidate: the savings node for each
+            # Euler candidate (`endog_grid = savings_node + action`, so the
+            # implied `endog_grid - policy` equals it in exact arithmetic), the
+            # borrowing limit for the constrained candidates (their savings is
+            # pinned there). FUES compares these pristine sources exactly.
+            candidate_savings = jnp.concatenate(
+                [
+                    jnp.full_like(constrained_actions, pieces.borrowing_limit),
+                    pieces.savings_nodes,
+                ]
+            )
             # Same `-inf` masking as the default per-combo computation: dead
             # candidates become the envelope scan's absent form (NaN).
             candidate_dead = jnp.isneginf(candidate_value)
@@ -198,6 +209,7 @@ def _get_solve_one_combo_asset_rows(
                 policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
                 value=jnp.where(candidate_dead, jnp.nan, candidate_value),
                 marginal_utility=candidate_marginal,
+                savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
                 x_query=resources_at_node,
             )
 

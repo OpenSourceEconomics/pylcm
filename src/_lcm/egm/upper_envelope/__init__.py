@@ -58,14 +58,18 @@ class UpperEnvelopeBackend(Protocol):
         policy: Float1D,
         value: Float1D,
         marginal_utility: Float1D,
+        savings: Float1D,
     ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
         """Return refined (grid, policy, value) rows and the kept-point count.
 
         The supgradient `marginal_utility` carries $\\mu = \\partial v /
         \\partial R$ per candidate — the exact value-row slope by the envelope
-        theorem. The refined rows are NaN-padded to a static length; a
-        kept-point count exceeding that length signals overflow (the rows then
-        hold a truncated prefix of the envelope).
+        theorem. `savings` carries each candidate's exogenous source savings
+        (the savings node for Euler candidates, the borrowing limit for
+        constrained ones); FUES uses it to judge savings monotonicity exactly,
+        the other backends ignore it. The refined rows are NaN-padded to a
+        static length; a kept-point count exceeding that length signals overflow
+        (the rows then hold a truncated prefix of the envelope).
         """
         ...
 
@@ -91,11 +95,13 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
         ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
             """Run the FUES scan with the solver's thresholds.
 
             FUES recovers segment slopes from its own forward scan, so the
-            candidate supgradient is not consumed.
+            candidate supgradient is not consumed; the exogenous source savings
+            resolve the savings-monotonicity test exactly.
             """
             del marginal_utility
             return refine_envelope_fues(
@@ -105,6 +111,7 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
                 n_refined=n_refined,
                 jump_thresh=solver.fues_jump_thresh,
                 n_points_to_scan=solver.fues_n_points_to_scan,
+                savings=savings,
                 scan_unroll=solver.fues_scan_unroll,
             )
 
@@ -118,8 +125,14 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
         ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-            """Run the rooftop cut with the solver's thresholds."""
+            """Run the rooftop cut with the solver's thresholds.
+
+            The exogenous source savings are a FUES-only refinement; RFC judges
+            monotonicity from its own geometry.
+            """
+            del savings
             return refine_envelope_rfc(
                 endog_grid=endog_grid,
                 policy=policy,
@@ -140,13 +153,14 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
         ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
             """Run the brute local-upper-bound scan.
 
-            LTM recovers segment slopes from the candidate chain, so the
-            candidate supgradient is not consumed.
+            LTM recovers segment slopes from the candidate chain, so neither the
+            candidate supgradient nor the exogenous source savings are consumed.
             """
-            del marginal_utility
+            del marginal_utility, savings
             return refine_envelope_ltm(
                 endog_grid=endog_grid,
                 policy=policy,
@@ -164,13 +178,14 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
         ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
             """Run HARK's EGM upper-envelope sweep with crossing insertion.
 
-            MSS recovers segment slopes from the candidate chain, so the
-            candidate supgradient is not consumed.
+            MSS recovers segment slopes from the candidate chain, so neither the
+            candidate supgradient nor the exogenous source savings are consumed.
             """
-            del marginal_utility
+            del marginal_utility, savings
             return refine_envelope_mss(
                 endog_grid=endog_grid,
                 policy=policy,
@@ -228,12 +243,14 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
             x_query: ScalarFloat,
         ) -> QueryBracket:
             """Run the streaming FUES scan with the solver's thresholds.
 
             FUES recovers segment slopes from its own forward scan, so the
-            candidate supgradient is not consumed.
+            candidate supgradient is not consumed; the exogenous source savings
+            resolve the savings-monotonicity test exactly.
             """
             del marginal_utility
             return refine_to_bracket(
@@ -243,6 +260,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
                 x_query=x_query,
                 jump_thresh=solver.fues_jump_thresh,
                 n_points_to_scan=solver.fues_n_points_to_scan,
+                savings=savings,
                 scan_unroll=solver.fues_scan_unroll,
             )
 
@@ -256,6 +274,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
             x_query: ScalarFloat,
         ) -> QueryBracket:
             """Locate the query bracket from RFC's full refined envelope.
@@ -264,8 +283,10 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             the bracket the row path would: the `searchsorted(side="right")`
             pair clamped to `[1, max(n_kept - 1, 1)]` (the
             `interp_on_prepared_grid` rule), so the published value cannot
-            diverge from full-envelope-then-interpolate.
+            diverge from full-envelope-then-interpolate. The exogenous source
+            savings are a FUES-only refinement.
             """
+            del savings
             refined_grid, refined_policy, refined_value, n_kept = refine_envelope_rfc(
                 endog_grid=endog_grid,
                 policy=policy,
@@ -293,6 +314,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
             x_query: ScalarFloat,
         ) -> QueryBracket:
             """Locate the query bracket from LTM's full refined envelope.
@@ -303,9 +325,10 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             `interp_on_prepared_grid` rule), so the published value cannot
             diverge from full-envelope-then-interpolate. Like RFC, LTM has no
             sequential carry to stream a bracket from, so it does not get
-            refine-to-query's `n_pad` memory win.
+            refine-to-query's `n_pad` memory win; the exogenous source savings
+            are a FUES-only refinement.
             """
-            del marginal_utility
+            del marginal_utility, savings
             refined_grid, refined_policy, refined_value, n_kept = refine_envelope_ltm(
                 endog_grid=endog_grid,
                 policy=policy,
@@ -330,6 +353,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
             x_query: ScalarFloat,
         ) -> QueryBracket:
             """Locate the query bracket from MSS's full refined envelope.
@@ -340,9 +364,10 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             rule), so the published value cannot diverge from
             full-envelope-then-interpolate. Like RFC and LTM, MSS has no
             sequential carry to stream a bracket from, so it does not get
-            refine-to-query's `n_pad` memory win.
+            refine-to-query's `n_pad` memory win; the exogenous source savings
+            are a FUES-only refinement.
             """
-            del marginal_utility
+            del marginal_utility, savings
             refined_grid, refined_policy, refined_value, n_kept = refine_envelope_mss(
                 endog_grid=endog_grid,
                 policy=policy,

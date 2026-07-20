@@ -115,6 +115,75 @@ def test_tied_savings_keep_all_nodes_under_ulp_perturbation():
     assert int(n_kept_perturbed) == 8
 
 
+def _cross_source_masked_decrease_candidates():
+    """A genuine savings decrease the magnitude-scaled float32 floor masks.
+
+    Three ascending-grid candidates with large resources so the noise floor
+    `16 * eps * max(|R|, |c|)` (~0.19 in float32 at this magnitude) exceeds the
+    real savings step. Exogenous source savings are `[2.0, 1.0, 0.875]`: the top
+    candidate genuinely saves 0.125 less than its predecessor (from a distinct
+    source), a decrease the floor swallows but provenance resolves exactly. Value
+    keeps rising, so only the savings-monotonicity clause can drop the top node.
+    """
+    grid = jnp.asarray([100_000.0, 100_001.0, 100_002.0], dtype=jnp.float32)
+    policy = jnp.asarray([99_998.0, 100_000.0, 100_001.125], dtype=jnp.float32)
+    value = jnp.asarray([10.0, 10.5, 10.55], dtype=jnp.float32)
+    savings = jnp.asarray([2.0, 1.0, 0.875], dtype=jnp.float32)
+    return grid, policy, value, savings
+
+
+def test_savings_floor_masks_a_cross_source_decrease_without_provenance():
+    """Without source savings, the float32 floor keeps a genuinely dominated node.
+
+    The magnitude-scaled noise floor treats the real 0.125 savings decrease as a
+    tie, so the top candidate survives refinement even though its exogenous
+    savings fell below its predecessor's.
+    """
+    grid, policy, value, _ = _cross_source_masked_decrease_candidates()
+
+    _, _, _, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=8
+    )
+
+    assert int(n_kept) == 3
+
+
+def test_savings_provenance_drops_a_cross_source_decrease():
+    """Source savings resolve a cross-source decrease the floor would mask.
+
+    Passing the exogenous source savings makes the monotonicity clause compare
+    true sources (`0.875 < 1.0`) exactly rather than the floor-masked implied
+    difference, so the dominated top candidate is dropped.
+    """
+    grid, policy, value, savings = _cross_source_masked_decrease_candidates()
+
+    _, _, _, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=8, savings=savings
+    )
+
+    assert int(n_kept) == 2
+
+
+def test_savings_provenance_protects_same_source_ties():
+    """Candidates sharing one exogenous savings source are never dropped as a decrease.
+
+    On a rising concave segment every candidate saves the same amount, so their
+    implied savings are equal in exact arithmetic and their source savings are
+    identical. Comparing sources (`s_i < s_j` is false at equality) keeps every
+    node on the envelope regardless of rounding in the implied difference.
+    """
+    grid = jnp.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
+    policy = grid - 0.01
+    value = jnp.log(grid)
+    savings = jnp.full_like(grid, 0.01)
+
+    _, _, _, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=12, savings=savings
+    )
+
+    assert int(n_kept) == 8
+
+
 def test_steep_but_continuous_policy_is_not_treated_as_a_switch():
     """`|ΔA/ΔR|` just below the threshold leaves a single segment untouched."""
     grid = jnp.linspace(1.0, 5.0, 9)

@@ -316,7 +316,11 @@ def test_rfc_backend_is_selected_by_solver_config():
 
     grid, policy, value, marginal = _crossing_segments_candidates()
     via_backend = backend(
-        endog_grid=grid, policy=policy, value=value, marginal_utility=marginal
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal,
+        savings=grid - policy,
     )
     direct = rfc.refine_envelope(
         endog_grid=grid,
@@ -349,7 +353,13 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
 
     refined_grid, refined_policy, refined_value, n_kept = get_upper_envelope(
         solver=solver, n_refined=n_pad
-    )(endog_grid=grid, policy=policy, value=value, marginal_utility=marginal)
+    )(
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal,
+        savings=grid - policy,
+    )
 
     query = jnp.asarray(x_query)
     ref_value = interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_value)
@@ -362,6 +372,7 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
         policy=policy,
         value=value,
         marginal_utility=marginal,
+        savings=grid - policy,
         x_query=query,
     )
 
