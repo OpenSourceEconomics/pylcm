@@ -47,6 +47,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ActionName, FloatND, FunctionName, StateName
 
+
 @dataclass(frozen=True, kw_only=True)
 class NNBEGMInnerSpec:
     """Normalized view of a 1-D inner EGM solver config for nested outer search.
@@ -527,5 +528,3 @@ def _fail_if_nnbegm_carry_publishes_topology_rows(
             "declared jump breakpoints."
         )
         raise RegimeInitializationError(msg)
-
-
