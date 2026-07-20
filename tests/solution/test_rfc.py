@@ -36,7 +36,7 @@ import numpy as np
 import pytest
 
 from _lcm.egm.interp import interp_on_padded_grid
-from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope
+from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope, rfc
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
@@ -55,11 +55,6 @@ def _rfc_solver():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
         upper_envelope="rfc",
     )
-
-
-rfc = pytest.importorskip(
-    "_lcm.egm.upper_envelope.rfc", reason="RFC kernel not yet implemented"
-)
 
 
 def _drop_nan(arr: jnp.ndarray) -> np.ndarray:

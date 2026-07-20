@@ -4,7 +4,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pytest
-from numpy.testing import assert_array_equal
+from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from _lcm.params.processing import (
@@ -486,6 +486,25 @@ def test_partial_state_laws_solve_with_declared_targets():
         work_transition=work_transition, next_regime_func=_next_regime
     )
     period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
+
+    # Consumption is unconstrained by wealth in this model, so the optimum is
+    # the largest consumption node (c = 2) in every state, giving flow utility
+    # log(2) each active period. The value is the discounted sum of log(2) over
+    # the remaining active periods (discount_factor 0.9) and is constant across
+    # the (health, wealth) grid; the terminal "dead" regime yields exactly 0.
+    log_two = float(jnp.log(2.0))
+    beta = 0.9
+    expected_alive = {
+        0: log_two * (1 + beta + beta**2),
+        1: log_two * (1 + beta),
+        2: log_two,
+    }
+    for period, expected in expected_alive.items():
+        for regime_name in ("work", "retire"):
+            V_arr = period_to_regime_to_V_arr[period][regime_name]
+            assert V_arr.shape == (2, 3)
+            assert_allclose(V_arr, expected, atol=1e-5)
     for regime_to_V_arr in period_to_regime_to_V_arr.values():
-        for V_arr in regime_to_V_arr.values():
-            assert not jnp.any(jnp.isnan(V_arr))
+        dead_V = regime_to_V_arr["dead"]
+        assert dead_V.shape == ()
+        assert_allclose(dead_V, 0.0, atol=1e-6)

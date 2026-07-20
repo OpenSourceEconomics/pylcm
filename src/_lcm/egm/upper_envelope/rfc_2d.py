@@ -95,7 +95,18 @@ def rfc_delete_mask_2d(
 
     tangent = jnp.einsum("id,ijd->ij", supgradients, diff)
     value_gap = values[None, :] - values[:, None]
-    below_tangent = value_gap < tangent
+    # Delete a candidate only when it lies below the neighbour's tangent plane
+    # past a scale-aware noise floor. `tangent` is an einsum reduction whose
+    # rounding sign follows the backend's summation order, so a candidate exactly
+    # on the plane would otherwise be dropped on one backend and kept on another.
+    # Keeping on the tie is the conservative direction (an on-plane point is on
+    # the envelope). Mirrors the savings-tie floor in `fues.py`.
+    noise_floor = (
+        16.0
+        * jnp.finfo(values.dtype).eps
+        * jnp.maximum(jnp.abs(value_gap), jnp.abs(tangent))
+    )
+    below_tangent = value_gap < tangent - noise_floor
 
     selector = policies[:, 0]
     policy_gap = jnp.abs(selector[None, :] - selector[:, None])

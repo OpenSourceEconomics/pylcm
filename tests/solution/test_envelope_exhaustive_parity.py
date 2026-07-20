@@ -1,11 +1,11 @@
 """The JAX first envelope matches an independent exhaustive host-side reference.
 
-The v3 oracle's mandatory gate for the upper-envelope kernel is an exhaustive
-all-simplex reference: on a tiny mesh, enumerate every triangle for every target, apply
-the exact admissibility and feasibility rules, recompute every objective, and take the
-maximum on the host. This module implements that reference in NumPy — independent of the
-production `first_envelope` — and asserts the two agree, including the audit's F3 case
-where an admissible-but-extrapolated triangle holds the maximizer.
+The correctness gate for the upper-envelope kernel is an exhaustive all-simplex
+reference: on a tiny mesh, enumerate every triangle for every target, apply the exact
+admissibility and feasibility rules, recompute every objective, and take the maximum on
+the host. This module implements that reference in NumPy — independent of the production
+`first_envelope` — and asserts the two agree, including the case where an
+admissible-but-extrapolated triangle holds the maximizer.
 """
 
 import jax.numpy as jnp
@@ -98,7 +98,7 @@ def _affine_two_asset_objective(*, post_value_coeffs, discount_factor, crra, dom
     return objective
 
 
-def test_first_envelope_matches_exhaustive_on_the_f3_extrapolation_case():
+def test_first_envelope_matches_exhaustive_when_extrapolated_triangle_holds_maximizer():
     """On the admissible-extrapolation mesh the JAX envelope equals the reference."""
     mesh = SegmentMesh(
         region_label=0,

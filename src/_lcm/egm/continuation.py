@@ -1378,98 +1378,43 @@ def _aggregate_child_choices(
         marginal_at_child = jax.vmap(_interp_row)(
             search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
         )
+    # The passive blend interpolates a list of finite marginal-like payloads.
+    # The regular path carries the single marginal read; the stacked NEGM path
+    # carries side-separated payloads plus a right-liveness indicator, so the
+    # ownership side is chosen after the blend rather than committed per node.
     if n_outer_candidates:
-        # Below a candidate's own first finite coh node its support has not
-        # started: mask the read to `-inf` so the edge clamp cannot hand an
-        # infeasible lifted candidate a boundary value that wins the max. The
-        # `-inf` also pins the marginal to zero below. The germs of each
-        # candidate's value read feed the tie rule at the candidate max; they
-        # need no support mask of their own — the left germ is dead at or
-        # below the first finite node by construction, and a below-support
-        # candidate enters the tie set only when every candidate is below
-        # support, where all published marginals are exactly zero regardless
-        # of the winner.
-        right_germ_at_child, left_germ_at_child, left_marginal_at_child = jax.vmap(
-            _germ_and_left_record_rows
-        )(search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat)
-        row_lower = jnp.min(
-            jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1
-        )
-        # Only rows with a finite first node have a support to fall below;
-        # `row_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read
-        # must reach the candidate maximum fail-loud instead of becoming an
-        # ordinary infeasible `(-inf, 0)` pair.
-        below_row_support = (queries_flat < row_lower) & jnp.isfinite(row_lower)
-        value_at_child = jnp.where(below_row_support, -jnp.inf, value_at_child)
-        # Strictly above a candidate's own last finite node its value read is
-        # a constant clamp: re-pin both marginal payloads to zero per
-        # candidate, BEFORE the collapse, so an earlier-ending clamp winner
-        # publishes the locally constant envelope's zero slope instead of a
-        # terminal record from a node strictly below the query. At exact
-        # equality the node's own record stands; `row_upper` is `-inf` on an
-        # all-NaN row (mask off — the NaN read stays poisonous).
-        row_upper = jnp.max(
-            jnp.where(jnp.isfinite(grid_rows), grid_rows, -jnp.inf), axis=1
-        )
-        above_row_support = (queries_flat > row_upper) & jnp.isfinite(row_upper)
-        marginal_at_child = jnp.where(above_row_support, 0.0, marginal_at_child)
-        left_marginal_at_child = jnp.where(
-            above_row_support, 0.0, left_marginal_at_child
-        )
-        # The paired (Epstein-Zin) marginal is the value interpolant's own
-        # derivative; its left-record payload follows the same convention as a
-        # side-aware paired read: the derivative of the value object seen from
-        # the LEFT of the query, so a left-owned tie at a duplicated terminal
-        # abscissa publishes the left duplicate's piece slope, not the
-        # ordinary right/clamp derivative.
-        if paired_marginal_read:
-            left_marginal_at_child = jax.vmap(_left_slope_row)(
-                search_rows,
-                valid_rows,
-                grid_rows,
-                value_rows,
-                marginal_rows,
-                queries_flat,
-            )
-            left_marginal_at_child = jnp.where(
-                above_row_support, 0.0, left_marginal_at_child
-            )
-    # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
-    # exactly-zero marginal utility, so an infeasible-everywhere row reads as
-    # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
-    # bequest at zero wealth) keeps its finite region intact. A `-inf` value
-    # read pins the marginal read to zero so the pair stays consistent at
-    # queries clamped onto a `-inf` node.
-    marginal_at_child = jnp.where(
-        jnp.isneginf(value_at_child), 0.0, marginal_at_child * gradients_flat
-    )
-    value_at_child = value_at_child.reshape(block_shape)
-    marginal_at_child = marginal_at_child.reshape(block_shape)
-    if n_outer_candidates:
-        # The left-record payload gets the same gradient scaling and the same
-        # `(-inf, 0)` pin as the ordinary marginal read.
-        left_marginal_at_child = jnp.where(
-            jnp.isneginf(value_at_child.reshape(-1)),
-            0.0,
-            left_marginal_at_child * gradients_flat,
-        )
-        value_at_child, marginal_at_child = _collapse_stacked_candidates(
+        value_at_child, marginal_arrays = _stacked_blend_payloads(
             value_at_child=value_at_child,
             marginal_at_child=marginal_at_child,
-            left_marginal_at_child=left_marginal_at_child.reshape(block_shape),
-            right_germ_at_child=tuple(
-                component.reshape(block_shape) for component in right_germ_at_child
-            ),
-            left_germ_at_child=tuple(
-                component.reshape(block_shape) for component in left_germ_at_child
-            ),
+            search_rows=search_rows,
+            valid_rows=valid_rows,
+            grid_rows=grid_rows,
+            value_rows=value_rows,
+            marginal_rows=marginal_rows,
+            queries_flat=queries_flat,
+            gradients_flat=gradients_flat,
+            block_shape=block_shape,
+            paired_marginal_read=paired_marginal_read,
         )
+    else:
+        # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
+        # exactly-zero marginal utility, so an infeasible-everywhere row reads
+        # as the `-inf` / zero pair while a row with isolated `-inf` nodes
+        # (e.g. a bequest at zero wealth) keeps its finite region intact. A
+        # `-inf` value read pins the marginal read to zero so the pair stays
+        # consistent at queries clamped onto a `-inf` node.
+        marginal_at_child = jnp.where(
+            jnp.isneginf(value_at_child), 0.0, marginal_at_child * gradients_flat
+        )
+        value_at_child = value_at_child.reshape(block_shape)
+        marginal_arrays = [marginal_at_child.reshape(block_shape)]
 
     value_at_child, marginal_at_child = _blend_passive_axes(
         value_at_child=value_at_child,
-        marginal_at_child=marginal_at_child,
+        marginal_arrays=marginal_arrays,
         child_passive_values=child_passive_values,
         child_passive_grids=child_passive_grids,
+        n_outer_candidates=n_outer_candidates,
     )
 
     value_at_child = value_at_child.reshape(-1)
@@ -1489,25 +1434,35 @@ def _aggregate_child_choices(
 def _blend_passive_axes(
     *,
     value_at_child: FloatND,
-    marginal_at_child: FloatND,
+    marginal_arrays: list[FloatND],
     child_passive_values: tuple[ScalarFloat, ...],
     child_passive_grids: tuple[Float1D, ...],
+    n_outer_candidates: int,
 ) -> tuple[FloatND, FloatND]:
     """Blend each passive axis away with edge-clamped linear node weights.
 
     Runs before the choice aggregation, so the logsum sees blended
-    choice-specific values.
+    choice-specific values. Every marginal-like payload is blended through the
+    same node weights; the ownership side is chosen only after the blend
+    (`_choose_blended_side`), so a blend of heterogeneous-support nodes stays
+    inside the blended read's generalized gradient instead of averaging
+    independently side-committed marginals.
 
     Args:
         value_at_child: Read values with the row block's shape (passive dims,
             then action dims).
-        marginal_at_child: Read marginals with the same shape.
+        marginal_arrays: List of marginal-like payloads with the same shape —
+            the single marginal read on the regular path, the
+            `[right_side, left_side, right_alive]` triple on the stacked path.
         child_passive_values: The child's passive values at this savings node,
             aligned with `child_passive_grids`.
         child_passive_grids: The child's passive grids in carry-axis order.
+        n_outer_candidates: Candidate-axis length of a stacked NEGM child
+            carry, `0` for a child without one; selects the side-choice rule.
 
     Returns:
-        Tuple of the value and marginal with every passive axis blended away.
+        Tuple of the value and published marginal with every passive axis
+        blended away.
 
     """
     for passive_value, passive_grid in zip(
@@ -1524,12 +1479,17 @@ def _blend_passive_axes(
         value_at_child = jnp.where(
             weight_lower > 0.0, weight_lower * value_at_child[lower], 0.0
         ) + jnp.where(weight_upper > 0.0, weight_upper * value_at_child[upper], 0.0)
-        # Marginal rows are finite everywhere (exactly 0.0 on infeasible
-        # rows), so a plain blend never produces NaN.
-        marginal_at_child = (
-            weight_lower * marginal_at_child[lower]
-            + weight_upper * marginal_at_child[upper]
-        )
+        # Marginal-like payloads are finite everywhere (exactly 0.0 on
+        # infeasible rows), so a plain blend never produces NaN.
+        marginal_arrays = [
+            weight_lower * arr[lower] + weight_upper * arr[upper]
+            for arr in marginal_arrays
+        ]
+
+    marginal_at_child = _choose_blended_side(
+        marginal_arrays=marginal_arrays, n_outer_candidates=n_outer_candidates
+    )
+
     # A positive-weight blend of a dead node with a live one yields a `-inf`
     # value alongside a finite averaged marginal; re-pin the marginal to zero
     # so the `(-inf, 0)` infeasible pair survives the passive blend and no
@@ -1565,6 +1525,127 @@ def _fail_if_carry_shape_mismatches_declaration(
             "candidate-axis structure of the carry it publishes."
         )
         raise ValueError(msg)
+
+
+def _stacked_blend_payloads(
+    *,
+    value_at_child: FloatND,
+    marginal_at_child: FloatND,
+    search_rows: FloatND,
+    valid_rows: IntND,
+    grid_rows: FloatND,
+    value_rows: FloatND,
+    marginal_rows: FloatND,
+    queries_flat: FloatND,
+    gradients_flat: FloatND,
+    block_shape: tuple[int, ...],
+    paired_marginal_read: bool,
+) -> tuple[FloatND, list[FloatND]]:
+    """Collapse a stacked candidate axis into passive-blend payloads.
+
+    Masks each candidate to `-inf` below its own first finite coh node (so the
+    edge clamp cannot hand an infeasible lifted candidate a boundary value that
+    wins the max), reads the right/left germs and the left record, applies the
+    `(-inf, 0)` pin and the composed gradient scaling, and collapses the
+    candidate axis via `_collapse_stacked_candidates`. The germs of each
+    candidate's value read feed the tie rule at the candidate max; they need no
+    support mask of their own — the left germ is dead at or below the first
+    finite node by construction, and a below-support candidate enters the tie
+    set only when every candidate is below support, where all published
+    marginals are exactly zero regardless of the winner.
+
+    Under `paired_marginal_read` both side payloads are the value
+    interpolant's own one-sided derivatives (the Epstein-Zin transform
+    marginal): the caller passes the paired right derivative as
+    `marginal_at_child` and the left payload is re-read as the paired left
+    slope instead of the linear left record.
+
+    Returns:
+        Tuple of the reshaped value maximum and the finite marginal-like
+        payloads `[right_side, left_side, right_alive]` for the passive blend.
+
+    """
+    right_germ_at_child, left_germ_at_child, left_marginal_at_child = jax.vmap(
+        _germ_and_left_record_rows
+    )(search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat)
+    # Only rows with a finite first node have a support to fall below;
+    # `row_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read must
+    # reach the candidate maximum fail-loud instead of becoming an ordinary
+    # infeasible `(-inf, 0)` pair. `row_upper` is `-inf` on the same row.
+    row_lower = jnp.min(jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1)
+    row_upper = jnp.max(jnp.where(jnp.isfinite(grid_rows), grid_rows, -jnp.inf), axis=1)
+    below_row_support = (queries_flat < row_lower) & jnp.isfinite(row_lower)
+    value_at_child = jnp.where(below_row_support, -jnp.inf, value_at_child)
+    # Strictly above a candidate's own last finite node its value read is a
+    # constant clamp: re-pin both marginal payloads to zero per candidate,
+    # before the collapse, so an earlier-ending clamp winner publishes the
+    # locally constant envelope's zero slope instead of a terminal record from
+    # a node strictly below the query. At exact equality the node's own record
+    # stands.
+    above_row_support = (queries_flat > row_upper) & jnp.isfinite(row_upper)
+    marginal_at_child = jnp.where(above_row_support, 0.0, marginal_at_child)
+    left_marginal_at_child = jnp.where(above_row_support, 0.0, left_marginal_at_child)
+    # The paired (Epstein-Zin) marginal is the value interpolant's own
+    # derivative; its left payload follows the same convention: the derivative
+    # of the value object seen from the LEFT of the query, so a left-owned tie
+    # at a duplicated terminal abscissa publishes the left duplicate's piece
+    # slope, not the ordinary right/clamp derivative.
+    if paired_marginal_read:
+        left_marginal_at_child = jax.vmap(_left_slope_row)(
+            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+        )
+        left_marginal_at_child = jnp.where(
+            above_row_support, 0.0, left_marginal_at_child
+        )
+    # The right-continuous payload additionally clamps to zero *at* the last
+    # finite node (the value read is already flat to the right there, so the
+    # node contributes a zero right-derivative to a passive blend), and the
+    # left-continuous payload *at* the first finite node. These inclusive flags
+    # let the blend mix a side-dead node with a live one without averaging the
+    # dead node's boundary record into the published one-sided marginal.
+    at_or_above_row_support = (queries_flat >= row_upper) & jnp.isfinite(row_upper)
+    at_or_below_row_support = (queries_flat <= row_lower) & jnp.isfinite(row_lower)
+    # `-inf` value reads pin both marginal payloads to zero (the `(-inf, 0)`
+    # infeasible contract) and both carry the composed gradient scaling.
+    is_dead = jnp.isneginf(value_at_child)
+    marginal_at_child = jnp.where(is_dead, 0.0, marginal_at_child * gradients_flat)
+    left_marginal_at_child = jnp.where(
+        is_dead, 0.0, left_marginal_at_child * gradients_flat
+    )
+    value_at_child, right_side, left_side, right_alive = _collapse_stacked_candidates(
+        value_at_child=value_at_child.reshape(block_shape),
+        ordinary_marginal_at_child=marginal_at_child.reshape(block_shape),
+        left_marginal_at_child=left_marginal_at_child.reshape(block_shape),
+        right_dead_at_child=at_or_above_row_support.reshape(block_shape),
+        left_dead_at_child=at_or_below_row_support.reshape(block_shape),
+        right_germ_at_child=tuple(
+            component.reshape(block_shape) for component in right_germ_at_child
+        ),
+        left_germ_at_child=tuple(
+            component.reshape(block_shape) for component in left_germ_at_child
+        ),
+    )
+    return value_at_child, [right_side, left_side, right_alive]
+
+
+def _choose_blended_side(
+    *, marginal_arrays: list[FloatND], n_outer_candidates: int
+) -> FloatND:
+    """Pick the published marginal from the blended payloads.
+
+    The regular path carries the single blended marginal. The stacked NEGM path
+    chooses the ownership side after the blend: where any positive-weight node
+    keeps a live right derivative, the right-continuous marginal is the
+    subgradient the parent's Euler inversion consumes; where every contributing
+    node is right-dead (a shared terminal), the left-continuous record applies.
+    This keeps the published marginal inside the blended read's generalized
+    gradient even when the blended nodes own opposite sides.
+    """
+    if n_outer_candidates:
+        right_side, left_side, right_alive = marginal_arrays
+        return jnp.where(right_alive > 0.0, right_side, left_side)
+    (marginal_at_child,) = marginal_arrays
+    return marginal_at_child
 
 
 def _interp_value_row(
@@ -1700,69 +1781,88 @@ def _germ_and_left_record_rows(
 def _collapse_stacked_candidates(
     *,
     value_at_child: FloatND,
-    marginal_at_child: FloatND,
+    ordinary_marginal_at_child: FloatND,
     left_marginal_at_child: FloatND,
+    right_dead_at_child: BoolND,
+    left_dead_at_child: BoolND,
     right_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
     left_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
-) -> tuple[FloatND, FloatND]:
+) -> tuple[FloatND, FloatND, FloatND, FloatND]:
     """Collapse the candidate axis by the exact hard max at the query.
 
-    Publishes the winner's marginal (Danskin). This runs *before* the passive
-    blend so the blend interpolates the nodewise outer maximum. An exact value
-    tie resolves right-continuously in the value read itself: the tied
-    candidates are compared by the complete right germ of their own value
-    interpolants (`right_germ_winner` — right-finiteness, then the first three
-    one-sided derivatives), so the branch whose read actually wins immediately
-    to the right owns the (economic) marginal the parent's Euler inversion
-    consumes; right-identical candidates (a shared terminal abscissa, where
-    every candidate clamps) are separated by their left germs so the marginal
-    stays inside the envelope's generalized gradient at the boundary, and only
-    branches identical on both sides fall back to the lowest index. The
-    published payload follows the ownership side: on left-owned cells the
-    winner's *left-record* marginal applies, so a winner whose terminal
-    abscissa is duplicated publishes the left duplicate's record — the one
-    that justified ownership — not the right one. (The germs use the
-    unscaled interpolant derivatives: the composed gradient is shared by all
-    candidates of a cell and positive, so scaling could never reorder them.)
-    A cell whose candidates are all `-inf` (no live support) keeps the
-    `(-inf, 0)` infeasible contract: every masked marginal is exactly zero.
+    This runs *before* the passive blend, so the blend interpolates the
+    nodewise outer maximum. An exact value tie resolves right-continuously in
+    the value read itself: the tied candidates are compared by the complete
+    right germ of their own value interpolants (`right_germ_winner` —
+    right-finiteness, then the first three one-sided derivatives), so the
+    branch whose read actually wins immediately to the right owns the marginal
+    the parent's Euler inversion consumes; right-identical candidates (a shared
+    terminal abscissa, where every candidate clamps) are separated by their
+    left germs, and only branches identical on both sides fall back to the
+    lowest index. (The germs use the unscaled interpolant derivatives: the
+    composed gradient is shared by all candidates of a cell and positive, so
+    scaling could never reorder them.)
+
+    Rather than commit the ownership side per cell, the collapse publishes both
+    the winner's right-continuous marginal (zero once its right side is dead —
+    at or above its last finite node) and its left-continuous record, plus a
+    `right_alive` indicator. The passive blend interpolates all three and the
+    side is chosen after it, so a blend of heterogeneous-support nodes stays
+    inside the blended read's generalized gradient instead of averaging
+    independently side-committed marginals. With no passive blend the choice
+    reduces to the per-node contract: an interior winner publishes its ordinary
+    marginal, a terminal (right-dead) winner its left record — the left
+    duplicate at a shared terminal abscissa. A cell whose candidates are all
+    `-inf` (no live support) keeps the `(-inf, 0)` infeasible contract: every
+    masked marginal is exactly zero.
 
     Args:
         value_at_child: Candidate value reads; the candidate axis is last.
-        marginal_at_child: Gradient-scaled candidate marginal reads, same shape.
+        ordinary_marginal_at_child: Gradient-scaled right-continuous candidate
+            marginal reads, same shape.
         left_marginal_at_child: Gradient-scaled left-record marginal reads
             (`interp_left_record_on_prepared_grid`), same shape.
+        right_dead_at_child: Per candidate, whether the query is at or above the
+            candidate's last finite node (its right side is a flat clamp).
+        left_dead_at_child: Per candidate, whether the query is at or below the
+            candidate's first finite node (its left side is a flat clamp).
         right_germ_at_child: Tuple of the right-finiteness flag and the first
             three right derivatives of the candidate value reads, same shape.
         left_germ_at_child: Tuple of the left-finiteness flag and the first
             three left derivatives of the candidate value reads, same shape.
 
     Returns:
-        Tuple of the winner's value and marginal, with the candidate axis
-        collapsed.
+        Tuple of the collapsed value maximum, the winner's right-continuous
+        marginal, its left-continuous record, and the `right_alive` indicator
+        (1.0 where the winner's right side is live, 0.0 where it is dead).
 
     """
-    winner, left_owned = right_germ_winner(
+    winner = right_germ_winner(
         value=value_at_child,
         right_germ=right_germ_at_child,
         left_germ=left_germ_at_child,
-    )
-    winner_marginal = jnp.where(
-        left_owned,
-        jnp.take_along_axis(left_marginal_at_child, winner, axis=-1),
-        jnp.take_along_axis(marginal_at_child, winner, axis=-1),
-    )[..., 0]
+    )[0]
+    ordinary = jnp.take_along_axis(ordinary_marginal_at_child, winner, axis=-1)[..., 0]
+    left_record = jnp.take_along_axis(left_marginal_at_child, winner, axis=-1)[..., 0]
+    right_dead = jnp.take_along_axis(right_dead_at_child, winner, axis=-1)[..., 0]
+    left_dead = jnp.take_along_axis(left_dead_at_child, winner, axis=-1)[..., 0]
+    right_side = jnp.where(right_dead, 0.0, ordinary)
+    left_side = jnp.where(left_dead, 0.0, left_record)
+    right_alive = jnp.where(right_dead, 0.0, 1.0)
     # The published value is the maximum itself: identical to the winner's read
     # at any tie, and NaN-propagating when a poisoned candidate row (whose NaN
-    # empties the tie set) must surface fail-loud. The marginal is pinned to
-    # NaN alongside so the published pair never looks healthy over a poisoned
-    # cell — the germ selector falls back to a finite competitor's index when
-    # the NaN empties the tie set, and that competitor's marginal must not
-    # ship beside a NaN value.
+    # empties the tie set) must surface fail-loud. Both side payloads are
+    # pinned to NaN alongside so the published pair never looks healthy over a
+    # poisoned cell — the germ selector falls back to a finite competitor's
+    # index when the NaN empties the tie set, and that competitor's marginal
+    # must not ship beside a NaN value.
     collapsed_value = jnp.max(value_at_child, axis=-1)
+    poisoned = jnp.isnan(collapsed_value)
     return (
         collapsed_value,
-        jnp.where(jnp.isnan(collapsed_value), jnp.nan, winner_marginal),
+        jnp.where(poisoned, jnp.nan, right_side),
+        jnp.where(poisoned, jnp.nan, left_side),
+        right_alive,
     )
 
 
