@@ -90,7 +90,6 @@ def refine_envelope(
     order = jnp.argsort(grid_key)
     query_grid = jnp.where(dead, jnp.nan, endog_grid)[order]
     query_dead = dead[order]
-    n_query = query_grid.shape[0]
 
     # Segment endpoints: candidate `k` to candidate `k+1`, consecutive in the
     # (unsorted) input order — the EGM cloud's natural segment chain. A segment
@@ -212,7 +211,6 @@ def refine_envelope(
     )
 
     n_kept = jnp.sum(row_valid, dtype=jnp.int32)
-    del n_query
     return out_grid, out_policy, out_value, n_kept
 
 

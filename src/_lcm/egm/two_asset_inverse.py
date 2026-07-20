@@ -177,7 +177,7 @@ def invert_acon_cloud(
     Where the liquid borrowing constraint binds the liquid post-decision balance is
     pinned at `a = 0`, so the liquid Euler holds only with a non-negative multiplier and
     cannot be inverted for consumption. Instead the region is parameterized by a
-    consumption sweep against the pension post-decision balance `b` at `a = 0`:
+    consumption grid axis against the pension post-decision balance `b` at `a = 0`:
     consumption is exogenous, and the still-interior deposit is recovered from its FOC
     `u'(c) = beta * w_b * (1 + chi / (1 + d))`. The liquid budget at the corner is
     `m = c + d` (no liquid savings), and the pension budget inverts to
@@ -244,7 +244,7 @@ def invert_con_cloud(
     holds with equality and there is nothing to invert: the agent consumes its entire
     liquid budget (`m = c`, since `a = 0` and `d = 0`) and the pension is unchanged
     (`n = b`). The region is the deep-constrained corner of the state space,
-    parameterized by a consumption sweep against the pension balance at `a = 0`.
+    parameterized by a consumption grid axis against the pension balance at `a = 0`.
 
     Args:
         consumption: Exogenous consumption sweep at each node (`m = c` at the corner).

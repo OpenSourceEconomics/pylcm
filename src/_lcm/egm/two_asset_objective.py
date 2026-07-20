@@ -47,7 +47,7 @@ def build_two_asset_objective(
             out-of-domain transformed state carries a fabricated continuation; where the
             mask is `False`, a candidate whose reconstructed `(a, b)` reads it (its
             bilinear stencil touches a `False` node) is infeasible. `None` treats every
-            node as in-domain (backward-compatible).
+            node as in-domain.
 
     Returns:
         A callable mapping a state `(m, n)` and policy `(c, d)` to the recomputed
