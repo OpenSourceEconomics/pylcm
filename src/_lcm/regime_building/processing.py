@@ -2074,6 +2074,7 @@ def _process_regime_core(
     }
     _fail_if_coarse_candidate_folds_ambiguously(
         source_regime_name=source_regime_name,
+        source_process_names=frozenset(process_names),
         coarse_candidate_targets=coarse_candidate_targets,
         all_grids=all_grids,
         active_periods_by_regime=active_periods_by_regime,
@@ -3045,6 +3046,7 @@ def _fold_state_names(
 def _fail_if_coarse_candidate_folds_ambiguously(
     *,
     source_regime_name: RegimeName,
+    source_process_names: frozenset[ProcessName],
     coarse_candidate_targets: set[RegimeName],
     all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]],
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
@@ -3064,6 +3066,16 @@ def _fail_if_coarse_candidate_folds_ambiguously(
     edge could carry that fold into a period where it persists) is rejected here:
     the modeller must declare it with explicit per-target transition cells, whose
     support IS known, so the persistence guard can validate it exactly.
+
+    fold-round5 F1: persistence across the coarse edge is only POSSIBLE for a
+    folded process the SOURCE itself carries -- the continuation builder auto-wires
+    an intrinsic `next_<process>` edge only for the source's own `process_names`
+    (see the `target_process_grids` comprehension above and the `next_<name>`
+    keys in `_stochastic_transition_names`). A candidate that folds a
+    TARGET-LOCAL process whose name the source does NOT carry can never receive a
+    `next_<process>` edge from this source, so the fold cannot persist across the
+    edge and there is nothing to validate; rejecting it is a false positive. Only
+    the intersection with the source's process names is genuinely ambiguous.
     """
     source_active = active_periods_by_regime.get(source_regime_name, ())
     next_periods = {p + 1 for p in source_active}
@@ -3077,6 +3089,7 @@ def _fail_if_coarse_candidate_folds_ambiguously(
             for name, grid in target_grids.items()
             if isinstance(grid, _ContinuousStochasticProcess)
             and getattr(grid, "fold", False)
+            and name in source_process_names
         )
         error_messages.extend(
             f"regime '{source_regime_name}' uses a COARSE `transition=func`, "

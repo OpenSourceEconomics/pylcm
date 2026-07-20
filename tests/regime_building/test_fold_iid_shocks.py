@@ -577,18 +577,26 @@ def test_fold_jitted_matches_unfolded_then_averaged_to_summand_scale_tolerance()
     Under `jit` the fold reduction is compiled INTO the surrounding solve kernel,
     and XLA's fusion/FMA/reassociation decisions there depend on the whole graph —
     not reproducible by any standalone oracle. The gap is the float32 REDUCTION
-    error of the summands, so the correct bound is `atol + rtol * max|summand|`,
-    where the summands are the unfolded node values.
+    error of the weighted summands, so the bound is summand-scale.
 
-    Do NOT pin this to a fixed few-ULP count of the RESULT (fold-round4 F3): ULP
-    is a result-space spacing metric and becomes unstable near CANCELLATION. The
-    round-4 review exhibited a supported 18-node uniform-IID float32 fold whose
-    fused value and materialized oracle differed by only ~2.62e-7 in absolute
-    terms — a floor-level summand-scale error — yet 287,557 ULP in the small
-    (~1e-5) cancelled result, so a `<= 2 * spacing(oracle)` contract fails there by
-    five orders of magnitude while the summand-scale bound below still holds. This
-    model's node values are ~10 (no cancellation), so both metrics pass here; the
-    summand-scale bound is the one that is also correct under cancellation.
+    Two refinements over a naive `rtol * max|summand|` (fold-round5 T2):
+
+    1. The principled forward-error scale for a length-`n` weighted sum is the SUM
+       of absolute weighted contributions `Σ_k |w_k V_k|`, not `max_k |w_k V_k|`.
+       The two diverge sharply near cancellation: the round-5 review's executed
+       192-node fixture had a gap of 255.6 epsilons times `max|w_k V_k|` but only
+       1.42 epsilons times `Σ|w_k V_k|`, so a small fixed rtol on the max is not a
+       general contract while the sum-scale one holds.
+    2. The coefficient must be NODE-COUNT- and dtype-aware: the reduction accrues
+       O(n) rounding steps, so a fixed node-count-independent rtol silently tightens
+       or loosens as `n` grows. Use `c(n, dtype) = C * n * eps(dtype)`.
+
+    Do NOT pin this to a fixed few-ULP count of the RESULT (fold-round4 F3): ULP is
+    a result-space spacing metric and becomes unstable near CANCELLATION — the
+    round-4 18-node fold differed by only ~2.62e-7 absolute yet 287,557 ULP in the
+    small (~1e-5) cancelled result. This model's node values are ~10 (no
+    cancellation), so the gap is at the float32 floor (here exactly 0), but the
+    sum-scale node-count-aware bound is the one that also holds under cancellation.
     """
     kwargs = {"n_points": _DRIFT_N_POINTS, "sigma": _DRIFT_SIGMA}
     weights = _shock(fold=False, **kwargs).get_transition_probs()[0]
@@ -601,10 +609,14 @@ def test_fold_jitted_matches_unfolded_then_averaged_to_summand_scale_tolerance()
     ]
     oracle = jnp.average(unfolded_V, weights=weights)
 
-    # Summand-scale absolute+relative tolerance (stable under cancellation),
-    # not a fixed ULP count of the possibly-cancelled result.
-    summand_scale = float(jnp.max(jnp.abs(unfolded_V)))
-    tol = 1e-6 + 1e-6 * summand_scale
+    # atol + C * n * eps(dtype) * Σ|w_k V_k| — summand-scale, node-count- and
+    # dtype-aware, stable under cancellation (fold-round5 T2). C absorbs XLA
+    # reassociation/FMA slack; still orders of magnitude below any wrong-reducer
+    # gap (which would be O(node value), not O(n * eps * Σ|wV|)).
+    n_nodes = int(weights.shape[0])
+    eps = float(jnp.finfo(folded_V.dtype).eps)
+    summand_scale = float(jnp.sum(jnp.abs(weights * unfolded_V)))
+    tol = 1e-6 + 16.0 * n_nodes * eps * summand_scale
     assert abs(float(folded_V) - float(oracle)) <= tol
 
 
@@ -771,6 +783,88 @@ def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
         process_regimes(
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
+                derived_categoricals={},
+            ),
+            ages=_AGES,
+            regime_names_to_ids=_REGIME_NAMES_TO_IDS,
+            enable_jit=False,
+        )
+
+
+def _u_source_shock(source_shock: FloatND, work: DiscreteAction) -> FloatND:
+    return work * (10.0 + source_shock)
+
+
+def _u_target_shock(target_shock: FloatND, work: DiscreteAction) -> FloatND:
+    return work * (10.0 + target_shock)
+
+
+def _make_target_local_fold_regimes(*, shared: bool) -> dict[str, Regime]:
+    """`period0` coarse-routes to `terminal`, which folds a process.
+
+    `shared=False`: `terminal` folds a TARGET-LOCAL `target_shock` whose name the
+    source (`source_shock`) does not carry -- no `next_target_shock` edge can be
+    auto-wired from the source, so the fold cannot persist across the coarse edge.
+    `shared=True`: `terminal` folds the SAME name the source carries -- the
+    genuinely ambiguous round-4 case.
+    """
+    fold_name = "source_shock" if shared else "target_shock"
+    period0 = Regime(
+        transition=_next_regime,
+        active=lambda age: age < 1,
+        states={"source_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_source_shock},
+    )
+    terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={fold_name: _shock(fold=True)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_source_shock if shared else _u_target_shock},
+    )
+    return {"period0": period0, "terminal": terminal}
+
+
+def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
+    """fold-round5 F1: the active-period scope fence must key on the SOURCE's own
+    process names, not every folded process in the candidate target.
+
+    `terminal` folds a target-local `target_shock` the source never carries, so no
+    `next_target_shock` continuation can persist across the coarse edge -- there is
+    nothing for the persistence guard to validate and the model is unambiguous.
+    Pre-fix it was rejected solely because the check ignored process provenance;
+    it must now build AND solve, with the fold axis integrated out of `terminal`'s
+    stored value.
+    """
+    processed = process_regimes(
+        user_regimes=finalize_regimes(
+            user_regimes=_make_target_local_fold_regimes(shared=False),
+            derived_categoricals={},
+        ),
+        ages=_AGES,
+        regime_names_to_ids=_REGIME_NAMES_TO_IDS,
+        enable_jit=False,
+    )
+    solution, _s, _d = solve(
+        flat_params=_FLAT_PARAMS,
+        ages=_AGES,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    )
+    # The folded process leaves no axis on the terminal value.
+    assert solution[1]["terminal"].shape == ()
+
+
+def test_coarse_candidate_folding_a_source_carried_process_is_still_rejected():
+    """fold-round5 F1 negative control: when the folded name IS carried by the
+    source, persistence across the coarse edge is genuinely possible, so the
+    ambiguous topology must still be rejected (round-4 behaviour preserved)."""
+    with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
+        process_regimes(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_target_local_fold_regimes(shared=True),
                 derived_categoricals={},
             ),
             ages=_AGES,
