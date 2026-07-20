@@ -140,7 +140,10 @@ def test_keeper_no_adjustment_map_threads_every_declared_argument() -> None:
 
     assert set(inspect.signature(transition).parameters) == {"car", "growth"}
     result = transition(car=jnp.asarray(100.0), growth=jnp.asarray(1.02))
-    np.testing.assert_allclose(np.asarray(result), 100.0 * 0.9 / 1.02, rtol=1e-10)
+    # The composed transition reruns the same arithmetic at the active float
+    # precision, so agreement holds to that dtype's roundoff.
+    rtol = 64.0 * float(np.finfo(np.asarray(result).dtype).eps)
+    np.testing.assert_allclose(np.asarray(result), 100.0 * 0.9 / 1.02, rtol=rtol)
 
 
 def test_keeper_outer_function_threads_every_declared_argument() -> None:
@@ -174,7 +177,9 @@ def test_keeper_outer_function_threads_every_declared_argument() -> None:
 
     assert set(inspect.signature(injected).parameters) == {"car", "growth"}
     result = injected(car=jnp.asarray(100.0), growth=jnp.asarray(1.02))
-    np.testing.assert_allclose(np.asarray(result), 100.0 * 0.9 / 1.02, rtol=1e-10)
+    # Same arithmetic at the active float precision; see above.
+    rtol = 64.0 * float(np.finfo(np.asarray(result).dtype).eps)
+    np.testing.assert_allclose(np.asarray(result), 100.0 * 0.9 / 1.02, rtol=rtol)
 
 
 def test_keeper_outer_function_identity_holds_the_durable_stock() -> None:
