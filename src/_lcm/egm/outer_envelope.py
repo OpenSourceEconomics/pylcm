@@ -21,8 +21,13 @@ the carry retains all candidates and the maximum is taken at the read:
 - `outer_envelope_at_query` reads each candidate at the query through the
   parent's own interpolation convention and takes the pointwise maximum there,
   publishing the winning candidate's marginal (Danskin) — never an average
-  across a crossing. The production read path applies the same semantics inside
-  the parent's child-carry aggregation.
+  across a crossing. Exact value ties resolve right-continuously by the value
+  germ, publishing the winner's economic marginal.
+
+The production read path (`continuation._collapse_stacked_candidates`) is the
+authoritative implementation and follows the same right-continuous tie
+convention; `outer_envelope_at_query` is a self-contained reference for the
+query-side max, not a byte-for-byte oracle of the production aggregation.
 """
 
 import jax
@@ -125,15 +130,14 @@ def outer_envelope_at_query(
     expects. Candidates whose right germs coincide — at a shared terminal
     abscissa every candidate clamps, so the right germ cannot discriminate —
     are compared by their *left* germs: the branch that carries the envelope
-    on the left neighborhood wins, keeping the published marginal inside the
-    envelope's generalized gradient at the boundary. Only candidates whose
-    local pieces literally coincide on both sides fall back to the lowest
-    index, a deterministic choice among identical branches. The published
-    payload follows the ownership side: on left-owned cells the winner's
-    *left-record* marginal applies (`interp_left_record_on_padded_grid`), so
-    a winner whose terminal abscissa is duplicated publishes the left
-    duplicate's record — the one that justified ownership — not the right
-    one.
+    on the left neighborhood wins ownership. Only candidates whose local pieces
+    literally coincide on both sides fall back to the lowest index, a
+    deterministic choice among identical branches. The germ decides ownership;
+    the published payload is the winner's economic marginal — the two stay
+    separate objects. On left-owned cells that payload is the winner's
+    *left-record* marginal (`interp_left_record_on_padded_grid`), so a winner
+    whose terminal abscissa is duplicated publishes the left duplicate's record
+    — the one that justified ownership — not the right one.
 
     Taking the maximum at the query — rather than at a shared node grid and
     republishing a single interpolated row — is exact for the finite candidate set

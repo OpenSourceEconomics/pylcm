@@ -496,7 +496,11 @@ def refine_to_bracket(
         n_points_to_scan: Number of candidates the bounded scans inspect; `None`
             (the default) scans exhaustively (see `refine_envelope`).
         segment_id: Optional per-candidate segment labels (see
-            `refine_envelope`).
+            `refine_envelope`). Threaded through the scan and the shared
+            node-crossing geometry, so a node-aligned crossing is recovered on
+            the stream exactly as `refine_envelope` recovers it. No production
+            caller passes labels, so labelled strictly-between crossings are not
+            asserted bracket-for-bracket against the full row.
         scan_unroll: Loop-unroll factor for the sequential `jax.lax.scan` over
             candidates (see `refine_envelope`); the captured bracket is identical
             across values.

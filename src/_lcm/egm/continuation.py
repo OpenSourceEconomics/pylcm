@@ -1051,11 +1051,13 @@ def _choose_blended_side(
 
     The regular path carries the single blended marginal. The stacked NEGM path
     chooses the ownership side after the blend: where any positive-weight node
-    keeps a live right derivative, the right-continuous marginal is the
-    subgradient the parent's Euler inversion consumes; where every contributing
-    node is right-dead (a shared terminal), the left-continuous record applies.
-    This keeps the published marginal inside the blended read's generalized
-    gradient even when the blended nodes own opposite sides.
+    keeps a live right derivative, the right-continuous marginal is what the
+    parent's Euler inversion consumes; where every contributing node is
+    right-dead (a shared terminal), the left-continuous record applies. This is
+    a value-ownership rule, not a projection onto a generalized gradient: it
+    publishes the economic marginal `u'(c)` of whichever side wins the value
+    read, so the parent Euler inversion consumes a genuine marginal utility even
+    when the blended nodes own opposite sides.
     """
     if n_outer_candidates:
         right_side, left_side, right_alive = marginal_arrays
@@ -1171,9 +1173,13 @@ def _collapse_stacked_candidates(
     the winner's right-continuous marginal (zero once its right side is dead —
     at or above its last finite node) and its left-continuous record, plus a
     `right_alive` indicator. The passive blend interpolates all three and the
-    side is chosen after it, so a blend of heterogeneous-support nodes stays
-    inside the blended read's generalized gradient instead of averaging
-    independently side-committed marginals. With no passive blend the choice
+    side is chosen after it, so a blend of heterogeneous-support nodes commits to
+    a single ownership side after interpolation instead of averaging
+    independently side-committed marginals. The published payload is always the
+    value-winning branch's economic marginal `u'(c)` — the two objects stay
+    separate: the value germ ranks branch ownership, the marginal row supplies
+    the utility derivative the parent Euler inversion consumes. With no passive
+    blend the choice
     reduces to the per-node contract: an interior winner publishes its ordinary
     marginal, a terminal (right-dead) winner its left record — the left
     duplicate at a shared terminal abscissa. A cell whose candidates are all
