@@ -731,26 +731,12 @@ class _NNBEGMPeriodKernel:
             fixed_cost_scale=fixed_cost_scale,
             fixed_cost_support=fixed_cost_support,
         )
-        diagnostics = SolverDiagnostics(
-            max_outer_interpolation_error=jnp.asarray(mesh.max_validation_error),
-            max_outer_bracket_width=jnp.max(collapse.value_search.bracket_width),
-            outer_nodes_used=jnp.asarray(bank.n_candidates, dtype=jnp.int32),
-            outer_at_lower_bound=collapse.value_search.at_lower_bound,
-            outer_at_upper_bound=collapse.value_search.at_upper_bound,
-            keeper_adjuster_margin=collapse.keeper_adjuster_margin,
-            best_second_best_margin=collapse.best_second_best_margin,
-            policy_fallback_mask=jnp.asarray(False),  # noqa: FBT003
-            unresolved_mask=jnp.asarray(mesh.unresolved),
-            adjustment_probability=collapse.adjustment_probability,
-        )
-        # Publish the nested payload whenever both branches' inner policies
-        # are available — the continuous simulation reader replays keeper vs
-        # adjuster off-grid from exactly these conditional ingredients. An
-        # NB-EGM inner publishes no `EGMSimPolicy` of its own; on the smooth
-        # v1 scope its unrefined carry rows determine the policy exactly
-        # (`consumption = resources - savings` node by node), so derive both
-        # sides from the carries and fail closed (no nested payload, grid
-        # simulation unchanged) whenever the rows are not derivation-safe.
+        # Derive both branches' inner simulation policies. An NB-EGM inner
+        # publishes no `EGMSimPolicy` of its own; on the smooth v1 scope its
+        # unrefined carry rows determine the policy exactly (`consumption =
+        # resources - savings` node by node), so derive both sides from the
+        # carries and fail closed (no nested payload, grid simulation
+        # unchanged) whenever the rows are not derivation-safe.
         keeper_policy = (
             keeper_result.simulation_policy
             if isinstance(keeper_result.simulation_policy, EGMSimPolicy)
@@ -774,15 +760,33 @@ class _NNBEGMPeriodKernel:
                 extra_leading_axes=1,
             )
         )
-        sim_policy: SimulationPolicy | None = keeper_result.simulation_policy
-        if (
+        # Publish the nested payload only when both inner policies are
+        # derivation-safe AND the branch is a deterministic hard maximum: the
+        # continuous reader replays keeper vs adjuster off-grid from exactly
+        # these conditional ingredients. Under a fixed-cost aggregation the
+        # realized branch depends on the drawn cost, so the reader cannot
+        # replay it and simulation falls back to the grid argmax — which is
+        # precisely what `policy_fallback_mask` reports, so the mask is set from
+        # this same condition rather than hard-coded.
+        nested_published = (
             keeper_policy is not None
             and adjuster_policies is not None
-            # The nested read replays the deterministic hard maximum; under a
-            # fixed-cost aggregation the realized branch depends on the drawn
-            # cost, so no nested payload is published (grid-argmax simulate).
             and self.branch_fixed_cost is None
-        ):
+        )
+        diagnostics = SolverDiagnostics(
+            max_outer_interpolation_error=jnp.asarray(mesh.max_validation_error),
+            max_outer_bracket_width=jnp.max(collapse.value_search.bracket_width),
+            outer_nodes_used=jnp.asarray(bank.n_candidates, dtype=jnp.int32),
+            outer_at_lower_bound=collapse.value_search.at_lower_bound,
+            outer_at_upper_bound=collapse.value_search.at_upper_bound,
+            keeper_adjuster_margin=collapse.keeper_adjuster_margin,
+            best_second_best_margin=collapse.best_second_best_margin,
+            policy_fallback_mask=jnp.asarray(not nested_published),
+            unresolved_mask=jnp.asarray(mesh.unresolved),
+            adjustment_probability=collapse.adjustment_probability,
+        )
+        sim_policy: SimulationPolicy | None = keeper_result.simulation_policy
+        if nested_published:
             sim_policy = NestedEGMSimPolicy(
                 keeper=keeper_policy,
                 adjuster=OuterPolicyBank(

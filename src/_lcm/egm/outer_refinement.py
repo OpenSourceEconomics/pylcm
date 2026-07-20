@@ -250,8 +250,15 @@ def _consider(
     the runner-up slot under the same rule.
     """
     better = (cand_v > best_v) | ((cand_v == best_v) & (cand_x < best_x))
-    runner_up = (~better) & (
-        (cand_v > second_v) | ((cand_v == second_v) & (cand_x < second_x))
+    # The runner-up must be a DISTINCT abscissa from the winner. The objective
+    # is a function of the abscissa, so a candidate at the winner's own `x`
+    # (e.g. a refined bracket optimum that lands back on an already-folded node)
+    # carries the winner's value and would install a duplicate second-best —
+    # a spurious zero best/second margin that reads as a branch tie.
+    runner_up = (
+        (~better)
+        & (cand_x != best_x)
+        & ((cand_v > second_v) | ((cand_v == second_v) & (cand_x < second_x)))
     )
     new_second_x = jnp.where(better, best_x, jnp.where(runner_up, cand_x, second_x))
     new_second_v = jnp.where(better, best_v, jnp.where(runner_up, cand_v, second_v))
@@ -424,7 +431,23 @@ def _mark_intervals(
     )
     finite_values = jnp.where(jnp.isfinite(values), values, -jnp.inf)
     local_max = _node_local_max_mask(finite_values)
-    search_relevant = local_max[:-1] | local_max[1:]  # (C-1, *S)
+    # A midpoint whose EXACT value beats the cell's best node by more than the
+    # acceptance band is an unsampled incumbent: a higher optimum sits off-node
+    # in this interval even though neither endpoint is a node-local maximum. The
+    # golden-section brackets only local-max nodes and the exact nodes never
+    # sample it, so without forcing a split here the peak is silently discarded
+    # — and an interpolant that happens to be accurate does NOT save it, because
+    # the defect is the search's bracketing, not the surrogate's error. Refine
+    # such intervals regardless of the interpolant error; a feasibility crash
+    # (low or nonfinite exact) never triggers this, so the node budget is safe.
+    best_node_value = jnp.max(finite_values, axis=0)  # (*S,)
+    beats_best = exact_finite & (
+        exact
+        > best_node_value
+        + config.value_atol
+        + config.value_rtol * jnp.abs(best_node_value)
+    )  # (C-1, *S)
+    search_relevant = local_max[:-1] | local_max[1:] | beats_best  # (C-1, *S)
     error = jnp.where(exact_finite & interp_finite & search_relevant, normalized, 0.0)
     state_axes = tuple(range(1, error.ndim))
     interval_error = jnp.max(error, axis=state_axes) if state_axes else error  # (C-1,)
@@ -450,6 +473,7 @@ def _mark_intervals(
 
     per_cell_marked = (
         (error > 1.0)
+        | beats_best
         | (contains_opt & (error > _OPTIMUM_TIGHTENING))
         | (contains_opt & margin_at_risk)
     )

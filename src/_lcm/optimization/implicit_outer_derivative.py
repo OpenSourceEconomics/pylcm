@@ -63,6 +63,13 @@ _STATIONARITY_RTOL = 100.0
 # by the curvature screen) does not also trip the stationarity screen on
 # rounding noise.
 _STATIONARITY_ATOL = 1e-7
+# Minimum radius of the symmetric slope probe that certifies stationarity. A
+# single forward-mode Q_f is NOT a valid kink certificate: at an exact kink
+# (a tent peak from the consumption floor) jax.jvp returns one sub-gradient
+# branch and can read ~0, passing a non-smooth optimum as stationary. Probing
+# |Q_f| from BOTH sides at this radius exposes the slope jump the AD value
+# hides. Must exceed the final polish bracket so the probe straddles the kink.
+_KINK_PROBE_ATOL = 1e-4
 
 
 @dataclass(frozen=True)
@@ -228,10 +235,15 @@ def implicit_optimum_diagnostics(
     tie_margin: float = _TIE_MARGIN,
     stationarity_rtol: float = _STATIONARITY_RTOL,
     stationarity_atol: float = _STATIONARITY_ATOL,
+    kink_probe_atol: float = _KINK_PROBE_ATOL,
 ) -> ImplicitOptimumDiagnostics:
     """Classify where the implicit derivative at `f_star` is trustworthy."""
     lower, upper = bounds
-    width = (upper - lower) / (n_mesh - 1) * (0.618**polish_iterations)
+    # The polish bracket flanking the winning node is [node-step, node+step],
+    # width 2*step; after `polish_iterations` golden-section reductions the
+    # final bracket is 2*step*0.618**iters. `f_star` lies within it of the true
+    # optimum, so this is the residual scale the stationarity screen tolerates.
+    width = 2.0 * (upper - lower) / (n_mesh - 1) * (0.618**polish_iterations)
     ones = jnp.ones_like(f_star)
     q_f = jax.jvp(lambda f: objective(f, theta), (f_star,), (ones,))[1]
     _, q_ff = jax.jvp(
@@ -243,14 +255,37 @@ def implicit_optimum_diagnostics(
     at_upper = f_star >= upper - width
     flat = jnp.abs(q_ff) < curvature_floor
     tie = basin_margin < tie_margin
-    # A genuine interior optimum leaves |Q_f| ~ |Q_ff| * width after the polish;
-    # a kink (or an under-polished primal) leaves it far larger. Suppress the
-    # screen where the winner is at a bound (Q_f is one-sided by design there,
+
+    # Certify stationarity from BOTH one-sided slopes, not the single
+    # forward-mode q_f: at an exact kink jax.jvp returns one sub-gradient branch
+    # and can read ~0 (a tent peak differentiates to 0), passing a non-smooth
+    # optimum as stationary. A symmetric finite-difference probe of radius
+    # `delta` (>= the final polish bracket, so it straddles the kink) samples
+    # both sides. A smooth optimum leaves each slope ~ |Q_ff|*delta with a jump
+    # of the same order; a kink leaves a slope jump of order the kink size,
+    # independent of delta.
+    delta = jnp.maximum(width, kink_probe_atol)
+    f_plus = jnp.clip(f_star + delta, min=lower, max=upper)
+    f_minus = jnp.clip(f_star - delta, min=lower, max=upper)
+    # Guard the denominators where a bound clips a probe to zero width; such
+    # cells are bound cells, already reported by the bound flags.
+    step_plus = jnp.where(f_plus > f_star, f_plus - f_star, 1.0)
+    step_minus = jnp.where(f_star > f_minus, f_star - f_minus, 1.0)
+    slope_plus = (objective(f_plus, theta) - objective(f_star, theta)) / step_plus
+    slope_minus = (objective(f_star, theta) - objective(f_minus, theta)) / step_minus
+    slope_jump = jnp.abs(slope_plus - slope_minus)
+
+    # A genuine interior optimum leaves |Q_f| ~ |Q_ff| * width after the polish
+    # and a slope jump ~ |Q_ff| * delta; a kink (or an under-polished primal)
+    # leaves either far larger. Suppress at a bound (Q_f is one-sided there,
     # already reported by the bound flags).
     stationarity_threshold = (
         stationarity_rtol * jnp.abs(q_ff) * width + stationarity_atol
     )
-    nonstationary = (jnp.abs(q_f) > stationarity_threshold) & ~(at_lower | at_upper)
+    kink_threshold = stationarity_rtol * jnp.abs(q_ff) * delta + stationarity_atol
+    nonstationary = (
+        (jnp.abs(q_f) > stationarity_threshold) | (slope_jump > kink_threshold)
+    ) & ~(at_lower | at_upper)
     return ImplicitOptimumDiagnostics(
         at_lower_bound=at_lower,
         at_upper_bound=at_upper,
