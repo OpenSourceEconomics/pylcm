@@ -985,17 +985,27 @@ def interp_and_derivative_on_prepared_grid(
     xp: Float1D,
     fp: Float1D,
     fp_slopes: Float1D | None = None,
+    side: Literal["left", "right"] = "right",
 ) -> tuple[FloatND, FloatND]:
     """Paired value-and-derivative read on a prepared row.
 
     The contract is `interp_and_derivative_on_padded_grid`'s; this form takes
     the row's `search_grid` and `valid_length` precomputed (via
-    `prepare_padded_grid`), mirroring `interp_on_prepared_grid`. The value
-    channel matches `interp_on_prepared_grid` bit for bit — both gather the
-    same bracket and share the two-node arithmetic.
+    `prepare_padded_grid`), mirroring `interp_on_prepared_grid`. With the
+    default `side="right"` the value channel matches `interp_on_prepared_grid`
+    bit for bit — both gather the same bracket and share the two-node
+    arithmetic.
+
+    `side` selects which bracket an exactly-on-node query lands in, mirroring
+    `_read_prepared_row`: `"right"` reads the node as the start of its right
+    bracket (the ordinary one-sided convention); `"left"` reads it as the end
+    of its left bracket, so at a duplicated abscissa the pair is the left
+    duplicate's record and its piece's right-endpoint slope — the derivative
+    of the value object a left-owned tie selected. Strictly interior queries
+    locate the same bracket either way.
     """
     upper = jnp.clip(
-        jnp.searchsorted(search_grid, x_query, side="right"),
+        jnp.searchsorted(search_grid, x_query, side=side),
         1,
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)

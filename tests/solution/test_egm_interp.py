@@ -730,6 +730,84 @@ def _host_right_germ(
     return right_finite, float(first), float(second), float(third)
 
 
+def test_paired_left_read_at_a_duplicated_terminal_returns_the_left_piece_slope(
+    x64_enabled: None,
+):
+    """`side="left"` pairs a duplicated terminal query with its left piece.
+
+    On `xp = [0, 1, 2, 2]` with values `[10, 11, 12, 12]` and node slopes
+    `[1, 1, 1, 100]`, a query exactly at the duplicated abscissa 2 lands in
+    the `[1, 2]` bracket under the left convention, so the pair is the left
+    duplicate's record and that piece's right-endpoint slope: `(12, 1)`. The
+    ordinary right-side read at the same query pairs the zero-width terminal
+    bracket: `(12, 0)`.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0, 2.0])
+    fp = jnp.array([10.0, 11.0, 12.0, 12.0])
+    fp_slopes = jnp.array([1.0, 1.0, 1.0, 100.0])
+    search_grid, valid_length = interp.prepare_padded_grid(xp)
+
+    left_value, left_derivative = interp.interp_and_derivative_on_prepared_grid(
+        x_query=jnp.asarray(2.0),
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        side="left",
+    )
+    right_value, right_derivative = interp.interp_and_derivative_on_prepared_grid(
+        x_query=jnp.asarray(2.0),
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+    np.testing.assert_allclose(float(left_value), 12.0, rtol=1e-12)
+    np.testing.assert_allclose(float(left_derivative), 1.0, rtol=1e-12)
+    np.testing.assert_allclose(float(right_value), 12.0, rtol=1e-12)
+    np.testing.assert_allclose(float(right_derivative), 0.0, atol=1e-12)
+
+
+def test_paired_left_read_matches_the_right_read_strictly_inside_a_bracket(
+    x64_enabled: None,
+):
+    """Strictly interior queries locate the same bracket under either side.
+
+    On a strictly increasing row both side conventions gather the identical
+    bracket for an off-node query, so the paired values and derivatives agree
+    bitwise.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0, 3.0])
+    fp = jnp.array([0.0, 1.0, 4.0, 9.0])
+    fp_slopes = jnp.array([1.0, 2.0, 3.0, 5.0])
+    search_grid, valid_length = interp.prepare_padded_grid(xp)
+    query = jnp.asarray(1.6)
+
+    left_pair = interp.interp_and_derivative_on_prepared_grid(
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        side="left",
+    )
+    right_pair = interp.interp_and_derivative_on_prepared_grid(
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+    assert float(left_pair[0]) == float(right_pair[0])
+    assert float(left_pair[1]) == float(right_pair[1])
+
+
 def test_right_germ_reproduces_a_cubic_interior_derivatives():
     """With exact node slopes the germ of `x**3` is `(3x², 6x, 6)`.
 

@@ -528,6 +528,63 @@ def test_two_distinct_crossings_survive_a_common_value_baseline():
     np.testing.assert_allclose(got_policy, 2_500_000.0)
 
 
+def test_crossings_a_few_abscissa_ulp_apart_keep_the_middle_branch():
+    """Distinct crossings separable by a representable query are never merged.
+
+    The three-branch float32 correspondence switches at local offsets
+    `1e6` and `1e6 + 0.2083...` — about three float32 ULP apart at that
+    abscissa, so representable queries lie strictly between them and the
+    middle branch genuinely reigns there. Both switches must be emitted:
+    grouping the second overtaker into the first crossing would hand the
+    interval to the steepest branch and read the wrong policy at every query
+    between the switches. A read at local offset `1e6 + 0.0625` follows the
+    middle branch's stored line.
+    """
+    width = np.float32(1_000_010.0)
+    policies = np.array([4_000_000.0, 2_500_000.0, 1_000_000.0], dtype=np.float32)
+    slopes = np.float32(1_000_000.0) / policies
+    first_crossing = np.float32(1_000_000.0)
+    second_crossing = np.float32(1_000_000.125)
+    intercepts = np.array(
+        [
+            0.0,
+            (slopes[0] - slopes[1]) * first_crossing,
+            (slopes[0] - slopes[1]) * first_crossing
+            + (slopes[1] - slopes[2]) * second_crossing,
+        ],
+        dtype=np.float32,
+    )
+
+    grid, policy, value = [], [], []
+    for slope, intercept, action in zip(slopes, intercepts, policies, strict=True):
+        grid.extend([np.float32(0.0), width])
+        policy.extend([action, action])
+        value.extend([intercept, np.float32(intercept + slope * width)])
+
+    refined_grid, refined_policy, refined_value, _ = refine_envelope(
+        endog_grid=jnp.asarray(np.asarray(grid, dtype=np.float32)),
+        policy=jnp.asarray(np.asarray(policy, dtype=np.float32)),
+        value=jnp.asarray(np.asarray(value, dtype=np.float32)),
+        n_refined=32,
+    )
+
+    query = jnp.asarray(np.float32(1_000_000.0625))
+    got_value = float(
+        interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_value)
+    )
+    got_policy = float(
+        interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_policy)
+    )
+    stored_left = np.asarray(value[::2], dtype=np.float64)
+    stored_right = np.asarray(value[1::2], dtype=np.float64)
+    exact_lines = stored_left + (stored_right - stored_left) / float(width) * float(
+        query
+    )
+
+    np.testing.assert_allclose(got_value, exact_lines.max(), rtol=0.0, atol=0.02)
+    np.testing.assert_allclose(got_policy, 2_500_000.0)
+
+
 def test_a_point_spike_a_few_ulp_above_an_exact_side_record_overflows():
     """A representable strict point maximum overflows, never vanishes.
 
@@ -541,6 +598,30 @@ def test_a_point_spike_a_few_ulp_above_an_exact_side_record_overflows():
         endog_grid=jnp.array([9.0, 10.0, 10.0], dtype=jnp.float32),
         policy=jnp.array([1.0, 1.0, 0.5], dtype=jnp.float32),
         value=jnp.array([10_000_000.0, 10_000_100.0, 10_000_104.0], dtype=jnp.float32),
+        n_refined=12,
+    )
+
+    assert int(n_kept) > 12
+
+
+def test_a_point_spike_above_a_long_link_interior_read_overflows():
+    """A stored point strictly above a covering link's chord overflows, never vanishes.
+
+    The third candidate's abscissa lies two grid units inside a float32 link
+    spanning `[2e7, 3e7]` with values `[-3e7, 3]`. The link's exact chord at
+    that abscissa is below the stored point value `-3`, so the point is a
+    strict unrepresented maximum. Evaluating the chord from the link's far
+    endpoint cancels catastrophically and rounds the line read a full unit
+    above the point; the interior read is anchored at the nearer stored
+    endpoint instead, so the strict stored excess is detected and the kernel
+    signals `n_kept > n_refined`.
+    """
+    *_, n_kept, _ = refine_envelope_with_support(
+        endog_grid=jnp.array(
+            [20_000_000.0, 30_000_000.0, 29_999_998.0], dtype=jnp.float32
+        ),
+        policy=jnp.array([19_000_000.0, 20_000_000.0, 1.0], dtype=jnp.float32),
+        value=jnp.array([-30_000_000.0, 3.0, -3.0], dtype=jnp.float32),
         n_refined=12,
     )
 
