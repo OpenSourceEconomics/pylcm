@@ -503,6 +503,7 @@ def test_a_poisoned_candidate_at_a_nonzero_index_keeps_the_collapse_nan():
     value, marginal = _collapse_stacked_candidates(
         value_at_child=jnp.array([[1.0, jnp.nan]]),
         marginal_at_child=jnp.array([[1.0, jnp.nan]]),
+        left_marginal_at_child=jnp.array([[1.0, jnp.nan]]),
         right_germ_at_child=(
             jnp.array([[True, False]]),
             jnp.array([[0.0, 0.0]]),
