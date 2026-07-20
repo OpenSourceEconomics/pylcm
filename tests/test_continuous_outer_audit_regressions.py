@@ -16,9 +16,15 @@ node, because that is an unsampled incumbent regardless of the interpolant.
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from _lcm.egm.outer_refinement import _consider, refine_outer_mesh
+from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
+from _lcm.egm.outer_refinement import (
+    _consider,
+    refine_outer_mesh,
+    safeguarded_continuous_argmax,
+)
 from _lcm.egm.outer_search import AdaptiveOuterMesh
 from _lcm.optimization.implicit_outer_derivative import implicit_optimum_diagnostics
 from lcm.exceptions import OuterSearchConvergenceError
@@ -229,3 +235,75 @@ def test_fail_closed_defaults_to_true() -> None:
         ).fail_closed
         is True
     )
+
+
+# --- Rank robustness (KV 2014 two-asset EZ collaboration) -----------------
+#
+# The continuous-outer collapse runs *eagerly* (the host-side refinement and
+# candidate-bank collapse have Python control flow), so every interpolant read
+# dispatches primitive-by-primitive. The four-point slope estimate gathers
+# `values[stencil]`, lifting the working arrays by two axes; the safeguarded
+# argmax then adds a leading golden-section *bracket* axis. On a rank-4 model
+# state (KV: two assets + a shock + a discrete regime) those combine to a
+# rank-7 eager gather, which SIGSEGVs XLA's CPU runtime. The fix flattens the
+# state/broadcast axes to one inside the interpolant (a pure reshape), capping
+# every working array at rank 3. Mahler's rank-3 state never reached it; KV's
+# rank-4 state did, and only through `fail_closed=False` (the inference default
+# raises during refinement before the collapse ever runs).
+
+
+def _cusp_surface(nodes: jnp.ndarray, state_shape: tuple[int, ...]) -> jnp.ndarray:
+    """A per-cell kinked outer surface stacked on the shared mesh."""
+    cusps = jnp.reshape(jnp.linspace(0.2, 0.8, int(np.prod(state_shape))), state_shape)
+    lead = (slice(None),) + (None,) * len(state_shape)
+    return -jnp.abs(nodes[lead] - cusps[None])
+
+
+def test_high_rank_state_does_not_segfault_the_eager_outer_search() -> None:
+    """A rank-4 state through the safeguarded argmax must not crash XLA/CPU.
+
+    Pre-fix this segfaulted the interpreter (a rank-7 eager gather); the guard
+    is that it now returns finite per-cell optima. A reintroduced regression
+    would kill the test process outright, which is the loud signal we want.
+    """
+    nodes = jnp.linspace(0.0, 4.0, 129, dtype=jnp.float32)
+    state_shape = (2, 2, 2, 2)  # rank 4 — the KV two-asset+shock+regime shape
+    values = _cusp_surface(nodes, state_shape).astype(jnp.float32)
+    interp = LocalCubicOuterInterpolant()
+
+    result = safeguarded_continuous_argmax(
+        lambda q: interp.evaluate(nodes=nodes, values=values, query=q),
+        nodes=nodes,
+        node_values=values,
+        golden_iterations=16,
+    )
+    assert result.x.shape == state_shape
+    assert bool(jnp.all(jnp.isfinite(result.x)))
+    assert bool(jnp.all(jnp.isfinite(result.value)))
+
+
+def test_interpolant_read_is_invariant_to_state_axis_flattening() -> None:
+    """The internal flatten must be a pure reshape: same reads at any rank.
+
+    Reading the identical surface shaped `(N, 6)` versus `(N, 2, 3)` must give
+    identical values and derivatives once reshaped back — this locks the fix's
+    bit-for-bit-equivalence claim so a future refactor cannot silently perturb
+    the interpolant while flattening.
+    """
+    interp = LocalCubicOuterInterpolant()
+    nodes = jnp.linspace(0.0, 1.0, 9, dtype=jnp.float64)
+    flat_values = jnp.asarray(
+        np.linspace(-1.0, 2.0, 9 * 6).reshape(9, 6), dtype=jnp.float64
+    )
+    query_flat = jnp.linspace(0.05, 0.95, 6, dtype=jnp.float64)
+
+    v_flat, d_flat = interp.evaluate_with_derivative(
+        nodes=nodes, values=flat_values, query=query_flat
+    )
+    v_nd, d_nd = interp.evaluate_with_derivative(
+        nodes=nodes,
+        values=flat_values.reshape(9, 2, 3),
+        query=query_flat.reshape(2, 3),
+    )
+    assert jnp.array_equal(v_flat, v_nd.reshape(6))
+    assert jnp.array_equal(d_flat, d_nd.reshape(6))
