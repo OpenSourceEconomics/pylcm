@@ -968,6 +968,17 @@ def _savings_decrease_past_noise(
     sign of pure rounding noise — which varies with the backend's reduction
     order and makes the kept set platform-dependent.
 
+    The floor `16 * eps * max(|R|, |c|)` masks a genuine savings decrease only
+    when it is smaller than that band. The band is a small multiple of the
+    representable spacing at the operands' magnitude, so a grid fine enough to
+    place two distinct savings within it would need on the order of
+    `1 / (16 * eps)` points across the same magnitude (hundreds of thousands in
+    float32, astronomically more in float64) — far beyond any solved grid. A
+    decrease inside the dead zone is therefore below the grid's own resolution,
+    where the two candidates are numerically indistinguishable and dropping
+    either is within interpolation error; the band buys cross-backend
+    determinism at no resolvable accuracy cost.
+
     Args:
         grid_i: Endogenous grid point of the later candidate.
         policy_i: Policy value of the later candidate.
