@@ -3979,5 +3979,3 @@ def _build_ride_along_carry_template(
             else None
         ),
     )
-
-

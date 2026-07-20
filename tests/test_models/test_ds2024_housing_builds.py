@@ -33,9 +33,7 @@ from tests.test_models.ds2024_housing import build_model, build_params
 # divergence in the NEGM housing solve"). Float32 runs agree across
 # backends.
 _xfail_gpu_float64_divergence = pytest.mark.xfail(
-    condition=(
-        jax.default_backend() == "gpu" and jax.config.read("jax_enable_x64")
-    ),
+    condition=(jax.default_backend() == "gpu" and jax.config.read("jax_enable_x64")),
     reason="pre-existing GPU-vs-CPU float64 divergence in the NEGM housing "
     "solve (tracked in the dcegm handoff; lift with the real fix)",
     strict=False,
