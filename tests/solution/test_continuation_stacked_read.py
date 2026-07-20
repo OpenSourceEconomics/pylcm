@@ -238,6 +238,67 @@ def test_paired_read_publishes_the_left_derivative_at_a_left_owned_terminal_tie(
     np.testing.assert_allclose(float(smoothed_marginal), 1.0, atol=_READ_ATOL)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the per-node collapse discards the ownership side before the passive "
+    "blend, so independently side-selected marginals mix into a value outside "
+    "the blended read's Clarke interval (repair owned by the collapse/blend "
+    "contract on feat/dcegm)",
+)
+def test_passive_blend_publishes_a_marginal_inside_the_clarke_interval():
+    """A passive blend's marginal is a generalized derivative of the blended read.
+
+    Two passive nodes at blend weight one-half, query 2 on both rows. Node 0
+    is a shared-terminal envelope whose read has one-sided derivatives 10
+    (left) and 0 (clamp, right); node 1 is an interior tie with one-sided
+    derivatives 1 (left owner) and 2. The blended value read has one-sided
+    derivatives 5.5 (left) and 1 (right), so any valid published marginal
+    lies in the Clarke interval [1, 5.5]. Node 0 selects its left payload
+    and node 1 its right, and blending those independently chosen sides
+    yields 0.5 * 10 + 0.5 * 2 = 6 — outside the interval.
+    """
+    node_0_grid = jnp.array([0.0, 1.0, 2.0, jnp.nan])
+    node_1_grid = jnp.array([0.0, 1.0, 2.0, 3.0])
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [
+                jnp.stack([node_0_grid, node_0_grid]),
+                jnp.stack([node_1_grid, node_1_grid]),
+            ]
+        ),
+        value=jnp.asarray(
+            [
+                [[80.0, 90.0, 100.0, jnp.nan], [60.0, 80.0, 100.0, jnp.nan]],
+                [[98.0, 99.0, 100.0, 101.0], [96.0, 98.0, 100.0, 102.0]],
+            ]
+        ),
+        marginal_utility=jnp.asarray(
+            [
+                [[10.0, 10.0, 10.0, jnp.nan], [20.0, 20.0, 20.0, jnp.nan]],
+                [[1.0, 1.0, 1.0, 1.0], [2.0, 2.0, 2.0, 2.0]],
+            ]
+        ),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.5),),
+        child_passive_grids=(jnp.asarray([0.0, 1.0]),),
+        row_queries=jnp.asarray([2.0, 2.0]),
+        row_gradients=jnp.asarray([1.0, 1.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 100.0, atol=_READ_ATOL)
+    assert 1.0 - _READ_ATOL <= float(smoothed_marginal) <= 5.5 + _READ_ATOL
+
+
 def test_stacked_read_propagates_a_poisoned_candidate_row():
     """An all-NaN (poisoned) candidate row poisons the stacked read's value.
 
