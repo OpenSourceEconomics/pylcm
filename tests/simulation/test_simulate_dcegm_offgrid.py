@@ -57,7 +57,7 @@ def _closed_form_model() -> Model:
 @pytest.mark.xfail(
     reason="off-grid continuous-action interpolation not yet wired into simulate "
     "(Increment 2 pending; the solve-side EGMSimPolicy publication landed first)",
-    strict=False,
+    strict=True,
 )
 def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     """Simulated consumption equals `wealth / (1 + beta)` at off-grid wealth.

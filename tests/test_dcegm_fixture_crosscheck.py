@@ -40,14 +40,14 @@ def reference() -> pd.DataFrame:
     # excluded: the run's uniform savings grid under-resolves the sharply
     # curved retiree value function near the borrowing limit, so the
     # value-space interpolation error there is large and
-    # implementation-specific — the fixture stores about -66.0 at period 0,
-    # pylcm's DC-EGM about -76, while a fine-grid value-iteration recursion
-    # of the same model (and the brute-force twin, and a DC-EGM run with a
-    # savings grid clustered toward the limit — see
-    # `test_clustered_savings_grid_resolves_excluded_low_wealth_nodes`) puts
-    # the truth near -54. With no common discretization error to compare,
-    # the rows are excluded rather than the tolerances loosened; every other
-    # row is asserted at full tolerance.
+    # implementation-specific — the fixture and pylcm's DC-EGM disagree
+    # substantially at those nodes, while a fine-grid value-iteration
+    # recursion of the same model (and the brute-force twin, and a DC-EGM run
+    # with a savings grid clustered toward the limit — see
+    # `test_clustered_savings_grid_resolves_excluded_low_wealth_nodes`) agree
+    # on a value far from both. With no common discretization error to
+    # compare, the rows are excluded rather than the tolerances loosened;
+    # every other row is asserted at full tolerance.
     return df.query("not (lagged_choice == 1 and wealth == 1.0)")
 
 

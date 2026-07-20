@@ -38,8 +38,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
 )
-from negm_phase0 import kinked_toy_oracle
-from tests.test_models import negm_kinked_toy
+from tests.test_models import kinked_toy_oracle, negm_kinked_toy
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 

@@ -124,8 +124,8 @@ def test_outer_margin_entering_inner_euler_law_is_rejected_with_2d_pointer():
     """The DS pension coupling fails fast with a pointer to the 2-D foundation.
 
     When the inner Euler-state transition reads the outer post-decision, the
-    inner Euler inversion is no longer independent of the outer choice, so
-    NEGM's deterministic outer max is invalid.
+    inner Euler inversion depends on the outer choice, so NEGM's deterministic
+    outer max is invalid.
     """
     regime = _VALID.replace(
         state_transitions={
