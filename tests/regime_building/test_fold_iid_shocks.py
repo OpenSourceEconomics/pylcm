@@ -610,13 +610,21 @@ def test_fold_jitted_matches_unfolded_then_averaged_to_summand_scale_tolerance()
     oracle = jnp.average(unfolded_V, weights=weights)
 
     # atol + C * n * eps(dtype) * Σ|w_k V_k| — summand-scale, node-count- and
-    # dtype-aware, stable under cancellation (fold-round5 T2). C absorbs XLA
-    # reassociation/FMA slack; still orders of magnitude below any wrong-reducer
-    # gap (which would be O(node value), not O(n * eps * Σ|wV|)).
+    # dtype-aware, stable under cancellation (fold-round5 T2). This is a
+    # TOOLCHAIN-CHARACTERIZED contract, not a proved universal XLA bound: the
+    # classical weighted-reduction forward error is ~gamma_n * Σ|w_k V_k| (with
+    # gamma_n = n*u/(1-n*u)); `C = 16` is a conservative empirical factor that
+    # additionally covers the fused-vs-materialized graph difference (products,
+    # the `jnp.average` division) beyond the bare summation. It stays orders of
+    # magnitude below any wrong-reducer gap (which would be O(node value), not
+    # O(n * eps * Σ|wV|)). The absolute floor is dtype/value-scale aware rather
+    # than a fixed 1e-6 (which is fine for float32 but needlessly loose for small
+    # float64 values): scale it by eps(dtype) and the summand magnitude.
     n_nodes = int(weights.shape[0])
     eps = float(jnp.finfo(folded_V.dtype).eps)
     summand_scale = float(jnp.sum(jnp.abs(weights * unfolded_V)))
-    tol = 1e-6 + 16.0 * n_nodes * eps * summand_scale
+    atol = 8.0 * eps * max(summand_scale, 1.0)
+    tol = atol + 16.0 * n_nodes * eps * summand_scale
     assert abs(float(folded_V) - float(oracle)) <= tol
 
 
