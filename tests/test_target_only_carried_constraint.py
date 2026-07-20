@@ -148,3 +148,75 @@ def test_target_only_carried_constraint_is_actually_enforced() -> None:
     """
     value = _working_value_at_start(_build(floor=100.0))
     assert np.all(value == -np.inf)
+
+
+def _to_dead(age: float) -> ScalarInt:  # noqa: ARG001
+    return _RegimeId.dead
+
+
+def _build_phase_varying(*, floor: float) -> Model:
+    """As `_build`, but working's regime transition is PHASE-VARYING.
+
+    `Phased(solve=to_dead, simulate=to_retired)` makes the carrier `retired`
+    reachable only in SIMULATE, while solve goes to the stateless terminal `dead`.
+    An earlier review argued this is where a target-only carried state must fail at
+    solve for want of a producer. It does not: working's own target-only transition
+    produces `next_pension_wealth` from `aime` in working's solve slice regardless of
+    which regime it targets, so the source constraint resolves in both phases.
+    """
+
+    def _feasible(
+        consumption: float, wealth: float, next_pension_wealth: float
+    ) -> bool:
+        return (consumption <= wealth) & (next_pension_wealth >= floor)
+
+    working = UserRegime(
+        transition=Phased(solve=_to_dead, simulate=_to_retired),
+        active=lambda age: age < 62,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8),
+            "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=4),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "aime": _next_aime,
+            "pension_wealth": _impute_pension_wealth,
+        },
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        constraints={"feasible": _feasible},
+        functions={"utility": _utility},
+    )
+    retired = UserRegime(
+        transition=_from_retired,
+        active=lambda age: 62 <= age < 64,
+        states={
+            "pension_wealth": Phased(
+                solve=_impute_pension_wealth,
+                simulate=LinSpacedGrid(start=0.0, stop=20.0, n_points=4),
+            ),
+        },
+        state_transitions={"pension_wealth": _evolve_pension_wealth},
+        functions={"utility": _retired_utility},
+    )
+    return Model(
+        regimes={"working": working, "retired": retired, "dead": _DEAD},
+        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        regime_id_class=_RegimeId,
+    )
+
+
+def test_phase_varying_transition_target_only_carried_is_accepted_and_solves() -> None:
+    """Carrier reachable only in simulate: still builds and solves finite."""
+    value = _working_value_at_start(_build_phase_varying(floor=0.0))
+    assert np.isfinite(value).any()
+
+
+def test_phase_varying_transition_target_only_carried_is_enforced() -> None:
+    """The producer exists in solve even when the carrier is simulate-only.
+
+    An impossible bound makes the source regime entirely infeasible, proving
+    `next_pension_wealth` is produced in the solve flow and the constraint enforced --
+    the phase-varying reachability does not remove the source's own producer.
+    """
+    value = _working_value_at_start(_build_phase_varying(floor=100.0))
+    assert np.all(value == -np.inf)

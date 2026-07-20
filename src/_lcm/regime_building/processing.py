@@ -1458,15 +1458,25 @@ def _rename_params_to_qnames(
     if not param_names:
         # No engine wrapper is added, so no provenance stamp: the cell's own object
         # identity distinguishes one coarse law (the same object broadcast to every
-        # target) from distinct per-target laws. See `_law_source`.
+        # target) from distinct per-target laws. A parameter-free law reused across
+        # per-target cells is genuinely identical (no parameter can differ), so
+        # shared identity is the right verdict here. See `_law_source`.
         return cast("EconFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
     renamed = rename_arguments(func, mapper=mapper)
-    # Stamp the engine-created wrapper with the user law it wraps, so the
-    # deterministic-transition conflict guard compares user-law provenance rather
-    # than unwrapping (which cannot tell the engine's rename layer from a user's own
-    # `rename_arguments` wrapper). Propagate an existing stamp through nested renames.
-    setattr(renamed, LAW_SOURCE_ATTR, getattr(func, LAW_SOURCE_ATTR, func))
+    # Stamp the engine-created wrapper with (user law, template location of its
+    # params). The conflict guard compares this token instead of unwrapping (which
+    # cannot tell the engine's rename layer from a user's own `rename_arguments`
+    # wrapper). `names_key` is decisive: a COARSE law's params sit at the BARE law
+    # name, shared by every target cell (same key -> same token -> merge), whereas a
+    # PER-TARGET dict's params sit at a TARGET-QUALIFIED name, distinct per cell -- so
+    # cells that reuse the SAME callable still get different tokens and remain a
+    # conflict. (The renamed arg names in `mapper` are target-qualified for BOTH and
+    # cannot tell them apart.) Keep the base user law, not a nested token, as origin.
+    location = names_key if names_key is not None else param_key
+    prior = getattr(func, LAW_SOURCE_ATTR, None)
+    base = prior[0] if isinstance(prior, tuple) else (func if prior is None else prior)
+    setattr(renamed, LAW_SOURCE_ATTR, (base, location))
     return cast("EconFunction", renamed)
 
 

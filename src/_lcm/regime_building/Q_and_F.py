@@ -682,7 +682,7 @@ def _get_deterministic_transitions(
         for name, func in bundle.items():
             if name in stochastic_transition_names:
                 continue
-            if name in merged and _law_source(merged[name]) is not _law_source(func):
+            if name in merged and _law_source(merged[name]) != _law_source(func):
                 conflicting.add(name)
             merged.setdefault(name, func)
     return MappingProxyType(merged), frozenset(conflicting)
@@ -694,22 +694,29 @@ LAW_SOURCE_ATTR = "_lcm_law_source"
 
 
 def _law_source(func: TransitionFunction) -> object:
-    """The user law behind a processed transition, for provenance comparison.
+    """Provenance token of a processed transition, compared BY VALUE (`==`).
 
     A single BARE (coarse) state law carried by several targets is canonicalized
     into one cell per target, and `_rename_params_to_qnames` then renames each with
-    its own qualified parameter names — producing DISTINCT wrapper objects that are
-    nonetheless the same user law. To tell that coarse-broadcast case apart from
-    genuinely different per-target laws, the engine STAMPS every cell it renames with
-    `LAW_SOURCE_ATTR` pointing at the user law it wrapped: cells of one coarse law
-    share that source object, per-target cells carry different ones.
+    qualified parameter names. To tell that coarse-broadcast case apart from
+    genuinely different per-target laws, the engine STAMPS every parameterized cell
+    it renames with `(user_law, qualified_param_names)`:
+
+    - A COARSE law binds ONE shared parameter branch across all its target cells, so
+      every cell gets the SAME token and the cells merge (no false conflict).
+    - A PER-TARGET dict binds a TARGET-QUALIFIED branch per cell, so cells get
+      DIFFERENT tokens — even when the user reuses the SAME callable object across
+      targets. The reused-callable case is the one raw callable identity missed.
 
     Provenance is explicit rather than inferred from `__wrapped__`, because unwrapping
     cannot distinguish the engine's own rename layer from a user's `rename_arguments`
-    wrapper. A parameter-free law receives no engine wrapper (and no stamp) — there is
-    then nothing to unwrap, and the cells' own object identity already separates one
-    coarse law (the same object broadcast to every target) from distinct per-target
-    laws. So read the stamp when present, else compare the cell itself; never peel.
+    wrapper. A parameter-free law receives no engine wrapper (and no stamp): its cell's
+    own object identity already separates one coarse law (the same object broadcast to
+    every target) from distinct per-target laws, and a reused parameter-free callable is
+    genuinely identical (no parameter can differ), so shared identity is correct there.
+    So read the stamp when present, else the cell itself, and compare with `==`; the
+    tuple stamp makes value-equality the right comparison and it degrades to identity
+    for bare callables.
     """
     return getattr(func, LAW_SOURCE_ATTR, func)
 
