@@ -704,6 +704,7 @@ class _NNBEGMPeriodKernel:
             initial_nodes=self.outer_grid_values,
             solve_at=solve_nodes,
             config=config,
+            fail_closed=config.fail_closed,
         )
         bank = build_outer_candidate_bank(
             outer_nodes=mesh.nodes,

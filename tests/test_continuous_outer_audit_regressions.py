@@ -16,10 +16,12 @@ node, because that is an unsampled incumbent regardless of the interpolant.
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from _lcm.egm.outer_refinement import _consider, refine_outer_mesh
 from _lcm.egm.outer_search import AdaptiveOuterMesh
 from _lcm.optimization.implicit_outer_derivative import implicit_optimum_diagnostics
+from lcm.exceptions import OuterSearchConvergenceError
 from lcm.grids import LinSpacedGrid
 
 
@@ -162,3 +164,68 @@ def test_exact_kink_optimum_is_flagged_though_ad_reads_stationary() -> None:
     assert bool(diag.unresolved[0])
     assert not bool(diag.at_lower_bound[0])
     assert not bool(diag.at_upper_bound[0])
+
+
+def _per_cell_cusp_solve(nodes: jnp.ndarray) -> jnp.ndarray:
+    """A per-cell kinked outer surface: cell i peaks at a cusp `c_i`.
+
+    `-|x - c_i|` with the cusp location varying by cell is the KV two-asset
+    borrowing-price kink in miniature — the cubic interpolant misses every
+    near-cusp midpoint and the `beats_best` incumbent rule keeps marking a
+    fresh near-cusp interval each round, so the mesh cannot validate to
+    tolerance within a small budget (the creeping front).
+    """
+    cusps = jnp.linspace(0.2, 0.8, 8)
+    return -jnp.abs(nodes[:, None] - cusps[None, :])
+
+
+def test_fail_closed_true_raises_on_a_non_convergent_kinked_surface() -> None:
+    """The inference-grade default still fails hard when the mesh cannot validate."""
+    config = AdaptiveOuterMesh(
+        initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=5),
+        max_nodes=17,
+        max_refinement_rounds=3,
+    )
+    with pytest.raises(OuterSearchConvergenceError):
+        refine_outer_mesh(
+            initial_nodes=jnp.linspace(0.0, 1.0, 5),
+            solve_at=_per_cell_cusp_solve,
+            config=config,
+            fail_closed=True,
+        )
+
+
+def test_fail_closed_false_returns_best_effort_with_residual_surfaced() -> None:
+    """Development mode degrades to a best-effort mesh instead of raising.
+
+    The handoff's KV Stage-2 need: a good-enough outer optimum on a kinked
+    surface, with the residual validation error REPORTED (not hidden) so the
+    caller decides whether it is good enough — exactly `unresolved=True` plus a
+    surfaced `max_validation_error`.
+    """
+    config = AdaptiveOuterMesh(
+        initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=5),
+        max_nodes=17,
+        max_refinement_rounds=3,
+        fail_closed=False,
+    )
+    assert config.fail_closed is False
+    result = refine_outer_mesh(
+        initial_nodes=jnp.linspace(0.0, 1.0, 5),
+        solve_at=_per_cell_cusp_solve,
+        config=config,
+        fail_closed=config.fail_closed,
+    )
+    assert result.unresolved is True
+    assert result.max_validation_error > 1.0  # residual measured and surfaced
+    assert result.nodes.shape[0] >= 5  # a real (refined) best-effort mesh
+
+
+def test_fail_closed_defaults_to_true() -> None:
+    """The field defaults to the inference-grade behaviour."""
+    assert (
+        AdaptiveOuterMesh(
+            initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=5)
+        ).fail_closed
+        is True
+    )

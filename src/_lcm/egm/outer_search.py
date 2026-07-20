@@ -125,6 +125,17 @@ class AdaptiveOuterMesh(OuterSearch):
     """Derivative batches must re-run on one frozen union mesh rather than
     letting each perturbation adapt its own."""
 
+    fail_closed: bool = True
+    """Whether an exhausted refinement budget with marked intervals remaining
+    is a hard error (`True`, the inference-grade default) or degrades to a
+    best-effort mesh flagged `unresolved` with its residual validation error
+    reported through the solver diagnostics (`False`, development / best-effort
+    mode). Set `False` when a good-enough outer optimum suffices and the surface
+    is known not to validate to tolerance (e.g. a genuinely kinked outer value),
+    so a diagnostic-grade solve is reachable while a convergence fix lands. It
+    does NOT loosen tolerances — the residual is measured, surfaced, and left to
+    the caller to accept, not hidden."""
+
     def __post_init__(self) -> None:
         _fail_if_batch_size_negative(self.batch_size, field="batch_size")
         if self.max_nodes < 2:  # noqa: PLR2004
