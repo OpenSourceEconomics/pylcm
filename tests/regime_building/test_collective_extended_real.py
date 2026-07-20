@@ -38,6 +38,7 @@ from _lcm.regime_building.ndimage import (
     _multiply_all,
     _sum_all,
 )
+from _lcm.regime_building.Q_and_F import _sum_regime_mixture
 from _lcm.regime_building.zero_safe import zero_safe_average, zero_safe_weighted_term
 from lcm import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.exceptions import RegimeInitializationError
@@ -61,7 +62,7 @@ from lcm.typing import DiscreteAction, FloatND, ScalarInt
 
 
 @contextlib.contextmanager
-def _x64(enabled: bool):
+def _x64(*, enabled: bool):
     """Scope `jax_enable_x64` and restore it (x64 is OFF by default in this env)."""
     previous = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", enabled)
@@ -180,7 +181,7 @@ def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
     round identically under both forms, so there the bit-identity is a regression
     pin rather than a fail-pre proof (noted, not forced).
     """
-    with _x64(use_x64):
+    with _x64(enabled=use_x64):
         dtype = jnp.float64 if use_x64 else jnp.float32
         values = jnp.array([-0.3096868097782135, 0.3673213720321655], dtype=dtype)
         weights = jnp.array([0.5910956263542175, 0.40890437364578247], dtype=dtype)
@@ -308,14 +309,14 @@ def test_zero_safe_average_does_not_reverse_a_nontied_action():
     assert guarded_below != old_below
 
 
-def _sequential_regime_mixture(terms: list[FloatND]) -> FloatND:
-    """Replay `Q_and_F`'s regime-mixture accumulation: a Python left-fold `E += term`.
+def _old_left_fold_mixture(terms: list[FloatND]) -> FloatND:
+    """The PRE-round-8 recipe: a Python left-fold over already-multiplied terms.
 
-    `Q_and_F` accumulates `E_next_V = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`.
-    This is a distinct reduction from the vectorised `zero_safe_average` and is what the
-    zero_safe.py ROUND-7 note characterizes: accurate to a few ULP of the exact mixture
-    but NOT correctly-rounded. (A `jnp.sum(jnp.stack(terms))` returns the identical bits
-    under jit, so consolidating the fold changes nothing — it is not implemented.)
+    `Q_and_F` used to accumulate `E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`.
+    `_sum_regime_mixture` replaced it with a deferred vectorised zero-safe contraction
+    over the UNMULTIPLIED operands (round-8). This replays the old order in-process so
+    the regression can PROVE the pre-round-8 recipe lands on the wrong knife-edge side
+    without reverting `src/`.
     """
     total = jnp.zeros_like(terms[0])
     for term in terms:
@@ -323,35 +324,42 @@ def _sequential_regime_mixture(terms: list[FloatND]) -> FloatND:
     return total
 
 
-def test_sequential_regime_mixture_is_zero_mass_safe():
+def _deferred_mixture(w: FloatND, v: FloatND, order: tuple[int, ...]) -> FloatND:
+    """Run `_sum_regime_mixture` from traced arrays: names are STATIC, arrays traced.
+
+    `order` fixes the list order the terms are appended in; each value keeps its own
+    canonical name `r{i}`, so a permuted `order` must not change the sorted result.
+    """
+    terms = [(f"r{i}", w[i], v[i]) for i in order]
+    return _sum_regime_mixture(terms, like=v[0])
+
+
+def test_sum_regime_mixture_is_zero_mass_safe():
     """The load-bearing GUARANTEE: a zero-prob target with a -inf continuation -> 0.
 
     An unreached regime-transition target carries probability exactly 0; its
-    continuation may be an admissible on-path -inf. The mixture fold must annihilate
-    that term (contribute exactly 0), never inject a nan into E_next_V. This is the
-    property no backend/dtype can take away — unlike the last-few-ULP reduction order,
-    which is inherently non-portable (see the companion accuracy test).
+    continuation may be an admissible on-path -inf. The mixture reduction must
+    annihilate that term (contribute exactly 0), never inject a nan into E_next_V.
     """
     values = jnp.array([1.5, -jnp.inf, 2.0, 0.5], dtype=jnp.float32)
     probs = jnp.array([0.5, 0.0, 0.3, 0.2], dtype=jnp.float32)
-    terms = [zero_safe_weighted_term(p, v) for p, v in zip(probs, values, strict=True)]
-    result = jax.jit(_sequential_regime_mixture)(terms)
+    result = jax.jit(lambda w, v: _deferred_mixture(w, v, (0, 1, 2, 3)))(probs, values)
     assert jnp.isfinite(result)
     # exact mixture over the positive-mass terms: .5*1.5 + .3*2 + .2*.5 = 1.45
     assert float(result) == pytest.approx(1.45, abs=1e-6)
 
 
-def test_sequential_regime_mixture_is_accurate_but_not_correctly_rounded():
-    """F1 (round-7): the mixture fold is a few ULP from exact, NOT correctly-rounded.
+def test_sum_regime_mixture_lands_on_the_exact_side_where_the_left_fold_did_not():
+    """F1 (round-8): the deferred vectorised reduction crosses to the exact-policy side.
 
-    On a valid all-positive 5-target float64 mixture the exact real value is
-    0.026468077778441356. `Q_and_F`'s left-fold lands within a few ULP of it but not on
-    it (measured bits ...842, 9 ULP below exact, under jit on hmg-office CPU jax 0.10.1)
-    -- which is why at a knife-edge the downstream argmax can go either way and float64
-    only shrinks, never removes, the event (zero_safe.py ROUND-7). The accuracy BOUND
-    below is durable across backends; the exact side of a specific knife-edge is NOT, so
-    it is deliberately not asserted. This is a characterization, not a fixable defect:
-    no source restructuring makes a 5-term float sum correctly-rounded.
+    On the round-7 pinned 5-target float64 fixture the exact mixture is bits ...851,
+    above a representable knife-edge alternative at bits ...843. `_sum_regime_mixture`
+    (stack the UNMULTIPLIED operands, one zero-safe contraction) lands on the exact side
+    (> alternative), while the pre-round-8 left fold lands at bits ...842, BELOW the
+    alternative -- the opposite action. Proves the round-7 "no source restructuring
+    fixes this" disposition was wrong. (Stacking the already-MULTIPLIED products, by
+    contrast, reproduces the left fold's wrong-side bits -- the operand-vs-product
+    distinction is the point.)
     """
     vals = [
         0.812941999835589,
@@ -367,16 +375,81 @@ def test_sequential_regime_mixture_is_accurate_but_not_correctly_rounded():
         0.2570410094999844,
         0.2618665316177127,
     ]
-    exact = float(
-        sum(Fraction(p) * Fraction(v) for p, v in zip(probs, vals, strict=True))
-    )
+    order = (0, 1, 2, 3, 4)
+    alternative = np.int64(4583286125422516843).view(np.float64).item()
     with _x64(enabled=True):
         v = jnp.asarray(vals, dtype=jnp.float64)
         w = jnp.asarray(probs, dtype=jnp.float64)
-        terms = [zero_safe_weighted_term(w[i], v[i]) for i in range(v.shape[0])]
-        fold = float(jax.jit(_sequential_regime_mixture)(terms))
-    # Durable accuracy bound: within ~16 ULP of the exact real mixture (~3.5e-16).
-    assert abs(fold - exact) <= 16 * np.spacing(abs(exact))
+        deferred = float(jax.jit(lambda w, v: _deferred_mixture(w, v, order))(w, v))
+        left_fold = float(
+            jax.jit(
+                lambda w, v: _old_left_fold_mixture(
+                    [zero_safe_weighted_term(w[i], v[i]) for i in order]
+                )
+            )(w, v)
+        )
+    assert deferred > alternative  # post-fix: exact-policy side
+    assert left_fold < alternative  # fail-pre: wrong side
+    assert (deferred > alternative) != (left_fold > alternative)
+
+
+def test_sum_regime_mixture_is_independent_of_target_declaration_order():
+    """F2 (round-8): the sorted reduction is invariant to target permutation.
+
+    The left fold changed a pinned-fixture policy under a mere target permutation on the
+    same backend. `_sum_regime_mixture` sorts by target name before stacking, so any
+    permutation of the same (name, prob, value) terms yields bit-identical results.
+    """
+    vals = [0.81, 1.14, -0.58, -2.64, 1.28]
+    probs = [0.1227, 0.2780, 0.0803, 0.2570, 0.2619]
+    with _x64(enabled=True):
+        v = jnp.asarray(vals, dtype=jnp.float64)
+        w = jnp.asarray(probs, dtype=jnp.float64)
+        base = _bits(
+            jax.jit(lambda w, v: _deferred_mixture(w, v, (0, 1, 2, 3, 4)))(w, v)
+        )
+        for perm in [(4, 0, 3, 1, 2), (2, 1, 0, 4, 3)]:
+            got = _bits(
+                jax.jit(lambda w, v, perm=perm: _deferred_mixture(w, v, perm))(w, v)
+            )
+            assert got == base
+
+
+def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ulp():
+    """F2 (round-8): the error bound is summand-scale, NOT a fixed few result-ULP.
+
+    Under cancellation (sum|p_r*V_r| >> |sum p_r*V_r|) the reduction is hundreds of
+    result-space ULP from exact, so a fixed few-ULP contract is false. The valid bound
+    is absolute-plus-relative in the sum of absolute contributions.
+    """
+    vals = [
+        -6.744894126570187,
+        -9.669040336801100,
+        4.023434514395978,
+        0.244618606567219,
+        15.911066759940047,
+    ]
+    probs = [
+        0.17226549255821572,
+        0.33944387307107820,
+        0.06951303254907440,
+        0.15995998262955247,
+        0.25881761919207920,
+    ]
+    exact = float(
+        sum(Fraction(p) * Fraction(v) for p, v in zip(probs, vals, strict=True))
+    )
+    summand_scale = float(sum(abs(p * v) for p, v in zip(probs, vals, strict=True)))
+    with _x64(enabled=True):
+        v = jnp.asarray(vals, dtype=jnp.float64)
+        w = jnp.asarray(probs, dtype=jnp.float64)
+        got = float(
+            jax.jit(lambda w, v: _deferred_mixture(w, v, (0, 1, 2, 3, 4)))(w, v)
+        )
+    # Cancellation: the result-ULP gap is large, but the SUMMAND-scale bound holds.
+    result_ulp = abs(got - exact) / np.spacing(abs(exact))
+    assert result_ulp > 50  # a fixed "few ULP" contract would be false here
+    assert abs(got - exact) <= 1e-15 + 1e-14 * summand_scale
 
 
 def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():

@@ -33,6 +33,45 @@ from _lcm.utils.functools import get_union_of_args
 from lcm.typing import BoolND, Float1D, FloatND
 
 
+def _sum_regime_mixture(
+    mixture_terms: list[tuple[RegimeName, FloatND, FloatND]], *, like: FloatND
+) -> FloatND:
+    """Reduce the regime mixture ``E[V']=Σ p_r·V_r`` as ONE zero-safe contraction.
+
+    ``mixture_terms`` is a list of ``(target_name, prob_r, expected_V_r)`` — the
+    UNMULTIPLIED per-target probability and expected continuation. They are sorted by
+    target name (canonical, declaration-order-independent), stacked along a new leading
+    axis, and reduced with a single ``zero_safe_weighted_term`` + ``jnp.sum`` over that
+    axis. Two properties this buys over the earlier sequential left-fold
+    ``E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`` (round-8 external
+    re-review, both MEASURED reproduce-first):
+
+    - **Accuracy.** Stacking the OPERANDS and multiplying once inside the reduction —
+      NOT stacking the already-formed products — lands on the exact-policy side of the
+      round-8 pinned 5-target fixture (bits ...858) where the left-fold and
+      ``jnp.sum(jnp.stack(products))`` both land on the wrong side (bits ...842). It is
+      still NOT correctly-rounded: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the
+      error scales with Σ|p_r·V_r|, hundreds of result-ULP, so a genuine knife-edge
+      argmax can still resolve either way. Deterministic knife-edge resolution would
+      need compensated/exact summation, which is not implemented.
+    - **Reproducibility.** The sort makes the reduction independent of the transition
+      mapping's iteration order; the left-fold changed a pinned-fixture policy under a
+      mere target permutation on the SAME backend (round-8 F2).
+
+    Zero-mass safety is preserved (a zero ``p_r`` beside an admissible ``±inf`` V_r
+    contributes exactly 0). Cost: the K per-target continuations are materialised
+    together for the stacked reduction rather than folded one at a time — K is the
+    number of active next-period targets (small). ``mixture_terms`` is empty in a
+    terminal period with no active target; the mixture is then exactly ``zeros_like``.
+    """
+    if not mixture_terms:
+        return jnp.zeros_like(like)
+    ordered = sorted(mixture_terms, key=lambda term: term[0])
+    probs = jnp.stack([prob for _, prob, _ in ordered], axis=0)
+    values = jnp.stack([value for _, _, value in ordered], axis=0)
+    return jnp.sum(zero_safe_weighted_term(probs, values), axis=0)
+
+
 def get_Q_and_F(
     *,
     flat_param_names: frozenset[str],
@@ -198,7 +237,7 @@ def get_Q_and_F(
             {r: regime_transition_probs[r] for r in period_targets}
         )
 
-        E_next_V = jnp.zeros_like(U_arr)
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -243,19 +282,18 @@ def get_Q_and_F(
                 next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
             )
-            # Zero-safe: an inactive regime-transition target (probability
-            # exactly 0) next to an admissible on-path -inf continuation must
-            # not turn this mixture term into a nan either.
-            #
-            # This SEQUENTIAL left-fold is a distinct reduction from the vectorised
-            # `zero_safe_average`; it is accurate to a few ULP of the exact mixture but
-            # NOT correctly-rounded, so at a knife-edge it can put the downstream argmax
-            # on either side (zero_safe.py ROUND-7). No source restructuring fixes this
-            # — a `jnp.sum(jnp.stack(terms))` returns the identical bits under jit — so
-            # the memory-frugal left-fold is kept; run in float64 to shrink the event.
-            E_next_V = E_next_V + zero_safe_weighted_term(
-                active_regime_probs[target_regime_name], next_V_expected_arr
+            # Collect the UNMULTIPLIED (prob, expected-V) per target; the mixture is
+            # reduced once by `_sum_regime_mixture` (stack operands, one zero-safe
+            # contraction, canonical target order) — see that helper for why this is
+            # more accurate and order-independent than a sequential left-fold (round-8).
+            mixture_terms.append(
+                (
+                    target_regime_name,
+                    active_regime_probs[target_regime_name],
+                    next_V_expected_arr,
+                )
             )
+        E_next_V = _sum_regime_mixture(mixture_terms, like=U_arr)
 
         if ce is not None:
             E_next_V = ce.inverse(
@@ -416,7 +454,7 @@ def get_compute_intermediates(
             {r: regime_transition_probs[r] for r in period_targets}
         )
 
-        E_next_V = jnp.zeros_like(U_arr)
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -444,9 +482,14 @@ def get_compute_intermediates(
                 )
             # Zero-safe, mirroring `get_Q_and_F` above: see the guards there.
             contribution = zero_safe_average(next_V_stoch, weights=joint)
-            E_next_V = E_next_V + zero_safe_weighted_term(
-                active_regime_probs[target_regime_name], contribution
+            mixture_terms.append(
+                (
+                    target_regime_name,
+                    active_regime_probs[target_regime_name],
+                    contribution,
+                )
             )
+        E_next_V = _sum_regime_mixture(mixture_terms, like=U_arr)
 
         if ce is not None:
             E_next_V = ce.inverse(
@@ -1113,7 +1156,7 @@ def get_Q_and_F_collective(
             {r: regime_transition_probs[r] for r in period_targets}
         )
 
-        E_next_V = jnp.zeros_like(U_stack)
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -1150,9 +1193,14 @@ def get_Q_and_F_collective(
                 axis=0,
                 weights=jnp.asarray(joint_next_stochastic_states_weights).reshape(-1),
             )
-            E_next_V = E_next_V + zero_safe_weighted_term(
-                active_regime_probs[target_regime_name], next_V_expected_arr
+            mixture_terms.append(
+                (
+                    target_regime_name,
+                    active_regime_probs[target_regime_name],
+                    next_V_expected_arr,
+                )
             )
+        E_next_V = _sum_regime_mixture(mixture_terms, like=U_stack)
 
         # H applied on the stacked arrays is H per stakeholder: `utility` and
         # `E_next_V` share the trailing stakeholder axis and H's parameters

@@ -150,17 +150,15 @@ reproduce-first:
   WRONG side of a representable knife-edge alternative (bits ...843), reversing the
   downstream argmax relative to exact. The external re-review reproduced the same
   direction (fold low, wrong side) on jax 0.9.0.1 / 0.10.1 / 0.11.0 CPU. CRUCIALLY,
-  this is NOT fixable by source restructuring: a consolidated
-  `jnp.sum(jnp.stack(per_target_terms))` returns the IDENTICAL bits ...842 as the
-  left-fold under jit here (MEASURED) — only a non-representative directly-
-  constructed `jnp.sum(zero_safe_weighted_term(p_vec, v_vec))` on a native array
-  lands on the exact-side ...858, and the real code cannot use that form (the terms
-  are computed one target at a time). So consolidating the fold buys NOTHING at the
-  knife-edge; it is not even an accuracy improvement, and is NOT pursued.
-  Deterministic resolution AT a genuine knife-edge would need correctly-rounded /
-  compensated summation, which is not implemented. Beware the trap: an eager
-  (non-jit) run of the same fixture gives bits ...848 for every form and hides the
-  reversal — the divergence only appears under jit, so validate on the jitted path.
+  consolidating the ALREADY-MULTIPLIED products as `jnp.sum(jnp.stack(products))`
+  returns the IDENTICAL wrong-side bits ...842 as the left-fold under jit
+  (MEASURED). ROUND-7 wrongly concluded from this that "no source restructuring
+  fixes it" — see the ROUND-8 UPDATE below, which corrects it: stacking the
+  UNMULTIPLIED OPERANDS (p_r and V_r into two arrays) and doing ONE zero-safe
+  contraction DOES land on the exact side, and the real code CAN build that form.
+  Beware the trap: an eager (non-jit) run of the same fixture gives bits ...848 for
+  every form and hides the reversal — the divergence only appears under jit, so
+  validate on the jitted path.
 - "An action that flips under a few-ULP perturbation is TIED at float32 precision"
   is imprecise. The exact real average has a UNIQUE correctly-rounded float32 value;
   the flip is an ill-conditioned NEAR-tie whose correctly-rounded resolution a
@@ -168,6 +166,29 @@ reproduce-first:
   float32 bits 1035386571, the guarded reduction returns 1035386575 — a determinate
   boundary crossed, not an equality). The decision cost is still ULP-level and still
   smaller in float64, but call it a near-tie, not a tie.
+
+ROUND-8 UPDATE (external re-review of the round-7 disposition; SUPERSEDES the "no
+source restructuring fixes it" claim above, and corrects the error-magnitude wording).
+Two round-7 statements were wrong, both confirmed reproduce-first on hmg-office CPU:
+
+- "NOT fixable by source restructuring" is FALSE. The distinction round-7 missed is
+  stacking OPERANDS vs stacking PRODUCTS. The left-fold and `jnp.sum(jnp.stack(
+  products))` both accumulate already-multiplied `p_r*V_r` terms and land on the
+  wrong side (bits ...842). But stacking the UNMULTIPLIED operands — collect each
+  target's `p_r` and `V_r` into two arrays and do ONE `jnp.sum(zero_safe_weighted_
+  term(P, V), axis=0)` — lands on the exact-policy side (bits ...858). The real code
+  CAN build this: the per-target terms are collected into a list at Python trace time
+  and stacked, so a single vectorised contraction replaces the fold. This is now
+  `_sum_regime_mixture` in `Q_and_F` (applied at all three mixture sites). It does NOT
+  make the result correctly-rounded at every knife-edge, but it (a) crosses to the
+  exact side on the pinned fixture and (b) is order-independent (see next point).
+- "up to a few ULP of reduction error" understates the worst case. Under CANCELLATION
+  (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the reduction can be HUNDREDS of result-space ULP from
+  exact — the honest bound is absolute-plus-relative in the SUMMAND scale Σ|p_r·V_r|,
+  not a fixed few result-ULP. And the left-fold's order-dependence meant a mere
+  permutation of the target-declaration order could flip a pinned-fixture policy on
+  one backend; `_sum_regime_mixture` SORTS by target name before stacking, so the
+  result is invariant to declaration order.
 
 HONEST CONTRACT (supersedes every unconditional "bit-identical" statement below).
 `zero_safe_average` / `zero_safe_weighted_term` are (i) exact-zero-mass-SAFE
@@ -177,16 +198,19 @@ lowering and CPU/GPU — the SAME order of non-determinism raw float reductions 
 across backends, NOT removable by any vmap-safe expression restructuring (ROUND-6);
 and (iii) in float64, `zero_safe_average` is bit-identical to the exact `jnp.average`
 on the cases measured. Guarantee (iii) is scoped to the AVERAGE HELPER — a single
-vectorised reduction — and does NOT extend to the SEQUENTIAL regime-mixture
-accumulation in `Q_and_F` (`E += zero_safe_weighted_term(p_r, V_r)` over targets): that
-is a different reduction ORDER that float64 does not make bit-portable across backends
-(ROUND-7). A float32 (and, at a knife-edge, even a float64) ULP difference can flip an
-ill-conditioned NEAR-tie — NOT an equality; the exact value has a unique correctly-
-rounded representative and the reduction error can land on the wrong side of it — in the
-downstream argmax / IR comparison at ULP-level value cost. Run the collective core in
-float64 to shrink this to a float64-knife-edge event; deterministic resolution AT a
-genuine knife-edge would require correctly-rounded/compensated summation, which is not
-implemented.
+vectorised reduction. The `Q_and_F` regime mixture is now `_sum_regime_mixture`, a
+single zero-safe contraction over the STACKED UNMULTIPLIED operands, sorted by target
+name (ROUND-8) — it lands on the exact-policy side of the pinned knife-edge fixture
+where the old `E += zero_safe_weighted_term(p_r, V_r)` left-fold did not, and is
+invariant to target-declaration order. It is still NOT correctly-rounded at every
+knife-edge: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the error is bounded by the
+SUMMAND scale, not a fixed few result-ULP, so a float32 (and, at a genuine knife-edge,
+even a float64) difference can still flip an ill-conditioned NEAR-tie — NOT an equality;
+the exact value has a unique correctly-rounded representative and the reduction error
+can land on the wrong side of it — in the downstream argmax / IR comparison. Run the
+collective core in float64 to shrink this to a float64-knife-edge event; deterministic
+resolution AT a genuine knife-edge would require correctly-rounded/compensated
+summation, which is not implemented.
 """
 
 import jax
