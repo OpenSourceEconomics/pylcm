@@ -597,6 +597,82 @@ class _IntervalCrossings:
         self.valid = valid
 
 
+def _two_sum(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
+    """Exact float addition: `a + b = total + error` with both parts floats.
+
+    Knuth's branch-free TwoSum. The returned pair represents the exact real
+    sum: `total` is the rounded sum and `error` its exact rounding residual.
+    """
+    total = a + b
+    b_virtual = total - a
+    a_virtual = total - b_virtual
+    return total, (a - a_virtual) + (b - b_virtual)
+
+
+def _two_product(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
+    """Exact float multiplication: `a * b = product + error`, both floats.
+
+    Dekker's split-based TwoProd (no FMA required): each factor is split into
+    high and low halves whose pairwise products are exact, so the residual of
+    the rounded product is recovered exactly in working precision.
+    """
+    mantissa_digits = jnp.finfo(a.dtype).nmant + 1
+    split_factor = jnp.asarray(
+        2.0 ** ((mantissa_digits + 1) // 2) + 1.0, dtype=a.dtype
+    )
+
+    def split(x: FloatND) -> tuple[FloatND, FloatND]:
+        scaled = split_factor * x
+        high = scaled - (scaled - x)
+        return high, x - high
+
+    product = a * b
+    a_high, a_low = split(a)
+    b_high, b_low = split(b)
+    error = (
+        ((a_high * b_high - product) + a_high * b_low) + a_low * b_high
+    ) + a_low * b_low
+    return product, error
+
+
+def _compensated_line_gap(
+    *,
+    x: FloatND,
+    anchor_value: FloatND,
+    anchor_grid: FloatND,
+    slope: FloatND,
+    winner_anchor_value: FloatND,
+    winner_anchor_grid: FloatND,
+    winner_slope: FloatND,
+) -> FloatND:
+    """Line-difference `(a + s (x - t)) - (a_w + s_w (x - t_w))`, compensated.
+
+    Double-float evaluation: every subtraction runs through TwoSum and every
+    slope-offset product through TwoProd, the high parts accumulate through a
+    TwoSum chain, and the collected residuals fold in at the end. The result
+    carries a relative error of order machine epsilon in the *gap itself* —
+    not in the cancelling terms — so a genuine sub-unit gap between lines with
+    large local terms survives the evaluation instead of being rounded away.
+    """
+    value_gap, value_gap_err = _two_sum(anchor_value, -winner_anchor_value)
+    offset, offset_err = _two_sum(x, -anchor_grid)
+    winner_offset, winner_offset_err = _two_sum(x, -winner_anchor_grid)
+    term, term_err = _two_product(slope, offset)
+    winner_term, winner_term_err = _two_product(winner_slope, winner_offset)
+    partial, partial_err = _two_sum(value_gap, term)
+    high, high_err = _two_sum(partial, -winner_term)
+    residual = (
+        value_gap_err
+        + partial_err
+        + high_err
+        + term_err
+        + slope * offset_err
+        - winner_term_err
+        - winner_slope * winner_offset_err
+    )
+    return high + residual
+
+
 def _enumerate_interval_crossings(
     *,
     query_grid: Float1D,
@@ -681,34 +757,36 @@ def _enumerate_interval_crossings(
         # sit many representable positions apart, and handing the group to the
         # steepest line would skip the branch that wins between them. A line
         # joins the tie only if it also passes through the same numerical
-        # point — the line-difference at the crossing vanishes to roundoff of
-        # the locally computed terms. The difference is formed from the stored
-        # anchor-value gap plus the slope terms on interval-local offsets, so
-        # a common value baseline cancels in one correctly-rounded subtraction
-        # before any rounding at the absolute level can enter; a residual
-        # scaled by the absolute line values instead would widen with the
-        # baseline and merge genuinely distinct crossings under a cardinal
-        # shift. The window is deliberately tight (two ulp of the largest
-        # term): a false negative over-emits a duplicated crossing, which the
-        # side convention reads correctly, while a false positive skips the
-        # branch that wins between two representable crossings.
+        # point. Two demands make that test sound:
+        # - the line-difference at the emitted crossing is evaluated in
+        #   compensated (double-float) arithmetic, so its own rounding cannot
+        #   absorb a genuine gap the way the plainly evaluated anchor products
+        #   can — their cancellation error scales with the local terms and
+        #   once certified a distinct overtake as simultaneous;
+        # - the window is the gap a one-ulp abscissa displacement of the
+        #   crossing induces, `|slope gap| * ulp(x)`: crossings closer than
+        #   one representable abscissa step admit no query between them, so
+        #   merging is harmless there, while any wider separation leaves a
+        #   representable query the middle branch must win. A false negative
+        #   over-emits a duplicated crossing, which the side convention reads
+        #   correctly (and capacity overflow is loud); a false positive skips
+        #   the branch that wins between two representable crossings.
         x_next_safe = x_current + jnp.where(found, offset_next, 0.0)
-        anchor_value_gap = (
-            links.anchor_value[None, :] - links.anchor_value[winner][:, None]
+        slope_gap_at_next = (
+            links.value_slope[None, :] - links.value_slope[winner][:, None]
         )
-        local_line = links.value_slope[None, :] * (
-            x_next_safe[:, None] - links.anchor_grid[None, :]
+        gap_at_next = _compensated_line_gap(
+            x=x_next_safe[:, None],
+            anchor_value=links.anchor_value[None, :],
+            anchor_grid=links.anchor_grid[None, :],
+            slope=links.value_slope[None, :],
+            winner_anchor_value=links.anchor_value[winner][:, None],
+            winner_anchor_grid=links.anchor_grid[winner][:, None],
+            winner_slope=links.value_slope[winner][:, None],
         )
-        local_winner = (
-            links.value_slope[winner] * (x_next_safe - links.anchor_grid[winner])
-        )[:, None]
-        gap_at_next = anchor_value_gap + local_line - local_winner
-        residual_scale = jnp.maximum(
-            jnp.abs(anchor_value_gap),
-            jnp.maximum(jnp.abs(local_line), jnp.abs(local_winner)),
-        )
+        abscissa_ulp = jnp.finfo(query_grid.dtype).eps * jnp.abs(x_next_safe[:, None])
         same_point = jnp.abs(gap_at_next) <= (
-            2.0 * jnp.finfo(query_grid.dtype).eps * residual_scale
+            jnp.abs(slope_gap_at_next) * abscissa_ulp
         )
         # The exact-minimum line(s) define the crossing being emitted, so they
         # belong to the tie unconditionally — the residual test only decides
