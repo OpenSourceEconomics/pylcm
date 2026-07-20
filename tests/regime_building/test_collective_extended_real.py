@@ -20,6 +20,7 @@ asserts a value that is `nan` pre-fix.
 
 import contextlib
 import itertools
+from fractions import Fraction
 
 import jax
 import jax.numpy as jnp
@@ -102,9 +103,7 @@ def _raw_corner_sum_interpolator(term_fn: object) -> object:
 
     @jax.jit
     def interpolate(array: FloatND, coordinates: FloatND) -> FloatND:
-        interpolation_data = [
-            _compute_indices_and_weights(coordinates, array.shape[0])
-        ]
+        interpolation_data = [_compute_indices_and_weights(coordinates, array.shape[0])]
         contributions = []
         for indices_and_weights in itertools.product(*interpolation_data):
             indices, weights = zip(*indices_and_weights, strict=True)
@@ -183,20 +182,14 @@ def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
     """
     with _x64(use_x64):
         dtype = jnp.float64 if use_x64 else jnp.float32
-        values = jnp.array(
-            [-0.3096868097782135, 0.3673213720321655], dtype=dtype
-        )
-        weights = jnp.array(
-            [0.5910956263542175, 0.40890437364578247], dtype=dtype
-        )
+        values = jnp.array([-0.3096868097782135, 0.3673213720321655], dtype=dtype)
+        weights = jnp.array([0.5910956263542175, 0.40890437364578247], dtype=dtype)
         # Guard the guard: an all-positive fixture is the whole point; a zero
         # weight would make the old and new forms agree and prove nothing.
         assert bool(jnp.all(weights > 0))
 
         naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
-        guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(
-            values, weights
-        )
+        guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(values, weights)
         old = jax.jit(_old_weighted_average)(values, weights)
 
         naive_bits = _bits(naive)
@@ -313,6 +306,77 @@ def test_zero_safe_average_does_not_reverse_a_nontied_action():
     # i.e. it would reverse the action to the stochastic node.
     assert old_below is False
     assert guarded_below != old_below
+
+
+def _sequential_regime_mixture(terms: list[FloatND]) -> FloatND:
+    """Replay `Q_and_F`'s regime-mixture accumulation: a Python left-fold `E += term`.
+
+    `Q_and_F` accumulates `E_next_V = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`.
+    This is a distinct reduction from the vectorised `zero_safe_average` and is what the
+    zero_safe.py ROUND-7 note characterizes: accurate to a few ULP of the exact mixture
+    but NOT correctly-rounded. (A `jnp.sum(jnp.stack(terms))` returns the identical bits
+    under jit, so consolidating the fold changes nothing — it is not implemented.)
+    """
+    total = jnp.zeros_like(terms[0])
+    for term in terms:
+        total = total + term
+    return total
+
+
+def test_sequential_regime_mixture_is_zero_mass_safe():
+    """The load-bearing GUARANTEE: a zero-prob target with a -inf continuation -> 0.
+
+    An unreached regime-transition target carries probability exactly 0; its
+    continuation may be an admissible on-path -inf. The mixture fold must annihilate
+    that term (contribute exactly 0), never inject a nan into E_next_V. This is the
+    property no backend/dtype can take away — unlike the last-few-ULP reduction order,
+    which is inherently non-portable (see the companion accuracy test).
+    """
+    values = jnp.array([1.5, -jnp.inf, 2.0, 0.5], dtype=jnp.float32)
+    probs = jnp.array([0.5, 0.0, 0.3, 0.2], dtype=jnp.float32)
+    terms = [zero_safe_weighted_term(p, v) for p, v in zip(probs, values, strict=True)]
+    result = jax.jit(_sequential_regime_mixture)(terms)
+    assert jnp.isfinite(result)
+    # exact mixture over the positive-mass terms: .5*1.5 + .3*2 + .2*.5 = 1.45
+    assert float(result) == pytest.approx(1.45, abs=1e-6)
+
+
+def test_sequential_regime_mixture_is_accurate_but_not_correctly_rounded():
+    """F1 (round-7): the mixture fold is a few ULP from exact, NOT correctly-rounded.
+
+    On a valid all-positive 5-target float64 mixture the exact real value is
+    0.026468077778441356. `Q_and_F`'s left-fold lands within a few ULP of it but not on
+    it (measured bits ...842, 9 ULP below exact, under jit on hmg-office CPU jax 0.10.1)
+    -- which is why at a knife-edge the downstream argmax can go either way and float64
+    only shrinks, never removes, the event (zero_safe.py ROUND-7). The accuracy BOUND
+    below is durable across backends; the exact side of a specific knife-edge is NOT, so
+    it is deliberately not asserted. This is a characterization, not a fixable defect:
+    no source restructuring makes a 5-term float sum correctly-rounded.
+    """
+    vals = [
+        0.812941999835589,
+        1.1378181379219148,
+        -0.5779549019050126,
+        -2.64240682258276,
+        1.2829525381652913,
+    ]
+    probs = [
+        0.12272144807325755,
+        0.2780493197350539,
+        0.08032169107399144,
+        0.2570410094999844,
+        0.2618665316177127,
+    ]
+    exact = float(
+        sum(Fraction(p) * Fraction(v) for p, v in zip(probs, vals, strict=True))
+    )
+    with _x64(enabled=True):
+        v = jnp.asarray(vals, dtype=jnp.float64)
+        w = jnp.asarray(probs, dtype=jnp.float64)
+        terms = [zero_safe_weighted_term(w[i], v[i]) for i in range(v.shape[0])]
+        fold = float(jax.jit(_sequential_regime_mixture)(terms))
+    # Durable accuracy bound: within ~16 ULP of the exact real mixture (~3.5e-16).
+    assert abs(fold - exact) <= 16 * np.spacing(abs(exact))
 
 
 def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():

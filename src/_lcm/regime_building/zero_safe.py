@@ -119,15 +119,55 @@ same select. So every safety-preserving structure lands on the masked bits under
 vmap — confirming the reviewer's list (cond / select-after-both / lax.map /
 optimization_barrier all fail) by direct MEASUREMENT, not report.
 
-The same probe fixes the resolution: in float64 the masked average is BIT-IDENTICAL
-to the exact `jnp.average` (relative diff 0.00e+00, both 0.089231097529865119) on the
-very carrier that diverges 1 ULP in float32. The divergence is therefore a float32
-rounding-FLOOR artifact, not an expression-structure bug — and `raw jnp.average` is
-itself not bit-portable across CPUs (ROUND-5), so "match raw in float32" was never a
-well-posed target. An action whose choice flips under a <=few-ULP perturbation is tied
-at float32 precision; the sound remedy is to solve the collective core in FLOAT64
-(the test conftest already enables x64 — precision is part of the model spec), which
-removes the divergence entirely. No expression rewrite is pursued.
+The same probe fixes the resolution FOR THE AVERAGE HELPER: in float64 the masked
+`zero_safe_average` is BIT-IDENTICAL to the exact `jnp.average` (relative diff 0.00e+00,
+both 0.089231097529865119) on the very carrier that diverges 1 ULP in float32. The
+divergence is therefore a float32 rounding-FLOOR artifact, not an expression-structure
+bug — and `raw jnp.average` is itself not bit-portable across CPUs (ROUND-5), so "match
+raw in float32" was never a well-posed target. The sound remedy is to solve the
+collective core in FLOAT64 (the test conftest already enables x64 — precision is part of
+the model spec), which removes the AVERAGE-helper divergence. No expression rewrite is
+pursued. (See ROUND-7: float64 does NOT extend this bit-identity to the sequential
+regime-MIXTURE accumulation, and "tied at float32 precision" is imprecise — corrected
+below.)
+
+ROUND-7 CAVEAT (external re-review of the round-6 disposition; NARROWS the float64
+claim from "the collective core is resolved" to "the AVERAGE HELPER is resolved",
+and corrects the "tie" wording). Round 6 MEASURED float64 bit-identity for
+`zero_safe_average` (a single vectorised `sum(w*a)/sum(w)` reduction) and I then
+over-generalised it to "solve the collective core in float64 removes the
+discrepancy." Two things are wrong with that generalisation, both confirmed
+reproduce-first:
+
+- The runtime collective core has a SECOND, structurally DIFFERENT consumer:
+  `Q_and_F` accumulates the regime mixture as a SEQUENTIAL left-fold
+  `E = 0; for r in targets: E += zero_safe_weighted_term(p_r, V_r)` — NOT a call to
+  `zero_safe_average`. With all-positive `p_r` the mask is the identity, so this is
+  pure reduction-ORDER, and float64 does NOT make it correctly-rounded to the exact
+  mixture. MEASURED under jit (the real solve path) on hmg-office CPU jax 0.10.1, on
+  a valid all-positive 5-target float64 mixture: the fold returns bits
+  4583286125422516842 — 9 ULP BELOW the exact real mixture (bits ...851) and on the
+  WRONG side of a representable knife-edge alternative (bits ...843), reversing the
+  downstream argmax relative to exact. The external re-review reproduced the same
+  direction (fold low, wrong side) on jax 0.9.0.1 / 0.10.1 / 0.11.0 CPU. CRUCIALLY,
+  this is NOT fixable by source restructuring: a consolidated
+  `jnp.sum(jnp.stack(per_target_terms))` returns the IDENTICAL bits ...842 as the
+  left-fold under jit here (MEASURED) — only a non-representative directly-
+  constructed `jnp.sum(zero_safe_weighted_term(p_vec, v_vec))` on a native array
+  lands on the exact-side ...858, and the real code cannot use that form (the terms
+  are computed one target at a time). So consolidating the fold buys NOTHING at the
+  knife-edge; it is not even an accuracy improvement, and is NOT pursued.
+  Deterministic resolution AT a genuine knife-edge would need correctly-rounded /
+  compensated summation, which is not implemented. Beware the trap: an eager
+  (non-jit) run of the same fixture gives bits ...848 for every form and hides the
+  reversal — the divergence only appears under jit, so validate on the jitted path.
+- "An action that flips under a few-ULP perturbation is TIED at float32 precision"
+  is imprecise. The exact real average has a UNIQUE correctly-rounded float32 value;
+  the flip is an ill-conditioned NEAR-tie whose correctly-rounded resolution a
+  backend's reduction error can land on the WRONG side of (reviewer: exact rounds to
+  float32 bits 1035386571, the guarded reduction returns 1035386575 — a determinate
+  boundary crossed, not an equality). The decision cost is still ULP-level and still
+  smaller in float64, but call it a near-tie, not a tie.
 
 HONEST CONTRACT (supersedes every unconditional "bit-identical" statement below).
 `zero_safe_average` / `zero_safe_weighted_term` are (i) exact-zero-mass-SAFE
@@ -135,10 +175,18 @@ HONEST CONTRACT (supersedes every unconditional "bit-identical" statement below)
 reduction up to a few ULP of reduction error whose sign/magnitude depend on the XLA
 lowering and CPU/GPU — the SAME order of non-determinism raw float reductions carry
 across backends, NOT removable by any vmap-safe expression restructuring (ROUND-6);
-and (iii) in float64, bit-identical to the exact average on the cases measured. A
-float32 ULP difference can flip a GENUINE near-tie in the downstream argmax / IR
-comparison at ULP-level value cost; run the collective core in float64 if any such
-near-tie must be resolved deterministically.
+and (iii) in float64, `zero_safe_average` is bit-identical to the exact `jnp.average`
+on the cases measured. Guarantee (iii) is scoped to the AVERAGE HELPER — a single
+vectorised reduction — and does NOT extend to the SEQUENTIAL regime-mixture
+accumulation in `Q_and_F` (`E += zero_safe_weighted_term(p_r, V_r)` over targets): that
+is a different reduction ORDER that float64 does not make bit-portable across backends
+(ROUND-7). A float32 (and, at a knife-edge, even a float64) ULP difference can flip an
+ill-conditioned NEAR-tie — NOT an equality; the exact value has a unique correctly-
+rounded representative and the reduction error can land on the wrong side of it — in the
+downstream argmax / IR comparison at ULP-level value cost. Run the collective core in
+float64 to shrink this to a float64-knife-edge event; deterministic resolution AT a
+genuine knife-edge would require correctly-rounded/compensated summation, which is not
+implemented.
 """
 
 import jax
@@ -258,10 +306,13 @@ def zero_safe_average(
     # recover the raw bits. Once the value-masked reduction is materialised on any
     # co-path, XLA co-fuses the two reductions and the raw one collapses onto the
     # masked bits; `optimization_barrier` does not isolate them (it independently
-    # yields the masked bits); `lax.cond` vmaps to the same select. The ~1-ULP gap
-    # from the exact `jnp.average` expression is a float32 rounding-floor artifact
-    # (bit-IDENTICAL in float64), not an expression-structure bug, so there is
-    # nothing to gain by the extra reductions.
+    # yields the masked bits); `lax.cond` vmaps to the same select. The gap from the
+    # exact `jnp.average` expression (up to ~6 ULP in float32; bit-IDENTICAL in float64
+    # FOR THIS AVERAGE reduction on the measured carriers) is a float32 rounding-floor
+    # artifact, not an expression-structure bug, so there is nothing to gain by the
+    # extra reductions. NB the float64 bit-identity is a property of THIS single
+    # vectorised reduction; the SEQUENTIAL regime-mixture fold in `Q_and_F` is a
+    # different reduction order and is not made bit-portable by float64 (ROUND-7).
     numerator = jnp.sum(zero_safe_weighted_term(weights_arr, a_arr), axis=axis)
     return numerator / total_weight
 

@@ -246,6 +246,13 @@ def get_Q_and_F(
             # Zero-safe: an inactive regime-transition target (probability
             # exactly 0) next to an admissible on-path -inf continuation must
             # not turn this mixture term into a nan either.
+            #
+            # This SEQUENTIAL left-fold is a distinct reduction from the vectorised
+            # `zero_safe_average`; it is accurate to a few ULP of the exact mixture but
+            # NOT correctly-rounded, so at a knife-edge it can put the downstream argmax
+            # on either side (zero_safe.py ROUND-7). No source restructuring fixes this
+            # — a `jnp.sum(jnp.stack(terms))` returns the identical bits under jit — so
+            # the memory-frugal left-fold is kept; run in float64 to shrink the event.
             E_next_V = E_next_V + zero_safe_weighted_term(
                 active_regime_probs[target_regime_name], next_V_expected_arr
             )
