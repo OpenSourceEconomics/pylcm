@@ -211,7 +211,16 @@ def refine_envelope_with_support(
         live=segment_live,
     )
 
-    left_side, right_side = _node_side_winners(query_grid=query_grid, links=links)
+    point_value = jnp.where(query_dead, jnp.nan, value[order])
+    certificate = _certify_chord_point_relations(
+        query_grid=query_grid, point_value=point_value, links=links
+    )
+    left_side, right_side = _node_side_winners(
+        query_grid=query_grid,
+        point_value=point_value,
+        links=links,
+        certificate=certificate,
+    )
 
     # One node per distinct live abscissa; duplicated abscissae in the input
     # collapse onto the first occurrence (all copies see the same winners).
@@ -237,10 +246,10 @@ def refine_envelope_with_support(
     unrepresented_point, read_supported = _unsupported_read_verdicts(
         query_grid=query_grid,
         query_dead=query_dead,
-        point_value=jnp.where(query_dead, jnp.nan, value[order]),
         left_side=left_side,
         right_side=right_side,
         links=links,
+        certificate=certificate,
     )
 
     crossings, interval_overflow = _enumerate_interval_crossings(
@@ -311,10 +320,10 @@ def _unsupported_read_verdicts(
     *,
     query_grid: Float1D,
     query_dead: BoolND,
-    point_value: Float1D,
     left_side: _SideWinner,
     right_side: _SideWinner,
     links: _LinkLines,
+    certificate: _ChordPointCertificate,
 ) -> tuple[ScalarBool, ScalarBool]:
     """Detect envelope features a linearly-read compacted row cannot carry.
 
@@ -338,17 +347,17 @@ def _unsupported_read_verdicts(
           (fail-closed) while the solve rows keep the compaction convention.
 
     """
-    best_side_value = jnp.maximum(
-        jnp.where(left_side.exists, left_side.value, -jnp.inf),
-        jnp.where(right_side.exists, right_side.value, -jnp.inf),
-    )
-    # The comparison is exact: side records at a candidate abscissa are
-    # stored endpoint records (the link reads snap exact endpoint queries),
-    # so a strict excess is a representable stored gap, not arithmetic noise.
-    # Any magnitude-relative margin here would scale with the absolute value
-    # level and silently absorb representable strict maxima a few stored ulp
-    # above the side record.
-    unrepresented_point = jnp.any(~query_dead & (point_value > best_side_value))
+    # A point is representable in the linearly read row only if some live
+    # covering link certifiably reaches it: an endpoint match compares the
+    # stored records exactly, and an interior read is decided by the
+    # compensated cross-multiplied chord gap — a single rounded affine
+    # evaluation of a spanning link's chord can land on either side of a
+    # stored point a few ulp away, so it can neither absorb nor flag a point
+    # on its own. Any magnitude-relative tolerance on the stored-record path
+    # would scale with the absolute value level and silently absorb
+    # representable strict maxima a few stored ulp above the side record.
+    covered = jnp.any(certificate.dominates(), axis=1)
+    unrepresented_point = jnp.any(~query_dead & ~covered)
 
     emits = (left_side.exists | right_side.exists) & ~query_dead
     previous_emitted_grid = jnp.concatenate(
@@ -492,7 +501,11 @@ class _SideWinner:
 
 
 def _node_side_winners(
-    *, query_grid: Float1D, links: _LinkLines
+    *,
+    query_grid: Float1D,
+    point_value: Float1D,
+    links: _LinkLines,
+    certificate: _ChordPointCertificate,
 ) -> tuple[_SideWinner, _SideWinner]:
     """Compute the left- and right-side envelope winners at every query node.
 
@@ -521,6 +534,8 @@ def _node_side_winners(
         policy_at=policy_at,
         links=links,
         slope_sign=-1.0,
+        point_value=point_value,
+        certificate=certificate,
     )
     right = _lexicographic_winner(
         covers=covers_right,
@@ -528,6 +543,8 @@ def _node_side_winners(
         policy_at=policy_at,
         links=links,
         slope_sign=1.0,
+        point_value=point_value,
+        certificate=certificate,
     )
     return left, right
 
@@ -539,30 +556,48 @@ def _lexicographic_winner(
     policy_at: FloatND,
     links: _LinkLines,
     slope_sign: float,
+    point_value: Float1D,
+    certificate: _ChordPointCertificate,
 ) -> _SideWinner:
     """Pick the covering link with the highest value, ties by signed slope.
 
     `slope_sign = -1` prefers the flattest line among value ties (the left-side
     winner: highest just before the node); `slope_sign = +1` prefers the
     steepest (the right-side winner: highest just after).
+
+    The node's own stored point value anchors the comparison wherever it can:
+    when no covering chord is *certified* strictly above the point and some
+    covering link is certified tied with it (a stored-record match or an
+    interior chord inside the certification margin), the published value is
+    the stored point itself and the tie set is the certified-tied links —
+    never a single rounded interior read, which can land a few ulp on either
+    side of an exact tie and hand the node to the wrong branch with a value
+    above every underlying candidate. Only when some chord is certified
+    strictly above the point (the routine dominated-node case) does the
+    rounded maximum decide, with exact-equality ties: any tolerance window
+    there would scale with the absolute value level, and a common cardinal
+    shift would pull genuinely representable gaps inside it.
     """
     masked_value = jnp.where(covers, value_at, -jnp.inf)
-    best_value = jnp.max(masked_value, axis=1)
+    rounded_best = jnp.max(masked_value, axis=1)
+    rounded_tie = covers & (masked_value == rounded_best[:, None])
+
+    side_tied = covers & certificate.ties_point()
+    point_anchored = (
+        jnp.isfinite(point_value)
+        & ~jnp.any(covers & certificate.above, axis=1)
+        & jnp.any(side_tied, axis=1)
+    )
+    best_value = jnp.where(point_anchored, point_value, rounded_best)
+    tie = jnp.where(point_anchored[:, None], side_tied, rounded_tie)
+
     exists = jnp.isfinite(best_value)
-    # A value tie is exact stored equality — the only translation-invariant
-    # tie set: any tolerance window scales with the absolute value level, so
-    # a common cardinal shift would pull genuinely representable gaps inside
-    # it and let a lower record own the node. A missed tie (two computations
-    # of the same crossing value a rounding step apart) merely skips the
-    # slope tie-break and duplicates the node downstream — never merges
-    # records.
-    tie = covers & (masked_value == best_value[:, None])
     slope_score = jnp.where(tie, slope_sign * links.value_slope[None, :], -jnp.inf)
     link = jnp.argmax(slope_score, axis=1).astype(jnp.int32)
-    # The published value is the exact maximum itself, not the tie winner's
-    # own read: the winner owns the policy and the slope convention, but a
-    # numerical tie rule must never replace the hard maximum of the stored
-    # records by a near-maximal competitor's lower value.
+    # The published value is the maximum (or the certified point), not the tie
+    # winner's own read: the winner owns the policy and the slope convention,
+    # but a numerical tie rule must never replace the hard maximum of the
+    # stored records by a near-maximal competitor's lower value.
     return _SideWinner(
         exists=exists,
         link=link,
@@ -598,10 +633,12 @@ class _IntervalCrossings:
 
 
 def _two_sum(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
-    """Exact float addition: `a + b = total + error` with both parts floats.
+    """Float addition with residual: `a + b = total + error`, both floats.
 
     Knuth's branch-free TwoSum. The returned pair represents the exact real
-    sum: `total` is the rounded sum and `error` its exact rounding residual.
+    sum — `total` is the rounded sum and `error` its exact rounding residual —
+    provided the addition itself neither overflows nor produces a nonfinite
+    intermediate; at overflow scales the residual is not meaningful.
     """
     total = a + b
     b_virtual = total - a
@@ -610,11 +647,16 @@ def _two_sum(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
 
 
 def _two_product(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
-    """Exact float multiplication: `a * b = product + error`, both floats.
+    """Float multiplication with residual: `a * b = product + error`.
 
     Dekker's split-based TwoProd (no FMA required): each factor is split into
     high and low halves whose pairwise products are exact, so the residual of
-    the rounded product is recovered exactly in working precision.
+    the rounded product is recovered exactly in working precision — for
+    operands whose split products stay finite and normal. Near the overflow
+    boundary the split factor itself can overflow (a nonfinite residual), and
+    subnormal split halves can lose low bits; the callers' certification
+    margins and the loud-overflow failure direction absorb those extremes
+    rather than the residual arithmetic.
     """
     mantissa_digits = jnp.finfo(a.dtype).nmant + 1
     split_factor = jnp.asarray(2.0 ** ((mantissa_digits + 1) // 2) + 1.0, dtype=a.dtype)
@@ -669,6 +711,117 @@ def _compensated_line_gap(
         - winner_slope * winner_offset_err
     )
     return high + residual
+
+
+class _ChordPointCertificate:
+    """Certified per-(query, link) relations of each link's chord to the point.
+
+    Each query abscissa carries its own stored point value; each live link's
+    exact chord relates to that point in one of the certified ways below. At
+    an endpoint abscissa the relation is the exact stored-record comparison.
+    In a link's interior the decision is the sign of the cross-multiplied
+    chord gap
+
+        D = (v_l - p) (x_u - x_l) + (v_u - v_l) (q - x_l),
+
+    which shares the sign of `chord(q) - p` (the abscissae are sorted, so the
+    span is positive). `D` is evaluated in compensated double-float
+    arithmetic — exact difference pairs via TwoSum, exact main products via
+    TwoProd, the epsilon-scale cross terms carried explicitly — so its
+    residual error is of second order in machine epsilon relative to the
+    products, and a gap inside the certification margin is treated as a
+    certified *tie* rather than resolved by rounding noise. Every certificate
+    term is a difference, so the relations are exactly invariant to common
+    translations of the value level and of the resource origin.
+    """
+
+    def __init__(
+        self,
+        *,
+        covers: BoolND,
+        at_endpoint: BoolND,
+        stored_ge: BoolND,
+        stored_eq: BoolND,
+        above: BoolND,
+        tied: BoolND,
+    ) -> None:
+        self.covers = covers
+        """Live link covering the query from at least one side (zero-width
+        links cover neither side, so a single-abscissa spike never absorbs
+        itself through its own duplicated record)."""
+        self.at_endpoint = at_endpoint
+        """The query is one of the link's stored endpoint abscissae."""
+        self.stored_ge = stored_ge
+        """Endpoint case: the stored record at the query is `>=` the point."""
+        self.stored_eq = stored_eq
+        """Endpoint case: the stored record at the query equals the point."""
+        self.above = above
+        """Interior case: the chord certifiably strictly exceeds the point."""
+        self.tied = tied
+        """Interior case: the chord gap is inside the certification margin —
+        the chord and the point are tied at working precision."""
+
+    def dominates(self) -> BoolND:
+        """Link certifiably reaches the point (absorbs it quietly).
+
+        An unresolved interior ordering does NOT dominate: over-reporting an
+        unrepresented point is the safe direction — the routine
+        dominated-candidate absorptions clear the margin by orders of
+        magnitude, and an eps-close point-versus-chord ordering is exactly
+        where a quiet answer could hide a genuine spike.
+        """
+        return self.covers & jnp.where(self.at_endpoint, self.stored_ge, self.above)
+
+    def ties_point(self) -> BoolND:
+        """Link's value at the query equals the point at working precision."""
+        return self.covers & jnp.where(self.at_endpoint, self.stored_eq, self.tied)
+
+
+def _certify_chord_point_relations(
+    *, query_grid: Float1D, point_value: Float1D, links: _LinkLines
+) -> _ChordPointCertificate:
+    """Build the certified chord-to-point relations for every (query, link)."""
+    query = query_grid[:, None]
+    point = point_value[:, None]
+    covers = links.live[None, :] & (
+        ((links.lower[None, :] < query) & (query <= links.upper[None, :]))
+        | ((links.lower[None, :] <= query) & (query < links.upper[None, :]))
+    )
+    at_lower = query == links.lower[None, :]
+    at_upper = query == links.upper[None, :]
+    stored_record = jnp.where(
+        at_lower, links.lower_value[None, :], links.upper_value[None, :]
+    )
+    stored_ge = stored_record >= point
+    stored_eq = stored_record == point
+
+    value_gap, value_gap_err = _two_sum(links.lower_value[None, :], -point)
+    span, span_err = _two_sum(links.upper[None, :], -links.lower[None, :])
+    rise, rise_err = _two_sum(links.upper_value[None, :], -links.lower_value[None, :])
+    offset, offset_err = _two_sum(query, -links.lower[None, :])
+    left_term, left_term_err = _two_product(value_gap, span)
+    right_term, right_term_err = _two_product(rise, offset)
+    cross_terms = (
+        value_gap * span_err
+        + value_gap_err * span
+        + value_gap_err * span_err
+        + rise * offset_err
+        + rise_err * offset
+        + rise_err * offset_err
+    )
+    high, high_err = _two_sum(left_term, right_term)
+    chord_gap = high + (high_err + left_term_err + right_term_err + cross_terms)
+    eps = jnp.finfo(query_grid.dtype).eps
+    margin = 32.0 * eps * eps * (jnp.abs(left_term) + jnp.abs(right_term))
+
+    return _ChordPointCertificate(
+        covers=covers,
+        at_endpoint=at_lower | at_upper,
+        stored_ge=stored_ge,
+        stored_eq=stored_eq,
+        above=chord_gap > margin,
+        tied=jnp.abs(chord_gap) <= margin,
+    )
 
 
 def _enumerate_interval_crossings(
@@ -794,6 +947,23 @@ def _enumerate_interval_crossings(
         ).astype(jnp.int32)
 
         x_next = x_current + offset_next
+        # A crossing whose emitted abscissa rounds onto a candidate node (the
+        # interval's right endpoint) or onto the current position is a node
+        # event, not an interior switch: the node's one-sided records own that
+        # abscissa, and the reconstructed crossing value there is a rounded
+        # affine product that can exceed both stored branches — an emitted
+        # third record would overstate the envelope at an actual node. Two
+        # cases, neither emitting a record:
+        # - landing on the right node exhausts the interval (any later switch
+        #   would lie beyond it), so the scan ends there;
+        # - landing on the current position (the positive offset rounds to no
+        #   representable advance) hands the running winner to the incoming
+        #   line and keeps scanning — no representable query separates the
+        #   true crossing from the position, so the ownership handoff is the
+        #   only observable effect.
+        lands_on_node = found & (x_next >= query_grid)
+        lands_in_place = found & ~lands_on_node & (x_next <= x_current)
+        emit = found & ~lands_on_node & ~lands_in_place
         winner_slope = links.value_slope[winner]
         crossing_value = (
             links.anchor_value[winner]
@@ -801,17 +971,19 @@ def _enumerate_interval_crossings(
             + winner_slope * offset_next
         )
         emitted = _IntervalCrossings(
-            grid=jnp.where(found, x_next, jnp.nan),
+            grid=jnp.where(emit, x_next, jnp.nan),
             value=crossing_value,
             policy_left=links.anchor_policy[winner]
             + links.policy_slope[winner] * (x_next - links.anchor_grid[winner]),
             policy_right=links.anchor_policy[incoming]
             + links.policy_slope[incoming] * (x_next - links.anchor_grid[incoming]),
-            valid=found,
+            valid=emit,
         )
-        new_winner = jnp.where(found, incoming, winner).astype(jnp.int32)
-        new_x = jnp.where(found, x_next, x_current)
-        return (new_winner, new_x, active & found), emitted
+        new_winner = jnp.where(found & ~lands_on_node, incoming, winner).astype(
+            jnp.int32
+        )
+        new_x = jnp.where(emit, x_next, x_current)
+        return (new_winner, new_x, active & found & ~lands_on_node), emitted
 
     carry_init = (init_winner, prev_grid, interval_active)
     carry_final, rows = jax.lax.scan(

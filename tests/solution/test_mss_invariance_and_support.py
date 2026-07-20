@@ -652,3 +652,87 @@ def test_a_long_span_link_publishes_its_stored_endpoint_exactly():
 
     assert got_value == 3.0
     assert got_policy == 1.0
+
+
+def test_a_strict_point_above_the_exact_chord_of_a_covering_link_overflows():
+    """A point strictly above a covering link's exact chord must fail loudly.
+
+    The third candidate's stored value lies strictly above the exact real
+    chord through the first link's stored endpoints, but by less than the
+    rounding error of a single affine evaluation of that chord — so only a
+    certified point-versus-chord comparison can detect that the point is
+    unrepresentable in a linearly read row. Absorbing it would publish the
+    covering link's policy at the candidate's own abscissa.
+    """
+    grid = jnp.asarray(np.array([14094.732, 24168.633, 21232.537], np.float32))
+    value = jnp.asarray(np.array([-2.5062137, 1.4316196, 0.28391573], np.float32))
+    policy = jnp.asarray(np.array([8000.0, 8000.0, 3232.537], np.float32))
+
+    chord_slope = (float(value[1]) - float(value[0])) / (
+        float(grid[1]) - float(grid[0])
+    )
+    exact_chord = float(value[0]) + chord_slope * (float(grid[2]) - float(grid[0]))
+    assert exact_chord < float(value[2])
+
+    *_, n_kept, _ = refine_envelope_with_support(
+        endog_grid=grid, policy=policy, value=value, n_refined=12
+    )
+
+    assert int(n_kept) > 12
+
+
+def test_a_crossing_landing_on_a_candidate_node_is_a_node_event():
+    """A crossing at a candidate abscissa emits no third record above the tie.
+
+    Two branches meet exactly at a candidate node: the exact chord of the
+    steep branch through its stored endpoints equals the flat branch's stored
+    value there. The refined row must carry exactly the two one-sided records
+    at that abscissa — no additional crossing record whose reconstructed value
+    exceeds both branches — so a competing branch a few ulp above the true tie
+    still wins the downstream maximum, and the read at the node returns the
+    stored tie value and the incoming branch's stored policy.
+    """
+    x0 = np.float32(np.float32(4.1932108e-05) * np.float32(2**20))
+    tie_query = np.float32(np.float32(4.2181477e-05) * np.float32(2**20))
+    x1 = np.float32(np.float32(4.2680214e-05) * np.float32(2**20))
+    value0, tie_value, value1 = (
+        np.float32(-762.7153),
+        np.float32(16.906372),
+        np.float32(1576.1497),
+    )
+    slope_a = (float(value1) - float(value0)) / (float(x1) - float(x0))
+    x2 = np.float32(float(x1) + 1.0)
+    slope_b = 4000.0
+    value2 = np.float32(float(tie_value) + slope_b * (float(x2) - float(tie_query)))
+    utility_scale = 100000.0
+    policy_a = np.float32(utility_scale / slope_a)
+    policy_b = np.float32(utility_scale / slope_b)
+    exact_a_at_query = float(value0) + slope_a * (float(tie_query) - float(x0))
+    assert exact_a_at_query == float(tie_value)
+
+    refined_grid, refined_policy, refined_value, n_kept = refine_envelope(
+        endog_grid=jnp.asarray(np.array([x0, x1, tie_query, x2], np.float32)),
+        policy=jnp.asarray(
+            np.array([policy_a, policy_a, policy_b, policy_b], np.float32)
+        ),
+        value=jnp.asarray(np.array([value0, value1, tie_value, value2], np.float32)),
+        n_refined=24,
+    )
+
+    live_grid = np.asarray(refined_grid)[: int(n_kept)]
+    assert int(np.sum(live_grid == tie_query)) == 2
+    got_value = float(
+        interp_on_padded_grid(
+            x_query=jnp.asarray(tie_query), xp=refined_grid, fp=refined_value
+        )
+    )
+    got_policy = float(
+        interp_on_padded_grid(
+            x_query=jnp.asarray(tie_query), xp=refined_grid, fp=refined_policy
+        )
+    )
+    np.testing.assert_allclose(
+        got_value, float(tie_value), rtol=0.0, atol=float(np.spacing(tie_value))
+    )
+    np.testing.assert_allclose(got_policy, float(policy_b), rtol=0.0, atol=0.0)
+    assert got_value < float(np.float32(16.90645))
