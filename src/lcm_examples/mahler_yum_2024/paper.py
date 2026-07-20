@@ -301,6 +301,7 @@ def create_mahler_yum_model(
     implementation: str = "paper",
     outer_search: AdaptiveOuterMesh | None = None,
     compatibility: legacy.MahlerLegacyCompatibility | None = None,
+    enable_jit: bool = True,
 ) -> Model:
     """Build the Mahler-Yum model in the requested implementation.
 
@@ -355,6 +356,10 @@ def create_mahler_yum_model(
         },
         ages=ages,
         regime_id_class=RegimeId,
+        # AOT-compiled cores cannot be crossed by JAX transformations; the
+        # implicit-derivative pilot builds with `enable_jit=False` to keep the
+        # kernel cores traceable under vmap/jvp.
+        enable_jit=enable_jit,
         fixed_params={
             "alive": {
                 "productivity_type_multiplier": productivity_type_multiplier,

@@ -184,6 +184,46 @@ def test_diagnostics_flag_tied_basins() -> None:
     assert bool(diag.unresolved[0])
 
 
+def test_diagnostics_flag_nonstationary_kink_optimum() -> None:
+    """A tent-peak maximizes at a kink where Q_f is sign-definite, not zero.
+
+    This is the real-model failure the Mahler pilot surfaced in miniature:
+    the paper-mode consumption floor makes the value non-smooth in effort, and
+    the outer optimum pins to a floor-induced kink. `Q_f(f*)` does not vanish
+    there, so the implicit-function tangent is invalid — and the stationarity
+    screen must flag it even though the winner is interior, has real (one-
+    sided) curvature-scale, and is not basin-tied.
+    """
+
+    def tent(f, theta):
+        # Peak at f = 0.3; slopes theta up on the left, -2*theta on the right.
+        # The maximum is AT the kink; forward-mode Q_f there is one-sided and
+        # far from zero. A parabola floor keeps Q_ff well-defined and negative.
+        return -theta * jnp.abs(f - 0.3) - 0.01 * (f - 0.3) ** 2
+
+    theta = jnp.array(1.0)
+    f_star, _, margin = continuous_outer_optimum(tent, theta, _BOUNDS)
+    np.testing.assert_allclose(np.asarray(f_star), [0.3], atol=1e-3)
+    diag = implicit_optimum_diagnostics(
+        tent, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
+    )
+    assert bool(diag.nonstationary[0])
+    assert bool(diag.unresolved[0])
+    # Not at a bound, and the curvature floor screen is not what caught it.
+    assert not bool(diag.at_lower_bound[0])
+    assert not bool(diag.at_upper_bound[0])
+
+
+def test_smooth_interior_optimum_is_stationary() -> None:
+    """The stationarity screen must NOT fire on a genuine smooth optimum."""
+    theta = jnp.array(0.6)
+    f_star, _, margin = continuous_outer_optimum(_quadratic, theta, _BOUNDS)
+    diag = implicit_optimum_diagnostics(
+        _quadratic, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
+    )
+    assert not bool(diag.nonstationary[0])
+
+
 def test_vectorized_cells_get_per_cell_tangents() -> None:
     """Heterogeneous brackets and a shared theta: per-cell implicit tangents."""
     bounds = (jnp.array([0.0, 0.0, 0.2]), jnp.array([1.0, 0.9, 1.0]))

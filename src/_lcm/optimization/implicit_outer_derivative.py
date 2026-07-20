@@ -20,7 +20,14 @@ REPORTED, not repaired, through `ImplicitOptimumDiagnostics`:
 - `|Q_ff|` is below the curvature threshold (flat top — the implicit
   tangent divides by ~0);
 - the best and runner-up mesh basins are value-tied (a global argmax about
-  to jump — the derivative is set-valued).
+  to jump — the derivative is set-valued);
+- `Q_f(f*)` is not (near) zero — the winner sits at a KINK in the value
+  surface (or the primal under-polished), so the first-order condition the
+  implicit-function theorem inverts does not hold. On the real Mahler-Yum
+  model the consumption floor makes the value non-smooth in effort, and the
+  outer optimum can pin to a floor-induced kink whose location does not move
+  with the parameter; without this screen the tangent `-Q_ftheta/Q_ff`, valid
+  only at a stationary point, would be reported as trustworthy.
 
 Consumers must treat `unresolved` cells as *no derivative available* and
 fall back to finite differences or refuse inference there; the tangent is
@@ -43,6 +50,19 @@ _CURVATURE_FLOOR = 1e-8
 # Best-vs-second-best mesh-basin margin below which the global argmax is
 # treated as tied (about to jump between basins under a parameter nudge).
 _TIE_MARGIN = 1e-10
+# A winner is treated as non-stationary when |Q_f(f*)| exceeds this many
+# multiples of the residual a genuine interior optimum would still carry after
+# the polish, |Q_ff| * bracket_width (since Q_f ~ Q_ff * (f - f*) and the
+# polish leaves f within ~one bracket width of the true optimum). A KINK in the
+# value surface — the paper-mode consumption floor makes V non-smooth in the
+# outer action — pins the optimum at a point where Q_f is sign-definite and
+# does NOT vanish under refinement, so it stays above this screen while a
+# smooth optimum falls below it.
+_STATIONARITY_RTOL = 100.0
+# Absolute |Q_f| floor so a near-flat objective (tiny |Q_ff|, already flagged
+# by the curvature screen) does not also trip the stationarity screen on
+# rounding noise.
+_STATIONARITY_ATOL = 1e-7
 
 
 @dataclass(frozen=True)
@@ -60,6 +80,12 @@ class ImplicitOptimumDiagnostics:
 
     basin_tie: BoolND
     """Best and runner-up mesh basins value-tied at the mesh stage."""
+
+    nonstationary: BoolND
+    """`|Q_f(f*)|` too large for an interior stationary point — the winner
+    sits at a KINK (or the primal under-polished), so the
+    implicit-function-theorem tangent `-Q_ftheta/Q_ff`, which assumes
+    `Q_f(f*)=0`, does not apply."""
 
     unresolved: BoolND
     """Any of the above: no trustworthy local-normal derivative here."""
@@ -161,17 +187,18 @@ def _continuous_outer_optimum_jvp(
         objective, theta, bounds, n_mesh, polish_iterations
     )
 
-    def q_of_f(f: FloatND) -> FloatND:
-        return objective(f, theta)
+    # All objective derivatives are FORWARD-mode. The objective is per-cell
+    # (cell i's value depends only on f[i]), so the ones-tangent JVP is
+    # exactly the elementwise derivative — and forward mode differentiates
+    # through any inner control flow (while/fori loops in a nested solve)
+    # that reverse-mode AD cannot.
+    ones = jnp.ones_like(f_star)
 
-    def q_f_of_theta(t: FloatND) -> FloatND:
-        grad_f = jax.grad(lambda f, tt: jnp.sum(objective(f, tt)), argnums=0)
-        return grad_f(f_star, t)
+    def q_f(f: FloatND, t: FloatND) -> FloatND:
+        return jax.jvp(lambda g: objective(g, t), (f,), (ones,))[1]
 
-    q_ff = jax.grad(lambda f: jnp.sum(jax.grad(lambda g: jnp.sum(q_of_f(g)))(f)))(
-        f_star
-    )
-    _, q_ftheta_dot = jax.jvp(q_f_of_theta, (theta,), (theta_dot,))
+    _, q_ff = jax.jvp(lambda f: q_f(f, theta), (f_star,), (ones,))
+    _, q_ftheta_dot = jax.jvp(lambda t: q_f(f_star, t), (theta,), (theta_dot,))
     # At a maximum Q_ff <= 0; a flat top is guarded toward -floor so the
     # tangent stays finite (the diagnostics flag such cells as unresolved).
     guarded_curvature = jnp.where(
@@ -199,21 +226,36 @@ def implicit_optimum_diagnostics(
     polish_iterations: int = 32,
     curvature_floor: float = _CURVATURE_FLOOR,
     tie_margin: float = _TIE_MARGIN,
+    stationarity_rtol: float = _STATIONARITY_RTOL,
+    stationarity_atol: float = _STATIONARITY_ATOL,
 ) -> ImplicitOptimumDiagnostics:
     """Classify where the implicit derivative at `f_star` is trustworthy."""
     lower, upper = bounds
     width = (upper - lower) / (n_mesh - 1) * (0.618**polish_iterations)
-    q_ff = jax.grad(
-        lambda f: jnp.sum(jax.grad(lambda g: jnp.sum(objective(g, theta)))(f))
-    )(f_star)
+    ones = jnp.ones_like(f_star)
+    q_f = jax.jvp(lambda f: objective(f, theta), (f_star,), (ones,))[1]
+    _, q_ff = jax.jvp(
+        lambda f: jax.jvp(lambda g: objective(g, theta), (f,), (ones,))[1],
+        (f_star,),
+        (ones,),
+    )
     at_lower = f_star <= lower + width
     at_upper = f_star >= upper - width
     flat = jnp.abs(q_ff) < curvature_floor
     tie = basin_margin < tie_margin
+    # A genuine interior optimum leaves |Q_f| ~ |Q_ff| * width after the polish;
+    # a kink (or an under-polished primal) leaves it far larger. Suppress the
+    # screen where the winner is at a bound (Q_f is one-sided by design there,
+    # already reported by the bound flags).
+    stationarity_threshold = (
+        stationarity_rtol * jnp.abs(q_ff) * width + stationarity_atol
+    )
+    nonstationary = (jnp.abs(q_f) > stationarity_threshold) & ~(at_lower | at_upper)
     return ImplicitOptimumDiagnostics(
         at_lower_bound=at_lower,
         at_upper_bound=at_upper,
         flat_curvature=flat,
         basin_tie=tie,
-        unresolved=at_lower | at_upper | flat | tie,
+        nonstationary=nonstationary,
+        unresolved=at_lower | at_upper | flat | tie | nonstationary,
     )
