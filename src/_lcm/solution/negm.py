@@ -23,7 +23,6 @@ from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.outer_envelope import build_stacked_outer_carry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
@@ -50,8 +49,10 @@ from lcm.exceptions import InvalidParamsError, RegimeInitializationError
 from lcm.typing import (
     ActionName,
     ContinuousState,
+    Float1D,
     FloatND,
     FunctionName,
+    ScalarFloat,
     StateName,
     StateOrActionName,
 )
@@ -310,7 +311,7 @@ class _NEGMPeriodKernel:
     regime_name: RegimeName
     """Name of the regime whose flat params the outer node binds into."""
 
-    outer_grid_values: FloatND
+    outer_grid_values: Float1D
     """Exogenous grid over the outer post-decision margin `s'`."""
 
     outer_post_decision: FunctionName
@@ -324,7 +325,7 @@ class _NEGMPeriodKernel:
     into the keeper's cash-on-hand axis.
     """
 
-    durable_grid_values: FloatND
+    durable_grid_values: Float1D
     """The durable state's grid — the carry's last leading (passive) axis.
 
     Any discrete/process states precede the passive durable margin in the carry's
@@ -450,9 +451,12 @@ class _NEGMPeriodKernel:
         durable stock unchanged at every durable state. For each exogenous
         outer-grid node `s'_j`, the adjuster runs with `outer_post_decision` bound
         to `s'_j`, yielding `W_j`, the inner value over the liquid endogenous grid
-        at durable `s'_j`. The outer axis is collapsed by
-        `V = max(V_keeper, max_j W_j)`; the argmax over that stacked axis is the
-        outer simulation policy.
+        at durable `s'_j`. The outer axis is collapsed into the value array by
+        `V = max(V_keeper, max_j W_j)`, and every candidate carry is retained in
+        the published continuation so the parent read can take the exact
+        `max_j V_j(q)` at its own query. The published simulation policy is the
+        keeper's off-grid inner consumption function; the outer durable choice is
+        re-optimized by grid argmax at simulate time, not carried on this axis.
         """
         keeper_result = self.keeper_kernel(
             compiled_cores={"main": compiled_cores["keeper"]},
@@ -514,6 +518,8 @@ class _NEGMPeriodKernel:
             # outer grid rather than one chunk — and the chunk's independent
             # solves could not overlap.
             V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
+        from _lcm.egm.outer_envelope import build_stacked_outer_carry  # noqa: PLC0415
+
         carry = build_stacked_outer_carry(
             keeper_carry=keeper_carry,
             adjuster_carries=tuple(adjuster_carries),
@@ -529,8 +535,8 @@ class _NEGMPeriodKernel:
             simulation_policy=keeper_result.simulation_policy,
         )
 
-    def _outer_nodes(self) -> list[FloatND]:
-        """The exogenous outer post-decision nodes, each a scalar `s'_j`.
+    def _outer_nodes(self) -> list[ScalarFloat]:
+        """Return the exogenous outer post-decision nodes, each a scalar `s'_j`.
 
         The state-specific no-adjustment kink `s' = s` a fixed exogenous grid
         would miss is covered by the keeper, not appended here.
@@ -837,7 +843,7 @@ def _with_outer_post_decision(
     flat_params: FlatParams,
     regime_name: RegimeName,
     outer_post_decision: FunctionName,
-    value: FloatND,
+    value: ScalarFloat,
 ) -> FlatParams:
     """Bind the outer post-decision value into the regime's flat params.
 

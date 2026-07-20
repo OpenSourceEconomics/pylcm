@@ -27,16 +27,11 @@ envelope under linear interpolation, with the crossing point present.
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
-from _lcm.egm.upper_envelope import get_upper_envelope
+from _lcm.egm.upper_envelope import get_upper_envelope, mss
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
-
-mss = pytest.importorskip(
-    "_lcm.egm.upper_envelope.mss", reason="MSS kernel not yet implemented"
-)
 
 
 def _mss_solver():

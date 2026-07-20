@@ -524,14 +524,22 @@ def _fail_if_carry_layout_unsupported(
         )
         if name != inner.continuous_state
     ]
-    if passive_state_names and passive_state_names[-1] != durable_state:
-        msg = (
-            f"Regime '{regime_name}' declares passive continuous state(s) "
-            f"{[n for n in passive_state_names if n != durable_state]} after "
-            f"the durable margin '{durable_state}'. The stacked outer "
-            "continuation carry lifts each candidate by a per-durable-state "
-            "credited cost, so the durable must be the last passive continuous "
-            "state the regime declares — reorder `states` so "
-            f"'{durable_state}' comes last."
-        )
-        raise ModelInitializationError(msg)
+    # Only meaningful when the durable is itself a passive continuous state:
+    # the "last passive axis" requirement is a statement about its position
+    # among the passive states. A durable that is not a passive continuous
+    # state at all is a separate error caught upstream, so skip here rather
+    # than emit an "after the durable" message that lists states preceding it.
+    if durable_state in passive_state_names:
+        after_durable = passive_state_names[
+            passive_state_names.index(durable_state) + 1 :
+        ]
+        if after_durable:
+            msg = (
+                f"Regime '{regime_name}' declares passive continuous state(s) "
+                f"{after_durable} after the durable margin '{durable_state}'. "
+                "The stacked outer continuation carry lifts each candidate by a "
+                "per-durable-state credited cost, so the durable must be the "
+                "last passive continuous state the regime declares — reorder "
+                f"`states` so '{durable_state}' comes last."
+            )
+            raise ModelInitializationError(msg)

@@ -1,27 +1,29 @@
-"""Phase-0 kinked 2-asset toy + brute oracle (the NEGM parity target).
+"""Kinked 2-asset toy + grid-search oracle (the NEGM parity target).
 
-The smallest model carrying the Laibson frictions a NEGM prototype must
-reproduce: liquid `X` + illiquid `Z`, a credit-card borrowing-rate kink at the
-liquid post-state `a^X = 0`, an illiquid withdrawal penalty (kink at `Iz = 0`),
-the hard `Z >= 0` floor, and the direct illiquid utility flow `u(C + iota*Z)`.
+The smallest model carrying the Laibson frictions a NEGM solve must reproduce:
+liquid `X` + illiquid `Z`, a credit-card borrowing-rate kink at the liquid
+post-state `a^X = 0`, an illiquid withdrawal penalty (kink at `Iz = 0`), the
+hard `Z >= 0` floor, and the direct illiquid utility flow `u(C + iota*Z)`.
 
-Solved with the `BruteForce` solver as the oracle. The liquid `wealth` grid
-covers the reachable negative-wealth range: the liquid floor `a^X >= -5` and the
-borrow rate `0.12` put the minimum reachable `next_wealth` at `1.12 * -5 = -5.6`,
-so a grid starting at `0` would force the brute V-interpolation to extrapolate
-below its own support at every low-wealth cell and inflate the value there. The
-grid starts at `-6` so every reachable `next_wealth` lands inside the support.
+Solved with the default `GridSearch` solver as the oracle. The liquid `wealth`
+grid covers the reachable negative-wealth range: the liquid floor `a^X >= -5`
+and the borrow rate `0.12` put the minimum reachable `next_wealth` at
+`1.12 * -5 = -5.6`, so a grid starting at `0` would force the V-interpolation to
+extrapolate below its own support at every low-wealth cell and inflate the value
+there. The grid starts at `-6` so every reachable `next_wealth` lands inside the
+support.
 
-Prints `V` at a few fixed grid coordinates so the NEGM solve can be checked for
-V-parity by concrete value, plus a provenance block (lcm build, git SHA, x64
-flag, grid shapes and checksums, the corner cell's independently recomputed
-maximizing `(c, Iz, a^X, next_wealth, next_illiquid)`, and the interpolation
-mode) so a future reader can reproduce the pinned numbers exactly.
+Importable as the parity oracle (`build_model`, `PARAMS`, the grids,
+`_checksum`); run as a script to print `V` at a few fixed grid coordinates plus
+a provenance block (lcm build, git SHA, x64 flag, grid shapes and checksums, the
+corner cell's independently recomputed maximizing `(c, Iz, a^X, next_wealth,
+next_illiquid)`, and the interpolation mode) so a future reader can reproduce
+the pinned numbers exactly.
 
-Run: python kinked_toy_oracle.py
+Run: python tests/test_models/kinked_toy_oracle.py
 """
 
-# ruff: noqa: T201, INP001, PLR2004, S607  (Phase-0 probe: prints, calls git)
+# ruff: noqa: T201, S607  (script provenance block: prints, calls git)
 
 import os
 import subprocess
@@ -268,7 +270,7 @@ def main() -> None:
 
     print(f"lcm.__file__ = {lcm.__file__}", flush=True)
     print(f"git SHA = {_git_sha()}", flush=True)
-    print(f"jax_enable_x64 = {jax.config.jax_enable_x64}", flush=True)
+    print(f"jax_enable_x64 = {jax.config.read('jax_enable_x64')}", flush=True)
     print("interpolation = order-1 (linear) edge-clamped map_coordinates", flush=True)
     wealth_grid = jnp.asarray(WEALTH_GRID.to_jax())
     illiquid_grid = jnp.asarray(ILLIQUID_GRID.to_jax())

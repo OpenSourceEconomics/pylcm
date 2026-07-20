@@ -137,9 +137,9 @@ def outer_envelope_at_query(
 
     Taking the maximum at the query — rather than at a shared node grid and
     republishing a single interpolated row — is exact for the finite candidate set
-    at every query (`thm:nnbegm`): a candidate that wins only on an interval
-    strictly between two nodes is read at its true value there instead of being
-    bridged upward (`thm:aggregate-bridge`).
+    at every query: a candidate that wins only on an interval strictly between two
+    nodes is read at its true value there instead of being bridged upward by a
+    shared-node reinterpolation.
 
     Args:
         candidate_endog: Lifted common-coh grids, `(n_candidates, n_pad)`, each

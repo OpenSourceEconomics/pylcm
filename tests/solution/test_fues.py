@@ -30,11 +30,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.upper_envelope import fues
 from tests.conftest import X64_ENABLED
-
-fues = pytest.importorskip(
-    "_lcm.egm.upper_envelope.fues", reason="FUES kernel not yet implemented"
-)
 
 # Tolerance for quantities computed by the kernel (segment intersections and
 # values interpolated through them): float32 carries a few ulp (~1e-7 at the

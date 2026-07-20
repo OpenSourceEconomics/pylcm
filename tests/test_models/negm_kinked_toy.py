@@ -1,11 +1,10 @@
-"""Kinked two-asset toy as an `NEGM` model (the G1 parity target).
+"""Kinked two-asset toy as an `NEGM` model.
 
 The smallest model carrying the Laibson frictions a NEGM solve must reproduce:
 a liquid margin `wealth` (X) the Euler equation inverts on, plus an
 illiquid/durable margin `illiquid` (Z) with a withdrawal penalty (a kink at
 `illiquid_investment = 0`) and a `Z >= 0` floor. The brute oracle for the
-equivalent spec is committed in `negm_phase0/kinked_toy_oracle.py` (§2 of
-`negm_phase0/negm-phase0-findings.md`).
+equivalent spec is committed in `kinked_toy_oracle.py`.
 
 The NEGM reparametrisation fixes the outer post-decision `next_illiquid`
 (`s' = Z + Iz`) per outer-grid node; the inner consumption-savings problem is

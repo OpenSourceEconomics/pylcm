@@ -36,7 +36,7 @@ environment (managed by pixi) instead of creating its own virtualenvs:
     "environment_type": "existing:python",
     "show_commit_url": "",
     "branches": ["main"],
-    "benchmark_dir": "benchmarks",
+    "benchmark_dir": "benchmarks/asv",
     "results_dir": ".asv/results",
     "html_dir": ".asv/html"
 }
@@ -61,7 +61,7 @@ ASV discovers benchmark classes in `bench_*.py` files inside the `benchmarks/`
 directory. Here is a full annotated example:
 
 ```python
-# benchmarks/bench_my_model.py
+# benchmarks/asv/bench_my_model.py
 import gc
 import time
 

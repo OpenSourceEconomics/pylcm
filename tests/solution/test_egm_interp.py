@@ -469,8 +469,8 @@ def test_prepared_interpolation_holds_no_grid_by_query_intermediate():
     This is the transient-memory contract: with the search key and valid length
     prepared above the query fan-out, the per-query path does only a scalar-carry
     `searchsorted` plus gathers, so no operation carries both the query axis and
-    the grid (`n_pad`) axis. A regression here would reintroduce the
-    `O(queries * n_pad)` working buffer the NaN preamble used to create.
+    the grid (`n_pad`) axis. A regression here would reintroduce an
+    `O(queries * n_pad)` working buffer carrying both the query and grid axes.
     """
     n_grid, n_query = 64, 11
     xp = jnp.arange(n_grid, dtype=float)
