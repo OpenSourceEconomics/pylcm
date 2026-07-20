@@ -282,6 +282,45 @@ def test_high_rank_state_does_not_segfault_the_eager_outer_search() -> None:
     assert bool(jnp.all(jnp.isfinite(result.value)))
 
 
+def test_worst_cell_dump_is_gated_and_changes_no_result(capsys, monkeypatch) -> None:
+    """The `LCM_OUTER_DUMP_WORST_CELL` locator emits only when set, never else.
+
+    It is a pure stderr read of data `_mark_intervals` already computes (to let a
+    caller localize an outer-variable discontinuity without patching the package),
+    so it must leave the refined mesh bit-identical whether or not it fires.
+    """
+    config = AdaptiveOuterMesh(
+        initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=5),
+        max_nodes=17,
+        max_refinement_rounds=3,
+        fail_closed=False,
+    )
+    nodes0 = jnp.linspace(0.0, 1.0, 5)
+
+    monkeypatch.delenv("LCM_OUTER_DUMP_WORST_CELL", raising=False)
+    off = refine_outer_mesh(
+        initial_nodes=nodes0,
+        solve_at=_per_cell_cusp_solve,
+        config=config,
+        fail_closed=False,
+    )
+    assert "LCM_OUTER_DUMP_WORST_CELL" not in capsys.readouterr().err
+
+    monkeypatch.setenv("LCM_OUTER_DUMP_WORST_CELL", "1")
+    on = refine_outer_mesh(
+        initial_nodes=nodes0,
+        solve_at=_per_cell_cusp_solve,
+        config=config,
+        fail_closed=False,
+    )
+    err = capsys.readouterr().err
+    assert "LCM_OUTER_DUMP_WORST_CELL" in err
+    assert "node_abscissa" in err
+    assert "mid_exact_val" in err
+    assert jnp.array_equal(off.nodes, on.nodes)
+    assert off.max_validation_error == on.max_validation_error
+
+
 def test_interpolant_read_is_invariant_to_state_axis_flattening() -> None:
     """The internal flatten must be a pure reshape: same reads at any rank.
 

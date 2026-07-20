@@ -34,6 +34,8 @@ each because the literal rule cannot terminate:
   varies per state cell.
 """
 
+import os
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -483,7 +485,60 @@ def _mark_intervals(
     marked = _close_over_neighbors(
         marked=np.asarray(marked), interval_error=np.asarray(interval_error)
     )
+    if os.environ.get("LCM_OUTER_DUMP_WORST_CELL"):
+        _dump_worst_cell(
+            nodes=nodes,
+            values=values,
+            exact=exact,
+            interpolated=interpolated,
+            error=error,
+            normalized=normalized,
+        )
     return jnp.asarray(marked), float(jnp.max(interval_error))
+
+
+def _dump_worst_cell(
+    *,
+    nodes: Float1D,
+    values: FloatND,
+    exact: FloatND,
+    interpolated: FloatND,
+    error: FloatND,
+    normalized: FloatND,
+) -> None:
+    """Env-gated (`LCM_OUTER_DUMP_WORST_CELL`) diagnostic dump of the worst cell.
+
+    Locates the state cell + interval carrying the largest *search-relevant*
+    normalized validation error and prints that cell's outer profile to stderr:
+    the node abscissae, the exact node values, and the failing midpoints' exact
+    vs interpolated values. This lets a caller localize a discontinuity in the
+    outer variable (e.g. trace a value jump back through the budget map) without
+    patching the installed package. Host-side only — the refinement loop is
+    eager, so this never runs on a compiled path. Purely diagnostic: it reads
+    nothing the return value does not already summarize and changes no result.
+    """
+    err = np.asarray(error)
+    if err.size == 0:
+        return
+    worst = np.unravel_index(int(np.argmax(err)), err.shape)  # (interval, *state)
+    interval, cell = int(worst[0]), tuple(int(i) for i in worst[1:])
+    take = (slice(None), *cell)
+    nd = np.asarray(nodes)
+    mids = 0.5 * (nd[:-1] + nd[1:])
+
+    def _row(a: np.ndarray) -> str:
+        return "[" + " ".join(f"{v:+.4e}" for v in np.ravel(a)) + "]"
+
+    sys.stderr.write(
+        f"[LCM_OUTER_DUMP_WORST_CELL] state_cell={cell} "
+        f"worst_interval={interval} "
+        f"norm_err={float(np.asarray(normalized)[worst]):.3e}\n"
+        f"  node_abscissa : {_row(nd)}\n"
+        f"  node_exact_val: {_row(np.asarray(values)[take])}\n"
+        f"  mid_abscissa  : {_row(mids)}\n"
+        f"  mid_exact_val : {_row(np.asarray(exact)[take])}\n"
+        f"  mid_interp_val: {_row(np.asarray(interpolated)[take])}\n"
+    )
 
 
 def _close_over_neighbors(
