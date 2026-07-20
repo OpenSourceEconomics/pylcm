@@ -309,8 +309,10 @@ def _hermite_query_derivative(
       only,
     - a zero-width located bracket (an end duplicate): zero — no slope is
       defined on it,
-    - singleton row: zero (constant clamp); empty row: NaN (the read is NaN —
-      the derivative is non-authoritative and carries the poison),
+    - singleton row: zero (constant clamp); empty row: NaN carried as
+      `nan * x_query`, so the poison survives a further differentiation (the
+      read is non-authoritative and stays NaN at every AD order, not just the
+      first),
     - a NaN query: NaN on every row shape — the value read re-pins a NaN query
       fail-loud, and the tangent carries the same poison.
     """
@@ -330,7 +332,13 @@ def _hermite_query_derivative(
     derivative = jnp.where(x_query < first_node, extension_slope, derivative)
     derivative = jnp.where(x_query > last_node, 0.0, derivative)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
-    derivative = jnp.where(valid_length == 0, jnp.nan, derivative)
+    # An empty row's read is NaN at every AD order: carry the poison as
+    # `nan * x_query` so a further differentiation stays NaN instead of
+    # differentiating a query-constant literal to zero. Gate the NaN coefficient
+    # on `valid_length == 0` so the term is `0 * x_query` (finite, zero-gradient)
+    # on non-empty rows and cannot leak NaN into their gradients via `0 * nan`.
+    empty_poison = jnp.where(valid_length == 0, jnp.nan, 0.0) * x_query
+    derivative = jnp.where(valid_length == 0, empty_poison, derivative)
     return jnp.where(jnp.isnan(x_query), jnp.nan, derivative)
 
 
@@ -402,7 +410,10 @@ def _linear_query_derivative(
       fallback convention, matching the value's clamp fallback below
       support),
     - a zero-width located bracket: zero,
-    - singleton row: zero; empty row: NaN (poison-carrying),
+    - singleton row: zero (degenerate gathers are sanitized to finite dummies
+      first, so the mixed query-abscissa second derivative stays zero rather
+      than NaN); empty row: NaN carried as `nan * x_query`, so the poison
+      survives a further differentiation (NaN at every AD order),
     - a NaN query: NaN on every row shape — the value read re-pins a NaN query
       fail-loud, and the located bracket's finite secant must not mask it.
     """
@@ -412,15 +423,32 @@ def _linear_query_derivative(
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
     lower = upper - 1
-    bracket_width = xp[upper] - xp[lower]
+    # Sanitize the gathered endpoints on a degenerate row (one or zero valid
+    # nodes) to finite dummies before any arithmetic, mirroring
+    # `_hermite_bracket_derivatives`. The primal is overridden below by the
+    # `valid_length` guards, but without this the NaN pad in the un-taken
+    # `where` branch poisons the mixed second derivative (query then abscissa)
+    # that asset-row mode takes on a singleton row.
+    degenerate = valid_length < 2  # noqa: PLR2004
+    xp_lower = jnp.where(degenerate, 0.0, xp[lower])
+    xp_upper = jnp.where(degenerate, 1.0, xp[upper])
+    fp_lower = jnp.where(degenerate, 0.0, fp[lower])
+    fp_upper = jnp.where(degenerate, 0.0, fp[upper])
+    bracket_width = xp_upper - xp_lower
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
-    df = fp[upper] - fp[lower]
+    df = fp_upper - fp_lower
     secant = jnp.where(jnp.isfinite(df), df, 0.0) / safe_width
     last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
     above = x_query > last_node
     derivative = jnp.where(above | (bracket_width == 0.0), 0.0, secant)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
-    derivative = jnp.where(valid_length == 0, jnp.nan, derivative)
+    # An empty row's read is NaN at every AD order: carry the poison as
+    # `nan * x_query` so a further differentiation stays NaN instead of
+    # differentiating a query-constant literal to zero. Gate the NaN coefficient
+    # on `valid_length == 0` so the term is `0 * x_query` (finite, zero-gradient)
+    # on non-empty rows and cannot leak NaN into their gradients via `0 * nan`.
+    empty_poison = jnp.where(valid_length == 0, jnp.nan, 0.0) * x_query
+    derivative = jnp.where(valid_length == 0, empty_poison, derivative)
     return jnp.where(jnp.isnan(x_query), jnp.nan, derivative)
 
 

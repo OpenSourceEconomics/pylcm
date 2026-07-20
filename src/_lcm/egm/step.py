@@ -624,6 +624,11 @@ def _get_egm_step(
                 taste_shock_scale=own_taste_shock_scale,
             )
             sim_policy = EGMSimPolicy(endog_grid=grid_row, policy=policy_row)
+        # The off-grid simulation policy is published every period for the
+        # exact-EGM-policy simulation path. Forward simulation is currently
+        # grid-restricted (it re-optimizes on the action grid), so this
+        # artifact is not yet consumed; the solve loop evicts it to host memory
+        # so it does not pin a continuation-sized device buffer per period.
         return V_arr, carry, sim_policy
 
     return egm_step

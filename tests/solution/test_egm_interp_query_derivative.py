@@ -193,6 +193,32 @@ def test_empty_row_query_gradient_is_nan():
     assert bool(jnp.isnan(derivative))
 
 
+@pytest.mark.parametrize("use_hermite", [False, True])
+def test_empty_row_query_derivatives_stay_nan_to_second_order(use_hermite):
+    """A poisoned row's query derivative stays NaN under a further derivative.
+
+    An empty (all-NaN) row's read is NaN; the poison must survive every AD
+    order, so both the first and second query derivatives are NaN rather than
+    the second collapsing to a finite zero (a query-constant literal would).
+    Covers the linear and Hermite reads alike.
+    """
+    poisoned = jnp.array([jnp.nan, jnp.nan, jnp.nan])
+
+    def read(query):
+        return interp_on_padded_grid(
+            x_query=query,
+            xp=poisoned,
+            fp=poisoned,
+            fp_slopes=poisoned if use_hermite else None,
+        )
+
+    first = jax.grad(read)(jnp.asarray(1.0))
+    second = jax.grad(jax.grad(read))(jnp.asarray(1.0))
+
+    assert bool(jnp.isnan(first))
+    assert bool(jnp.isnan(second))
+
+
 def test_value_tangents_survive_the_query_derivative_contract():
     """Gradients with respect to the node values stay the interpolation weights.
 
@@ -339,6 +365,32 @@ def test_singleton_linear_read_is_smooth_to_second_order_in_the_query():
 
     np.testing.assert_allclose(
         float(jax.grad(jax.grad(read))(jnp.asarray(1.0))), 0.0, atol=1e-12
+    )
+
+
+def test_singleton_linear_read_has_finite_mixed_derivatives():
+    """A linear singleton's query gradient has zero (finite) mixed derivatives.
+
+    The query gradient of a one-node linear row is identically zero, so its
+    derivatives with respect to the node's value and abscissa are exactly zero
+    too — the padded bracket must not leak NaN into the mixed query-abscissa
+    second derivative that asset-row mode takes (the Hermite twin already
+    guards this; the linear read must too).
+    """
+
+    def query_gradient(fp0, x0):
+        row_xp = jnp.array([1.0, jnp.nan, jnp.nan]).at[0].set(x0)
+        row_fp = jnp.array([5.0, jnp.nan, jnp.nan]).at[0].set(fp0)
+
+        def read(query):
+            return interp_on_padded_grid(x_query=query, xp=row_xp, fp=row_fp)
+
+        return jax.grad(read)(jnp.asarray(1.0))
+
+    mixed = jax.grad(query_gradient, argnums=(0, 1))(jnp.asarray(5.0), jnp.asarray(1.0))
+
+    np.testing.assert_allclose(
+        [float(component) for component in mixed], [0.0, 0.0], atol=1e-12
     )
 
 

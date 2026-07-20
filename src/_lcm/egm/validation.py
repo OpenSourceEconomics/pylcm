@@ -1072,6 +1072,11 @@ def _fail_if_inverse_marginal_utility_inconsistent(
 
         marginal_utility = [jax.grad(utility_of_action)(c) for c in action_sample]
 
+        # Mirror the sibling resources strict-monotonicity check's tolerance:
+        # its strictly-increasing violation is `r_hi <= r_lo + atol`, so the
+        # strictly-*decreasing* violation for marginal utility is
+        # `mu_hi >= mu_lo - atol`. The `atol` margin keeps the sampled
+        # `jax.grad` values off a bare `==` boundary.
         non_decreasing = [
             (float(c_lo), float(c_hi))
             for c_lo, c_hi, mu_lo, mu_hi in zip(
@@ -1081,7 +1086,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
                 marginal_utility[1:],
                 strict=True,
             )
-            if float(mu_hi) >= float(mu_lo)
+            if float(mu_hi) >= float(mu_lo) - atol
         ]
         if non_decreasing:
             msg = (
