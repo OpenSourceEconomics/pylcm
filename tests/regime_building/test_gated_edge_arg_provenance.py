@@ -1723,3 +1723,137 @@ def test_gate_ref_key_aliasing_a_target_state_is_rejected():
         match=r"alias a gate-ref key",
     ):
         _solve_fixture(_make_gate_ref_key_aliases_target_state_regimes(), flat_params)
+
+
+# ----------------------------------------------------------------------------------
+# simulate-round8 F1: a gate/projection arg that is BOTH a TARGET STATE and a
+# SOURCE PARAM binds one fold leaf two ways -- solve reads the param
+# (`_evaluate_edge_fold` overwrites the state grid), simulate reads the state
+# (`_expose` classifies it as a state before recording a source param). The two
+# sides then evaluate different gates. `regime_to_flat_param_names[source]` cannot
+# catch it at construction: a gate/projection param is bound from a BARE key the
+# user adds to `flat_params[source]`, never from the (function-qualified) template.
+# The fence therefore runs at solve, where `flat_params` is in hand.
+# ----------------------------------------------------------------------------------
+
+
+def _next_y_identity(y: ContinuousState) -> ContinuousState:
+    return y
+
+
+def _u_src_reads_x_param(
+    y: ContinuousState, work: DiscreteAction, x: FloatND
+) -> FloatND:
+    """Source utility reads param `x` -> `x` is a genuine source param the user
+    supplies (bare) in `flat_params['src']`. It ALSO names the target's state."""
+    return jnp.zeros_like(y) * work + 0.0 * x
+
+
+def _u_src_no_param(y: ContinuousState, work: DiscreteAction) -> FloatND:
+    return jnp.zeros_like(y) * work
+
+
+def _gate_reads_x(V_target: FloatND, x: FloatND) -> BoolND:
+    return V_target > x
+
+
+def _make_gate_param_aliases_target_state_regimes(
+    *, source_supplies_x_param: bool
+) -> dict[str, Regime]:
+    """Source `y`-regime; target state is `x`; the gate reads `x`.
+
+    With `source_supplies_x_param=True` the source utility also reads param `x`,
+    so the user supplies a bare `x` in `flat_params['src']` -- the collision. With
+    `False` the source never supplies `x`, so `gate(x)` is an unambiguous direct
+    read of the target state (the legitimate case that must still solve).
+    """
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"y": _next_y_identity},
+        actions={"work": DiscreteGrid(Work)},
+        functions={
+            "utility": _u_src_reads_x_param
+            if source_supplies_x_param
+            else _u_src_no_param
+        },
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_reads_x,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    return {"src": src, "target": target, "fallback": fallback}
+
+
+def test_gate_param_aliasing_a_target_state_and_source_param_is_rejected():
+    """simulate-round8 F1: the solve-time fence rejects the double-bound leaf.
+
+    Pre-fix the model solved silently, with the solve-side `Wbar` reading the
+    source param `x=0.9` (`_evaluate_edge_fold` overwrites the state grid) and the
+    simulate router reading the realized target state instead -- two different
+    gates for one edge. `x` is a genuine source param (the source utility reads
+    it), supplied bare in `flat_params['src']`, and simultaneously the target
+    state name.
+    """
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType(
+                {
+                    "H__discount_factor": jnp.asarray(_BETA),
+                    "utility__x": jnp.asarray(0.0),
+                    "x": jnp.asarray(0.9),
+                }
+            ),
+            "target": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"simultaneously a TARGET state.*and a source parameter",
+    ):
+        _solve_fixture(
+            _make_gate_param_aliases_target_state_regimes(
+                source_supplies_x_param=True
+            ),
+            flat_params,
+        )
+
+
+def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
+    """Negative control: a gate reading a target state the source never supplies
+    as a param is a legitimate direct state read and must still solve. The fence
+    keys on membership in `flat_params[source]`, not on the state name alone."""
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "target": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    # Must not raise.
+    _solve_fixture(
+        _make_gate_param_aliases_target_state_regimes(source_supplies_x_param=False),
+        flat_params,
+    )

@@ -33,7 +33,7 @@ from _lcm.utils.logging import (
     validation_raises,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidValueFunctionError
+from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 
 
@@ -146,6 +146,11 @@ def solve(
     # backwards induction loop
     base_state_action_spaces = _build_base_state_action_spaces(
         regimes=regimes, flat_params=flat_params
+    )
+    _reject_edge_fold_state_param_collisions(
+        regimes=regimes,
+        base_state_action_spaces=base_state_action_spaces,
+        flat_params=flat_params,
     )
 
     # Simulation policies are a DC-EGM solve *output*, accumulated for every
@@ -623,6 +628,62 @@ def _roll_gated_edges(
             )
             rolled[(source_name, target_name)] = wbar
     return MappingProxyType(rolled)
+
+
+def _reject_edge_fold_state_param_collisions(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
+    flat_params: FlatParams,
+) -> None:
+    """Reject a gated edge whose fold binds one leaf as BOTH a target state and a
+    source param (simulate-round8 F1).
+
+    A gate / gate-ref projection / fallback projection declares its arguments by
+    bare name. `get_edge_fold` exposes the target's state grids and the source's
+    gate/projection params in ONE flat signature, so a name that is simultaneously
+    a TARGET STATE of the target regime and a key of `flat_params[source]` occupies
+    a single leaf that two binders both claim: `_evaluate_edge_fold` (below)
+    overwrites the state grid with the source param, so the SOLVE-side ``Wbar``
+    reads the param, while the simulate evaluator's ``_expose``
+    (`get_edge_simulate_gate_evaluator`) classifies the same name as a state
+    BEFORE it would record a source param, so the SIMULATE-side gate reads the
+    realized target state. Solve and simulate then evaluate DIFFERENT predicates
+    for the same edge -- the gate flips, ``Wbar`` changes, or a fallback
+    coordinate is written from the wrong value, all silently.
+
+    Why this is a solve-time (not construction-time) fence: a gate/projection
+    param is bound from a BARE key the user adds to `flat_params[source]`, never
+    from the function-qualified regime params template, so it is absent from
+    `regime_to_flat_param_names[source]` and the collision is only visible once
+    `flat_params` is in hand. A LEGITIMATE direct target-state read (a gate that
+    reads a target state the source never supplies as a param -- e.g. a reused
+    state NAME across two regimes) is untouched, because that name is not a key of
+    `flat_params[source]`.
+    """
+    for source_name, source in regimes.items():
+        if not source.gated_edges:
+            continue
+        source_param_names = set(flat_params[source_name])
+        for target_name in source.gated_edges:
+            fold = source.gated_edge_folds[target_name]
+            sig_params = set(inspect.signature(fold).parameters)
+            target_state_names = set(base_state_action_spaces[target_name].states)
+            collisions = sorted(sig_params & target_state_names & source_param_names)
+            if collisions:
+                msg = (
+                    f"The gated edge '{source_name}' -> '{target_name}' has a gate "
+                    f"or projection argument {collisions} that is simultaneously a "
+                    f"TARGET state of '{target_name}' and a source parameter in "
+                    f"`flat_params['{source_name}']`. The fold's single leaf for "
+                    "each such name is bound as the source param on the solve side "
+                    "(`_evaluate_edge_fold`) but as the realized target state on the "
+                    "simulate side (`get_edge_simulate_gate_evaluator`), so the "
+                    "solved `Wbar` and the simulate router would evaluate different "
+                    "gates. Rename the source parameter (or the target state) so the "
+                    "two namespaces are disjoint."
+                )
+                raise ModelInitializationError(msg)
 
 
 def _evaluate_edge_fold(
