@@ -694,7 +694,7 @@ def create_adjustment_cost_envelope(*, adjustment_cost: Sequence[float]) -> pd.S
     return pd.Series(values, index=pd.Index(age_values, name="age"))
 
 
-EFFORT_FIELD_NAMES = np.array([f.name for f in dataclasses.fields(Effort)])
+EFFORT_FIELD_NAMES = np.array([f.name for f in dataclasses.fields(Effort)])  # ty: ignore[invalid-argument-type]
 
 
 def _build_type_distribution() -> pd.DataFrame:
@@ -707,10 +707,10 @@ def _build_type_distribution() -> pd.DataFrame:
     raw = np.loadtxt(_DATA_DIR / "init_distr_2b2t2h.txt", skiprows=1)
     index = pd.MultiIndex.from_product(
         [
-            [f.name for f in dataclasses.fields(Education)],
-            [f.name for f in dataclasses.fields(DiscountType)],
-            [f.name for f in dataclasses.fields(ProductivityType)],
-            [f.name for f in dataclasses.fields(HealthType)],
+            [f.name for f in dataclasses.fields(Education)],  # ty: ignore[invalid-argument-type]
+            [f.name for f in dataclasses.fields(DiscountType)],  # ty: ignore[invalid-argument-type]
+            [f.name for f in dataclasses.fields(ProductivityType)],  # ty: ignore[invalid-argument-type]
+            [f.name for f in dataclasses.fields(HealthType)],  # ty: ignore[invalid-argument-type]
         ],
         names=["education", "discount_type", "productivity", "health_type"],
     )
