@@ -682,8 +682,9 @@ def interp_left_germ_on_prepared_grid(
     query, as a tie-selection object for the stacked candidate readers. A tie
     whose right germs are identical (both candidates clamp at a shared
     terminal abscissa) is owned by the branch that carries the envelope on the
-    left neighborhood, so its published marginal stays inside the envelope's
-    generalized gradient at the boundary. Semantics:
+    left neighborhood, so the published payload is that branch's own economic
+    marginal — the meaningful one-sided value for a parent Euler inversion at
+    the boundary. Semantics:
 
     - Strictly inside a bracket: the derivatives of that bracket's limited
       cubic Hermite (the secant and zero curvature where the correction is

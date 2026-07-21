@@ -253,8 +253,8 @@ def right_germ_winner(
       abscissa every candidate clamps right — so the left germ decides:
       left-finite first, then the branch maximizing the read at `q - ε`
       (lexicographically the *smallest* first, *largest* second, *smallest*
-      third left derivative), keeping the published marginal inside the
-      envelope's generalized gradient at such a boundary,
+      third left derivative), so the published payload is that branch's own
+      economic marginal at such a boundary,
     - `argmax` resolves what remains to the lowest index, a deterministic
       choice among branches identical on both sides.
 
