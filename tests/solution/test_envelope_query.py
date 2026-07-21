@@ -172,6 +172,48 @@ def test_exact_node_tie_selects_the_segment_that_continues_right():
     assert np.isclose(float(marginal), 1.0)
 
 
+@pytest.mark.parametrize(
+    ("dtype", "base", "gap"),
+    [
+        (jnp.float64, 1.0e4, 3.0e-11),
+        (jnp.float32, 1.0e6, 1.0),
+    ],
+)
+def test_large_magnitude_value_tie_is_precision_scaled(dtype, base, gap):
+    """A value tie at large magnitude must still resolve right-continuously.
+
+    Audit finding F6 (DC-1): the tie test used a fixed absolute half-width
+    ``_VALUE_TIE_ATOL = 1e-12``. At magnitude ``base`` the representable ULP is
+    ``eps(dtype) * base``, which for float32 at ``1e6`` (~0.06) — and even for
+    float64 at ``1e4`` (~1.8e-12) — dwarfs ``1e-12``. Two branches that meet at
+    a value tie then differ by more than the absolute band while being within a
+    single ULP of each other, so the ending (steeper) segment A is picked as a
+    strict winner and the right-continuous segment B is dropped: the published
+    policy/marginal reverse. The dtype+magnitude-scaled band
+    ``_TIE_BAND_ULPS * eps * max(|a|, |b|)`` recognizes the tie and B wins.
+
+    ``gap`` sits in the window ``(1e-12, _TIE_BAND_ULPS * eps * base)``: above
+    the old absolute band (so the old code saw A as a strict winner) and below
+    the new scaled band (so the tie is honored). Segment A spans ``[0, 1]`` and
+    ends at ``q=1`` with value ``base+gap``, policy 0, marginal 7; segment B
+    spans ``[1, 2]`` and continues right of ``q=1`` with value ``base``, policy
+    1, marginal 1. The right-continuous rule must publish B.
+    """
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.array([0.0, 1.0, 1.0, 2.0], dtype=dtype),
+        policy=jnp.array([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+        value=jnp.array([0.0, base + gap, base, base + 1.0], dtype=dtype),
+        marginal=jnp.array([7.0, 7.0, 1.0, 1.0], dtype=dtype),
+        segment_id=jnp.array([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+        x_query=jnp.array(1.0, dtype=dtype),
+    )
+    # Published value is the envelope max; policy/marginal are the
+    # right-continuous winner B's.
+    assert float(value) >= base
+    assert np.isclose(float(policy), 1.0), "right-continuous segment B must win"
+    assert np.isclose(float(marginal), 1.0), "B's marginal must be published"
+
+
 def test_query_outside_all_branches_is_nan():
     """A query beyond every branch's support yields NaN value/policy/marginal."""
     got_value, got_policy, got_marginal = envelope_at_query(

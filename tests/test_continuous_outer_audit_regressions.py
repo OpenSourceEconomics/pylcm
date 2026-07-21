@@ -385,6 +385,50 @@ def test_constant_surface_does_not_flip_the_outer_action() -> None:
     assert float(result.x) == 0.0
 
 
+def test_ninth_basin_off_node_peak_is_not_missed_by_a_bracket_cap() -> None:
+    """The global off-node optimum in a low-ranked basin must not be skipped.
+
+    Audit finding F7: ``safeguarded_continuous_argmax`` refined only the top-8
+    node-local maxima (``max_brackets=8``). A surface with nine local maxima
+    whose ninth-ranked basin (by exact node value) hides the tallest OFF-node
+    interpolant peak then had that basin refined only as its exact node — the
+    peak between the nodes was never polished and was silently discarded. The
+    fixed default ``max_brackets=None`` refines every node-local maximum, so the
+    peak is found; passing ``max_brackets=8`` reproduces the miss.
+
+    Nine local maxima sit at odd nodes with descending heights 100, 90, ..., 20;
+    the height-20 basin (rank 9) carries a tall bump (~220) between its nodes.
+    """
+    node_x = jnp.linspace(0.0, 1.0, 19)
+    heights = {1 + 2 * k: 100.0 - 10.0 * k for k in range(9)}  # idx 1,3,..,17
+    node_values = jnp.asarray(
+        [heights.get(i, 0.0) for i in range(19)], dtype=jnp.float64
+    )
+    q_peak = float(node_x[17])  # ninth (lowest, height 20) local maximum's node
+
+    def objective(q: jnp.ndarray) -> jnp.ndarray:
+        base = jnp.interp(q, node_x, node_values)  # peaks at nodes, <= 100
+        bump = 200.0 * jnp.exp(-(((q - q_peak) / 0.004) ** 2))  # off-node, basin 9
+        return base + bump
+
+    found = safeguarded_continuous_argmax(
+        objective, nodes=node_x, node_values=node_values, golden_iterations=48
+    )
+    assert float(found.value) > 150.0, "the ninth-basin off-node peak is the global max"
+    assert node_x[16] < float(found.x) < node_x[18], "winner sits in the ninth basin"
+
+    # The old top-8 cap refines only basins 1-8, so the ninth basin competes as
+    # its exact node (value 20) and the ~100 node peak wins instead.
+    capped = safeguarded_continuous_argmax(
+        objective,
+        nodes=node_x,
+        node_values=node_values,
+        golden_iterations=48,
+        max_brackets=8,
+    )
+    assert float(capped.value) < 150.0, "top-8 cap misses the ninth-basin peak"
+
+
 def test_below_tolerance_value_difference_resolves_to_the_smaller_action() -> None:
     one = np.float64(1.0)
     up = np.nextafter(one, np.inf)  # 2.22e-16 above 1, far below any real band

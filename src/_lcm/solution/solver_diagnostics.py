@@ -35,7 +35,10 @@ class SolverDiagnostics:
     """
 
     max_outer_interpolation_error: FloatND
-    """Largest validated interpolant-vs-exact-solve gap, in value units."""
+    """Largest validated interpolant-vs-exact-solve gap as a dimensionless
+    normalized validation ratio `|exact - interp| / (value_atol + value_rtol *
+    scale)`, NOT a value-unit gap: a value at or below 1 is within the
+    configured mesh tolerance. (Round-3 audit F10.)"""
 
     max_outer_bracket_width: FloatND
     """Widest refinement bracket around a selected outer optimum."""
