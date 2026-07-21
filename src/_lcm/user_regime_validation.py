@@ -23,7 +23,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import NBEGM, GridSearch
+from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.temporal_aggregation import H_epstein_zin
 from lcm.transition import MarkovTransition
 
@@ -290,31 +290,35 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if not isinstance(regime.solver, (GridSearch, NBEGM)):
+    if not isinstance(regime.solver, (GridSearch, NBEGM, NNBEGM)):
         error_messages.append(
             f"The {type(regime.solver).__name__} solver does not support a "
             "nonlinear `certainty_equivalent`: its Euler inversion assumes "
-            "expected utility. Use GridSearch() or NBEGM() for this regime."
+            "expected utility. Use GridSearch(), NBEGM(), or NNBEGM() for "
+            "this regime."
         )
-    if isinstance(regime.solver, NBEGM):
+    if isinstance(regime.solver, (NBEGM, NNBEGM)):
         # The endogenous-grid kernels implement the Epstein-Zin recursion for
         # exactly one pairing: they read the power mean's `risk_aversion`
         # parameter for the transform partials and the aggregator's
         # intertemporal elasticity for the Euler inversion and period value.
-        # GridSearch aggregates any certainty equivalent in concrete values,
-        # so only the NBEGM route is narrowed.
+        # NNBEGM's inner solve runs the same NBEGM kernels, so the contract
+        # binds it identically. GridSearch aggregates any certainty
+        # equivalent in concrete values, so only the endogenous-grid routes
+        # are narrowed.
+        solver_name = type(regime.solver).__name__
         if not isinstance(regime.certainty_equivalent, PowerMean):
             error_messages.append(
-                f"NBEGM implements the recursive certainty equivalent for "
-                f"`PowerMean` only, got "
+                f"{solver_name} implements the recursive certainty "
+                f"equivalent for `PowerMean` only, got "
                 f"{type(regime.certainty_equivalent).__name__}. Use "
                 f"`certainty_equivalent=PowerMean()` or solve the regime with "
                 f"GridSearch()."
             )
         if regime.functions.get("H") is not H_epstein_zin:
             error_messages.append(
-                "NBEGM with a `certainty_equivalent` requires the regime's "
-                "aggregator to be `H_epstein_zin` "
+                f"{solver_name} with a `certainty_equivalent` requires the "
+                "regime's aggregator to be `H_epstein_zin` "
                 '(`functions={"H": lcm.H_epstein_zin, ...}`): the Euler '
                 "inversion and period value read its intertemporal "
                 "elasticity. With a different `H` the kernels would solve a "

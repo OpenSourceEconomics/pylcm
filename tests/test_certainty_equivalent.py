@@ -23,7 +23,7 @@ from lcm import (
     piecewise_affine,
 )
 from lcm.exceptions import InvalidNameError, RegimeInitializationError
-from lcm.solvers import DCEGM, NBEGM
+from lcm.solvers import DCEGM, NBEGM, NNBEGM
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
@@ -916,6 +916,66 @@ def test_epstein_zin_solved_values_match_numpy_reference(risk_aversion: float):
             expected_arr.T,
             rtol=5e-5,
             err_msg=f"period={period}",
+        )
+
+
+def _minimal_nnbegm() -> Any:
+    return NNBEGM(
+        inner=NBEGM(
+            continuous_state="wealth",
+            post_decision_function="savings",
+            budget_target="resources",
+            savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+        ),
+        outer_action="investment",
+        outer_post_decision="next_stock",
+        outer_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+        outer_no_adjustment_candidate="keep_stock",
+    )
+
+
+def test_nnbegm_rejects_a_non_power_mean_certainty_equivalent():
+    """N-NB-EGM's inner solve runs the NBEGM kernels, so the same CE contract binds.
+
+    The nested solver inherits the Epstein-Zin recursion from its inner NBEGM,
+    which reads the power mean's `risk_aversion` in closed form; a general
+    quasi-arithmetic mean must fail at model build for NNBEGM exactly as it
+    does for standalone NBEGM.
+    """
+
+    def g(value: FloatND) -> FloatND:
+        return jnp.log(value)
+
+    def g_inv(value: FloatND) -> FloatND:
+        return jnp.exp(value)
+
+    with pytest.raises(RegimeInitializationError, match="PowerMean"):
+        _make_model(
+            alive_kwargs={
+                "certainty_equivalent": QuasiArithmeticMean(transform=g, inverse=g_inv),
+                "solver": _minimal_nnbegm(),
+                "functions": dict(_NBEGM_FUNCTIONS),
+            },
+            dead_kwargs={},
+        )
+
+
+def test_nnbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
+    """N-NB-EGM with a certainty equivalent needs `H_epstein_zin`, like NBEGM.
+
+    The inner Euler inversion and period value read the aggregator's
+    intertemporal elasticity; with the default linear `H` the nested solve
+    would run a recursion the regime does not declare, so the combination
+    must fail at model build.
+    """
+    with pytest.raises(RegimeInitializationError, match="H_epstein_zin"):
+        _make_model(
+            alive_kwargs={
+                "certainty_equivalent": PowerMean(),
+                "solver": _minimal_nnbegm(),
+                "functions": dict(_NBEGM_FUNCTIONS),
+            },
+            dead_kwargs={},
         )
 
 
