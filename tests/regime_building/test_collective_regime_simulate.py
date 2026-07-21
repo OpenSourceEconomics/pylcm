@@ -1169,9 +1169,7 @@ def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_val
         calls.append(frozenset(kwargs))
         return real(**kwargs)
 
-    monkeypatch.setattr(
-        model_module, "_reject_edge_fold_state_param_collisions", _spy
-    )
+    monkeypatch.setattr(model_module, "_reject_edge_fold_state_param_collisions", _spy)
 
     initial_conditions = MappingProxyType(
         {
