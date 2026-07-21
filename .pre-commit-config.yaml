@@ -68,6 +68,15 @@ repos:
           - jupyter
           - pyi
           - python
+  - repo: https://github.com/astral-sh/ty-pre-commit
+    rev: v0.0.61
+    hooks:
+      - id: ty
+        # `--no-project` keeps uv from creating a `.venv`/`uv.lock` in this
+        # pixi-managed repo; ty resolves third-party imports from the env named
+        # in `[tool.ty] environment.python` (run `pixi install` once).
+        args:
+          - --no-project
   - repo: https://github.com/kynan/nbstripout
     rev: 0.9.1
     hooks:
@@ -99,3 +108,7 @@ repos:
         exclude: docs/index\.md
 ci:
   autoupdate_schedule: monthly
+  # pre-commit.ci has no pixi environments and blocks network at hook runtime;
+  # the GitHub Actions run-ty job covers type checking.
+  skip:
+    - ty

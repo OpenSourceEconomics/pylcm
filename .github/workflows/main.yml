@@ -71,7 +71,9 @@ jobs:
           frozen: true
       - name: Run ty
         shell: bash {0}
-        run: pixi run ty
+        # The prek `ty` hook is skipped on pre-commit.ci (no pixi envs there);
+        # this job runs it against the `type-checking` env instead.
+        run: pixi run -e type-checking prek run ty --all-files
   run-tests-gpu:
     name: Run tests on GPU
     # Config:

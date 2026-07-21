@@ -34,7 +34,7 @@ dependencies = [
   # Require the beartype fix, replace once release is there
   # "dags>=0.6.0",
   "h5py>=3.12",
-  "jax>=0.9",
+  "jax>=0.11",
   "jaxtyping>=0.3.10",
   "orbax-checkpoint>=0.11",
   "pandas",
@@ -112,19 +112,17 @@ type-checking = { features = [ "type-checking", "tests" ], solve-group = "defaul
 # eligibility); flip back to branch = "main" once both sides have merged.
 aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "54fb8df1f83865eee421a4b656676ce4e6787928" }
 [tool.pixi.feature.cuda12]
-platforms = [ "linux-64" ]
-system-requirements = { cuda = "12" }
+platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
 cuda-nvcc = "~=12.0"
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.9", extras = [ "cuda12" ] }
+jax = { version = ">=0.11", extras = [ "cuda12" ] }
 [tool.pixi.feature.cuda13]
-platforms = [ "linux-64" ]
-system-requirements = { cuda = "13" }
+platforms = [ "linux-64-cuda13" ]
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.9", extras = [ "cuda13" ] }
+jax = { version = ">=0.11", extras = [ "cuda13" ] }
 [tool.pixi.feature.docs.dependencies]
 jupyter-book = ">=2.0"
 mystmd = "*"
@@ -137,7 +135,7 @@ view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PL
 [tool.pixi.feature.metal]
 platforms = [ "osx-arm64" ]
 [tool.pixi.feature.metal.target.osx-arm64.pypi-dependencies]
-jax = ">=0.9"
+jax = ">=0.11"
 jax-metal = ">=0.1.1"
 [tool.pixi.feature.tests.dependencies]
 pytest = "*"
@@ -150,14 +148,13 @@ tests = "pytest tests"
 tests-32bit = "pytest tests --precision=32"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
 [tool.pixi.feature.type-checking.dependencies]
+# The env ty analyzes against (`[tool.ty] environment.python`); the ty binary
+# itself is managed by the `ty` pre-commit hook (`prek run ty --all-files`).
 matplotlib = "*"
 pandas-stubs = "*"
 scipy-stubs = "*"
-ty = "*"
-[tool.pixi.feature.type-checking.tasks]
-ty = "ty check"
 [tool.pixi.pypi-dependencies]
-jax = ">=0.9"
+jax = ">=0.11"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 # Remove and comment in `dags >= 0.6.0` above once released.
@@ -173,7 +170,13 @@ asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
 asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
 [tool.pixi.workspace]
 channels = [ "conda-forge" ]
-platforms = [ "linux-64", "osx-arm64", "win-64" ]
+platforms = [
+  "linux-64",
+  "osx-arm64",
+  "win-64",
+  { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
+  { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
+]
 
 [tool.ruff]
 target-version = "py314"
@@ -299,7 +302,6 @@ expand_tables = [
   "tool.pixi.feature.tests.pypi-dependencies",
   "tool.pixi.feature.tests.tasks",
   "tool.pixi.feature.type-checking.dependencies",
-  "tool.pixi.feature.type-checking.tasks",
   "tool.pixi.pypi-dependencies",
   "tool.pixi.tasks",
   "tool.pixi.workspace",
@@ -308,6 +310,10 @@ expand_tables = [
 [tool.ty]
 src.exclude = [ "docs/**/*.ipynb" ]
 src.include = [ "src/", "tests/" ]
+# ty resolves third-party imports from this pixi env (the ty-pre-commit hook runs
+# `uv check --no-project`, so uv neither creates a `.venv` nor resolves deps). Run
+# `pixi install` once.
+environment.python = ".pixi/envs/type-checking"
 rules.ambiguous-protocol-member = "error"
 rules.deprecated = "error"
 rules.division-by-zero = "error"
