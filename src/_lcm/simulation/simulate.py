@@ -862,6 +862,14 @@ def _redecide_branch_and_read_policy(
 # (the affine inversion contract of the nested policy read).
 _UNIT_SLOPE_ATOL = 1e-8
 
+# Per-subject residual tolerance (relative to the post-decision scale) certifying
+# that the recovered outer action actually reproduces the winning post-decision
+# through the transition: `|T(states, a_recovered) - s'| <= rtol * (1 + |s'|)`.
+# A two-point 0/1 slope probe cannot see a non-affine transition that merely
+# happens to satisfy `T(1) - T(0) = 1`; this check evaluates the transition at
+# the ACTUAL recovered action and rejects the subject otherwise (round-3 F3).
+_TRANSITION_RESIDUAL_RTOL = 1e-6
+
 
 def _interp_across_outer_axis(
     *, nodes: Float1D, values: FloatND, query: FloatND
@@ -1022,7 +1030,7 @@ def _read_nested_policy(
     )
     if outer_offset_slope is None:
         return optimal_actions
-    offset, slope_is_unit = outer_offset_slope
+    offset, slope_is_unit, transition_at = outer_offset_slope
     keep_value = _keeper_post_decision(
         payload=payload,
         regime=regime,
@@ -1052,8 +1060,17 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
 
+    # F3: certify the affine inversion per subject AT the recovered action, not
+    # only through the 0/1 slope probe. `outer_action = s' - offset`, so an
+    # affine-unit transition reproduces `T(states, outer_action) == s'` exactly;
+    # a non-affine transition that happened to pass the two-point slope test
+    # leaves a residual here and the subject falls back to the grid argmax.
+    residual_ok = jnp.abs(
+        transition_at(outer_action) - chosen_post_decision
+    ) <= _TRANSITION_RESIDUAL_RTOL * (1.0 + jnp.abs(chosen_post_decision))
     accepted = (
         slope_is_unit
+        & residual_ok
         & keeper_support
         & jnp.all(candidate_support, axis=0)
         & jnp.isfinite(winner_value)
@@ -1149,7 +1166,7 @@ def _outer_transition_offset_and_slope(
     period: int,
     age: ScalarFloat | ScalarInt,
     n_subjects: int,
-) -> tuple[FloatND, BoolND] | None:
+) -> tuple[FloatND, BoolND, Callable[[FloatND], FloatND]] | None:
     """Per-subject offset of the outer transition, with a unit-slope check.
 
     The winning outer post-decision `s'` is a *transition value*; the
@@ -1169,9 +1186,8 @@ def _outer_transition_offset_and_slope(
     if not found or any(func is not found[0] for func in found[1:]):
         return None
     transition = found[0]
-    zeros = jnp.zeros(n_subjects)
-    probes = []
-    for action_value in (zeros, zeros + 1.0):
+
+    def probe(action_value: FloatND) -> FloatND | None:
         kwargs = _resolve_function_kwargs(
             transition,
             states=states,
@@ -1183,10 +1199,23 @@ def _outer_transition_offset_and_slope(
         )
         if kwargs is None:
             return None
-        probes.append(jnp.reshape(jnp.asarray(transition(**kwargs)), (n_subjects,)))
-    offset, at_one = probes
+        return jnp.reshape(jnp.asarray(transition(**kwargs)), (n_subjects,))
+
+    zeros = jnp.zeros(n_subjects)
+    offset = probe(zeros)
+    at_one = probe(zeros + 1.0)
+    if offset is None or at_one is None:
+        return None
     slope_is_unit = jnp.abs((at_one - offset) - 1.0) <= _UNIT_SLOPE_ATOL
-    return offset, slope_is_unit
+
+    def evaluate_at(action: FloatND) -> FloatND:
+        # Argument resolvability is already established by the 0/1 probes above,
+        # so `probe` cannot return None here; the transition is re-evaluated at
+        # the recovered action for the per-subject affine-residual certificate.
+        result = probe(action)
+        return result if result is not None else jnp.full(n_subjects, jnp.nan)
+
+    return offset, slope_is_unit, evaluate_at
 
 
 def _keeper_post_decision(
