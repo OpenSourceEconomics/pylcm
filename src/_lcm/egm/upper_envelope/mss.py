@@ -265,6 +265,13 @@ def refine_envelope_with_support(
         links=links,
     )
 
+    missed_switch = _missed_switch_overflow(
+        is_new=is_new,
+        left_side=left_side,
+        right_side=right_side,
+        crossings=crossings,
+    )
+
     # Per-query emission block, ascending: the interval's crossings (each two
     # rows — same abscissa, left- then right-branch policy) precede the node's
     # left and right records. All crossings of the interval ending at node `i`
@@ -309,7 +316,7 @@ def refine_envelope_with_support(
 
     n_kept = jnp.sum(row_valid, dtype=jnp.int32)
     n_kept = jnp.where(
-        interval_overflow | unrepresented_point,
+        interval_overflow | unrepresented_point | missed_switch,
         jnp.maximum(n_kept, n_refined + 1),
         n_kept,
     )
@@ -357,7 +364,15 @@ def _unsupported_read_verdicts(
     # would scale with the absolute value level and silently absorb
     # representable strict maxima a few stored ulp above the side record.
     covered = jnp.any(certificate.dominates(), axis=1)
-    unrepresented_point = jnp.any(~query_dead & ~covered)
+    # A covering interior chord whose ordering is unresolved may be the true
+    # envelope above the point; an endpoint record that reaches the point must
+    # not mask it. Unless some chord certifiably dominates the point (it is
+    # then below the envelope and safely dropped), an unresolved interior chord
+    # leaves the point unrepresentable, routed to loud overflow.
+    dominated = jnp.any(certificate.covers & certificate.above, axis=1)
+    unresolved = jnp.any(certificate.interior_unresolved(), axis=1)
+    supported = covered & ~(unresolved & ~dominated)
+    unrepresented_point = jnp.any(~query_dead & ~supported)
 
     emits = (left_side.exists | right_side.exists) & ~query_dead
     previous_emitted_grid = jnp.concatenate(
@@ -586,6 +601,7 @@ def _lexicographic_winner(
     point_anchored = (
         jnp.isfinite(point_value)
         & ~jnp.any(covers & certificate.above, axis=1)
+        & ~jnp.any(covers & certificate.interior_unresolved(), axis=1)
         & jnp.any(side_tied, axis=1)
     )
     best_value = jnp.where(point_anchored, point_value, rounded_best)
@@ -727,12 +743,20 @@ class _ChordPointCertificate:
     which shares the sign of `chord(q) - p` (the abscissae are sorted, so the
     span is positive). `D` is evaluated in compensated double-float
     arithmetic — exact difference pairs via TwoSum, exact main products via
-    TwoProd, the epsilon-scale cross terms carried explicitly — so its
-    residual error is of second order in machine epsilon relative to the
-    products, and a gap inside the certification margin is treated as a
-    certified *tie* rather than resolved by rounding noise. Every certificate
-    term is a difference, so the relations are exactly invariant to common
-    translations of the value level and of the resource origin.
+    TwoProd, the epsilon-scale cross terms carried explicitly — so the computed
+    gap is accurate to a tight *noise floor* (a small multiple of the
+    second-order-in-epsilon term error). Two thresholds classify the gap:
+
+    - `|D| <= noise` — certified equal: the chord passes through the point to
+      the arithmetic's own resolution (an exactly-tied chord computes `D = 0`).
+    - `D > margin` — certified strictly above (`margin` a conservative multiple
+      of `noise`, so the certified-above verdict never fires on rounding noise).
+    - `noise < D <= margin` — unresolved above: the compensated gap sees a real
+      excess the conservative margin cannot certify, so the chord may be the
+      true envelope above the point and the node cannot be anchored on it.
+
+    Every certificate term is a difference, so the relations are exactly
+    invariant to common translations of the value level and resource origin.
     """
 
     def __init__(
@@ -744,6 +768,7 @@ class _ChordPointCertificate:
         stored_eq: BoolND,
         above: BoolND,
         tied: BoolND,
+        unresolved_above: BoolND,
     ) -> None:
         self.covers = covers
         """Live link covering the query from at least one side (zero-width
@@ -756,10 +781,16 @@ class _ChordPointCertificate:
         self.stored_eq = stored_eq
         """Endpoint case: the stored record at the query equals the point."""
         self.above = above
-        """Interior case: the chord certifiably strictly exceeds the point."""
+        """Interior case: the chord certifiably strictly exceeds the point
+        (compensated gap above the conservative margin)."""
         self.tied = tied
-        """Interior case: the chord gap is inside the certification margin —
-        the chord and the point are tied at working precision."""
+        """Interior case: the chord equals the point to the arithmetic noise
+        floor (`|D| <= noise`) — a certified tie, not merely margin-close."""
+        self.unresolved_above = unresolved_above
+        """Interior case: the compensated gap sees a real excess above the
+        noise floor but below the certified-above margin — the chord may be the
+        true envelope above the point, so it cannot be masked by an endpoint
+        tie."""
 
     def dominates(self) -> BoolND:
         """Link certifiably reaches the point (absorbs it quietly).
@@ -775,6 +806,18 @@ class _ChordPointCertificate:
     def ties_point(self) -> BoolND:
         """Link's value at the query equals the point at working precision."""
         return self.covers & jnp.where(self.at_endpoint, self.stored_eq, self.tied)
+
+    def interior_unresolved(self) -> BoolND:
+        """Covering interior chord that may be the true envelope above the point.
+
+        The compensated gap resolves a real excess above the noise floor that
+        the conservative margin cannot certify as strictly above. A separate
+        stored endpoint tie must not mask it: a node carrying such a chord
+        cannot be anchored on the point and is routed to loud overflow. An
+        exactly-tied chord (gap within the noise floor) is not unresolved, so a
+        genuine node-coincident tie still anchors and publishes the point.
+        """
+        return self.covers & ~self.at_endpoint & self.unresolved_above
 
 
 def _certify_chord_point_relations(
@@ -812,7 +855,14 @@ def _certify_chord_point_relations(
     high, high_err = _two_sum(left_term, right_term)
     chord_gap = high + (high_err + left_term_err + right_term_err + cross_terms)
     eps = jnp.finfo(query_grid.dtype).eps
-    margin = 32.0 * eps * eps * (jnp.abs(left_term) + jnp.abs(right_term))
+    term_scale = jnp.abs(left_term) + jnp.abs(right_term)
+    # The noise floor bounds the compensated evaluation's own residual (a small
+    # multiple of the second-order-in-epsilon term error); the certified-above
+    # margin sits a further order above it so a certified-above verdict never
+    # fires on rounding noise. A gap between the two is resolved as a real
+    # excess the margin cannot certify — the unresolved-above band.
+    noise = 4.0 * eps * eps * term_scale
+    margin = 32.0 * eps * eps * term_scale
 
     return _ChordPointCertificate(
         covers=covers,
@@ -820,8 +870,90 @@ def _certify_chord_point_relations(
         stored_ge=stored_ge,
         stored_eq=stored_eq,
         above=chord_gap > margin,
-        tied=jnp.abs(chord_gap) <= margin,
+        tied=jnp.abs(chord_gap) <= noise,
+        unresolved_above=(chord_gap > noise) & (chord_gap <= margin),
     )
+
+
+def _branch_envelope_value(
+    *, x: Float1D, winner: Int1D, incoming: Int1D, links: _LinkLines
+) -> Float1D:
+    """Envelope value of the two switching branches at `x`.
+
+    The larger of the outgoing and incoming branch values, each read from its
+    nearer stored endpoint. At a crossing the two agree; where the emitted
+    abscissa rounds off the intersection the maximum stays at or above the
+    envelope, never below both branches.
+    """
+    reads = links.value_at(x[:, None])
+    winner_value = jnp.take_along_axis(reads, winner[:, None], axis=1)[:, 0]
+    incoming_value = jnp.take_along_axis(reads, incoming[:, None], axis=1)[:, 0]
+    return jnp.maximum(winner_value, incoming_value)
+
+
+def _crossing_off_intersection(
+    *, x: Float1D, winner: Int1D, incoming: Int1D, links: _LinkLines
+) -> BoolND:
+    """Flag a crossing whose branches do not meet at the rounded abscissa `x`.
+
+    The two switching branches must cross at the emitted abscissa. Their
+    compensated line gap above a second-order-in-epsilon margin means the
+    rounded abscissa is not the intersection, so the crossing value cannot be a
+    certified common value and the interval must fail loudly.
+    """
+    gap = _compensated_line_gap(
+        x=x,
+        anchor_value=links.anchor_value[incoming],
+        anchor_grid=links.anchor_grid[incoming],
+        slope=links.value_slope[incoming],
+        winner_anchor_value=links.anchor_value[winner],
+        winner_anchor_grid=links.anchor_grid[winner],
+        winner_slope=links.value_slope[winner],
+    )
+    eps = jnp.finfo(x.dtype).eps
+    margin = (
+        32.0
+        * eps
+        * eps
+        * (
+            jnp.abs(links.anchor_value[incoming])
+            + jnp.abs(links.value_slope[incoming])
+            * jnp.abs(x - links.anchor_grid[incoming])
+            + jnp.abs(links.anchor_value[winner])
+            + jnp.abs(links.value_slope[winner])
+            * jnp.abs(x - links.anchor_grid[winner])
+        )
+    )
+    return jnp.abs(gap) > margin
+
+
+def _missed_switch_overflow(
+    *,
+    is_new: BoolND,
+    left_side: _SideWinner,
+    right_side: _SideWinner,
+    crossings: _IntervalCrossings,
+) -> ScalarBool:
+    """Flag an interval whose owner switched but emitted no breaking crossing.
+
+    The interval bridges its start-of-interval winner (the previous node's right
+    side) to its end-of-interval winner (this node's left side) as one linear
+    span. When the two differ the envelope owner switched inside the interval,
+    so at least one crossing must break the span; if the earliest-overtake scan
+    emitted none — a switch near a coincident endpoint whose offset rounds past
+    the interval width — the linear read overshoots a representable query, so
+    the interval must fail loudly.
+    """
+    start_link = jnp.concatenate(
+        [jnp.zeros((1,), dtype=jnp.int32), right_side.link[:-1]]
+    )
+    start_exists = jnp.concatenate(
+        [jnp.zeros((1,), dtype=bool), right_side.exists[:-1]]
+    )
+    interval_active = is_new & left_side.exists & start_exists
+    endpoint_owner_switch = start_link != left_side.link
+    has_emitted_crossing = jnp.any(crossings.valid, axis=1)
+    return jnp.any(interval_active & endpoint_owner_switch & ~has_emitted_crossing)
 
 
 def _enumerate_interval_crossings(
@@ -894,7 +1026,7 @@ def _enumerate_interval_crossings(
 
     def step(
         carry: tuple[Int1D, Float1D, BoolND], _: ScalarInt
-    ) -> tuple[tuple[Int1D, Float1D, BoolND], _IntervalCrossings]:
+    ) -> tuple[tuple[Int1D, Float1D, BoolND], tuple[_IntervalCrossings, ScalarBool]]:
         winner, x_current, active = carry
         offset, valid = overtaking(winner, x_current)
         valid = valid & active[:, None]
@@ -964,11 +1096,12 @@ def _enumerate_interval_crossings(
         lands_on_node = found & (x_next >= query_grid)
         lands_in_place = found & ~lands_on_node & (x_next <= x_current)
         emit = found & ~lands_on_node & ~lands_in_place
-        winner_slope = links.value_slope[winner]
-        crossing_value = (
-            links.anchor_value[winner]
-            + winner_slope * (x_current - links.anchor_grid[winner])
-            + winner_slope * offset_next
+        # The published crossing value is the envelope at the emitted abscissa —
+        # the larger of the two switching branches read from their nearer stored
+        # endpoints — never the outgoing line's own far-anchored product, which
+        # can round below both branches when the anchor is distant.
+        crossing_value = _branch_envelope_value(
+            x=x_next, winner=winner, incoming=incoming, links=links
         )
         emitted = _IntervalCrossings(
             grid=jnp.where(emit, x_next, jnp.nan),
@@ -979,21 +1112,39 @@ def _enumerate_interval_crossings(
             + links.policy_slope[incoming] * (x_next - links.anchor_grid[incoming]),
             valid=emit,
         )
+        # An emitted crossing whose rounded abscissa is not the true
+        # intersection cannot be published as a certified envelope row: the two
+        # switching branches must meet there. A compensated line gap above a
+        # second-order-in-epsilon margin flags a rounded abscissa off the
+        # intersection, routing the interval to loud overflow rather than a
+        # silently wrong value payload.
+        uncertifiable = jnp.any(
+            emit
+            & _crossing_off_intersection(
+                x=x_next, winner=winner, incoming=incoming, links=links
+            )
+        )
+
         new_winner = jnp.where(found & ~lands_on_node, incoming, winner).astype(
             jnp.int32
         )
         new_x = jnp.where(emit, x_next, x_current)
-        return (new_winner, new_x, active & found & ~lands_on_node), emitted
+        return (new_winner, new_x, active & found & ~lands_on_node), (
+            emitted,
+            uncertifiable,
+        )
 
     carry_init = (init_winner, prev_grid, interval_active)
-    carry_final, rows = jax.lax.scan(
+    carry_final, (rows, uncertifiable) = jax.lax.scan(
         step,
         carry_init,
         jnp.arange(_MAX_CROSSINGS_PER_INTERVAL, dtype=jnp.int32),
     )
     winner, x_current, active = carry_final
     _, leftover_valid = overtaking(winner, x_current)
-    interval_overflow = jnp.any(leftover_valid & active[:, None])
+    interval_overflow = jnp.any(leftover_valid & active[:, None]) | jnp.any(
+        uncertifiable
+    )
 
     stack_to_query_axis = lambda leaf: jnp.moveaxis(leaf, 0, 1)  # noqa: E731
     return (
