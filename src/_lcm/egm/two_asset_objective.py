@@ -19,6 +19,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from jax.scipy.ndimage import map_coordinates
 
+from _lcm.egm.crra import crra_utility
 from lcm.typing import BoolND, Float1D, Float2D, FloatND, ScalarFloat
 
 
@@ -30,6 +31,7 @@ def build_two_asset_objective(
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
     match_rate: ScalarFloat | float,
+    post_decision_valid: BoolND | None = None,
 ) -> Callable[[Float1D, Float1D], tuple[FloatND, BoolND]]:
     """Build the `(state, policy) -> (value, feasible)` objective evaluator.
 
@@ -41,6 +43,12 @@ def build_two_asset_objective(
         discount_factor: Discount factor `beta`.
         crra: Coefficient of relative risk aversion `rho`.
         match_rate: Pension employer-match coefficient `chi`.
+        post_decision_valid: Optional in-domain mask over the post-decision grid, shape
+            `(len(a_grid), len(b_grid))`. A `W(a, b)` node built by clamping an
+            out-of-domain transformed state carries a fabricated continuation; where the
+            mask is `False`, a candidate whose reconstructed `(a, b)` reads it (its
+            bilinear stencil touches a `False` node) is infeasible. `None` treats every
+            node as in-domain.
 
     Returns:
         A callable mapping a state `(m, n)` and policy `(c, d)` to the recomputed
@@ -69,7 +77,7 @@ def build_two_asset_objective(
         # Clamp consumption before the utility so an infeasible candidate's value is
         # finite (it is masked out by `feasible`), never NaN.
         safe_consumption = jnp.where(consumption > 0.0, consumption, 1.0)
-        value = _crra_utility(safe_consumption, crra) + discount_factor * post_value
+        value = crra_utility(safe_consumption, crra) + discount_factor * post_value
         # The continuation reader clamps post-states to the grid boundary, so a
         # candidate whose reconstructed `(a, b)` leaves the post-decision grid gets a
         # fabricated continuation. Require the post-state inside the grid (subsuming the
@@ -83,14 +91,18 @@ def build_two_asset_objective(
             & (pension_post >= b_grid[0])
             & (pension_post <= b_grid[-1])
         )
+        # `W(a, b)` itself may have been built by clamping an out-of-domain
+        # transformed state. Read the in-domain mask with the same bilinear stencil
+        # and require it fully in-domain (`== 1.0`): a candidate whose stencil touches
+        # a fabricated node is infeasible and routed to the direct-Bellman fill.
+        if post_decision_valid is not None:
+            valid_read = map_coordinates(
+                post_decision_valid.astype(post_decision_value.dtype),
+                [jnp.atleast_1d(a_index), jnp.atleast_1d(b_index)],
+                order=1,
+                mode="nearest",
+            )[0]
+            feasible = feasible & (valid_read >= 1.0 - 1e-9)
         return value, feasible
 
     return objective
-
-
-def _crra_utility(consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
-    )

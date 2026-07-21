@@ -11,7 +11,8 @@ Contract under test — `_lcm.egm.interp.interp_on_padded_grid`:
 Behavior:
 
 - linear interpolation between neighboring non-NaN nodes,
-- edge clamp outside the non-NaN range,
+- below the first node: linear extrapolation along the first bracket's secant;
+  at or above the last non-NaN node: clamp to the boundary value,
 - tie-safe at duplicated abscissae (zero-width brackets from envelope kinks):
   queries strictly below the duplicate interpolate toward the left value, queries
   at or above it use the right value — never a division by the zero bracket,
@@ -29,6 +30,23 @@ import numpy as np
 import pytest
 
 from _lcm.egm import interp
+from tests.conftest import X64_ENABLED
+
+# The germ read and its host reference rerun identical interpolation
+# arithmetic, so the two sides agree to the active float precision's
+# roundoff, not better. The k-th germ component divides by the bracket
+# width to the k-th power, amplifying that roundoff by one power of `1/h`
+# per derivative order — so the higher components carry correspondingly
+# looser float32 bounds.
+_GERM_ATOL = 1e-9 if X64_ENABLED else 2e-5
+if X64_ENABLED:
+    _GERM_COMPONENT_RTOL_ATOL = dict.fromkeys((1, 2, 3), (1e-07, 1e-09))
+else:
+    _GERM_COMPONENT_RTOL_ATOL = {
+        1: (1e-3, 3e-4),
+        2: (1e-3, 1e-2),
+        3: (1e-3, 3e-1),
+    }
 
 
 def test_matches_numpy_interp_on_clean_grid():
@@ -55,15 +73,46 @@ def test_nan_tail_is_ignored():
     np.testing.assert_allclose(got, expected, atol=1e-12)
 
 
-def test_edge_clamp_below_and_above():
-    """Queries outside the non-NaN range return the boundary values."""
+def test_below_support_extrapolates_and_above_support_clamps():
+    """Below the first node the first bracket's secant continues; above clamps.
+
+    Below support the carry read matches the canonical state-grid read
+    (`map_coordinates` extrapolates linearly), so a transition landing below
+    the child grid (a borrowing corner whose savings undershoot the grid
+    start) is priced on the edge slope rather than credited with the boundary
+    value — which no feasible action attains there. At or above the last node
+    the boundary value applies: a refined envelope row can end in a
+    crossing-inserted near-duplicate bracket whose secant slope is arbitrarily
+    steep, so extending it would poison every above-support read.
+    """
     xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     x_query = jnp.array([0.0, 100.0])
 
     got = interp.interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
 
-    np.testing.assert_allclose(got, jnp.array([0.0, 5.0]), atol=1e-12)
+    below = 0.0 + (0.0 - 1.0) * (3.0 - 0.0) / (2.0 - 1.0)
+    above = 5.0
+    np.testing.assert_allclose(got, jnp.array([below, above]), atol=1e-12)
+
+
+def test_out_of_range_reads_ignore_the_hermite_correction():
+    """With slopes, out-of-range queries follow the slope-free convention.
+
+    The Hermite correction vanishes at the bracket endpoints, so extending it
+    outside the bracket would leave the cubic's tail; the read instead
+    continues the first bracket's secant below support and clamps to the
+    boundary value above, matching the slope-free convention.
+    """
+    xp = jnp.array([1.0, 2.0, 4.0])
+    fp = jnp.array([0.0, 3.0, 5.0])
+    fp_slopes = jnp.array([0.0, 0.0, 0.0])
+
+    got = interp.interp_on_padded_grid(
+        x_query=jnp.array([0.5, 5.0]), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(got, jnp.array([-1.5, 5.0]), atol=1e-12)
 
 
 def test_duplicated_abscissa_is_tie_safe():
@@ -106,6 +155,134 @@ def test_all_neg_inf_row_yields_neg_inf_everywhere():
     assert bool(jnp.isneginf(got).all())
 
 
+def test_singleton_row_clamps_to_its_node():
+    """A row with one valid node reads that node's value at every query.
+
+    The edge clamp applies on both sides of a single-node row: the value read
+    (with slopes) and the slope-free marginal read alike return the node's
+    value below, at, and above the node — a valid one-point carry is never
+    silently replaced by zero.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+    slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+    x_query = jnp.array([0.5, 1.0, 2.0])
+
+    value = interp.interp_on_padded_grid(
+        x_query=x_query, xp=xp, fp=fp, fp_slopes=slopes
+    )
+    marginal = interp.interp_on_padded_grid(x_query=x_query, xp=xp, fp=slopes)
+
+    np.testing.assert_array_equal(np.asarray(value), [5.0, 5.0, 5.0])
+    np.testing.assert_array_equal(np.asarray(marginal), [2.0, 2.0, 2.0])
+
+
+def test_singleton_row_is_constant_under_autodiff():
+    """A singleton row's constant clamp differentiates as a constant.
+
+    `jax.grad` with respect to the query must be exactly zero (finite, not
+    NaN): asset-row mode differentiates the continuation read in the Euler
+    slot, so a NaN tangent leaking from the padded bracket would poison the
+    published Euler marginal even though the primal value is correct.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+    slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+
+    def read(query):
+        return interp.interp_on_padded_grid(
+            x_query=query, xp=xp, fp=fp, fp_slopes=slopes
+        )
+
+    value, derivative = jax.value_and_grad(read)(jnp.asarray(1.0))
+
+    np.testing.assert_allclose(float(value), 5.0, atol=1e-12)
+    np.testing.assert_allclose(float(derivative), 0.0, atol=1e-12)
+
+
+def test_singleton_row_passes_its_node_values_tangent_through():
+    """The singleton clamp is the node's value: unit derivative in that node.
+
+    Differentiating the read with respect to the row's single valid value must
+    give exactly one — the clamp publishes that value verbatim — with no NaN
+    contamination from the padded slots.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+
+    def read(node_value):
+        fp = jnp.array([jnp.nan, jnp.nan, jnp.nan]).at[0].set(node_value)
+        return interp.interp_on_padded_grid(
+            x_query=jnp.asarray(2.0), xp=xp, fp=fp, fp_slopes=slopes
+        )
+
+    derivative = jax.grad(read)(jnp.asarray(5.0))
+
+    np.testing.assert_allclose(float(derivative), 1.0, atol=1e-12)
+
+
+def test_singleton_row_stays_constant_under_vmap_and_autodiff():
+    """The zero query derivative survives per-row `vmap` batching.
+
+    The production readers map the row read over a stacked candidate axis, so
+    the degenerate-row handling must stay AD-safe inside `vmap` — a construct
+    that re-evaluates both sides of a branch (as `lax.cond` lowered under
+    `vmap` would) leaks the padded bracket's NaN tangent back in.
+    """
+    xp = jnp.array([[1.0, 2.0, 3.0], [1.0, jnp.nan, jnp.nan]])
+    fp = jnp.array([[1.0, 4.0, 9.0], [5.0, jnp.nan, jnp.nan]])
+    slopes = jnp.array([[2.0, 4.0, 6.0], [2.0, jnp.nan, jnp.nan]])
+
+    def summed_read(query):
+        def read_row(xp_row, fp_row, slopes_row):
+            return interp.interp_on_padded_grid(
+                x_query=query, xp=xp_row, fp=fp_row, fp_slopes=slopes_row
+            )
+
+        return jnp.sum(jax.vmap(read_row)(xp, fp, slopes))
+
+    derivative = jax.grad(summed_read)(jnp.asarray(2.5))
+
+    # The regular row holds `x²` data, which the Hermite read reproduces
+    # (derivative `2q = 5`); the singleton row contributes exactly zero.
+    np.testing.assert_allclose(float(derivative), 5.0, atol=1e-12)
+
+
+def test_nan_query_reads_nan_on_a_singleton_row():
+    """A NaN query stays NaN even where the singleton clamp is constant.
+
+    A NaN query marks an upstream failure; the constant clamp must not convert
+    it into a finite value — regular rows already propagate NaN queries through
+    the bracket arithmetic, and singleton rows must fail just as loudly.
+    """
+    xp = jnp.array([1.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+
+    got = interp.interp_on_padded_grid(x_query=jnp.array([jnp.nan, 1.0]), xp=xp, fp=fp)
+
+    assert bool(jnp.isnan(got[0]))
+    np.testing.assert_allclose(float(got[1]), 5.0, atol=1e-12)
+
+
+def test_empty_row_reads_nan():
+    """An all-NaN (poisoned) row reads NaN at every query, never a finite value.
+
+    An empty valid prefix only arises from an already-poisoned carry; the read
+    must preserve the NaN so the runtime diagnostics surface the poison instead
+    of masking it with a finite constant.
+    """
+    poisoned = jnp.array([jnp.nan, jnp.nan, jnp.nan])
+    x_query = jnp.array([0.0, 1.0])
+
+    linear = interp.interp_on_padded_grid(x_query=x_query, xp=poisoned, fp=poisoned)
+    hermite = interp.interp_on_padded_grid(
+        x_query=x_query, xp=poisoned, fp=poisoned, fp_slopes=poisoned
+    )
+
+    assert bool(jnp.isnan(linear).all())
+    assert bool(jnp.isnan(hermite).all())
+
+
 def test_exact_slopes_reproduce_a_monotone_cubic():
     """With exact node slopes, a monotone cubic is interpolated exactly.
 
@@ -125,8 +302,8 @@ def test_exact_slopes_reproduce_a_monotone_cubic():
     np.testing.assert_allclose(got, np.asarray(x_query) ** 3, atol=1e-12)
 
 
-def test_slopes_keep_nan_tail_edge_clamp_and_node_values():
-    """The Hermite path preserves NaN-tail handling, edge clamps, and nodes."""
+def test_slopes_keep_nan_tail_boundary_reads_and_node_values():
+    """The Hermite path preserves NaN-tail handling, boundary reads, and nodes."""
     xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     fp_slopes = jnp.array([3.0, 2.0, 0.5, jnp.nan])
@@ -136,7 +313,11 @@ def test_slopes_keep_nan_tail_edge_clamp_and_node_values():
         x_query=x_query, xp=xp, fp=fp, fp_slopes=fp_slopes
     )
 
-    np.testing.assert_allclose(got, jnp.array([0.0, 0.0, 3.0, 5.0, 5.0]), atol=1e-12)
+    below = 0.0 + (0.0 - 1.0) * 3.0
+    above = 5.0
+    np.testing.assert_allclose(
+        got, jnp.array([below, 0.0, 3.0, 5.0, above]), atol=1e-12
+    )
 
 
 def test_slopes_keep_duplicated_abscissa_tie_safe():
@@ -288,8 +469,8 @@ def test_prepared_interpolation_holds_no_grid_by_query_intermediate():
     This is the transient-memory contract: with the search key and valid length
     prepared above the query fan-out, the per-query path does only a scalar-carry
     `searchsorted` plus gathers, so no operation carries both the query axis and
-    the grid (`n_pad`) axis. A regression here would reintroduce the
-    `O(queries * n_pad)` working buffer the NaN preamble used to create.
+    the grid (`n_pad`) axis. A regression here would reintroduce an
+    `O(queries * n_pad)` working buffer carrying both the query and grid axes.
     """
     n_grid, n_query = 64, 11
     xp = jnp.arange(n_grid, dtype=float)
@@ -314,3 +495,521 @@ def test_prepared_interpolation_holds_no_grid_by_query_intermediate():
         if any(f"[{a},{b}]" in line for a, b in forbidden)
     ]
     assert not offenders, "grid-by-query intermediate present:\n" + "\n".join(offenders)
+
+
+def test_paired_read_derivative_at_an_interior_node_is_the_right_side_slope():
+    """At an exact interior node the paired derivative is the right piece's slope.
+
+    The value read at a node selects the right bracket (`side="right"`), whose
+    Hermite derivative at its left endpoint is that node's limited slope. RT1
+    of the external audit: with zero node slopes both adjacent pieces have
+    derivative zero at the node, so anything else (an autodiff subgradient of
+    the clip/where representation) is wrong.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([1.0, 2.0, 4.0])
+    fp_slopes = jnp.array([0.0, 0.0, 0.0])
+
+    value, derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(1.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(np.asarray(value), 2.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(derivative), 0.0, atol=1e-12)
+
+
+def test_paired_read_derivative_uses_node_slopes_at_first_and_last_node():
+    """The first node reads its right-side slope, the last its left-side slope.
+
+    With exact node slopes that pass the monotonicity limiter untouched, the
+    selected piece's endpoint derivative is the node's own slope on both
+    boundaries — the first node starts the first bracket, the last node ends
+    the last bracket (the read clamps to it).
+    """
+    xp = jnp.array([1.0, 1.5, 2.0])
+    fp = xp**3
+    fp_slopes = 3.0 * xp**2
+
+    _, at_first = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(1.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+    _, at_last = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(2.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(np.asarray(at_first), 3.0, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(at_last), 12.0, rtol=1e-12)
+
+
+def test_paired_read_derivative_matches_finite_differences_off_node(
+    x64_enabled: None,
+):
+    """Between nodes the paired derivative is the value read's exact slope."""
+    xp = jnp.array([1.0, 1.5, 2.0])
+    fp = xp**3
+    fp_slopes = 3.0 * xp**2
+    step = 1e-6
+
+    for query in (1.1, 1.25, 1.7, 1.95):
+        _, derivative = interp.interp_and_derivative_on_padded_grid(
+            x_query=jnp.asarray(query), xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+        left = interp.interp_on_padded_grid(
+            x_query=jnp.asarray(query - step), xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+        right = interp.interp_on_padded_grid(
+            x_query=jnp.asarray(query + step), xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+        np.testing.assert_allclose(
+            np.asarray(derivative),
+            (np.asarray(right) - np.asarray(left)) / (2.0 * step),
+            rtol=1e-5,
+        )
+
+
+def test_paired_read_derivative_out_of_support_matches_the_value_conventions():
+    """Below support the derivative is the first bracket's secant; above it is zero.
+
+    The value read extends the first bracket's secant below support and clamps
+    to the boundary value above; the paired derivative is the exact slope of
+    that value read on both sides.
+    """
+    xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
+    fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
+    fp_slopes = jnp.array([3.0, 2.0, 0.5, jnp.nan])
+
+    _, below = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+    _, above = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(100.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(np.asarray(below), 3.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(above), 0.0, atol=1e-12)
+
+
+def test_paired_read_derivative_at_a_duplicated_abscissa_reads_the_right_piece():
+    """At a duplicated kink abscissa the derivative belongs to the right piece.
+
+    The value read at the duplicate returns the right value (`side="right"`);
+    the paired derivative is the right piece's left-endpoint slope, so the
+    (value, derivative) pair describes one consistent branch of the kink.
+    """
+    xp = jnp.array([0.0, 1.0, 1.0, 2.0])
+    fp = jnp.array([0.0, 10.0, 2.0, 3.0])
+
+    value, derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(1.0), xp=xp, fp=fp
+    )
+
+    np.testing.assert_allclose(np.asarray(value), 2.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(derivative), 1.0, atol=1e-12)
+
+
+def test_paired_read_derivative_is_zero_on_neg_inf_brackets():
+    """A `-inf` endpoint pins the paired derivative to zero, matching the value.
+
+    Infeasible (`-inf`) values read as `-inf` with exactly zero marginal, so
+    the pair stays consistent and the transform space never sees `inf * 0`.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([-jnp.inf, 3.0, 5.0])
+
+    _, derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.5), xp=xp, fp=fp
+    )
+
+    np.testing.assert_allclose(np.asarray(derivative), 0.0, atol=1e-12)
+
+
+def test_paired_read_linear_derivative_at_a_node_is_the_right_secant():
+    """Without slopes, an exact-node read pairs with the right bracket's secant."""
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([1.0, 2.0, 4.0])
+
+    _, at_interior = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(1.0), xp=xp, fp=fp
+    )
+    _, at_last = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(2.0), xp=xp, fp=fp
+    )
+
+    np.testing.assert_allclose(np.asarray(at_interior), 2.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(at_last), 2.0, atol=1e-12)
+
+
+def test_value_read_on_a_singleton_row_is_the_constant_node_value():
+    """A one-node row reads as the constant `fp[0]` at any query."""
+    xp = jnp.array([0.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+
+    value = interp.interp_on_padded_grid(x_query=jnp.asarray(0.25), xp=xp, fp=fp)
+
+    np.testing.assert_allclose(np.asarray(value), 5.0, atol=1e-12)
+
+
+def test_paired_read_on_a_singleton_row_is_the_node_value_with_zero_slope():
+    """A one-node row's paired read is the constant pair `(fp[0], 0)`."""
+    xp = jnp.array([0.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+    fp_slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+
+    value, derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.25), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(np.asarray(value), 5.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(derivative), 0.0, atol=1e-12)
+
+
+def test_reads_on_an_empty_row_propagate_nan():
+    """An all-NaN (poisoned) row reads as NaN, never as a finite constant.
+
+    A poisoned carry row must surface in the runtime NaN diagnostics; a read
+    that converts it to a finite value would let a poisoned candidate lose a
+    downstream maximum silently instead of failing loudly.
+    """
+    empty = jnp.full(3, jnp.nan)
+
+    value = interp.interp_on_padded_grid(x_query=jnp.asarray(0.25), xp=empty, fp=empty)
+    paired_value, paired_derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.25), xp=empty, fp=empty, fp_slopes=empty
+    )
+
+    assert bool(jnp.isnan(value))
+    assert bool(jnp.isnan(paired_value))
+    assert bool(jnp.isnan(paired_derivative))
+
+
+def _host_right_germ(
+    xp: np.ndarray, fp: np.ndarray, slopes: np.ndarray, x_query: float
+) -> tuple[bool, float, float, float]:
+    """Scalar NumPy reference for the value read's right germ.
+
+    Independent of the JAX implementation: plain `searchsorted` bracket lookup
+    (right-continuous at nodes), the Fritsch-Carlson limiter written out
+    scalar-wise, and the bracket cubic differentiated analytically — with `t`
+    the relative position, `h` the width, and `c_l`, `c_u` the Hermite
+    coefficients, the piece is `p(t) = f_l + Δf t + c_l t + (c_u - 2 c_l) t² +
+    (c_l - c_u) t³`. Right-finite with all derivatives zero on both clamp rays
+    (strictly below the first node; at or above the last).
+    """
+    valid = ~np.isnan(xp)
+    x_valid, f_valid, s_valid = xp[valid], fp[valid], slopes[valid]
+    if x_query < x_valid[0] or x_query >= x_valid[-1]:
+        return True, 0.0, 0.0, 0.0
+    lower = int(np.searchsorted(x_valid, x_query, side="right")) - 1
+    width = x_valid[lower + 1] - x_valid[lower]
+    relative_position = (x_query - x_valid[lower]) / width
+    right_finite = bool(np.isfinite(f_valid[lower]) and np.isfinite(f_valid[lower + 1]))
+    df = f_valid[lower + 1] - f_valid[lower]
+    if not np.isfinite(df):
+        return right_finite, 0.0, 0.0, 0.0
+    secant = df / width
+    if not (np.isfinite(s_valid[lower]) and np.isfinite(s_valid[lower + 1])):
+        return right_finite, float(secant), 0.0, 0.0
+
+    def limit(slope: float) -> float:
+        if slope * secant <= 0.0:
+            return 0.0
+        return float(np.sign(secant) * min(abs(slope), 3.0 * abs(secant)))
+
+    coeff_lower = width * limit(s_valid[lower]) - df
+    coeff_upper = df - width * limit(s_valid[lower + 1])
+    t = relative_position
+    first = (
+        df
+        + (1.0 - 2.0 * t) * ((1.0 - t) * coeff_lower + t * coeff_upper)
+        + t * (1.0 - t) * (coeff_upper - coeff_lower)
+    ) / width
+    second = (
+        2.0 * (coeff_upper - 2.0 * coeff_lower) + 6.0 * (coeff_lower - coeff_upper) * t
+    ) / width**2
+    third = 6.0 * (coeff_lower - coeff_upper) / width**3
+    return right_finite, float(first), float(second), float(third)
+
+
+def test_paired_left_read_at_a_duplicated_terminal_returns_the_left_piece_slope(
+    x64_enabled: None,
+):
+    """`side="left"` pairs a duplicated terminal query with its left piece.
+
+    On `xp = [0, 1, 2, 2]` with values `[10, 11, 12, 12]` and node slopes
+    `[1, 1, 1, 100]`, a query exactly at the duplicated abscissa 2 lands in
+    the `[1, 2]` bracket under the left convention, so the pair is the left
+    duplicate's record and that piece's right-endpoint slope: `(12, 1)`. The
+    ordinary right-side read at the same query pairs the zero-width terminal
+    bracket: `(12, 0)`.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0, 2.0])
+    fp = jnp.array([10.0, 11.0, 12.0, 12.0])
+    fp_slopes = jnp.array([1.0, 1.0, 1.0, 100.0])
+    search_grid, valid_length = interp.prepare_padded_grid(xp)
+
+    left_value, left_derivative = interp.interp_and_derivative_on_prepared_grid(
+        x_query=jnp.asarray(2.0),
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        side="left",
+    )
+    right_value, right_derivative = interp.interp_and_derivative_on_prepared_grid(
+        x_query=jnp.asarray(2.0),
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+    np.testing.assert_allclose(float(left_value), 12.0, rtol=1e-12)
+    np.testing.assert_allclose(float(left_derivative), 1.0, rtol=1e-12)
+    np.testing.assert_allclose(float(right_value), 12.0, rtol=1e-12)
+    np.testing.assert_allclose(float(right_derivative), 0.0, atol=1e-12)
+
+
+def test_paired_left_read_matches_the_right_read_strictly_inside_a_bracket(
+    x64_enabled: None,
+):
+    """Strictly interior queries locate the same bracket under either side.
+
+    On a strictly increasing row both side conventions gather the identical
+    bracket for an off-node query, so the paired values and derivatives agree
+    bitwise.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0, 3.0])
+    fp = jnp.array([0.0, 1.0, 4.0, 9.0])
+    fp_slopes = jnp.array([1.0, 2.0, 3.0, 5.0])
+    search_grid, valid_length = interp.prepare_padded_grid(xp)
+    query = jnp.asarray(1.6)
+
+    left_pair = interp.interp_and_derivative_on_prepared_grid(
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        side="left",
+    )
+    right_pair = interp.interp_and_derivative_on_prepared_grid(
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+    assert float(left_pair[0]) == float(right_pair[0])
+    assert float(left_pair[1]) == float(right_pair[1])
+
+
+def test_right_germ_reproduces_a_cubic_interior_derivatives():
+    """With exact node slopes the germ of `x**3` is `(3x², 6x, 6)`.
+
+    A cubic with exact endpoint values and slopes is reproduced exactly by the
+    Hermite bracket (four constraints determine the cubic), so all three of its
+    derivative reads are exact wherever the limiter is inactive — and the read
+    is right-finite.
+    """
+    xp = jnp.array([1.0, 1.5, 2.0, 3.0])
+    fp = xp**3
+    slopes = 3.0 * xp**2
+    x_query = jnp.array([1.2, 1.5, 1.9, 2.4])
+
+    right_finite, first, second, third = interp.interp_right_germ_on_padded_grid(
+        x_query=x_query, xp=xp, fp=fp, fp_slopes=slopes
+    )
+
+    assert bool(right_finite.all())
+    np.testing.assert_allclose(first, 3.0 * np.asarray(x_query) ** 2, rtol=1e-9)
+    np.testing.assert_allclose(second, 6.0 * np.asarray(x_query), rtol=1e-9)
+    np.testing.assert_allclose(third, np.full(4, 6.0), rtol=1e-9)
+
+
+def test_right_germ_at_a_node_uses_the_right_brackets_limited_slope():
+    """At a node the first right derivative is the right bracket's limited slope.
+
+    The value row rises by `0.1` per bracket while the node carries a raw slope
+    of `100`; the Fritsch-Carlson limiter caps the value read's slope at three
+    times the secant, so the first right derivative at the node is `0.3`, not
+    `100`.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([0.9, 1.0, 1.1])
+    slopes = jnp.array([0.1, 100.0, 0.1])
+
+    _, first, _, _ = interp.interp_right_germ_on_padded_grid(
+        x_query=jnp.array([1.0]), xp=xp, fp=fp, fp_slopes=slopes
+    )
+
+    np.testing.assert_allclose(float(first[0]), 0.3, atol=_GERM_ATOL)
+
+
+def test_right_germ_is_flat_and_finite_on_the_clamp_rays():
+    """The read clamps outside the valid range: right-finite, all derivatives zero.
+
+    Strictly below the first node and at or above the last valid node the value
+    read is constant; a query exactly on the first node is interior (its right
+    bracket exists) and keeps the bracket's slope.
+    """
+    xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
+    fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
+    slopes = jnp.array([3.0, 3.0, 1.0, jnp.nan])
+
+    right_finite, first, second, third = interp.interp_right_germ_on_padded_grid(
+        x_query=jnp.array([0.5, 1.0, 4.0, 7.0]), xp=xp, fp=fp, fp_slopes=slopes
+    )
+
+    assert bool(right_finite.all())
+    np.testing.assert_allclose(np.asarray(first), [0.0, 3.0, 0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(float(second[0]), 0.0, atol=1e-12)
+    np.testing.assert_allclose(float(third[0]), 0.0, atol=1e-12)
+
+
+def test_right_germ_flags_a_neg_inf_bracket_as_not_right_finite():
+    """A `-inf` bracket endpoint is not right-finite; derivatives are zero.
+
+    The read is `-inf` on the bracket's interior, so a candidate tied at a
+    finite node whose right bracket dies must be distinguishable from a finite
+    constant clamp — the flag carries that distinction, the derivatives stay
+    zero (never NaN).
+    """
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([0.0, 1.0, -jnp.inf])
+    slopes = jnp.array([1.0, 1.0, 1.0])
+
+    right_finite, first, second, third = interp.interp_right_germ_on_padded_grid(
+        x_query=jnp.array([1.0, 1.5]), xp=xp, fp=fp, fp_slopes=slopes
+    )
+
+    assert not bool(right_finite.any())
+    np.testing.assert_allclose(np.asarray(first), [0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(second), [0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(third), [0.0, 0.0], atol=1e-12)
+
+
+def test_right_germ_matches_scalar_host_on_random_rows():
+    """The vectorized right germ equals an independent scalar reference.
+
+    Random strictly-ascending rows with arbitrary finite values and slopes are
+    read at interior points, exactly at nodes, and on both clamp rays; the JAX
+    implementation must agree with the scalar NumPy host at every query, in
+    every germ component.
+    """
+    rng = np.random.default_rng(seed=42)
+    for _ in range(5):
+        xp = np.cumsum(rng.uniform(0.1, 1.0, size=7))
+        fp = rng.normal(size=7)
+        slopes = rng.normal(scale=5.0, size=7)
+        nodes = xp.tolist()
+        interior = ((xp[:-1] + xp[1:]) / 2.0).tolist()
+        rays = [xp[0] - 0.5, xp[-1] + 0.5]
+        queries = np.array(nodes + interior + rays)
+
+        got = interp.interp_right_germ_on_padded_grid(
+            x_query=jnp.asarray(queries),
+            xp=jnp.asarray(xp),
+            fp=jnp.asarray(fp),
+            fp_slopes=jnp.asarray(slopes),
+        )
+
+        expected = [_host_right_germ(xp, fp, slopes, q) for q in queries]
+        np.testing.assert_array_equal(np.asarray(got[0]), [e[0] for e in expected])
+        for component in (1, 2, 3):
+            rtol, atol = _GERM_COMPONENT_RTOL_ATOL[component]
+            np.testing.assert_allclose(
+                np.asarray(got[component]),
+                [e[component] for e in expected],
+                rtol=rtol,
+                atol=atol,
+            )
+
+
+def test_left_germ_reproduces_a_cubic_interior_derivatives():
+    """With exact node slopes the left germ of `x**3` is `(3x², 6x, 6)`.
+
+    The Hermite bracket reproduces a cubic exactly, so the left germ — the
+    located *left* bracket's derivatives at the query — agrees with the
+    polynomial's derivatives at interior points and at interior nodes (where
+    the left and right pieces of a smooth interpolant coincide).
+    """
+    xp = jnp.array([1.0, 1.5, 2.0, 3.0])
+    fp = xp**3
+    slopes = 3.0 * xp**2
+    x_query = jnp.array([1.2, 1.5, 1.9, 2.4, 3.0])
+
+    left_finite, first, second, third = interp.interp_left_germ_on_padded_grid(
+        x_query=x_query, xp=xp, fp=fp, fp_slopes=slopes
+    )
+
+    assert bool(left_finite.all())
+    np.testing.assert_allclose(first, 3.0 * np.asarray(x_query) ** 2, rtol=1e-9)
+    np.testing.assert_allclose(second, 6.0 * np.asarray(x_query), rtol=1e-9)
+    np.testing.assert_allclose(third, np.full(5, 6.0), rtol=1e-9)
+
+
+def test_left_germ_at_a_node_uses_the_left_brackets_limited_slope():
+    """At a node the first left derivative is the left bracket's limited slope.
+
+    The value row rises by `0.1` per bracket while the node carries a raw slope
+    of `100`; the limiter caps the value read's slope at three times the
+    secant, so the first left derivative at the node is `0.3` — read at the
+    right edge of the node's *left* bracket, where the right germ would read
+    the right bracket instead.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([0.9, 1.0, 1.1])
+    slopes = jnp.array([0.1, 100.0, 0.1])
+
+    _, first, _, _ = interp.interp_left_germ_on_padded_grid(
+        x_query=jnp.array([1.0]), xp=xp, fp=fp, fp_slopes=slopes
+    )
+
+    np.testing.assert_allclose(float(first[0]), 0.3, atol=_GERM_ATOL)
+
+
+def test_left_germ_is_dead_at_and_below_the_first_node():
+    """At or below the first valid node the left germ is dead with zeros.
+
+    The stacked readers mask a candidate to `-inf` below its first finite
+    node, so as an envelope candidate the branch owns no left neighborhood at
+    its support start — not left-finite, all derivatives zero. Strictly above
+    the last valid node the read clamps to a constant: left-finite, zeros.
+    """
+    xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
+    fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
+    slopes = jnp.array([3.0, 3.0, 1.0, jnp.nan])
+
+    left_finite, first, second, third = interp.interp_left_germ_on_padded_grid(
+        x_query=jnp.array([0.5, 1.0, 4.0, 7.0]), xp=xp, fp=fp, fp_slopes=slopes
+    )
+
+    np.testing.assert_array_equal(np.asarray(left_finite), [False, False, True, True])
+    np.testing.assert_allclose(np.asarray(first)[:2], [0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(first)[2:], [1.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(np.asarray(second)[[0, 1, 3]], 0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(third)[[0, 1, 3]], 0.0, atol=1e-12)
+
+
+def test_left_germ_flags_a_neg_inf_bracket_as_not_left_finite():
+    """A `-inf` left-bracket endpoint is not left-finite; derivatives are zero.
+
+    The read is `-inf` on the bracket's interior immediately left of the
+    query, so a candidate tied at the finite node above a dead bracket must
+    not claim the left neighborhood.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([-jnp.inf, 1.0, 2.0])
+    slopes = jnp.array([1.0, 1.0, 1.0])
+
+    left_finite, first, _, _ = interp.interp_left_germ_on_padded_grid(
+        x_query=jnp.array([0.5, 1.0]), xp=xp, fp=fp, fp_slopes=slopes
+    )
+
+    assert not bool(left_finite.any())
+    np.testing.assert_allclose(np.asarray(first), [0.0, 0.0], atol=1e-12)

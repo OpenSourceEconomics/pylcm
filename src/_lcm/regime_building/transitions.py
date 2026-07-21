@@ -11,33 +11,24 @@ separate lets this module stay free of any dependency on the user-facing
 `Regime`.
 """
 
-import inspect
 from collections.abc import Callable, Mapping
-from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAliasType, cast
+from typing import TypeAliasType, cast
 
 from dags.tree import QNAME_DELIMITER
 
-from _lcm.engine import _StochasticStateTransition
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import RegimeName, StateName, TransitionFunctionName
-from _lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.exceptions import (
-    InvalidStateTransitionProbabilitiesError,
     RegimeInitializationError,
 )
 from lcm.phased import Phased
-from lcm.transition import MarkovTransition
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
-
-if TYPE_CHECKING:
-    from lcm.regime import Regime as UserRegime
 
 
 def collect_state_transitions(
-    states: Mapping[StateName, Grid | Phased | None],
+    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
     state_transitions: Mapping[
         StateName,
         UserFunction
@@ -95,69 +86,6 @@ def collect_state_transitions(
     return transitions
 
 
-def collect_stochastic_state_transitions(
-    *,
-    user_regime: UserRegime,
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> MappingProxyType[TransitionFunctionName, _StochasticStateTransition]:
-    """Collect validation metadata for every `MarkovTransition` state transition.
-
-    Walks `user_regime.state_transitions` and yields one entry per
-    `MarkovTransition`. Per-target dict entries are flattened into
-    `next_{state}__{target}` keys, mirroring the qname pattern used by
-    `collect_state_transitions`. Returns an empty mapping for regimes with
-    no stochastic state transitions (incl. terminal regimes).
-
-    Args:
-        user_regime: User-facing regime to inspect.
-        user_regimes: All user regimes in the model. Needed to look up
-            `n_outcomes` for target-only states whose `DiscreteGrid` lives
-            on the target regime, not the source.
-
-    Returns:
-        Immutable mapping of qualified transition name to validation
-        metadata.
-
-    Raises:
-        InvalidStateTransitionProbabilitiesError: If a `MarkovTransition`'s
-            `probs_array` subscript order does not match the function's
-            signature parameter order. Permissively skipped when the
-            function does not use the `probs_array[...]` pattern.
-
-    """
-    entries: dict[TransitionFunctionName, _StochasticStateTransition] = {}
-
-    for state_name, raw in user_regime.state_transitions.items():
-        if isinstance(raw, MarkovTransition):
-            _add_stochastic_entry(
-                entries=entries,
-                key=f"next_{state_name}",
-                markov=raw,
-                state_name=state_name,
-                target_regime_name=None,
-                user_regime=user_regime,
-                user_regimes=user_regimes,
-            )
-        elif isinstance(raw, Mapping):
-            for raw_target_regime_name, law in raw.items():
-                if not isinstance(law, MarkovTransition):
-                    continue
-                target_regime_name: RegimeName = cast(
-                    "RegimeName", raw_target_regime_name
-                )
-                _add_stochastic_entry(
-                    entries=entries,
-                    key=f"next_{state_name}__{target_regime_name}",
-                    markov=law,
-                    state_name=state_name,
-                    target_regime_name=target_regime_name,
-                    user_regime=user_regime,
-                    user_regimes=user_regimes,
-                )
-
-    return MappingProxyType(entries)
-
-
 def _make_identity_fn(
     *, state_name: StateName, annotation: TypeAliasType
 ) -> _IdentityTransition:
@@ -179,116 +107,47 @@ def _add_raw_transition(
     A `Phased` entry is registered as-is; consumers that need a single
     callable resolve it for their phase (`Regime.get_all_functions`), while
     the params-template collector unions both variants' parameters.
+
+    An outer `Phased` with a per-target dict on at least one side is NORMALIZED
+    into the inner form — one qualified key per target, each carrying a `Phased` of
+    that target's two laws. `Phased` of dicts is not a value any consumer
+    understands: registered as-is it would reach `Regime.get_all_functions` as a
+    raw dict where a callable is required. The two forms mean the same thing, and
+    the per-key one is what the engine already consumes.
+
+    A **bare** law on one side (map-vs-bare) BROADCASTS over the per-target side's
+    targets — the same meaning a bare state law has outside `Phased`. The
+    per-target side's key set defines the targets; the shape validator has already
+    rejected two per-target dicts over different targets, so when both sides are
+    dicts their keys match and either set works.
+
+    Note this produces a `Phased` value *under a per-target key*, which is exactly
+    what `_validate_per_target_dict` forbids a USER to write (`Phased` is
+    outermost-only). No contradiction: that rule governs the user's spelling, this
+    is the internal normal form the outer spelling is rewritten INTO.
     """
-    if callable(raw) or isinstance(raw, Phased):
+    if isinstance(raw, Phased) and (
+        isinstance(raw.solve, Mapping) or isinstance(raw.simulate, Mapping)
+    ):
+
+        def _cell(side: object, target: RegimeName) -> UserFunction:
+            # A per-target dict yields its cell; a bare law broadcasts over targets.
+            if isinstance(side, Mapping):
+                by_target = cast("Mapping[RegimeName, object]", side)
+                return cast("UserFunction", by_target[target])
+            return cast("UserFunction", side)
+
+        target_source = raw.solve if isinstance(raw.solve, Mapping) else raw.simulate
+        targets = cast("Mapping[RegimeName, object]", target_source)
+        for target_regime_name in targets:
+            key = f"next_{name}{QNAME_DELIMITER}{target_regime_name}"
+            transitions[key] = Phased(
+                solve=_cell(raw.solve, target_regime_name),
+                simulate=_cell(raw.simulate, target_regime_name),
+            )
+    elif callable(raw) or isinstance(raw, Phased):
         transitions[f"next_{name}"] = cast("UserFunction", raw)
     elif isinstance(raw, Mapping):
         for target_regime_name, law in raw.items():
             key = f"next_{name}{QNAME_DELIMITER}{target_regime_name}"
             transitions[key] = cast("UserFunction", law)
-
-
-def _add_stochastic_entry(
-    *,
-    entries: dict[TransitionFunctionName, _StochasticStateTransition],
-    key: TransitionFunctionName,
-    markov: MarkovTransition,
-    state_name: str,
-    target_regime_name: RegimeName | None,
-    user_regime: UserRegime,
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> None:
-    """Static-check one MarkovTransition and append its metadata."""
-    func = markov.func
-
-    state_grid = _find_state_grid(
-        state_name=state_name,
-        target_regime_name=target_regime_name,
-        user_regime=user_regime,
-        user_regimes=user_regimes,
-    )
-    if not isinstance(state_grid, DiscreteGrid):
-        # `MarkovTransition` on a continuous state is not a supported
-        # pattern for the automatic validator. Static phase tolerates
-        # the omission; the runtime phase skips it by absence from the
-        # metadata. The subscript-order check is skipped too — it applies
-        # only to the discrete `probs_array[...]` pattern this validator
-        # covers.
-        return
-
-    indexing_params = tuple(
-        _get_func_indexing_params(func=func, array_param_name="probs_array")
-    )
-    _check_subscript_order(
-        func=func, indexing_params=indexing_params, state_name=state_name
-    )
-    n_outcomes = len(state_grid.categories)
-
-    entries[key] = _StochasticStateTransition(
-        func=func,
-        state_name=state_name,
-        target_regime_name=target_regime_name,
-        n_outcomes=n_outcomes,
-        indexing_params=indexing_params,
-    )
-
-
-def _find_state_grid(
-    *,
-    state_name: str,
-    target_regime_name: RegimeName | None,
-    user_regime: UserRegime,
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> object:
-    """Look up the state's grid for outcome-axis sizing.
-
-    For a per-target dict entry the **target** regime's grid is authoritative:
-    the `MarkovTransition` returns a distribution over the target's state
-    space, which may differ in size from the source's (cross-grid
-    transitions). The source grid is never substituted in that case — if the
-    target regime does not declare the state, `None` is returned so the
-    caller skips metadata creation rather than sizing off a wrong grid.
-
-    A plain `MarkovTransition` (no per-target dict) sizes off the source
-    regime's grid.
-
-    Returns `None` when no authoritative grid is found.
-    """
-    if target_regime_name is not None:
-        target = user_regimes.get(target_regime_name)
-        if target is not None and state_name in target.states:
-            return target.states[state_name]
-        return None
-    if state_name in user_regime.states:
-        return user_regime.states[state_name]
-    return None
-
-
-def _check_subscript_order(
-    *,
-    func: object,
-    indexing_params: tuple[str, ...],
-    state_name: str,
-) -> None:
-    """Raise if `probs_array[…]` subscripts don't match signature order.
-
-    Permissive: when the function doesn't use the `probs_array[...]`
-    pattern (`indexing_params` is empty), the check silently skips. The
-    runtime numerical checks still cover such functions.
-    """
-    if not indexing_params:
-        return
-    sig = inspect.signature(func)  # ty: ignore[invalid-argument-type]
-    sig_order = tuple(
-        p for p in sig.parameters if p != "probs_array" and p in indexing_params
-    )
-    if indexing_params != sig_order:
-        func_name = getattr(func, "__name__", "<unknown>")
-        msg = (
-            f"In MarkovTransition for state '{state_name}', function "
-            f"'{func_name}' indexes `probs_array` as "
-            f"`probs_array[{', '.join(indexing_params)}]` but the signature "
-            f"order is `probs_array[{', '.join(sig_order)}]`. Swap the "
-            f"subscript order or the signature so they match."
-        )
-        raise InvalidStateTransitionProbabilitiesError(msg)

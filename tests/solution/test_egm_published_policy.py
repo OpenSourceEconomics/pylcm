@@ -88,6 +88,7 @@ def test_published_policies_are_host_resident():
     )
 
     pol = sim_policy[0]["retirement"]
+    assert isinstance(pol, EGMSimPolicy)
     assert all(
         device.platform == "cpu"
         for array in (pol.endog_grid, pol.policy)

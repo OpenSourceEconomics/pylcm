@@ -14,6 +14,7 @@ from typing import Any, cast
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
+from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
@@ -88,13 +89,35 @@ def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
     """Name of a carry target's continuous (Euler) state.
 
     For a DC-EGM or NEGM target this is its configured (inner) Euler state; for a
-    terminal target it is its only state (uniqueness is checked by
-    `_find_unsupported_feature`).
+    terminal target it is the first non-process continuous state, matching the
+    carry's Euler axis (passive continuous states, e.g. a ride-along wage, follow
+    it). A model-level distributed state (e.g. a permanent type sharded across
+    devices) is broadcast into the terminal regime as an extra discrete axis, so
+    the Euler state is the first continuous state, never an int-coded discrete
+    state that happens to iterate first.
     """
     dcegm = _as_dcegm(user_regime)
     if dcegm is not None:
         return dcegm.continuous_state
-    return next(iter(user_regime.states))
+    grids = get_grids(user_regime)
+    # A carried state (imputed in solve, seeded in simulate) has no solve grid, so
+    # it never appears in `grids` and is not the Euler axis; skip it. The Euler axis
+    # is a genuine grid-backed continuous state.
+    continuous = tuple(
+        name
+        for name in user_regime.states
+        if name in grids
+        and isinstance(grids[name], ContinuousGrid)
+        and not isinstance(grids[name], _ContinuousStochasticProcess)
+    )
+    if not continuous:
+        msg = (
+            f"A terminal carry target must have at least one continuous (Euler) "
+            f"state; regime states {tuple(user_regime.states)} resolve to no "
+            f"continuous states."
+        )
+        raise ValueError(msg)
+    return continuous[0]
 
 
 def _get_child_discrete_actions(
@@ -141,7 +164,7 @@ def _get_child_resources_function(
     if _as_dcegm(user_regime) is not None:
         return _concatenate_child_resources(user_regime=user_regime)
 
-    state_name = next(iter(user_regime.states))
+    state_name = _get_child_state_name(user_regime=user_regime)
 
     def identity_resources(**kwargs: ScalarFloat) -> ScalarFloat:
         return kwargs[state_name]
@@ -155,7 +178,7 @@ def _get_child_resources_arg_names(*, user_regime: UserRegime) -> set[str]:
         return set(
             get_union_of_args([_concatenate_child_resources(user_regime=user_regime)])
         )
-    return {next(iter(user_regime.states))}
+    return {_get_child_state_name(user_regime=user_regime)}
 
 
 def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
@@ -169,11 +192,14 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     solve variant and baked into the DAG, so their outputs are computed from
     leaf states and params rather than demanded as leaves.
 
-    For a NEGM target the published continuation is the keeper's (the durable
-    stays put), so the inner resources' outer post-decision is replaced by the
-    durable identity `next_<durable> = <durable>`. The child resources then read
-    `<durable>` (a bound passive state) rather than demanding the outer
-    post-decision as an unbound leaf.
+    For a NEGM target the published continuation lives on the keeper's
+    cash-on-hand axis — the axis where keeping is free — so the inner
+    resources' outer post-decision is replaced by the keeper's no-adjustment
+    map `next_<durable> = keep(<durable>)` (the identity when the regime
+    declares none). The child resources then read `<durable>` (a bound passive
+    state) rather than demanding the outer post-decision as an unbound leaf,
+    and the parent's query axis matches the axis the stacked candidates are
+    lifted onto.
     """
     # Imported lazily: `regime_building.processing` imports the solver
     # registry, which imports this module, so a top-level import would cycle.
@@ -193,9 +219,17 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
         if isinstance(value, Phased) and name not in resolved:
             resolved[name] = cast("UserFunction", value.solve)
     if isinstance(user_regime.solver, NEGM):
-        resolved[user_regime.solver.outer_post_decision] = _keeper_identity_function(
-            outer_post_decision=user_regime.solver.outer_post_decision,
-            functions=resolved,
+        no_adjustment_name = user_regime.solver.outer_no_adjustment_candidate
+        resolved[user_regime.solver.outer_post_decision] = (
+            _keeper_no_adjustment_function(
+                outer_post_decision=user_regime.solver.outer_post_decision,
+                no_adjustment_func=(
+                    resolved[no_adjustment_name]
+                    if no_adjustment_name is not None
+                    else None
+                ),
+                functions=resolved,
+            )
         )
     qnamed = {
         name: _proc._rename_params_to_qnames(  # noqa: SLF001
@@ -213,22 +247,29 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     )
 
 
-def _keeper_identity_function(
-    *, outer_post_decision: FunctionName, functions: dict[str, UserFunction]
+def _keeper_no_adjustment_function(
+    *,
+    outer_post_decision: FunctionName,
+    no_adjustment_func: UserFunction | None,
+    functions: dict[str, UserFunction],
 ) -> UserFunction:
-    """Build the keeper identity `next_<durable>(durable) = durable`.
+    """Build the keeper map `next_<durable>(durable) = keep(durable)`.
 
-    The injected function declares the durable state as its single argument and
-    copies its annotation off the first regime function that declares it, so the
-    DAG's annotation-consistency check (which requires every consumer of a leaf
-    to agree) stays satisfied.
+    `keep` is the regime's no-adjustment candidate (e.g. the depreciated stock
+    `durable (1 - delta)`); with none declared it is the identity. The injected
+    function declares the durable state as its single argument and copies its
+    annotation off the first regime function that declares it, so the DAG's
+    annotation-consistency check (which requires every consumer of a leaf to
+    agree) stays satisfied.
     """
     durable_state = outer_post_decision.removeprefix("next_")
     annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
 
     @with_signature(args={durable_state: annotation}, return_annotation=annotation)
     def keep_outer_post_decision(**kwargs: ScalarFloat) -> ScalarFloat:
-        return kwargs[durable_state]
+        if no_adjustment_func is None:
+            return kwargs[durable_state]
+        return no_adjustment_func(kwargs[durable_state])
 
     keep_outer_post_decision.__name__ = outer_post_decision
     return cast("UserFunction", keep_outer_post_decision)

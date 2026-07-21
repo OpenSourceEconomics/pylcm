@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
 
+from _lcm.certainty_equivalent import PowerMean
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
@@ -33,11 +34,19 @@ if TYPE_CHECKING:
 
 
 def _grid_mapping_errors(
-    *, attr_name: str, mapping: Mapping[str, object], allow_phase_variants: bool
+    *,
+    attr_name: str,
+    mapping: Mapping[str, object],
+    allow_phase_variants: bool,
+    allow_age_specialized_grid: bool = False,
 ) -> list[str]:
     """Collect key/value type errors for a grid-valued mapping (states/actions)."""
-    allowed = Grid | Phased if allow_phase_variants else Grid
+    allowed: object = Grid | Phased if allow_phase_variants else Grid
     suffix = " or Phased" if allow_phase_variants else ""
+    if allow_age_specialized_grid:
+        # An age-varying continuous-state grid is a valid state (states only).
+        allowed = allowed | AgeSpecializedGrid  # type: ignore[operator]
+        suffix += " or AgeSpecializedGrid"
     error_messages: list[str] = []
     for k, v in mapping.items():
         if not isinstance(k, str):
@@ -388,7 +397,10 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
     """
     error_messages = [
         *_grid_mapping_errors(
-            attr_name="states", mapping=regime.states, allow_phase_variants=True
+            attr_name="states",
+            mapping=regime.states,
+            allow_phase_variants=True,
+            allow_age_specialized_grid=True,
         ),
         *_grid_mapping_errors(
             attr_name="actions", mapping=regime.actions, allow_phase_variants=False
@@ -451,10 +463,181 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_state_transition_grammar_errors(regime))
     error_messages.extend(_regime_transition_grammar_errors(regime.transition))
+    error_messages.extend(
+        _age_specialized_scope_errors(
+            transition=regime.transition,
+            state_transitions=regime.state_transitions,
+            functions=regime.functions,
+            constraints=regime.constraints,
+            terminal=regime.terminal,
+        )
+    )
 
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
+
+
+def _iter_transition_nodes(value: object) -> Iterator[object]:
+    """Yield leaf transition nodes, unwrapping `Phased` sides and per-target dicts."""
+    if isinstance(value, Phased):
+        yield from _iter_transition_nodes(value.solve)
+        yield from _iter_transition_nodes(value.simulate)
+    elif isinstance(value, Mapping):
+        for cell in value.values():
+            yield from _iter_transition_nodes(cell)
+    else:
+        yield value
+
+
+def _state_transition_marker_errors(
+    state_transitions: Mapping[str, object],
+) -> list[str]:
+    """Collect errors for `AgeSpecializedFunction` markers inside state transitions."""
+    error_messages: list[str] = []
+    for name, value in state_transitions.items():
+        for node in _iter_transition_nodes(value):
+            if isinstance(node, MarkovTransition) and isinstance(
+                node.func, AgeSpecializedFunction
+            ):
+                error_messages.append(
+                    f"state_transitions['{name}']: a `MarkovTransition` wrapping an "
+                    f"`AgeSpecializedFunction` (a policy-specialized stochastic "
+                    f"transition) is not supported.",
+                )
+            elif isinstance(node, AgeSpecializedFunction):
+                error_messages.append(
+                    f"state_transitions['{name}']: an `AgeSpecializedFunction` cannot "
+                    f"be a state-transition value. Express the policy-dependent law of "
+                    f"motion as a plain transition function that reads an "
+                    f"`AgeSpecializedFunction` entry of `functions` instead.",
+                )
+    return error_messages
+
+
+def _first_age_specialized_ancestor_of_transition(
+    *,
+    transition: object,
+    functions: Mapping[str, object],
+) -> str | None:
+    """Return the name of an `AgeSpecializedFunction` the transition reads, if any.
+
+    Walks the regime transition's parameter names transitively through plain
+    entries of `functions` (unwrapping `Phased` sides, per-target dicts, and
+    `MarkovTransition` wrappers along the way). Returns the first specialized
+    function name reached, or `None` when the transition's dependency graph is
+    policy-free.
+    """
+    specialized_names = {
+        name
+        for name, value in functions.items()
+        if any(
+            isinstance(node, AgeSpecializedFunction)
+            for node in _iter_transition_nodes(value)
+        )
+    }
+    if transition is None or not specialized_names:
+        return None
+
+    def arg_names_of(value: object) -> list[str]:
+        names: list[str] = []
+        for node in _iter_transition_nodes(value):
+            func = node.func if isinstance(node, MarkovTransition) else node
+            if callable(func):
+                try:
+                    names.extend(inspect.signature(func).parameters)
+                except TypeError, ValueError:
+                    continue
+        return names
+
+    seen: set[str] = set()
+    stack = arg_names_of(transition)
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        if name in specialized_names:
+            return name
+        if name in functions:
+            stack.extend(arg_names_of(functions[name]))
+    return None
+
+
+def _age_specialized_scope_errors(
+    *,
+    transition: object,
+    state_transitions: Mapping[str, object],
+    functions: Mapping[str, object],
+    constraints: Mapping[str, object],
+    terminal: bool,
+) -> list[str]:
+    """Reject the `AgeSpecializedFunction` compositions that are out of scope.
+
+    `AgeSpecializedFunction` is supported in `functions` and `constraints` of
+    non-terminal regimes only. Rejected — loudly, before any per-period program
+    is built:
+
+    - a regime `transition` that is (or contains) an `AgeSpecializedFunction` — a
+      policy-specialized *regime* transition;
+    - a `MarkovTransition` wrapping an `AgeSpecializedFunction` in a state
+      transition — a policy-specialized *stochastic* transition;
+    - an `AgeSpecializedFunction` directly as a state-transition value — express the
+      policy-dependent law of motion as a plain transition reading an
+      `AgeSpecializedFunction` helper function instead;
+    - a regime transition whose dependency graph reads an `AgeSpecializedFunction`
+      function (directly or through plain helper functions) — regime-transition
+      probabilities are built once, not per period, so a policy-specialized
+      value flowing into them would reuse one age's policy closure everywhere;
+    - any `AgeSpecializedFunction` in a terminal regime — the terminal value program is
+      built once and shared across all periods.
+    """
+    error_messages: list[str] = []
+
+    if any(
+        isinstance(node, AgeSpecializedFunction)
+        or (
+            isinstance(node, MarkovTransition)
+            and isinstance(node.func, AgeSpecializedFunction)
+        )
+        for node in _iter_transition_nodes(transition)
+    ):
+        error_messages.append(
+            "A regime `transition` cannot be `AgeSpecializedFunction` (bare or "
+            "wrapped in `MarkovTransition`): policy-specialized regime transitions "
+            "are not "
+            "supported. Specialize `functions` or `constraints` instead.",
+        )
+
+    specialized_ancestor = _first_age_specialized_ancestor_of_transition(
+        transition=transition, functions=functions
+    )
+    if specialized_ancestor is not None:
+        error_messages.append(
+            f"The regime `transition` depends on the `AgeSpecializedFunction` function "
+            f"'{specialized_ancestor}'. Regime-transition probabilities are built "
+            f"once, not per period, so a policy-specialized value flowing into "
+            f"them would silently reuse one age's policy closure across all "
+            f"periods. Route the policy dependency through `functions` consumed "
+            f"by utility, constraints, or state transitions instead.",
+        )
+
+    error_messages.extend(_state_transition_marker_errors(state_transitions))
+
+    if terminal:
+        for slot_name, slot in (("functions", functions), ("constraints", constraints)):
+            for name, value in slot.items():
+                if any(
+                    isinstance(node, AgeSpecializedFunction)
+                    for node in _iter_transition_nodes(value)
+                ):
+                    error_messages.append(
+                        f"{slot_name}['{name}']: `AgeSpecializedFunction` is not "
+                        f"supported in a terminal regime — the terminal value "
+                        f"program is built once and shared across all periods.",
+                    )
+
+    return error_messages
 
 
 def _regime_transition_grammar_errors(transition: object) -> list[str]:
@@ -581,8 +764,13 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
     - terminal regimes have no continuation value to aggregate
-    - only `GridSearch` supports a nonlinear certainty equivalent (the
-      Euler inversion in DC-EGM assumes expected utility)
+    - `GridSearch` and `NBEGM` support a nonlinear certainty equivalent (the
+      Epstein-Zin recursion); the other endogenous-grid solvers' Euler inversion
+      assumes expected utility, so a declared certainty equivalent must be
+      rejected rather than silently ignored
+    - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
+      logsum is not invariant under the certainty-equivalent transform, so the
+      combination is rejected
     """
     if regime.certainty_equivalent is None:
         return []
@@ -592,11 +780,46 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if isinstance(regime.solver, DCEGM):
+    if not isinstance(regime.solver, (GridSearch, NBEGM, NNBEGM)):
         error_messages.append(
-            "The DCEGM solver does not support a nonlinear "
-            "`certainty_equivalent`: the Euler inversion assumes expected "
-            "utility. Use GridSearch() for this regime."
+            f"The {type(regime.solver).__name__} solver does not support a "
+            "nonlinear `certainty_equivalent`: its Euler inversion assumes "
+            "expected utility. Use GridSearch(), NBEGM(), or NNBEGM() for "
+            "this regime."
+        )
+    if isinstance(regime.solver, (NBEGM, NNBEGM)):
+        # The endogenous-grid kernels implement the Epstein-Zin recursion for
+        # exactly one pairing: they read the power mean's `risk_aversion`
+        # parameter for the transform partials and the aggregator's
+        # intertemporal elasticity for the Euler inversion and period value.
+        # NNBEGM's inner solve runs the same NBEGM kernels, so the contract
+        # binds it identically. GridSearch aggregates any certainty
+        # equivalent in concrete values, so only the endogenous-grid routes
+        # are narrowed.
+        solver_name = type(regime.solver).__name__
+        if not isinstance(regime.certainty_equivalent, PowerMean):
+            error_messages.append(
+                f"{solver_name} implements the recursive certainty "
+                f"equivalent for `PowerMean` only, got "
+                f"{type(regime.certainty_equivalent).__name__}. Use "
+                f"`certainty_equivalent=PowerMean()` or solve the regime with "
+                f"GridSearch()."
+            )
+        if regime.functions.get("H") is not H_epstein_zin:
+            error_messages.append(
+                f"{solver_name} with a `certainty_equivalent` requires the "
+                "regime's aggregator to be `H_epstein_zin` "
+                '(`functions={"H": lcm.H_epstein_zin, ...}`): the Euler '
+                "inversion and period value read its intertemporal "
+                "elasticity. With a different `H` the kernels would solve a "
+                "recursion the regime does not declare."
+            )
+    if regime.taste_shocks is not None:
+        error_messages.append(
+            "A regime cannot combine `certainty_equivalent` with "
+            "`taste_shocks`: the extreme-value logsum is not invariant under "
+            "the certainty-equivalent transform, so the Epstein-Zin recursion "
+            "and taste shocks do not compose."
         )
     return error_messages
 
@@ -764,7 +987,9 @@ def _state_transition_grammar_errors(regime: lcm.regime.Regime) -> list[str]:
     """Validate each `state_transitions` entry against the value vocabulary."""
     error_messages: list[str] = []
     for name, value in regime.state_transitions.items():
-        error_messages.extend(_state_transition_value_errors(name=name, value=value))
+        error_messages.extend(
+            _state_transition_value_errors(name=name, value=value, regime=regime)
+        )
     return error_messages
 
 
@@ -817,25 +1042,135 @@ def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
     return error_messages
 
 
-def _state_transition_value_errors(*, name: StateName, value: object) -> list[str]:
+def _phased_per_target_shape_mismatch(
+    *, name: StateName, value: Phased, regime: lcm.regime.Regime
+) -> list[str]:
+    """Inside `Phased`, constrain per-target/bare combinations of the two variants.
+
+    `Phased(solve={...}, simulate={...})` is normalized at collection into one entry per
+    target, each holding a `Phased` of that target's two laws — the form the engine
+    actually consumes (`transitions._add_raw_transition`).
+
+    Accepted shapes:
+
+    - **both bare** — one coarse `next_<state>` node (a plain phased law), including a
+      PARAMETERIZED coarse law: both phases bind the same single node, so its parameter
+      is one shared leaf.
+    - **both per-target** over the SAME targets — paired cell by cell.
+    - **PARAMETER-FREE map-vs-bare** — one side per-target, the other a bare law with no
+      free parameter. The bare law broadcasts over the per-target side's targets (the
+      same meaning a bare state law has outside `Phased`); with no parameter it carries
+      no template leaf, so its broadcast cells merge by object identity and nothing is
+      replicated. The per-phase provenance stamp
+      (`processing._phase_coarse_state_law_names` → `_rename_params_to_qnames`) keys a
+      within-period read's merge/conflict off each phase's OWN declaration shape.
+
+    Rejected shapes:
+
+    - **two per-target dicts over DIFFERENT targets** — a target would carry a law in
+      one phase and none in the other, with no single authoritative key set.
+    - **PARAMETERIZED map-vs-bare** — a bare (coarse) side carrying a free parameter
+      opposite a per-target dict. The phase-union params template replicates that
+      parameter into one leaf per target, but the coarse side binds a single law: the
+      build merges its per-target cells and silently DROPS all but the first leaf, so
+      the extra leaves are dead and a user setting them differently is ignored. Rather
+      than expose that trap, require the parameterized coarse law to be spelled as
+      **both-bare** `Phased` (coarse in both phases — one shared leaf) or as an explicit
+      **per-target dict** on this side (one honest leaf per target). Only the bare
+      side's spelling is constrained; the per-target side is unaffected.
+
+    (`Phased` is outermost-only — `_validate_per_target_dict` rejects a `Phased` cell —
+    so the outer form is the only spelling for a per-target law that varies by phase.)
+    """
+    solve_per_target = isinstance(value.solve, Mapping)
+    simulate_per_target = isinstance(value.simulate, Mapping)
+    if solve_per_target and simulate_per_target:
+        solve_targets = set(cast("Mapping[RegimeName, object]", value.solve))
+        simulate_targets = set(cast("Mapping[RegimeName, object]", value.simulate))
+        if solve_targets != simulate_targets:
+            return [
+                f"state_transitions['{name}']: the per-target dicts inside `Phased` "
+                f"declare different targets — solve has {sorted(solve_targets)}, "
+                f"simulate has {sorted(simulate_targets)}. Both phases must cover the "
+                f"same targets.",
+            ]
+        return []
+    if solve_per_target == simulate_per_target:
+        # Both bare: one coarse node (parameterized or not) — nothing to reject.
+        return []
+    # Map-vs-bare: one side per-target, the other bare. The bare side broadcasts; a
+    # free parameter on it would be replicated per target with only the first leaf live.
+    bare_side, phase_label = (
+        (value.simulate, "simulate") if solve_per_target else (value.solve, "solve")
+    )
+    if _law_has_free_parameter(bare_side, regime):
+        return [
+            f"state_transitions['{name}']: the {phase_label} variant is a bare "
+            f"(coarse) law with a free parameter, opposite a per-target dict "
+            f"(map-vs-bare). A parameterized coarse law broadcast over targets would "
+            f"have its parameter replicated per target with only one binding live, so "
+            f"this shape is not supported. Spell it as a both-bare `Phased` (coarse in "
+            f"both phases, one shared parameter) or as an explicit per-target dict on "
+            f"the {phase_label} side (one parameter per target).",
+        ]
+    return []
+
+
+def _law_has_free_parameter(law: object, regime: lcm.regime.Regime) -> bool:
+    """Whether a bare state-transition law reads a free parameter (a template leaf).
+
+    A free parameter is any argument that is not a state, action, `next_<state>` node,
+    or reserved name (`period`, `age`, `E_next_V`) — i.e., an argument that would appear
+    in the params template. `fixed_transition` identities and any callable whose
+    signature cannot be read are treated as parameter-free (nothing to replicate).
+    """
+    if isinstance(law, _IdentityTransition) or not callable(law):
+        return False
+    try:
+        arg_names = set(inspect.signature(law).parameters)
+    except TypeError, ValueError:
+        return False
+    variables = (
+        set(regime.states)
+        | set(regime.actions)
+        | {f"next_{state_name}" for state_name in regime.states}
+        | {f"next_{state_name}" for state_name in regime.state_transitions}
+        | {"period", "age", "E_next_V"}
+    )
+    return bool(arg_names - variables)
+
+
+def _state_transition_value_errors(
+    *, name: StateName, value: object, regime: lcm.regime.Regime
+) -> list[str]:
     """Validate one `state_transitions` entry against the value vocabulary.
 
-    Each variant of a `Phased` entry is held to the vocabulary of a bare
-    value — callable or a per-target Mapping — except that a stochastic
-    (`MarkovTransition`) variant is rejected: per-phase stochasticity of a
-    law of motion is not yet supported. `None` is not a law of motion; the
-    error points to `fixed_transition`.
+    Each variant of a `Phased` entry is held to the vocabulary of a bare value —
+    callable, `MarkovTransition`, or a per-target Mapping. A stochastic variant inside
+    `Phased` is supported: the solve variant is the perceived law that prices the
+    continuation in Q, the simulate variant is the true law the next state is drawn
+    from.
+
+    The two variants need NOT agree on whether the law is stochastic. A deterministic
+    law is a degenerate kernel, so the state has the same domain either way, and the two
+    phase cores classify their stochastic names independently — a perceived kernel with
+    a point-valued truth, and the reverse, both build and carry the intended meaning
+    (`tests/regime_building/test_mixed_stochasticity_phases.py`).
+
+    The two variants may be both bare (one coarse node), both per-target dicts over the
+    SAME targets, or a map-vs-bare mix (per-target on one side, a bare law that
+    broadcasts on the other). Only two per-target dicts over DIFFERENT target sets are
+    rejected, as an ambiguous normalization — see `_phased_per_target_shape_mismatch`.
+
+    `None` is not a law of motion; the error points to `fixed_transition`.
     """
     error_messages: list[str] = []
     phase_variant = isinstance(value, Phased)
+    if phase_variant:
+        error_messages.extend(
+            _phased_per_target_shape_mismatch(name=name, value=value, regime=regime)
+        )
     for variant, label in _state_transition_variants(value):
-        if phase_variant and isinstance(variant, MarkovTransition):
-            error_messages.append(
-                f"state_transitions['{name}']{label}: a stochastic "
-                f"(`MarkovTransition`) variant inside `Phased` is not yet "
-                f"supported.",
-            )
-            continue
         if variant is None:
             if phase_variant:
                 error_messages.append(

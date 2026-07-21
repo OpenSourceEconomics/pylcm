@@ -65,15 +65,14 @@ def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> Float
     )
 
 
-def resources(
-    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: ContinuousState
-) -> FloatND:
-    """Liquid resources consumption is paid out of, given the fixed outer node."""
-    return (
-        wealth
-        + LABOUR_INCOME
-        - credited(illiquid=illiquid, next_illiquid=next_illiquid)
-    )
+def resources_before_outer_cost(wealth: ContinuousState) -> FloatND:
+    """Cost-free base of the liquid resources consumption is paid out of.
+
+    With `NEGM.outer_cost` declared, pylcm composes the resources function as
+    `resources_before_outer_cost - credited` at model build, so the credited
+    durable move enters resources additively by construction.
+    """
+    return wealth + LABOUR_INCOME
 
 
 def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
@@ -104,9 +103,20 @@ def utility(consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND
     return flow ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
 
 
-def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
-    """Inverse of `u'(c) = (c + iota*Z)^{-gamma}` in the inner consumption slot."""
-    return marginal_continuation ** (-1.0 / RISK_AVERSION)
+def inverse_marginal_utility(
+    marginal_continuation: FloatND, illiquid: ContinuousState
+) -> FloatND:
+    """Inverse of `u'(c) = (c + iota*Z)^{-gamma}` in the inner consumption slot.
+
+    Inverting $u'(c) = (c + \\iota Z)^{-\\gamma} = m$ for consumption gives
+    $c = m^{-1/\\gamma} - \\iota Z$: the `iota * Z` shift the durable contributes
+    to the utility flow is a constant offset that must be subtracted when
+    recovering `c`. The kernel binds the durable state `illiquid` (`Z`) from the
+    combo pool, so the offset is exact at every durable node. (DC-EGM re-evaluates
+    the true utility, so omitting it leaves parity unchanged, but the recovered
+    endogenous consumption grid would be wrong by `iota * Z`.)
+    """
+    return marginal_continuation ** (-1.0 / RISK_AVERSION) - ILLIQUID_FLOW * illiquid
 
 
 def bequest(wealth: ContinuousState, illiquid: ContinuousState) -> FloatND:
@@ -146,6 +156,7 @@ NEGM_SOLVER = NEGM(
     outer_post_decision="next_illiquid",
     outer_grid=OUTER_GRID,
     outer_no_adjustment_candidate="keep_illiquid",
+    outer_cost="credited",
 )
 
 
@@ -172,7 +183,7 @@ def build_negm_model() -> Model:
         transition=next_regime,
         functions={
             "utility": utility,
-            "resources": resources,
+            "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,
             "keep_illiquid": keep_illiquid,
             "credited": credited,

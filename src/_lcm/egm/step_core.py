@@ -108,11 +108,12 @@ class _EgmKernelPieces:
     build_H_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
     """Closure assembling the Bellman aggregator's keyword arguments."""
 
-    refine: Callable[..., tuple[Float1D, Float1D, Float1D, ScalarInt]]
+    refine: Callable[..., tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]]
     """The configured upper-envelope backend (single-post-state carry)."""
 
     refine_to_bracket: Callable[..., QueryBracket]
-    """The streaming single-query bracket finder (asset-row publish)."""
+    """The single-query bracket finder for the asset-row publish (builds the full
+    refined row and slices the bracketing node pair)."""
 
     continuation_plan: ContinuationPlan
     """Build-time statics of the per-savings-node continuation aggregation."""
@@ -123,13 +124,13 @@ def _get_solve_one_combo(
     pieces: _EgmKernelPieces,
     pool: dict[str, Any],
     state_grid: Float1D,
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
     savings_batch_size: int,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+    tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
 ]:
     """Build the per-combo EGM computation for one kernel invocation.
 
@@ -146,16 +147,19 @@ def _get_solve_one_combo(
 
     def solve_one_combo(
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
         """Run the EGM step for one (discrete x passive-node) combo.
 
         Takes the combo's values (discrete codes and passive node values)
         positionally so `jax.vmap` can batch over flattened combo arrays.
 
         Returns:
-            Tuple of the combo's value row on the exogenous state grid and
-            its refined endogenous grid, the published consumption policy on
-            that grid, and the value and marginal-utility carry rows.
+            Tuple of the combo's value row on the exogenous state grid, its
+            refined endogenous grid, the published consumption policy on that
+            grid, the value and marginal-utility carry rows, and the
+            backend's read-support verdict (whether the row's linear span is
+            free of compacted coverage gaps, so the off-grid simulation read
+            may consume it).
 
         """
         combo_pool = {
@@ -176,7 +180,7 @@ def _get_solve_one_combo(
             combo_pool=combo_pool,
             discount_factor=discount_factor,
             utility_of_action=utility_of_action,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             dtype=dtype,
             resolved_process_grids=resolved_process_grids,
         )
@@ -208,6 +212,18 @@ def _get_solve_one_combo(
         )
         candidate_policy = jnp.concatenate([constrained_actions, actions])
         candidate_value = jnp.concatenate([constrained_values, values])
+        # Exogenous source savings per candidate: the savings node for each Euler
+        # candidate (`endog_grid = savings_node + action`, so the implied
+        # `endog_grid - policy` equals it in exact arithmetic), the borrowing
+        # limit for the constrained candidates (their savings is pinned there).
+        # FUES compares these pristine sources instead of the lossy implied
+        # difference, so a same-source tie is never dropped by rounding.
+        candidate_savings = jnp.concatenate(
+            [
+                jnp.full_like(constrained_actions, pieces.borrowing_limit),
+                pieces.savings_nodes,
+            ]
+        )
         # A `-inf`-valued candidate (e.g. a corner whose continuation is
         # `-inf`) is dominated by every finite candidate and would inject
         # `-inf - (-inf) = NaN` into the envelope scan's gradient arithmetic.
@@ -229,11 +245,13 @@ def _get_solve_one_combo(
         # not an explicit label — that resolves it. Explicit topology is the
         # oracle/test path (LTM/MSS/query accept `segment_id`); production has none
         # to emit.
-        refined_grid, refined_policy, refined_value, n_kept = pieces.refine(
-            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
-            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
-            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
-            marginal_utility=candidate_marginal,
+        refined_grid, refined_policy, refined_value, n_kept, read_supported = (
+            pieces.refine(
+                endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
+                policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
+                value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+                marginal_utility=candidate_marginal,
+            )
         )
 
         V_row, value_row, marginal_utility_row = _publish_V_and_carry_rows(
@@ -270,6 +288,7 @@ def _get_solve_one_combo(
             refined_policy.astype(dtype),
             value_row,
             marginal_utility_row,
+            read_supported,
         )
 
     return solve_one_combo
@@ -304,7 +323,7 @@ def _get_compute_node(
     combo_pool: dict[str, Any],
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
@@ -312,7 +331,7 @@ def _get_compute_node(
     continuation = bind_continuation(
         plan=pieces.continuation_plan,
         combo_pool=combo_pool,
-        next_regime_to_egm_carry=next_regime_to_egm_carry,
+        next_regime_to_continuation=next_regime_to_continuation,
         dtype=dtype,
         resolved_process_grids=resolved_process_grids,
     )
@@ -334,6 +353,15 @@ def _get_compute_node(
         # scale; a clamped near-zero-marginal corner whose root exceeds the
         # bracket lands far to the right and is discarded by the envelope, exactly
         # as the analytic path's large value is).
+        #
+        # `action_upper` must dominate every feasible consumption. It is derived
+        # from the savings-grid scale (the model's own resources scale) rather than
+        # the resources bound directly, since the per-savings-node kernel has no
+        # single current-state resources value here. A model whose optimal
+        # consumption can genuinely exceed ~1000x the top savings node (income far
+        # above the savings scale) is mis-scaled for this grid and would clamp a
+        # real interior root to the bound (reported with `dc/dm = 0`, like a binding
+        # corner); widen the savings grid or supply an analytic inverse in that case.
         marginal_utility_of_action = jax.grad(utility_of_action)
         action_upper = pieces.savings_nodes[-1] * 1000.0 + 1000.0
         action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
@@ -535,4 +563,9 @@ def _publish_V_and_carry_rows(
     # finite envelope nodes above the true envelope wherever the closed-form
     # constrained value exceeds them, overstating the parent's continuation.
     value_row = jnp.where(overflowed, jnp.nan, refined_value).astype(dtype)
-    return V_row, value_row, marginal_utility.astype(dtype)
+    # The carry marginal-utility row is the parent's Hermite slope. On overflow
+    # the backend still returns a finite truncated prefix, so — like the value
+    # rows — it must be NaN-poisoned too, or an overflowed period would feed the
+    # parent a wrong-but-finite slope past the NaN diagnostics.
+    marginal_row = jnp.where(overflowed, jnp.nan, marginal_utility).astype(dtype)
+    return V_row, value_row, marginal_row

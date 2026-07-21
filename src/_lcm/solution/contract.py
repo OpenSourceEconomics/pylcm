@@ -12,7 +12,8 @@ Each entry of `SolutionKernels.period_kernels` is a `PeriodKernel`: a single
 non-jitted period adapter that wraps the solver's shared jitted core, calls it
 with the solver's own argument layout, and assembles a `KernelResult` outside
 JIT. The solve loop invokes the same adapter for every solver, branching only on
-which optional outputs (`carry`, `sim_policy`) are present, never on solver type.
+which optional outputs (`continuation`, `simulation_policy`) are present, never
+on solver type.
 
 This module is an engine leaf. Reaching `lcm.regime` would close an import
 cycle — it imports the `lcm.solvers` façade, which re-exports `Solver` from
@@ -34,13 +35,17 @@ from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
+from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatParams,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToVArr,
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
@@ -52,10 +57,17 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.typing import BoolND, FloatND
 
-# The cross-period continuation channel a DC-EGM parent interpolates. Named
-# solver-agnostically on the seam so the engine threads it without knowing it is
-# an EGM carry; today the only continuation payload is the EGM carry itself.
+# The cross-period continuation channel a continuation-based parent
+# interpolates. Named solver-agnostically on the seam so the engine threads it
+# without knowing it is an EGM carry; today the only continuation payload is
+# the EGM carry itself.
 type ContinuationPayload = EGMCarry
+
+# The published off-grid simulation-policy artifact, under the same rule: the
+# engine stores and returns it opaquely — a solver-supplied reader is the only
+# consumer that looks inside (DC-EGM's flat `EGMSimPolicy`, the
+# continuous-outer NNBEGM's `NestedEGMSimPolicy`).
+type SimulationPolicy = EGMSimPolicy | NestedEGMSimPolicy
 
 if TYPE_CHECKING:
     from _lcm.regime_building.V import VInterpolationInfo
@@ -210,19 +222,21 @@ class KernelResult:
     The solve loop reads `V_arr` from every kernel and branches only on whether
     the optional generic outputs are present — never on solver type:
 
-    - `carry` is the cross-period continuation a DC-EGM parent interpolates;
-      `None` for a regime that publishes no continuation.
-    - `sim_policy` is the off-grid consumption policy DC-EGM forward simulation
-      can interpolate; `None` for a regime that publishes none.
+    - `continuation` is the cross-period payload a continuation-based parent
+      interpolates; `None` for a regime that publishes no continuation.
+    - `simulation_policy` is the off-grid policy forward simulation can
+      interpolate; `None` for a regime that publishes none.
+    - `diagnostics` is the solver's numerical self-report; `None` for a solver
+      that measures nothing (every finite-grid solver today).
     """
 
     V_arr: FloatND
     """The regime's value-function array on its exogenous state grid."""
 
-    carry: ContinuationPayload | None = None
-    """Continuation payload for a DC-EGM parent, or `None`."""
+    continuation: ContinuationPayload | None = None
+    """Continuation payload for a continuation-based parent, or `None`."""
 
-    sim_policy: EGMSimPolicy | None = None
+    simulation_policy: SimulationPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
 
     dissolution: BoolND | None = None
@@ -249,11 +263,11 @@ class PeriodKernel(Protocol):
     per-kernel name so AOT compilation can deduplicate and lower each;
     `build_lower_args` builds a named core's lowering kwargs.
 
-    Most kernels carry exactly one core (`{"main": ...}`); the NEGM kernel
-    carries two (`{"keeper": ..., "adjuster": ...}`), a per-durable-state passive
-    DC-EGM keeper alongside the adjuster sweep. The AOT contract lowers, compiles,
-    and dispatches each core by its key, so a multi-core kernel never collapses
-    into one program.
+    Most kernels carry exactly one core (`{"main": ...}`); a multi-core kernel
+    carries several under its own keys, one per distinct traced program it must
+    lower (for example a passive keeper alongside an adjuster sweep). The AOT
+    contract lowers, compiles, and dispatches each core by its key, so a
+    multi-core kernel never collapses into one program.
     """
 
     def cores(self) -> Mapping[str, Callable]:
@@ -289,15 +303,15 @@ class PeriodKernel(Protocol):
         core_key: str,
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
     ) -> Mapping[str, object]:
         """Build the named core's lowering arguments for this period.
 
-        Single-core kernels ignore `core_key`; the NEGM kernel dispatches the
-        keeper-vs-adjuster lowering off it.
+        Single-core kernels ignore `core_key`; a multi-core kernel dispatches
+        its per-core lowering off it.
         """
         ...
 
@@ -307,16 +321,43 @@ class PeriodKernel(Protocol):
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_egm_carry: Mapping[RegimeName, ContinuationPayload],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
     ) -> KernelResult:
         """Invoke the compiled core(s) and assemble the period's `KernelResult`.
 
-        Single-core kernels read `compiled_cores["main"]`; the NEGM kernel reads
-        `["keeper"]` and `["adjuster"]`.
+        Single-core kernels read `compiled_cores["main"]`; a multi-core kernel
+        reads each of its own core keys.
         """
+        ...
+
+
+@runtime_checkable
+class SimulationPolicyReader(Protocol):
+    """Solver-supplied off-grid policy read for forward simulation.
+
+    Matches the engine's one policy-read seam: given the grid-argmax actions
+    and the solver's published payload, return the (possibly) updated action
+    mapping for this regime-period. The reader owns every payload-specific
+    decision — row indexing, interpolation, branch re-decision, acceptance,
+    fallbacks — so the simulation loop never switches on payload type. A
+    reader must fall back to the grid-argmax value for any subject it cannot
+    read confidently, never fabricate one.
+    """
+
+    def __call__(
+        self,
+        *,
+        payload: SimulationPolicy,
+        optimal_actions: MappingProxyType[StateOrActionName, FloatND],
+        states: Mapping[StateOrActionName, FloatND],
+        flat_params: FlatParams,
+        period: int,
+        age: FloatND,
+    ) -> MappingProxyType[StateOrActionName, FloatND]:
+        """Return the action mapping with off-grid reads applied."""
         ...
 
 
@@ -331,7 +372,7 @@ class SolutionKernels:
     """All-finite template continuation with the regime's static shapes.
 
     `None` for a regime that publishes no continuation. Initializes the rolling
-    `next_regime_to_egm_carry` mapping and serves as the lowering argument when
+    `next_regime_to_continuation` mapping and serves as the lowering argument when
     AOT-compiling a parent's kernel.
     """
 
@@ -349,19 +390,74 @@ class Solver(ABC):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build the regime's per-period solve adapters."""
 
+    @property
+    def carry_retains_discrete_action_rows(self) -> bool:
+        """Whether this regime's continuation carry keeps per-discrete-action rows.
+
+        A reading parent aggregates the child's discrete choices (the DC-EGM
+        logsum) only when the carry retains a row per discrete-action combo. A
+        value-only solver that publishes an already-action-maxed value array
+        (brute `GridSearch`, the case-piece `NBEGM`) sets this `False`, so the
+        parent reads the maxed value directly without spurious action rows.
+        """
+        return True
+
+    @property
+    def carry_rows_share_state_grid(self) -> bool:
+        """Whether every published carry row shares the state grid as abscissae.
+
+        Grid-aligned rows (a value array published on the regime's own state
+        grid) all interpolate with the same bracket structure, so reads that
+        are linear in the rows commute with expectations over the carry's
+        node axes. Endogenous-grid solvers publish per-row abscissae and set
+        this `False`.
+        """
+        return False
+
+    @property
+    def n_stacked_carry_candidates(self) -> int:
+        """Length of the published carry's stacked outer-candidate axis.
+
+        A solver that publishes one carry row per outer durable candidate
+        (keeper plus one per outer-grid node), stacked on an axis before the
+        grid axis, declares that axis length here; a reading parent broadcasts
+        its queries over exactly that many candidates and collapses them by
+        the hard max. A solver whose carry has no candidate axis — no outer
+        margin, or an outer margin already folded inside the solve — declares
+        `0`, and the parent queries each carry row once.
+        """
+        return 0
+
     def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Check the regime is in scope for this solver. Default: no-op."""
 
+    def build_simulation_policy_reader(
+        self,
+        *,
+        context: SolverBuildContext,
+    ) -> SimulationPolicyReader | None:
+        """Build the reader that consumes this solver's `sim_policy` payload.
+
+        `None` (the default) keeps the engine's built-in behavior: the DC-EGM
+        `EGMSimPolicy` read where the regime qualifies, grid argmax otherwise.
+        A solver that publishes a payload the engine cannot read (the nested
+        continuous-outer policy) supplies its own reader here, so the
+        simulation loop dispatches through the solver — never through an
+        `isinstance` switch on the payload.
+        """
+        _ = context
+        return None
+
     @property
-    def requires_continuation_carries(self) -> bool:
-        """Whether this solver reads a continuation carry from its targets.
+    def requires_continuation(self) -> bool:
+        """Whether this solver reads a continuation payload from its targets.
 
         An endogenous-grid solver inverts the Euler equation against its
         target regimes' value *and marginal* on a continuation grid, so each
-        target — including a terminal one — must publish a carry the engine
-        rolls alongside `next_regime_to_V_arr`. Grid search reads only the
-        value array, so it needs no carry. The engine reads this off every
+        target — including a terminal one — must publish a continuation the
+        engine rolls alongside `next_regime_to_V_arr`. Grid search reads only
+        the value array, so it needs none. The engine reads this off every
         regime's solver to decide whether terminal regimes produce their
-        closed-form carries, without forking on the solver type.
+        closed-form continuations, without forking on the solver type.
         """
         return False

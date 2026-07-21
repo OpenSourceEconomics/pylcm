@@ -84,7 +84,6 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidValueFunctionError,
-    PyLCMError,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
@@ -263,6 +262,7 @@ class Model:
             regime_id_class=regime_id_class,
             n_subjects=n_subjects,
             broadcast_variables=broadcast_variables,
+            ages=self.ages,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -574,12 +574,14 @@ class Model:
         if (
             log_path is not None
             and validation_enabled(log)
-            and (validation_raises(log) or contains_nan(period_to_regime_to_V_arr))
+            and (
+                validation_raises(log) or contains_nan(internal_result.value_functions)
+            )
         ):
             _save_solve_snapshot(
                 model=self,
                 params=params,
-                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                period_to_regime_to_V_arr=internal_result.value_functions,
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
             )
@@ -679,9 +681,10 @@ class Model:
                 keys are drawn for the full population and sliced by global index.
                 - `0` (default): one pass over the whole (padded) population.
                 - `> 0`: chunk the subjects into passes of this size, bounding the
-                  per-period device workspace. Raises `PyLCMError` if any grid is
-                  distributed and more than one device is visible — there the
-                  subject axis is sharded across devices, not chunked.
+                  per-period device workspace. Under distributed grids each chunk
+                  is placed onto the subject mesh axis (the size is rounded up to
+                  a device multiple); the value-function arrays stay sharded
+                  throughout.
             log_level: Verbosity, and the runtime-validation policy it implies.
                 Required — pick deliberately for the situation:
                 - `"off"` — silent; initial-condition, transition-probability,
@@ -719,19 +722,23 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
         )
-        # Align the subject axis to the block size the simulate path needs: the
-        # device count when grids are distributed (sharding must divide it
-        # evenly), or the chunk size when chunking on a single device (every chunk
-        # must match the AOT-compiled shape). The two are mutually exclusive —
-        # chunking under multi-device distribution is rejected in
-        # `_resolve_compile_batch_size`. Pad rows duplicate the last real subject
-        # and are trimmed inside `simulate`; a multiple of 1 (single pass) is a
-        # no-op.
-        if self._distributes_subjects() and len(jax.devices()) > 1:
-            alignment = len(jax.devices())
-        elif subject_batch_size > 0:
+        # Align the subject axis to the block size the simulate path needs.
+        # Every chunk must match the AOT-compiled shape, and under distributed
+        # grids each chunk is additionally placed onto the subject mesh axis,
+        # so the chunk itself is rounded up to a device multiple (mirroring
+        # `_resolve_compile_batch_size`) before the subject axis is padded to
+        # a multiple of it. Without chunking, distribution alone needs a
+        # device multiple. Pad rows duplicate the last real subject and are
+        # trimmed inside `simulate`; a multiple of 1 (single pass) is a no-op.
+        distributes = self._distributes_subjects() and len(jax.devices()) > 1
+        if subject_batch_size > 0:
             raw_n_subjects = len(next(iter(initial_conditions.values())))
             alignment = min(subject_batch_size, raw_n_subjects)
+            if distributes:
+                n_devices = len(jax.devices())
+                alignment = -(-alignment // n_devices) * n_devices
+        elif distributes:
+            alignment = len(jax.devices())
         else:
             alignment = 1
         initial_conditions, original_n_subjects = pad_initial_conditions_to_multiple(
@@ -786,6 +793,7 @@ class Model:
             max_compilation_workers=max_compilation_workers,
             log=log,
         )
+        period_to_regime_to_sim_policy = None
         if period_to_regime_to_V_arr is None:
             # Simulation is grid-restricted: it interpolates only the value
             # functions, so the published DC-EGM policy is unpacked and dropped.
@@ -804,6 +812,8 @@ class Model:
                     max_compilation_workers=max_compilation_workers,
                 )
             )
+            period_to_regime_to_V_arr = internal_result.value_functions
+            period_to_regime_to_sim_policy = internal_result.simulation_policies
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             compile_batch_size=compile_batch_size,
@@ -859,10 +869,12 @@ class Model:
         """Map the `subject_batch_size` knob to a concrete chunk shape.
 
         - `0` ⇒ the whole padded population (single pass).
-        - `> 0` ⇒ that size, clamped to the population. Forbidden under
-          multi-device distribution: subject-chunking is single-device, but the
-          value-function array is sharded across the devices and can't be
-          gathered onto one.
+        - `> 0` ⇒ that size, clamped to the population. Under multi-device
+          distribution the chunk is additionally rounded up to the next multiple
+          of the device count: every chunk is placed onto the subject mesh axis
+          (see `subject_array_sharding`), so its leading axis must divide evenly
+          across the devices. The value-function arrays stay sharded throughout —
+          chunking never gathers them.
 
         Also AOT-compiles (and caches) the simulate functions for the resolved
         shape when `n_subjects` matches the population.
@@ -870,21 +882,14 @@ class Model:
         aot_active = (
             self.n_subjects is not None and self.n_subjects == actual_n_subjects
         )
-        distributed_multidevice = (
-            self._distributes_subjects() and len(jax.devices()) > 1
-        )
         if subject_batch_size > 0:
-            if distributed_multidevice:
-                msg = (
-                    "subject_batch_size > 0 chunks the subject axis on a single "
-                    "device, which cannot be combined with distributed grids "
-                    f"across multiple devices ({len(jax.devices())} visible): the "
-                    "value-function array is sharded across them and cannot be "
-                    "gathered onto one. Use subject_batch_size=0 with distributed "
-                    "grids, or run on a single device."
-                )
-                raise PyLCMError(msg)
             compile_batch_size = min(subject_batch_size, padded_n_subjects)
+            if self._distributes_subjects():
+                n_devices = len(jax.devices())
+                compile_batch_size = min(
+                    -(-compile_batch_size // n_devices) * n_devices,
+                    padded_n_subjects,
+                )
         else:
             compile_batch_size = padded_n_subjects
         if aot_active:

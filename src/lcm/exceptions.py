@@ -71,3 +71,30 @@ class CategoricalDefinitionError(PyLCMError):
 
 class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
+
+
+class OuterSearchConvergenceError(PyLCMError):
+    """Raised when an adaptive outer mesh cannot resolve within its budget.
+
+    Inference-grade continuous-outer solves must fail closed: reaching the
+    node or round budget while validation-marked intervals remain raises
+    instead of silently degrading the solution.
+    """
+
+
+class NBEGMCaseError(PyLCMError):
+    """Raised when a NBEGM case-boundary or formula-piece declaration is invalid.
+
+    Covers three families of checks:
+
+    - Invalid boundary/piece declarations: a bare `(variable, threshold)` tuple
+      that does not declare equality ownership, a case boundary with no
+      `lcm.boundary(...)` surface, a piece referencing an undeclared predicate,
+      or a duplicate/missing `when`/`otherwise` side for an output.
+    - The AST/JAXPR smoothness gate: hidden branching (a Python `if`, a bare
+      comparison, a piecewise primitive inside a helper) in a case's economic
+      nodes.
+    - The v1 scope gate: a non-`'subsidy'` split output, a state-dependent
+      piece, a `'when'`-owned equality, a non-`'jump'` boundary kind, or a
+      boundary on a variable other than the liquid state.
+    """

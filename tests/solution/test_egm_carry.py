@@ -3,7 +3,7 @@
 Backward induction threads the child's value, marginal utility, and endogenous
 grid (plus the taste-shock scale) back to the parent; the parent never reads the
 child's optimal continuous action. The carry therefore does not retain a policy
-row — the rolling `next_regime_to_egm_carry` is the dominant device resident at
+row — the rolling `next_regime_to_continuation` is the dominant device resident at
 scale, so a write-only row would be pure wasted memory.
 """
 
@@ -19,6 +19,7 @@ def test_egm_carry_fields_exclude_policy():
         "value",
         "marginal_utility",
         "taste_shock_scale",
+        "breakpoints",
     }
     assert not hasattr(EGMCarry, "policy")
     field_names = {f.name for f in EGMCarry.__dataclass_fields__.values()}

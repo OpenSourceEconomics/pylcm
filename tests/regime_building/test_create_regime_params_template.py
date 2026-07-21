@@ -4,6 +4,7 @@ from _lcm.params.regime_template import (
 )
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm import Phased, fixed_transition
+from lcm.transition import AgeSpecializedFunction
 from tests.mock_regime import MockRegime
 
 
@@ -28,6 +29,68 @@ def test_create_params_without_processes(binary_category_class):
             "next_regime": {},
         }
     )
+
+
+def test_create_params_resolves_age_specialized_function(binary_category_class):
+    """An `AgeSpecializedFunction` function contributes its concrete function's params.
+
+    The wrapper's own call signature is `(*args, **kwargs)`; the template must be
+    read off the concrete function `build(representative_age)` returns, so a real
+    estimated parameter of an age-specialized function surfaces under its name.
+    """
+
+    def build(age):  # noqa: ARG001
+        def net_income(a, b, tax_rate):  # noqa: ARG001
+            return tax_rate
+
+        return net_income
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        state_transitions={"b": lambda b: b},
+        transition=lambda: 0,
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "net_income": AgeSpecializedFunction(
+                build=build, signature=lambda age: age
+            ),
+        },
+    )
+    got = create_regime_params_template(regime, representative_age=60.0)
+    assert got["net_income"] == {"tax_rate": "no_annotation_found"}
+
+
+def test_create_params_resolves_phased_age_specialized_function(binary_category_class):
+    """`Phased(AgeSpecializedFunction, AgeSpecializedFunction)` contributes its params.
+
+    Representative resolution must descend into both `Phased` sides so a real
+    estimated parameter of a phase-split, age-specialized function surfaces in
+    the template instead of the marker's `(*args, **kwargs)` signature.
+    """
+
+    def build(age):  # noqa: ARG001
+        def net_income(a, b, tax_rate):  # noqa: ARG001
+            return tax_rate
+
+        return net_income
+
+    phased_specialized = Phased(
+        solve=AgeSpecializedFunction(build=build, signature=lambda age: age),
+        simulate=AgeSpecializedFunction(build=build, signature=lambda age: age),
+    )
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        state_transitions={"b": lambda b: b},
+        transition=lambda: 0,
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "net_income": phased_specialized,
+        },
+    )
+    got = create_regime_params_template(regime, representative_age=60.0)
+    assert got["net_income"] == {"tax_rate": "no_annotation_found"}
 
 
 def test_create_params_with_custom_H_no_extra_params():
@@ -119,7 +182,7 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
     regime = MockRegime(
         actions={"a": None},
         states={"b": None},
-        functions={  # ty: ignore[invalid-argument-type]
+        functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "H": Phased(solve=exponential_h, simulate=beta_delta_h),
         },

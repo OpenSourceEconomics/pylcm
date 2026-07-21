@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.ndimage import map_coordinates
 
-from lcm.typing import Float1D, FloatND, ScalarFloat
+from lcm.typing import BoolND, Float1D, FloatND, ScalarFloat
 
 
 class PostDecision(NamedTuple):
@@ -30,6 +30,14 @@ class PostDecision(NamedTuple):
     """`w_a = d/da V'(m'(a), n'(b))`."""
     grad_b: FloatND
     """`w_b = d/db V'(m'(a), n'(b))`."""
+    valid: BoolND
+    """Whether the carried-forward state stayed inside the next-period value grid.
+
+    The reader clamps an out-of-domain transformed state to the grid boundary
+    (`mode="nearest"`), fabricating a continuation value with a zero boundary
+    gradient. `valid` is `False` at those nodes so the envelope can drop them
+    rather than compete a fabricated `w`/`w_a`/`w_b` against genuine candidates.
+    """
 
 
 def post_decision_value_and_grad(
@@ -72,10 +80,19 @@ def post_decision_value_and_grad(
     flat_b = b.reshape(-1)
     value = jax.vmap(value_at)(flat_a, flat_b)
     grad_a, grad_b = jax.vmap(jax.grad(value_at, argnums=(0, 1)))(flat_a, flat_b)
+    m_next = (1.0 + return_liquid) * a + wage
+    n_next = (1.0 + return_pension) * b
+    valid = (
+        (m_next >= m_grid[0])
+        & (m_next <= m_grid[-1])
+        & (n_next >= n_grid[0])
+        & (n_next <= n_grid[-1])
+    )
     return PostDecision(
         value=value.reshape(a.shape),
         grad_a=grad_a.reshape(a.shape),
         grad_b=grad_b.reshape(a.shape),
+        valid=valid,
     )
 
 
@@ -129,8 +146,10 @@ def post_decision_value_and_grad_retiring(
     flat_liquid = liquid_next.reshape(-1)
     value = read_at(flat_liquid, next_value_retired)
     marginal = read_at(flat_liquid, next_marginal_retired)
+    valid = (liquid_next >= liquid_grid[0]) & (liquid_next <= liquid_grid[-1])
     return PostDecision(
         value=value.reshape(a.shape),
         grad_a=(gross_return * marginal).reshape(a.shape),
         grad_b=(pension_payout_return * marginal).reshape(a.shape),
+        valid=valid,
     )

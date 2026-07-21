@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -32,7 +33,9 @@ class MockRegime(UserRegime):
         state_transitions: dict[str, UserFunction | None] | None = None,
         constraints: dict[str, UserFunction] | None = None,
         transition: UserFunction | None = None,
-        functions: dict[str, UserFunction] | None = None,
+        # Loosely typed on purpose: tests pass markers (`AgeSpecializedFunction`,
+        # `Phased`) alongside plain callables.
+        functions: Mapping[str, object] | None = None,
     ) -> None:
         object.__setattr__(self, "n_periods", n_periods)
         object.__setattr__(self, "actions", actions if actions is not None else {})

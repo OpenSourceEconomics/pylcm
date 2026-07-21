@@ -29,8 +29,6 @@ retirement; `1 + return_pension` by default) and `retirement_income_in_first_per
 (whether `retirement_income` is received in the first retired period).
 """
 
-import functools
-
 import jax.numpy as jnp
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
@@ -259,7 +257,6 @@ def get_model(
     )
 
 
-@functools.cache
 def get_params(
     *,
     discount_factor: float = 0.98,

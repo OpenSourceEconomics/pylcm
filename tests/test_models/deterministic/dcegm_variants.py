@@ -13,6 +13,7 @@ compare value functions on the shared wealth grid. Importable only once `lcm.sol
 exists.
 """
 
+import dataclasses
 import functools
 from typing import Literal
 
@@ -130,19 +131,25 @@ def get_retirement_only_model(
 
 
 @functools.cache
-def get_full_model(solver: Literal["brute_force", "dcegm"], n_periods: int) -> Model:
+def get_full_model(
+    solver: Literal["brute_force", "dcegm"],
+    n_periods: int,
+    *,
+    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues",
+) -> Model:
     """Build the three-regime worker/retirement/dead model for the requested solver."""
     if solver == "brute_force":
         return base.get_model(n_periods)
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
+    dcegm_solver = dataclasses.replace(DCEGM_SOLVER, upper_envelope=upper_envelope)
     return Model(
         regimes={
             "working_life": dcegm_working_life.replace(
-                active=lambda age, la=last_age: age < la
+                active=lambda age, la=last_age: age < la, solver=dcegm_solver
             ),
             "retirement": dcegm_retirement_full.replace(
-                active=lambda age, la=last_age: age < la
+                active=lambda age, la=last_age: age < la, solver=dcegm_solver
             ),
             "dead": dead,
         },

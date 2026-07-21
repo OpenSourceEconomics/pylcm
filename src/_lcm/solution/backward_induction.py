@@ -6,11 +6,9 @@ import os
 import time
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax
-import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
@@ -27,8 +25,6 @@ from _lcm.utils.logging import (
     log_period_header,
     log_period_timing,
     raise_or_warn,
-    v_array_has_inf,
-    v_array_has_nan,
     validation_enabled,
     validation_raises,
 )
@@ -153,11 +149,12 @@ def solve(
         flat_params=flat_params,
     )
 
-    # Simulation policies are a DC-EGM solve *output*, accumulated for every
-    # period; no backward step reads them. Their `endog_grid` aliases the
-    # period's carry buffer, so leaving them on device pins one carry-sized
-    # buffer per period for the whole induction. Evict each period's policies
-    # to host as they are produced; simulation re-materializes them on device.
+    # A published simulation policy is a solve *output*, accumulated for
+    # every period; no backward step reads it. Its buffers can alias the
+    # period's continuation buffer, so leaving policies on device pins one
+    # continuation-sized buffer per period for the whole induction. Evict each
+    # period's policies to host as they are produced; simulation
+    # re-materializes them on device.
     host_device = jax.devices("cpu")[0]
 
     for period in reversed(range(ages.n_periods)):
@@ -190,7 +187,6 @@ def solve(
             regime = active_regimes[regime_name]
             V_arr = _solve_regime_period(
                 regime=regime,
-                regime_name=regime_name,
                 period=period,
                 compiled_cores=compiled_functions[(regime_name, period)],
                 state_action_space=base_state_action_spaces[regime_name],
@@ -269,9 +265,9 @@ def solve(
         next_regime_to_V_arr, next_regime_to_egm_carry = _roll_continuation_inputs(
             regimes=regimes,
             period_solution=period_solution,
-            period_egm_carries=period_egm_carries,
+            period_continuations=period_continuations,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
         )
         solution[period] = MappingProxyType(period_solution)
         # COLLECTIVE-REGIMES (E2): publish each collective regime's dissolution
@@ -283,9 +279,9 @@ def solve(
         sim_policies[period] = MappingProxyType(
             {
                 regime_name: jax.block_until_ready(
-                    jax.device_put(sim_policy, host_device)
+                    jax.device_put(simulation_policy, host_device)
                 )
-                for regime_name, sim_policy in period_sim_policies.items()
+                for regime_name, simulation_policy in period_simulation_policies.items()
             }
         )
 
@@ -306,7 +302,7 @@ def solve(
         if validation_raises(logger) and running_any_nan.item():
             break
 
-        _collect_rolled_carries(period_egm_carries=period_egm_carries)
+        _release_rolled_continuations(period_continuations=period_continuations)
 
     if diagnostics_enabled:
         try:
@@ -337,23 +333,25 @@ def solve(
     )
 
 
-def _collect_rolled_carries(*, period_egm_carries: dict[RegimeName, EGMCarry]) -> None:
-    """Return the device buffers rolled off the period just solved.
+def _release_rolled_continuations(
+    *, period_continuations: dict[RegimeName, ContinuationPayload]
+) -> None:
+    """Free the device buffers rolled off the period just solved.
 
-    The superseded continuation V/carry and the period's transient working set
-    are unreferenced once the period rolls, but a rolled continuation carry sits
-    in a registered pytree that CPython's cyclic collector frees only when it
-    next runs — forcing a collection here returns the device pool promptly,
-    capping peak resident across the loop (mirrors the forward-sim memory rework
-    in `result.py`).
+    The superseded continuation inputs and the period's transient working set
+    are unreferenced once the period rolls, but a rolled continuation payload
+    sits in a registered pytree that CPython's cyclic collector frees only when
+    it next runs — forcing a collection here frees the device pool promptly,
+    capping peak resident across the loop (mirrors the forward-sim memory
+    rework in `result.py`).
 
-    Gated on whether this period actually produced a carry (the generic
+    Gated on whether this period actually produced a continuation (the generic
     per-period kernel output the loop already tracks), not on the solver type:
-    a period whose kernels publish no carry rolls no such buffer, so the
-    collection — which otherwise dominates small warm solves with no memory
-    gain — is skipped for it.
+    a period whose kernels publish none rolls no such buffer, so the collection
+    — which otherwise dominates small warm solves with no memory gain — is
+    skipped for it.
     """
-    if period_egm_carries:
+    if period_continuations:
         gc.collect()
 
 
@@ -415,7 +413,6 @@ def _init_diagnostic_accumulators() -> tuple[
 def _solve_regime_period(
     *,
     regime: Regime,
-    regime_name: RegimeName,
     period: int,
     compiled_cores: MappingProxyType[str, Callable],
     state_action_space: StateActionSpace,
@@ -455,11 +452,11 @@ def _solve_regime_period(
     for every distinct (period, age) pair.
 
     The adapter is handed its full per-key compiled-core map (`compiled_cores`):
-    a single-core kernel reads `["main"]`, the NEGM kernel reads `["keeper"]`
-    and `["adjuster"]`.
+    a single-core kernel reads `["main"]`, a multi-core kernel reads each of its
+    own core keys.
 
     Returns:
-        The regime's value-function array.
+        The kernel's result for this regime-period.
 
     """
     period_kernel = regime.solution.period_kernels[period]
@@ -485,7 +482,7 @@ def _solve_regime_period(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
-        next_regime_to_egm_carry=next_regime_to_egm_carry,
+        next_regime_to_continuation=next_regime_to_continuation,
         flat_params=flat_params,
         period=period,
         ages=ages,
@@ -542,11 +539,12 @@ def _roll_continuation_inputs(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     period_solution: dict[RegimeName, FloatND],
-    period_egm_carries: dict[RegimeName, EGMCarry],
+    period_continuations: dict[RegimeName, ContinuationPayload],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
 ) -> tuple[
-    MappingProxyType[RegimeName, FloatND], MappingProxyType[RegimeName, EGMCarry]
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, ContinuationPayload],
 ]:
     """Roll the per-period continuation mappings forward by one period.
 
@@ -554,27 +552,100 @@ def _roll_continuation_inputs(
     carries for every carry-producing regime — and update only the entries
     solved this period, so the pytree structure stays JIT-stable.
 
+    The `.get(..., prior)` fallback is for regimes *inactive* this period: they
+    keep the prior period's entry. It relies on the invariant that every
+    continuation-publishing regime publishes on each of its active periods — the
+    solve loop enforces this before rolling, so an active publisher can never
+    fall through to the stale prior carry here.
+
     Returns:
         Tuple of the rolled V mapping and the rolled carry mapping.
 
     """
     rolled_V_arr = MappingProxyType(
         {
-            regime_name: period_solution.get(
-                regime_name, next_regime_to_V_arr[regime_name]
+            regime_name: _match_leaf_template_sharding(
+                leaf=period_solution[regime_name],
+                template_leaf=next_regime_to_V_arr[regime_name],
             )
+            if regime_name in period_solution
+            else next_regime_to_V_arr[regime_name]
             for regime_name in regimes
         }
     )
-    rolled_egm_carry = MappingProxyType(
+    rolled_continuation = MappingProxyType(
         {
-            regime_name: period_egm_carries.get(
-                regime_name, next_regime_to_egm_carry[regime_name]
+            regime_name: _match_continuation_template_sharding(
+                continuation=period_continuations[regime_name],
+                template=next_regime_to_continuation[regime_name],
             )
-            for regime_name in next_regime_to_egm_carry
+            if regime_name in period_continuations
+            else next_regime_to_continuation[regime_name]
+            for regime_name in next_regime_to_continuation
         }
     )
-    return rolled_V_arr, rolled_egm_carry
+    return rolled_V_arr, rolled_continuation
+
+
+def _match_continuation_template_sharding(
+    *, continuation: ContinuationPayload, template: ContinuationPayload
+) -> ContinuationPayload:
+    """Place a solved period's continuation on its template's device sharding.
+
+    The parent's cores are AOT-compiled against the continuation template, so
+    the template's per-leaf sharding is the calling convention. A producer can
+    emit mixed-sharding leaves (value rows derived from the sharded value
+    array, endogenous-grid rows broadcast replicated from the asset grid);
+    every leaf is placed onto its template counterpart's sharding, a no-op
+    where they already agree. Assumes the template of a distributed regime is
+    itself sharded — an unsharded template under a distributed state would
+    pull the continuation onto one device.
+    """
+    return jax.tree.map(
+        lambda leaf, template_leaf: _match_leaf_template_sharding(
+            leaf=leaf, template_leaf=template_leaf
+        ),
+        continuation,
+        template,
+    )
+
+
+def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
+    """Place one solved array on its template's device sharding (no-op on match).
+
+    Applied where a solved value array is published and where the continuation
+    mappings roll forward, for the same reason as the continuations: a compiled
+    kernel's output sharding is the backend's choice, so a value array can
+    arrive replicated while the templates every consumer (parent cores and the
+    AOT-lowered simulate programs) was lowered against are sharded.
+    """
+    if leaf.sharding == template_leaf.sharding:
+        return leaf
+    return jax.device_put(leaf, template_leaf.sharding)
+
+
+def _fail_if_continuation_publisher_returned_none(
+    *,
+    result: KernelResult,
+    regime_name: RegimeName,
+    period: int,
+    continuation_publishers: Mapping[RegimeName, ContinuationPayload],
+) -> None:
+    """Fail loud if a continuation-publishing regime published nothing.
+
+    A regime with a continuation template MUST publish a continuation on every
+    active period. If its kernel returns None, `_roll_continuation_inputs` would
+    silently roll the stale prior period's carry forward — wrong numbers, not a
+    crash — so surface the offending (regime, period) instead.
+    """
+    if result.continuation is None and regime_name in continuation_publishers:
+        msg = (
+            f"Regime '{regime_name}' declares a continuation template but its "
+            f"kernel returned no continuation in active period {period}. A "
+            f"continuation-based solver must publish a continuation on every "
+            f"active period."
+        )
+        raise RuntimeError(msg)
 
 
 # COLLECTIVE-REGIMES (E3'): a gated edge's continuation slot is keyed by the
@@ -803,7 +874,7 @@ def _build_continuation_templates(
             for regime_name, topology in regime_V_topology.items()
         }
     )
-    next_regime_to_egm_carry = MappingProxyType(
+    next_regime_to_continuation = MappingProxyType(
         {
             regime_name: regime.solution.continuation_template
             for regime_name, regime in regimes.items()
@@ -913,8 +984,8 @@ def _compile_all_functions(
 
     Each regime exposes one period adapter per period; the adapter wraps one or
     more shared jitted cores, keyed by a stable per-kernel name (`cores()`).
-    Most kernels carry a single `"main"` core; the NEGM kernel carries a
-    `"keeper"` and an `"adjuster"` core, each a distinct traced program. Many
+    Most kernels carry a single `"main"` core; a multi-core kernel carries
+    several named cores, each a distinct traced program. Many
     periods share the same core object, so this deduplicates the cores by
     identity, lowers each unique core once (sequential — tracing is
     single-threaded) with the adapter's per-key lowering arguments, then compiles
@@ -930,7 +1001,7 @@ def _compile_all_functions(
         ages: Age grid for the model.
         next_regime_to_V_arr: Template with consistent keys and V array shapes
             for constructing lowering arguments.
-        next_regime_to_egm_carry: Template with consistent keys and carry
+        next_regime_to_continuation: Template with consistent keys and carry
             shapes for constructing lowering arguments.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum threads for parallel compilation.
@@ -998,7 +1069,7 @@ def _compile_all_functions(
                 regime_params=flat_params[regime_name],
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_egm_carry=next_regime_to_egm_carry,
+            next_regime_to_continuation=next_regime_to_continuation,
             flat_params=flat_params,
             period=period,
             ages=ages,
@@ -1056,8 +1127,8 @@ def _group_cores_by_regime_period(
     """Group (regime, period, core_key) -> core into (regime, period) -> {key: core}.
 
     The solve loop dispatches each period adapter with its full per-key core map,
-    so a multi-core kernel (NEGM's keeper/adjuster) receives both compiled cores
-    while a single-core kernel receives `{"main": ...}`.
+    so a multi-core kernel receives all its compiled cores while a single-core
+    kernel receives `{"main": ...}`.
     """
     grouped: dict[tuple[RegimeName, int], dict[str, Callable]] = {}
     for (regime_name, period, core_key), core in cores_by_triple.items():

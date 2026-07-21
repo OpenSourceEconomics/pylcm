@@ -48,7 +48,7 @@ from _lcm.regime_building.phases import (
 from _lcm.typing import RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import ModelInitializationError
-from lcm.transition import MarkovTransition
+from lcm.transition import AgeSpecializedGrid, MarkovTransition
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 type _CanonicalLaw = UserFunction | MarkovTransition
@@ -311,7 +311,7 @@ def _desugar_identity(
     *,
     law: _CanonicalLaw,
     state_name: StateName,
-    grid: Grid | None,
+    grid: Grid | AgeSpecializedGrid | None,
 ) -> _CanonicalLaw:
     """Rebuild a `fixed_transition` identity with the source grid's annotation."""
     if not isinstance(law, _IdentityTransition):

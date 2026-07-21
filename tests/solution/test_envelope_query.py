@@ -127,6 +127,51 @@ def test_blocked_segment_scan_matches_the_dense_reduction(block_size):
         )
 
 
+def test_inclusive_bracket_reads_the_boundary_owning_value_at_a_shared_abscissa():
+    """At a duplicated abscissa the inclusive bracket picks the higher segment.
+
+    Value jumps ride on carry rows as duplicated abscissae: two segments end and
+    start at the same grid point, and reads at that point must see the segment
+    whose value owns the boundary (the higher one). The bracket test is inclusive
+    (`lower <= query <= upper`), so both segments are eligible there and the
+    envelope maximum resolves the read.
+    """
+    # Two monotone segments meeting at the abscissa x = 1.0: segment 0 carries
+    # value 1.0 there, segment 1 carries value 5.0 (the boundary-owning side).
+    env_value, _, _ = envelope_at_query(
+        endog_grid=jnp.array([0.0, 1.0, 1.0, 2.0]),
+        policy=jnp.array([0.0, 1.0, 5.0, 6.0]),
+        value=jnp.array([0.0, 1.0, 5.0, 6.0]),
+        marginal=jnp.array([1.0, 1.0, 1.0, 1.0]),
+        segment_id=jnp.array([0.0, 0.0, 1.0, 1.0]),
+        x_query=jnp.array([1.0]),
+    )
+    np.testing.assert_allclose(np.asarray(env_value), [5.0])
+
+
+def test_exact_node_tie_selects_the_segment_that_continues_right():
+    """At a node where one segment ends and another starts, the right-continuous
+    winner is the one that continues to the right, even if the ending segment is
+    steeper.
+
+    Segment A spans [0, 1] with the larger value-slope (10) and policy 0; segment B
+    spans [1, 2] with slope 1 and policy 1. Both bracket the shared node q=1 and
+    attain the same value there, but only B is defined immediately to the right, so
+    a `side="right"` read must publish B's policy and marginal, not A's.
+    """
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.array([0.0, 1.0, 1.0, 2.0]),
+        policy=jnp.array([0.0, 0.0, 1.0, 1.0]),
+        value=jnp.array([0.0, 10.0, 10.0, 11.0]),
+        marginal=jnp.array([10.0, 10.0, 1.0, 1.0]),
+        segment_id=jnp.array([0.0, 0.0, 1.0, 1.0]),
+        x_query=jnp.array(1.0),
+    )
+    assert np.isclose(float(value), 10.0)
+    assert np.isclose(float(policy), 1.0)
+    assert np.isclose(float(marginal), 1.0)
+
+
 def test_query_outside_all_branches_is_nan():
     """A query beyond every branch's support yields NaN value/policy/marginal."""
     got_value, got_policy, got_marginal = envelope_at_query(
