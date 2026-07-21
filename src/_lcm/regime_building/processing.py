@@ -121,7 +121,7 @@ from _lcm.variables import (
     simulate_variables_from_regime,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM, Solver
@@ -247,6 +247,16 @@ def process_regimes(
     validate_dcegm_regimes(user_regimes=user_regimes)
     validate_negm_regimes(user_regimes=user_regimes)
 
+    # Age-varying continuous-state grids (`AgeSpecializedGrid`) are resolved to a
+    # representative-age concrete grid for all age-invariant machinery (specs,
+    # variables, grids, template, base state-action space), and to a per-period
+    # grid for the continuation interpolation (`period_to_regime_v_interp`) and the
+    # solve axis. `representative_user_regimes` equals `user_regimes` when no state
+    # is age-varying, so an age-invariant model builds byte-identically.
+    representative_user_regimes, period_to_regime_v_interp = (
+        _resolve_age_specialized_state_grids(user_regimes=user_regimes, ages=ages)
+    )
+
     # The canonical specs hold every law in target-granular form, resolved per
     # phase: the simulate slice additionally holds every carried-only state
     # and its law of motion, so the canonical mapping carries the law toward
@@ -313,7 +323,14 @@ def process_regimes(
     # the union of the source and its reachable carry targets' fixed params.
     regime_to_params_template = MappingProxyType(
         {
-            regime_name: create_regime_params_template(user_regime)
+            regime_name: create_regime_params_template(
+                user_regime,
+                representative_age=(
+                    ages.period_to_age(regimes_to_active_periods[regime_name][0])
+                    if regimes_to_active_periods[regime_name]
+                    else None
+                ),
+            )
             for regime_name, user_regime in user_regimes.items()
         }
     )
@@ -559,6 +576,7 @@ def _build_solution_phase(
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
+            period_to_regime_v_interp=period_to_regime_v_interp,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             flat_param_names=flat_param_names,
@@ -1189,6 +1207,27 @@ def _build_simulation_phase(
             resources_target=solver.resources,
             savings_lower_bound=float(solver.savings_grid.to_jax()[0]),
         )
+
+    # Publish representative-age-resolved functions (feasibility checks and
+    # additional-target computation consume them unresolved); `next_state` above
+    # keeps resolving the marker-bearing `simulate_functions` per age.
+    simulation_active_periods = regimes_to_active_periods[regime_name]
+    published_simulate_functions = (
+        cast(
+            "EconFunctionsMapping",
+            resolve_specialized_nodes(
+                simulate_functions,
+                float(ages.period_to_age(simulation_active_periods[0])),
+            ),
+        )
+        if simulation_active_periods
+        else simulate_functions
+    )
+    age_specialized_function_names = frozenset(
+        name
+        for name, func in simulate_functions.items()
+        if isinstance(func, _SpecializedEconFunction)
+    )
 
     return SimulationPhase(
         _variables=simulation_variables,
@@ -2551,6 +2590,9 @@ def _build_Q_and_F_per_period(
     flat_param_names: frozenset[str],
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
