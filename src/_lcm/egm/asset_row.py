@@ -181,6 +181,17 @@ def _get_solve_one_combo_asset_rows(
             )
             candidate_policy = jnp.concatenate([constrained_actions, actions])
             candidate_value = jnp.concatenate([constrained_values, values])
+            # Exogenous source savings per candidate: the savings node for each
+            # Euler candidate (`endog_grid = savings_node + action`, so the
+            # implied `endog_grid - policy` equals it in exact arithmetic), the
+            # borrowing limit for the constrained candidates (their savings is
+            # pinned there). FUES compares these pristine sources exactly.
+            candidate_savings = jnp.concatenate(
+                [
+                    jnp.full_like(constrained_actions, pieces.borrowing_limit),
+                    pieces.savings_nodes,
+                ]
+            )
             # Same `-inf` masking as the default per-combo computation: dead
             # candidates become the envelope scan's absent form (NaN).
             candidate_dead = jnp.isneginf(candidate_value)
@@ -190,16 +201,16 @@ def _get_solve_one_combo_asset_rows(
                 utility_of_action=utility_of_action,
             )
             # The node reads its refined envelope at one query
-            # (`resources_at_node`): FUES streams the bracketing pair (the
-            # `n_pad` envelope never materializes), while RFC has no streamed
-            # finder and materializes the full envelope before locating the same
-            # bracket — the published `(V, policy)` is identical, but RFC's
-            # asset-row path does not yet get the streaming `n_pad` memory win.
+            # (`resources_at_node`): every finder materializes the full refined
+            # envelope row and locates the bracketing pair, so the published
+            # `(V, policy)` is a full-envelope-then-interpolate. A sub-`n_pad`
+            # streamed finder is future work for all backends.
             bracket = pieces.refine_to_bracket(
                 endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
                 policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
                 value=jnp.where(candidate_dead, jnp.nan, candidate_value),
                 marginal_utility=candidate_marginal,
+                savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
                 x_query=resources_at_node,
             )
 
@@ -448,11 +459,9 @@ def publish_node_from_bracket(
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Publish one asset node's value and optimal action from its query bracket.
 
-    The streamed counterpart of `_publish_node_V_and_policy`: it consumes the
-    two envelope nodes that `refine_to_bracket` captured around
-    `resources_at_node` instead of the full NaN-padded refined row, so the
-    `n_pad` envelope is never materialized. The published economics are
-    identical:
+    The single-bracket counterpart of `_publish_node_V_and_policy`: it consumes
+    the two envelope nodes `refine_to_bracket` sliced around `resources_at_node`
+    from the full refined row. The published economics are identical:
 
     - The value is the cubic-Hermite read of the envelope between the two
       bracket nodes (the value slope at each node is `grad(utility_of_action)`
@@ -468,8 +477,8 @@ def publish_node_from_bracket(
 
     Because the value and policy arithmetic is the shared `_interp_between_nodes`
     primitive — the same one the row path reaches through
-    `interp_on_padded_grid` — the streamed publish cannot diverge from
-    row-then-interpolate: only the bracket-finding differs.
+    `interp_on_padded_grid`, reading the same refined row — the bracket publish
+    cannot diverge from row-then-interpolate.
 
     Args:
         bracket: The query bracket from `refine_to_bracket`.

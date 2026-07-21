@@ -10,7 +10,7 @@ public module keeps `lcm.regime` to class definitions.
 import ast
 import inspect
 import textwrap
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
@@ -32,11 +32,19 @@ if TYPE_CHECKING:
 
 
 def _grid_mapping_errors(
-    *, attr_name: str, mapping: Mapping[str, object], allow_phase_variants: bool
+    *,
+    attr_name: str,
+    mapping: Mapping[str, object],
+    allow_phase_variants: bool,
+    allow_age_specialized_grid: bool = False,
 ) -> list[str]:
     """Collect key/value type errors for a grid-valued mapping (states/actions)."""
-    allowed = Grid | Phased if allow_phase_variants else Grid
+    allowed: object = Grid | Phased if allow_phase_variants else Grid
     suffix = " or Phased" if allow_phase_variants else ""
+    if allow_age_specialized_grid:
+        # An age-varying continuous-state grid is a valid state (states only).
+        allowed = allowed | AgeSpecializedGrid  # type: ignore[operator]
+        suffix += " or AgeSpecializedGrid"
     error_messages: list[str] = []
     for k, v in mapping.items():
         if not isinstance(k, str):
@@ -94,7 +102,10 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
     """
     error_messages = [
         *_grid_mapping_errors(
-            attr_name="states", mapping=regime.states, allow_phase_variants=True
+            attr_name="states",
+            mapping=regime.states,
+            allow_phase_variants=True,
+            allow_age_specialized_grid=True,
         ),
         *_grid_mapping_errors(
             attr_name="actions", mapping=regime.actions, allow_phase_variants=False
@@ -157,10 +168,181 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_state_transition_grammar_errors(regime))
     error_messages.extend(_regime_transition_grammar_errors(regime.transition))
+    error_messages.extend(
+        _age_specialized_scope_errors(
+            transition=regime.transition,
+            state_transitions=regime.state_transitions,
+            functions=regime.functions,
+            constraints=regime.constraints,
+            terminal=regime.terminal,
+        )
+    )
 
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
+
+
+def _iter_transition_nodes(value: object) -> Iterator[object]:
+    """Yield leaf transition nodes, unwrapping `Phased` sides and per-target dicts."""
+    if isinstance(value, Phased):
+        yield from _iter_transition_nodes(value.solve)
+        yield from _iter_transition_nodes(value.simulate)
+    elif isinstance(value, Mapping):
+        for cell in value.values():
+            yield from _iter_transition_nodes(cell)
+    else:
+        yield value
+
+
+def _state_transition_marker_errors(
+    state_transitions: Mapping[str, object],
+) -> list[str]:
+    """Collect errors for `AgeSpecializedFunction` markers inside state transitions."""
+    error_messages: list[str] = []
+    for name, value in state_transitions.items():
+        for node in _iter_transition_nodes(value):
+            if isinstance(node, MarkovTransition) and isinstance(
+                node.func, AgeSpecializedFunction
+            ):
+                error_messages.append(
+                    f"state_transitions['{name}']: a `MarkovTransition` wrapping an "
+                    f"`AgeSpecializedFunction` (a policy-specialized stochastic "
+                    f"transition) is not supported.",
+                )
+            elif isinstance(node, AgeSpecializedFunction):
+                error_messages.append(
+                    f"state_transitions['{name}']: an `AgeSpecializedFunction` cannot "
+                    f"be a state-transition value. Express the policy-dependent law of "
+                    f"motion as a plain transition function that reads an "
+                    f"`AgeSpecializedFunction` entry of `functions` instead.",
+                )
+    return error_messages
+
+
+def _first_age_specialized_ancestor_of_transition(
+    *,
+    transition: object,
+    functions: Mapping[str, object],
+) -> str | None:
+    """Return the name of an `AgeSpecializedFunction` the transition reads, if any.
+
+    Walks the regime transition's parameter names transitively through plain
+    entries of `functions` (unwrapping `Phased` sides, per-target dicts, and
+    `MarkovTransition` wrappers along the way). Returns the first specialized
+    function name reached, or `None` when the transition's dependency graph is
+    policy-free.
+    """
+    specialized_names = {
+        name
+        for name, value in functions.items()
+        if any(
+            isinstance(node, AgeSpecializedFunction)
+            for node in _iter_transition_nodes(value)
+        )
+    }
+    if transition is None or not specialized_names:
+        return None
+
+    def arg_names_of(value: object) -> list[str]:
+        names: list[str] = []
+        for node in _iter_transition_nodes(value):
+            func = node.func if isinstance(node, MarkovTransition) else node
+            if callable(func):
+                try:
+                    names.extend(inspect.signature(func).parameters)
+                except TypeError, ValueError:
+                    continue
+        return names
+
+    seen: set[str] = set()
+    stack = arg_names_of(transition)
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        if name in specialized_names:
+            return name
+        if name in functions:
+            stack.extend(arg_names_of(functions[name]))
+    return None
+
+
+def _age_specialized_scope_errors(
+    *,
+    transition: object,
+    state_transitions: Mapping[str, object],
+    functions: Mapping[str, object],
+    constraints: Mapping[str, object],
+    terminal: bool,
+) -> list[str]:
+    """Reject the `AgeSpecializedFunction` compositions that are out of scope.
+
+    `AgeSpecializedFunction` is supported in `functions` and `constraints` of
+    non-terminal regimes only. Rejected — loudly, before any per-period program
+    is built:
+
+    - a regime `transition` that is (or contains) an `AgeSpecializedFunction` — a
+      policy-specialized *regime* transition;
+    - a `MarkovTransition` wrapping an `AgeSpecializedFunction` in a state
+      transition — a policy-specialized *stochastic* transition;
+    - an `AgeSpecializedFunction` directly as a state-transition value — express the
+      policy-dependent law of motion as a plain transition reading an
+      `AgeSpecializedFunction` helper function instead;
+    - a regime transition whose dependency graph reads an `AgeSpecializedFunction`
+      function (directly or through plain helper functions) — regime-transition
+      probabilities are built once, not per period, so a policy-specialized
+      value flowing into them would reuse one age's policy closure everywhere;
+    - any `AgeSpecializedFunction` in a terminal regime — the terminal value program is
+      built once and shared across all periods.
+    """
+    error_messages: list[str] = []
+
+    if any(
+        isinstance(node, AgeSpecializedFunction)
+        or (
+            isinstance(node, MarkovTransition)
+            and isinstance(node.func, AgeSpecializedFunction)
+        )
+        for node in _iter_transition_nodes(transition)
+    ):
+        error_messages.append(
+            "A regime `transition` cannot be `AgeSpecializedFunction` (bare or "
+            "wrapped in `MarkovTransition`): policy-specialized regime transitions "
+            "are not "
+            "supported. Specialize `functions` or `constraints` instead.",
+        )
+
+    specialized_ancestor = _first_age_specialized_ancestor_of_transition(
+        transition=transition, functions=functions
+    )
+    if specialized_ancestor is not None:
+        error_messages.append(
+            f"The regime `transition` depends on the `AgeSpecializedFunction` function "
+            f"'{specialized_ancestor}'. Regime-transition probabilities are built "
+            f"once, not per period, so a policy-specialized value flowing into "
+            f"them would silently reuse one age's policy closure across all "
+            f"periods. Route the policy dependency through `functions` consumed "
+            f"by utility, constraints, or state transitions instead.",
+        )
+
+    error_messages.extend(_state_transition_marker_errors(state_transitions))
+
+    if terminal:
+        for slot_name, slot in (("functions", functions), ("constraints", constraints)):
+            for name, value in slot.items():
+                if any(
+                    isinstance(node, AgeSpecializedFunction)
+                    for node in _iter_transition_nodes(value)
+                ):
+                    error_messages.append(
+                        f"{slot_name}['{name}']: `AgeSpecializedFunction` is not "
+                        f"supported in a terminal regime — the terminal value "
+                        f"program is built once and shared across all periods.",
+                    )
+
+    return error_messages
 
 
 def _regime_transition_grammar_errors(transition: object) -> list[str]:

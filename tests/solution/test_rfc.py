@@ -352,7 +352,13 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
 
     refined_grid, refined_policy, refined_value, n_kept, _ = get_upper_envelope(
         solver=solver, n_refined=n_pad
-    )(endog_grid=grid, policy=policy, value=value, marginal_utility=marginal)
+    )(
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal,
+        savings=grid - policy,
+    )
 
     query = jnp.asarray(x_query)
     ref_value = interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_value)
@@ -365,6 +371,7 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
         policy=policy,
         value=value,
         marginal_utility=marginal,
+        savings=grid - policy,
         x_query=query,
     )
 

@@ -684,8 +684,9 @@ def interp_left_germ_on_prepared_grid(
     query, as a tie-selection object for the stacked candidate readers. A tie
     whose right germs are identical (both candidates clamp at a shared
     terminal abscissa) is owned by the branch that carries the envelope on the
-    left neighborhood, so its published marginal stays inside the envelope's
-    generalized gradient at the boundary. Semantics:
+    left neighborhood, so the published payload is that branch's own economic
+    marginal — the meaningful one-sided value for a parent Euler inversion at
+    the boundary. Semantics:
 
     - Strictly inside a bracket: the derivatives of that bracket's limited
       cubic Hermite (the secant and zero curvature where the correction is
@@ -859,9 +860,9 @@ def _interp_between_nodes(
 
     The pure two-node arithmetic of the padded-grid interpolant, shared by
     `interp_on_prepared_grid` (which gathers the bracket from a full row) and
-    the streamed asset-row publish (which captures the bracket directly during
-    the upper-envelope scan). Having both paths reduce to this one function
-    guarantees the streamed value cannot diverge from the row-then-interpolate
+    the asset-row publish (which slices its bracket from the same refined row via
+    `refine_to_bracket`). Having both paths reduce to this one function
+    guarantees the bracket publish cannot diverge from the row-then-interpolate
     value: only *which two nodes* differs, not the arithmetic on them.
 
     The bracket must already be edge-clamped to a real pair of nodes (queries
