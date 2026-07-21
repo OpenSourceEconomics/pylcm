@@ -49,6 +49,23 @@ from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
+from _lcm.processes.ar1 import TauchenAR1Process
+from _lcm.processes.iid import NormalIIDProcess
+from _lcm.processes.state_conditioned import (
+    Family,
+    StateConditioned,
+    conditioned_row,
+    gather_sigma,
+    sigma_array_by_code,
+)
+from _lcm.regime_building.age_specialization import (
+    _SpecializedEconFunction,
+    has_age_specialized_grid,
+    resolve_specialized_nodes,
+    resolve_state_grids,
+    tree_signature,
+    validate_age_specialized_grids,
+)
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
