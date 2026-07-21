@@ -372,11 +372,24 @@ def test_envelope_is_invariant_to_a_common_value_shift():
     """
     grid, policy, value, savings = _dominated_coincident_candidates()
 
+    # The shift must stay below the working precision's resolution-vs-margin
+    # bound: the domination margins here are ~1, and once the shift's ULP exceeds
+    # that margin (float32 near 1e8 has ULP ~8) the dominated members round up
+    # into the tie and get promoted — a precision limit, not a tolerance bug. A
+    # 3e5 shift keeps ULP well below 1 at both precisions while remaining large
+    # enough that a relative `rtol * |V|` band (`1e-5 * 3e5 = 3 > 1`) would still
+    # manufacture kinks.
+    shift = 1e8 if X64_ENABLED else 3e5
+
     base = fues.refine_envelope(
         endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=16
     )
     shifted = fues.refine_envelope(
-        endog_grid=grid, policy=policy, value=value + 1e8, savings=savings, n_refined=16
+        endog_grid=grid,
+        policy=policy,
+        value=value + shift,
+        savings=savings,
+        n_refined=16,
     )
 
     assert int(base[3]) == int(shifted[3])
