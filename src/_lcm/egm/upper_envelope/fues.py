@@ -654,7 +654,19 @@ def _inspect_candidate(
         jump_thresh=jump_thresh,
     )
     secant_i_to_j_seg = _slope(x_a=grid_i, y_a=value_i, x_b=j_seg_grid, y_b=j_seg_value)
-    below_j_segment = switches & j_seg_found & (secant < secant_i_to_j_seg)
+    # `i` is below `j`'s segment continuation when it lies under that line. If the
+    # continuation lands on `i`'s own abscissa (a node-aligned crossing, so the
+    # secant slope is degenerate), "below" is the direct value comparison: equal
+    # value means the branches meet there and `i` is kept, not dominated.
+    below_j_segment = (
+        switches
+        & j_seg_found
+        & jnp.where(
+            grid_i == j_seg_grid,
+            value_i < j_seg_value,
+            secant < secant_i_to_j_seg,
+        )
+    )
 
     # A value drop marks a dominated candidate only *within* a segment, where the
     # envelope value is monotone in the grid. Across a segment switch the value may
