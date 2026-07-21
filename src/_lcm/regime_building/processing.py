@@ -2203,7 +2203,7 @@ def _wrap_deterministic_regime_transition(
     # the decorator stack can drop them when `func` carries deferred (PEP 649)
     # annotations through `functools.wraps`.
     wrapped.__annotations__ = {**annotations, "return": "FloatND"}
-    return wrapped  # ty: ignore[invalid-return-type]
+    return wrapped
 
 
 def _get_vmap_params(
