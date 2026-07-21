@@ -109,11 +109,26 @@ def _node_aligned_crossing_candidates():
     return grid, policy, value
 
 
+def _two_crossing_chain_candidates():
+    """Three affine branches A|B|C crossing exactly on nodes 10 and 20.
+
+    Branch B (c = 4) is optimal across (10, 20); the chain of two node-aligned
+    crossings must keep B's middle segment, so at R = 15 the envelope policy is
+    B's `4.0`. Supplied in exogenous-savings order on a non-monotone grid; the
+    streamed bracket must reproduce the full row's middle branch.
+    """
+    grid = jnp.asarray([9.0, 10.0, 10.0, 20.0, 20.0, 21.0])
+    policy = jnp.asarray([8.0, 8.0, 4.0, 4.0, 2.0, 2.0])
+    value = jnp.asarray([4.875, 5.0, 5.0, 7.5, 7.5, 8.0])
+    return grid, policy, value
+
+
 _CANDIDATE_SETS = {
     "smooth": _smooth_candidates(),
     "kinked": _crossing_segments_candidates(),
     "multi_crossing": _multi_crossing_candidates(),
     "node_aligned_crossing": _node_aligned_crossing_candidates(),
+    "two_crossing_chain": _two_crossing_chain_candidates(),
     "all_dead": _all_dead_candidates(),
     "single_live": _single_live_candidate(),
 }
@@ -160,6 +175,7 @@ def _streamed(grid, policy, value, x_query, n_pad):
         policy=jnp.where(dead, jnp.nan, policy),
         value=jnp.where(dead, jnp.nan, value),
         x_query=jnp.asarray(x_query),
+        n_refined=n_pad,
     )
     return publish_node_from_bracket(
         bracket=bracket,
@@ -210,7 +226,10 @@ def test_streamed_matches_row_then_interp_above_last_point(name):
     _assert_equivalent(grid, policy, value, x_query, n_pad=16)
 
 
-@pytest.mark.parametrize("name", ["kinked", "multi_crossing", "node_aligned_crossing"])
+@pytest.mark.parametrize(
+    "name",
+    ["kinked", "multi_crossing", "node_aligned_crossing", "two_crossing_chain"],
+)
 def test_streamed_matches_row_then_interp_exactly_on_kink(name):
     """A query exactly on a duplicated kink abscissa resolves the right-copy.
 
@@ -248,7 +267,7 @@ def test_streamed_is_vmappable_over_nodes():
 
     def one(x_query):
         bracket = fues.refine_to_bracket(
-            endog_grid=g, policy=p, value=v, x_query=x_query
+            endog_grid=g, policy=p, value=v, x_query=x_query, n_refined=16
         )
         return publish_node_from_bracket(
             bracket=bracket,

@@ -258,6 +258,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
                 policy=policy,
                 value=value,
                 x_query=x_query,
+                n_refined=n_refined,
                 jump_thresh=solver.fues_jump_thresh,
                 n_points_to_scan=solver.fues_n_points_to_scan,
                 savings=savings,
