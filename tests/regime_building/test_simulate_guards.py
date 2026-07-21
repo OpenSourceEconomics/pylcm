@@ -392,13 +392,16 @@ def _solve_all_collective():
             "couple_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 
@@ -477,13 +480,16 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
     flat_params = MappingProxyType({"stateless_couple": MappingProxyType({})})
-    solution, _sim_policies, _dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution_flags = _bi_result.dissolution_flags
     assert solution[0]["stateless_couple"].shape == (2,)  # solve: no subject axis
 
     n_subjects = 3

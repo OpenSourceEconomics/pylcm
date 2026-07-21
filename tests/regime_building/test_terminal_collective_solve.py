@@ -65,13 +65,16 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
         enable_jit=False,
     )
 
-    solution, _sim_policies, _dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=MappingProxyType({"couple": MappingProxyType({})}),
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution_flags = _bi_result.dissolution_flags
 
     V = solution[0]["couple"]
     # V carries a trailing stakeholder axis: (wage grid = 2) x (stakeholders = 2).

@@ -64,7 +64,7 @@ def _states_for_period(
     return state_action_space.states
 
 
-def solve(
+def solve(  # noqa: C901, PLR0915
     *,
     flat_params: FlatParams,
     ages: AgeGrid,

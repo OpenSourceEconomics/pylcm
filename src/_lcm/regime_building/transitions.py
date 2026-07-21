@@ -24,6 +24,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.phased import Phased
+from lcm.transition import AgeSpecializedGrid
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 

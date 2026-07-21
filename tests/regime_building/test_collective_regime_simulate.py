@@ -170,13 +170,16 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
             "couple_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
 
     initial_conditions = MappingProxyType(
         {
@@ -235,13 +238,16 @@ def test_couple_simulate_with_runtime_validation_enabled():
             "couple_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([8.0, 40.0]),
@@ -381,13 +387,16 @@ def _solve_consent():
             "married_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 
@@ -628,13 +637,16 @@ def _solve_dissolution():
             "single_m_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 
@@ -935,13 +947,16 @@ def _solve_consent_discrete_axis():
             "married_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 
@@ -1353,13 +1368,16 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
             "solo_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([8.0, 40.0]),
@@ -1520,13 +1538,16 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
     # Solve already tolerates a per-period-absent target (the SOLVE-side
     # `_roll_gated_edges` guard predates this fix); this is the control that
     # isolates the bug to the SIMULATE path below.
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
 
     initial_conditions = MappingProxyType(
         {

@@ -9,7 +9,7 @@ The fused output is consumed by `_enrich_with_diagnostics` in
 `_lcm.utils.error_handling`.
 """
 
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -57,6 +57,11 @@ def _build_compute_intermediates_per_period(
     enable_jit: bool,
     certainty_equivalent: CertaintyEquivalent | None = None,
     next_state_names: frozenset[TransitionFunctionName] = frozenset(),
+    period_to_regime_v_interp: Mapping[
+        int, MappingProxyType[RegimeName, VInterpolationInfo]
+    ]
+    | None = None,
+    continuation_grid_signature: Callable[..., Hashable] | None = None,
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 

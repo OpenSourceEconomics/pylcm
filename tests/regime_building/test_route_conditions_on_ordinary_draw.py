@@ -346,13 +346,16 @@ def _solve_dual_edge(*, edge_order: tuple[str, str]):
             "fallback_b": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     return regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 

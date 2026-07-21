@@ -615,7 +615,7 @@ class Model:
             return self._simulate_compile_cache[compile_batch_size]
 
     @beartype(conf=PARAMS_CONF)
-    def simulate(
+    def simulate(  # noqa: C901
         self,
         *,
         params: UserParams,

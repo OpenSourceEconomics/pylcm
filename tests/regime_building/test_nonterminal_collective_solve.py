@@ -128,7 +128,7 @@ def test_nonterminal_collective_regime_solves_with_continuation():
         enable_jit=False,
     )
 
-    solution, _sim_policies, _dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
@@ -140,6 +140,9 @@ def test_nonterminal_collective_regime_solves_with_continuation():
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution_flags = _bi_result.dissolution_flags
 
     V_terminal = solution[1]["couple_terminal"]
     V_0 = solution[0]["couple"]
@@ -249,7 +252,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
         enable_jit=False,
     )
 
-    solution, _sim_policies, _dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
@@ -261,6 +264,9 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution_flags = _bi_result.dissolution_flags
 
     V_terminal = solution[1]["couple_terminal"]
     V_0 = solution[0]["couple"]

@@ -211,13 +211,16 @@ def _solve_fixture():
             "fallback": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     return regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 
@@ -411,13 +414,16 @@ def _solve_curved_fixture(*, gate_threshold: float):
             "fallback": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, _dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution_flags = _bi_result.dissolution_flags
     return regimes, regime_names_to_ids, flat_params, solution
 
 

@@ -152,13 +152,16 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
             "shock_ref_terminal": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, _dissolution = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution = _bi_result.dissolution_flags
     nodes = np.asarray(_SHOCK.get_gridpoints())
     V_ref = np.asarray(solution[0]["shock_ref"])
     return nodes, V_ref
@@ -264,13 +267,16 @@ def _build_and_solve():
         enable_jit=False,
     )
     flat_params = _flat_params()
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     return regimes, flat_params, solution, dissolution_flags
 
 

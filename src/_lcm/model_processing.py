@@ -27,6 +27,7 @@ from _lcm.params.processing import (
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
@@ -288,7 +289,7 @@ def _model_wide_conditioning_names(
     }
 
 
-def _validate_all_variables_used(
+def _validate_all_variables_used(  # noqa: C901
     user_regimes: Mapping[RegimeName, UserRegime],
     *,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,

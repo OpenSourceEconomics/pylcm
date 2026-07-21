@@ -125,13 +125,16 @@ def _solve_fixture(regimes_dict, flat_params):
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
     )
-    solution, _sim_policies, _dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution_flags = _bi_result.dissolution_flags
     return regimes, regime_names_to_ids, solution
 
 
@@ -1040,13 +1043,16 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     regimes, _ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
 
     # V_single_f = wage on ITS OWN points (0, 10).
     np.testing.assert_allclose(np.asarray(solution[0]["single_f"]), [0.0, 10.0])

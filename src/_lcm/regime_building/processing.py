@@ -2374,7 +2374,7 @@ class _CoreResult:
     or `None` when the regime transition is coarse or absent."""
 
 
-def _process_regime_core(
+def _process_regime_core(  # noqa: C901
     *,
     source_regime_name: RegimeName,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],

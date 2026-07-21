@@ -264,12 +264,17 @@ def _solve_ir_model(
         regime_names_to_ids=_IR_REGIME_IDS,
         enable_jit=False,
     )
-    return solve(
+    _bi_result = solve(
         flat_params=MappingProxyType(flat_params),
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
+    )
+    return (
+        _bi_result.value_functions,
+        _bi_result.simulation_policies,
+        _bi_result.dissolution_flags,
     )
 
 
@@ -461,7 +466,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         ),
         enable_jit=False,
     )
-    solution, _, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=MappingProxyType(
             {
                 "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
@@ -480,6 +485,8 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    dissolution_flags = _bi_result.dissolution_flags
 
     np.testing.assert_allclose(
         np.asarray(solution[0]["single_f"]), np.array([1.0, 5.0]), rtol=1e-6
@@ -561,7 +568,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         ),
         enable_jit=False,
     )
-    solution, _, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
@@ -573,6 +580,8 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    dissolution_flags = _bi_result.dissolution_flags
 
     V = np.asarray(solution[0]["couple"])
     D = np.asarray(dissolution_flags[0]["couple"])

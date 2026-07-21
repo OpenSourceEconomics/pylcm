@@ -277,13 +277,16 @@ def _build_solve_and_simulate(*, n_subjects: int, seed: int):
         enable_jit=False,
     )
     flat_params = _flat_params()
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     wages = jnp.array([1.0 if i % 2 == 0 else 2.0 for i in range(n_subjects)])
     initial_conditions = MappingProxyType(
         {

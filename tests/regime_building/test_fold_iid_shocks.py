@@ -128,13 +128,16 @@ def _solve(regimes: dict[str, Regime]) -> MappingProxyType:
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         enable_jit=False,
     )
-    solution, _sim_policies, _dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution_flags = _bi_result.dissolution_flags
     return solution
 
 
@@ -284,13 +287,16 @@ def test_fold_collective_composition_matches_unfolded_then_averaged():
             regime_names_to_ids=MappingProxyType({"couple": jnp.int32(0)}),
             enable_jit=False,
         )
-        solution, _sim_policies, _dissolution_flags = solve(
+        _bi_result = solve(
             flat_params=MappingProxyType({"couple": MappingProxyType({})}),
             ages=_AGES,
             regimes=processed,
             logger=get_logger(log_level="off"),
             enable_jit=False,
         )
+        solution = _bi_result.value_functions
+        _sim_policies = _bi_result.simulation_policies
+        _dissolution_flags = _bi_result.dissolution_flags
         return solution[0]["couple"]
 
     V_unfolded = _solve_one(_make(fold=False))
@@ -487,13 +493,16 @@ def _solve_jit(regimes: dict[str, Regime], *, enable_jit: bool) -> MappingProxyT
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         enable_jit=enable_jit,
     )
-    solution, _sim_policies, _dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
         logger=get_logger(log_level="off"),
         enable_jit=enable_jit,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution_flags = _bi_result.dissolution_flags
     return solution
 
 
@@ -854,13 +863,16 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         enable_jit=False,
     )
-    solution, _s, _d = solve(
+    _bi_result = solve(
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _s = _bi_result.simulation_policies
+    _d = _bi_result.dissolution_flags
     # The folded process leaves no axis on the terminal value.
     assert solution[1]["terminal"].shape == ()
 
@@ -926,13 +938,16 @@ def test_coarse_self_transition_retains_the_self_continuation():
     assert "stay" in dict(getattr(core, "transitions", {}) or {}), (
         "the coarse self-transition must retain 'stay' as its own continuation target"
     )
-    solution, _s, _d = solve(
+    _bi_result = solve(
         flat_params=params,
         ages=ages3,
         regimes=processed,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _s = _bi_result.simulation_policies
+    _d = _bi_result.dissolution_flags
     # A live self-continuation lifts the value above the one-period utility (~10).
     assert float(jnp.mean(solution[0]["stay"])) > 10.5
 
@@ -1168,13 +1183,16 @@ def _solve_route(regimes: dict[str, Regime], *, discount: float) -> MappingProxy
             "dead_C": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, _dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=_AGES,
         regimes=processed,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    _dissolution_flags = _bi_result.dissolution_flags
     return solution
 
 
@@ -1318,13 +1336,16 @@ def _simulate_route(
             "dead_C": MappingProxyType({}),
         }
     )
-    solution, _sim_policies, dissolution_flags = solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=_AGES,
         regimes=processed,
         logger=get_logger(log_level="off"),
         enable_jit=False,
     )
+    solution = _bi_result.value_functions
+    _sim_policies = _bi_result.simulation_policies
+    dissolution_flags = _bi_result.dissolution_flags
     initial_conditions = MappingProxyType(
         {
             "age": jnp.array([0.0]),

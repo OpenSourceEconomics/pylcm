@@ -1804,7 +1804,7 @@ def _get_U_and_F(
         **dict(constraints),
         **{k: v for k, v in functions.items() if k != "H"},
     }
-    guard_targets = ["utility", *constraints]
+    guard_targets = [utility_name, *constraints]
     _fail_if_conflicting_transition_is_read(
         combined=raw_decision_graph,
         targets=guard_targets,

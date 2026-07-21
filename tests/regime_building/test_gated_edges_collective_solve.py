@@ -178,12 +178,17 @@ def _solve_consent(*, enable_jit: bool = False):
             "married_terminal": MappingProxyType({}),
         }
     )
-    return solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=enable_jit,
+    )
+    return (
+        _bi_result.value_functions,
+        _bi_result.simulation_policies,
+        _bi_result.dissolution_flags,
     )
 
 
@@ -374,12 +379,17 @@ def _solve_dissolution(*, enable_jit: bool = False):
             "single_m_terminal": MappingProxyType({}),
         }
     )
-    return solve(
+    _bi_result = solve(
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
         logger=get_logger(log_level="off"),
         enable_jit=enable_jit,
+    )
+    return (
+        _bi_result.value_functions,
+        _bi_result.simulation_policies,
+        _bi_result.dissolution_flags,
     )
 
 
