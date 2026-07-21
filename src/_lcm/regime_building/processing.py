@@ -138,6 +138,7 @@ from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import (
+    AgeSpecializedFunction,
     MarkovTransition,
 )
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
@@ -592,6 +593,7 @@ def _build_solution_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             ages=ages,
             flat_param_names=flat_param_names,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
             next_state_names=next_state_names,
@@ -609,6 +611,8 @@ def _build_solution_phase(
             grids=all_grids[regime_name],
             ages=ages,
             enable_jit=enable_jit,
+            period_to_regime_v_interp=period_to_regime_v_interp,
+            continuation_grid_signature=_continuation_grid_signature,
             certainty_equivalent=certainty_equivalent,
             next_state_names=next_state_names,
         )
@@ -1175,6 +1179,7 @@ def _build_simulation_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             ages=ages,
             flat_param_names=flat_param_names,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             certainty_equivalent=certainty_equivalent,
             continuation_functions=solve_functions,
             flow_transitions=core.transitions,
@@ -1791,6 +1796,45 @@ def _phase_coarse_state_law_names(
         if side is not None and not isinstance(side, Mapping):
             coarse.add(state_name)
     return frozenset(coarse)
+
+
+def _process_one_function(
+    *,
+    func: UserFunction,
+    regime_params_template: RegimeParamsTemplate,
+    param_key: str,
+    names_key: str | None = None,
+) -> EconFunction:
+    """Rename a function's params to qnames, or wrap an `AgeSpecializedFunction`.
+
+    A plain function is renamed once. An `AgeSpecializedFunction` becomes a
+    `_SpecializedEconFunction` whose `build(age)` renames the concrete function
+    the wrapper produces for that age under the **same** `param_key` / `names_key`,
+    so every age carries identical qnames — sound because the wrapper's call
+    signature is age-invariant by contract.
+
+    (Restored: a cascade merge dropped this helper while keeping its call site,
+    so age-specialized deterministic functions were never wrapped into the
+    `_SpecializedEconFunction` marker the per-period builders resolve.)
+    """
+    if isinstance(func, AgeSpecializedFunction):
+        concrete_build = func.build
+
+        def build(age: float) -> EconFunction:
+            return _rename_params_to_qnames(
+                func=concrete_build(age),
+                regime_params_template=regime_params_template,
+                param_key=param_key,
+                names_key=names_key,
+            )
+
+        return _SpecializedEconFunction(build=build, signature=func.signature)
+    return _rename_params_to_qnames(
+        func=func,
+        regime_params_template=regime_params_template,
+        param_key=param_key,
+        names_key=names_key,
+    )
 
 
 def _rename_params_to_qnames(
@@ -2917,6 +2961,9 @@ def _build_Q_and_F_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
     flat_param_names: frozenset[str],
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
     continuation_functions: EconFunctionsMapping | None = None,

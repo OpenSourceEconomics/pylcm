@@ -55,6 +55,10 @@ def _build_compute_intermediates_per_period(
     grids: MappingProxyType[StateOrActionName, Grid],
     ages: AgeGrid,
     enable_jit: bool,
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
+    continuation_grid_signature: Callable[..., Hashable] | None = None,
     certainty_equivalent: CertaintyEquivalent | None = None,
     next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> MappingProxyType[int, Callable]:
