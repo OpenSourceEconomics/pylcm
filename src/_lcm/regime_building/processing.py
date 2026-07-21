@@ -9,7 +9,6 @@ from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import jax
-import numpy as np
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
@@ -44,9 +43,7 @@ from _lcm.engine import (
 from _lcm.grids import (
     DiscreteGrid,
     Grid,
-    IrregSpacedGrid,
 )
-from _lcm.grids.continuous import ContinuousGrid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names

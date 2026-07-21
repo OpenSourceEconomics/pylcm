@@ -39,13 +39,10 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
-from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatParams,
-    PeriodToRegimeToSimulationPolicy,
-    PeriodToRegimeToVArr,
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
