@@ -98,6 +98,7 @@ from _lcm.typing import (
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from _lcm.utils.error_messages import format_messages
+from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 from _lcm.variables import (
     from_regime,
@@ -389,6 +390,9 @@ def _build_solution_phase(
         all_grids=all_grids,
         regime_params_template=regime_params_template,
         variables=variables,
+        coarse_state_law_names=_phase_coarse_state_law_names(
+            user_regime=user_regimes[regime_name], phase="solve"
+        ),
     )
 
     flat_param_names = _engine_flat_param_names(
@@ -886,6 +890,9 @@ def _build_simulation_phase(
         all_grids=all_grids,
         regime_params_template=regime_params_template,
         variables=variables,
+        coarse_state_law_names=_phase_coarse_state_law_names(
+            user_regime=user_regime, phase="simulate"
+        ),
     )
     functions = core.functions
     constraints = core.constraints
@@ -1114,6 +1121,7 @@ def _process_regime_core(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variables: Variables,
+    coarse_state_law_names: frozenset[StateName],
 ) -> _CoreResult:
     """Process one phase's regime functions and transitions.
 
@@ -1131,6 +1139,12 @@ def _process_regime_core(
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         variables: States and actions of the regime with kind/topology/process tags.
+        coarse_state_law_names: State names whose deterministic law is COARSE
+            (a bare law, not a per-target dict) in THIS phase. A coarse law's
+            `next_<state>` cells are stamped at the shared bare location so a
+            within-period read MERGES; a per-target law's cells keep their
+            target-qualified location so the read CONFLICTS. See
+            `_phase_coarse_state_law_names`.
 
     Returns:
         Core processing result with functions, constraints, transitions, stochastic
@@ -1202,11 +1216,27 @@ def _process_regime_core(
         )
 
     for func_name, func in deterministic_transition_functions.items():
+        # `func_name` is `<target>__next_<state>`; its last path part is the bare
+        # law name `next_<state>` and the state name drops the `next_` prefix.
+        bare_law_name = tree_path_from_qname(func_name)[-1]
+        state_name = bare_law_name.removeprefix("next_")
+        # Provenance location keys a within-period read's merge/conflict (see
+        # `_law_sources_differ`). For a law COARSE in THIS phase, stamp at the bare
+        # `next_<state>` shared by all its target cells so the read MERGES; a
+        # per-target law keeps its target-qualified `names_key` so the read CONFLICTS.
+        # Decoupled from `names_key` (param binding), so the coarse side of a
+        # map-vs-bare `Phased` merges even though the phase-union template binds its
+        # params per target.
+        names_key = _extract_template_names_key(func_name, regime_params_template)
+        law_source_location = (
+            bare_law_name if state_name in coarse_state_law_names else names_key
+        )
         processed_functions[func_name] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
             param_key=func_name,
-            names_key=_extract_template_names_key(func_name, regime_params_template),
+            names_key=names_key,
+            law_source_location=law_source_location,
         )
 
     for func_name, func in stochastic_transition_functions.items():
@@ -1424,12 +1454,40 @@ def _get_stochastic_transition_names(
     )
 
 
+def _phase_coarse_state_law_names(
+    *, user_regime: UserRegime, phase: Literal["solve", "simulate"]
+) -> frozenset[StateName]:
+    """State names whose deterministic law is COARSE (bare) in the given phase.
+
+    A coarse law binds ONE shared law across all its target cells, so a within-period
+    read of its `next_<state>` is unambiguous and must MERGE across targets; a
+    per-target dict binds a distinct cell per target, so the read is target-dependent
+    and CONFLICTS. `Phased` resolves per phase — the side facing `phase` decides.
+
+    Read from the USER declaration shape (bare callable vs `Mapping`), because after
+    canonicalization a broadcast coarse law and a per-target dict that reuses one
+    callable are indistinguishable by object identity — the very ambiguity the
+    provenance stamp exists to resolve. `Phased(solve=coarse, simulate={...})` (and its
+    mirror) is therefore coarse in exactly one phase, which is why the location must be
+    keyed per phase rather than off the phase-union template.
+    """
+    coarse: set[StateName] = set()
+    for state_name, raw in user_regime.state_transitions.items():
+        side: object = raw
+        if isinstance(raw, Phased):
+            side = raw.solve if phase == "solve" else raw.simulate
+        if side is not None and not isinstance(side, Mapping):
+            coarse.add(state_name)
+    return frozenset(coarse)
+
+
 def _rename_params_to_qnames(
     *,
     func: UserFunction,
     regime_params_template: RegimeParamsTemplate,
     param_key: str,
     names_key: str | None = None,
+    law_source_location: str | None = None,
 ) -> EconFunction:
     """Rename function params to qualified names using dags.signature.rename_arguments.
 
@@ -1444,6 +1502,15 @@ def _rename_params_to_qnames(
             differs from `param_key` — a coarse law's names sit at the bare
             law name while its params bind per target. Defaults to
             `param_key`.
+        law_source_location: The location recorded in the provenance stamp used
+            by `_law_sources_differ` for the within-period conflict guard, when
+            it must differ from `names_key`. This decouples a `next_<state>`
+            cell's merge/conflict identity from where its params BIND: the caller
+            passes the bare `next_<state>` for a law that is COARSE in THIS phase
+            (so its cells share a location and MERGE) and the target-qualified
+            `names_key` for a per-target law (so its cells CONFLICT), even in a
+            `Phased` map-vs-bare law whose phase-union template would otherwise
+            give the coarse side per-target leaves. Defaults to `names_key`.
 
     Returns:
         The function with renamed parameters.
@@ -1454,7 +1521,13 @@ def _rename_params_to_qnames(
     branch: Mapping[str, object] = regime_params_template
     for part in tree_path_from_qname(names_key if names_key is not None else param_key):
         branch = cast("Mapping[str, object]", branch[part])
-    param_names = list(branch)
+    # Scope the rename to THIS cell's OWN parameters. A `Phased` state-transition
+    # cell's template branch is the UNION of both phases' params, so a cell that is
+    # parameter-free (or coarse) in its own phase must not be renamed/stamped merely
+    # because the OTHER phase contributed a param to the union — that is the false
+    # conflict of the map-vs-bare and asymmetric both-per-target cases.
+    own_args = get_union_of_args([func])
+    param_names = [p for p in branch if p in own_args]
     if not param_names:
         # No engine wrapper is added, so no provenance stamp: the cell's own object
         # identity distinguishes one coarse law (the same object broadcast to every
@@ -1464,16 +1537,18 @@ def _rename_params_to_qnames(
         return cast("EconFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
     renamed = rename_arguments(func, mapper=mapper)
-    # Stamp the engine-created wrapper with (user law, template location of its
-    # params). The conflict guard compares this token instead of unwrapping (which
-    # cannot tell the engine's rename layer from a user's own `rename_arguments`
-    # wrapper). `names_key` is decisive: a COARSE law's params sit at the BARE law
-    # name, shared by every target cell (same key -> same token -> merge), whereas a
-    # PER-TARGET dict's params sit at a TARGET-QUALIFIED name, distinct per cell -- so
-    # cells that reuse the SAME callable still get different tokens and remain a
-    # conflict. (The renamed arg names in `mapper` are target-qualified for BOTH and
-    # cannot tell them apart.) Keep the base user law, not a nested token, as origin.
-    location = names_key if names_key is not None else param_key
+    # Stamp the engine-created wrapper with (user law, provenance location). The
+    # conflict guard compares this token instead of unwrapping (which cannot tell the
+    # engine's rename layer from a user's own `rename_arguments` wrapper). The location
+    # is decisive: a COARSE law (this phase) is stamped at the BARE `next_<state>`,
+    # shared by every target cell (same location -> merge), whereas a PER-TARGET dict's
+    # cells carry a TARGET-QUALIFIED location, distinct per cell -- so cells that reuse
+    # the SAME callable still get different tokens and remain a conflict. The caller
+    # supplies `law_source_location` from this phase's declaration shape; it defaults to
+    # `names_key`. Keep the base user law, not a nested token, as origin.
+    location = law_source_location
+    if location is None:
+        location = names_key if names_key is not None else param_key
     prior = getattr(func, LAW_SOURCE_ATTR, None)
     base = prior[0] if isinstance(prior, tuple) else (func if prior is None else prior)
     setattr(renamed, LAW_SOURCE_ATTR, (base, location))

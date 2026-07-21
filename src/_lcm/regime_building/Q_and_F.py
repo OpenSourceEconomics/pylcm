@@ -790,6 +790,10 @@ def _get_U_and_F(
         targets=guard_targets,
         stochastic_transition_names=stochastic_transition_names,
     )
+    _fail_if_unproduced_next_state_is_read(
+        combined=raw_decision_graph,
+        targets=guard_targets,
+    )
     combined = {
         "feasibility": _get_feasibility(
             functions=functions,
@@ -885,6 +889,60 @@ def _fail_if_stochastic_transition_is_read(
             "the within-period decision. Read the CURRENT state instead, or make "
             "this transition deterministic in the phase where utility or "
             "feasibility reads it."
+        )
+        raise ValueError(msg)
+
+
+def _fail_if_unproduced_next_state_is_read(
+    *,
+    combined: Mapping[str, Callable[..., Any]],
+    targets: list[str],
+) -> None:
+    """Reject a within-period read of a `next_<state>` with no producer this phase.
+
+    A within-period utility or feasibility may legitimately read a chosen deterministic
+    next state (the NEGM service-flow `next_<durable>`, or a budget constraint reading
+    it). That read resolves only if THIS phase's flow supplies a producer for the
+    unqualified `next_<state>` — i.e. some reachable target carries the state and
+    contributes its law to the merged deterministic transitions
+    (`_get_deterministic_transitions`). When no reachable target carries it in this
+    phase (a target-only handover whose carrier does not grid it here, or a carried
+    state imputed rather than gridded in the solve phase), the name is left an
+    unresolved external argument that fails much later with a cryptic missing-argument
+    error — and only in the phase that lacks the producer. Fail early, naming each such
+    state.
+
+    Producer availability is read off `combined`: a produced `next_<state>` is a KEY
+    (its merged transition function); a read-but-unproduced one is an ancestor that is
+    not a key. Stochastic next-states are excluded from the flow and guarded separately
+    (`_fail_if_stochastic_transition_is_read`, run first), so any remaining unproduced
+    `next_*` ancestor is a genuine deterministic no-producer read.
+
+    Being phase-local — it runs on each phase's own flow DAG — this catches a
+    simulate-only read whose producer exists only in the solve phase, and does NOT
+    over-reject a read whose producer a reachable ordinary target does supply.
+
+    Args:
+        combined: The raw decision graph — deterministic transitions (the producers),
+            constraints, and functions — keyed by name.
+        targets: The decision target names the graph evaluates (`utility` and the
+            individual constraints).
+    """
+    read_names = get_ancestors(combined, targets, include_targets=True)
+    offending = sorted(
+        name for name in read_names if name.startswith("next_") and name not in combined
+    )
+    if offending:
+        names = ", ".join(offending)
+        msg = (
+            f"Within-period utility or feasibility reads the next value of state(s) "
+            f"({names}), but this phase's flow has no producer for them. A "
+            f"`next_<state>` is produced only where a reachable target carries the "
+            f"state in this phase; a target-only handover whose carrier does not grid "
+            f"it here — or a carried state imputed rather than gridded in the solve "
+            f"phase — leaves the read unsupplied. Grid the state in a reachable target "
+            f"(or in this regime) if the decision genuinely depends on its next value, "
+            f"or remove the `next_<state>` read from the within-period function."
         )
         raise ValueError(msg)
 

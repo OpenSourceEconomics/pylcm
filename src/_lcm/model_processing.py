@@ -230,7 +230,6 @@ def validate_model_inputs(
         )
     )
     error_messages.extend(_validate_constraint_phase_invariance(user_regimes))
-    error_messages.extend(_validate_no_target_only_next_reads(user_regimes))
 
     for name, user_regime in user_regimes.items():
         if user_regime.taste_shocks is not None and not any(
@@ -455,64 +454,6 @@ def _validate_constraint_phase_invariance(
                     f"DAG would be left with an unsupplied argument. Read the "
                     f"carried state's current value instead, or make it an "
                     f"ordinary (non-carried) state."
-                )
-    return error_messages
-
-
-def _validate_no_target_only_next_reads(
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> list[str]:
-    """Reject a within-period read of `next_<target-only-state>`.
-
-    A *target-only* state is declared in `state_transitions` but not in the
-    regime's own `states` (it is produced by the source regime and handed to a
-    reachable target that carries it). Its `next_<state>` is therefore a HANDOVER
-    into the target's state space, not a within-period node of the source: the
-    canonical solve slice routes it under `<target>__next_<state>`, leaving no
-    unqualified `next_<state>` producer in the source's own feasibility/utility DAG.
-
-    A source utility or constraint that reads the unqualified `next_<state>` would
-    leave the solve build with an unsupplied argument — a cryptic missing-argument
-    failure deep in the build. (The pre-canonicalization `get_all_functions` view
-    misleadingly shows a producer, because there the bare law is still keyed
-    unqualified; the discrepancy is exactly what makes the eventual failure
-    obscure.) Reject it early and clearly.
-
-    Args:
-        user_regimes: Mapping of finalized regime names to `Regime` instances.
-
-    Returns:
-        A list of error messages. Empty list if validation passes.
-
-    """
-    error_messages: list[str] = []
-    for regime_name, user_regime in user_regimes.items():
-        target_only_next = frozenset(
-            f"next_{name}"
-            for name in set(user_regime.state_transitions) - set(user_regime.states)
-        )
-        if not target_only_next:
-            continue
-        solve_funcs = dict(user_regime.get_all_functions(phase="solve"))
-        within_period = ["utility", *user_regime.constraints]
-        for func_name in within_period:
-            if func_name not in solve_funcs:
-                continue
-            ancestors = get_ancestors(
-                solve_funcs, targets=[func_name], include_targets=False
-            )
-            offending = sorted(ancestors & target_only_next)
-            if offending:
-                error_messages.append(
-                    f"'{func_name}' in regime '{regime_name}' reads the next value "
-                    f"of a target-only state {offending}. A target-only state "
-                    f"(declared in `state_transitions` but not in this regime's "
-                    f"`states`) is produced for a reachable target that carries it, so "
-                    f"its `next_<state>` is a handover into the target's state space, "
-                    f"not a within-period value of this regime — the solve build has "
-                    f"no unqualified producer for it. Grid the state in this regime's "
-                    f"`states` if the decision genuinely depends on its next value, or "
-                    f"remove the `next_<state>` read from the within-period function."
                 )
     return error_messages
 
