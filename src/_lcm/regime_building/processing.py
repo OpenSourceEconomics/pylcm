@@ -130,7 +130,6 @@ from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import (
-    AgeSpecializedFunction,
     MarkovTransition,
 )
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
