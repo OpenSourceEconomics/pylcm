@@ -22,7 +22,11 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import MarkovTransition
+from lcm.transition import (
+    AgeSpecializedFunction,
+    AgeSpecializedGrid,
+    MarkovTransition,
+)
 
 if TYPE_CHECKING:
     import lcm.regime
