@@ -29,6 +29,18 @@ REPORTED, not repaired, through `ImplicitOptimumDiagnostics`:
   with the parameter; without this screen the tangent `-Q_ftheta/Q_ff`, valid
   only at a stationary point, would be reported as trustworthy.
 
+The kink screen has TWO tiers (round-3 audit F1). The exact certificate is
+BRANCH IDENTITY: when the caller supplies a `branch_id` oracle labelling which
+analytic piece of the value surface wins at a query point, a winner whose branch
+is not constant across the probe neighborhood is a breakpoint and is marked
+unresolved, independent of the jump amplitude. Without `branch_id` the screen
+falls back to a value-only HEURISTIC — a multi-radius slope-jump contraction
+test — which is NOT a differentiability certificate: a kink whose slope jump is
+below the value oracle's rounding floor at the probe radius (yet still yields an
+O(1) argmax-tangent error) cannot be seen from values alone. `branch_certified`
+reports which tier ran, so a consumer never mistakes a heuristic pass for a
+proof; supply `branch_id` wherever a rigorous certificate is required.
+
 Consumers must treat `unresolved` cells as *no derivative available* and
 fall back to finite differences or refuse inference there; the tangent is
 still returned (guarded against division blow-up) so a vectorized caller
@@ -106,10 +118,18 @@ class ImplicitOptimumDiagnostics:
     """Best and runner-up mesh basins value-tied at the mesh stage."""
 
     nonstationary: BoolND
-    """`|Q_f(f*)|` too large for an interior stationary point — the winner
+    """`|Q_f(f*)|` too large for an interior stationary point, OR the winning
+    branch identity is not stable across the probe neighborhood — the winner
     sits at a KINK (or the primal under-polished), so the
     implicit-function-theorem tangent `-Q_ftheta/Q_ff`, which assumes
     `Q_f(f*)=0`, does not apply."""
+
+    branch_certified: BoolND
+    """Whether the smoothness verdict at this cell rests on the EXACT branch-
+    identity certificate (`branch_id` supplied and probed) rather than the
+    value-only slope-jump HEURISTIC. Where `False`, a `resolved` cell is only
+    heuristically screened: a sub-rounding-amplitude kink can slip through, so a
+    consumer needing a guarantee must supply `branch_id` (round-3 audit F1)."""
 
     unresolved: BoolND
     """Any of the above: no trustworthy local-normal derivative here."""
@@ -248,6 +268,7 @@ def implicit_optimum_diagnostics(
     bounds: tuple[FloatND, FloatND],
     n_mesh: int = 33,
     polish_iterations: int = 32,
+    branch_id: Callable[[FloatND, FloatND], FloatND] | None = None,
     curvature_floor: float = _CURVATURE_FLOOR,
     tie_margin: float = _TIE_MARGIN,
     stationarity_rtol: float = _STATIONARITY_RTOL,
@@ -256,7 +277,18 @@ def implicit_optimum_diagnostics(
     kink_contraction_ratio: float = _KINK_CONTRACTION_RATIO,
     kink_contraction_tol: float = _KINK_CONTRACTION_TOL,
 ) -> ImplicitOptimumDiagnostics:
-    """Classify where the implicit derivative at `f_star` is trustworthy."""
+    """Classify where the implicit derivative at `f_star` is trustworthy.
+
+    `branch_id`, if given, maps `(f, theta)` to a per-cell label of the active
+    analytic branch of the value surface (e.g. the winning discrete inner choice
+    or a floor-binding indicator). It is the EXACT kink certificate: a winner
+    whose branch differs anywhere in the probe neighborhood
+    `{f_star - delta, f_star, f_star + delta}` sits on a breakpoint and is marked
+    nonstationary regardless of the slope-jump amplitude — closing the blind spot
+    of the value-only heuristic, which cannot see a kink below the oracle's
+    rounding floor (round-3 audit F1). Without `branch_id` only the heuristic
+    screen runs and `branch_certified` is `False`.
+    """
     lower, upper = bounds
     # The polish bracket flanking the winning node is [node-step, node+step],
     # width 2*step; after `polish_iterations` golden-section reductions the
@@ -314,21 +346,39 @@ def implicit_optimum_diagnostics(
         jump_inner > kink_contraction_tol * jump_outer
     )
 
+    # Exact certificate (F1): a winner whose active branch is not constant across
+    # the probe neighborhood is a breakpoint, whatever the slope-jump amplitude —
+    # this is what the value-only heuristic cannot guarantee. Absent a `branch_id`
+    # oracle the branch is unknown, so the term is inert and only the heuristic
+    # runs (`branch_certified=False`).
+    if branch_id is None:
+        branch_unstable = jnp.zeros_like(kinked)
+        branch_certified = jnp.zeros_like(kinked)
+    else:
+        f_plus = jnp.clip(f_star + delta, min=lower, max=upper)
+        f_minus = jnp.clip(f_star - delta, min=lower, max=upper)
+        b_star = branch_id(f_star, theta)
+        b_plus = branch_id(f_plus, theta)
+        b_minus = branch_id(f_minus, theta)
+        branch_unstable = (b_plus != b_star) | (b_minus != b_star)
+        branch_certified = jnp.ones_like(kinked)
+
     # A genuine interior optimum also leaves |Q_f| ~ |Q_ff| * width after the
     # polish; a far larger residual is an under-polished primal (or a one-sided
-    # winner). Combine with the kink screen; suppress both at a bound (Q_f is
-    # one-sided there, already reported by the bound flags).
+    # winner). Combine with the kink screen and the branch certificate; suppress
+    # all at a bound (Q_f is one-sided there, already reported by the bound flags).
     stationarity_threshold = (
         stationarity_rtol * jnp.abs(q_ff) * width + stationarity_atol
     )
-    nonstationary = ((jnp.abs(q_f) > stationarity_threshold) | kinked) & ~(
-        at_lower | at_upper
-    )
+    nonstationary = (
+        (jnp.abs(q_f) > stationarity_threshold) | kinked | branch_unstable
+    ) & ~(at_lower | at_upper)
     return ImplicitOptimumDiagnostics(
         at_lower_bound=at_lower,
         at_upper_bound=at_upper,
         flat_curvature=flat,
         basin_tie=tie,
         nonstationary=nonstationary,
+        branch_certified=branch_certified,
         unresolved=at_lower | at_upper | flat | tie | nonstationary,
     )

@@ -662,6 +662,73 @@ def test_genuine_smooth_optimum_stays_resolved() -> None:
     assert not bool(diag.unresolved)
 
 
+def test_branch_certificate_flags_a_kink_the_value_heuristic_misses() -> None:
+    """The exact branch-identity certificate catches a sub-heuristic kink (F1).
+
+    Round-3 finding F1: the multi-radius slope-jump contraction test is still a
+    value-only HEURISTIC, not a differentiability certificate. A kink whose jump
+    is drowned by the smooth curvature at the probe radius passes as stationary,
+    yet the IFT tangent `-Q_ftheta/Q_ff = 1` is order-one wrong (`df*/dtheta = 0`
+    for the pinned optimum). Here `kink_coef = 1e-7` is far below the radius-scale
+    curvature term, so the heuristic reports the winner resolved. Supplying a
+    `branch_id` oracle labelling the analytic piece (`sign(f - 0.3)`) marks the
+    breakpoint winner nonstationary regardless of amplitude — and reports that the
+    verdict now rests on the exact certificate.
+    """
+    objective = _pinned_kink_objective(1e-7)
+    theta = jnp.asarray(0.0)
+    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
+    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
+        objective, theta, bounds
+    )
+    assert abs(float(f_star) - 0.3) < 1e-3
+
+    heuristic = implicit_optimum_diagnostics(
+        objective, theta=theta, f_star=f_star, basin_margin=basin_margin, bounds=bounds
+    )
+    # The value-only screen misses this kink and does not claim a certificate.
+    assert not bool(heuristic.nonstationary)
+    assert not bool(heuristic.branch_certified)
+
+    certified = implicit_optimum_diagnostics(
+        objective,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=basin_margin,
+        bounds=bounds,
+        branch_id=lambda f, _theta: jnp.sign(f - 0.3),
+    )
+    # The exact branch certificate flags the breakpoint winner and says so.
+    assert bool(certified.nonstationary)
+    assert bool(certified.unresolved)
+    assert bool(certified.branch_certified)
+
+
+def test_branch_certificate_does_not_over_flag_a_smooth_optimum() -> None:
+    """A constant branch across the probe neighborhood leaves a smooth optimum
+    resolved — the exact certificate adds no false positives (F1)."""
+
+    def objective(f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+        return -0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
+
+    theta = jnp.asarray(0.0)
+    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
+    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
+        objective, theta, bounds
+    )
+    diag = implicit_optimum_diagnostics(
+        objective,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=basin_margin,
+        bounds=bounds,
+        branch_id=lambda f, _theta: jnp.zeros_like(f),  # one analytic branch
+    )
+    assert not bool(diag.nonstationary)
+    assert not bool(diag.unresolved)
+    assert bool(diag.branch_certified)
+
+
 # --- F2 -----------------------------------------------------------------
 # Midpoint-only validation is mesh-relative, not a global safeguard: a peak
 # narrower than the mesh that misses every sampled midpoint is neither seen nor
