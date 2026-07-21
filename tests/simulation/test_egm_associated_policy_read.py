@@ -87,3 +87,24 @@ def test_inverting_the_value_derivative_recovers_the_attaining_action():
 
     assert objective(c_associated) > objective(linear_policy)
     np.testing.assert_allclose(c_associated, 1.0 / 0.9, atol=1e-5)
+
+
+def test_unsupported_all_nan_row_yields_a_nan_derivative():
+    """An all-NaN (fail-closed) row's value-derivative is NaN, never a finite slope.
+
+    A row published all-NaN is rejected off-grid so the read falls back to the
+    constraint-masked grid pair. The associated read maps the derivative through
+    `inverse_marginal_utility`, so the derivative of an unsupported row must stay
+    NaN — otherwise a finite slope would invert to a spurious finite action that
+    passes the acceptance checks and admits a fabricated read.
+    """
+    nan_row = EGMSimPolicy(
+        endog_grid=jnp.array([jnp.nan, jnp.nan]),
+        policy=jnp.array([jnp.nan, jnp.nan]),
+        value=jnp.array([jnp.nan, jnp.nan]),
+        marginal_utility=jnp.array([jnp.nan, jnp.nan]),
+    )
+    deriv = _hermite_value_derivative_rows(
+        sim_policy=nan_row, index=(), resources=jnp.array([2.5]), n_subjects=1
+    )
+    assert bool(jnp.isnan(deriv[0]))
