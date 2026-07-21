@@ -346,3 +346,89 @@ def test_interpolant_read_is_invariant_to_state_axis_flattening() -> None:
     )
     assert jnp.array_equal(v_flat, v_nd.reshape(6))
     assert jnp.array_equal(d_flat, d_nd.reshape(6))
+
+
+# --- F4 (round-2 audit): rounded ties must not flip the discrete outer action ---
+#
+# Two coupled defects let backend/precision rounding pick a different outer
+# action despite the declared value tolerance: (a) the four-point slope
+# reduction cancelled, so a mathematically constant surface grew a one-ULP
+# interpolation peak; (b) the candidate fold compared values with strict `>` /
+# `==` and no tie band, so a sub-ULP difference displaced the canonical smaller
+# action. The fix centers the stencil (constant column -> exactly-zero slopes)
+# and folds candidates within `value_atol + value_rtol*max(|v1|,|v2|)` by the
+# smaller-abscissa rule (DC-1 / DC-2).
+
+
+def test_constant_surface_does_not_flip_the_outer_action() -> None:
+    interp = LocalCubicOuterInterpolant()
+    nodes = jnp.asarray([0.0, 1.0, 2.0, 3.0])
+    values = jnp.full((4,), 10.0)
+
+    # Centering collapses the cancellation: the residual interpolation ripple
+    # is at most a few ULP of the value scale, not an O(1e-1) spurious peak.
+    dense = interp.evaluate(nodes=nodes, values=values, query=jnp.linspace(0, 3, 601))
+    assert float(jnp.max(dense) - 10.0) < 1e-12
+
+    # ... and the tie band resolves whatever ripple remains to the smaller node.
+    result = safeguarded_continuous_argmax(
+        lambda z: interp.evaluate(nodes=nodes, values=values, query=z),
+        nodes=nodes,
+        node_values=values,
+        golden_iterations=16,
+        value_atol=1e-10,
+        value_rtol=1e-8,
+    )
+    assert float(result.x) == 0.0
+
+
+def test_below_tolerance_value_difference_resolves_to_the_smaller_action() -> None:
+    one = np.float64(1.0)
+    up = np.nextafter(one, np.inf)  # 2.22e-16 above 1, far below any real band
+
+    # Within the band -> the smaller abscissa (action 0) wins, not the sub-ULP
+    # larger value at action 1.
+    tied = _consider(
+        cand_x=jnp.array(1.0),
+        cand_v=jnp.array(up),
+        cand_width=jnp.array(0.0),
+        best_x=jnp.array(0.0),
+        best_v=jnp.array(one),
+        second_x=jnp.array(1.0),
+        second_v=jnp.array(-jnp.inf),
+        width=jnp.array(0.0),
+        value_atol=1e-10,
+        value_rtol=1e-8,
+    )
+    assert float(tied[0]) == 0.0
+
+    # A genuine improvement beyond the band still wins ...
+    real = _consider(
+        cand_x=jnp.array(1.0),
+        cand_v=jnp.array(2.0),
+        cand_width=jnp.array(0.0),
+        best_x=jnp.array(0.0),
+        best_v=jnp.array(1.0),
+        second_x=jnp.array(1.0),
+        second_v=jnp.array(-jnp.inf),
+        width=jnp.array(0.0),
+        value_atol=1e-10,
+        value_rtol=1e-8,
+    )
+    assert float(real[0]) == 1.0
+
+    # ... and a finite candidate always beats a -inf incumbent regardless of x
+    # (the band is taken only where both values are finite).
+    over_inf = _consider(
+        cand_x=jnp.array(1.0),
+        cand_v=jnp.array(5.0),
+        cand_width=jnp.array(0.0),
+        best_x=jnp.array(0.0),
+        best_v=jnp.array(-jnp.inf),
+        second_x=jnp.array(0.0),
+        second_v=jnp.array(-jnp.inf),
+        width=jnp.array(0.0),
+        value_atol=1e-10,
+        value_rtol=1e-8,
+    )
+    assert float(over_inf[0]) == 1.0

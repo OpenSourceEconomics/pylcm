@@ -288,8 +288,16 @@ def _four_point_slopes(*, nodes: FloatND, values: FloatND) -> FloatND:
     weights = jnp.where(is_target, target_weight[:, None], weights)
 
     ys = values[stencil]  # (C, 4, *S)
+    # Center each stencil on its own target node's value before the weighted
+    # sum. The Lagrange derivative weights sum to zero, so subtracting the
+    # target value is exact-arithmetic-identical, but it removes the
+    # catastrophic cancellation that otherwise turns a (near-)constant surface
+    # into a one-ULP interpolation peak — enough to flip a discrete outer
+    # action under a strict comparison (DC-1). The target slot becomes exactly
+    # zero, so a genuinely constant column yields exactly-zero slopes.
+    centered = ys - values[:, None]  # (C, 4, *S)
     weights_b = weights.reshape(*weights.shape, *([1] * (values.ndim - 1)))
-    return jnp.sum(weights_b * ys, axis=1)
+    return jnp.sum(weights_b * centered, axis=1)
 
 
 def _three_point_slopes(*, nodes: FloatND, values: FloatND) -> FloatND:

@@ -114,6 +114,8 @@ def safeguarded_continuous_argmax(
     node_values: FloatND,
     golden_iterations: int,
     max_brackets: int = 8,
+    value_atol: float = 0.0,
+    value_rtol: float = 0.0,
 ) -> SafeguardedSearchResult:
     """Continuous outer argmax, safeguarded by the exact candidate mesh.
 
@@ -128,6 +130,11 @@ def safeguarded_continuous_argmax(
         max_brackets: Node-local maxima refined per cell (the top ones by
             exact value); further local maxima still compete as exact nodes,
             just without continuous refinement.
+        value_atol: Absolute value-tie band for the deterministic action fold.
+        value_rtol: Relative value-tie band. Together with ``value_atol`` this
+            is the certified tolerance below which a value difference never
+            flips the discrete selected action (it resolves to the smaller
+            abscissa); ``0.0`` recovers the exact strict comparison.
 
     Returns:
         The per-cell selection with margins and bound/bracket diagnostics.
@@ -175,6 +182,8 @@ def safeguarded_continuous_argmax(
             second_x=second_x,
             second_v=second_v,
             width=width,
+            value_atol=value_atol,
+            value_rtol=value_rtol,
         )
     coarse_x = best_x
     coarse_v = best_v
@@ -191,6 +200,8 @@ def safeguarded_continuous_argmax(
             second_x=second_x,
             second_v=second_v,
             width=width,
+            value_atol=value_atol,
+            value_rtol=value_rtol,
         )
 
     return SafeguardedSearchResult(
@@ -243,24 +254,47 @@ def _consider(
     second_x: FloatND,
     second_v: FloatND,
     width: FloatND,
+    value_atol: float = 0.0,
+    value_rtol: float = 0.0,
 ) -> tuple[FloatND, FloatND, FloatND, FloatND, FloatND]:
     """One step of the two-best fold with the deterministic tie rule.
 
-    A candidate displaces the incumbent when its value is strictly higher,
-    or exactly ties with a strictly smaller abscissa; the displaced
-    incumbent becomes the runner-up. Otherwise the candidate competes for
-    the runner-up slot under the same rule.
+    A candidate displaces the incumbent when its value is above it by more
+    than the scale-aware value band, or lies within that band with a strictly
+    smaller abscissa; the displaced incumbent becomes the runner-up. Otherwise
+    the candidate competes for the runner-up slot under the same rule.
+
+    The band ``value_atol + value_rtol * max(|v1|, |v2|)`` is the SAME certified
+    value tolerance the mesh validates to, so a value difference below the
+    backend's rounding/cancellation noise never flips the *discrete* selected
+    action — it resolves to the smaller abscissa deterministically (DC-1/DC-2).
+    Defaults of ``0.0`` recover the exact strict comparison. The band is taken
+    only where both values are finite, so a finite candidate always beats a
+    ``-inf`` incumbent and two ``-inf`` values never tie.
     """
-    better = (cand_v > best_v) | ((cand_v == best_v) & (cand_x < best_x))
+
+    def _tie(a: FloatND, b: FloatND) -> FloatND:
+        both_finite = jnp.isfinite(a) & jnp.isfinite(b)
+        band = value_atol + value_rtol * jnp.maximum(jnp.abs(a), jnp.abs(b))
+        return jnp.where(both_finite, band, 0.0)
+
+    best_tie = _tie(cand_v, best_v)
+    better = (cand_v > best_v + best_tie) | (
+        (jnp.abs(cand_v - best_v) <= best_tie) & (cand_x < best_x)
+    )
     # The runner-up must be a DISTINCT abscissa from the winner. The objective
     # is a function of the abscissa, so a candidate at the winner's own `x`
     # (e.g. a refined bracket optimum that lands back on an already-folded node)
     # carries the winner's value and would install a duplicate second-best —
     # a spurious zero best/second margin that reads as a branch tie.
+    second_tie = _tie(cand_v, second_v)
     runner_up = (
         (~better)
         & (cand_x != best_x)
-        & ((cand_v > second_v) | ((cand_v == second_v) & (cand_x < second_x)))
+        & (
+            (cand_v > second_v + second_tie)
+            | ((jnp.abs(cand_v - second_v) <= second_tie) & (cand_x < second_x))
+        )
     )
     new_second_x = jnp.where(better, best_x, jnp.where(runner_up, cand_x, second_x))
     new_second_v = jnp.where(better, best_v, jnp.where(runner_up, cand_v, second_v))
