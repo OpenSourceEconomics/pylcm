@@ -1834,9 +1834,7 @@ def test_gate_param_aliasing_a_target_state_and_source_param_is_rejected():
         match=r"simultaneously a TARGET state.*and a source parameter",
     ):
         _solve_fixture(
-            _make_gate_param_aliases_target_state_regimes(
-                source_supplies_x_param=True
-            ),
+            _make_gate_param_aliases_target_state_regimes(source_supplies_x_param=True),
             flat_params,
         )
 
@@ -1857,3 +1855,274 @@ def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
         _make_gate_param_aliases_target_state_regimes(source_supplies_x_param=False),
         flat_params,
     )
+
+
+# ----------------------------------------------------------------------------------
+# simulate-round9 F1: the ENGINE argument namespace must be reserved too.
+#
+# `_evaluate_edge_fold` binds the internal engine mappings `SAME_PERIOD_V_ARG`
+# (always) and `SAME_PERIOD_PARAMS_ARG` (when a ref/gate reads it) into the fold
+# kwargs, then OVERWRITES them from `flat_params[source]` -- so a source param
+# named after an engine arg is bound as the source scalar on the SOLVE side. The
+# simulate evaluator's `_expose` classifies the same spelling as the engine mapping
+# BEFORE it could be a source param, so SIMULATE reads the engine object. Solve and
+# simulate then evaluate different gates (or the solve side crashes when the source
+# scalar overwrites the value MAPPING). A target STATE named after an engine arg is
+# the same hazard. The round-8 guard only intersected source-params with target
+# STATES, never the engine names; the round-9 fix reserves both.
+# ----------------------------------------------------------------------------------
+def _gate_reads_params_engine_arg(
+    V_target: FloatND, same_period_regime_to_params: FloatND
+) -> BoolND:
+    return V_target > same_period_regime_to_params
+
+
+def _make_source_param_aliases_engine_params_regimes() -> dict[str, Regime]:
+    """Source gate reads a bare param spelled exactly `SAME_PERIOD_PARAMS_ARG`,
+    supplied in `flat_params['src']` -- so it is both a source param and the fold's
+    engine reference-params leaf."""
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"y": _next_y_identity},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src_no_param},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_reads_params_engine_arg,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    return {"src": src, "target": target, "fallback": fallback}
+
+
+def _u_src_reads_v_arg_param(
+    y: ContinuousState, work: DiscreteAction, same_period_regime_to_V_arr: FloatND
+) -> FloatND:
+    return jnp.zeros_like(y) * work + 0.0 * same_period_regime_to_V_arr
+
+
+def _gate_v_only(V_target: FloatND) -> BoolND:
+    return V_target > 0.0
+
+
+def _make_source_param_aliases_engine_v_regimes() -> dict[str, Regime]:
+    """Source utility reads a bare param spelled exactly `SAME_PERIOD_V_ARG`,
+    supplied in `flat_params['src']`. `SAME_PERIOD_V_ARG` is ALWAYS in the fold
+    signature, so the source scalar overwrites the solve-side value MAPPING."""
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"y": _next_y_identity},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src_reads_v_arg_param},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_v_only,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_identity},
+    )
+    return {"src": src, "target": target, "fallback": fallback}
+
+
+def _u_id_v_arg_state(same_period_regime_to_V_arr: ContinuousState) -> FloatND:
+    return same_period_regime_to_V_arr
+
+
+def _identity_v_arg_state(
+    same_period_regime_to_V_arr: ContinuousState,
+) -> ContinuousState:
+    return same_period_regime_to_V_arr
+
+
+def _gate_reads_v_arg_state(
+    V_target: FloatND, same_period_regime_to_V_arr: FloatND
+) -> BoolND:
+    return V_target > same_period_regime_to_V_arr
+
+
+def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
+    """Target STATE named exactly `SAME_PERIOD_V_ARG`; the gate reads it. It shares
+    one fold leaf with the engine value mapping."""
+    src = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"y": _next_y_identity},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src_no_param},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_reads_v_arg_state,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback",
+                            projection={SAME_PERIOD_V_ARG: _identity_v_arg_state},
+                        )
+                    )
+                },
+            )
+        },
+    )
+    target = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={SAME_PERIOD_V_ARG: LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_id_v_arg_state},
+    )
+    fallback = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={SAME_PERIOD_V_ARG: LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_id_v_arg_state},
+    )
+    return {"src": src, "target": target, "fallback": fallback}
+
+
+def test_source_param_aliasing_the_engine_params_arg_is_rejected():
+    """simulate-round9 F1: a source param named `SAME_PERIOD_PARAMS_ARG` opens the
+    gate in solve (source scalar) but closes it in simulate (engine mapping)."""
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType(
+                {
+                    "H__discount_factor": jnp.asarray(_BETA),
+                    SAME_PERIOD_PARAMS_ARG: jnp.asarray(0.1),
+                }
+            ),
+            "target": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"(?i)engine|same_period_regime_to_params|reserved",
+    ):
+        _solve_fixture(_make_source_param_aliases_engine_params_regimes(), flat_params)
+
+
+def test_source_param_aliasing_the_engine_v_arg_is_rejected():
+    """simulate-round9 F1: a source param named `SAME_PERIOD_V_ARG` overwrites the
+    solve-side value mapping."""
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType(
+                {
+                    "H__discount_factor": jnp.asarray(_BETA),
+                    SAME_PERIOD_V_ARG: jnp.asarray(0.1),
+                }
+            ),
+            "target": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"(?i)engine|same_period_regime_to_V_arr|reserved",
+    ):
+        _solve_fixture(_make_source_param_aliases_engine_v_regimes(), flat_params)
+
+
+def test_target_state_aliasing_the_engine_v_arg_is_rejected():
+    """simulate-round9 F1: a target STATE named `SAME_PERIOD_V_ARG` shares one fold
+    leaf with the engine value mapping."""
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "target": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"(?i)engine|same_period_regime_to_V_arr|reserved",
+    ):
+        _solve_fixture(_make_target_state_aliases_engine_v_regimes(), flat_params)
+
+
+def test_source_param_near_engine_name_still_solves():
+    """Negative control: a source param whose name merely RESEMBLES an engine arg
+    (not an exact match) is a legitimate gate param and must still solve."""
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType(
+                {
+                    "H__discount_factor": jnp.asarray(_BETA),
+                    "same_period_regime_to_params_user": jnp.asarray(0.1),
+                }
+            ),
+            "target": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+
+    def _gate_near(
+        V_target: FloatND, same_period_regime_to_params_user: FloatND
+    ) -> BoolND:
+        return V_target > same_period_regime_to_params_user
+
+    regimes = _make_source_param_aliases_engine_params_regimes()
+    # swap the gate to read the near-miss (non-engine) name
+    regimes["src"] = Regime(
+        transition={"target": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"y": _next_y_identity},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src_no_param},
+        gated_edges={
+            "target": GatedEdge(
+                gate=_gate_near,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
+    # Must not raise.
+    _solve_fixture(regimes, flat_params)

@@ -684,6 +684,38 @@ def _reject_edge_fold_state_param_collisions(
                     "two namespaces are disjoint."
                 )
                 raise ModelInitializationError(msg)
+            # A source flat-param key (or target state) that shadows one of the
+            # internal ENGINE argument names is a second solve/simulate divergence
+            # of the same class (simulate-round9 F1): on the solve side
+            # `_evaluate_edge_fold` binds `SAME_PERIOD_V_ARG` to the value mapping
+            # and `SAME_PERIOD_PARAMS_ARG` to the reference params, then overwrites
+            # those slots with any same-named source flat-param; on the simulate
+            # side `_expose` classifies the identical spelling as the engine arg
+            # BEFORE it can be recorded as a source param. So a source scalar named
+            # `same_period_regime_to_params` opens the gate on solve (scalar) but
+            # closes it on simulate (mapping), and a source
+            # `same_period_regime_to_V_arr` overwrites the value mapping outright.
+            # Reserve the engine names against
+            # both source params and target states, restricted to the names actually
+            # present in this fold's signature.
+            engine_args = {SAME_PERIOD_V_ARG, SAME_PERIOD_PARAMS_ARG}
+            engine_collisions = sorted(
+                sig_params & engine_args & (source_param_names | target_state_names)
+            )
+            if engine_collisions:
+                msg = (
+                    f"The gated edge '{source_name}' -> '{target_name}' has a gate "
+                    f"or projection argument {engine_collisions} that shadows a "
+                    "reserved internal engine argument name "
+                    f"({sorted(engine_args)}). Such a name is bound as the source "
+                    "parameter / target state on one side of the solve/simulate seam "
+                    "but as the engine's value/params mapping on the other, so the "
+                    "solved `Wbar` and the simulate router would evaluate different "
+                    "gates (or crash when a source value overwrites the value "
+                    "mapping). Rename the source parameter (or the target state) so "
+                    "it does not collide with a reserved engine argument."
+                )
+                raise ModelInitializationError(msg)
 
 
 def _evaluate_edge_fold(
