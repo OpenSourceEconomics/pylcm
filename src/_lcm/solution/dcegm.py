@@ -117,7 +117,7 @@ class DCEGM(Solver):
     error compounds across periods.
     """
 
-    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues"
+    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "mss"
     """Upper-envelope refinement backend removing dominated Euler candidates.
 
     - `"fues"`: the Fast Upper-Envelope Scan — a sequential scan that inserts
