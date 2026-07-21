@@ -26,6 +26,7 @@ from _lcm.params.processing import (
     materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
@@ -44,6 +45,7 @@ from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.typing import UserParams
 
@@ -166,6 +168,7 @@ def validate_model_inputs(
     regime_id_class: type,
     n_subjects: int | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
+    ages: AgeGrid | None = None,
 ) -> None:
     """Validate model constructor inputs.
 
@@ -174,6 +177,9 @@ def validate_model_inputs(
     function with their declared types. This function focuses on value and
     cross-field rules.
 
+    `ages` lets the used-variable check resolve `AgeSpecializedFunction` functions at
+    each regime's representative age, so a state read only by a policy-specialized
+    function still counts as used.
     """
     _fail_if_invalid_n_subjects(n_subjects=n_subjects)
 
@@ -225,9 +231,10 @@ def validate_model_inputs(
         )
     error_messages.extend(
         _validate_all_variables_used(
-            user_regimes, broadcast_variables=broadcast_variables
+            user_regimes, broadcast_variables=broadcast_variables, ages=ages
         )
     )
+    error_messages.extend(_validate_constraint_phase_invariance(user_regimes))
 
     for name, user_regime in user_regimes.items():
         if user_regime.taste_shocks is not None and not any(
@@ -257,10 +264,35 @@ def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
         raise ValueError(msg)
 
 
+def _model_wide_conditioning_names(
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> set[str]:
+    """Every conditioning state read by any state-conditioned process in the model.
+
+    `state_conditioned.on` is a real dependency of the generated weights/draw functions,
+    but it lives in grid metadata rather than in a user function, so a callable-DAG scan
+    misses it. A conditioned process's transition weight is also built into the Q of
+    every *source* regime that can reach the process's regime, evaluated at that
+    source's current `on` state — so the dependency is not local to the process's regime
+    (round-3 review F1). We collect the conditioners model-wide and, at the call site,
+    credit each regime for those it actually carries: a conservative over-approximation
+    of reachability whose only cost is not flagging a genuinely unused state, never a
+    wrong policy.
+    """
+    return {
+        grid.state_conditioned.on
+        for user_regime in user_regimes.values()
+        for grid in user_regime.states.values()
+        if isinstance(grid, _ContinuousStochasticProcess)
+        and grid.state_conditioned is not None
+    }
+
+
 def _validate_all_variables_used(
     user_regimes: Mapping[RegimeName, UserRegime],
     *,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
+    ages: AgeGrid | None = None,
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -285,12 +317,28 @@ def _validate_all_variables_used(
 
     """
     error_messages = []
+    conditioning_names = _model_wide_conditioning_names(user_regimes)
 
     for regime_name, user_regime in user_regimes.items():
         variable_names = set(user_regime.states) | set(user_regime.actions)
         if broadcast_variables is not None:
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
+        if ages is not None:
+            # Resolve any `AgeSpecializedFunction` marker to its concrete function at a
+            # representative active age so `get_ancestors` sees the real argument
+            # dependencies. The dependency structure is age-invariant, so any active
+            # age serves; the resolved build is memoized and reused by the engine.
+            active_periods = ages.get_periods_where(user_regime.active)
+            if active_periods:
+                representative_age = float(ages.period_to_age(active_periods[0]))
+                user_functions = cast(
+                    "dict[str, Callable[..., object]]",
+                    {
+                        name: resolve_node(func, representative_age)
+                        for name, func in user_functions.items()
+                    },
+                )
 
         targets = [
             "utility",
@@ -306,6 +354,14 @@ def _validate_all_variables_used(
         reachable = get_ancestors(
             user_functions, targets=targets, include_targets=False
         )
+        # A state-conditioned process reads `state_conditioned.on`: the generated solve
+        # weights and the simulation draw both take it as an argument. But it is
+        # declared as grid *metadata* rather than in a user function, so the ancestry
+        # above cannot see it. A process conditioned in one regime is also drawn into a
+        # *source* regime's Q when that source can reach it, evaluated at the source's
+        # own `on` state — so a conditioner is credited to every regime that carries it,
+        # not only the process's own regime (round-2 review F1 / round-3 review F1).
+        reachable = set(reachable) | (conditioning_names & variable_names)
         unused_variables = sorted(variable_names - reachable)
 
         if unused_variables:
@@ -327,6 +383,132 @@ def _validate_all_variables_used(
                 f"utility, constraints, or transition functions."
             )
 
+    return error_messages
+
+
+def _law_phase_varies(solve_obj: object, sim_obj: object) -> bool:
+    """Whether a name's `solve` and `simulate` resolutions are different laws.
+
+    Object identity is the base test: `get_all_functions` returns raw user
+    callables, so a bare law is the same object in both phases and a `Phased`
+    yields its two genuinely-distinct variants. The one exception is
+    `fixed_transition`: its `_IdentityTransition` is rebuilt fresh on every
+    collection (`_make_identity_fn`), so the two phases hold distinct objects that
+    are nonetheless the same phase-invariant identity law. Treat them as equal when
+    both are the auto-identity law for the same state, else a constraint reading a
+    fixed `next_<state>` would be falsely rejected.
+    """
+    if solve_obj is sim_obj:
+        return False
+    if getattr(solve_obj, "_is_auto_identity", False) and getattr(
+        sim_obj, "_is_auto_identity", False
+    ):
+        return getattr(solve_obj, "_state_name", None) != getattr(
+            sim_obj, "_state_name", object()
+        )
+    return True
+
+
+def _validate_constraint_phase_invariance(
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> list[str]:
+    """Reject a constraint whose dependency ancestry contains a phase-varying node.
+
+    `Regime.constraints` are contractually phase-invariant: a *direct* `Phased`
+    constraint is rejected at regime init (`_callable_mapping_errors`), because a
+    phase-specific feasible set would let the simulated argmax range over actions
+    the value function was never computed for. But that check only inspects the
+    top-level constraint object. A *bare* constraint can reach a `Phased` helper
+    or a `Phased` `next_<state>` transitively; the solve and simulate feasibility
+    DAGs then resolve that dependency from different phase pools, so the feasible
+    set is phase-specific anyway -- silently reintroducing exactly the hazard the
+    direct ban forbids. This walks each constraint's dependency ancestry and
+    closes the gap.
+
+    A name is phase-varying iff its `solve` and `simulate` resolutions are
+    different laws (`_law_phase_varies`): object identity is the base test because
+    `get_all_functions` returns raw user callables (a `Phased` yields its two
+    genuinely-distinct variants; a bare value is the same object in both phases),
+    with `fixed_transition`'s freshly-rebuilt identity law treated as equal. A
+    per-target state law is keyed under `next_<state>__<target>`, so its
+    phase-varying entries are aliased to the unqualified `next_<state>` a
+    constraint actually reads. Carried-only states are *not* phase-varying: their
+    imputation resolves to the same `solve` variant in both phases, so a
+    constraint reading a carried state has the same feasible set in both --
+    consistent with the decision using the imputation (policy-consistency), not
+    the realized carried value.
+
+    Args:
+        user_regimes: Mapping of finalized regime names to `Regime` instances.
+
+    Returns:
+        A list of error messages. Empty list if validation passes.
+
+    """
+    error_messages = []
+    for regime_name, user_regime in user_regimes.items():
+        solve_funcs = dict(user_regime.get_all_functions(phase="solve"))
+        sim_funcs = user_regime.get_all_functions(phase="simulate")
+        phase_varying = frozenset(
+            name
+            for name in solve_funcs
+            if _law_phase_varies(solve_funcs[name], sim_funcs.get(name))
+        )
+        # A per-target state (or regime) law is keyed as `next_<state>__<target>`,
+        # one entry per target regime, but a constraint reads the unqualified
+        # decision-DAG name `next_<state>`: the compiled per-target bundle resolves
+        # that name to the current target's law. So if ANY target's law is
+        # phase-varying, a constraint reading the unqualified name still sees a
+        # phase-specific feasible set. Alias each phase-varying qualified transition
+        # to its unqualified name so the unqualified ancestry read is caught.
+        phase_varying = phase_varying | frozenset(
+            name.rsplit(QNAME_DELIMITER, 1)[0]
+            for name in phase_varying
+            if QNAME_DELIMITER in name
+        )
+        # A carried state (`Phased(solve=callable, simulate=Grid)`) is imputed in
+        # the solve phase, so its *next* value has no solve-phase producer: the
+        # canonical solve slice omits the carried law of motion. A constraint that
+        # reads `next_<carried>` would leave the solve feasibility DAG with an
+        # unsupplied argument -- a cryptic missing-argument failure deep in the
+        # solve build. Reject it early and clearly. (Reading the carried state's
+        # CURRENT value is fine: it resolves to the solve imputation.)
+        carried_next = frozenset(
+            f"next_{name}"
+            for name, spec in user_regime.states.items()
+            if isinstance(spec, Phased)
+        )
+        if not phase_varying and not carried_next:
+            continue
+        for constraint_name in user_regime.constraints:
+            ancestors = get_ancestors(
+                solve_funcs, targets=[constraint_name], include_targets=False
+            )
+            offending = sorted(ancestors & phase_varying)
+            if offending:
+                error_messages.append(
+                    f"Constraint '{constraint_name}' in regime '{regime_name}' "
+                    f"depends on phase-varying function(s) {offending}. "
+                    f"Constraints must be phase-invariant through their whole "
+                    f"dependency ancestry: a phase-specific feasible set would "
+                    f"let the simulated argmax range over actions the value "
+                    f"function was never computed for. The direct `Phased` "
+                    f"constraint ban is bypassed when a bare constraint reaches a "
+                    f"`Phased` helper or `Phased` `next_<state>` transitively. "
+                    f"Make the constraint's dependencies phase-invariant, or keep "
+                    f"the phase variance out of the feasibility path."
+                )
+            offending_carried = sorted(ancestors & carried_next)
+            if offending_carried:
+                error_messages.append(
+                    f"Constraint '{constraint_name}' in regime '{regime_name}' "
+                    f"reads the next value of a carried state {offending_carried}. "
+                    f"A carried state is imputed in the solve phase, so its next "
+                    f"value has no solve-phase producer and the solve feasibility "
+                    f"DAG would be left with an unsupplied argument. Read the "
+                    f"carried state's current value instead, or make it an "
+                    f"ordinary (non-carried) state."
+                )
     return error_messages
 
 
@@ -464,7 +646,12 @@ def _partial_fixed_params_into_regimes(
                     for period, func in simulation.argmax_and_max_Q_over_a.items()
                 }
             ),
-            next_state=functools.partial(simulation.next_state, **regime_fixed),
+            next_state=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in simulation.next_state.items()
+                }
+            ),
             compute_regime_transition_probs=(
                 functools.partial(
                     simulation.compute_regime_transition_probs,

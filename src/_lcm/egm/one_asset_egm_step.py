@@ -23,6 +23,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
+from _lcm.egm.crra import crra_utility
 from lcm.typing import Float1D, ScalarFloat
 
 
@@ -75,7 +76,7 @@ def egm_one_asset_step(
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     liquid_endog = consumption + savings_grid
-    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
 
     # Interior: interpolate the endogenous value and consumption onto the regular grid.
     interior_value = jnp.interp(liquid_grid, liquid_endog, value_endog)
@@ -86,7 +87,7 @@ def egm_one_asset_step(
     constrained = liquid_grid < liquid_endog[0]
     value_at_zero_savings = jnp.interp(income, liquid_grid, next_value)
     constrained_value = (
-        _crra_utility(liquid_grid, crra) + discount_factor * value_at_zero_savings
+        crra_utility(liquid_grid, crra) + discount_factor * value_at_zero_savings
     )
     consumption_on_grid = jnp.where(constrained, liquid_grid, interior_consumption)
     value = jnp.where(constrained, constrained_value, interior_value)
@@ -95,12 +96,4 @@ def egm_one_asset_step(
     marginal = consumption_on_grid ** (-crra)
     return RetiredEGMResult(
         value=value, marginal=marginal, consumption=consumption_on_grid
-    )
-
-
-def _crra_utility(consumption: Float1D, crra: ScalarFloat | float) -> Float1D:
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
     )

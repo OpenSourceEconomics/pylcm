@@ -28,8 +28,6 @@ terminal bequest is a simple consume-liquid CRRA value (the source's `term_u` sc
 is flagged, not yet replicated).
 """
 
-import functools
-
 import jax.numpy as jnp
 
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
@@ -103,7 +101,13 @@ def utility(
 
 
 def bequest(liquid: ContinuousState, housing: ContinuousState, crra: float) -> FloatND:
-    """Terminal value: consume liquid wealth plus the resale value of the house."""
+    """Terminal value: consume liquid wealth plus the resale value of the house.
+
+    Uses the un-normalized CRRA form, without the `-1` normalization the flow
+    utility carries. The `-1` is an additive level constant; omitting it here
+    shifts the value function by a constant and leaves the optimal policy
+    unchanged, so the two forms need not match term for term.
+    """
     return (liquid + housing) ** (1.0 - crra) / (1.0 - crra)
 
 
@@ -228,7 +232,6 @@ def get_model(
     )
 
 
-@functools.cache
 def get_params(
     *,
     discount_factor: float = 0.945,

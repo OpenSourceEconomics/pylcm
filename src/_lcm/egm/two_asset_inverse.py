@@ -19,6 +19,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
+from _lcm.egm.crra import crra_utility
 from lcm.typing import BoolND, FloatND, ScalarFloat
 
 
@@ -93,7 +94,7 @@ def invert_ucon_cloud(
     # Budget identities, inverted: a = m - c - d, b = n + d + chi*log(1 + d).
     m_endog = a + consumption + deposit
     n_endog = b - deposit - match_rate * jnp.log1p(deposit)
-    value = _crra_utility(consumption, crra) + discount_factor * post_decision_value
+    value = crra_utility(consumption, crra) + discount_factor * post_decision_value
     # KKT: liquid slack (a > 0, so the consumption Euler holds) and an interior
     # deposit (d > 0). `deposit > 0` already implies `w_a > w_b`, since a
     # non-positive denominator drives the deposit below zero.
@@ -144,7 +145,7 @@ def invert_dcon_cloud(
 
     """
     consumption = (discount_factor * w_a) ** (-1.0 / crra)
-    value = _crra_utility(consumption, crra) + discount_factor * post_decision_value
+    value = crra_utility(consumption, crra) + discount_factor * post_decision_value
     # KKT: liquid slack (a > 0) and `d = 0` optimal — the marginal gain from the
     # first deposited dollar, `beta*w_b*(1 + chi)`, must not exceed the marginal
     # value of the liquid dollar it costs, `u'(c) = beta*w_a`.
@@ -177,7 +178,7 @@ def invert_acon_cloud(
     Where the liquid borrowing constraint binds the liquid post-decision balance is
     pinned at `a = 0`, so the liquid Euler holds only with a non-negative multiplier and
     cannot be inverted for consumption. Instead the region is parameterized by a
-    consumption sweep against the pension post-decision balance `b` at `a = 0`:
+    consumption grid axis against the pension post-decision balance `b` at `a = 0`:
     consumption is exogenous, and the still-interior deposit is recovered from its FOC
     `u'(c) = beta * w_b * (1 + chi / (1 + d))`. The liquid budget at the corner is
     `m = c + d` (no liquid savings), and the pension budget inverts to
@@ -203,7 +204,7 @@ def invert_acon_cloud(
     deposit_ratio = marginal_utility / (discount_factor * w_b_at_zero_a)
     deposit = match_rate / (deposit_ratio - 1.0) - 1.0
     value = (
-        _crra_utility(consumption, crra)
+        crra_utility(consumption, crra)
         + discount_factor * post_decision_value_at_zero_a
     )
     # KKT: the borrowing limit binds with a non-negative multiplier, i.e. the agent
@@ -244,7 +245,7 @@ def invert_con_cloud(
     holds with equality and there is nothing to invert: the agent consumes its entire
     liquid budget (`m = c`, since `a = 0` and `d = 0`) and the pension is unchanged
     (`n = b`). The region is the deep-constrained corner of the state space,
-    parameterized by a consumption sweep against the pension balance at `a = 0`.
+    parameterized by a consumption grid axis against the pension balance at `a = 0`.
 
     Args:
         consumption: Exogenous consumption sweep at each node (`m = c` at the corner).
@@ -264,7 +265,7 @@ def invert_con_cloud(
     """
     marginal_utility = consumption ** (-crra)
     value = (
-        _crra_utility(consumption, crra)
+        crra_utility(consumption, crra)
         + discount_factor * post_decision_value_at_zero_a
     )
     # KKT: both corners bind with non-negative multipliers — the borrowing limit
@@ -283,12 +284,4 @@ def invert_con_cloud(
         value_grad_m=marginal_utility,
         value_grad_n=discount_factor * w_b_at_zero_a,
         valid_region=valid_region,
-    )
-
-
-def _crra_utility(consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
     )

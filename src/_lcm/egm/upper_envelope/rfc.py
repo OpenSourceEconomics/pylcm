@@ -165,8 +165,19 @@ def _dominated_within_radius(
 
     grid_l = grid[:, None]
     delta_grid = grid_l - grid_j
-    # `l` below `j`'s tangent line: v_l - v_j < mu_j * (R_l - R_j).
-    below_tangent = (value[:, None] - value_j) < mu_j * delta_grid - 1e-9
+    # `l` below `j`'s tangent line: v_l - v_j < mu_j * (R_l - R_j). Judge the
+    # strict inequality past a scale-aware noise floor so a candidate exactly on
+    # the tangent line is not deleted by rounding noise whose sign follows the
+    # backend's reduction order (conservative keep). Mirrors the savings-tie
+    # floor in `fues.py`; scale-aware where a fixed absolute margin is not.
+    value_gap = value[:, None] - value_j
+    tangent = mu_j * delta_grid
+    noise_floor = (
+        16.0
+        * jnp.finfo(value.dtype).eps
+        * jnp.maximum(jnp.abs(value_gap), jnp.abs(tangent))
+    )
+    below_tangent = value_gap < tangent - noise_floor
     policy_jump = _has_policy_jump(
         grid_a=grid_j,
         policy_a=policy_j,

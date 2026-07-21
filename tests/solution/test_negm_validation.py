@@ -28,7 +28,8 @@ from _lcm.egm.negm_validation import (
 )
 from _lcm.regime_building.finalize import finalize_regimes
 from lcm import DiscreteGrid, ExtremeValueTasteShocks, Phased, categorical
-from lcm.exceptions import ModelInitializationError
+from lcm.certainty_equivalent import PowerMean
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,
@@ -123,8 +124,8 @@ def test_outer_margin_entering_inner_euler_law_is_rejected_with_2d_pointer():
     """The DS pension coupling fails fast with a pointer to the 2-D foundation.
 
     When the inner Euler-state transition reads the outer post-decision, the
-    inner Euler inversion is no longer independent of the outer choice, so
-    NEGM's deterministic outer max is invalid.
+    inner Euler inversion depends on the outer choice, so NEGM's deterministic
+    outer max is invalid.
     """
     regime = _VALID.replace(
         state_transitions={
@@ -303,6 +304,18 @@ def _resources_defined_by_the_user(
 def _cost_free_base(wealth: ContinuousState) -> FloatND:
     """A cost-free resources base for the composed-resources tests."""
     return wealth + 5.0
+
+
+def test_negm_regime_rejects_nonlinear_certainty_equivalent():
+    """NEGM, like every continuation-based solver, rejects a nonlinear CE.
+
+    The rejection is keyed on the solver requiring a continuation, not on the
+    concrete `DCEGM` type, so an `NEGM` regime declaring a nonlinear certainty
+    equivalent is caught at model build with the same expected-utility pointer.
+    """
+    regime = _VALID.replace(certainty_equivalent=PowerMean())
+    with pytest.raises(RegimeInitializationError, match="does not support a nonlinear"):
+        finalize_regimes(user_regimes={"alive": regime}, derived_categoricals={})
 
 
 def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():

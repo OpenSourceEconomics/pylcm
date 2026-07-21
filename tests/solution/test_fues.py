@@ -30,11 +30,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.upper_envelope import fues
 from tests.conftest import X64_ENABLED
-
-fues = pytest.importorskip(
-    "_lcm.egm.upper_envelope.fues", reason="FUES kernel not yet implemented"
-)
 
 # Tolerance for quantities computed by the kernel (segment intersections and
 # values interpolated through them): float32 carries a few ulp (~1e-7 at the
@@ -87,6 +84,104 @@ def test_concave_input_passes_through_unchanged():
     np.testing.assert_allclose(_drop_nan(got_grid), np.asarray(grid), atol=1e-12)
     np.testing.assert_allclose(_drop_nan(got_policy), np.asarray(policy), atol=1e-12)
     np.testing.assert_allclose(_drop_nan(got_value), np.asarray(value), atol=1e-12)
+
+
+def test_tied_savings_keep_all_nodes_under_ulp_perturbation():
+    """Rounding noise in exactly tied implied savings never drops an envelope node.
+
+    On a rising concave segment where every candidate saves the same amount
+    (`A = R - c` constant), the savings-monotonicity dominance test compares
+    quantities that are equal in exact arithmetic; their floating-point
+    difference is pure rounding noise whose sign varies with backend reduction
+    order. A one-ulp perturbation of a single policy value must not change the
+    kept set — all candidates lie on the envelope either way.
+    """
+    grid = jnp.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
+    policy = grid - 0.01
+    value = jnp.log(grid)
+
+    # Nudge one interior consumption up by one ulp: its implied savings drops
+    # one ulp below the (exactly tied) predecessor's.
+    policy_perturbed = policy.at[4].set(jnp.nextafter(policy[4], jnp.inf))
+
+    _, _, _, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=12
+    )
+    _, _, _, n_kept_perturbed = fues.refine_envelope(
+        endog_grid=grid, policy=policy_perturbed, value=value, n_refined=12
+    )
+
+    assert int(n_kept) == 8
+    assert int(n_kept_perturbed) == 8
+
+
+def _cross_source_masked_decrease_candidates():
+    """A genuine savings decrease the magnitude-scaled float32 floor masks.
+
+    Three ascending-grid candidates with large resources so the noise floor
+    `16 * eps * max(|R|, |c|)` (~0.19 in float32 at this magnitude) exceeds the
+    real savings step. Exogenous source savings are `[2.0, 1.0, 0.875]`: the top
+    candidate genuinely saves 0.125 less than its predecessor (from a distinct
+    source), a decrease the floor swallows but provenance resolves exactly. Value
+    keeps rising, so only the savings-monotonicity clause can drop the top node.
+    """
+    grid = jnp.asarray([100_000.0, 100_001.0, 100_002.0], dtype=jnp.float32)
+    policy = jnp.asarray([99_998.0, 100_000.0, 100_001.125], dtype=jnp.float32)
+    value = jnp.asarray([10.0, 10.5, 10.55], dtype=jnp.float32)
+    savings = jnp.asarray([2.0, 1.0, 0.875], dtype=jnp.float32)
+    return grid, policy, value, savings
+
+
+def test_savings_floor_masks_a_cross_source_decrease_without_provenance():
+    """Without source savings, the float32 floor keeps a genuinely dominated node.
+
+    The magnitude-scaled noise floor treats the real 0.125 savings decrease as a
+    tie, so the top candidate survives refinement even though its exogenous
+    savings fell below its predecessor's.
+    """
+    grid, policy, value, _ = _cross_source_masked_decrease_candidates()
+
+    _, _, _, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=8
+    )
+
+    assert int(n_kept) == 3
+
+
+def test_savings_provenance_drops_a_cross_source_decrease():
+    """Source savings resolve a cross-source decrease the floor would mask.
+
+    Passing the exogenous source savings makes the monotonicity clause compare
+    true sources (`0.875 < 1.0`) exactly rather than the floor-masked implied
+    difference, so the dominated top candidate is dropped.
+    """
+    grid, policy, value, savings = _cross_source_masked_decrease_candidates()
+
+    _, _, _, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=8, savings=savings
+    )
+
+    assert int(n_kept) == 2
+
+
+def test_savings_provenance_protects_same_source_ties():
+    """Candidates sharing one exogenous savings source are never dropped as a decrease.
+
+    On a rising concave segment every candidate saves the same amount, so their
+    implied savings are equal in exact arithmetic and their source savings are
+    identical. Comparing sources (`s_i < s_j` is false at equality) keeps every
+    node on the envelope regardless of rounding in the implied difference.
+    """
+    grid = jnp.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
+    policy = grid - 0.01
+    value = jnp.log(grid)
+    savings = jnp.full_like(grid, 0.01)
+
+    _, _, _, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=12, savings=savings
+    )
+
+    assert int(n_kept) == 8
 
 
 def test_steep_but_continuous_policy_is_not_treated_as_a_switch():
@@ -148,6 +243,180 @@ def test_crossing_segments_drop_dominated_points():
     clean_grid = _drop_nan(got_grid)
     for dominated in [0.8, 1.6, 2.4]:
         assert not np.any(np.isclose(clean_grid, dominated, atol=1e-8))
+
+
+def _node_aligned_crossing_candidates():
+    """Two linear value branches crossing exactly on the grid node R = 10.
+
+    - Branch A: v = 1 + 0.4 R, c = 4 + 0.5 R — optimal for R < 10.
+    - Branch B: v = -3 + 0.8 R, c = -1 + 0.5 R — optimal for R > 10.
+
+    They meet at R = 10 with equal value 5.0 but different policy (9.0 vs 4.0).
+    Candidates are supplied in exogenous-savings order (implied savings
+    `A = R - c = [0.5, 1, 3, 6, 6.5]` ascending) on a non-monotone endogenous
+    grid; the R = 12 point (v = -100) is dominated.
+    """
+    grid = jnp.asarray([9.0, 10.0, 12.0, 10.0, 11.0])
+    policy = jnp.asarray([8.5, 9.0, 9.0, 4.0, 4.5])
+    value = jnp.asarray([4.6, 5.0, -100.0, 5.0, 5.8])
+    return grid, policy, value
+
+
+def test_node_aligned_crossing_publishes_right_policy_on_default_path():
+    """A branch switch exactly on a grid node keeps the right branch's policy.
+
+    With `segment_id=None` (the production FUES dispatch) and candidates in
+    exogenous-savings order, a crossing that lands on the grid node R = 10 must
+    reinsert both branch policies, so the refined policy just right of the node
+    is the right branch's `c = -1 + 0.5 R`: c(10.1) = 4.05. Collapsing the node
+    to only its left copy would instead interpolate across the policy
+    discontinuity — from the left copy 9.0 down to the next node 4.5 — giving a
+    spurious 8.55. The envelope value is 5.08 either way.
+    """
+    grid, policy, value = _node_aligned_crossing_candidates()
+
+    got_grid, got_policy, got_value, _ = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=12
+    )
+
+    np.testing.assert_allclose(
+        _envelope_interp(got_grid, got_policy, 10.1), 4.05, atol=_COMPUTED_ATOL
+    )
+    np.testing.assert_allclose(
+        _envelope_interp(got_grid, got_value, 10.1), 5.08, atol=_COMPUTED_ATOL
+    )
+
+
+def _two_crossing_chain_candidates():
+    """Three affine value branches A|B|C crossing exactly on nodes 10 and 20.
+
+    - Branch A: c = 8, value slope 0.125 — optimal on [9, 10].
+    - Branch B: c = 4, value slope 0.25 — optimal on [10, 20].
+    - Branch C: c = 2, value slope 0.5 — optimal on [20, 21].
+
+    Candidates are in exogenous-savings order (`savings` ascending). The exact
+    envelope keeps branch B across (10, 20), so at R = 15 the pair is
+    (value, policy) = (6.25, 4). Losing B's middle segment interpolates the
+    policy across the collapsed discontinuity instead.
+    """
+    grid = jnp.asarray([9.0, 10.0, 10.0, 20.0, 20.0, 21.0])
+    policy = jnp.asarray([8.0, 8.0, 4.0, 4.0, 2.0, 2.0])
+    value = jnp.asarray([4.875, 5.0, 5.0, 7.5, 7.5, 8.0])
+    savings = jnp.asarray([1.0, 2.0, 6.0, 16.0, 18.0, 19.0])
+    return grid, policy, value, savings
+
+
+def test_multi_crossing_chain_preserves_the_middle_branch_policy():
+    """Two node-aligned crossings keep the middle branch: c(15) = 4, V(15) = 6.25.
+
+    A three-branch chain crossing on both R = 10 and R = 20 must retain branch B
+    across (10, 20). The envelope has six records (two per crossing plus the two
+    endpoints), so `n_kept == 6`.
+    """
+    grid, policy, value, savings = _two_crossing_chain_candidates()
+
+    got_grid, got_policy, got_value, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=16
+    )
+
+    np.testing.assert_allclose(
+        _envelope_interp(got_grid, got_policy, 15.0), 4.0, atol=_COMPUTED_ATOL
+    )
+    np.testing.assert_allclose(
+        _envelope_interp(got_grid, got_value, 15.0), 6.25, atol=_COMPUTED_ATOL
+    )
+    assert int(n_kept) == 6
+
+
+def _dominated_coincident_candidates():
+    """A coincident c=9 / c=4 pair (value 5) sits beneath the c=7 branch at R=10.
+
+    The c = 7 branch strictly dominates at R = 10 (value 6 > 5), so the exact
+    envelope is [9, 10, 11] with policy 7 throughout — the lower pair is not an
+    envelope kink.
+    """
+    grid = jnp.asarray([9.0, 10.0, 9.0, 10.0, 11.0, 10.0, 11.0])
+    policy = jnp.asarray([9.0, 9.0, 7.0, 7.0, 7.0, 4.0, 4.0])
+    value = jnp.asarray([5 - 1 / 9, 5.0, 6 - 1 / 7, 6.0, 6 + 1 / 7, 5.0, 5.25])
+    savings = jnp.asarray([0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 7.0])
+    return grid, policy, value, savings
+
+
+def test_dominated_coincident_pair_is_not_promoted_to_a_kink():
+    """A dominated coincident pair beneath a superior branch is dropped.
+
+    The c = 7 branch owns R = 10 (value 6), so the read there is (6, 7) and the
+    envelope has exactly three nodes — no false kink, no spurious overflow.
+    """
+    grid, policy, value, savings = _dominated_coincident_candidates()
+
+    got_grid, got_policy, got_value, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=16
+    )
+
+    assert int(n_kept) == 3
+    np.testing.assert_allclose(
+        _envelope_interp(got_grid, got_value, 10.0), 6.0, atol=_COMPUTED_ATOL
+    )
+    np.testing.assert_allclose(
+        _envelope_interp(got_grid, got_policy, 10.0), 7.0, atol=_COMPUTED_ATOL
+    )
+
+
+def test_envelope_is_invariant_to_a_common_value_shift():
+    """Adding a large constant to every value leaves the kept set and policy fixed.
+
+    The maximizer tie test is invariant to `V -> V + K`: a relative `rtol * |V|`
+    band would widen at large value level and manufacture kinks; the kept set and
+    the refined policy must be identical to the un-shifted envelope.
+    """
+    grid, policy, value, savings = _dominated_coincident_candidates()
+
+    # The shift must stay below the working precision's resolution-vs-margin
+    # bound: the domination margins here are ~1, and once the shift's ULP exceeds
+    # that margin (float32 near 1e8 has ULP ~8) the dominated members round up
+    # into the tie and get promoted — a precision limit, not a tolerance bug. A
+    # 3e5 shift keeps ULP well below 1 at both precisions while remaining large
+    # enough that a relative `rtol * |V|` band (`1e-5 * 3e5 = 3 > 1`) would still
+    # manufacture kinks.
+    shift = 1e8 if X64_ENABLED else 3e5
+
+    base = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=16
+    )
+    shifted = fues.refine_envelope(
+        endog_grid=grid,
+        policy=policy,
+        value=value + shift,
+        savings=savings,
+        n_refined=16,
+    )
+
+    assert int(base[3]) == int(shifted[3])
+    np.testing.assert_allclose(
+        np.asarray(base[1]), np.asarray(shifted[1]), atol=_COMPUTED_ATOL, equal_nan=True
+    )
+
+
+def test_same_source_coincident_candidates_are_not_a_jump():
+    """Two candidates from one exogenous savings node are a duplicate, not a jump.
+
+    At a coincident grid with equal value, candidates sharing an exogenous
+    savings source are the same point: the refined row has three unique nodes and
+    does not overflow, even when their implied `R - c` rounds differently in
+    float32. Meaningful under 32-bit precision, where the subtraction noise
+    appears.
+    """
+    grid = jnp.asarray([1.2, 1.3000002, 1.3000002, 1.4000001], dtype=jnp.float32)
+    policy = jnp.asarray([0.9, 1.0000001, 1.0000002, 1.1], dtype=jnp.float32)
+    value = (10 + jnp.log(policy)).astype(jnp.float32)
+    savings = jnp.asarray([0.3, 0.3, 0.3, 0.3], dtype=jnp.float32)
+
+    _, _, _, n_kept = fues.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=8
+    )
+
+    assert int(n_kept) == 3
 
 
 def test_refined_grid_is_weakly_ascending_with_nan_tail():
@@ -236,40 +505,3 @@ def test_overflow_is_reported_via_n_kept():
     )
 
     assert int(n_kept) > 4
-
-
-def test_insert_node_crossings_selects_one_branch_at_a_three_way_tie():
-    """A node where three branches coincide keeps one genuine branch policy.
-
-    The on-node crossing repair reinserts the branch policy dropped by the
-    coincident-node dedup. When three candidates share one abscissa with equal value
-    (two coincident crossings at that node), the kept node must carry a single genuine
-    branch policy, not the sum of both crossings' policies — a summed policy is not a
-    consumption any branch prescribes.
-    """
-    presort_grid = jnp.array([1.0, 1.0, 1.0])
-    presort_policy = jnp.array([10.0, 20.0, 30.0])
-    presort_value = jnp.array([5.0, 5.0, 5.0])
-    segment_sorted = jnp.array([0.0, 1.0, 2.0])
-    n_refined = 8
-    refined_grid = jnp.full(n_refined, jnp.nan).at[0].set(1.0)
-    refined_policy = jnp.full(n_refined, jnp.nan).at[0].set(10.0)
-    refined_value = jnp.full(n_refined, jnp.nan).at[0].set(5.0)
-
-    out_grid, out_policy, _out_value, _n = fues._insert_node_crossings(
-        refined_grid=refined_grid,
-        refined_policy=refined_policy,
-        refined_value=refined_value,
-        n_kept=jnp.asarray(1, dtype=jnp.int32),
-        presort_grid=presort_grid,
-        presort_policy=presort_policy,
-        presort_value=presort_value,
-        segment_sorted=segment_sorted,
-        n_refined=n_refined,
-        n_points_to_scan=1,
-        jump_thresh=2.0,
-    )
-
-    at_tie = np.asarray(out_policy)[np.isclose(np.asarray(out_grid), 1.0)]
-    genuine = {10.0, 20.0, 30.0}
-    assert set(at_tie.tolist()) <= genuine

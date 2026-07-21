@@ -34,7 +34,7 @@ dependencies = [
   # Require the beartype fix, replace once release is there
   # "dags>=0.6.0",
   "h5py>=3.12",
-  "jax>=0.9",
+  "jax>=0.11",
   "jaxtyping>=0.3.10",
   "orbax-checkpoint>=0.11",
   "pandas",
@@ -44,10 +44,13 @@ dependencies = [
 [[project.authors]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
+
 [[project.authors]]
 name = "Maximilian Jahn"
+
 [[project.authors]]
 name = "Janos Gabler"
+
 [[project.authors]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
@@ -56,6 +59,7 @@ file = "LICENSE"
 [[project.maintainers]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
+
 [[project.maintainers]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
@@ -109,13 +113,13 @@ platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
 cuda-nvcc = "~=12.0"
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.9", extras = [ "cuda12" ] }
+jax = { version = ">=0.11", extras = [ "cuda12" ] }
 [tool.pixi.feature.cuda13]
 platforms = [ "linux-64-cuda13" ]
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.9", extras = [ "cuda13" ] }
+jax = { version = ">=0.11", extras = [ "cuda13" ] }
 [tool.pixi.feature.docs.dependencies]
 jupyter-book = ">=2.0"
 mystmd = "*"
@@ -147,7 +151,7 @@ matplotlib = "*"
 pandas-stubs = "*"
 scipy-stubs = "*"
 [tool.pixi.pypi-dependencies]
-jax = ">=0.9"
+jax = ">=0.11"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 # Remove and comment in `dags >= 0.6.0` above once released.

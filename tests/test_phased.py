@@ -661,14 +661,102 @@ def _markov_law(wealth: float) -> FloatND:  # noqa: ARG001
     return jnp.asarray([0.5, 0.5])
 
 
-def test_markov_variant_in_phased_law_is_rejected() -> None:
-    """Stochastic (`MarkovTransition`) variants inside a `Phased` law of
-    motion are not yet supported."""
-    with pytest.raises(RegimeInitializationError, match="not yet supported"):
+def test_markov_variant_in_phased_law_is_accepted() -> None:
+    """A `Phased` law may be stochastic: solve = perceived law, simulate = true law.
+
+    The solve variant supplies the probabilities Q integrates the continuation over; the
+    simulate variant is the law the next state is actually drawn from. See
+    `tests/regime_building/test_perceived_stochastic_transitions.py` for the behavioural
+    split.
+    """
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(
+                solve=MarkovTransition(_markov_law),
+                simulate=MarkovTransition(_markov_law),
+            )
+        }
+    )
+
+
+def test_mixed_stochastic_and_deterministic_phased_law_is_accepted() -> None:
+    """The two phases need NOT agree on whether the law is stochastic.
+
+    A deterministic law is a degenerate kernel, so the state has the same domain either
+    way, and the two phase cores classify their stochastic names independently. A
+    perceived kernel with a point-valued truth is a coherent model, not a kind error.
+    `tests/regime_building/test_mixed_stochasticity_phases.py` pins the behaviour in
+    both directions.
+    """
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(solve=MarkovTransition(_markov_law), simulate=_next_wealth)
+        }
+    )
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(solve=_next_wealth, simulate=MarkovTransition(_markov_law))
+        }
+    )
+
+
+def test_mixed_per_target_dict_phased_law_is_accepted() -> None:
+    """Same for the per-target-dict form, where the cells carry the stochastic-ness."""
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(
+                solve={"working": MarkovTransition(_markov_law)},
+                simulate={"working": _next_wealth},
+            )
+        }
+    )
+
+
+def test_per_target_dict_with_bare_other_phase_is_accepted() -> None:
+    """A per-target dict one side and a bare law the other is ACCEPTED (map-vs-bare).
+
+    The bare law broadcasts over the per-target side's targets — the same meaning a bare
+    state law has outside `Phased`. Per-phase provenance
+    (`processing._phase_coarse_state_law_names` → `_rename_params_to_qnames`) keys a
+    within-period read's merge/conflict off each phase's OWN declaration shape, so the
+    coarse side merges and the per-target side conflicts independently; the phase-union
+    params template no longer decides it. Only two per-target dicts over DIFFERENT
+    targets remain rejected.
+    """
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(
+                solve={"working": MarkovTransition(_markov_law)},
+                simulate=_next_wealth,
+            )
+        }
+    )
+
+
+def test_bare_solve_per_target_simulate_is_accepted() -> None:
+    """The mirror spelling — bare solve, per-target simulate dict — is accepted too."""
+    _build_regime(
+        state_transitions={
+            "wealth": Phased(
+                solve=_next_wealth,
+                simulate={"working": _next_wealth},
+            )
+        }
+    )
+
+
+def test_per_target_dicts_with_different_targets_are_rejected() -> None:
+    """Both phases' per-target dicts must cover the same targets.
+
+    Otherwise normalization leaves a target with a law in one phase and none in the
+    other.
+    """
+    with pytest.raises(RegimeInitializationError, match="different targets"):
         _build_regime(
             state_transitions={
                 "wealth": Phased(
-                    solve=MarkovTransition(_markov_law), simulate=_next_wealth
+                    solve={"working": _next_wealth},
+                    simulate={"retired": _next_wealth},
                 )
             }
         )

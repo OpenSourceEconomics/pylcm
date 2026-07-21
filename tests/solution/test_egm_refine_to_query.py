@@ -1,15 +1,14 @@
-"""Spec for streamed refine-to-query in asset-row mode.
+"""Spec for refine-to-query in asset-row mode.
 
 In asset-row mode the per-node solve refines a full NaN-padded upper envelope
 and interpolates it at exactly one query point (`resources_at_node`) to publish
-a scalar `(V_node, policy_node)`. Refine-to-query folds that single-query
-interpolation into the upper-envelope scan: the scan keeps only the two
-envelope points bracketing the query (plus the first point and the kept count)
-and returns the scalar result, so the `n_pad` envelope rows are never
-materialized.
+a scalar `(V_node, policy_node)`. Refine-to-query builds that same full refined
+row (`refine_to_bracket` calls `refine_envelope`) and slices the two envelope
+points bracketing the query (plus the first point and the kept count), returning
+the scalar result.
 
 Correctness is defined by the existing composition: for the *same* candidates,
-query, and utility, the streamed pair
+query, and utility, the bracket pair
 
     refine_to_bracket(...) -> publish_node_from_bracket(...)
 
@@ -95,10 +94,40 @@ def _single_live_candidate():
     return grid, policy, value
 
 
+def _node_aligned_crossing_candidates():
+    """Two linear branches crossing exactly on the grid node R = 10.
+
+    Branch A (v = 1 + 0.4 R, c = 4 + 0.5 R) and branch B (v = -3 + 0.8 R,
+    c = -1 + 0.5 R) meet at R = 10 with equal value 5.0 but different policy;
+    supplied in exogenous-savings order on a non-monotone grid. The streamed
+    bracket must reproduce the full row's reinserted right-branch policy.
+    """
+    grid = jnp.asarray([9.0, 10.0, 12.0, 10.0, 11.0])
+    policy = jnp.asarray([8.5, 9.0, 9.0, 4.0, 4.5])
+    value = jnp.asarray([4.6, 5.0, -100.0, 5.0, 5.8])
+    return grid, policy, value
+
+
+def _two_crossing_chain_candidates():
+    """Three affine branches A|B|C crossing exactly on nodes 10 and 20.
+
+    Branch B (c = 4) is optimal across (10, 20); the chain of two node-aligned
+    crossings must keep B's middle segment, so at R = 15 the envelope policy is
+    B's `4.0`. Supplied in exogenous-savings order on a non-monotone grid; the
+    streamed bracket must reproduce the full row's middle branch.
+    """
+    grid = jnp.asarray([9.0, 10.0, 10.0, 20.0, 20.0, 21.0])
+    policy = jnp.asarray([8.0, 8.0, 4.0, 4.0, 2.0, 2.0])
+    value = jnp.asarray([4.875, 5.0, 5.0, 7.5, 7.5, 8.0])
+    return grid, policy, value
+
+
 _CANDIDATE_SETS = {
     "smooth": _smooth_candidates(),
     "kinked": _crossing_segments_candidates(),
     "multi_crossing": _multi_crossing_candidates(),
+    "node_aligned_crossing": _node_aligned_crossing_candidates(),
+    "two_crossing_chain": _two_crossing_chain_candidates(),
     "all_dead": _all_dead_candidates(),
     "single_live": _single_live_candidate(),
 }
@@ -145,6 +174,7 @@ def _streamed(grid, policy, value, x_query, n_pad):
         policy=jnp.where(dead, jnp.nan, policy),
         value=jnp.where(dead, jnp.nan, value),
         x_query=jnp.asarray(x_query),
+        n_refined=n_pad,
     )
     return publish_node_from_bracket(
         bracket=bracket,
@@ -195,7 +225,10 @@ def test_streamed_matches_row_then_interp_above_last_point(name):
     _assert_equivalent(grid, policy, value, x_query, n_pad=16)
 
 
-@pytest.mark.parametrize("name", ["kinked", "multi_crossing"])
+@pytest.mark.parametrize(
+    "name",
+    ["kinked", "multi_crossing", "node_aligned_crossing", "two_crossing_chain"],
+)
 def test_streamed_matches_row_then_interp_exactly_on_kink(name):
     """A query exactly on a duplicated kink abscissa resolves the right-copy.
 
@@ -233,7 +266,7 @@ def test_streamed_is_vmappable_over_nodes():
 
     def one(x_query):
         bracket = fues.refine_to_bracket(
-            endog_grid=g, policy=p, value=v, x_query=x_query
+            endog_grid=g, policy=p, value=v, x_query=x_query, n_refined=16
         )
         return publish_node_from_bracket(
             bracket=bracket,

@@ -82,7 +82,13 @@ def rfc_delete_mask(
                 continue
             delta_x = states[j] - states[i]
             tangent = float(delta_x @ supgradients[i])
-            below_tangent = (values[j] - values[i]) < tangent
+            value_gap = values[j] - values[i]
+            # Match the kernel's scale-aware noise floor so both keep a candidate
+            # sitting on the tangent plane within rounding noise.
+            noise_floor = (
+                16.0 * np.finfo(values.dtype).eps * max(abs(value_gap), abs(tangent))
+            )
+            below_tangent = value_gap < tangent - noise_floor
             policy_jump = abs(abs(selector[j] - selector[i]) / dist) > j_bar
             if below_tangent and policy_jump:
                 keep[j] = False

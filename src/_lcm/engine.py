@@ -366,6 +366,17 @@ class SolutionPhase:
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 
+    period_state_axes: (
+        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+    ) = None
+    """Per-period node arrays for age-varying (`AgeSpecializedGrid`) states.
+
+    `{period: {state_name: nodes}}` — the current period's grid nodes for each
+    age-varying continuous state, used by backward induction to override the
+    (representative) base axis so period `t`'s value function is tabulated on
+    period `t`'s grid. `None` for age-invariant regimes (the base axis is used
+    unchanged)."""
+
     @property
     def solves_from_continuation(self) -> bool:
         """Whether this regime's V is built from interpolated continuations.
@@ -557,8 +568,17 @@ class SimulationPhase:
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
 
-    next_state: NextStateSimulationFunction
-    """Compiled function to compute next-period states."""
+    next_state: MappingProxyType[int, NextStateSimulationFunction]
+    """Immutable mapping of period to next-period-state functions."""
+
+    age_specialized_function_names: frozenset[FunctionName] = frozenset()
+    """Function names that were `AgeSpecializedFunction` in the user regime.
+
+    The published `functions` hold these resolved at the regime's representative
+    age only — the per-period programs (`argmax_and_max_Q_over_a`, `next_state`)
+    carry the true per-age closures. Consumers computing period-specific outputs
+    from `functions` (e.g. `additional_targets`) must reject targets that depend
+    on these names."""
 
     egm_policy_read: EGMPolicyRead | None = None
     """Off-grid read of the published EGM simulation policy, or `None`.
@@ -613,11 +633,18 @@ class SimulationPhase:
 class _StochasticStateTransition:
     """Metadata for a stochastic state transition, used by automatic validation.
 
-    One entry exists for every `MarkovTransition` state — and for each target
-    of a per-target dict. The pre-solve state-transition validator consumes
-    these to evaluate the function on the regime's grid Cartesian product and
-    check that the output has the expected outcome-axis size, lies in [0, 1],
-    and has rows summing to 1.
+    One entry exists for every `MarkovTransition` state — for each target of a
+    per-target dict, and for each phase variant of a `Phased` law. The pre-solve
+    state-transition validator consumes these to evaluate the function on the
+    regime's grid Cartesian product and check that the output has the expected
+    outcome-axis size, lies in [0, 1], and has rows summing to 1.
+
+    A `Phased` law contributes one entry PER PHASE. Both must be kept: they are
+    different functions and each is fatal if malformed, but for DIFFERENT reasons —
+    the perceived (solve) law prices every action in backward induction, while the
+    true (simulate) law governs the realized draw and the simulation-side checks.
+    Collapsing them onto one key would silently validate only whichever was
+    inserted last.
     """
 
     func: Callable[..., FloatND]
@@ -638,6 +665,13 @@ class _StochasticStateTransition:
     Derived statically at process time from the function's AST. Empty
     when the function doesn't use the `probs_array[...]` pattern, in
     which case the AST subscript-order check is permissively skipped.
+    """
+
+    phase: Literal["solve", "simulate"] | None = None
+    """Phase this law belongs to; `None` for a bare (phase-invariant) law.
+
+    Carried only so failures name the offending phase — a bare law and a `Phased`
+    pair are otherwise validated identically.
     """
 
 

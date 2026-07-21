@@ -28,3 +28,6 @@ hood.
   retirement model, with a brute-force vs DC-EGM accuracy comparison.
 - [Internal Architecture](architecture.md) — Map of the source tree, the user/engine
   boundary, and the role each package plays.
+- [Adding a Solver](adding_a_solver.md) — The solver contract (`Solver`, `PeriodKernel`,
+  `KernelResult`), the lifecycle the engine drives it through, and the invariants that
+  keep the backward-induction loop solver-agnostic.

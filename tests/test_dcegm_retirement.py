@@ -172,8 +172,9 @@ def test_smoothed_model_brute_and_dcegm_agree():
     the same object from exact Euler policies. Agreement is up to the brute
     solver's resolution, which fails at the lowest wealth nodes: there the
     brute solution leans on consumption choices below its grid start and on
-    coarse interpolation where log utility curves hardest (e.g. retirement,
-    period 0, wealth node 4: closed form 5.121, DC-EGM 5.118, brute 5.044).
+    coarse interpolation where log utility curves hardest (the lowest
+    retirement wealth nodes in the earliest periods, where the brute value
+    falls well below the closed form while DC-EGM stays close to it).
     DC-EGM's exact-slope carry read does not mirror that low-wealth error, so
     the comparison covers the wealth nodes where the brute solver is reliable.
     """

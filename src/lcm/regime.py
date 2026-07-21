@@ -32,7 +32,7 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import GridSearch, Solver
 from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.transition import MarkovTransition
+from lcm.transition import AgeSpecializedGrid, MarkovTransition
 from lcm.typing import UserFunction
 
 
@@ -85,7 +85,7 @@ class Regime:
     """Callable that takes age (float) and returns True if regime is active."""
 
     # `None` masks a model-level entry of the same name.
-    states: Mapping[StateName, Grid | Phased | None] = field(
+    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of state variable names to grids or phase-variant declarations.
@@ -95,6 +95,9 @@ class Regime:
     derived function (no grid axis) in the solve phase and a seeded, evolved
     state in the simulate phase, whose law of motion is its regular
     `state_transitions` entry.
+    An `AgeSpecializedGrid` value is a continuous state whose grid bounds vary
+    with age (fixed `n_points`); it is resolved to a concrete grid per period at
+    model build.
     """
 
     state_transitions: Mapping[

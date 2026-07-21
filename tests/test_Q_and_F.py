@@ -4,7 +4,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pytest
-from numpy.testing import assert_array_equal
+from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from _lcm.params.processing import (
@@ -15,10 +15,12 @@ from _lcm.params.processing import (
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
+    LAW_SOURCE_ATTR,
     _get_deterministic_transitions,
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
+    _law_sources_differ,
     get_Q_and_F_terminal,
 )
 from lcm import AgeGrid
@@ -377,6 +379,49 @@ def test_conflicting_deterministic_law_not_read_by_decision_is_accepted():
     assert jnp.isclose(U, jnp.log(2.0))
 
 
+class _RaisingEq:
+    """A stand-in for an array-backed callable law whose `==`/`!=` is not a plain bool.
+
+    A real array-backed callable object (e.g. one wrapping a jax array) compares by
+    value, so `a != b` builds an array and `bool(...)` on it raises. Here `__eq__`
+    raises outright, which any value comparison of the provenance token would trigger.
+    """
+
+    def __eq__(self, other: object) -> bool:
+        raise AssertionError("law base must never be compared by value")
+
+    __hash__ = object.__hash__
+
+
+def test_law_sources_differ_uses_identity_not_value_equality():
+    """The conflict comparison must not invoke a user law's `__eq__` (round-7 F3).
+
+    The base user law is compared by object identity and the parameter location by
+    string equality, so an array-backed callable law whose `==` returns a non-bool
+    (or raises) never blocks or corrupts the merge.
+    """
+    base1, base2 = _RaisingEq(), _RaisingEq()
+
+    def a() -> float:
+        return 0.0
+
+    def b() -> float:
+        return 0.0
+
+    # Distinct base objects, same location -> differ, WITHOUT calling `base.__eq__`.
+    setattr(a, LAW_SOURCE_ATTR, (base1, "next_x"))
+    setattr(b, LAW_SOURCE_ATTR, (base2, "next_x"))
+    assert _law_sources_differ(a, b) is True  # ty: ignore[invalid-argument-type]
+
+    # Same base object, same location -> not differ (identity short-circuit).
+    setattr(b, LAW_SOURCE_ATTR, (base1, "next_x"))
+    assert _law_sources_differ(a, b) is False  # ty: ignore[invalid-argument-type]
+
+    # Same base object, different (target-qualified) location -> differ, by string.
+    setattr(b, LAW_SOURCE_ATTR, (base1, "next_x__retire"))
+    assert _law_sources_differ(a, b) is True  # ty: ignore[invalid-argument-type]
+
+
 def _health_probs(health: DiscreteState, probs_array: FloatND) -> FloatND:
     return probs_array[health]
 
@@ -486,6 +531,25 @@ def test_partial_state_laws_solve_with_declared_targets():
         work_transition=work_transition, next_regime_func=_next_regime
     )
     period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
+
+    # Consumption is unconstrained by wealth in this model, so the optimum is
+    # the largest consumption node (c = 2) in every state, giving flow utility
+    # log(2) each active period. The value is the discounted sum of log(2) over
+    # the remaining active periods (discount_factor 0.9) and is constant across
+    # the (health, wealth) grid; the terminal "dead" regime yields exactly 0.
+    log_two = float(jnp.log(2.0))
+    beta = 0.9
+    expected_alive = {
+        0: log_two * (1 + beta + beta**2),
+        1: log_two * (1 + beta),
+        2: log_two,
+    }
+    for period, expected in expected_alive.items():
+        for regime_name in ("work", "retire"):
+            V_arr = period_to_regime_to_V_arr[period][regime_name]
+            assert V_arr.shape == (2, 3)
+            assert_allclose(V_arr, expected, atol=1e-5)
     for regime_to_V_arr in period_to_regime_to_V_arr.values():
-        for V_arr in regime_to_V_arr.values():
-            assert not jnp.any(jnp.isnan(V_arr))
+        dead_V = regime_to_V_arr["dead"]
+        assert dead_V.shape == ()
+        assert_allclose(dead_V, 0.0, atol=1e-6)

@@ -22,7 +22,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.certainty_equivalent import PowerMean
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import GridSearch
 from lcm.temporal_aggregation import H_linear
@@ -327,6 +328,17 @@ CASES = {
         "runtime",
     ),
 }
+
+
+def test_dcegm_regime_rejects_nonlinear_certainty_equivalent():
+    """A continuation-based solver rejects a nonlinear `certainty_equivalent`.
+
+    The Euler inversion inverts against the target's marginal value, which
+    assumes an expected-utility (linear) continuation; a nonlinear certainty
+    equivalent is only compatible with `GridSearch`.
+    """
+    with pytest.raises(RegimeInitializationError, match="does not support a nonlinear"):
+        _build_model(VALID.replace(certainty_equivalent=PowerMean()))
 
 
 @pytest.mark.parametrize(("build", "match"), CASES.values(), ids=CASES.keys())

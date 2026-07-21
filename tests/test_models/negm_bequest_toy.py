@@ -103,9 +103,20 @@ def utility(consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND
     return flow ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
 
 
-def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
-    """Inverse of `u'(c) = (c + iota*Z)^{-gamma}` in the inner consumption slot."""
-    return marginal_continuation ** (-1.0 / RISK_AVERSION)
+def inverse_marginal_utility(
+    marginal_continuation: FloatND, illiquid: ContinuousState
+) -> FloatND:
+    """Inverse of `u'(c) = (c + iota*Z)^{-gamma}` in the inner consumption slot.
+
+    Inverting $u'(c) = (c + \\iota Z)^{-\\gamma} = m$ for consumption gives
+    $c = m^{-1/\\gamma} - \\iota Z$: the `iota * Z` shift the durable contributes
+    to the utility flow is a constant offset that must be subtracted when
+    recovering `c`. The kernel binds the durable state `illiquid` (`Z`) from the
+    combo pool, so the offset is exact at every durable node. (DC-EGM re-evaluates
+    the true utility, so omitting it leaves parity unchanged, but the recovered
+    endogenous consumption grid would be wrong by `iota * Z`.)
+    """
+    return marginal_continuation ** (-1.0 / RISK_AVERSION) - ILLIQUID_FLOW * illiquid
 
 
 def bequest(wealth: ContinuousState, illiquid: ContinuousState) -> FloatND:

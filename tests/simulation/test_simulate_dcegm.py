@@ -216,10 +216,19 @@ def test_dcegm_full_model_simulates_end_to_end():
         seed=99,
     )
 
-    df = result.to_dataframe()
+    df = result.to_dataframe(additional_targets=["resources", "savings"])
     alive = df.query("regime_name in ['working_life', 'retirement']")
     assert not alive.empty
-    assert alive["consumption"].notna().all()
+    # The intrinsic budget the EGM solve enforces holds row by row in the
+    # simulated path: end-of-period savings is exactly resources minus
+    # consumption, never drops below the savings grid's lower bound (the
+    # synthesized borrowing limit), and consumption stays strictly positive.
+    consumption = alive["consumption"].to_numpy()
+    resources = alive["resources"].to_numpy()
+    savings = alive["savings"].to_numpy()
+    np.testing.assert_allclose(savings, resources - consumption, atol=1e-5)
+    assert (savings >= savings_lower_bound - 1e-9).all()
+    assert (consumption > 0.0).all()
     assert set(df.query("regime_name == 'working_life'")["labor_supply"]) <= {
         "work",
         "retire",

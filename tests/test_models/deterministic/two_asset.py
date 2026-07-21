@@ -15,8 +15,6 @@ reference (oracle) the 2-D EGM kernel is validated against. Two continuous state
 coupled through the budget.
 """
 
-import functools
-
 import jax.numpy as jnp
 
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
@@ -136,7 +134,6 @@ def get_model(
     )
 
 
-@functools.cache
 def get_params(
     *,
     n_periods: int = 3,

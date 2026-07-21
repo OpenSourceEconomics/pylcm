@@ -258,6 +258,7 @@ class Model:
             regime_id_class=regime_id_class,
             n_subjects=n_subjects,
             broadcast_variables=broadcast_variables,
+            ages=self.ages,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(

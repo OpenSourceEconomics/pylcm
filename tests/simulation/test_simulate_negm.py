@@ -77,12 +77,13 @@ def test_negm_simulate_enforces_inner_budget_constraint():
     assert (df["consumption"].to_numpy() <= budget + 1e-9).all()
 
 
-def test_negm_simulated_consumption_is_positive_and_finite():
-    """Every simulated consumption choice is strictly positive and finite.
+def test_negm_simulated_consumption_is_positive_and_within_inner_budget():
+    """Simulated consumption is strictly positive and inside the inner budget.
 
-    The CRRA flow is defined only for positive consumption, and the masked
-    argmax must never select the infeasible region; a non-positive or non-finite
-    simulated consumption would signal the budget mask failed to apply.
+    The CRRA flow is defined only for positive consumption, and the synthesized
+    inner mask keeps every choice at or below inner resources minus the
+    borrowing limit; a non-positive choice or one above that bound would signal
+    the budget mask failed to apply.
     """
     n_subjects = 4
     initial_conditions = {
@@ -91,8 +92,19 @@ def test_negm_simulated_consumption_is_positive_and_finite():
         "age": jnp.full(n_subjects, 20.0),
         "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
     }
-    consumption = _alive_dataframe(initial_conditions=initial_conditions)[
-        "consumption"
-    ].to_numpy()
-    assert np.all(np.isfinite(consumption))
+    df = _alive_dataframe(initial_conditions=initial_conditions)
+    consumption = df["consumption"].to_numpy()
     assert np.all(consumption > 0.0)
+
+    # Strict positivity alone is a smoke check; the inner budget mask is what
+    # enforces it. Reconstruct inner resources (outer durable move folded in)
+    # and assert consumption never exceeds resources minus the borrowing limit.
+    illiquid = df["illiquid"].to_numpy()
+    investment = df["illiquid_investment"].to_numpy()
+    next_illiquid = illiquid + investment
+    resources = np.asarray(
+        negm_kinked_toy.resources_before_outer_cost(wealth=df["wealth"].to_numpy())
+        - negm_kinked_toy.credited(illiquid=illiquid, next_illiquid=next_illiquid)
+    )
+    borrowing_limit = float(negm_kinked_toy.SAVINGS_GRID.to_jax()[0])
+    assert (consumption <= resources - borrowing_limit + 1e-9).all()

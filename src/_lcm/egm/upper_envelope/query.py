@@ -31,11 +31,20 @@ import jax.numpy as jnp
 
 from lcm.typing import BoolND, Float1D, FloatND
 
-# Right-continuous tie tolerance: among bracketing segments whose interpolated
-# value is within this of the envelope maximum, the larger value-slope wins (it
-# is higher just to the right). Both the dense and blocked paths use it, so they
-# select the same policy/marginal at a tie.
+# Right-continuous tie tolerance (relative): among bracketing segments whose
+# interpolated value is within this fraction of the envelope maximum, the larger
+# value-slope wins (it is higher just to the right). Both the dense and blocked
+# paths use it, so they select the same policy/marginal at a tie. Applied
+# relative to the value scale (`* max(1, |envelope value|)`) so the tie band does
+# not collapse below cancellation noise at large lifetime-value magnitudes, which
+# would make the near-max set — and the published policy/marginal — depend on the
+# backend's `jnp.max` reduction order.
 _VALUE_TIE_ATOL = 1e-12
+
+
+def _value_tie_band(reference: FloatND) -> FloatND:
+    """Scale-aware absolute tie band around a reference envelope value."""
+    return _VALUE_TIE_ATOL * jnp.maximum(1.0, jnp.abs(reference))
 
 
 class _SegmentLinks(NamedTuple):
@@ -165,7 +174,7 @@ def envelope_at_query(
     # near-max slope. `_right_continuous_rank` folds both keys into one comparable
     # scalar so this dense reduction and the blocked scan select the same winner.
     slope = (right_value - left_value)[None, :] / safe_width
-    near_max = brackets & (masked_value >= max_value - _VALUE_TIE_ATOL)
+    near_max = brackets & (masked_value >= max_value - _value_tie_band(max_value))
     right_available = flat < upper
     best = jnp.argmax(
         _right_continuous_rank(
@@ -335,7 +344,9 @@ def _envelope_at_query_blocked(
         brackets, value_interp, policy_interp, marginal_interp, slope, upper = (
             _block_query_terms(block=block, live=block_live, flat=flat)
         )
-        near_max = brackets & (value_interp >= env_value[:, None] - _VALUE_TIE_ATOL)
+        near_max = brackets & (
+            value_interp >= env_value[:, None] - _value_tie_band(env_value[:, None])
+        )
         rank = _right_continuous_rank(
             near_max=near_max, right_available=flat[:, None] < upper, slope=slope
         )

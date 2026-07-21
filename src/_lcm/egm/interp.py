@@ -311,8 +311,10 @@ def _hermite_query_derivative(
       only,
     - a zero-width located bracket (an end duplicate): zero — no slope is
       defined on it,
-    - singleton row: zero (constant clamp); empty row: NaN (the read is NaN —
-      the derivative is non-authoritative and carries the poison),
+    - singleton row: zero (constant clamp); empty row: NaN carried as
+      `nan * x_query`, so the poison survives a further differentiation (the
+      read is non-authoritative and stays NaN at every AD order, not just the
+      first),
     - a NaN query: NaN on every row shape — the value read re-pins a NaN query
       fail-loud, and the tangent carries the same poison.
     """
@@ -332,7 +334,13 @@ def _hermite_query_derivative(
     derivative = jnp.where(x_query < first_node, extension_slope, derivative)
     derivative = jnp.where(x_query > last_node, 0.0, derivative)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
-    derivative = jnp.where(valid_length == 0, jnp.nan, derivative)
+    # An empty row's read is NaN at every AD order: carry the poison as
+    # `nan * x_query` so a further differentiation stays NaN instead of
+    # differentiating a query-constant literal to zero. Gate the NaN coefficient
+    # on `valid_length == 0` so the term is `0 * x_query` (finite, zero-gradient)
+    # on non-empty rows and cannot leak NaN into their gradients via `0 * nan`.
+    empty_poison = jnp.where(valid_length == 0, jnp.nan, 0.0) * x_query
+    derivative = jnp.where(valid_length == 0, empty_poison, derivative)
     return jnp.where(jnp.isnan(x_query), jnp.nan, derivative)
 
 
@@ -404,7 +412,10 @@ def _linear_query_derivative(
       fallback convention, matching the value's clamp fallback below
       support),
     - a zero-width located bracket: zero,
-    - singleton row: zero; empty row: NaN (poison-carrying),
+    - singleton row: zero (degenerate gathers are sanitized to finite dummies
+      first, so the mixed query-abscissa second derivative stays zero rather
+      than NaN); empty row: NaN carried as `nan * x_query`, so the poison
+      survives a further differentiation (NaN at every AD order),
     - a NaN query: NaN on every row shape — the value read re-pins a NaN query
       fail-loud, and the located bracket's finite secant must not mask it.
     """
@@ -414,15 +425,32 @@ def _linear_query_derivative(
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
     lower = upper - 1
-    bracket_width = xp[upper] - xp[lower]
+    # Sanitize the gathered endpoints on a degenerate row (one or zero valid
+    # nodes) to finite dummies before any arithmetic, mirroring
+    # `_hermite_bracket_derivatives`. The primal is overridden below by the
+    # `valid_length` guards, but without this the NaN pad in the un-taken
+    # `where` branch poisons the mixed second derivative (query then abscissa)
+    # that asset-row mode takes on a singleton row.
+    degenerate = valid_length < 2  # noqa: PLR2004
+    xp_lower = jnp.where(degenerate, 0.0, xp[lower])
+    xp_upper = jnp.where(degenerate, 1.0, xp[upper])
+    fp_lower = jnp.where(degenerate, 0.0, fp[lower])
+    fp_upper = jnp.where(degenerate, 0.0, fp[upper])
+    bracket_width = xp_upper - xp_lower
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
-    df = fp[upper] - fp[lower]
+    df = fp_upper - fp_lower
     secant = jnp.where(jnp.isfinite(df), df, 0.0) / safe_width
     last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
     above = x_query > last_node
     derivative = jnp.where(above | (bracket_width == 0.0), 0.0, secant)
     derivative = jnp.where(valid_length == 1, 0.0, derivative)
-    derivative = jnp.where(valid_length == 0, jnp.nan, derivative)
+    # An empty row's read is NaN at every AD order: carry the poison as
+    # `nan * x_query` so a further differentiation stays NaN instead of
+    # differentiating a query-constant literal to zero. Gate the NaN coefficient
+    # on `valid_length == 0` so the term is `0 * x_query` (finite, zero-gradient)
+    # on non-empty rows and cannot leak NaN into their gradients via `0 * nan`.
+    empty_poison = jnp.where(valid_length == 0, jnp.nan, 0.0) * x_query
+    derivative = jnp.where(valid_length == 0, empty_poison, derivative)
     return jnp.where(jnp.isnan(x_query), jnp.nan, derivative)
 
 
@@ -656,8 +684,9 @@ def interp_left_germ_on_prepared_grid(
     query, as a tie-selection object for the stacked candidate readers. A tie
     whose right germs are identical (both candidates clamp at a shared
     terminal abscissa) is owned by the branch that carries the envelope on the
-    left neighborhood, so its published marginal stays inside the envelope's
-    generalized gradient at the boundary. Semantics:
+    left neighborhood, so the published payload is that branch's own economic
+    marginal — the meaningful one-sided value for a parent Euler inversion at
+    the boundary. Semantics:
 
     - Strictly inside a bracket: the derivatives of that bracket's limited
       cubic Hermite (the secant and zero curvature where the correction is
@@ -831,9 +860,9 @@ def _interp_between_nodes(
 
     The pure two-node arithmetic of the padded-grid interpolant, shared by
     `interp_on_prepared_grid` (which gathers the bracket from a full row) and
-    the streamed asset-row publish (which captures the bracket directly during
-    the upper-envelope scan). Having both paths reduce to this one function
-    guarantees the streamed value cannot diverge from the row-then-interpolate
+    the asset-row publish (which slices its bracket from the same refined row via
+    `refine_to_bracket`). Having both paths reduce to this one function
+    guarantees the bracket publish cannot diverge from the row-then-interpolate
     value: only *which two nodes* differs, not the arithmetic on them.
 
     The bracket must already be edge-clamped to a real pair of nodes (queries
@@ -985,17 +1014,27 @@ def interp_and_derivative_on_prepared_grid(
     xp: Float1D,
     fp: Float1D,
     fp_slopes: Float1D | None = None,
+    side: Literal["left", "right"] = "right",
 ) -> tuple[FloatND, FloatND]:
     """Paired value-and-derivative read on a prepared row.
 
     The contract is `interp_and_derivative_on_padded_grid`'s; this form takes
     the row's `search_grid` and `valid_length` precomputed (via
-    `prepare_padded_grid`), mirroring `interp_on_prepared_grid`. The value
-    channel matches `interp_on_prepared_grid` bit for bit — both gather the
-    same bracket and share the two-node arithmetic.
+    `prepare_padded_grid`), mirroring `interp_on_prepared_grid`. With the
+    default `side="right"` the value channel matches `interp_on_prepared_grid`
+    bit for bit — both gather the same bracket and share the two-node
+    arithmetic.
+
+    `side` selects which bracket an exactly-on-node query lands in, mirroring
+    `_read_prepared_row`: `"right"` reads the node as the start of its right
+    bracket (the ordinary one-sided convention); `"left"` reads it as the end
+    of its left bracket, so at a duplicated abscissa the pair is the left
+    duplicate's record and its piece's right-endpoint slope — the derivative
+    of the value object a left-owned tie selected. Strictly interior queries
+    locate the same bracket either way.
     """
     upper = jnp.clip(
-        jnp.searchsorted(search_grid, x_query, side="right"),
+        jnp.searchsorted(search_grid, x_query, side=side),
         1,
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
