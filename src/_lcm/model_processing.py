@@ -26,6 +26,7 @@ from _lcm.params.processing import (
     materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
@@ -167,6 +168,7 @@ def validate_model_inputs(
     regime_id_class: type,
     n_subjects: int | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
+    ages: AgeGrid | None = None,
 ) -> None:
     """Validate model constructor inputs.
 
@@ -175,6 +177,9 @@ def validate_model_inputs(
     function with their declared types. This function focuses on value and
     cross-field rules.
 
+    `ages` lets the used-variable check resolve `AgeSpecializedFunction` functions at
+    each regime's representative age, so a state read only by a policy-specialized
+    function still counts as used.
     """
     _fail_if_invalid_n_subjects(n_subjects=n_subjects)
 
@@ -226,7 +231,7 @@ def validate_model_inputs(
         )
     error_messages.extend(
         _validate_all_variables_used(
-            user_regimes, broadcast_variables=broadcast_variables
+            user_regimes, broadcast_variables=broadcast_variables, ages=ages
         )
     )
     error_messages.extend(_validate_constraint_phase_invariance(user_regimes))
@@ -259,10 +264,35 @@ def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
         raise ValueError(msg)
 
 
+def _model_wide_conditioning_names(
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> set[str]:
+    """Every conditioning state read by any state-conditioned process in the model.
+
+    `state_conditioned.on` is a real dependency of the generated weights/draw functions,
+    but it lives in grid metadata rather than in a user function, so a callable-DAG scan
+    misses it. A conditioned process's transition weight is also built into the Q of
+    every *source* regime that can reach the process's regime, evaluated at that
+    source's current `on` state — so the dependency is not local to the process's regime
+    (round-3 review F1). We collect the conditioners model-wide and, at the call site,
+    credit each regime for those it actually carries: a conservative over-approximation
+    of reachability whose only cost is not flagging a genuinely unused state, never a
+    wrong policy.
+    """
+    return {
+        grid.state_conditioned.on
+        for user_regime in user_regimes.values()
+        for grid in user_regime.states.values()
+        if isinstance(grid, _ContinuousStochasticProcess)
+        and grid.state_conditioned is not None
+    }
+
+
 def _validate_all_variables_used(
     user_regimes: Mapping[RegimeName, UserRegime],
     *,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
+    ages: AgeGrid | None = None,
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -287,12 +317,28 @@ def _validate_all_variables_used(
 
     """
     error_messages = []
+    conditioning_names = _model_wide_conditioning_names(user_regimes)
 
     for regime_name, user_regime in user_regimes.items():
         variable_names = set(user_regime.states) | set(user_regime.actions)
         if broadcast_variables is not None:
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
+        if ages is not None:
+            # Resolve any `AgeSpecializedFunction` marker to its concrete function at a
+            # representative active age so `get_ancestors` sees the real argument
+            # dependencies. The dependency structure is age-invariant, so any active
+            # age serves; the resolved build is memoized and reused by the engine.
+            active_periods = ages.get_periods_where(user_regime.active)
+            if active_periods:
+                representative_age = float(ages.period_to_age(active_periods[0]))
+                user_functions = cast(
+                    "dict[str, Callable[..., object]]",
+                    {
+                        name: resolve_node(func, representative_age)
+                        for name, func in user_functions.items()
+                    },
+                )
 
         targets = [
             "utility",
@@ -308,6 +354,14 @@ def _validate_all_variables_used(
         reachable = get_ancestors(
             user_functions, targets=targets, include_targets=False
         )
+        # A state-conditioned process reads `state_conditioned.on`: the generated solve
+        # weights and the simulation draw both take it as an argument. But it is
+        # declared as grid *metadata* rather than in a user function, so the ancestry
+        # above cannot see it. A process conditioned in one regime is also drawn into a
+        # *source* regime's Q when that source can reach it, evaluated at the source's
+        # own `on` state — so a conditioner is credited to every regime that carries it,
+        # not only the process's own regime (round-2 review F1 / round-3 review F1).
+        reachable = set(reachable) | (conditioning_names & variable_names)
         unused_variables = sorted(variable_names - reachable)
 
         if unused_variables:
@@ -592,7 +646,12 @@ def _partial_fixed_params_into_regimes(
                     for period, func in simulation.argmax_and_max_Q_over_a.items()
                 }
             ),
-            next_state=functools.partial(simulation.next_state, **regime_fixed),
+            next_state=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in simulation.next_state.items()
+                }
+            ),
             compute_regime_transition_probs=(
                 functools.partial(
                     simulation.compute_regime_transition_probs,

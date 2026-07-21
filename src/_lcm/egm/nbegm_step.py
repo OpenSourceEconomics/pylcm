@@ -465,12 +465,14 @@ def nbegm_multi_interval_step_savings(
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
     next_segment = jnp.nanmax(interior_segment) + 1.0
 
-    # Savings-node corner chains: for every post-decision node `s_i`, consume
+    # Savings-node corner points: for every post-decision node `s_i`, consume
     # `coh - s_i` at each liquid grid point and earn that node's continuation. The
     # family is a dense Bellman floor on the savings grid at every query point, so
     # a continuation kink between Euler roots (a child-value interpolation node,
-    # where the inversion has no root) still gets a candidate; the `s = 0` chain
-    # is the hard borrowing corner. One segment id per node keeps chains apart.
+    # where the inversion has no root) still gets a candidate; the `s = 0` corner
+    # is the hard borrowing corner. Each point is its own zero-width self-pair
+    # with a distinct segment id (below), so a node feasible at a single liquid
+    # point stays bracketable by the link-only envelope at its own abscissa.
     node_consumption = coh_grid[None, :] - savings_grid[:, None]
     node_feasible = node_consumption > 0.0
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
@@ -501,16 +503,18 @@ def nbegm_multi_interval_step_savings(
         jnp.nan,
     )
     node_marginal = coh_slopes[interval_of_grid][None, :] * node_marginal_safe
-    node_segment = jnp.broadcast_to(
-        next_segment
-        + jnp.arange(savings_grid.shape[0], dtype=liquid_grid.dtype)[:, None],
-        node_consumption.shape,
-    )
-    endog_parts = [liquid_endog, node_endog.ravel()]
-    value_parts = [value_endog, node_value.ravel()]
-    policy_parts = [consumption, node_consumption_safe.ravel()]
-    marginal_parts = [marginal_endog, node_marginal.ravel()]
-    segment_parts = [interior_segment, node_segment.ravel()]
+    node_segment = next_segment + jnp.arange(
+        node_consumption.size, dtype=liquid_grid.dtype
+    ).reshape(node_consumption.shape)
+
+    def as_pairs(entries: Float1D) -> Float1D:
+        return jnp.stack([entries, entries], axis=-1).reshape(-1)
+
+    endog_parts = [liquid_endog, as_pairs(node_endog.ravel())]
+    value_parts = [value_endog, as_pairs(node_value.ravel())]
+    policy_parts = [consumption, as_pairs(node_consumption_safe.ravel())]
+    marginal_parts = [marginal_endog, as_pairs(node_marginal.ravel())]
+    segment_parts = [interior_segment, as_pairs(node_segment.ravel())]
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),

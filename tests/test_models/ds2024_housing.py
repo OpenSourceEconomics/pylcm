@@ -172,20 +172,21 @@ def housing_cost(
     return jnp.where(next_housing == depreciated, 0.0, round_trip)
 
 
-def resources(
+def resources_before_outer_cost(
     liquid: ContinuousState,
-    housing_cost: FloatND,
     income_value: FloatND,
     return_liquid: float,
 ) -> FloatND:
-    """Liquid resources consumption is paid from, given the fixed outer node.
+    """Cost-free base of the liquid resources consumption is paid from.
 
-    `(1 + r)·a + y - housing_cost`. With the keep cost `0` this is the keeper's
-    cash `R·a + y`; with the adjust cost it is `R·a + (1+r_H)·h(1-delta) + y -
-    (1+tau)·H'`. The housing cost is bound per outer-grid node, so it enters the
-    inner Euler inversion as a constant.
+    `(1 + r)·a + y`. With `NEGM.outer_cost` declared, pylcm composes the
+    resources function as `resources_before_outer_cost - housing_cost` at
+    model build: with the keep cost `0` that is the keeper's cash `R·a + y`;
+    with the adjust cost it is `R·a + (1+r_H)·h(1-delta) + y - (1+tau)·H'`.
+    The housing cost is bound per outer-grid node, so it enters the inner
+    Euler inversion as a constant.
     """
-    return (1.0 + return_liquid) * liquid + income_value - housing_cost
+    return (1.0 + return_liquid) * liquid + income_value
 
 
 def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
@@ -298,6 +299,7 @@ def build_model(
     n_consumption: int = 60,
     n_savings: int = 60,
     delta: float = 0.0,
+    n_outer_grid: int | None = None,
 ) -> Model:
     """Build the DS-2024 housing model.
 
@@ -317,6 +319,9 @@ def build_model(
             `H' = h(1 - delta)` (param-free, so set at build time). Pass the same
             value to `build_params` (where it enters the adjust cost and bequest
             as a param); `0.0` is the keeper-holds-the-stock case.
+        n_outer_grid: Number of points on the NEGM outer house grid; `None`
+            uses `n_grid`. Decoupling it from the state grids enables nested
+            outer refinements at a fixed state resolution.
 
     Returns:
         The alive housing regime plus the terminal bequest regime.
@@ -327,7 +332,9 @@ def build_model(
 
     liquid_grid = LinSpacedGrid(start=housing_min, stop=liquid_max, n_points=n_grid)
     housing_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
-    outer_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
+    outer_grid = LinSpacedGrid(
+        start=housing_min, stop=housing_max, n_points=n_outer_grid or n_grid
+    )
     consumption_grid = LinSpacedGrid(
         start=0.05, stop=consumption_max, n_points=n_consumption
     )
@@ -406,6 +413,7 @@ def build_model(
         outer_post_decision="next_housing",
         outer_grid=outer_grid,
         outer_no_adjustment_candidate="keep_housing",
+        outer_cost="housing_cost",
     )
 
     alive = UserRegime(
@@ -429,7 +437,7 @@ def build_model(
         functions={
             "utility": utility,
             "housing_cost": housing_cost,
-            "resources": resources,
+            "resources_before_outer_cost": resources_before_outer_cost,
             "savings": savings,
             "keep_housing": keep_housing,
             "serviced_housing": serviced_housing,
@@ -504,7 +512,7 @@ def build_params(
         alive = {
             "utility": {"gamma_c": gamma_c, "alpha": alpha},
             "housing_cost": cost_params,
-            "resources": {"return_liquid": return_liquid},
+            "resources_before_outer_cost": {"return_liquid": return_liquid},
             "next_liquid": {},
             "inverse_marginal_utility": {"gamma_c": gamma_c},
         }

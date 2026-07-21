@@ -11,7 +11,7 @@ from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import solve
 from _lcm.solution.contract import PeriodKernel
-from _lcm.solution.solvers import _GridSearchPeriodKernel
+from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from _lcm.typing import MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
@@ -153,7 +153,7 @@ def test_backward_induction():
         active_periods=[0, 1],
     )
 
-    solution, _sim_policies = solve(
+    solution = solve(
         flat_params=MappingProxyType({"default": flat_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
@@ -161,12 +161,12 @@ def test_backward_induction():
         enable_jit=False,
     )
 
-    # Solution is now MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
-    assert isinstance(solution, MappingProxyType)
-    assert 0 in solution
-    assert 1 in solution
-    assert "default" in solution[0]
-    assert "default" in solution[1]
+    # The value functions are an immutable period -> regime -> array mapping.
+    assert isinstance(solution.value_functions, MappingProxyType)
+    assert 0 in solution.value_functions
+    assert 1 in solution.value_functions
+    assert "default" in solution.value_functions[0]
+    assert "default" in solution.value_functions[1]
 
 
 def test_backward_induction_single_period_Qc_arr():
@@ -217,7 +217,7 @@ def test_backward_induction_single_period_Qc_arr():
         active_periods=[0, 1],
     )
 
-    got, _sim_policies = solve(
+    got = solve(
         flat_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
@@ -226,4 +226,4 @@ def test_backward_induction_single_period_Qc_arr():
     )
 
     # Solution is now dict[int, dict[RegimeName, FloatND]], need to extract the V_arr
-    aaae(got[0]["default"], expected)
+    aaae(got.value_functions[0]["default"], expected)

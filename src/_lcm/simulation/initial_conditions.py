@@ -729,13 +729,13 @@ def _batched_feasibility_check(
     if action_kwargs:
 
         def _is_combo_feasible(
-            action_kw: dict[str, FloatND | IntND],
-            subject_kw: dict[str, FloatND | IntND],
+            action_kw: Mapping[str, FloatND | IntND],
+            subject_kw: Mapping[str, FloatND | IntND],
         ) -> BoolND:
             return feasibility_func(**action_kw, **subject_kw, **filtered_params)
 
         def _is_any_action_feasible(
-            per_subject_kwargs: dict[str, FloatND | IntND],
+            per_subject_kwargs: Mapping[str, FloatND | IntND],
         ) -> BoolND:
             per_combo = jax.vmap(_is_combo_feasible, in_axes=(0, None))(
                 action_kwargs,
@@ -746,7 +746,7 @@ def _batched_feasibility_check(
     else:
 
         def _is_any_action_feasible(
-            per_subject_kwargs: dict[str, FloatND | IntND],
+            per_subject_kwargs: Mapping[str, FloatND | IntND],
         ) -> BoolND:
             return jnp.any(feasibility_func(**per_subject_kwargs, **filtered_params))
 
@@ -908,7 +908,7 @@ def _admits_any_action(
     """Return True iff the feasibility function admits ≥ 1 action under params."""
     if action_kwargs:
 
-        def _check_combo(action_kw: dict[str, FloatND | IntND]) -> BoolND:
+        def _check_combo(action_kw: Mapping[str, FloatND | IntND]) -> BoolND:
             return feasibility_func(**action_kw, **params)
 
         per_combo = jax.vmap(_check_combo)(action_kwargs)

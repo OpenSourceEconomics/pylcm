@@ -26,11 +26,13 @@ from _lcm.engine import Regime
 from _lcm.simulation.initial_conditions import subject_array_sharding
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.solution.backward_induction import (
-    _build_zero_V_arr,
     _func_dedup_key,
+    _resolve_compilation_workers,
+)
+from _lcm.solution.v_topology import (
+    _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
     _RegimeVTopology,
-    _resolve_compilation_workers,
 )
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName
 from _lcm.utils.logging import format_duration
@@ -218,6 +220,9 @@ def _collect_unique_simulation_callables(
         # depend on its own state-action shapes, so even when two regimes
         # share a callable identity, their compiled programs are distinct.
         if not regime.terminal:
+            # `next_state` lower-args are period-independent, so build them once;
+            # periods whose specialized functions resolve to the same closures
+            # share one compiled program via the callable dedup key.
             args = _build_next_state_args(
                 regime=regime,
                 regime_params=regime_params,
@@ -225,17 +230,22 @@ def _collect_unique_simulation_callables(
                 n_subjects=n_subjects,
                 subject_sharding=subject_sharding,
             )
-            key = ("next_state", regime_name, _func_dedup_key(func=sf.next_state))
-            func_keys[(regime_name, "next_state", None)] = key
-            if key not in unique:
-                # Re-wrap with `jax.jit`: when `fixed_params` are partialled
-                # into the regime, `sf.next_state` is a `functools.partial`
-                # (no `.lower()`); plain jit objects are also fine to re-jit.
-                unique[key] = (
-                    jax.jit(sf.next_state),
-                    args,
-                    f"{regime_name}/next_state",
+            for period in regime.active_periods:
+                next_state_func = sf.next_state[period]
+                key = (
+                    "next_state",
+                    regime_name,
+                    _func_dedup_key(func=next_state_func),
                 )
+                func_keys[(regime_name, "next_state", period)] = key
+                if key not in unique:
+                    # Re-wrap with `jax.jit`: when `fixed_params` are partialled
+                    # into the regime, `next_state_func` is a `functools.partial`
+                    # (no `.lower()`); plain jit objects are also fine to re-jit.
+                    label = (
+                        f"{regime_name}/next_state (age {ages.values[period].item()})"
+                    )
+                    unique[key] = (jax.jit(next_state_func), args, label)
 
         if sf.compute_regime_transition_probs is not None:
             args = _build_crtp_args(
@@ -288,7 +298,16 @@ def _swap_in_compiled(
         if regime.terminal:
             next_state_compiled = sf.next_state
         else:
-            next_state_compiled = compiled[func_keys[(regime_name, "next_state", None)]]
+            next_state_compiled_for_active = {
+                period: compiled[func_keys[(regime_name, "next_state", period)]]
+                for period in regime.active_periods
+            }
+            next_state_compiled = MappingProxyType(
+                {
+                    period: next_state_compiled_for_active.get(period, original_func)
+                    for period, original_func in sf.next_state.items()
+                }
+            )
         if sf.compute_regime_transition_probs is None:
             crtp_compiled = None
         else:

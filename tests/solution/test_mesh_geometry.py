@@ -3,8 +3,8 @@
 The geometry is the foundation of the upper-envelope selection: each source cell
 splits into two triangles, a target is located by its barycentric weights, and a
 triangle is an admissible candidate when every weight exceeds a negative threshold.
-The tests pin the basic invariants and the two counterexamples an adversarial audit
-used to reject a quadrilateral, cover-first design: a folded cell whose triangles stay
+The tests pin the basic invariants and the two geometric edge cases a naive
+quadrilateral, cover-first design mishandles: a folded cell whose triangles stay
 non-degenerate, and an extrapolated target that is admissible under the reference
 threshold.
 """

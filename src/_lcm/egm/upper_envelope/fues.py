@@ -10,19 +10,32 @@ Adapted from the `OpenSourceEconomics/upper-envelope` package (Apache-2.0,
 Inverting the Euler equation in models with discrete choices yields a value
 *correspondence*: in non-concave regions, several candidate points share a
 neighborhood of the endogenous grid, each lying on a different choice-specific
-value segment. `refine_envelope` scans the candidates once, in ascending grid
-order, and keeps only the points on the upper envelope:
+value segment. `refine_envelope` sorts the candidates ascending in grid, reduces
+each coincident-abscissa group to its envelope-relevant points, then scans once
+and keeps only the points on the upper envelope:
 
+- Coincident-abscissa groups are reduced first (`_reduce_coincident_groups`):
+  within a run of equal grid values only the group's value-maximizers survive
+  (exact max-equality, so translation-invariant), and same-source maximizers
+  collapse to one copy. A node-aligned crossing — two maximizers at one abscissa
+  with equal value but different branch — therefore keeps both branch policies.
 - Candidates on a different segment than the last kept point are detected via
   the implied savings $A = R - c$: the segments differ iff
-  $|\\Delta A / \\Delta R|$ exceeds `jump_thresh`.
-- Dominated candidates are dropped (value decreases, savings non-monotone with
-  a falling value gradient, or the candidate lies below the continuation of
-  the current segment found by a bounded forward scan).
-- Where two kept segments cross, the linear intersection of the segments is
-  inserted twice — once with the left- and once with the right-extrapolated
-  policy — so the refined arrays remain weakly ascending and policy
-  discontinuities at kinks are preserved exactly.
+  $|\\Delta A / \\Delta R|$ exceeds `jump_thresh`, or (at a coincident abscissa,
+  an infinite gradient) whenever the implied savings differ.
+- Dominated candidates are dropped (value decreases within a segment, savings
+  non-monotone with a falling value gradient, or the candidate lies below the
+  continuation of the current segment found by a bounded forward scan). A
+  node-aligned crossing is exempt — it is an envelope kink, never interior-
+  dominated.
+- Where two kept segments cross, the intersection is emitted inline during the
+  scan as two points at one abscissa — the left- and right-extrapolated policy —
+  so the refined arrays stay weakly ascending and the policy discontinuity at the
+  kink is preserved exactly.
+
+`refine_to_bracket` builds the same refined row and slices the two nodes
+bracketing a single query, so the streamed asset-row read agrees with the full
+row by construction (no separate streaming geometry to keep in sync).
 
 All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
@@ -33,18 +46,24 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D, FloatND, ScalarBool, ScalarFloat, ScalarInt
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    ScalarBool,
+    ScalarFloat,
+    ScalarInt,
+)
 
 
 class QueryBracket(NamedTuple):
     """The two envelope nodes bracketing one query, plus the publish statics.
 
-    The streamed counterpart of a full refined envelope row read at a single
-    query: instead of materializing the NaN-padded `n_pad` rows and locating
-    the bracket with `searchsorted(side="right")`, `refine_to_bracket` captures
-    only the bracketing pair directly during the scan. The arithmetic on the
-    pair is then identical to the row-then-interpolate path, so the published
-    value cannot diverge — only the bracket-finding differs.
+    A single refined envelope row read at one query: `refine_to_bracket` builds
+    the full refined row (`refine_envelope`) and locates the bracket with
+    `searchsorted(side="right")`, returning only the bracketing pair. The
+    arithmetic on the pair is identical to the row-then-interpolate path — it
+    reads the same row — so the published value agrees by construction.
 
     All fields are arrays so the struct threads through `jax.vmap`/`jax.lax.map`.
     The `lower_*`/`upper_*` pair is already edge-clamped to a real node pair
@@ -90,6 +109,26 @@ def _resolve_n_points_to_scan(n_points_to_scan: int | None, *, n_input: int) -> 
     return n_points_to_scan
 
 
+def _init_fues_carry(
+    *, first_point: Float1D, first_segment: ScalarFloat, first_savings: ScalarFloat
+) -> Float1D:
+    """Seed the FUES scan carry: k and j both the first sorted candidate.
+
+    Carry layout (flat `Float1D` so it threads through `jax.lax.scan`): the two
+    most recent envelope points, k then j, each as (grid, policy, value); their
+    segment labels (seg_k, seg_j); and the exogenous source savings of j
+    (`savings_j`, ignored on the noise-floor path). Initially k and j are the
+    first sorted candidate.
+    """
+    return jnp.concatenate(
+        [
+            first_point,
+            first_point,
+            jnp.stack([first_segment, first_segment, first_savings]),
+        ]
+    )
+
+
 def refine_envelope(
     *,
     endog_grid: Float1D,
@@ -99,6 +138,7 @@ def refine_envelope(
     jump_thresh: float = 2.0,
     n_points_to_scan: int | None = None,
     segment_id: Float1D | None = None,
+    savings: Float1D | None = None,
     scan_unroll: int = 1,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its upper envelope.
@@ -143,6 +183,16 @@ def refine_envelope(
             kink, not a value-segment switch, so labelling it would insert a
             spurious crossing; this parameter is the hook for a future
             notch/bracket model.
+        savings: Optional per-candidate exogenous source savings, aligned with
+            `endog_grid` — the exogenous savings grid point that generated each
+            candidate (equal to the implied savings `R - c` in exact arithmetic).
+            When supplied, the savings-monotonicity dominance clause compares
+            these true sources directly (`s_i < s_j` is a genuine decrease; equal
+            sources are ties, never dropped), which is exact and backend-stable.
+            `None` (the default) falls back to the magnitude-scaled noise floor on
+            the implied difference, which protects same-source ties against
+            rounding but can mask a real cross-source decrease when the resources
+            dwarf the savings span.
         scan_unroll: Loop-unroll factor for the sequential `jax.lax.scan` over
             candidates. Unrolling trades compile time for fewer loop-carry round
             trips on accelerators; the refined output is identical across values.
@@ -158,15 +208,21 @@ def refine_envelope(
 
     """
     # Sort ascending in the endogenous grid, breaking ties by descending value
-    # so the maximal-value candidate leads each run of coincident abscissae;
-    # NaN grid points sort to the tail. Coincident abscissae with *unequal*
-    # values are not envelope kinks (those are inserted later, with equal
-    # value): the lower copies are dominated and collapsed away here — NaN-ed
-    # in place — before the scan, so a dominated duplicate can never reach the
-    # output and corrupt the index-keyed interpolation of a kink.
+    # so the maximal-value candidate leads each run of coincident abscissae, and
+    # finally by descending policy so a *node crossing* (two branches meeting at
+    # one abscissa with equal value) is ordered left-owner-then-right-owner
+    # independently of input order: under the EGM envelope condition the value
+    # slope is `u'(c)`, decreasing in consumption, so the higher-policy branch has
+    # the shallower slope and owns the interval just left of the node. NaN grid
+    # points sort to the tail. Coincident abscissae with *unequal* values are not
+    # envelope kinks (those are inserted later, with equal value): the lower
+    # copies are dominated and collapsed away here — NaN-ed in place — before the
+    # scan, so a dominated duplicate can never reach the output and corrupt the
+    # index-keyed interpolation of a kink.
     grid_key = jnp.where(jnp.isnan(endog_grid), jnp.inf, endog_grid)
     value_key = jnp.where(jnp.isnan(value), -jnp.inf, value)
-    order = jnp.lexsort(jnp.stack([-value_key, grid_key]))
+    policy_key = jnp.where(jnp.isnan(policy), -jnp.inf, policy)
+    order = jnp.lexsort(jnp.stack([-policy_key, -value_key, grid_key]))
     grid_sorted = endog_grid[order]
     policy_sorted = policy[order]
     value_sorted = value[order]
@@ -181,31 +237,29 @@ def refine_envelope(
         if segment_id is None
         else segment_id[order].astype(grid_sorted.dtype)
     )
-
-    # Pre-dedup copies: the dedup below collapses a coincident crossing to one
-    # branch, so the post-pass recovers the dropped branch's policy/slope here to
-    # re-insert the on-node dual-policy kink.
-    presort_grid = grid_sorted
-    presort_policy = policy_sorted
-    presort_value = value_sorted
-
-    duplicate = jnp.concatenate(
-        [
-            jnp.zeros((1,), dtype=bool),
-            (grid_sorted[1:] == grid_sorted[:-1]) & ~jnp.isnan(grid_sorted[1:]),
-        ]
+    use_savings = savings is not None
+    savings_sorted = (
+        savings[order].astype(grid_sorted.dtype)
+        if use_savings
+        else jnp.zeros_like(grid_sorted)
     )
-    grid_sorted = jnp.where(duplicate, jnp.nan, grid_sorted)
-    policy_sorted = jnp.where(duplicate, jnp.nan, policy_sorted)
-    value_sorted = jnp.where(duplicate, jnp.nan, value_sorted)
+
+    grid_sorted, policy_sorted, value_sorted, savings_sorted = (
+        _reduce_coincident_groups(
+            grid_sorted=grid_sorted,
+            policy_sorted=policy_sorted,
+            value_sorted=value_sorted,
+            savings_sorted=savings_sorted,
+            use_savings=use_savings,
+        )
+    )
 
     first_point = jnp.stack([grid_sorted[0], policy_sorted[0], value_sorted[0]])
     first_segment = segment_sorted[0]
-    # Carry layout: the two most recent envelope points, k then j, each as
-    # (grid, policy, value), then their segment labels (seg_k, seg_j). Initially
-    # both points are the first sorted candidate.
-    carry_init = jnp.concatenate(
-        [first_point, first_point, jnp.stack([first_segment, first_segment])]
+    carry_init = _init_fues_carry(
+        first_point=first_point,
+        first_segment=first_segment,
+        first_savings=savings_sorted[0],
     )
 
     def step(
@@ -219,6 +273,8 @@ def refine_envelope(
             policy_sorted=policy_sorted,
             value_sorted=value_sorted,
             segment_sorted=segment_sorted,
+            savings_sorted=savings_sorted,
+            use_savings=use_savings,
             jump_thresh=jump_thresh,
             n_points_to_scan=n_points_to_scan,
         )
@@ -260,149 +316,85 @@ def refine_envelope(
 
     n_kept = (total + final_valid).astype(jnp.int32)
 
-    # The dedup keeps one branch per coincident node, so the scan's value row is
-    # exact but a node-aligned crossing carries only one branch's policy. Re-insert
-    # the dropped branch as the on-node dual-policy kink (left then right) so an
-    # off-node read recovers the right branch rather than interpolating across the
-    # policy discontinuity.
-    return _insert_node_crossings(
-        refined_grid=refined_grid,
-        refined_policy=refined_policy,
-        refined_value=refined_value,
-        n_kept=n_kept,
-        presort_grid=presort_grid,
-        presort_policy=presort_policy,
-        presort_value=presort_value,
-        segment_sorted=segment_sorted,
-        n_refined=n_refined,
-        n_points_to_scan=n_points_to_scan,
-        jump_thresh=jump_thresh,
-    )
+    return refined_grid, refined_policy, refined_value, n_kept
 
 
-def _branch_value_slopes(
+def _reduce_coincident_groups(
     *,
-    grid: Float1D,
-    value: Float1D,
-    segment: Float1D,
-    n_points_to_scan: int,
-) -> Float1D:
-    """Value slope of each candidate's branch from its nearest same-segment node.
+    grid_sorted: Float1D,
+    policy_sorted: Float1D,
+    value_sorted: Float1D,
+    savings_sorted: Float1D,
+    use_savings: bool,
+) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    """Reduce each coincident-abscissa group to its envelope-relevant maximizers.
 
-    Inspects up to `n_points_to_scan` candidates either side (nearest first) and
-    takes the first finite, same-segment, non-coincident neighbour. A branch is
-    linear, so any such neighbour gives the exact segment slope; candidates with
-    no neighbour report `NaN`.
+    Replaces the destructive coincident-node dedup. Within each maximal run of
+    equal finite abscissae (the arrays arrive sorted ascending in grid):
+
+    - keep only members whose value equals the group maximum. The test is exact
+      equality against the segment maximum, so it is invariant to a common value
+      shift `value -> value + K` (a relative `rtol * |value|` band would widen at
+      large value level and manufacture kinks). A dominated member — value below
+      the group max by any representable margin — is NaN-ed. Two branches that
+      cross exactly on the node share one value and both survive.
+    - collapse maximizers that share an exogenous savings source (or, without
+      provenance, an equal policy) to a single copy, so a true duplicate is one
+      point while a genuine branch switch keeps both branch policies. The
+      collapse is group-wide — a maximizer is dropped when its source already
+      appears on any earlier maximizer of the group — so same-source copies split
+      by a different source (an A, B, A run) still reduce to A, B.
+
+    Points equal in exact arithmetic but split by a single ULP of construction
+    rounding are treated as one maximizer and its off-by-one-ULP shadow; the
+    shadow is dropped, publishing one branch's policy across the node — a benign
+    ULP-level degradation, and translation-invariant.
+
+    Known limitation (pointwise vs interval dominance). Group membership is
+    decided by the value *at the node*, not by segment ownership on the adjacent
+    interval. When two branches are both sampled at the *same* pair of abscissae
+    and swap ownership strictly between them, the branch that is pointwise-lower
+    at each shared node is dropped here, losing its slope anchor, so the scan
+    bridges the surviving node maxima instead of reconstructing the true crossing.
+    A one-sided interval-ownership reducer would be needed to close this. The
+    trigger requires exact endogenous-grid coincidence across branches, which the
+    production models do not exhibit (their oracle gates hold); see
+    `test_pointwise_lower_branch_that_owns_an_interval_is_retained` (xfail).
     """
-    n = grid.shape[0]
-    mags = 1 + jnp.arange(n_points_to_scan, dtype=jnp.int32)
-    offsets = jnp.stack([mags, -mags], axis=1).reshape(-1)
-    nbr_idx = jnp.arange(n, dtype=jnp.int32)[:, None] + offsets[None, :]
-    in_bounds = (nbr_idx >= 0) & (nbr_idx < n)
-    clipped = jnp.clip(nbr_idx, 0, n - 1)
-    nbr_grid = grid[clipped]
-    nbr_value = value[clipped]
-    nbr_segment = segment[clipped]
-    same = (
-        in_bounds
-        & ~jnp.isnan(nbr_grid)
-        & (nbr_segment == segment[:, None])
-        & (nbr_grid != grid[:, None])
-    )
-    found = jnp.any(same, axis=1)
-    first = jnp.argmax(same, axis=1)
-    neighbour_grid = jnp.take_along_axis(nbr_grid, first[:, None], axis=1)[:, 0]
-    neighbour_value = jnp.take_along_axis(nbr_value, first[:, None], axis=1)[:, 0]
-    delta = neighbour_grid - grid
-    safe_delta = jnp.where(delta == 0.0, 1.0, delta)
-    return jnp.where(
-        found & (delta != 0.0), (neighbour_value - value) / safe_delta, jnp.nan
-    )
-
-
-def _insert_node_crossings(
-    *,
-    refined_grid: Float1D,
-    refined_policy: Float1D,
-    refined_value: Float1D,
-    n_kept: ScalarInt,
-    presort_grid: Float1D,
-    presort_policy: Float1D,
-    presort_value: Float1D,
-    segment_sorted: Float1D,
-    n_refined: int,
-    n_points_to_scan: int,
-    jump_thresh: float,
-) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-    """Re-insert on-node crossing kinks dropped by the coincident-node dedup.
-
-    A coincident pair of candidates with equal value but a branch switch is a
-    node-aligned crossing the dedup collapses to one branch. Recover both branch
-    policies (left then right, ordered by branch slope: the steeper branch wins
-    to the right), set the kept node to the left policy, and insert the right
-    copy at the same abscissa so the refined row carries the kink.
-    """
-    slope = _branch_value_slopes(
-        grid=presort_grid,
-        value=presort_value,
-        segment=segment_sorted,
-        n_points_to_scan=n_points_to_scan,
-    )
-    grid_left, grid_right = presort_grid[:-1], presort_grid[1:]
-    value_left, value_right = presort_value[:-1], presort_value[1:]
-    policy_left, policy_right = presort_policy[:-1], presort_policy[1:]
-    segment_left, segment_right = segment_sorted[:-1], segment_sorted[1:]
-    slope_left, slope_right = slope[:-1], slope[1:]
-
-    coincident = (grid_left == grid_right) & ~jnp.isnan(grid_left)
-    value_equal = jnp.isclose(value_left, value_right, atol=1e-9, rtol=1e-7)
-    switches = (segment_left != segment_right) | _has_policy_jump(
-        grid_a=grid_left,
-        policy_a=policy_left,
-        grid_b=grid_right,
-        policy_b=policy_right,
-        jump_thresh=jump_thresh,
-    )
-    is_crossing = coincident & value_equal & switches
-
-    # Steeper branch wins to the right; the other is the left copy.
-    right_is_upper = slope_right >= slope_left
-    left_policy = jnp.where(right_is_upper, policy_left, policy_right)
-    right_policy = jnp.where(right_is_upper, policy_right, policy_left)
-    crossing_grid = jnp.where(is_crossing, grid_left, jnp.nan)
-
-    # Set each kept crossing node's policy to the left branch's policy. When more
-    # than one crossing coincides at the node (three or more branches meeting at one
-    # abscissa), select a single matching crossing's policy rather than summing them:
-    # a summed policy is not a consumption any branch prescribes. `argmax` takes the
-    # first matching crossing; for the ordinary two-branch node exactly one crossing
-    # matches, so this is unchanged there.
-    match = (refined_grid[:, None] == crossing_grid[None, :]) & is_crossing[None, :]
-    matched = jnp.any(match, axis=1)
-    first_match = jnp.argmax(match, axis=1)
-    matched_left_policy = left_policy[first_match]
-    refined_policy = jnp.where(matched, matched_left_policy, refined_policy)
-
-    # Append the right copies and stable-sort so each lands just after its node.
-    insert_grid = jnp.where(is_crossing, grid_left, jnp.nan)
-    insert_policy = jnp.where(is_crossing, right_policy, jnp.nan)
-    insert_value = jnp.where(is_crossing, value_left, jnp.nan)
-    all_grid = jnp.concatenate([refined_grid, insert_grid])
-    all_policy = jnp.concatenate([refined_policy, insert_policy])
-    all_value = jnp.concatenate([refined_value, insert_value])
-    copy_order = jnp.concatenate(
+    n = grid_sorted.shape[0]
+    finite = ~jnp.isnan(grid_sorted)
+    new_group = jnp.concatenate(
         [
-            jnp.zeros(n_refined, dtype=jnp.int32),
-            jnp.ones_like(insert_grid, dtype=jnp.int32),
+            jnp.ones((1,), dtype=bool),
+            (grid_sorted[1:] != grid_sorted[:-1]) & finite[1:],
         ]
     )
-    grid_key = jnp.where(jnp.isnan(all_grid), jnp.inf, all_grid)
-    order = jnp.lexsort(jnp.stack([copy_order, grid_key]))
-    out_grid = all_grid[order][:n_refined]
-    out_policy = all_policy[order][:n_refined]
-    out_value = all_value[order][:n_refined]
-    new_n_kept = (n_kept + jnp.sum(is_crossing, dtype=jnp.int32)).astype(jnp.int32)
-    return out_grid, out_policy, out_value, new_n_kept
+    group_id = jnp.cumsum(new_group) - 1
+
+    value_or_neg = jnp.where(finite, value_sorted, -jnp.inf)
+    group_max = jax.ops.segment_max(value_or_neg, group_id, num_segments=n)[group_id]
+    is_max = finite & (value_sorted == group_max)
+
+    # Collapse a maximizer whose exogenous source already appears on an earlier
+    # maximizer of the same group. The test is group-wide, not only against the
+    # immediate predecessor, so an A, B, A run — two same-source copies split by a
+    # different source — keeps one A and the B rather than all three.
+    source = savings_sorted if use_savings else policy_sorted
+    idx = jnp.arange(n)
+    earlier_same_source_max = (
+        (group_id[:, None] == group_id[None, :])
+        & (source[:, None] == source[None, :])
+        & (idx[None, :] < idx[:, None])
+        & is_max[None, :]
+    )
+    collapse = is_max & jnp.any(earlier_same_source_max, axis=1)
+
+    keep = finite & is_max & ~collapse
+    grid_out = jnp.where(keep, grid_sorted, jnp.nan)
+    policy_out = jnp.where(keep, policy_sorted, jnp.nan)
+    value_out = jnp.where(keep, value_sorted, jnp.nan)
+    savings_out = jnp.where(keep, savings_sorted, jnp.nan)
+    return grid_out, policy_out, value_out, savings_out
 
 
 def refine_to_bracket(
@@ -411,32 +403,31 @@ def refine_to_bracket(
     policy: Float1D,
     value: Float1D,
     x_query: ScalarFloat,
+    n_refined: int,
     jump_thresh: float = 2.0,
     n_points_to_scan: int | None = None,
     segment_id: Float1D | None = None,
+    savings: Float1D | None = None,
     scan_unroll: int = 1,
 ) -> QueryBracket:
-    """Refine to the two envelope nodes bracketing a single query, streaming.
+    """Refine to the two envelope nodes bracketing a single query.
 
-    Geometry-only counterpart of `refine_envelope` for the asset-row publish,
-    where the refined envelope is intra-node scratch read at exactly one query
-    (`resources_at_node`). Runs the same FUES scan (reusing `_inspect_candidate`
-    verbatim — identical drop/dominance/kink decisions), but folds each step's
-    up-to-three emitted points into an O(1) bracket-capture carry instead of
-    scattering them into NaN-padded `n_pad` rows. The `[n_input, 3]` per-step
-    stack and the `[n_pad]` envelope never materialize, so the per-(combo, node)
-    envelope working set is O(1) rather than O(n_pad).
+    Counterpart of `refine_envelope` for the asset-row publish, where the
+    refined envelope is intra-node scratch read at exactly one query
+    (`resources_at_node`). Builds the full refined row via `refine_envelope`
+    (identical drop/dominance/kink decisions and node-aligned crossings) and
+    slices the bracketing node pair, so the streamed publish agrees with the
+    row-then-interpolate publish by construction — there is no separate
+    streaming geometry to keep in sync with the full row.
 
-    The captured bracket reproduces `searchsorted(search_grid, x_query,
-    side="right")` clamped to `[1, max(n_kept - 1, 1)]` on the full refined
-    row, node-for-node:
+    The bracket is `searchsorted(search_grid, x_query, side="right")` clamped to
+    `[1, max(n_kept - 1, 1)]` on the full refined row:
 
-    - The bracket's lower node is the latest emitted point with grid
-      $\\le$ `x_query`; the upper node is the first emitted point with grid
-      $>$ `x_query`. At a duplicated kink abscissa (left then right copy, same
-      abscissa) both copies have grid $\\le$ `x_query` when the query sits on
-      the kink, so the later-emitted right copy wins the lower slot — the
-      `side="right"` tie-break.
+    - The bracket's lower node is the latest row node with grid $\\le$ `x_query`;
+      the upper node is the first row node with grid $>$ `x_query`. At a
+      duplicated kink abscissa (left then right copy, same abscissa) the query on
+      the kink brackets the right copy as its lower node — the `side="right"`
+      tie-break.
     - A query below the first node brackets the first pair (first, second);
       below-first weight 0 then publishes the first node's value.
     - A query at or above the last node brackets the last pair (second-last,
@@ -450,238 +441,173 @@ def refine_to_bracket(
         policy: Candidate policy values at `endog_grid`.
         value: Candidate value-correspondence points at `endog_grid`.
         x_query: The single point at which the envelope is read.
+        n_refined: Static length of the full refined row that is built and
+            sliced (see `refine_envelope`).
         jump_thresh: Threshold on $|\\Delta A / \\Delta R|$ above which two
             points lie on different value-function segments (see
             `refine_envelope`).
         n_points_to_scan: Number of candidates the bounded scans inspect; `None`
             (the default) scans exhaustively (see `refine_envelope`).
-        segment_id: Optional per-candidate segment labels (see
-            `refine_envelope`).
+        segment_id: Optional per-candidate segment labels, forwarded to
+            `refine_envelope`. No production caller passes labels.
+        savings: Optional per-candidate exogenous source savings (see
+            `refine_envelope`); the savings-monotonicity clause compares true
+            sources when supplied, else the noise floor.
         scan_unroll: Loop-unroll factor for the sequential `jax.lax.scan` over
-            candidates (see `refine_envelope`); the captured bracket is identical
-            across values.
+            candidates (see `refine_envelope`); the bracket is identical across
+            values.
 
     Returns:
         The query bracket and the kept-point count.
 
     """
-    grid_key = jnp.where(jnp.isnan(endog_grid), jnp.inf, endog_grid)
-    value_key = jnp.where(jnp.isnan(value), -jnp.inf, value)
-    order = jnp.lexsort(jnp.stack([-value_key, grid_key]))
-    grid_sorted = endog_grid[order]
-    policy_sorted = policy[order]
-    value_sorted = value[order]
-    n_input = grid_sorted.shape[0]
-    n_points_to_scan = _resolve_n_points_to_scan(n_points_to_scan, n_input=n_input)
-
-    duplicate = jnp.concatenate(
-        [
-            jnp.zeros((1,), dtype=bool),
-            (grid_sorted[1:] == grid_sorted[:-1]) & ~jnp.isnan(grid_sorted[1:]),
-        ]
-    )
-    grid_sorted = jnp.where(duplicate, jnp.nan, grid_sorted)
-    policy_sorted = jnp.where(duplicate, jnp.nan, policy_sorted)
-    value_sorted = jnp.where(duplicate, jnp.nan, value_sorted)
-
-    segment_sorted = (
-        jnp.zeros_like(grid_sorted)
-        if segment_id is None
-        else segment_id[order].astype(grid_sorted.dtype)
+    refined_grid, refined_policy, refined_value, n_kept = refine_envelope(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=n_refined,
+        jump_thresh=jump_thresh,
+        n_points_to_scan=n_points_to_scan,
+        segment_id=segment_id,
+        savings=savings,
+        scan_unroll=scan_unroll,
     )
 
-    first_point = jnp.stack([grid_sorted[0], policy_sorted[0], value_sorted[0]])
-    first_segment = segment_sorted[0]
-    fues_carry_init = jnp.concatenate(
-        [first_point, first_point, jnp.stack([first_segment, first_segment])]
-    )
-    bracket_carry_init = _empty_bracket_carry(dtype=grid_sorted.dtype)
-
-    def step(
-        carry: tuple[Float1D, Float1D], idx: ScalarInt
-    ) -> tuple[tuple[Float1D, Float1D], None]:
-        """Inspect candidate `idx`, then fold its emissions into the bracket."""
-        fues_carry, bracket_carry = carry
-        fues_carry_new, (row_grid, row_policy, row_value, count) = _inspect_candidate(
-            carry=fues_carry,
-            idx=idx,
-            grid_sorted=grid_sorted,
-            policy_sorted=policy_sorted,
-            value_sorted=value_sorted,
-            segment_sorted=segment_sorted,
-            jump_thresh=jump_thresh,
-            n_points_to_scan=n_points_to_scan,
-        )
-        bracket_carry_new = _fold_emissions_into_bracket(
-            bracket_carry=bracket_carry,
-            row_grid=row_grid,
-            row_policy=row_policy,
-            row_value=row_value,
-            count=count,
-            x_query=x_query,
-        )
-        return (fues_carry_new, bracket_carry_new), None
-
-    indices = jnp.arange(1, n_input, dtype=jnp.int32)
-    (fues_carry_final, bracket_carry), _ = jax.lax.scan(
-        step, (fues_carry_init, bracket_carry_init), indices, unroll=scan_unroll
-    )
-
-    # The last accepted point is still pending in the FUES carry; fold it as the
-    # scan's final single emission (mirrors `refine_envelope`'s post-scan emit).
-    final_grid, final_policy, final_value = (
-        fues_carry_final[3],
-        fues_carry_final[4],
-        fues_carry_final[5],
-    )
-    final_valid = ~jnp.isnan(final_grid) & ~jnp.isnan(final_value)
-    nan_scalar = jnp.full((), jnp.nan, dtype=grid_sorted.dtype)
-    bracket_carry = _fold_emissions_into_bracket(
-        bracket_carry=bracket_carry,
-        row_grid=jnp.stack([final_grid, nan_scalar, nan_scalar]),
-        row_policy=jnp.stack([final_policy, nan_scalar, nan_scalar]),
-        row_value=jnp.stack([final_value, nan_scalar, nan_scalar]),
-        count=final_valid.astype(jnp.int32),
-        x_query=x_query,
-    )
-
-    return _assemble_bracket(bracket_carry=bracket_carry, dtype=grid_sorted.dtype)
-
-
-# Bracket-capture carry layout (flat Float1D so it threads through `lax.scan`):
-# six (grid, policy, value) triples, then three counters.
-#   first  (0:3)   — lowest emitted node (constrained-floor edge test, below clamp)
-#   second (3:6)   — second emitted node (below-first clamp upper)
-#   prev   (6:9)   — second-most-recent emitted node (above-last clamp lower)
-#   last   (9:12)  — most-recent emitted node (above-last clamp upper)
-#   lo     (12:15) — latest emitted node with grid <= x_query (interior lower)
-#   hi     (15:18) — first emitted node with grid > x_query (interior upper)
-#   seen   (18)    — running count of emitted nodes (for first/second/n_kept)
-#   below  (19)    — running count of emitted nodes with grid <= x_query (`s`)
-#   hi_set (20)    — 1.0 once `hi` has been frozen, else 0.0
-_BRACKET_CARRY_LEN = 21
-
-
-def _empty_bracket_carry(*, dtype: jnp.dtype) -> Float1D:
-    """Initialize the bracket-capture carry to all-NaN nodes and zero counters."""
-    carry = jnp.full((_BRACKET_CARRY_LEN,), jnp.nan, dtype=dtype)
-    return carry.at[18:21].set(jnp.zeros((3,), dtype=dtype))
-
-
-def _fold_emissions_into_bracket(
-    *,
-    bracket_carry: Float1D,
-    row_grid: Float1D,
-    row_policy: Float1D,
-    row_value: Float1D,
-    count: ScalarInt,
-    x_query: ScalarFloat,
-) -> Float1D:
-    """Fold a step's up-to-three emitted nodes into the bracket-capture carry.
-
-    Emissions arrive in ascending grid order; only the first `count` of the
-    three slots are valid. Each valid node updates, in order:
-
-    - `seen` and the `first`/`second` registers (the first two ever emitted),
-    - the rolling `prev`/`last` pair (the two most recent),
-    - on grid $\\le$ `x_query`: the `below` count and the `lo` register
-      (latest-wins, so a duplicated kink's right copy wins),
-    - on grid $>$ `x_query`: the `hi` register, frozen on first occurrence.
-    """
-    for slot in range(3):
-        valid = slot < count
-        bracket_carry = _fold_one_node(
-            bracket_carry=bracket_carry,
-            grid=row_grid[slot],
-            policy=row_policy[slot],
-            value=row_value[slot],
-            valid=valid,
-            x_query=x_query,
-        )
-    return bracket_carry
-
-
-def _fold_one_node(
-    *,
-    bracket_carry: Float1D,
-    grid: ScalarFloat,
-    policy: ScalarFloat,
-    value: ScalarFloat,
-    valid: ScalarBool,
-    x_query: ScalarFloat,
-) -> Float1D:
-    """Update the bracket-capture carry with one emitted node when `valid`."""
-    node = jnp.stack([grid, policy, value])
-    seen = bracket_carry[18]
-    below = bracket_carry[19]
-    hi_set = bracket_carry[20]
-
-    is_first = valid & (seen == 0.0)
-    is_second = valid & (seen == 1.0)
-    at_or_below = valid & (grid <= x_query)
-    above = valid & (grid > x_query)
-    freezes_hi = above & (hi_set == 0.0)
-
-    new = bracket_carry
-    new = new.at[0:3].set(jnp.where(is_first, node, bracket_carry[0:3]))
-    new = new.at[3:6].set(jnp.where(is_second, node, bracket_carry[3:6]))
-    # Roll the most-recent pair: `prev` takes the old `last`, `last` takes the
-    # node — only on a valid emission, so dropped/NaN slots leave them intact.
-    new = new.at[6:9].set(jnp.where(valid, bracket_carry[9:12], bracket_carry[6:9]))
-    new = new.at[9:12].set(jnp.where(valid, node, bracket_carry[9:12]))
-    new = new.at[12:15].set(jnp.where(at_or_below, node, bracket_carry[12:15]))
-    new = new.at[15:18].set(jnp.where(freezes_hi, node, bracket_carry[15:18]))
-    new = new.at[18].set(seen + jnp.where(valid, 1.0, 0.0))
-    new = new.at[19].set(below + jnp.where(at_or_below, 1.0, 0.0))
-    return new.at[20].set(jnp.where(freezes_hi, 1.0, hi_set))
-
-
-def _assemble_bracket(*, bracket_carry: Float1D, dtype: jnp.dtype) -> QueryBracket:
-    """Assemble the edge-clamped query bracket from the capture carry.
-
-    Reproduces `clip(searchsorted(side="right"), 1, max(n_kept - 1, 1))` on the
-    full refined row by selecting among the captured registers on `s` (count of
-    emitted nodes with grid $\\le$ `x_query`) and `n_kept`:
-
-    - `s == 0` (query below the first node): bracket (first, second).
-    - `s == n_kept` (query at or above the last node): bracket (prev, last) when
-      `n_kept >= 2`; with a single live node the reference clamps the upper
-      index to the NaN-padded slot, so the bracket is (first, second=NaN) there.
-    - otherwise: bracket (lo, hi) — the searchsorted pair node-for-node.
-    """
-    first = bracket_carry[0:3]
-    second = bracket_carry[3:6]
-    prev = bracket_carry[6:9]
-    last = bracket_carry[9:12]
-    lo = bracket_carry[12:15]
-    hi = bracket_carry[15:18]
-    n_kept = bracket_carry[18].astype(jnp.int32)
-    below = bracket_carry[19].astype(jnp.int32)
-
-    below_first = below == 0
-    at_or_above_last = below == n_kept
-    # The reference clamps the upper index to `max(n_kept - 1, 1)`, so the
-    # above-last bracket is (second-last, last) once there are at least two
-    # nodes (`max(n_kept - 1, 1) == n_kept - 1`); with a single node the upper
-    # index stays at the NaN-padded slot, so the bracket is the (first,
-    # NaN-padded-second) pair that `first`/`second` already hold (`second`
-    # stayed NaN, never emitted).
-    above_clamp_is_last = (n_kept - 1) >= jnp.maximum(n_kept - 1, 1)
-    above_lower = jnp.where(above_clamp_is_last, prev, first)
-    above_upper = jnp.where(above_clamp_is_last, last, second)
-
-    lower = jnp.where(below_first, first, jnp.where(at_or_above_last, above_lower, lo))
-    upper = jnp.where(below_first, second, jnp.where(at_or_above_last, above_upper, hi))
+    # Locate the query bracket exactly as the dense read does:
+    # `searchsorted(side="right")` clamped to `[1, max(n_kept - 1, 1)]`. NaN-padded
+    # tail entries become `+inf` so they never bracket a finite query, and a query
+    # on a duplicated kink abscissa lands the right copy in the lower slot.
+    search_grid = jnp.where(jnp.isnan(refined_grid), jnp.inf, refined_grid)
+    n_valid = jnp.minimum(n_kept, n_refined)
+    upper_idx = jnp.searchsorted(search_grid, x_query, side="right")
+    upper_idx = jnp.clip(upper_idx, 1, jnp.maximum(n_valid - 1, 1))
+    lower_idx = upper_idx - 1
     return QueryBracket(
-        lower_grid=lower[0].astype(dtype),
-        upper_grid=upper[0].astype(dtype),
-        lower_policy=lower[1].astype(dtype),
-        upper_policy=upper[1].astype(dtype),
-        lower_value=lower[2].astype(dtype),
-        upper_value=upper[2].astype(dtype),
-        first_grid=first[0].astype(dtype),
+        lower_grid=refined_grid[lower_idx],
+        upper_grid=refined_grid[upper_idx],
+        lower_policy=refined_policy[lower_idx],
+        upper_policy=refined_policy[upper_idx],
+        lower_value=refined_value[lower_idx],
+        upper_value=refined_value[upper_idx],
+        first_grid=refined_grid[0],
         n_kept=n_kept,
     )
+
+
+def _judge_savings_decrease(
+    *,
+    use_savings: bool,
+    savings_i: ScalarFloat,
+    savings_j: ScalarFloat,
+    grid_i: ScalarFloat,
+    policy_i: ScalarFloat,
+    grid_j: ScalarFloat,
+    policy_j: ScalarFloat,
+) -> ScalarBool:
+    """Judge a savings decrease between two candidates.
+
+    With exogenous source savings the decrease is exact and backend-stable
+    (`s_i < s_j`; equal sources are ties, never dropped). Without them, the
+    noise floor on the implied difference `R - c` protects same-source ties from
+    rounding at the cost of masking a real cross-source decrease when resources
+    dwarf the savings span.
+    """
+    if use_savings:
+        return savings_i < savings_j
+    return _savings_decrease_past_noise(
+        grid_i=grid_i, policy_i=policy_i, grid_j=grid_j, policy_j=policy_j
+    )
+
+
+def _emission_block(
+    *,
+    plain: ScalarBool,
+    kink_5: ScalarBool,
+    kink_6: ScalarBool,
+    kink_on_j: ScalarBool,
+    kink_on_i: ScalarBool,
+    grid_j: ScalarFloat,
+    grid_i: ScalarFloat,
+    policy_j: ScalarFloat,
+    value_j: ScalarFloat,
+    kink_grid_5: ScalarFloat,
+    kink_policy_left_5: ScalarFloat,
+    kink_policy_right_5: ScalarFloat,
+    kink_value_5: ScalarFloat,
+    kink_grid_6: ScalarFloat,
+    kink_policy_left_6: ScalarFloat,
+    kink_policy_right_6: ScalarFloat,
+    kink_value_6: ScalarFloat,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    """Assemble a scan step's up-to-three emission rows in ascending grid order.
+
+    A step emits, at most:
+
+    - a `j`-dominated crossing kink (`kink_6`, two copies — left then right policy
+      at one abscissa; `j` itself is dominated, so not emitted),
+    - the finalized `j` (`plain`, or when a crossing also fires),
+    - a strictly-between crossing kink (`kink_5`, two more copies at the crossing),
+    - a crossing snapped to an endpoint: on `grid_j` (`kink_on_j`, one right copy
+      at `grid_j` — `j` is the left copy) or on `grid_i` (`kink_on_i`, one left
+      copy at `grid_i` — the accepted `i` is the right copy, emitted next step).
+
+    The flags are mutually exclusive by construction, so the three slots pack the
+    valid emissions densely and `count` is the number of filled slots.
+    """
+    nan_scalar = jnp.full((), jnp.nan, dtype=grid_j.dtype)
+    emits_j = plain | kink_5 | kink_on_j | kink_on_i
+    crossing_value = kink_5 | kink_on_j | kink_on_i
+    row_grid = jnp.stack(
+        [
+            jnp.where(kink_6, kink_grid_6, jnp.where(emits_j, grid_j, nan_scalar)),
+            jnp.where(
+                kink_6,
+                kink_grid_6,
+                jnp.where(
+                    kink_5,
+                    kink_grid_5,
+                    jnp.where(
+                        kink_on_j, grid_j, jnp.where(kink_on_i, grid_i, nan_scalar)
+                    ),
+                ),
+            ),
+            jnp.where(kink_5, kink_grid_5, nan_scalar),
+        ]
+    )
+    row_policy = jnp.stack(
+        [
+            jnp.where(
+                kink_6,
+                kink_policy_left_6,
+                jnp.where(emits_j, policy_j, nan_scalar),
+            ),
+            jnp.where(
+                kink_6,
+                kink_policy_right_6,
+                jnp.where(
+                    kink_5 | kink_on_i,
+                    kink_policy_left_5,
+                    jnp.where(kink_on_j, kink_policy_right_5, nan_scalar),
+                ),
+            ),
+            jnp.where(kink_5, kink_policy_right_5, nan_scalar),
+        ]
+    )
+    row_value = jnp.stack(
+        [
+            jnp.where(kink_6, kink_value_6, jnp.where(emits_j, value_j, nan_scalar)),
+            jnp.where(
+                kink_6,
+                kink_value_6,
+                jnp.where(crossing_value, kink_value_5, nan_scalar),
+            ),
+            jnp.where(kink_5, kink_value_5, nan_scalar),
+        ]
+    )
+    count = jnp.where(
+        kink_5, 3, jnp.where(kink_6 | kink_on_j | kink_on_i, 2, jnp.where(plain, 1, 0))
+    ).astype(jnp.int32)
+    return row_grid, row_policy, row_value, count
 
 
 def _inspect_candidate(
@@ -692,6 +618,8 @@ def _inspect_candidate(
     policy_sorted: Float1D,
     value_sorted: Float1D,
     segment_sorted: Float1D,
+    savings_sorted: Float1D,
+    use_savings: bool,
     jump_thresh: float,
     n_points_to_scan: int,
 ) -> tuple[Float1D, tuple[Float1D, Float1D, Float1D, ScalarInt]]:
@@ -709,6 +637,11 @@ def _inspect_candidate(
         grid_sorted: Sorted candidate endogenous grid points.
         policy_sorted: Candidate policy values at `grid_sorted`.
         value_sorted: Candidate value-correspondence points at `grid_sorted`.
+        segment_sorted: Sorted candidate segment labels.
+        savings_sorted: Sorted candidate exogenous source savings (dummy zeros
+            when `use_savings` is false).
+        use_savings: When true, the savings-monotonicity clause compares
+            exogenous sources; otherwise it uses the noise-floor heuristic.
         jump_thresh: Threshold on $|\\Delta A / \\Delta R|$ above which two
             points lie on different segments.
         n_points_to_scan: Number of candidates the bounded scans inspect.
@@ -719,11 +652,14 @@ def _inspect_candidate(
         rows.
 
     """
-    grid_k, policy_k, value_k, grid_j, policy_j, value_j, seg_k, seg_j = carry
+    grid_k, policy_k, value_k, grid_j, policy_j, value_j, seg_k, seg_j, savings_j = (
+        carry
+    )
     grid_i = grid_sorted[idx]
     policy_i = policy_sorted[idx]
     value_i = value_sorted[idx]
     seg_i = segment_sorted[idx]
+    savings_i = savings_sorted[idx]
 
     candidate_valid = ~jnp.isnan(grid_i) & ~jnp.isnan(value_i)
     # Two points lie on different segments if the implied-savings policy jumps
@@ -734,7 +670,16 @@ def _inspect_candidate(
         grid_b=grid_i,
         policy_b=policy_i,
         jump_thresh=jump_thresh,
+        savings_a=savings_j if use_savings else None,
+        savings_b=savings_i if use_savings else None,
     ) | (seg_j != seg_i)
+    # A node-aligned crossing is a genuine switch landing on a grid node: two
+    # maximizers at one abscissa with equal value and different branch. It is an
+    # envelope kink, never interior-dominated, so it is exempt from the
+    # domination drops below and both copies are emitted (left then right).
+    node_crossing = (
+        candidate_valid & switches & (grid_i == grid_j) & (value_i == value_j)
+    )
     secant = _slope(x_a=grid_j, y_a=value_j, x_b=grid_i, y_b=value_i)
     grad_before = _slope(x_a=grid_k, y_a=value_k, x_b=grid_j, y_b=value_j)
 
@@ -755,19 +700,41 @@ def _inspect_candidate(
         jump_thresh=jump_thresh,
     )
     secant_i_to_j_seg = _slope(x_a=grid_i, y_a=value_i, x_b=j_seg_grid, y_b=j_seg_value)
-    below_j_segment = switches & j_seg_found & (secant < secant_i_to_j_seg)
+    # `i` is below `j`'s segment continuation when it lies under that line. If the
+    # continuation lands on `i`'s own abscissa (a node-aligned crossing, so the
+    # secant slope is degenerate), "below" is the direct value comparison: equal
+    # value means the branches meet there and `i` is kept, not dominated.
+    below_j_segment = (
+        switches
+        & j_seg_found
+        & jnp.where(
+            grid_i == j_seg_grid,
+            value_i < j_seg_value,
+            secant < secant_i_to_j_seg,
+        )
+    )
 
     # A value drop marks a dominated candidate only *within* a segment, where the
     # envelope value is monotone in the grid. Across a segment switch the value may
     # legitimately fall (the winning segment changes at a crossing), so a switch is
     # judged geometrically by `below_j_segment`, not by the raw value comparison —
     # otherwise the genuine crossing point of two branches is dropped as dominated.
+    #
+    savings_decrease = _judge_savings_decrease(
+        use_savings=use_savings,
+        savings_i=savings_i,
+        savings_j=savings_j,
+        grid_i=grid_i,
+        policy_i=policy_i,
+        grid_j=grid_j,
+        policy_j=policy_j,
+    )
     dropped = (
         ~candidate_valid
         | ((value_i < value_j) & ~switches)
-        | (((grid_i - policy_i) < (grid_j - policy_j)) & (secant < grad_before))
+        | (savings_decrease & (secant < grad_before))
         | below_j_segment
-    )
+    ) & ~node_crossing
 
     # A same-segment partner of i defines i's segment line (forward preferred:
     # after a crossing, i's segment continues to the right).
@@ -809,7 +776,9 @@ def _inspect_candidate(
     # j below i's segment line means the crossing happened before j: j is
     # dominated and is replaced by the intersection of the line through (k, j)
     # with i's segment line.
-    j_dominated = ~dropped & switches & partner_found & (secant > i_seg_slope)
+    j_dominated = (
+        ~dropped & switches & partner_found & (secant > i_seg_slope) & ~node_crossing
+    )
     policy_slope_kj = _slope(x_a=grid_k, y_a=policy_k, x_b=grid_j, y_b=policy_j)
     kink_grid_6, kink_value_6 = _intersect_lines(
         x_a=grid_j,
@@ -854,58 +823,61 @@ def _inspect_candidate(
     )
     kink_policy_left_5 = policy_j + j_seg_policy_slope * (kink_grid_5 - grid_j)
     kink_policy_right_5 = policy_i + i_seg_policy_slope * (kink_grid_5 - grid_i)
+    # The crossing of j's and i's segment lines can land strictly between them (an
+    # interior kink: both nodes kept, the intersection inserted twice), or on an
+    # existing endpoint `grid_j` / `grid_i` — a node-aligned crossing where one
+    # branch spans the node without a coincident candidate there. An endpoint
+    # landing (within rounding) is snapped to that node and emitted as a canonical
+    # two-copy kink; the redundant endpoint copy is suppressed so `n_kept` is not
+    # inflated. `near_tol` is a few ULP of the node scale — "certified within
+    # rounding error", not a tolerance that would swallow a genuine interior kink.
+    # A coincident node crossing (`grid_i == grid_j`, handled by `node_crossing`
+    # with both copies kept) is excluded: its segment-line intersection is not a
+    # separate inserted kink.
+    crossing = ~dropped & ~j_dominated & ~node_crossing & switches & partner_found
+    near_tol = (
+        16.0
+        * jnp.finfo(grid_sorted.dtype).eps
+        * jnp.maximum(jnp.maximum(jnp.abs(grid_j), jnp.abs(grid_i)), 1.0)
+    )
+    kink_on_j = crossing & (jnp.abs(kink_grid_5 - grid_j) <= near_tol)
+    kink_on_i = crossing & ~kink_on_j & (jnp.abs(kink_grid_5 - grid_i) <= near_tol)
     kink_5 = (
-        ~dropped
-        & ~j_dominated
-        & switches
-        & partner_found
+        crossing
+        & ~kink_on_j
+        & ~kink_on_i
         & (kink_grid_5 > grid_j)
         & (kink_grid_5 < grid_i)
     )
 
-    plain = ~dropped & ~j_dominated & ~kink_5
-    nan_scalar = jnp.full((), jnp.nan, dtype=grid_sorted.dtype)
-
-    emits_j = plain | kink_5
-    row_grid = jnp.stack(
-        [
-            jnp.where(kink_6, kink_grid_6, jnp.where(emits_j, grid_j, nan_scalar)),
-            jnp.where(kink_6, kink_grid_6, jnp.where(kink_5, kink_grid_5, nan_scalar)),
-            jnp.where(kink_5, kink_grid_5, nan_scalar),
-        ]
-    )
-    row_policy = jnp.stack(
-        [
-            jnp.where(
-                kink_6,
-                kink_policy_left_6,
-                jnp.where(emits_j, policy_j, nan_scalar),
-            ),
-            jnp.where(
-                kink_6,
-                kink_policy_right_6,
-                jnp.where(kink_5, kink_policy_left_5, nan_scalar),
-            ),
-            jnp.where(kink_5, kink_policy_right_5, nan_scalar),
-        ]
-    )
-    row_value = jnp.stack(
-        [
-            jnp.where(kink_6, kink_value_6, jnp.where(emits_j, value_j, nan_scalar)),
-            jnp.where(
-                kink_6, kink_value_6, jnp.where(kink_5, kink_value_5, nan_scalar)
-            ),
-            jnp.where(kink_5, kink_value_5, nan_scalar),
-        ]
-    )
-    count = jnp.where(kink_5, 3, jnp.where(kink_6, 2, jnp.where(plain, 1, 0))).astype(
-        jnp.int32
+    plain = ~dropped & ~j_dominated & ~kink_5 & ~kink_on_j & ~kink_on_i
+    row_grid, row_policy, row_value, count = _emission_block(
+        plain=plain,
+        kink_5=kink_5,
+        kink_6=kink_6,
+        kink_on_j=kink_on_j,
+        kink_on_i=kink_on_i,
+        grid_j=grid_j,
+        grid_i=grid_i,
+        policy_j=policy_j,
+        value_j=value_j,
+        kink_grid_5=kink_grid_5,
+        kink_policy_left_5=kink_policy_left_5,
+        kink_policy_right_5=kink_policy_right_5,
+        kink_value_5=kink_value_5,
+        kink_grid_6=kink_grid_6,
+        kink_policy_left_6=kink_policy_left_6,
+        kink_policy_right_6=kink_policy_right_6,
+        kink_value_6=kink_value_6,
     )
 
     # New k is the point emitted last this step: the right-policy copy of an
     # inserted kink, the finalized j on a plain accept, or unchanged when
-    # nothing was emitted (drop, or j dominated without a valid kink). New j
-    # is the accepted candidate i.
+    # nothing was emitted (drop, or j dominated without a valid kink). For a
+    # crossing on `grid_j` the last emitted node is the right copy at `grid_j`;
+    # for a crossing on `grid_i` the left copy sits at `grid_i` (coincident with
+    # the accepted `i`), so k carries the plain-accept `j` and the left copy is an
+    # inserted node only. New j is the accepted candidate i.
     keeps_k = dropped | (j_dominated & ~kink_6)
     new_k_grid = jnp.where(
         keeps_k,
@@ -918,19 +890,37 @@ def _inspect_candidate(
         jnp.where(
             kink_5,
             kink_policy_right_5,
-            jnp.where(kink_6, kink_policy_right_6, policy_j),
+            jnp.where(
+                kink_6,
+                kink_policy_right_6,
+                jnp.where(kink_on_j, kink_policy_right_5, policy_j),
+            ),
         ),
     )
     new_k_value = jnp.where(
         keeps_k,
         value_k,
-        jnp.where(kink_5, kink_value_5, jnp.where(kink_6, kink_value_6, value_j)),
+        jnp.where(
+            kink_5,
+            kink_value_5,
+            jnp.where(
+                kink_6,
+                kink_value_6,
+                jnp.where(kink_on_j, kink_value_5, value_j),
+            ),
+        ),
     )
     # New k inherits the segment of the point it represents: an inserted kink
-    # carries `i`'s segment (the crossing continues to the right on i's
-    # segment), a plain accept carries the finalized `j`'s segment, and a
-    # retained k keeps its own. New j is the accepted candidate `i`.
-    new_k_seg = jnp.where(keeps_k, seg_k, jnp.where(kink_5 | kink_6, seg_i, seg_j))
+    # (interior, or the right copy of a crossing on `grid_j`) carries `i`'s
+    # segment as the crossing continues to the right; a plain accept and the
+    # `grid_i` crossing carry the finalized `j`'s segment; a retained k keeps its
+    # own. New j is the accepted candidate `i`.
+    new_k_seg = jnp.where(
+        keeps_k, seg_k, jnp.where(kink_5 | kink_6 | kink_on_j, seg_i, seg_j)
+    )
+    # New j is the accepted candidate `i`, so its source savings become
+    # `savings_i`. Only `savings_j` is carried (the clause never reads a `k`
+    # source), so no `k` savings slot is threaded.
     carry_accepted = jnp.stack(
         [
             new_k_grid,
@@ -941,11 +931,59 @@ def _inspect_candidate(
             value_i,
             new_k_seg,
             seg_i,
+            savings_i,
         ]
     )
     carry_new = jnp.where(dropped, carry, carry_accepted)
 
     return carry_new, (row_grid, row_policy, row_value, count)
+
+
+def _savings_decrease_past_noise(
+    *,
+    grid_i: ScalarFloat,
+    policy_i: ScalarFloat,
+    grid_j: ScalarFloat,
+    policy_j: ScalarFloat,
+) -> ScalarBool:
+    """Indicate a genuine decrease in implied savings between two candidates.
+
+    Judges a decrease only past a noise floor: each implied saving $A = R - c$
+    is a difference of like-magnitude grid and policy values, so its rounding
+    error scales with those magnitudes, not with the saving itself. Candidates
+    whose savings are tied in exact arithmetic (one exogenous savings point
+    feeding consecutive candidates) would otherwise be kept or dropped by the
+    sign of pure rounding noise — which varies with the backend's reduction
+    order and makes the kept set platform-dependent.
+
+    The floor `16 * eps * max(|R|, |c|)` masks a genuine savings decrease only
+    when it is smaller than that band. The band is a small multiple of the
+    representable spacing at the operands' magnitude, so a grid fine enough to
+    place two distinct savings within it would need on the order of
+    `1 / (16 * eps)` points across the same magnitude (hundreds of thousands in
+    float32, astronomically more in float64) — far beyond any solved grid. A
+    decrease inside the dead zone is therefore below the grid's own resolution,
+    where the two candidates are numerically indistinguishable and dropping
+    either is within interpolation error; the band buys cross-backend
+    determinism at no resolvable accuracy cost.
+
+    Args:
+        grid_i: Endogenous grid point of the later candidate.
+        policy_i: Policy value of the later candidate.
+        grid_j: Endogenous grid point of the earlier candidate.
+        policy_j: Policy value of the earlier candidate.
+
+    Returns:
+        Boolean indicator, true iff the later candidate's implied savings lie
+        below the earlier candidate's by more than the noise floor.
+
+    """
+    savings_scale = jnp.maximum(
+        jnp.maximum(jnp.abs(grid_i), jnp.abs(policy_i)),
+        jnp.maximum(jnp.abs(grid_j), jnp.abs(policy_j)),
+    )
+    noise_floor = 16.0 * jnp.finfo(grid_i.dtype).eps * savings_scale
+    return (grid_i - policy_i) < (grid_j - policy_j) - noise_floor
 
 
 def _find_same_segment_point(
@@ -1021,11 +1059,23 @@ def _has_policy_jump(
     grid_b: FloatND,
     policy_b: FloatND,
     jump_thresh: float,
+    savings_a: FloatND | None = None,
+    savings_b: FloatND | None = None,
 ) -> BoolND:
     """Indicate whether two points lie on different value-function segments.
 
     Points lie on different segments iff the gradient of the implied savings
-    $A = R - c$ between them exceeds `jump_thresh` in absolute value.
+    $A = R - c$ between them exceeds `jump_thresh` in absolute value. At a
+    coincident abscissa the gradient is undefined — `_slope` returns 0 there —
+    so a branch switch landing exactly on a grid node would be invisible to the
+    threshold test. A differing saving at a coincident abscissa is an infinite
+    savings gradient, i.e. a genuine discontinuity, and counts as a jump
+    directly; an equal saving (a true duplicate point) does not.
+
+    At a coincident abscissa the comparison uses the pristine exogenous
+    `savings` source when supplied — two candidates from one savings node are a
+    duplicate, not a switch, even when their implied `R - c` rounds differently
+    — and falls back to the implied saving otherwise.
 
     Args:
         grid_a: Endogenous grid point(s) of the first point.
@@ -1033,18 +1083,25 @@ def _has_policy_jump(
         grid_b: Endogenous grid point(s) of the second point.
         policy_b: Policy value(s) of the second point.
         jump_thresh: Threshold on $|\\Delta A / \\Delta R|$.
+        savings_a: Exogenous source saving(s) of the first point, or `None`.
+        savings_b: Exogenous source saving(s) of the second point, or `None`.
 
     Returns:
         Boolean indicator(s), broadcast over the inputs.
 
     """
-    savings_slope = _slope(
-        x_a=grid_a,
-        y_a=grid_a - policy_a,
-        x_b=grid_b,
-        y_b=grid_b - policy_b,
+    implied_a = grid_a - policy_a
+    implied_b = grid_b - policy_b
+    savings_slope = _slope(x_a=grid_a, y_a=implied_a, x_b=grid_b, y_b=implied_b)
+    if savings_a is not None and savings_b is not None:
+        coincident_jump = savings_a != savings_b
+    else:
+        coincident_jump = implied_a != implied_b
+    return jnp.where(
+        grid_a == grid_b,
+        coincident_jump,
+        jnp.abs(savings_slope) > jump_thresh,
     )
-    return jnp.abs(savings_slope) > jump_thresh
 
 
 def _slope(*, x_a: FloatND, y_a: FloatND, x_b: FloatND, y_b: FloatND) -> FloatND:

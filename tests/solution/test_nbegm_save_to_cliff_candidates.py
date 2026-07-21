@@ -12,7 +12,7 @@ near-cliff nodes capture.
 import jax.numpy as jnp
 import numpy as np
 
-import _lcm.solution.solvers as solvers_mod
+import _lcm.solution.nbegm as solvers_mod
 from tests.test_models import nbegm_jump_ride_along_toy as toy
 
 

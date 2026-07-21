@@ -1,5 +1,5 @@
 import functools
-from typing import Literal
+from typing import Any, Literal
 
 from jax import numpy as jnp
 
@@ -32,7 +32,11 @@ _SHOCK_GRID_CLASSES = {
     "rouwenhorst": RouwenhorstAR1Process,
 }
 
-_SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
+# Heterogeneous per-class constructor kwargs, splatted with `**`, so the value type
+# is genuinely `Any`: a checker must assume any key of the target class could receive
+# one. (It typed as `bool` only by luck — every param used to accept a bool, since
+# `bool` is an `int`.)
+_SHOCK_GRID_KWARGS: dict[str, dict[str, Any]] = {
     "uniform": {},
     "normal": {"gauss_hermite": True},
     "lognormal": {"gauss_hermite": True},

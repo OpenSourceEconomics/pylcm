@@ -26,9 +26,8 @@ _N_GRID = jnp.linspace(0.0, 50.0, 10)
 _B_GRID = jnp.linspace(0.0, 46.0, 16)
 # The covered region excludes the top pension edge hole (the last n column). The
 # interior further drops the low-liquid constrained corner (first m rows), where RFC
-# does not yet select the acon/con corner segments — a known accuracy gap (the cut/
-# publish corner handling) tracked for the next iteration; the bulk interior is where
-# the combined-cloud RFC is validated against the brute solve.
+# does not select the acon/con corner segments — a known accuracy gap; the bulk
+# interior is where the combined-cloud RFC is validated against the brute solve.
 _COVERED = np.s_[:, :9]
 _INTERIOR = np.s_[4:, :9]
 

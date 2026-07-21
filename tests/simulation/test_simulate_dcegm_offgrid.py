@@ -13,6 +13,8 @@ wealth strictly between consumption-grid nodes, the simulated consumption must
 hit `c*` — which a grid-restricted argmax cannot.
 """
 
+import dataclasses
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -22,6 +24,7 @@ from lcm.typing import ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
 from tests.test_models.deterministic import base, dcegm_variants, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
+    DCEGM_SOLVER,
     dcegm_retirement,
     get_retirement_only_params,
 )
@@ -39,9 +42,14 @@ def _closed_form_model() -> Model:
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
+    # MSS is the only backend whose rows certify every envelope crossing, so
+    # it is the only one that qualifies for the off-grid read.
+    solver = dataclasses.replace(DCEGM_SOLVER, upper_envelope="mss")
     return Model(
         regimes={
-            "retirement": dcegm_retirement.replace(active=lambda age: age < 50),
+            "retirement": dcegm_retirement.replace(
+                active=lambda age: age < 50, solver=solver
+            ),
             "dead": bequest_dead,
         },
         ages=AgeGrid(start=40, stop=50, step="10Y"),
@@ -85,18 +93,17 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     np.testing.assert_allclose(consumption, expected, rtol=2e-2)
 
 
-def test_discrete_action_regime_keeps_the_grid_consumption_path():
-    """With a discrete work choice, simulated consumption stays on the grid.
+def test_discrete_action_regime_consumption_leaves_the_action_grid():
+    """With a discrete work choice, simulated consumption is read off-grid.
 
-    The discrete branch is chosen from grid-restricted Q values; a branch
-    whose refined conditional optimum lies between action-grid nodes can lose
-    that comparison yet win after continuous refinement, so replacing only
-    the continuous action could pair the refined policy with the wrong
-    branch. Until branch re-decision from published conditional values
-    exists, such regimes keep the grid-argmax consumption.
+    The discrete branch is re-decided at the subject's state from the
+    published conditional values, and the winning branch's policy row is
+    interpolated at the subject's resources — so consumption need not sit on
+    an action-grid node. (The closed-form re-decision tests pin the values;
+    this pins that the off-grid path engages for a discrete-action regime.)
     """
     n_periods = 3
-    model = dcegm_variants.get_full_model("dcegm", n_periods)
+    model = dcegm_variants.get_full_model("dcegm", n_periods, upper_envelope="mss")
     params = dcegm_variants.get_full_params(n_periods)
 
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
@@ -125,7 +132,7 @@ def test_discrete_action_regime_keeps_the_grid_consumption_path():
     node_distance = np.abs(consumption[:, None] - consumption_nodes[None, :]).min(
         axis=1
     )
-    np.testing.assert_allclose(node_distance, 0.0, atol=1e-12)
+    assert np.all(node_distance > 1e-8)
 
 
 def _skill_bequest_utility(
@@ -179,13 +186,14 @@ def _skill_model() -> Model:
     )
 
 
-def test_dcegm_simulated_consumption_blends_rows_at_off_grid_passive_state():
-    """An off-grid passive state blends the two bracketing policy rows.
+def test_passive_state_regime_keeps_the_grid_consumption_path():
+    """With a passive continuous state, simulated consumption stays on the grid.
 
-    With bequest weight `skill`, optimal consumption is
-    `c* = wealth / (1 + beta * skill)`. Seeding subjects at skill values
-    strictly between the skill-grid nodes, the simulated consumption must
-    track the closed form — a single row (either bracket) cannot.
+    Each published policy row is the upper-envelope consumption conditional on
+    one passive-state node. Where the winning endogenous branch differs across
+    passive nodes, blending the rows would read an action from neither branch,
+    so passive regimes keep the grid-argmax consumption until conditional-value
+    re-decision across the passive axis exists.
     """
     model = _skill_model()
     params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
@@ -211,8 +219,12 @@ def test_dcegm_simulated_consumption_blends_rows_at_off_grid_passive_state():
     )
     period_0 = result.to_dataframe().query("period == 0")
     consumption = period_0["consumption"].to_numpy()
-    expected = off_grid_wealth / (1.0 + _DISCOUNT_FACTOR * off_grid_skill)
-    np.testing.assert_allclose(consumption, expected, rtol=2e-2)
+
+    consumption_nodes = np.asarray(dcegm_variants.CONSUMPTION_GRID.to_jax())
+    node_distance = np.abs(consumption[:, None] - consumption_nodes[None, :]).min(
+        axis=1
+    )
+    np.testing.assert_allclose(node_distance, 0.0, atol=1e-12)
 
 
 def _phased_alive_utility_solve(consumption: ContinuousState) -> FloatND:

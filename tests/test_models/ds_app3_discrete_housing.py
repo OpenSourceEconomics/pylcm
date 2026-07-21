@@ -122,9 +122,9 @@ RESOURCES_FUNCTION_NAME = "resources"
 # bracket `[a0, a1)` (the `B`/`tau_a` of each bracket). Three level discontinuities
 # (up +0.10 at a=3.87, down ~0.14 at a=6.97 where the subsidy bracket resets the
 # offset to 0.05, up +0.15 at a=15) plus rate kinks make the budget non-monotone —
-# why Table 5 compares only FUES vs VFI. The resolved `(LOWER, OFFSET, RATE)` arrays
-# below hash to sha256[:16] `4e8d1bf0748f6933`; re-derive from the pinned commit to
-# detect upstream drift.
+# why Table 5 compares only FUES vs VFI. The `(LOWER, OFFSET, RATE)` arrays below
+# encode that schedule as three per-bracket coordinates; re-derive them from the
+# pinned commit to detect upstream drift.
 TAX_BRACKET_LOWER = (0.0, 2.20, 2.50, 2.75, 3.87, 6.97, 8.36, 12.0, 15.0, 20.0)
 TAX_BRACKET_OFFSET = (
     0.0,

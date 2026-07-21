@@ -66,14 +66,22 @@ def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     Internal machinery is excluded: the Bellman aggregator `H`, the
     stochastic weight functions, and the budget mask synthesized for DC-EGM
     regimes (an implementation detail of the simulate-phase argmax, not a
-    user-declared constraint). A DC-EGM regime's `inverse_marginal_utility`
-    is excluded as well — its `marginal_continuation` argument exists only
-    inside the Euler inversion, so it is not computable from simulation data.
+    user-declared constraint). A regime that solves from a continuation also
+    excludes `inverse_marginal_utility` — its `marginal_continuation` argument
+    exists only inside the Euler inversion, so it is not computable from
+    simulation data; the exclusion is gated on the `solves_from_continuation`
+    capability, not the solver type.
+
+    The two names (`DCEGM_BUDGET_CONSTRAINT_NAME`, `"inverse_marginal_utility"`)
+    are name-based couplings to the EGM step's internal functions — the one spot
+    the generic simulation layer must know them. A new continuation solver that
+    reuses those internal names inherits the exemption; one that introduces
+    differently-named internal machinery extends this exclusion set here.
     """
     excluded = {"H", DCEGM_BUDGET_CONSTRAINT_NAME} | (
         _get_stochastic_weight_function_names(regime)
     )
-    if regime.solution.solves_via_dcegm:
+    if regime.solution.solves_from_continuation:
         excluded.add("inverse_marginal_utility")
     sim = regime.simulation
     candidates = {name for name in sim.functions if name not in excluded} | {
@@ -158,6 +166,9 @@ def _compute_targets(
     single pass. Values are identical to the single-pass evaluation.
     """
     functions_pool = _build_functions_pool(regime)
+    _fail_if_targets_depend_on_age_specialized(
+        targets=targets, functions_pool=functions_pool, regime=regime
+    )
     target_func = _create_target_function(
         functions_pool=functions_pool, targets=targets
     )
@@ -197,6 +208,38 @@ def _compute_targets(
         else:
             result[name] = np.squeeze(np.concatenate(per_chunk))
     return result
+
+
+def _fail_if_targets_depend_on_age_specialized(
+    *,
+    targets: list[str],
+    functions_pool: dict[str, UserFunction],
+    regime: Regime,
+) -> None:
+    """Reject targets whose DAG reads a policy-specialized function.
+
+    The rejected functions are those specialized via `AgeSpecializedFunction`.
+
+    The published simulation functions hold each specialized function resolved at
+    the regime's representative age only; computing a period-specific target from
+    them would silently use the wrong age's policy closure.
+    """
+    specialized = regime.simulation.age_specialized_function_names
+    if not specialized:
+        return
+    consumed = (
+        set(get_ancestors(functions_pool, targets=targets, include_targets=True))
+        & specialized
+    )
+    if consumed:
+        raise InvalidAdditionalTargetsError(
+            f"Targets {sorted(set(targets))} depend on the policy-specialized "
+            f"(`AgeSpecializedFunction`) function(s) {sorted(consumed)}. Published "
+            f"simulation functions hold one representative-age closure, so a "
+            f"period-specific value computed from them would use the wrong age's "
+            f"policy. Compute such quantities inside the model (as a state or a "
+            f"logged function) instead."
+        )
 
 
 def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:

@@ -550,7 +550,8 @@ def test_asset_row_decreasing_resources_nan_poisons_the_marginal():
     The published marginal `dV/dR` divides the direct continuation channel by `dR/da`,
     so a negative slope must surface as NaN (caught by the solve's NaN diagnostics)
     rather than a finite marginal with the wrong sign. `log_level="off"` lets the NaN
-    propagate into the earliest-period value instead of raising, so we can observe it.
+    propagate into the earliest-period value instead of raising, so it surfaces in the
+    returned solution.
     """
     params = {**_params(), "offset": 200.0}
     del params["rate_of_return"]

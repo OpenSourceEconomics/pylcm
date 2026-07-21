@@ -24,7 +24,7 @@ _SCRIPT = textwrap.dedent(
 
     assert jax.device_count() == 2, jax.devices()
 
-    from _lcm.solution import solvers
+    from _lcm.solution import nbegm as solvers
     from tests.test_models import nbegm_ride_along_toy as toy
 
     captured = []

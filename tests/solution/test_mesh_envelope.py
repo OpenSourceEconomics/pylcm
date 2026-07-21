@@ -2,10 +2,10 @@
 
 The envelope must maximize the recomputed objective over every admissible triangle —
 covering and mildly extrapolated alike — and drop infeasible interpolated policies
-before the maximum. The tests pin the two selection behaviors an adversarial audit
-flagged: an extrapolated-but-admissible triangle holding the true maximizer must beat a
-covering triangle with a lower value (a cover-first rule would miss it), and an
-infeasible interpolated policy must never win.
+before the maximum. The tests pin the two selection behaviors that separate a correct
+envelope from a naive cover-first rule: an extrapolated-but-admissible triangle holding
+the true maximizer must beat a covering triangle with a lower value (a cover-first rule
+would miss it), and an infeasible interpolated policy must never win.
 """
 
 import jax.numpy as jnp

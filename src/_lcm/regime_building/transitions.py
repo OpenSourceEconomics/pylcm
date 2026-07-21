@@ -28,7 +28,7 @@ from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 
 def collect_state_transitions(
-    states: Mapping[StateName, Grid | Phased | None],
+    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
     state_transitions: Mapping[
         StateName,
         UserFunction
