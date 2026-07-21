@@ -1071,3 +1071,160 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
     np.testing.assert_allclose(
         np.asarray(coarse[0]["period0"]), np.asarray(per_target[0]["period0"])
     )
+
+
+# --------------------------------------------------------------------------------------
+# fold-review F2 (fold-only continuation): a target whose ONLY state is a
+# target-local folded IID process must still enter E[V] — its stored V is a
+# SCALAR (the folded axis is integrated out), so it needs an empty transition
+# bundle that keeps it enumerable by `get_period_targets`, and its continuation
+# must be read as that scalar (no interpolation coordinate).
+# --------------------------------------------------------------------------------------
+
+
+@categorical(ordered=False)
+class _RouteRegimeId:
+    src: ScalarInt
+    folded_B: ScalarInt
+    dead_C: ScalarInt
+
+
+def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
+    """Binary-action source routes to a folded-only target B or a worthless C.
+
+    `src` (period 0) has NO states, only a binary `work` action:
+
+    - `work == work` (code 1) routes, per-target, to `folded_B`; its immediate
+      utility is 0.
+    - `work == leisure` (code 0) routes to `dead_C`; its immediate utility is
+      0.5.
+
+    `folded_B` (period 1, terminal) declares a SINGLE state: a target-local
+    `NormalIIDProcess(fold=True)` the source does not carry. Its utility folds
+    to the constant 1.0 (mean-zero shock), so its stored V is the scalar 1.0.
+    `dead_C` (period 1, terminal) is stateless with utility 0 — genuinely
+    worthless, so dropping it from E[V] is harmless.
+
+    With `discount > 0.5` the correct choice is to route to B (continuation
+    `discount * 1.0`) rather than take C's immediate 0.5. If B's folded scalar
+    continuation is silently dropped, `src` wrongly prefers C — a reversed
+    policy. `src` has no states, so its stored V is a single scalar equal to
+    the value of the chosen action.
+    """
+    from lcm.transition import MarkovTransition  # noqa: PLC0415
+
+    def _route_to_B(work: DiscreteAction) -> FloatND:
+        return jnp.asarray(work, dtype=float)
+
+    def _route_to_C(work: DiscreteAction) -> FloatND:
+        return 1.0 - jnp.asarray(work, dtype=float)
+
+    def _u_src(work: DiscreteAction) -> FloatND:
+        # leisure (code 0) -> 0.5; work (code 1) -> 0.0
+        return 0.5 * (1.0 - jnp.asarray(work, dtype=float))
+
+    def _u_folded_B(bshock: FloatND, work: DiscreteAction) -> FloatND:
+        # Mean-zero shock folds away; the constant 1.0 survives. `work` is
+        # inert so the max-over-actions is the folded 1.0.
+        return 1.0 + bshock + 0.0 * jnp.asarray(work, dtype=float)
+
+    src = Regime(
+        transition={
+            "folded_B": MarkovTransition(_route_to_B),
+            "dead_C": MarkovTransition(_route_to_C),
+        },
+        active=lambda age: age < 1,
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
+    )
+    folded_B = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"bshock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_folded_B},
+    )
+    dead_C = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        functions={"utility": lambda: 0.0},
+    )
+    return {"src": src, "folded_B": folded_B, "dead_C": dead_C}
+
+
+def _solve_route(regimes: dict[str, Regime], *, discount: float) -> MappingProxyType:
+    processed = process_regimes(
+        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        ages=_AGES,
+        regime_names_to_ids=MappingProxyType(
+            {"src": jnp.int32(0), "folded_B": jnp.int32(1), "dead_C": jnp.int32(2)}
+        ),
+        enable_jit=False,
+    )
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(discount)}),
+            "folded_B": MappingProxyType({}),
+            "dead_C": MappingProxyType({}),
+        }
+    )
+    solution, _sim_policies, _dissolution_flags = solve(
+        flat_params=flat_params,
+        ages=_AGES,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    )
+    return solution
+
+
+def test_folded_only_per_target_continuation_enters_expected_value():
+    """A folded-only target reached by a per-target transition enters E[V].
+
+    fold-review F2 (folded slice): `folded_B`'s only state is a target-local
+    folded IID process, so its stored V is the scalar 1.0. Pre-fix, `src`'s
+    transition bundle was empty for BOTH targets (no state law, no source
+    process edge), so `get_period_targets` enumerated neither and E[V] was
+    identically zero — `src` took `dead_C`'s immediate 0.5 (V_src = 0.5), a
+    REVERSED policy. Post-fix, the folded target keeps an explicit empty bundle
+    (enumerable, read as its scalar V), so routing to B yields the discounted
+    continuation and `src` prefers it.
+
+    PROVEN fail-pre/pass-post: pre-fix V_src == 0.5 (routes to worthless C);
+    post-fix V_src == discount * 1.0 (routes to the value-1 folded target).
+    """
+    discount = 0.9
+    solution = _solve_route(_make_route_to_folded_target_regimes(), discount=discount)
+    # `src` has no states: a single scalar equal to the chosen action's value.
+    V_src = np.asarray(solution[0]["src"])
+    assert V_src.shape == ()
+    # The folded target's stored V is the scalar 1.0 (shock integrated out).
+    np.testing.assert_allclose(np.asarray(solution[1]["folded_B"]), 1.0, atol=1e-5)
+    # Post-fix: route to B, value = discount * 1.0 = 0.9 (> C's immediate 0.5).
+    np.testing.assert_allclose(V_src, discount, atol=1e-5)
+
+
+def test_folded_only_per_target_target_is_enumerable_in_transitions():
+    """The folded-only target keeps an (empty) bundle so it stays enumerable.
+
+    Structural companion to the value test: pre-fix `src.solution.transitions`
+    was empty (the folded-only target was dropped); post-fix it carries a
+    `folded_B` key with an empty bundle (no state law / process edge needed —
+    its V is scalar). `dead_C` stays absent: it is genuinely stateless and
+    worthless, so the general non-folded empty-bundle hole stays deferred.
+    """
+    processed = process_regimes(
+        user_regimes=finalize_regimes(
+            user_regimes=_make_route_to_folded_target_regimes(),
+            derived_categoricals={},
+        ),
+        ages=_AGES,
+        regime_names_to_ids=MappingProxyType(
+            {"src": jnp.int32(0), "folded_B": jnp.int32(1), "dead_C": jnp.int32(2)}
+        ),
+        enable_jit=False,
+    )
+    transitions = dict(processed["src"].solution.transitions)
+    assert "folded_B" in transitions
+    assert dict(transitions["folded_B"]) == {}
+    assert "dead_C" not in transitions

@@ -217,6 +217,23 @@ def process_regimes(
         }
     )
 
+    # fold-review F2 (folded slice): regimes whose EVERY state is a folded IID
+    # process. Their stored V has all state axes integrated out
+    # (`_get_regime_V_shapes_and_shardings`), so V is a scalar (per any trailing
+    # stakeholder axis). Such a regime reached ONLY via a regime transition has
+    # no ordinary state law and no source-carried process edge, so its
+    # transition bundle would be empty and it would be silently dropped from
+    # `get_period_targets` / E[V]. The solve phase keeps it enumerable with an
+    # explicit empty bundle and reads its scalar continuation (see
+    # `_process_regime_core` and `_build_solution_phase`).
+    fold_only_regimes = frozenset(
+        regime_name
+        for regime_name in user_regimes
+        if (state_names := state_action_spaces[regime_name].state_names)
+        and _fold_state_names(state_names=state_names, grids=all_grids[regime_name])
+        == state_names
+    )
+
     # COLLECTIVE-REGIMES (E2): same-period reference declarations are a
     # cross-regime contract — validate it (existence, stakeholder layout,
     # projection coverage, co-activity) and reject reference cycles before any
@@ -335,6 +352,7 @@ def process_regimes(
             same_period_ref_regimes=same_period_ref_regimes,
             edge_target_regimes=tuple(user_regime.gated_edges),
             fold_state_names=fold_state_names,
+            fold_only_regimes=fold_only_regimes,
         )
 
         simulation = _build_simulation_phase(
@@ -1137,6 +1155,7 @@ def _build_solution_phase(
     same_period_ref_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     fold_state_names: tuple[StateName, ...] = (),
+    fold_only_regimes: frozenset[RegimeName] = frozenset(),
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -1187,6 +1206,23 @@ def _build_solution_phase(
         all_grids=all_grids,
         regime_params_template=regime_params_template,
         variables=variables,
+        fold_only_regimes=fold_only_regimes,
+    )
+
+    # fold-review F2 (folded slice): a folded-only target enters `core.transitions`
+    # with an EMPTY bundle (see `_process_regime_core`). Its stored V has the
+    # folded axes integrated out, but its `VInterpolationInfo` still lists the
+    # folded states, so the continuation interpolator would otherwise demand a
+    # `next_<shock>` coordinate the source cannot supply and index an axis the
+    # scalar V no longer has. Strip the folded axes from the interpolation info
+    # of exactly those empty-bundle folded targets so the continuation is read
+    # as the scalar V (no coordinate). Only the Q-and-F continuation read is
+    # overridden; every other consumer keeps the unstripped info.
+    regime_to_v_interpolation_info_for_Q = _strip_folded_axes_for_scalar_targets(
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        transitions=core.transitions,
+        fold_only_regimes=fold_only_regimes,
+        all_grids=all_grids,
     )
 
     flat_param_names = _engine_flat_param_names(
@@ -1278,7 +1314,7 @@ def _build_solution_phase(
             transitions=core.transitions,
             stochastic_transition_names=core.stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
             ages=ages,
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
@@ -1906,6 +1942,7 @@ def _process_regime_core(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variables: Variables,
+    fold_only_regimes: frozenset[RegimeName] = frozenset(),
 ) -> _CoreResult:
     """Process one phase's regime functions and transitions.
 
@@ -1932,6 +1969,10 @@ def _process_regime_core(
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         variables: States and actions of the regime with kind/topology/process tags.
+        fold_only_regimes: Regime names whose every state is a folded IID process
+            (scalar stored V). A reachable target in this set that would otherwise
+            get an empty bundle is kept enumerable with an explicit empty bundle
+            (fold-review F2), so its scalar continuation enters E[V].
 
     Returns:
         Core processing result with functions, constraints, transitions, stochastic
@@ -2141,7 +2182,23 @@ def _process_regime_core(
         }
     )
 
-    transitions = _wrap_transitions(unflatten_regime_namespace(internal_transition))
+    nested_transitions_by_target = unflatten_regime_namespace(internal_transition)
+    # fold-review F2 (folded slice): a reachable target whose ONLY state is a
+    # target-local folded IID process has no ordinary state law and no
+    # source-carried process edge, so it is absent from
+    # `nested_transitions_by_target` and would be silently dropped from
+    # `get_period_targets` / E[V] — valuing the source action that routes to it
+    # as worthless (a reversed policy). Its stored V is a SCALAR (the folded
+    # axis is integrated out), so it needs no continuation coordinate: keep an
+    # explicit EMPTY bundle so it stays enumerable and its scalar V enters E[V]
+    # (the solve phase strips the folded axis from its interpolation info; see
+    # `_build_solution_phase`). Scoped strictly to folded-only targets; the
+    # general non-folded empty-bundle hole (an ordinary state reached only via
+    # the regime transition — `get_period_targets` docstring) stays deferred.
+    for target in reachable_targets:
+        if target in fold_only_regimes and target not in nested_transitions_by_target:
+            nested_transitions_by_target[target] = {}
+    transitions = _wrap_transitions(nested_transitions_by_target)
 
     next_regime_func, next_regime_cells = _process_next_regime_cells(
         next_regime_cells_by_target=next_regime_cells_by_target,
@@ -3041,6 +3098,65 @@ def _fold_state_names(
         for name in state_names
         if isinstance(grid := grids.get(name), _IIDProcess) and grid.fold
     )
+
+
+def _strip_folded_axes_for_scalar_targets(
+    *,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    transitions: TransitionFunctionsMapping,
+    fold_only_regimes: frozenset[RegimeName],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+) -> MappingProxyType[RegimeName, VInterpolationInfo]:
+    """Override the continuation interpolation info of empty-bundle folded targets.
+
+    fold-review F2 (folded slice): a folded-only target carries an EMPTY
+    transition bundle so `get_period_targets` keeps it enumerable
+    (`_process_regime_core`). Its stored V has every folded axis integrated out
+    (`_get_regime_V_shapes_and_shardings`), but `create_v_interpolation_info`
+    still lists the folded states, so the ordinary continuation interpolator
+    would demand a `next_<shock>` coordinate — which the source never realises —
+    and index an axis the scalar V no longer has. For exactly those targets,
+    return a `VInterpolationInfo` with the folded states stripped, so the
+    interpolator becomes a plain scalar read. Every other regime's info is
+    passed through unchanged.
+
+    Args:
+        regime_to_v_interpolation_info: The model's per-regime interpolation info.
+        transitions: This source regime's processed transition bundles.
+        fold_only_regimes: Regimes whose every state is a folded IID process.
+        all_grids: Immutable mapping of regime names to Grid spec objects.
+
+    Returns:
+        The interpolation-info mapping with folded-only empty-bundle targets
+        stripped of their folded axes (a copy only when an override is needed).
+
+    """
+    scalar_targets = [
+        target
+        for target, bundle in transitions.items()
+        if not bundle and target in fold_only_regimes
+    ]
+    if not scalar_targets:
+        return regime_to_v_interpolation_info
+    overridden = dict(regime_to_v_interpolation_info)
+    for target in scalar_targets:
+        info = regime_to_v_interpolation_info[target]
+        grids = all_grids[target]
+        folded = {
+            name
+            for name in info.state_names
+            if isinstance(grid := grids.get(name), _IIDProcess) and grid.fold
+        }
+        overridden[target] = VInterpolationInfo(
+            state_names=tuple(n for n in info.state_names if n not in folded),
+            discrete_states=MappingProxyType(
+                {k: v for k, v in info.discrete_states.items() if k not in folded}
+            ),
+            continuous_states=MappingProxyType(
+                {k: v for k, v in info.continuous_states.items() if k not in folded}
+            ),
+        )
+    return MappingProxyType(overridden)
 
 
 def _fail_if_coarse_candidate_folds_ambiguously(
