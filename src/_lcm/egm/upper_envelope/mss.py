@@ -743,16 +743,22 @@ class _ChordPointCertificate:
     which shares the sign of `chord(q) - p` (the abscissae are sorted, so the
     span is positive). `D` is evaluated in compensated double-float
     arithmetic — exact difference pairs via TwoSum, exact main products via
-    TwoProd, the epsilon-scale cross terms carried explicitly — so the computed
-    gap is accurate to a tight *noise floor* (a small multiple of the
-    second-order-in-epsilon term error). Two thresholds classify the gap:
+    TwoProd, the epsilon-scale cross terms carried explicitly. An interior gap
+    is classified only by what the arithmetic certifies, never by an interval
+    that straddles zero:
 
-    - `|D| <= noise` — certified equal: the chord passes through the point to
-      the arithmetic's own resolution (an exactly-tied chord computes `D = 0`).
+    - `D == 0` — certified tie: every rounding residual cancelled, so the chord
+      passes through the point exactly at working precision. This is the only
+      interior tie, and it is the strongest resolution the arithmetic offers; a
+      merely margin-close nonzero gap is NOT a tie (a computed error interval
+      containing zero establishes an *unresolved* ordering, not equality).
     - `D > margin` — certified strictly above (`margin` a conservative multiple
-      of `noise`, so the certified-above verdict never fires on rounding noise).
-    - `noise < D <= margin` — unresolved above: the compensated gap sees a real
-      excess the conservative margin cannot certify, so the chord may be the
+      of the noise floor, so the certified-above verdict never fires on rounding
+      noise).
+    - `D <= -noise` — certified strictly below (the chord is under the point;
+      it cannot be the envelope above it and does not block anchoring).
+    - `-noise < D <= margin` with `D != 0` — unresolved: the compensated gap is
+      nonzero and neither certified above nor below, so the chord may be the
       true envelope above the point and the node cannot be anchored on it.
 
     Every certificate term is a difference, so the relations are exactly
@@ -768,7 +774,7 @@ class _ChordPointCertificate:
         stored_eq: BoolND,
         above: BoolND,
         tied: BoolND,
-        unresolved_above: BoolND,
+        unresolved: BoolND,
     ) -> None:
         self.covers = covers
         """Live link covering the query from at least one side (zero-width
@@ -784,13 +790,12 @@ class _ChordPointCertificate:
         """Interior case: the chord certifiably strictly exceeds the point
         (compensated gap above the conservative margin)."""
         self.tied = tied
-        """Interior case: the chord equals the point to the arithmetic noise
-        floor (`|D| <= noise`) — a certified tie, not merely margin-close."""
-        self.unresolved_above = unresolved_above
-        """Interior case: the compensated gap sees a real excess above the
-        noise floor but below the certified-above margin — the chord may be the
-        true envelope above the point, so it cannot be masked by an endpoint
-        tie."""
+        """Interior case: the compensated gap is exactly zero — the only
+        certified interior tie, not merely margin-close."""
+        self.unresolved = unresolved
+        """Interior case: the compensated gap is nonzero and neither certified
+        above nor certified below the point, so the chord may be the true
+        envelope above it and cannot be masked by an endpoint tie."""
 
     def dominates(self) -> BoolND:
         """Link certifiably reaches the point (absorbs it quietly).
@@ -810,14 +815,14 @@ class _ChordPointCertificate:
     def interior_unresolved(self) -> BoolND:
         """Covering interior chord that may be the true envelope above the point.
 
-        The compensated gap resolves a real excess above the noise floor that
-        the conservative margin cannot certify as strictly above. A separate
-        stored endpoint tie must not mask it: a node carrying such a chord
+        The compensated gap is nonzero and neither certified strictly above nor
+        strictly below the point. A separate stored endpoint tie must not mask
+        it: a node carrying such a chord
         cannot be anchored on the point and is routed to loud overflow. An
-        exactly-tied chord (gap within the noise floor) is not unresolved, so a
-        genuine node-coincident tie still anchors and publishes the point.
+        exactly-tied chord (compensated gap exactly zero) is not unresolved, so
+        a genuine node-coincident tie still anchors and publishes the point.
         """
-        return self.covers & ~self.at_endpoint & self.unresolved_above
+        return self.covers & ~self.at_endpoint & self.unresolved
 
 
 def _certify_chord_point_relations(
@@ -859,8 +864,11 @@ def _certify_chord_point_relations(
     # The noise floor bounds the compensated evaluation's own residual (a small
     # multiple of the second-order-in-epsilon term error); the certified-above
     # margin sits a further order above it so a certified-above verdict never
-    # fires on rounding noise. A gap between the two is resolved as a real
-    # excess the margin cannot certify — the unresolved-above band.
+    # fires on rounding noise. Only an exactly-zero gap is a certified tie — a
+    # nonzero gap whose error interval merely straddles zero is unresolved, not
+    # equal — so anything from just below the noise floor up to the margin
+    # (excluding exact zero) is the unresolved band, and only a gap at or below
+    # `-noise` is certified strictly below.
     noise = 4.0 * eps * eps * term_scale
     margin = 32.0 * eps * eps * term_scale
 
@@ -870,9 +878,46 @@ def _certify_chord_point_relations(
         stored_ge=stored_ge,
         stored_eq=stored_eq,
         above=chord_gap > margin,
-        tied=jnp.abs(chord_gap) <= noise,
-        unresolved_above=(chord_gap > noise) & (chord_gap <= margin),
+        tied=chord_gap == 0.0,
+        unresolved=(chord_gap != 0.0) & (chord_gap > -noise) & (chord_gap <= margin),
     )
+
+
+def _endpoint_faithful_value(
+    *, x: Float1D, link: Int1D, links: _LinkLines
+) -> tuple[Float1D, Float1D]:
+    """Evaluate a link's stored-endpoint chord at `x`, compensated.
+
+    The chord through the link's two stored endpoints,
+    `[lower_value (upper - x) + upper_value (x - lower)] / (upper - lower)`,
+    evaluated so the near-zero numerator survives the cancellation of two large
+    endpoint products. No pre-rounded slope enters — unlike the nearer-endpoint
+    `value_at`, whose `value_slope` carries an eps-relative error that swamps a
+    crossing value orders of magnitude below the endpoint magnitudes.
+
+    Returns the chord value and the magnitude scale of its compensated
+    numerator (the sum of the two endpoint-product magnitudes over the span), a
+    conservative size for the evaluation's own residual.
+    """
+    lower = links.lower[link]
+    upper = links.upper[link]
+    lower_value = links.lower_value[link]
+    upper_value = links.upper_value[link]
+    right_span, right_span_err = _two_sum(upper, -x)
+    left_span, left_span_err = _two_sum(x, -lower)
+    left_term, left_term_err = _two_product(lower_value, right_span)
+    right_term, right_term_err = _two_product(upper_value, left_span)
+    high, high_err = _two_sum(left_term, right_term)
+    numerator = high + (
+        high_err
+        + left_term_err
+        + right_term_err
+        + lower_value * right_span_err
+        + upper_value * left_span_err
+    )
+    span = upper - lower
+    scale = (jnp.abs(left_term) + jnp.abs(right_term)) / span
+    return numerator / span, scale
 
 
 def _branch_envelope_value(
@@ -880,14 +925,14 @@ def _branch_envelope_value(
 ) -> Float1D:
     """Envelope value of the two switching branches at `x`.
 
-    The larger of the outgoing and incoming branch values, each read from its
-    nearer stored endpoint. At a crossing the two agree; where the emitted
-    abscissa rounds off the intersection the maximum stays at or above the
-    envelope, never below both branches.
+    The larger of the outgoing and incoming branch values, each read from the
+    stored-endpoint compensated chord. At a crossing the two agree; where the
+    emitted abscissa rounds off the intersection the maximum stays at or above
+    the envelope, never above the higher branch — so the published row cannot
+    overstate the envelope and let a representable competitor wrongly lose.
     """
-    reads = links.value_at(x[:, None])
-    winner_value = jnp.take_along_axis(reads, winner[:, None], axis=1)[:, 0]
-    incoming_value = jnp.take_along_axis(reads, incoming[:, None], axis=1)[:, 0]
+    winner_value, _ = _endpoint_faithful_value(x=x, link=winner, links=links)
+    incoming_value, _ = _endpoint_faithful_value(x=x, link=incoming, links=links)
     return jnp.maximum(winner_value, incoming_value)
 
 
@@ -896,35 +941,21 @@ def _crossing_off_intersection(
 ) -> BoolND:
     """Flag a crossing whose branches do not meet at the rounded abscissa `x`.
 
-    The two switching branches must cross at the emitted abscissa. Their
-    compensated line gap above a second-order-in-epsilon margin means the
-    rounded abscissa is not the intersection, so the crossing value cannot be a
-    certified common value and the interval must fail loudly.
+    The two switching branches must cross at the emitted abscissa. Both are read
+    from the same stored-endpoint compensated chord — the identical primitive
+    the published value uses — so the guard and the payload cannot disagree on
+    the line geometry. The branches are the intersection of the *rounded* lines,
+    so at the representable abscissa their exact chords stand at most one
+    one-ulp abscissa displacement apart; a stored-endpoint gap wider than that
+    `|slope gap| * ulp(x)` window means the rounded abscissa is not the
+    intersection and the interval fails loudly.
     """
-    gap = _compensated_line_gap(
-        x=x,
-        anchor_value=links.anchor_value[incoming],
-        anchor_grid=links.anchor_grid[incoming],
-        slope=links.value_slope[incoming],
-        winner_anchor_value=links.anchor_value[winner],
-        winner_anchor_grid=links.anchor_grid[winner],
-        winner_slope=links.value_slope[winner],
-    )
-    eps = jnp.finfo(x.dtype).eps
-    margin = (
-        32.0
-        * eps
-        * eps
-        * (
-            jnp.abs(links.anchor_value[incoming])
-            + jnp.abs(links.value_slope[incoming])
-            * jnp.abs(x - links.anchor_grid[incoming])
-            + jnp.abs(links.anchor_value[winner])
-            + jnp.abs(links.value_slope[winner])
-            * jnp.abs(x - links.anchor_grid[winner])
-        )
-    )
-    return jnp.abs(gap) > margin
+    winner_value, _ = _endpoint_faithful_value(x=x, link=winner, links=links)
+    incoming_value, _ = _endpoint_faithful_value(x=x, link=incoming, links=links)
+    slope_gap = links.value_slope[winner] - links.value_slope[incoming]
+    abscissa_ulp = jnp.finfo(x.dtype).eps * jnp.abs(x)
+    window = jnp.abs(slope_gap) * abscissa_ulp
+    return jnp.abs(winner_value - incoming_value) > window
 
 
 def _missed_switch_overflow(

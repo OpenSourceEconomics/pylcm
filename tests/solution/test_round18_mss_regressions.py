@@ -214,5 +214,8 @@ def test_an_interior_crossing_cannot_publish_a_value_below_both_branches():
     true_envelope = max(value_a, value_b)
     competitor = -2.4
 
+    # The published crossing value is the stored-endpoint envelope there — at or
+    # above both branch values, never one below both. A competitor below the
+    # envelope loses the node to the published row.
     np.testing.assert_allclose(published, true_envelope, rtol=0.0, atol=0.02)
-    assert published < competitor < true_envelope
+    assert published > competitor
