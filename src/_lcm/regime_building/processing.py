@@ -406,12 +406,15 @@ def _build_solution_phase(
     co_map_state_names: tuple[StateName, ...] = ()
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
 
+    next_state_names = _declared_next_state_names(user_regimes[regime_name])
+
     if spec.terminal:
         compute_regime_transition_probs = None
         terminal_func = get_Q_and_F_terminal(
             flat_param_names=flat_param_names,
             functions=core.functions,
             constraints=core.constraints,
+            next_state_names=next_state_names,
         )
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(range(ages.n_periods), terminal_func)
@@ -459,6 +462,7 @@ def _build_solution_phase(
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
+            next_state_names=next_state_names,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             flat_param_names=flat_param_names,
@@ -474,6 +478,7 @@ def _build_solution_phase(
             ages=ages,
             enable_jit=enable_jit,
             certainty_equivalent=certainty_equivalent,
+            next_state_names=next_state_names,
         )
 
     # Dispatch the per-period kernel build polymorphically on the regime's
@@ -946,12 +951,15 @@ def _build_simulation_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
+    next_state_names = _declared_next_state_names(user_regime)
+
     if spec.terminal:
         compute_regime_transition_probs = None
         terminal_func = get_Q_and_F_terminal(
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
+            next_state_names=next_state_names,
         )
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(range(ages.n_periods), terminal_func)
@@ -1008,6 +1016,7 @@ def _build_simulation_phase(
             continuation_functions=solve_functions,
             flow_transitions=core.transitions,
             flow_stochastic_transition_names=core.stochastic_transition_names,
+            next_state_names=next_state_names,
         )
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
@@ -1451,6 +1460,23 @@ def _get_stochastic_transition_names(
             markov_state_names.add(name)
     return frozenset(
         f"next_{name}" for name in markov_state_names | set(variables.process_names)
+    )
+
+
+def _declared_next_state_names(user_regime: UserRegime) -> frozenset[str]:
+    """Engine `next_<state>` node names for a regime (own + target-only states).
+
+    A `next_<state>` DAG node exists for every state the regime grids AND every
+    target-only state it hands off (a `state_transitions` key not in `states`). This
+    is phase-invariant and read from the USER declaration, so it still lists a
+    target-only state whose carrier does not grid it in some phase — exactly the
+    no-producer case the read guard must catch. A user may LEGALLY name a current
+    state/action `next_stock`; its own node is `next_next_stock`, so `next_stock`
+    itself is absent here and a read of it is not mistaken for a next-state node.
+    """
+    return frozenset(
+        f"next_{name}"
+        for name in set(user_regime.states) | set(user_regime.state_transitions)
     )
 
 
@@ -2284,6 +2310,7 @@ def _build_Q_and_F_per_period(
     continuation_functions: EconFunctionsMapping | None = None,
     flow_transitions: TransitionFunctionsMapping | None = None,
     flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
@@ -2314,6 +2341,9 @@ def _build_Q_and_F_per_period(
             taken from; `None` in the solve phase, where they coincide with
             `transitions`. See `get_Q_and_F` for the phase-closure contract.
         flow_stochastic_transition_names: Stochastic names of `flow_transitions`.
+        next_state_names: Declared `next_<state>` node names for this regime,
+            used by the no-producer guard to distinguish a genuine missing
+            next-state producer from a current variable merely named `next_*`.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -2346,6 +2376,7 @@ def _build_Q_and_F_per_period(
             continuation_functions=continuation_functions,
             flow_transitions=flow_transitions,
             flow_stochastic_transition_names=flow_stochastic_transition_names,
+            next_state_names=next_state_names,
         )
 
     # Map each period to its group's function

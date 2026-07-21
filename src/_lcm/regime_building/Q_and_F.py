@@ -45,6 +45,7 @@ def get_Q_and_F(
     continuation_functions: EconFunctionsMapping | None = None,
     flow_transitions: TransitionFunctionsMapping | None = None,
     flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -139,6 +140,7 @@ def get_Q_and_F(
             conflicting_deterministic_transition_names
         ),
         stochastic_transition_names=flow_stochastic_names,
+        next_state_names=next_state_names,
     )
     state_transitions = {}
     next_stochastic_states_weights = {}
@@ -323,6 +325,7 @@ def get_compute_intermediates(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None = None,
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
@@ -368,6 +371,7 @@ def get_compute_intermediates(
             conflicting_deterministic_transition_names
         ),
         stochastic_transition_names=stochastic_transition_names,
+        next_state_names=next_state_names,
     )
     state_transitions = {}
     next_stochastic_states_weights = {}
@@ -504,6 +508,7 @@ def get_Q_and_F_terminal(
     flat_param_names: frozenset[str],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a terminal period.
 
@@ -519,7 +524,11 @@ def get_Q_and_F_terminal(
         for a terminal period.
 
     """
-    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
+    U_and_F = _get_U_and_F(
+        functions=functions,
+        constraints=constraints,
+        next_state_names=next_state_names,
+    )
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[U_and_F],
@@ -721,10 +730,41 @@ def _law_sources_differ(a: TransitionFunction, b: TransitionFunction) -> bool:
     src_a = getattr(a, LAW_SOURCE_ATTR, None)
     src_b = getattr(b, LAW_SOURCE_ATTR, None)
     if src_a is None or src_b is None:
+        # Engine-generated identity laws (`fixed_transition`) are parameter-free and
+        # carry no stamp, but canonicalization rebuilds a FRESH `_IdentityTransition`
+        # per target cell, so object identity would wrongly flag two identities for the
+        # SAME state as differing. They are extensionally equal (next value = the same
+        # current state), so merge them. Duck-typed on `_is_auto_identity` to avoid an
+        # import cycle.
+        if _both_auto_identity_for_same_state(a, b):
+            return False
         return a is not b
     base_a, location_a = src_a
     base_b, location_b = src_b
     return base_a is not base_b or location_a != location_b
+
+
+def _both_auto_identity_for_same_state(
+    a: TransitionFunction, b: TransitionFunction
+) -> bool:
+    """Whether `a` and `b` are engine identity laws for the same state (and annotation).
+
+    `_IdentityTransition` (backing `lcm.fixed_transition`) sets `_is_auto_identity` and
+    `_state_name`; the collector rebuilds one per target with the state's grid-matched
+    annotation. Two such laws for the same state compute the identical next value, so a
+    within-period read of them must NOT be treated as a target-dependent conflict.
+    """
+    if not (
+        getattr(a, "_is_auto_identity", False)
+        and getattr(b, "_is_auto_identity", False)
+    ):
+        return False
+    same_state = getattr(a, "_state_name", object()) == getattr(
+        b, "_state_name", object()
+    )
+    ann_a = getattr(a, "__annotations__", {}).get("return")
+    ann_b = getattr(b, "__annotations__", {}).get("return")
+    return same_state and ann_a == ann_b
 
 
 def _get_U_and_F(
@@ -738,6 +778,7 @@ def _get_U_and_F(
         TransitionFunctionName
     ] = frozenset(),
     stochastic_transition_names: frozenset[TransitionFunctionName] = frozenset(),
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -793,6 +834,7 @@ def _get_U_and_F(
     _fail_if_unproduced_next_state_is_read(
         combined=raw_decision_graph,
         targets=guard_targets,
+        next_state_names=next_state_names,
     )
     combined = {
         "feasibility": _get_feasibility(
@@ -897,6 +939,7 @@ def _fail_if_unproduced_next_state_is_read(
     *,
     combined: Mapping[str, Callable[..., Any]],
     targets: list[str],
+    next_state_names: frozenset[TransitionFunctionName],
 ) -> None:
     """Reject a within-period read of a `next_<state>` with no producer this phase.
 
@@ -922,15 +965,25 @@ def _fail_if_unproduced_next_state_is_read(
     simulate-only read whose producer exists only in the solve phase, and does NOT
     over-reject a read whose producer a reachable ordinary target does supply.
 
+    A `next_<state>` node exists only for a name in `next_state_names` — the engine's
+    declared transition-output names for this regime (own or target-only states). A user
+    may LEGALLY name a current state or action `next_stock` (only FUNCTION names reserve
+    the `next_` prefix); such a variable is an ordinary decision input, not a next-state
+    node — its own transition is `next_next_stock` — so it must not be flagged. Hence
+    the offending set intersects the declared next-state names, not a raw string prefix.
+
     Args:
         combined: The raw decision graph — deterministic transitions (the producers),
             constraints, and functions — keyed by name.
         targets: The decision target names the graph evaluates (`utility` and the
             individual constraints).
+        next_state_names: The engine's declared next-state node names for this regime
+            (`next_<state>` for every own and target-only state). Only these can be a
+            genuine unproduced next-state read.
     """
     read_names = get_ancestors(combined, targets, include_targets=True)
     offending = sorted(
-        name for name in read_names if name.startswith("next_") and name not in combined
+        name for name in read_names & next_state_names if name not in combined
     )
     if offending:
         names = ", ".join(offending)
