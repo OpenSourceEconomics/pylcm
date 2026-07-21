@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.nbegm_step import nbegm_multi_interval_step_savings
+from _lcm.egm.upper_envelope.query import envelope_at_query
 
 _CRRA = 2.0
 _DISCOUNT = 0.95
@@ -74,3 +75,32 @@ def test_single_point_savings_node_action_stays_on_the_envelope():
         np.asarray(value),
         err_msg="single-point savings-node winner dropped by the link-only envelope",
     )
+
+
+def test_envelope_brackets_a_lone_candidate_at_its_own_abscissa():
+    """A live candidate with no same-segment neighbour still wins at its abscissa.
+
+    A lone point — a boundary-collapsed interior Euler candidate or any singleton
+    segment — sitting exactly at a query abscissa with the highest value wins the
+    envelope there rather than collapsing to a lower multi-point branch. Here a
+    flat chain brackets `q = 4.0` at value `1.0`, while a lone higher point sits
+    at `4.0` with value `5.0`; the envelope returns `5.0` and the lone point's
+    policy.
+    """
+    endog_grid = jnp.array([0.0, 4.0, 4.0])
+    value = jnp.array([1.0, 1.0, 5.0])
+    policy = jnp.array([0.1, 0.1, 0.9])
+    marginal = jnp.array([0.0, 0.0, 0.0])
+    segment_id = jnp.array([0.0, 0.0, 1.0])
+
+    env_value, env_policy, _ = envelope_at_query(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal=marginal,
+        segment_id=segment_id,
+        x_query=jnp.array([4.0]),
+    )
+
+    np.testing.assert_allclose(float(env_value[0]), 5.0, atol=0.0)
+    np.testing.assert_allclose(float(env_policy[0]), 0.9, atol=0.0)

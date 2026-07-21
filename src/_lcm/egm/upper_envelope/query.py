@@ -99,7 +99,7 @@ def envelope_at_query(
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
     # A link is a real segment only within one branch: both endpoints live and
     # carrying the same label.
-    links = _SegmentLinks(
+    consecutive = _SegmentLinks(
         left_grid=endog_grid[:-1],
         right_grid=endog_grid[1:],
         left_value=value[:-1],
@@ -109,6 +109,30 @@ def envelope_at_query(
         left_marginal=marginal[:-1],
         right_marginal=marginal[1:],
         live=~dead[:-1] & ~dead[1:] & (segment_id[:-1] == segment_id[1:]),
+    )
+    # Every live candidate is also a zero-width self-bracket at its own abscissa,
+    # so a lone point — a folded-out or boundary-collapsed candidate with no
+    # consecutive same-segment neighbour — stays visible where a query lands on
+    # it, instead of collapsing to a lower multi-point branch. A right-extending
+    # consecutive link outranks a zero-width self-bracket in the right-continuous
+    # tie-break, so multi-point chains and their interpolation are unchanged; a
+    # self-bracket wins only where nothing brackets the query from the right.
+    self_bracket = _SegmentLinks(
+        left_grid=endog_grid,
+        right_grid=endog_grid,
+        left_value=value,
+        right_value=value,
+        left_policy=policy,
+        right_policy=policy,
+        left_marginal=marginal,
+        right_marginal=marginal,
+        live=~dead,
+    )
+    links = _SegmentLinks(
+        *(
+            jnp.concatenate([pair, point])
+            for pair, point in zip(consecutive, self_bracket, strict=True)
+        )
     )
 
     query = jnp.asarray(x_query)
