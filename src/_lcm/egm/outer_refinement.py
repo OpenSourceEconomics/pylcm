@@ -66,6 +66,17 @@ _MARGIN_SAFETY = 10.0
 # measured before the upgrade); 1/16 covers one full order of headroom.
 _NEIGHBOR_FRACTION = 1.0 / 16.0
 
+# Argmax tie band, in ULPs of the value dtype. This band exists only to absorb
+# floating-point rounding/cancellation when two candidate VALUES are compared to
+# pick the discrete outer action — it must be many orders of magnitude below the
+# mesh *validation* tolerance (which is a modelling choice, often ~1e-3), or it
+# would swallow the genuine off-node optima the continuous search exists to find
+# (a sub-grid peak beats its neighbouring node by ~h^2*curvature, far above ULP
+# scale). 64 ULPs covers the accumulated rounding of the four-point Lagrange
+# slopes plus the cubic Hermite evaluation with headroom, while staying ~1e-14
+# (float64) / ~8e-6 (float32) relative — well under any real value advantage.
+_TIE_BAND_ULPS = 64.0
+
 
 @dataclass(frozen=True, kw_only=True)
 class SafeguardedSearchResult:
@@ -114,8 +125,6 @@ def safeguarded_continuous_argmax(
     node_values: FloatND,
     golden_iterations: int,
     max_brackets: int = 8,
-    value_atol: float = 0.0,
-    value_rtol: float = 0.0,
 ) -> SafeguardedSearchResult:
     """Continuous outer argmax, safeguarded by the exact candidate mesh.
 
@@ -130,11 +139,11 @@ def safeguarded_continuous_argmax(
         max_brackets: Node-local maxima refined per cell (the top ones by
             exact value); further local maxima still compete as exact nodes,
             just without continuous refinement.
-        value_atol: Absolute value-tie band for the deterministic action fold.
-        value_rtol: Relative value-tie band. Together with ``value_atol`` this
-            is the certified tolerance below which a value difference never
-            flips the discrete selected action (it resolves to the smaller
-            abscissa); ``0.0`` recovers the exact strict comparison.
+
+    The deterministic action fold breaks value ties within a dtype-aware
+    rounding band (``_TIE_BAND_ULPS`` ULPs) toward the smaller abscissa, so a
+    sub-ULP value difference never flips the selected action; the band is far
+    below any genuine off-node value advantage the search must resolve.
 
     Returns:
         The per-cell selection with margins and bound/bracket diagnostics.
@@ -182,8 +191,6 @@ def safeguarded_continuous_argmax(
             second_x=second_x,
             second_v=second_v,
             width=width,
-            value_atol=value_atol,
-            value_rtol=value_rtol,
         )
     coarse_x = best_x
     coarse_v = best_v
@@ -200,8 +207,6 @@ def safeguarded_continuous_argmax(
             second_x=second_x,
             second_v=second_v,
             width=width,
-            value_atol=value_atol,
-            value_rtol=value_rtol,
         )
 
     return SafeguardedSearchResult(
@@ -254,28 +259,28 @@ def _consider(
     second_x: FloatND,
     second_v: FloatND,
     width: FloatND,
-    value_atol: float = 0.0,
-    value_rtol: float = 0.0,
 ) -> tuple[FloatND, FloatND, FloatND, FloatND, FloatND]:
     """One step of the two-best fold with the deterministic tie rule.
 
     A candidate displaces the incumbent when its value is above it by more
-    than the scale-aware value band, or lies within that band with a strictly
+    than the dtype-aware tie band, or lies within that band with a strictly
     smaller abscissa; the displaced incumbent becomes the runner-up. Otherwise
     the candidate competes for the runner-up slot under the same rule.
 
-    The band ``value_atol + value_rtol * max(|v1|, |v2|)`` is the SAME certified
-    value tolerance the mesh validates to, so a value difference below the
-    backend's rounding/cancellation noise never flips the *discrete* selected
-    action — it resolves to the smaller abscissa deterministically (DC-1/DC-2).
-    Defaults of ``0.0`` recover the exact strict comparison. The band is taken
-    only where both values are finite, so a finite candidate always beats a
-    ``-inf`` incumbent and two ``-inf`` values never tie.
+    The band is ``_TIE_BAND_ULPS * eps * max(|v1|, |v2|)`` — a floating-point
+    rounding floor, deliberately NOT the mesh validation tolerance: it absorbs
+    only cancellation noise so a sub-ULP value difference never flips the
+    *discrete* selected action (DC-1/DC-2), while staying far below the
+    ~h^2*curvature advantage of a genuine off-node optimum (which the search
+    must still resolve). The band is taken only where both values are finite, so
+    a finite candidate always beats a ``-inf`` incumbent and two ``-inf`` values
+    never tie.
     """
 
     def _tie(a: FloatND, b: FloatND) -> FloatND:
         both_finite = jnp.isfinite(a) & jnp.isfinite(b)
-        band = value_atol + value_rtol * jnp.maximum(jnp.abs(a), jnp.abs(b))
+        eps = jnp.finfo(jnp.result_type(a, b)).eps
+        band = _TIE_BAND_ULPS * eps * jnp.maximum(jnp.abs(a), jnp.abs(b))
         return jnp.where(both_finite, band, 0.0)
 
     best_tie = _tie(cand_v, best_v)
@@ -476,15 +481,38 @@ def _mark_intervals(
     # the defect is the search's bracketing, not the surrogate's error. Refine
     # such intervals regardless of the interpolant error; a feasibility crash
     # (low or nonfinite exact) never triggers this, so the node budget is safe.
+    #
+    # A cell with NO finite node at all is a feasible *island* seen only
+    # off-node: `best_node_value` is `-inf`, so the naive incumbent threshold
+    # `-inf + rtol*inf` is `NaN` and every comparison against it reads False —
+    # silently discarding the finite midpoint. Gate on whether the cell has any
+    # finite incumbent: with none, any finite exact midpoint is itself an
+    # incumbent worth sampling; with one, use the finite acceptance band.
+    has_finite_incumbent = jnp.any(jnp.isfinite(values), axis=0)  # (*S,)
     best_node_value = jnp.max(finite_values, axis=0)  # (*S,)
-    beats_best = exact_finite & (
-        exact
-        > best_node_value
+    finite_threshold = (
+        best_node_value
         + config.value_atol
         + config.value_rtol * jnp.abs(best_node_value)
+    )  # (*S,) — NaN where no finite incumbent; masked out below
+    beats_best = exact_finite & (
+        ~has_finite_incumbent | (exact > finite_threshold)
     )  # (C-1, *S)
     search_relevant = local_max[:-1] | local_max[1:] | beats_best  # (C-1, *S)
-    error = jnp.where(exact_finite & interp_finite & search_relevant, normalized, 0.0)
+    # A `beats_best` interval whose interpolant cannot even *read* the incumbent
+    # (a nonfinite surrogate straddling a finite exact optimum) is an unbounded
+    # validation failure, not a zero-error pass: the surrogate the search trusts
+    # is infinitely wrong about a decision-relevant point. Score it `inf` so the
+    # reported residual (and the neighbor closure) see it. The interval is
+    # already marked through `beats_best`, so this changes what is *reported*,
+    # not which feasibility boundaries get chased — a nonfinite interpolant that
+    # is NOT `beats_best` (a mere feasibility-edge flank) still scores `0`.
+    unbounded_mismatch = beats_best & ~interp_finite  # (C-1, *S)
+    error = jnp.where(
+        exact_finite & interp_finite & search_relevant,
+        normalized,
+        jnp.where(unbounded_mismatch, jnp.inf, 0.0),
+    )
     state_axes = tuple(range(1, error.ndim))
     interval_error = jnp.max(error, axis=state_axes) if state_axes else error  # (C-1,)
 

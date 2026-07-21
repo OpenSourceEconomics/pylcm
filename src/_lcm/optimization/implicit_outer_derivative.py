@@ -70,6 +70,23 @@ _STATIONARITY_ATOL = 1e-7
 # |Q_f| from BOTH sides at this radius exposes the slope jump the AD value
 # hides. Must exceed the final polish bracket so the probe straddles the kink.
 _KINK_PROBE_ATOL = 1e-4
+# Multi-radius kink screen (round-2 audit F1). A single fixed-radius slope-jump
+# threshold is amplitude-scaled — a kink whose jump is below rtol*|Q_ff|*delta
+# slips through, and the kink amplitude can be made arbitrarily small while the
+# argmax tangent error stays O(1). Instead compare the slope jump at delta and
+# delta/`_KINK_CONTRACTION_RATIO`: a SMOOTH optimum's one-sided slopes both
+# converge to Q_f(f*)=0, so the jump contracts ~linearly with the radius (jump ~
+# |Q_ff|*delta); a KINK leaves a jump of order the kink size, INDEPENDENT of
+# radius. A jump that fails to contract below `_KINK_CONTRACTION_TOL` of its
+# outer value (between 1/ratio and 1) when the radius is cut is a genuine
+# breakpoint, whatever its amplitude.
+_KINK_CONTRACTION_RATIO = 8.0
+_KINK_CONTRACTION_TOL = 0.5
+# ULPs of Q's value scale below which the slope jump is rounding, not structure:
+# rounding in Q propagates to a one-sided slope as ~eps*|Q|/radius, so the
+# contraction ratio of two noise-level jumps is meaningless and must be gated
+# out (a machine-precision-smooth optimum is not a kink).
+_KINK_NOISE_ULPS = 64.0
 
 
 @dataclass(frozen=True)
@@ -236,6 +253,8 @@ def implicit_optimum_diagnostics(
     stationarity_rtol: float = _STATIONARITY_RTOL,
     stationarity_atol: float = _STATIONARITY_ATOL,
     kink_probe_atol: float = _KINK_PROBE_ATOL,
+    kink_contraction_ratio: float = _KINK_CONTRACTION_RATIO,
+    kink_contraction_tol: float = _KINK_CONTRACTION_TOL,
 ) -> ImplicitOptimumDiagnostics:
     """Classify where the implicit derivative at `f_star` is trustworthy."""
     lower, upper = bounds
@@ -259,33 +278,52 @@ def implicit_optimum_diagnostics(
     # Certify stationarity from BOTH one-sided slopes, not the single
     # forward-mode q_f: at an exact kink jax.jvp returns one sub-gradient branch
     # and can read ~0 (a tent peak differentiates to 0), passing a non-smooth
-    # optimum as stationary. A symmetric finite-difference probe of radius
-    # `delta` (>= the final polish bracket, so it straddles the kink) samples
-    # both sides. A smooth optimum leaves each slope ~ |Q_ff|*delta with a jump
-    # of the same order; a kink leaves a slope jump of order the kink size,
-    # independent of delta.
+    # optimum as stationary. Probe the slope jump at two shrinking radii and
+    # test CONTRACTION (F1): a smooth optimum's jump shrinks ~linearly with the
+    # radius, a kink's does not — the discriminant is amplitude-independent,
+    # where a single fixed-radius threshold let a small-but-critical kink pass.
     delta = jnp.maximum(width, kink_probe_atol)
-    f_plus = jnp.clip(f_star + delta, min=lower, max=upper)
-    f_minus = jnp.clip(f_star - delta, min=lower, max=upper)
-    # Guard the denominators where a bound clips a probe to zero width; such
-    # cells are bound cells, already reported by the bound flags.
-    step_plus = jnp.where(f_plus > f_star, f_plus - f_star, 1.0)
-    step_minus = jnp.where(f_star > f_minus, f_star - f_minus, 1.0)
-    slope_plus = (objective(f_plus, theta) - objective(f_star, theta)) / step_plus
-    slope_minus = (objective(f_star, theta) - objective(f_minus, theta)) / step_minus
-    slope_jump = jnp.abs(slope_plus - slope_minus)
 
-    # A genuine interior optimum leaves |Q_f| ~ |Q_ff| * width after the polish
-    # and a slope jump ~ |Q_ff| * delta; a kink (or an under-polished primal)
-    # leaves either far larger. Suppress at a bound (Q_f is one-sided there,
-    # already reported by the bound flags).
+    def _slope_jump(radius: FloatND) -> FloatND:
+        f_plus = jnp.clip(f_star + radius, min=lower, max=upper)
+        f_minus = jnp.clip(f_star - radius, min=lower, max=upper)
+        # Guard the denominators where a bound clips a probe to zero width; such
+        # cells are bound cells, already reported by the bound flags.
+        step_plus = jnp.where(f_plus > f_star, f_plus - f_star, 1.0)
+        step_minus = jnp.where(f_star > f_minus, f_star - f_minus, 1.0)
+        slope_plus = (objective(f_plus, theta) - objective(f_star, theta)) / step_plus
+        slope_minus = (
+            objective(f_star, theta) - objective(f_minus, theta)
+        ) / step_minus
+        return jnp.abs(slope_plus - slope_minus)
+
+    jump_outer = _slope_jump(delta)
+    jump_inner = _slope_jump(delta / kink_contraction_ratio)
+    # Rounding in Q propagates to a one-sided slope as ~eps*|Q|/radius; below
+    # this the "jump" is noise and its contraction ratio is meaningless. Gate on
+    # the INNER (smaller radius, larger noise) scale so a machine-smooth optimum
+    # is never flagged. A smooth optimum's jump contracts to ~jump_outer/ratio;
+    # a kink's stays ~jump_outer, so failing to fall below `kink_contraction_tol`
+    # times the outer jump is a genuine breakpoint at any amplitude.
+    eps = jnp.finfo(jnp.asarray(f_star).dtype).eps
+    value_scale = jnp.abs(objective(f_star, theta))
+    jump_noise = stationarity_atol + _KINK_NOISE_ULPS * eps * value_scale * (
+        kink_contraction_ratio / delta
+    )
+    kinked = (jump_outer > jump_noise) & (
+        jump_inner > kink_contraction_tol * jump_outer
+    )
+
+    # A genuine interior optimum also leaves |Q_f| ~ |Q_ff| * width after the
+    # polish; a far larger residual is an under-polished primal (or a one-sided
+    # winner). Combine with the kink screen; suppress both at a bound (Q_f is
+    # one-sided there, already reported by the bound flags).
     stationarity_threshold = (
         stationarity_rtol * jnp.abs(q_ff) * width + stationarity_atol
     )
-    kink_threshold = stationarity_rtol * jnp.abs(q_ff) * delta + stationarity_atol
-    nonstationary = (
-        (jnp.abs(q_f) > stationarity_threshold) | (slope_jump > kink_threshold)
-    ) & ~(at_lower | at_upper)
+    nonstationary = ((jnp.abs(q_f) > stationarity_threshold) | kinked) & ~(
+        at_lower | at_upper
+    )
     return ImplicitOptimumDiagnostics(
         at_lower_bound=at_lower,
         at_upper_bound=at_upper,

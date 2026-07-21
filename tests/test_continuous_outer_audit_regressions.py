@@ -26,7 +26,10 @@ from _lcm.egm.outer_refinement import (
     safeguarded_continuous_argmax,
 )
 from _lcm.egm.outer_search import AdaptiveOuterMesh
-from _lcm.optimization.implicit_outer_derivative import implicit_optimum_diagnostics
+from _lcm.optimization.implicit_outer_derivative import (
+    _continuous_outer_optimum_primal,
+    implicit_optimum_diagnostics,
+)
 from lcm.exceptions import OuterSearchConvergenceError
 from lcm.grids import LinSpacedGrid
 
@@ -356,8 +359,10 @@ def test_interpolant_read_is_invariant_to_state_axis_flattening() -> None:
 # interpolation peak; (b) the candidate fold compared values with strict `>` /
 # `==` and no tie band, so a sub-ULP difference displaced the canonical smaller
 # action. The fix centers the stencil (constant column -> exactly-zero slopes)
-# and folds candidates within `value_atol + value_rtol*max(|v1|,|v2|)` by the
-# smaller-abscissa rule (DC-1 / DC-2).
+# and folds candidates within a dtype-aware ULP band by the smaller-abscissa
+# rule (DC-1 / DC-2). The band is a rounding floor (`_TIE_BAND_ULPS` ULPs of the
+# value dtype), NOT the mesh validation tolerance: a wider band would swallow the
+# genuine off-node optima the continuous search exists to find.
 
 
 def test_constant_surface_does_not_flip_the_outer_action() -> None:
@@ -376,8 +381,6 @@ def test_constant_surface_does_not_flip_the_outer_action() -> None:
         nodes=nodes,
         node_values=values,
         golden_iterations=16,
-        value_atol=1e-10,
-        value_rtol=1e-8,
     )
     assert float(result.x) == 0.0
 
@@ -397,8 +400,6 @@ def test_below_tolerance_value_difference_resolves_to_the_smaller_action() -> No
         second_x=jnp.array(1.0),
         second_v=jnp.array(-jnp.inf),
         width=jnp.array(0.0),
-        value_atol=1e-10,
-        value_rtol=1e-8,
     )
     assert float(tied[0]) == 0.0
 
@@ -412,8 +413,6 @@ def test_below_tolerance_value_difference_resolves_to_the_smaller_action() -> No
         second_x=jnp.array(1.0),
         second_v=jnp.array(-jnp.inf),
         width=jnp.array(0.0),
-        value_atol=1e-10,
-        value_rtol=1e-8,
     )
     assert float(real[0]) == 1.0
 
@@ -428,7 +427,192 @@ def test_below_tolerance_value_difference_resolves_to_the_smaller_action() -> No
         second_x=jnp.array(0.0),
         second_v=jnp.array(-jnp.inf),
         width=jnp.array(0.0),
-        value_atol=1e-10,
-        value_rtol=1e-8,
     )
     assert float(over_inf[0]) == 1.0
+
+
+def test_tie_band_does_not_swallow_a_genuine_off_node_advantage() -> None:
+    """The band must be a rounding floor, not the mesh tolerance.
+
+    A genuine off-node optimum beats its neighbouring node by ~h^2*curvature —
+    on a refined outer mesh this is O(1e-4), vastly above the ULP band. Wiring
+    the mesh validation tolerance (often ~1e-3) as the band folded every such
+    advantage back to the node (0% off-node selections in the Mahler-Yum e2e
+    solve). A candidate 1e-4 above the incumbent, at a LARGER abscissa, must
+    still win — the search may not snap it to the smaller node.
+    """
+    won = _consider(
+        cand_x=jnp.array(0.5),
+        cand_v=jnp.array(np.float64(1.0) + 1e-4),
+        cand_width=jnp.array(0.0),
+        best_x=jnp.array(0.0),
+        best_v=jnp.array(1.0),
+        second_x=jnp.array(0.0),
+        second_v=jnp.array(-jnp.inf),
+        width=jnp.array(0.0),
+    )
+    assert float(won[0]) == 0.5
+
+
+# --- F3 -----------------------------------------------------------------
+# Nonfinite-sentinel arithmetic in the mesh validator discarded a finite
+# feasible island and reported a zero residual over a genuinely-unresolved
+# interval. Two reachable cases, each RED before the `_mark_intervals` fix.
+
+
+def test_finite_off_node_island_is_not_discarded() -> None:
+    """A cell feasible only *between* nodes must be refined, not dropped.
+
+    Cell 1 is ``-inf`` at every initial node ``[0,.25,.5,.75,1]`` but carries a
+    narrow feasible bump peaking at ``x=0.375`` (the midpoint of ``[.25,.5]``).
+    The old incumbent threshold ``-inf + rtol*inf`` was ``NaN``, so ``beats_best``
+    read False and the island was silently discarded (``n_cells_all_invalid=1``,
+    no finite node ever inserted). The ``has_finite_incumbent`` gate now samples
+    it.
+    """
+
+    def solve_at(x: jnp.ndarray) -> jnp.ndarray:
+        ramp = 4.0 * x  # cell 0: ordinary rising ramp, feasible throughout
+        island = jnp.where(  # cell 1: feasible only near x = 0.375
+            jnp.abs(x - 0.375) < 0.1,
+            5.0 - 50.0 * (x - 0.375) ** 2,
+            -jnp.inf,
+        )
+        return jnp.stack([ramp, island], axis=-1)  # (M, 2)
+
+    initial_nodes = jnp.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    config = AdaptiveOuterMesh(
+        initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=5),
+    )
+
+    # Precondition: cell 1 is infeasible at every initial node.
+    assert bool(jnp.all(~jnp.isfinite(solve_at(initial_nodes)[:, 1])))
+
+    result = refine_outer_mesh(
+        initial_nodes=initial_nodes,
+        solve_at=solve_at,
+        config=config,
+        fail_closed=False,
+    )
+
+    # The island is now captured: cell 1 has a finite node near its peak and is
+    # no longer counted as an all-invalid cell.
+    assert result.n_cells_all_invalid == 0
+    cell1 = result.node_values[:, 1]
+    assert bool(jnp.any(jnp.isfinite(cell1)))
+    assert float(jnp.max(jnp.where(jnp.isfinite(cell1), cell1, -jnp.inf))) > 4.9
+
+
+def test_unresolved_beats_best_interval_reports_infinite_residual() -> None:
+    """A marked ``beats_best`` interval the interpolant can't read is not error 0.
+
+    Node 0 is finite, node 1 is ``-inf``, and the midpoint value beats node 0 —
+    so the interval is marked, but the cubic across a ``-inf`` endpoint reads
+    ``-inf``. With the round budget spent and ``fail_closed=False`` the solve is
+    honestly ``unresolved``; the old validator forced the residual to ``0`` (the
+    "resolved to tolerance" reading) because ``interp_finite`` was False. It must
+    read ``inf``.
+    """
+
+    def solve_at(x: jnp.ndarray) -> jnp.ndarray:
+        return jnp.where(x > 0.75, -jnp.inf, 4.0 * x + jnp.where(x > 0.1, 6.0, 0.0))
+
+    config = AdaptiveOuterMesh(
+        initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+        max_refinement_rounds=0,
+    )
+    result = refine_outer_mesh(
+        initial_nodes=jnp.array([0.0, 1.0]),
+        solve_at=solve_at,
+        config=config,
+        fail_closed=False,
+    )
+    assert result.unresolved is True
+    assert not np.isfinite(result.max_validation_error)
+
+
+def test_fail_closed_raises_on_unresolved_beats_best_interval() -> None:
+    """The same configuration must fail closed under inference mode."""
+
+    def solve_at(x: jnp.ndarray) -> jnp.ndarray:
+        return jnp.where(x > 0.75, -jnp.inf, 4.0 * x + jnp.where(x > 0.1, 6.0, 0.0))
+
+    config = AdaptiveOuterMesh(
+        initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+        max_refinement_rounds=0,
+    )
+    with pytest.raises(OuterSearchConvergenceError):
+        refine_outer_mesh(
+            initial_nodes=jnp.array([0.0, 1.0]),
+            solve_at=solve_at,
+            config=config,
+            fail_closed=True,
+        )
+
+
+# --- F1 -----------------------------------------------------------------
+# The fixed-radius two-sided slope probe accepted small but derivative-critical
+# kinks: its threshold `rtol*|Q_ff|*delta` scales with the probe radius, so a
+# kink whose slope jump is below it passes as stationary while the IFT tangent
+# is order-one wrong. The multi-radius contraction test is amplitude-independent.
+
+
+def _pinned_kink_objective(kink_coef: float):
+    """Pro's F1 surface: a kink at f*=0.3 pins the optimum for |theta|<coef.
+
+    ``Q(f, theta) = -coef*|f-0.3| - 0.5*(f-0.3)^2 + theta*(f-0.3)``. The
+    maximizer stays at 0.3 for |theta| < coef, so ``df*/dtheta = 0``, yet the
+    IFT tangent ``-Q_ftheta/Q_ff = -1/-1 = 1``. ``coef`` can be shrunk toward
+    zero while that tangent error stays 1.
+    """
+
+    def objective(f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+        return -kink_coef * jnp.abs(f - 0.3) - 0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
+
+    return objective
+
+
+@pytest.mark.parametrize("kink_coef", [0.004, 0.0005])
+def test_small_amplitude_kink_is_flagged_nonstationary(kink_coef: float) -> None:
+    objective = _pinned_kink_objective(kink_coef)
+    theta = jnp.asarray(0.0)
+    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
+    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
+        objective, theta, bounds
+    )
+    # The primal pins the optimum at the kink, where the IFT tangent is wrong.
+    assert abs(float(f_star) - 0.3) < 1e-3
+
+    diag = implicit_optimum_diagnostics(
+        objective,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=basin_margin,
+        bounds=bounds,
+    )
+    # The single fixed-radius screen accepted this (jump ~2*coef below the
+    # radius-scaled threshold); the contraction screen rejects it at any coef.
+    assert bool(diag.nonstationary)
+    assert bool(diag.unresolved)
+
+
+def test_genuine_smooth_optimum_stays_resolved() -> None:
+    """The contraction screen must not over-flag a smooth interior optimum."""
+
+    def objective(f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+        return -0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
+
+    theta = jnp.asarray(0.0)
+    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
+    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
+        objective, theta, bounds
+    )
+    diag = implicit_optimum_diagnostics(
+        objective,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=basin_margin,
+        bounds=bounds,
+    )
+    assert not bool(diag.nonstationary)
+    assert not bool(diag.unresolved)

@@ -236,8 +236,6 @@ def _continuous_outer_argmax(
         nodes=nodes,
         node_values=stacked,
         golden_iterations=config.golden_iterations,
-        value_atol=config.value_atol,
-        value_rtol=config.value_rtol,
     )
 
 

@@ -61,6 +61,14 @@ class SolverDiagnostics:
     unresolved_mask: BoolND
     """Where the solve could not certify its outer optimum to tolerance."""
 
+    n_outer_all_invalid_cells: IntND
+    """Count of state cells with no finite outer candidate on any mesh node
+    (nor any sampled midpoint). Under NB-EGM these are cells where *adjusting*
+    is infeasible everywhere and the keeper legitimately wins, so the count is
+    reported rather than raised on; a release gate that knows the reachable
+    support consults it to distinguish a benign infeasible padding cell from a
+    reachable cell that should have resolved."""
+
     adjustment_probability: FloatND | None = None
     """Analytic per-cell adjuster-branch probability under a uniform observed
     fixed cost (`UniformObservedFixedCost`), or `None` under the

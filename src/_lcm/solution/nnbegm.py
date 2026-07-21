@@ -784,6 +784,9 @@ class _NNBEGMPeriodKernel:
             best_second_best_margin=collapse.best_second_best_margin,
             policy_fallback_mask=jnp.asarray(not nested_published),
             unresolved_mask=jnp.asarray(mesh.unresolved),
+            n_outer_all_invalid_cells=jnp.asarray(
+                mesh.n_cells_all_invalid, dtype=jnp.int32
+            ),
             adjustment_probability=collapse.adjustment_probability,
         )
         sim_policy: SimulationPolicy | None = keeper_result.simulation_policy
