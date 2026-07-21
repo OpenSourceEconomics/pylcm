@@ -34,7 +34,7 @@ dependencies = [
   # Require the beartype fix, replace once release is there
   # "dags>=0.6.0",
   "h5py>=3.12",
-  "jax>=0.9",
+  "jax>=0.11",
   "jaxtyping>=0.3.10",
   "orbax-checkpoint>=0.11",
   "pandas",
@@ -109,13 +109,13 @@ platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
 cuda-nvcc = "~=12.0"
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.9", extras = [ "cuda12" ] }
+jax = { version = ">=0.11", extras = [ "cuda12" ] }
 [tool.pixi.feature.cuda13]
 platforms = [ "linux-64-cuda13" ]
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.9", extras = [ "cuda13" ] }
+jax = { version = ">=0.11", extras = [ "cuda13" ] }
 [tool.pixi.feature.docs.dependencies]
 jupyter-book = ">=2.0"
 mystmd = "*"
@@ -147,7 +147,7 @@ matplotlib = "*"
 pandas-stubs = "*"
 scipy-stubs = "*"
 [tool.pixi.pypi-dependencies]
-jax = ">=0.9"
+jax = ">=0.11"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 # Remove and comment in `dags >= 0.6.0` above once released.
@@ -256,7 +256,19 @@ per-file-ignores."tests/*" = [
   "S301",    # Use of pickle
   "SLF001",  # Private member access
 ]
+per-file-ignores."tests/solution/test_egm_interp.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
+]
+per-file-ignores."tests/solution/test_mss_invariance_and_support.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
+]
+per-file-ignores."tests/test_certainty_equivalent.py" = [
+  "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
+]
 per-file-ignores."tests/test_compilation_cache.py" = [
+  "S603", # subprocess call with test-controlled input
+]
+per-file-ignores."tests/test_distributed.py" = [
   "S603", # subprocess call with test-controlled input
 ]
 per-file-ignores."tests/test_dtypes.py" = [
@@ -277,6 +289,9 @@ per-file-ignores."tests/test_Q_and_F.py" = [
   "ARG001", # Unused function argument
   "ARG005", # Unused lambda argument
   "E731",   # Do not assign a `lambda` expression, use a `def`
+]
+per-file-ignores."tests/test_temporal_aggregation.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
 ]
 pydocstyle.convention = "google"
 [tool.ruff.lint.flake8-bugbear]

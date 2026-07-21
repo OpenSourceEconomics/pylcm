@@ -523,13 +523,18 @@ def _validate_state_transition_single(
             # grid nor a param. Skip numerical validation for this
             # transition rather than raising — a raise here would conceal
             # the real error the solve step surfaces. Warn so the skip is
-            # not silent.
+            # not silent. Name the phase: a `Phased` law has two variants under
+            # one state name, and only one of them may be hitting this branch.
+            phase_suffix = (
+                f" ({transition.phase} phase)" if transition.phase is not None else ""
+            )
             logger.warning(
-                "MarkovTransition for state '%s' in regime '%s' not numerically "
+                "MarkovTransition for state '%s' in regime '%s'%s not numerically "
                 "validated: parameter '%s' is not a recognized grid or model "
                 "parameter.",
                 transition.state_name,
                 regime_name,
+                phase_suffix,
                 name,
             )
             return
@@ -569,14 +574,16 @@ def _check_state_probs(
     age: float | ScalarInt | ScalarFloat,
 ) -> None:
     """Assert outcome-axis size, [0, 1] range, and sum-to-1 on a probs array."""
-    state_label = (
-        f"state '{transition.state_name}'"
-        if transition.target_regime_name is None
-        else (
-            f"state '{transition.state_name}' (target regime "
-            f"'{transition.target_regime_name}')"
-        )
-    )
+    qualifiers = []
+    if transition.target_regime_name is not None:
+        qualifiers.append(f"target regime '{transition.target_regime_name}'")
+    if transition.phase is not None:
+        # A `Phased` law has two variants under one state name; without the phase the
+        # message would not say which of them is malformed.
+        qualifiers.append(f"{transition.phase} phase")
+    state_label = f"state '{transition.state_name}'"
+    if qualifiers:
+        state_label += f" ({', '.join(qualifiers)})"
 
     if probs.shape[-1] != transition.n_outcomes:
         raise InvalidStateTransitionProbabilitiesError(

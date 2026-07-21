@@ -172,6 +172,26 @@ def test_numeric_inverse_fails_loud_when_marginal_turns_nonpositive():
     assert bool(jnp.isnan(c))
 
 
+def test_numeric_inverse_fails_loud_when_bracket_marginal_overflows():
+    """A bracket marginal that overflows to `+inf` violates the precondition → NaN.
+
+    A power-law `u'(c) = c^{-crra}` with a steep `crra` and a near-zero `c_lower`
+    makes `u'(c_lower)` overflow to `+inf`. That endpoint is `> 0` but not finite,
+    so the log-consumption solve cannot proceed on it; the inverter must fail loud
+    (NaN, caught by the kernel's NaN diagnostics) rather than run the log path on a
+    non-finite bracket endpoint and return a silently clamped bound. The upper
+    endpoint stays finite and positive (`2^{-60} > 0`), so only the overflow —
+    not a non-positive marginal — can gate this call.
+    """
+    c = numeric_inverse_marginal_utility(
+        marginal_continuation=jnp.asarray(1.0),
+        marginal_utility=_crra_marginal(60.0),
+        c_lower=jnp.asarray(1e-8),
+        c_upper=jnp.asarray(2.0),
+    )
+    assert bool(jnp.isnan(c))
+
+
 def test_numeric_inverse_is_vmappable_and_jittable():
     """The inverter vmaps over targets and jit-compiles (kernel requirements)."""
     targets = jnp.linspace(0.1, 4.0, 16)

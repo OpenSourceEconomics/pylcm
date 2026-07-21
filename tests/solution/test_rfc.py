@@ -36,7 +36,7 @@ import numpy as np
 import pytest
 
 from _lcm.egm.interp import interp_on_padded_grid
-from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope
+from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope, rfc
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
@@ -55,11 +55,6 @@ def _rfc_solver():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
         upper_envelope="rfc",
     )
-
-
-rfc = pytest.importorskip(
-    "_lcm.egm.upper_envelope.rfc", reason="RFC kernel not yet implemented"
-)
 
 
 def _drop_nan(arr: jnp.ndarray) -> np.ndarray:
@@ -320,7 +315,7 @@ def test_rfc_backend_is_selected_by_solver_config():
     backend = get_upper_envelope(solver=solver, n_refined=12)
 
     grid, policy, value, marginal = _crossing_segments_candidates()
-    via_backend = backend(
+    *via_backend, read_supported = backend(
         endog_grid=grid, policy=policy, value=value, marginal_utility=marginal
     )
     direct = rfc.refine_envelope(
@@ -332,6 +327,7 @@ def test_rfc_backend_is_selected_by_solver_config():
         search_radius=solver.rfc_search_radius,
         jump_thresh=solver.rfc_jump_thresh,
     )
+    assert not bool(read_supported)
     for via_arr, direct_arr in zip(via_backend, direct, strict=True):
         np.testing.assert_array_equal(np.asarray(via_arr), np.asarray(direct_arr))
 
@@ -343,18 +339,26 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
     The asset-row solve reads the refined envelope at one query per node. RFC
     has no streamed bracket finder, so `get_bracket_finder` materializes the
     full envelope and locates the `searchsorted(side="right")` bracket. The
-    bracket's interior interpolation must equal `interp_on_padded_grid` on the
-    full refined row at every query — below the first node, on the kink, and
-    above the last — so a full-envelope-then-interpolate and the bracket read
-    publish the same `(value, policy)`.
+    bracket's linear read must equal `interp_on_padded_grid` on the full
+    refined row at every query — below the first node, on the kink, and above
+    the last — so a full-envelope-then-interpolate and the bracket read publish
+    the same `(value, policy)`. Below-support queries extrapolate along the
+    first bracket's secant; above-support queries clamp to the last kept
+    value, matching the padded-row read's boundary conventions.
     """
     solver = _rfc_solver()
     grid, policy, value, marginal = _crossing_segments_candidates()
     n_pad = 12
 
-    refined_grid, refined_policy, refined_value, n_kept = get_upper_envelope(
+    refined_grid, refined_policy, refined_value, n_kept, _ = get_upper_envelope(
         solver=solver, n_refined=n_pad
-    )(endog_grid=grid, policy=policy, value=value, marginal_utility=marginal)
+    )(
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal,
+        savings=grid - policy,
+    )
 
     query = jnp.asarray(x_query)
     ref_value = interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_value)
@@ -367,6 +371,7 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
         policy=policy,
         value=value,
         marginal_utility=marginal,
+        savings=grid - policy,
         x_query=query,
     )
 
@@ -375,7 +380,15 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
         1.0,
         bracket.upper_grid - bracket.lower_grid,
     )
-    weight = jnp.clip((query - bracket.lower_grid) / width, 0.0, 1.0)
+    # Mirror the row read's boundary rules: below the first node the read
+    # extends the bracket's secant (an unclamped negative weight), at or
+    # above the last node it clamps; a zero-width bracket takes the right
+    # value.
+    weight = jnp.where(
+        bracket.upper_grid == bracket.lower_grid,
+        1.0,
+        jnp.minimum((query - bracket.lower_grid) / width, 1.0),
+    )
     bracket_value = bracket.lower_value + weight * (
         bracket.upper_value - bracket.lower_value
     )

@@ -93,8 +93,17 @@ def numeric_inverse_marginal_utility(
     mu_lower = marginal_utility(c_lower)
     mu_upper = marginal_utility(c_upper)
     log_m = jnp.log(m)
+    # A bracket marginal that overflows to `+inf` (a power-law `u'` at a
+    # near-zero `c_lower`) is `> 0.0` but not finite: `log(+inf)` is `+inf`, not
+    # NaN, so the positivity checks alone would let the log path proceed on a
+    # non-finite endpoint. Require finiteness explicitly so the gate fails loud.
     log_well_defined = (
-        (m > 0.0) & (mu_lower > 0.0) & (mu_upper > 0.0) & jnp.isfinite(log_m)
+        (m > 0.0)
+        & (mu_lower > 0.0)
+        & (mu_upper > 0.0)
+        & jnp.isfinite(mu_lower)
+        & jnp.isfinite(mu_upper)
+        & jnp.isfinite(log_m)
     )
 
     def log_marginal_utility(log_c: ScalarFloat) -> ScalarFloat:

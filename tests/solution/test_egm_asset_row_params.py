@@ -497,3 +497,64 @@ def test_imputed_pension_wealth_feeding_resources_matches_brute_force():
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
     )
+
+
+# --- Slice 4: a decreasing (parameter-dependent) resources map fails loud ---
+
+
+def resources_decreasing(wealth: ContinuousState, offset: float) -> FloatND:
+    """Cash-on-hand that decreases in wealth: `offset - wealth`.
+
+    Positive over the wealth grid (with `offset` above the top node) but strictly
+    decreasing, so `dR/da < 0`. It reads the model parameter `offset`, which makes
+    the build-time strict-monotonicity check skip it — the asset-row kernel divides
+    the direct continuation channel by `dR/da`, so a negative slope would otherwise
+    publish a finite marginal with the wrong orientation.
+    """
+    return offset - wealth
+
+
+@functools.cache
+def _decreasing_resources_model() -> Model:
+    """Asset-row DC-EGM regime whose resources decreases in wealth."""
+    working = UserRegime(
+        transition={
+            "working_life": MarkovTransition(stay_prob_wealth),
+            "dead": MarkovTransition(death_prob_wealth),
+        },
+        active=_active,
+        actions={"consumption": CONSUMPTION_GRID},
+        states={"wealth": WEALTH_GRID},
+        state_transitions={"wealth": next_wealth_dcegm},
+        constraints={},
+        functions={
+            "utility": utility,
+            "resources": resources_decreasing,
+            "savings": savings,
+            "inverse_marginal_utility": inverse_marginal_utility,
+        },
+        solver=DCEGM_SOLVER,
+    )
+    return Model(
+        regimes={"working_life": working, "dead": dead},
+        ages=_ages(),
+        regime_id_class=AssetRowRegimeId,
+    )
+
+
+def test_asset_row_decreasing_resources_nan_poisons_the_marginal():
+    """A negative resources slope NaN-poisons the asset-row marginal, not a wrong one.
+
+    The survival probability reads wealth, so the regime solves per exogenous asset
+    node; `resources = offset - wealth` is positive over the grid but has `dR/da < 0`.
+    The published marginal `dV/dR` divides the direct continuation channel by `dR/da`,
+    so a negative slope must surface as NaN (caught by the solve's NaN diagnostics)
+    rather than a finite marginal with the wrong sign. `log_level="off"` lets the NaN
+    propagate into the earliest-period value instead of raising, so it surfaces in the
+    returned solution.
+    """
+    params = {**_params(), "offset": 200.0}
+    del params["rate_of_return"]
+    solution = _decreasing_resources_model().solve(params=params, log_level="off")
+    earliest = min(solution)
+    assert np.isnan(np.asarray(solution[earliest]["working_life"])).any()

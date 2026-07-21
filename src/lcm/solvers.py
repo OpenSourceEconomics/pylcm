@@ -12,24 +12,61 @@ backward induction:
   consumption-savings problem conditional on that margin (Druedahl 2021,
   Computational Economics 58(3), 747-775,
   [doi:10.1007/s10614-020-10045-x](https://doi.org/10.1007/s10614-020-10045-x)).
+- `NNBEGM(...)`: the same outer keeper/adjuster search with an inner
+  `NBEGM` solve, so declared liquid kinks, jumps, and hard constraints keep
+  their exact NB-EGM treatment inside every outer candidate.
+- `OneAssetEGM(...)`: the single-asset endogenous grid method for a regime
+  with one continuous (Euler) state and no discrete kinks — the
+  specialization whose step needs no upper envelope.
+- `TwoDimEGM(...)`: the two-continuous-state endogenous grid method with a
+  selectable upper-envelope refinement (`upper_envelope="g2egm"` or
+  `"rfc"`).
 
-The solvers are defined engine-side in `_lcm.solution.solvers`; this module is a
-thin re-export so user code (and `lcm.regime`) can name them, and the `Solver`
-contract, without eagerly importing the numerical engine. The engine dispatches
-polymorphically on the solver instance (`solver.build_period_kernels(context)`),
-not on its type.
+The solvers are defined engine-side in per-solver modules under
+`_lcm.solution`; this module is a thin re-export so user code (and
+`lcm.regime`) can name them, and the `Solver` contract, without eagerly
+importing the numerical engine. The engine dispatches polymorphically on the
+solver instance (`solver.build_period_kernels(context)`), not on its type.
 """
 
 from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
-from _lcm.solution.solvers import DCEGM, NEGM, GridSearch, OneAssetEGM, TwoDimEGM
+from _lcm.solution.dcegm import DCEGM
+from _lcm.solution.grid_search import GridSearch
+from _lcm.solution.nbegm import NBEGM
+from _lcm.solution.negm import NEGM
+from _lcm.solution.nnbegm import NNBEGM
+from _lcm.solution.one_asset_egm import OneAssetEGM
+from _lcm.solution.two_dim_egm import TwoDimEGM
+from lcm.branch_aggregation import (
+    BranchAggregateResult,
+    DeterministicOuterMaximum,
+    OuterBranchAggregator,
+    UniformObservedFixedCost,
+)
+from lcm.outer_search import (
+    AdaptiveOuterMesh,
+    FiniteOuterGrid,
+    LegacyGoldenSection,
+    OuterSearch,
+)
 
 __all__ = [
     "DCEGM",
+    "NBEGM",
     "NEGM",
+    "NNBEGM",
+    "AdaptiveOuterMesh",
+    "BranchAggregateResult",
+    "DeterministicOuterMaximum",
+    "FiniteOuterGrid",
     "GridSearch",
+    "LegacyGoldenSection",
     "OneAssetEGM",
+    "OuterBranchAggregator",
+    "OuterSearch",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
     "TwoDimEGM",
+    "UniformObservedFixedCost",
 ]

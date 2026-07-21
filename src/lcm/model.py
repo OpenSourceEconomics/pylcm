@@ -56,6 +56,7 @@ from _lcm.solution.backward_induction import (
     _reject_edge_fold_state_param_collisions,
     solve,
 )
+from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -63,7 +64,7 @@ from _lcm.typing import (
     FunctionName,
     ParamsTemplate,
     PeriodToRegimeToDissolutionFlags,
-    PeriodToRegimeToSimPolicy,
+    PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
@@ -84,7 +85,6 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidValueFunctionError,
-    PyLCMError,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
@@ -263,6 +263,7 @@ class Model:
             regime_id_class=regime_id_class,
             n_subjects=n_subjects,
             broadcast_variables=broadcast_variables,
+            ages=self.ages,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -359,7 +360,7 @@ class Model:
         log_keep_n_latest: int = ...,
         return_simulation_policy: Literal[True],
         return_dissolution_flags: Literal[False] = ...,
-    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]: ...
+    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]: ...
 
     @overload
     def solve(
@@ -387,7 +388,7 @@ class Model:
         return_dissolution_flags: Literal[True],
     ) -> tuple[
         PeriodToRegimeToVArr,
-        PeriodToRegimeToSimPolicy,
+        PeriodToRegimeToSimulationPolicy,
         PeriodToRegimeToDissolutionFlags,
     ]: ...
 
@@ -404,11 +405,11 @@ class Model:
         return_dissolution_flags: bool,
     ) -> (
         PeriodToRegimeToVArr
-        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
         | tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]
         | tuple[
             PeriodToRegimeToVArr,
-            PeriodToRegimeToSimPolicy,
+            PeriodToRegimeToSimulationPolicy,
             PeriodToRegimeToDissolutionFlags,
         ]
     ): ...
@@ -426,15 +427,15 @@ class Model:
         return_dissolution_flags: bool = False,
     ) -> (
         PeriodToRegimeToVArr
-        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimPolicy]
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
         | tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]
         | tuple[
             PeriodToRegimeToVArr,
-            PeriodToRegimeToSimPolicy,
+            PeriodToRegimeToSimulationPolicy,
             PeriodToRegimeToDissolutionFlags,
         ]
     ):
-        """Solve the model using the pre-computed functions.
+        """Solve the model by backward induction, using each regime's solver.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -466,12 +467,13 @@ class Model:
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
 
             return_simulation_policy: When `True`, also return the per-period
-                DC-EGM simulation policies (the off-grid consumption functions),
-                as `(value_functions, policies)`. The policies are the artifact
-                a future off-grid `simulate` will interpolate; the current
-                `simulate` is grid-restricted and consumes only the value
-                functions, so it does not yet take the policies back. Defaults
-                to `False` (value functions only).
+                simulation-policy artifacts published by the configured
+                solvers, as `(value_functions, policies)`. A policy is the
+                artifact a future off-grid `simulate` will interpolate; the
+                current `simulate` is grid-restricted and consumes only the
+                value functions, so it does not yet take the policies back.
+                Regimes whose solver publishes no policy have no entry in the
+                policy mapping. Defaults to `False` (value functions only).
             return_dissolution_flags: When `True`, also return the per-period,
                 per-COLLECTIVE-regime dissolution-flag arrays `D` (`True` on state
                 cells whose action mask is empty; empty inner mappings for
@@ -483,7 +485,7 @@ class Model:
 
         Returns:
             Immutable mapping of period to a value function array for each
-            regime; combined with the per-period DC-EGM simulation-policy
+            regime; combined with the per-period simulation-policy
             mapping when `return_simulation_policy=True` and/or the
             per-period dissolution-flag mapping when `return_dissolution_flags=True`
             (in that order: value functions, then simulation policy, then
@@ -498,11 +500,7 @@ class Model:
             ages=self.ages,
             logger=log,
         )
-        (
-            period_to_regime_to_V_arr,
-            period_to_regime_to_sim_policy,
-            period_to_regime_to_dissolution_flags,
-        ) = self._solve_compiled(
+        internal_result = self._solve_compiled(
             flat_params=flat_params,
             params=params,
             log=log,
@@ -512,15 +510,15 @@ class Model:
         )
         if return_simulation_policy and return_dissolution_flags:
             return (
-                period_to_regime_to_V_arr,
-                period_to_regime_to_sim_policy,
-                period_to_regime_to_dissolution_flags,
+                internal_result.value_functions,
+                internal_result.simulation_policies,
+                internal_result.dissolution_flags,
             )
         if return_simulation_policy:
-            return period_to_regime_to_V_arr, period_to_regime_to_sim_policy
+            return internal_result.value_functions, internal_result.simulation_policies
         if return_dissolution_flags:
-            return period_to_regime_to_V_arr, period_to_regime_to_dissolution_flags
-        return period_to_regime_to_V_arr
+            return internal_result.value_functions, internal_result.dissolution_flags
+        return internal_result.value_functions
 
     def _solve_compiled(
         self,
@@ -531,28 +529,20 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
-    ) -> tuple[
-        PeriodToRegimeToVArr,
-        PeriodToRegimeToSimPolicy,
-        PeriodToRegimeToDissolutionFlags,
-    ]:
+    ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
-        Returns the value-function arrays, the per-period DC-EGM simulation
-        policies (the off-grid consumption functions `simulate` interpolates),
-        and the per-period, per-COLLECTIVE-regime dissolution-flag arrays (E2;
-        empty for models without collective regimes). With `log_path` set, a
+        Returns the named backward-induction outputs: value-function arrays,
+        each regime's published per-period simulation policy, and (E2) the
+        per-period, per-COLLECTIVE-regime dissolution-flag arrays (empty for
+        models without collective regimes). With `log_path` set, a
         snapshot is written at `log_level="debug"` (every solve) and at
         `"warning"` / `"progress"` whenever the returned solution contains
         NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
         try:
-            (
-                period_to_regime_to_V_arr,
-                period_to_regime_to_sim_policy,
-                period_to_regime_to_dissolution_flags,
-            ) = solve(
+            internal_result = solve(
                 flat_params=flat_params,
                 ages=self.ages,
                 regimes=self._regimes,
@@ -574,20 +564,18 @@ class Model:
         if (
             log_path is not None
             and validation_enabled(log)
-            and (validation_raises(log) or contains_nan(period_to_regime_to_V_arr))
+            and (
+                validation_raises(log) or contains_nan(internal_result.value_functions)
+            )
         ):
             _save_solve_snapshot(
                 model=self,
                 params=params,
-                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                period_to_regime_to_V_arr=internal_result.value_functions,
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
             )
-        return (
-            period_to_regime_to_V_arr,
-            period_to_regime_to_sim_policy,
-            period_to_regime_to_dissolution_flags,
-        )
+        return internal_result
 
     def _resolve_simulate_regimes(
         self,
@@ -679,9 +667,10 @@ class Model:
                 keys are drawn for the full population and sliced by global index.
                 - `0` (default): one pass over the whole (padded) population.
                 - `> 0`: chunk the subjects into passes of this size, bounding the
-                  per-period device workspace. Raises `PyLCMError` if any grid is
-                  distributed and more than one device is visible — there the
-                  subject axis is sharded across devices, not chunked.
+                  per-period device workspace. Under distributed grids each chunk
+                  is placed onto the subject mesh axis (the size is rounded up to
+                  a device multiple); the value-function arrays stay sharded
+                  throughout.
             log_level: Verbosity, and the runtime-validation policy it implies.
                 Required — pick deliberately for the situation:
                 - `"off"` — silent; initial-condition, transition-probability,
@@ -719,19 +708,23 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
         )
-        # Align the subject axis to the block size the simulate path needs: the
-        # device count when grids are distributed (sharding must divide it
-        # evenly), or the chunk size when chunking on a single device (every chunk
-        # must match the AOT-compiled shape). The two are mutually exclusive —
-        # chunking under multi-device distribution is rejected in
-        # `_resolve_compile_batch_size`. Pad rows duplicate the last real subject
-        # and are trimmed inside `simulate`; a multiple of 1 (single pass) is a
-        # no-op.
-        if self._distributes_subjects() and len(jax.devices()) > 1:
-            alignment = len(jax.devices())
-        elif subject_batch_size > 0:
+        # Align the subject axis to the block size the simulate path needs.
+        # Every chunk must match the AOT-compiled shape, and under distributed
+        # grids each chunk is additionally placed onto the subject mesh axis,
+        # so the chunk itself is rounded up to a device multiple (mirroring
+        # `_resolve_compile_batch_size`) before the subject axis is padded to
+        # a multiple of it. Without chunking, distribution alone needs a
+        # device multiple. Pad rows duplicate the last real subject and are
+        # trimmed inside `simulate`; a multiple of 1 (single pass) is a no-op.
+        distributes = self._distributes_subjects() and len(jax.devices()) > 1
+        if subject_batch_size > 0:
             raw_n_subjects = len(next(iter(initial_conditions.values())))
             alignment = min(subject_batch_size, raw_n_subjects)
+            if distributes:
+                n_devices = len(jax.devices())
+                alignment = -(-alignment // n_devices) * n_devices
+        elif distributes:
+            alignment = len(jax.devices())
         else:
             alignment = 1
         initial_conditions, original_n_subjects = pad_initial_conditions_to_multiple(
@@ -786,24 +779,33 @@ class Model:
             max_compilation_workers=max_compilation_workers,
             log=log,
         )
+        period_to_regime_to_sim_policy = None
+        auto_solved_dissolution_flags: PeriodToRegimeToDissolutionFlags | None = None
         if period_to_regime_to_V_arr is None:
-            # Simulation is grid-restricted: it interpolates only the value
-            # functions, so the published DC-EGM policy is unpacked and dropped.
-            # Off-grid simulation would interpolate the policy instead. The
-            # dissolution-flag array is similarly dropped here — a caller relying
-            # on the auto-solve path for a dissolution-gated model must call
-            # `solve(return_dissolution_flags=True)` explicitly and pass the
-            # result via `period_to_regime_to_dissolution_flags`.
-            period_to_regime_to_V_arr, _period_to_regime_to_sim_policy, _ = (
-                self._solve_compiled(
-                    flat_params=flat_params,
-                    params=params,
-                    log=log,
-                    log_path=log_path,
-                    log_keep_n_latest=log_keep_n_latest,
-                    max_compilation_workers=max_compilation_workers,
-                )
+            # A fresh solve also publishes the off-grid DC-EGM policy, which
+            # simulation interpolates at each subject's resources where the
+            # regime qualifies (`SimulationPhase.egm_policy_read`). With
+            # user-supplied V arrays there is no published policy, so the
+            # grid-argmax path decides the continuous action.
+            #
+            # COLLECTIVE-REGIMES (E2): the auto-solve also carries each
+            # collective regime's dissolution flag D on the result, so a
+            # dissolution-gated model driven through the auto-solve path
+            # need not re-run `solve(return_dissolution_flags=True)`
+            # separately — the flags are threaded straight into `simulate`
+            # below (still overridable by an explicit caller-supplied
+            # `period_to_regime_to_dissolution_flags`).
+            internal_result = self._solve_compiled(
+                flat_params=flat_params,
+                params=params,
+                log=log,
+                log_path=log_path,
+                log_keep_n_latest=log_keep_n_latest,
+                max_compilation_workers=max_compilation_workers,
             )
+            period_to_regime_to_V_arr = internal_result.value_functions
+            period_to_regime_to_sim_policy = internal_result.simulation_policies
+            auto_solved_dissolution_flags = internal_result.dissolution_flags
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             compile_batch_size=compile_batch_size,
@@ -817,10 +819,13 @@ class Model:
             logger=log,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             period_to_regime_to_dissolution_flags=(
-                MappingProxyType({})
-                if period_to_regime_to_dissolution_flags is None
-                else period_to_regime_to_dissolution_flags
+                period_to_regime_to_dissolution_flags
+                if period_to_regime_to_dissolution_flags is not None
+                else auto_solved_dissolution_flags
+                if auto_solved_dissolution_flags is not None
+                else MappingProxyType({})
             ),
+            period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
@@ -859,10 +864,12 @@ class Model:
         """Map the `subject_batch_size` knob to a concrete chunk shape.
 
         - `0` ⇒ the whole padded population (single pass).
-        - `> 0` ⇒ that size, clamped to the population. Forbidden under
-          multi-device distribution: subject-chunking is single-device, but the
-          value-function array is sharded across the devices and can't be
-          gathered onto one.
+        - `> 0` ⇒ that size, clamped to the population. Under multi-device
+          distribution the chunk is additionally rounded up to the next multiple
+          of the device count: every chunk is placed onto the subject mesh axis
+          (see `subject_array_sharding`), so its leading axis must divide evenly
+          across the devices. The value-function arrays stay sharded throughout —
+          chunking never gathers them.
 
         Also AOT-compiles (and caches) the simulate functions for the resolved
         shape when `n_subjects` matches the population.
@@ -870,21 +877,14 @@ class Model:
         aot_active = (
             self.n_subjects is not None and self.n_subjects == actual_n_subjects
         )
-        distributed_multidevice = (
-            self._distributes_subjects() and len(jax.devices()) > 1
-        )
         if subject_batch_size > 0:
-            if distributed_multidevice:
-                msg = (
-                    "subject_batch_size > 0 chunks the subject axis on a single "
-                    "device, which cannot be combined with distributed grids "
-                    f"across multiple devices ({len(jax.devices())} visible): the "
-                    "value-function array is sharded across them and cannot be "
-                    "gathered onto one. Use subject_batch_size=0 with distributed "
-                    "grids, or run on a single device."
-                )
-                raise PyLCMError(msg)
             compile_batch_size = min(subject_batch_size, padded_n_subjects)
+            if self._distributes_subjects():
+                n_devices = len(jax.devices())
+                compile_batch_size = min(
+                    -(-compile_batch_size // n_devices) * n_devices,
+                    padded_n_subjects,
+                )
         else:
             compile_batch_size = padded_n_subjects
         if aot_active:

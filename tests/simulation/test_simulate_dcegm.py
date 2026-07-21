@@ -51,15 +51,16 @@ CONSUMPTION_GRID_STEP = float(
 
 
 def test_dcegm_simulated_consumption_matches_brute_force():
-    """Both solver variants simulate the same consumption path on shared grids.
+    """Both solver variants simulate consumption paths within grid resolution.
 
-    The two specs are mathematically equivalent and share the wealth and
-    consumption grids, so each simulate runs the same grid argmax — only the
-    stored V arrays differ (both approximate the same analytical solution).
-    The argmax therefore picks the same consumption node wherever the V
-    difference is below the Q-gap between neighboring nodes; where Q is flat
-    near its maximum, a small V difference can shift the chosen node. One
-    consumption-grid step is the natural quantum of disagreement.
+    The two specs are mathematically equivalent, but their simulate-phase
+    conventions differ: brute force argmaxes over the shared consumption
+    grid, while DC-EGM interpolates its published off-grid policy at each
+    subject's resources. At the first decision both see the same state, so
+    they disagree by at most the brute's quantization — one grid step.
+    Because the off-grid choice compounds into different wealth paths, later
+    periods compare slightly different states; the disagreement stays within
+    two grid steps over this horizon.
     """
     n_periods = 6
     params = dcegm_variants.get_retirement_only_params(n_periods)
@@ -73,6 +74,7 @@ def test_dcegm_simulated_consumption_matches_brute_force():
     }
 
     consumption = {}
+    first_decision = {}
     for solver in ["brute_force", "dcegm"]:
         model = dcegm_variants.get_retirement_only_model(solver, n_periods)
         result = model.simulate(
@@ -88,11 +90,17 @@ def test_dcegm_simulated_consumption_matches_brute_force():
             .sort_values(["subject_id", "period"])
         )
         consumption[solver] = df["consumption"].to_numpy()
+        first_decision[solver] = df.query("period == 0")["consumption"].to_numpy()
 
+    np.testing.assert_allclose(
+        first_decision["dcegm"],
+        first_decision["brute_force"],
+        atol=CONSUMPTION_GRID_STEP + 1e-9,
+    )
     np.testing.assert_allclose(
         consumption["dcegm"],
         consumption["brute_force"],
-        atol=CONSUMPTION_GRID_STEP + 1e-9,
+        atol=2.0 * CONSUMPTION_GRID_STEP + 1e-9,
     )
 
 
@@ -208,10 +216,19 @@ def test_dcegm_full_model_simulates_end_to_end():
         seed=99,
     )
 
-    df = result.to_dataframe()
+    df = result.to_dataframe(additional_targets=["resources", "savings"])
     alive = df.query("regime_name in ['working_life', 'retirement']")
     assert not alive.empty
-    assert alive["consumption"].notna().all()
+    # The intrinsic budget the EGM solve enforces holds row by row in the
+    # simulated path: end-of-period savings is exactly resources minus
+    # consumption, never drops below the savings grid's lower bound (the
+    # synthesized borrowing limit), and consumption stays strictly positive.
+    consumption = alive["consumption"].to_numpy()
+    resources = alive["resources"].to_numpy()
+    savings = alive["savings"].to_numpy()
+    np.testing.assert_allclose(savings, resources - consumption, atol=1e-5)
+    assert (savings >= savings_lower_bound - 1e-9).all()
+    assert (consumption > 0.0).all()
     assert set(df.query("regime_name == 'working_life'")["labor_supply"]) <= {
         "work",
         "retire",

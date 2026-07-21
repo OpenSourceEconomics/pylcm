@@ -27,16 +27,11 @@ envelope under linear interpolation, with the crossing point present.
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
-from _lcm.egm.upper_envelope import get_upper_envelope
+from _lcm.egm.upper_envelope import get_upper_envelope, mss
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
-
-mss = pytest.importorskip(
-    "_lcm.egm.upper_envelope.mss", reason="MSS kernel not yet implemented"
-)
 
 
 def _mss_solver():
@@ -254,12 +249,13 @@ def test_mss_backend_is_selected_by_solver_config():
 
     grid, policy, value = _crossing_segments_candidates()
     marginal = jnp.ones_like(grid)
-    via_backend = backend(
+    *via_backend, read_supported = backend(
         endog_grid=grid, policy=policy, value=value, marginal_utility=marginal
     )
     direct = mss.refine_envelope(
         endog_grid=grid, policy=policy, value=value, n_refined=16
     )
+    assert bool(read_supported)
     for via_arr, direct_arr in zip(via_backend, direct, strict=True):
         np.testing.assert_array_equal(np.asarray(via_arr), np.asarray(direct_arr))
 

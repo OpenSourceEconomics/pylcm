@@ -344,7 +344,7 @@ class SolutionPhase:
 
     Populated for every continuation-producing regime (DC-EGM regimes and
     terminal regimes in a model with a DC-EGM regime). Initializes the rolling
-    `next_regime_to_egm_carry` mapping and serves as the lowering argument when
+    `next_regime_to_continuation` mapping and serves as the lowering argument when
     AOT-compiling a parent's kernel; `None` for a regime that publishes none.
     """
 
@@ -366,13 +366,30 @@ class SolutionPhase:
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 
-    @property
-    def solves_via_dcegm(self) -> bool:
-        """Whether this regime is solved by the DC-EGM kernel.
+    period_state_axes: (
+        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+    ) = None
+    """Per-period node arrays for age-varying (`AgeSpecializedGrid`) states.
 
-        A DC-EGM regime is the non-terminal regime that publishes a
-        continuation: a grid-search regime publishes none, and a terminal
-        carry-producing regime is terminal (no regime-transition probs).
+    `{period: {state_name: nodes}}` — the current period's grid nodes for each
+    age-varying continuous state, used by backward induction to override the
+    (representative) base axis so period `t`'s value function is tabulated on
+    period `t`'s grid. `None` for age-invariant regimes (the base axis is used
+    unchanged)."""
+
+    @property
+    def solves_from_continuation(self) -> bool:
+        """Whether this regime's V is built from interpolated continuations.
+
+        True exactly for a non-terminal regime that publishes a continuation
+        payload — such a regime's kernels solve by reading its targets'
+        continuations rather than by the compiled Q-and-F grid program. A
+        grid-search regime publishes no continuation, and a terminal
+        carry-producing regime publishes one without reading any (no
+        regime-transition probs). Downstream consumers ask this capability —
+        the brute U/F/E/Q breakdown cannot reproduce such a regime's failure
+        rows, and its inversion-internal functions are not simulate-readable
+        targets — instead of asking which solver produced the regime.
         """
         return (
             self.compute_regime_transition_probs is not None
@@ -486,6 +503,26 @@ class SolutionPhase:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class EGMPolicyRead:
+    """Names for the off-grid read of a published `EGMSimPolicy` in simulate.
+
+    The stored policy maps the endogenous resources value to the optimal
+    continuous action; simulation interpolates it at each subject's resources
+    instead of argmaxing over the action grid.
+    """
+
+    action_name: ActionName
+    """The EGM continuous action the interpolated policy value replaces."""
+
+    resources_target: FunctionName
+    """DAG function computing the endogenous resources the policy is read at."""
+
+    savings_lower_bound: float
+    """Lower bound of the solver's savings grid — the borrowing limit the
+    post-read feasibility check enforces (`action <= resources - bound`)."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
     """Simulate-phase view of a canonical regime.
 
@@ -531,8 +568,28 @@ class SimulationPhase:
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
 
-    next_state: NextStateSimulationFunction
-    """Compiled function to compute next-period states."""
+    next_state: MappingProxyType[int, NextStateSimulationFunction]
+    """Immutable mapping of period to next-period-state functions."""
+
+    age_specialized_function_names: frozenset[FunctionName] = frozenset()
+    """Function names that were `AgeSpecializedFunction` in the user regime.
+
+    The published `functions` hold these resolved at the regime's representative
+    age only — the per-period programs (`argmax_and_max_Q_over_a`, `next_state`)
+    carry the true per-age closures. Consumers computing period-specific outputs
+    from `functions` (e.g. `additional_targets`) must reject targets that depend
+    on these names."""
+
+    egm_policy_read: EGMPolicyRead | None = None
+    """Off-grid read of the published EGM simulation policy, or `None`.
+
+    Present only where replaying the solve-phase policy is valid:
+    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`;
+    - the temporal aggregator `H` is phase-invariant (a phase-variant `H`
+      changes the simulate-phase FOC, so the stored policy is wrong there);
+    - the regime declares no taste shocks.
+    `None` keeps the grid-argmax decision path for the continuous action.
+    """
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
@@ -576,11 +633,18 @@ class SimulationPhase:
 class _StochasticStateTransition:
     """Metadata for a stochastic state transition, used by automatic validation.
 
-    One entry exists for every `MarkovTransition` state — and for each target
-    of a per-target dict. The pre-solve state-transition validator consumes
-    these to evaluate the function on the regime's grid Cartesian product and
-    check that the output has the expected outcome-axis size, lies in [0, 1],
-    and has rows summing to 1.
+    One entry exists for every `MarkovTransition` state — for each target of a
+    per-target dict, and for each phase variant of a `Phased` law. The pre-solve
+    state-transition validator consumes these to evaluate the function on the
+    regime's grid Cartesian product and check that the output has the expected
+    outcome-axis size, lies in [0, 1], and has rows summing to 1.
+
+    A `Phased` law contributes one entry PER PHASE. Both must be kept: they are
+    different functions and each is fatal if malformed, but for DIFFERENT reasons —
+    the perceived (solve) law prices every action in backward induction, while the
+    true (simulate) law governs the realized draw and the simulation-side checks.
+    Collapsing them onto one key would silently validate only whichever was
+    inserted last.
     """
 
     func: Callable[..., FloatND]
@@ -601,6 +665,13 @@ class _StochasticStateTransition:
     Derived statically at process time from the function's AST. Empty
     when the function doesn't use the `probs_array[...]` pattern, in
     which case the AST subscript-order check is permissively skipped.
+    """
+
+    phase: Literal["solve", "simulate"] | None = None
+    """Phase this law belongs to; `None` for a bare (phase-invariant) law.
+
+    Carried only so failures name the offending phase — a bare law and a `Phased`
+    pair are otherwise validated identically.
     """
 
 
@@ -890,6 +961,11 @@ class PeriodRegimeSimulationData:
     n_stakeholders)` for a collective regime (E4) — each stakeholder's own
     value at the household's shared argmax, mirroring the solve-side V's
     trailing stakeholder axis.
+
+    The grid-argmax value: where the off-grid policy read replaces the
+    continuous action, this value belongs to the pre-replacement gridded
+    action combination, not to the recorded action — the pair is not a
+    consistent (action, value) evaluation there.
     """
 
     actions: MappingProxyType[ActionName, FloatND | IntND]

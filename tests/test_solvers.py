@@ -187,8 +187,8 @@ def test_period_kernels_sharing_a_config_reuse_one_compiled_core():
     distinct_cores = {_func_dedup_key(func=k.core) for k in period_kernels.values()}
     assert len(distinct_cores) < len(period_kernels)
 
-    # Every period's core is one of the deduped representatives the AOT step
-    # would compile — no per-period adapter introduces a fresh compilation.
-    assert all(
-        _func_dedup_key(func=k.core) in distinct_cores for k in period_kernels.values()
-    )
+    # Dedup collapses the active periods onto a fixed, small number of compiled
+    # cores (two here: the retirement regime's periods fall into two Q-and-F
+    # configurations) independent of the period count — the property the AOT
+    # step relies on to lower two cores rather than one per period.
+    assert len(distinct_cores) == 2

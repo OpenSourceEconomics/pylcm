@@ -203,7 +203,7 @@ _AR1_GRID_CLASSES = [TauchenAR1Process, RouwenhorstAR1Process]
 def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
     """Midpoint of AR(1) gridpoints is approximately mu / (1 - rho)."""
     mu, rho = 2.0, 0.8
-    kwargs = {"rho": rho, "sigma": 0.5, "mu": mu}
+    kwargs: dict[str, Any] = {"rho": rho, "sigma": 0.5, "mu": mu}
     if grid_cls is TauchenAR1Process:
         kwargs["gauss_hermite"] = True
     grid = grid_cls(n_points=11, **kwargs)
@@ -216,7 +216,7 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
 def test_ar1_transition_probs_rows_sum_to_one(grid_cls):
     """Each row of the transition matrix sums to 1."""
-    kwargs = {"rho": 0.9, "sigma": 0.5, "mu": 1.0}
+    kwargs: dict[str, Any] = {"rho": 0.9, "sigma": 0.5, "mu": 1.0}
     if grid_cls is TauchenAR1Process:
         kwargs["gauss_hermite"] = True
     grid = grid_cls(n_points=7, **kwargs)
@@ -398,7 +398,7 @@ def test_lognormal_gauss_hermite_weights_sum_to_one():
     aaae(P[0].sum(), 1.0, decimal=DECIMAL_PRECISION)
 
 
-_NORMAL_MIXTURE_KWARGS = {
+_NORMAL_MIXTURE_KWARGS: dict[str, Any] = {
     "n_std": 3.0,
     "p1": 0.9,
     "mu1": 0.0,
@@ -438,7 +438,7 @@ def test_iid_normal_mixture_stationary_moments():
     aaae(got_std, float(jnp.sqrt(expected_var)), decimal=1)
 
 
-_TAUCHEN_NORMAL_MIXTURE_KWARGS = {
+_TAUCHEN_NORMAL_MIXTURE_KWARGS: dict[str, Any] = {
     "rho": 0.8,
     "mu": 1.0,
     "n_std": 3.0,

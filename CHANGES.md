@@ -7,6 +7,29 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+- Fixes the simulate-phase Q so a simulated agent prices its continuation under
+  its *perceived* law. `Phased` state transitions are now supported for
+  `MarkovTransition` laws, and the simulate-phase Q is assembled from two
+  phase-closed halves: the current flow (utility, feasibility, `H`) from the
+  simulate transitions and simulate function pool, the continuation (state laws,
+  stochastic weights, and every helper they read) from the solve ones. The
+  realized draw is unchanged and still follows the simulate laws.
+
+  **Behaviour change.** A model is numerically unchanged unless a *phase-varying*
+  (`Phased`) function lies in the dependency ancestry of a continuation
+  transition or of a `next_<state>` read by within-period utility or
+  feasibility — the solve phase is untouched, and for every non-`Phased` name
+  both pools hold the same object. Models that do have such a dependency change,
+  by design: they previously resolved that helper from the simulate pool in the
+  continuation (and the solve law with simulate helpers in the flow), which is
+  the bug being fixed. This pattern was reachable before this release via a
+  `Phased` helper under a bare law, so the correction can move results for
+  existing models.
+
+  Two variants of a `Phased` stochastic law are validated separately; previously
+  only one of them was checked numerically. A per-target dict inside `Phased`
+  must be per-target in both phases and cover the same targets.
+
 - Adds the DC-EGM solver (Iskhakov, Jørgensen, Rust & Schjerning 2017) as a
   per-regime alternative to grid search: `Regime(solver=lcm.DCEGM(...))`.
   Euler-equation inversion on an exogenous savings grid with a fast

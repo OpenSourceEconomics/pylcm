@@ -11,9 +11,10 @@ offending piece. The rules, in the order they are checked:
   with a transition whose DAG ancestors include neither the continuous
   action, the resources function, nor the post-decision function (the
   current Euler state is allowed — see the savings-node-stage rule below),
-  and a grid that is neither batched nor distributed
-- the post-decision function, the resources function, and
-  `inverse_marginal_utility` exist in `Regime.functions`
+  and a grid that is not distributed (`batch_size` is honored)
+- the post-decision function and the resources function exist in
+  `Regime.functions` (`inverse_marginal_utility` is optional — when omitted,
+  the iEGM path derives a numerical inverse from `utility`)
 - the regime uses the default Bellman aggregator `H`
 - the post-decision function consumes the continuous action and the
   resources function (not the continuous state directly)
@@ -38,8 +39,8 @@ offending piece. The rules, in the order they are checked:
   candidate families, while a jump in the other savings-stage functions
   breaks the smoothness-at-node-resolution assumption the per-node solve
   relies on)
-- grid hygiene: the Euler grid is neither batched nor distributed, and the
-  savings grid covers the Euler grid's upper region
+- grid hygiene: the Euler grid is not distributed (`batch_size` is honored),
+  and the savings grid covers the Euler grid's upper region
 - every declared-reachable non-terminal target regime also uses DC-EGM with
   the same Euler state (reachability is read off the regime transition: a
   granular per-target mapping declares its key set, any coarse form reaches
@@ -465,8 +466,9 @@ def _fail_if_passive_state_invalid(
       allowed ancestor: the kernel then solves per exogenous asset node,
       where the state's value is known (the read must be continuous at node
       resolution — checked by the savings-stage continuity spot check),
-    - a grid that is neither batched nor distributed (the kernel enumerates
-      its nodes as discrete combos).
+    - a grid that is not distributed; `batch_size` is honored (it splays the
+      passive state's combo axis via productmap to shed memory), while a
+      continuous axis cannot be sharded.
     """
     passive_names = [
         name
@@ -744,7 +746,13 @@ def _fail_if_grid_hygiene_violated(
     user_regime: UserRegime,
     solver: DCEGM,
 ) -> None:
-    """No runtime/batched/distributed grids; savings grid covers the Euler grid."""
+    """Reject runtime-supplied points and distributed grids; savings grid covers
+    the Euler grid.
+
+    `batch_size` is honored on the Euler, savings, and discrete-state grids (it
+    only splays combo/node axes to shed memory); it is rejected on discrete
+    actions, whose logsum aggregation needs every action value at once.
+    """
     # Rule 1 has already established that the Euler state's grid is a
     # (non-process) continuous grid.
     euler_grid = cast("ContinuousGrid", user_regime.states[solver.continuous_state])
@@ -1064,6 +1072,11 @@ def _fail_if_inverse_marginal_utility_inconsistent(
 
         marginal_utility = [jax.grad(utility_of_action)(c) for c in action_sample]
 
+        # Mirror the sibling resources strict-monotonicity check's tolerance:
+        # its strictly-increasing violation is `r_hi <= r_lo + atol`, so the
+        # strictly-*decreasing* violation for marginal utility is
+        # `mu_hi >= mu_lo - atol`. The `atol` margin keeps the sampled
+        # `jax.grad` values off a bare `==` boundary.
         non_decreasing = [
             (float(c_lo), float(c_hi))
             for c_lo, c_hi, mu_lo, mu_hi in zip(
@@ -1073,7 +1086,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
                 marginal_utility[1:],
                 strict=True,
             )
-            if float(mu_hi) >= float(mu_lo)
+            if float(mu_hi) >= float(mu_lo) - atol
         ]
         if non_decreasing:
             msg = (

@@ -64,6 +64,14 @@ from _lcm.variables import (  # noqa: E402
 )
 from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.case_piece import (  # noqa: E402
+    affine_breakpoint,
+    boundary,
+    case_boundary,
+    piece,
+    piecewise_affine,
+    smooth_helper,
+)
 from lcm.certainty_equivalent import (  # noqa: E402
     CertaintyEquivalent,
     PowerMean,
@@ -96,6 +104,7 @@ from lcm.processes import (  # noqa: E402
     NormalIIDProcess,
     NormalMixtureIIDProcess,
     RouwenhorstAR1Process,
+    StateConditioned,
     TauchenAR1Process,
     TauchenNormalMixtureAR1Process,
     UniformIIDProcess,
@@ -108,14 +117,28 @@ from lcm.regime import (  # noqa: E402
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import (  # noqa: E402
     DCEGM,
+    NBEGM,
     NEGM,
+    NNBEGM,
+    AdaptiveOuterMesh,
+    BranchAggregateResult,
+    DeterministicOuterMaximum,
+    FiniteOuterGrid,
     GridSearch,
+    LegacyGoldenSection,
     OneAssetEGM,
+    OuterBranchAggregator,
+    OuterSearch,
     TwoDimEGM,
+    UniformObservedFixedCost,
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.temporal_aggregation import H_epstein_zin, H_linear  # noqa: E402
-from lcm.transition import fixed_transition  # noqa: E402
+from lcm.transition import (  # noqa: E402
+    AgeSpecializedFunction,
+    AgeSpecializedGrid,
+    fixed_transition,
+)
 
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
@@ -134,15 +157,22 @@ jax.tree_util.register_pytree_node(
 
 __all__ = [
     "DCEGM",
+    "NBEGM",
     "NEGM",
+    "NNBEGM",
+    "AdaptiveOuterMesh",
     "AgeGrid",
+    "BranchAggregateResult",
     "CertaintyEquivalent",
+    "DeterministicOuterMaximum",
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
+    "FiniteOuterGrid",
     "GridSearch",
     "H_epstein_zin",
     "H_linear",
     "IrregSpacedGrid",
+    "LegacyGoldenSection",
     "LinSpacedGrid",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
@@ -151,6 +181,8 @@ __all__ = [
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
     "OneAssetEGM",
+    "OuterBranchAggregator",
+    "OuterSearch",
     "Phased",
     "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
@@ -163,14 +195,22 @@ __all__ = [
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",
+    "StateConditioned",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
     "TwoDimEGM",
     "UniformIIDProcess",
+    "UniformObservedFixedCost",
     "__version__",
+    "affine_breakpoint",
+    "boundary",
+    "case_boundary",
     "categorical",
     "fixed_transition",
     "load_snapshot",
     "load_solution",
+    "piece",
+    "piecewise_affine",
     "save_solution",
+    "smooth_helper",
 ]

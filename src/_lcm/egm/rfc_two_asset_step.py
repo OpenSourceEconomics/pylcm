@@ -257,4 +257,12 @@ def _build_region_clouds(
         crra=crra,
         match_rate=match_rate,
     )
+    # A candidate built from a continuation that the reader fabricated by clamping an
+    # out-of-domain transformed state (`post.valid` False) is dropped from its KKT
+    # region, mirroring the G2EGM objective's `post_decision_valid` gate. `ucon`/`dcon`
+    # read the full `(a, b)` mesh; `acon`/`con` read the `a = 0` slice over `b_grid`.
+    ucon = ucon._replace(valid_region=ucon.valid_region & post.valid)
+    dcon = dcon._replace(valid_region=dcon.valid_region & post.valid)
+    acon = acon._replace(valid_region=acon.valid_region & post_zero.valid[None, :])
+    con = con._replace(valid_region=con.valid_region & post_zero.valid[None, :])
     return ucon, dcon, acon, con

@@ -1,11 +1,10 @@
-"""Kinked two-asset toy as an `NEGM` model (the G1 parity target).
+"""Kinked two-asset toy as an `NEGM` model.
 
 The smallest model carrying the Laibson frictions a NEGM solve must reproduce:
 a liquid margin `wealth` (X) the Euler equation inverts on, plus an
 illiquid/durable margin `illiquid` (Z) with a withdrawal penalty (a kink at
 `illiquid_investment = 0`) and a `Z >= 0` floor. The brute oracle for the
-equivalent spec is committed in `negm_phase0/kinked_toy_oracle.py` (§2 of
-`negm_phase0/negm-phase0-findings.md`).
+equivalent spec is committed in `kinked_toy_oracle.py`.
 
 The NEGM reparametrisation fixes the outer post-decision `next_illiquid`
 (`s' = Z + Iz`) per outer-grid node; the inner consumption-savings problem is
@@ -75,19 +74,15 @@ def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> Float
     )
 
 
-def resources(
-    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: ContinuousState
-) -> FloatND:
-    """Liquid resources consumption is paid out of, given the fixed outer node.
+def resources_before_outer_cost(wealth: ContinuousState) -> FloatND:
+    """Cost-free base of the liquid resources consumption is paid out of.
 
-    `next_illiquid` (`s'`) is bound to one outer-grid node, so the credited
-    durable move is a constant in the inner Euler inversion.
+    With `NEGM.outer_cost` declared, pylcm composes the resources function as
+    `resources_before_outer_cost - credited` at model build, so the credited
+    durable move (bound to one outer-grid node) enters resources additively by
+    construction and is a constant in the inner Euler inversion.
     """
-    return (
-        wealth
-        + LABOUR_INCOME
-        - credited(illiquid=illiquid, next_illiquid=next_illiquid)
-    )
+    return wealth + LABOUR_INCOME
 
 
 def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
@@ -169,6 +164,7 @@ NEGM_SOLVER = NEGM(
     outer_post_decision="next_illiquid",
     outer_grid=OUTER_GRID,
     outer_no_adjustment_candidate="keep_illiquid",
+    outer_cost="credited",
 )
 
 
@@ -190,7 +186,7 @@ def build_alive_regime(*, outer_batch_size: int = 0) -> Regime:
         transition=next_regime,
         functions={
             "utility": utility,
-            "resources": resources,
+            "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,
             "keep_illiquid": keep_illiquid,
             "credited": credited,

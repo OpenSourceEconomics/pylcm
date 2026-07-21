@@ -281,6 +281,7 @@ def _g2egm_envelope_step(
         discount_factor=discount_factor,
         crra=crra,
         match_rate=match_rate,
+        post_decision_valid=post.valid,
     )
 
     m_mesh, n_mesh = jnp.meshgrid(m_grid, n_grid, indexing="ij")
@@ -301,7 +302,7 @@ def _g2egm_envelope_step(
     )
 
     # Targets no admissible segment candidate reaches (envelope value `-inf`) are filled
-    # by a direct-Bellman search over a coarse policy grid — the v3 hole-fill. A target
+    # by a direct-Bellman search over a coarse policy grid. A target
     # whose optimal post-state leaves the post-decision grid stays a hole (no in-domain
     # candidate exists), which is a grid-coverage limit, not an algorithm gap.
     deposit_grid = jnp.linspace(0.0, b_grid[-1] - b_grid[0], consumption_grid.shape[0])

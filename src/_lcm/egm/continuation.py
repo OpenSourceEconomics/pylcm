@@ -14,7 +14,7 @@ behind that boundary.
 """
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -24,11 +24,23 @@ from dags import concatenate_functions
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.ez_kernel import (
+    ez_blend_partials,
+    ez_invert_partials,
+    ez_transform_partials,
+    ez_transform_scalar,
+)
 from _lcm.egm.interp import (
+    interp_and_derivative_on_prepared_grid,
+    interp_left_germ_on_prepared_grid,
+    interp_left_record_on_prepared_grid,
     interp_on_prepared_grid,
+    interp_right_germ_on_prepared_grid,
     locate_on_grid,
     prepare_padded_grid,
 )
+from _lcm.egm.nbegm import jump_moving_state_names
+from _lcm.egm.outer_envelope import right_germ_winner
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
     _get_child_resources_arg_names,
@@ -55,12 +67,20 @@ from _lcm.typing import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
+    BoolND,
     Float1D,
     FloatND,
     IntND,
+    ScalarBool,
     ScalarFloat,
     ScalarInt,
 )
+
+# The anchored Epstein-Zin partials `(a, W, E, b, T~)` a child reader returns
+# when a certainty equivalent is active.
+type _EZPartials = tuple[
+    ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat
+]
 
 
 def _is_runtime_process(grid: Grid) -> bool:
@@ -190,6 +210,32 @@ class _ChildRead:
     stochastic_state_names: tuple[StateName, ...]
     """Child stochastic node-axis names (process or Markov) in carry-axis order."""
 
+    foldable_stochastic_flags: tuple[bool, ...]
+    """Per stochastic dimension: whether its expectation folds into the carry.
+
+    A dimension folds when its nodes cannot move the per-row resources
+    queries or the aggregation those queries feed, so its expectation
+    commutes with the row-linear carry interpolation and pre-folds into an
+    expected carry once per cell (instead of looping its nodes per savings
+    query). All three conditions are static model topology:
+
+    - the child's resources DAG does not read the dimension's node value;
+    - the child's carry rows share the state grid as abscissae
+      (`Solver.carry_rows_share_state_grid`), so every node row interpolates
+      with the same bracket structure;
+    - the carry keeps no per-discrete-action rows
+      (`Solver.carry_retains_discrete_action_rows` is `False`), so no
+      per-node choice aggregation sits between interpolation and the fold;
+    - for a topology-publishing child, no jump source reads the dimension's
+      node value, so the published jump preimages (and the rows' duplicated
+      abscissae) are identical along it.
+
+    The fold commutes with the read exactly wherever the value read's
+    monotone slope limiter is inactive; where it binds (near jumps) the
+    folded read is a different valid interpolant of the same data, deviating
+    at interpolation-error order.
+    """
+
     stochastic_node_values: tuple[FloatND | IntND, ...]
     """Per stochastic dimension: the node values fed into the resources query.
 
@@ -233,6 +279,27 @@ class _ChildRead:
     row_block_shape: tuple[int, ...]
     """Shape of the carry's row block: passive sizes, then action sizes."""
 
+    n_outer_candidates: int
+    """Candidate-axis length of a stacked NEGM child carry (`0` = none).
+
+    A NEGM child publishes every outer durable candidate — the keeper plus one
+    per outer-grid node — lifted into common cash-on-hand and stacked on an
+    axis just before the grid axis. The read takes the exact hard max over
+    that axis at the query, per durable node, *before* the passive blend, so
+    the blended value interpolates the nodewise outer maximum. `0` for every
+    other child (no candidate axis in its carry).
+    """
+
+    co_map_state_names: tuple[StateName, ...] = ()
+    """Fixed, distributed child states co-mapped with the carry's leading axes.
+
+    A co-mapped state's carry axis is sliced off by the caller's outer `vmap`
+    before the read runs, so it names no discrete index here: its `next_<name>`
+    coordinate is dropped from the carry indexing (the axis is gone), while the
+    resources read still binds it from the combo pool. Empty in the replicated
+    (non-co-mapped) read.
+    """
+
 
 @dataclass(frozen=True, kw_only=True)
 class ContinuationPlan:
@@ -263,14 +330,24 @@ class ContinuationPlan:
     stochastic_node_batch_size: int
     """Block size for splaying the child stochastic-node expectation (0 = fused)."""
 
+    risk_aversion_param_name: str | None = None
+    """Flat-param name of the certainty equivalent's risk-aversion coefficient.
+
+    `None` for the linear (expected-utility) continuation. When set, the child
+    stochastic-node expectation is the Epstein-Zin power mean of the next-period
+    value and its risk-reweighted savings derivative rather than the plain
+    weighted sum.
+    """
+
 
 def bind_continuation(
     *,
     plan: ContinuationPlan,
     combo_pool: dict[str, Any],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
+    co_map_state_names: tuple[StateName, ...] = (),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
     """Bind a continuation plan to one combo pool and the next period's carries.
 
@@ -291,16 +368,47 @@ def bind_continuation(
     child read whose stochastic dimension is such a process substitutes that
     grid for the build-time NaN placeholder, so a resources function reading
     the process node integrates over the resolved nodes.
+
+    `co_map_state_names` names the fixed distributed child states whose carry
+    axes the caller has already sliced off each `next_regime_to_continuation` leaf
+    with an outer `vmap` (one device-local slice per co-mapped value). The read
+    drops those states from the carry indexing — the axis is gone — while still
+    binding them for the child resources from `combo_pool`, so the continuation
+    is read from the device-local slice and XLA inserts no all-gather.
     """
     regime_transition_probs = plan.compute_regime_transition_probs(**combo_pool)
+    # Carry rows are indexed here along their whole leading discrete axes (the
+    # carry-producing target's combo axes). A target state sharded across devices
+    # (`distributed=True`) would split those axes per device, so this index could
+    # not cross shards — and unlike the continuation V-array (co-mapped device-local
+    # via `co_mapped_in_axes` in `max_Q_over_a`), the carry channel has no such
+    # co-map, so a sharded carry into a DCEGM parent is unsupported. It is currently
+    # unreachable, not merely unhandled: a distributed state cannot reach a DCEGM
+    # regime or its carry-producing targets — regime-level `distributed` is rejected
+    # (must be model-level), a model-level sharded state pruned from a non-terminal
+    # regime is rejected, and a sharded discrete state surviving on a DCEGM regime is
+    # rejected by grid hygiene. Lifting the restriction is not infeasible: extend the
+    # continuation-V co-map to `next_regime_to_continuation` (map each carry's leading
+    # discrete axis device-local, as for the V-array); or gather carry rows
+    # shard-aware before indexing (an all-gather on just the carry's leading axis);
+    # or carve out sharded axes that appear in no carry via a validation check.
+    # The Epstein-Zin continuation reweights the child expectation by risk; its
+    # coefficient is a flat param resolved from the pool here (runtime), keyed by
+    # the plan's build-time name. `None` keeps the linear expected-utility read.
+    risk_aversion = (
+        combo_pool[plan.risk_aversion_param_name]
+        if plan.risk_aversion_param_name is not None
+        else None
+    )
     child_readers = {
         target: _get_child_carry_reader(
-            read=plan.child_reads[target],
-            carry=next_regime_to_egm_carry[target],
+            read=_with_co_map_states(plan.child_reads[target], co_map_state_names),
+            carry=next_regime_to_continuation[target],
             combo_pool=combo_pool,
             post_decision_name=plan.post_decision_name,
             stochastic_node_batch_size=plan.stochastic_node_batch_size,
             resolved_process_grids=resolved_process_grids,
+            risk_aversion=risk_aversion,
         )
         for target in plan.carry_targets
     }
@@ -308,33 +416,297 @@ def bind_continuation(
     def continuation(
         savings_value: ScalarFloat,
     ) -> tuple[ScalarFloat, ScalarFloat]:
-        """Expected continuation value and marginal at one savings node."""
-        expected_marginal = jnp.asarray(0.0, dtype=dtype)
-        expected_value = jnp.asarray(0.0, dtype=dtype)
+        """Blend the reachable targets' continuations at one savings node.
+
+        Linear (expected-utility) mode returns the regime-probability-weighted
+        expected value and marginal. Epstein-Zin mode blends each target's
+        anchored transform-space partials `(a_r, S~_r, b_r, T~_r)` with the
+        regime probabilities (`ez_blend_partials`) and inverts once, so the
+        certainty equivalent spans the joint (regime x shock) lottery — the
+        regime split (e.g. survival) is inside the CE, not a linear average of
+        per-regime certainty equivalents.
+        """
+        if risk_aversion is not None:
+            anchors: list[ScalarFloat] = []
+            weight_sums: list[ScalarFloat] = []
+            scaled_values: list[ScalarFloat] = []
+            marginal_log_scales: list[ScalarFloat] = []
+            marginal_mantissas: list[ScalarFloat] = []
+            probs: list[ScalarFloat] = []
+            for target in plan.carry_targets:
+                # The reader returns the anchored quint whenever risk_aversion
+                # is set (this branch); ty cannot correlate the union's arity
+                # with the mode.
+                (
+                    anchor,
+                    weight_sum,
+                    scaled_value,
+                    marginal_log_scale,
+                    marginal_mantissa,
+                ) = cast(
+                    "_EZPartials",
+                    child_readers[target](savings_value),
+                )
+                anchors.append(anchor)
+                weight_sums.append(weight_sum)
+                scaled_values.append(scaled_value)
+                marginal_log_scales.append(marginal_log_scale)
+                marginal_mantissas.append(marginal_mantissa)
+                probs.append(regime_transition_probs[target])
+            for target in plan.scalar_targets:
+                # A stateless target (a constant bequest) contributes only to
+                # the value channel; its constant enters transform space as its
+                # own anchor, and its marginal channel is exactly zero.
+                constant_value = next_regime_to_continuation[target].value[0]
+                anchor, weight_sum, scaled_value = ez_transform_scalar(
+                    value=constant_value, risk_aversion=risk_aversion
+                )
+                anchors.append(anchor)
+                weight_sums.append(weight_sum)
+                scaled_values.append(scaled_value)
+                marginal_log_scales.append(jnp.asarray(0.0, dtype=dtype))
+                marginal_mantissas.append(jnp.asarray(0.0, dtype=dtype))
+                probs.append(regime_transition_probs[target])
+            (
+                joint_anchor,
+                blended_weight,
+                blended_value,
+                joint_marginal_scale,
+                blended_mantissa,
+            ) = ez_blend_partials(
+                log_anchors=jnp.stack(anchors),
+                weight_sums=jnp.stack(weight_sums),
+                scaled_values=jnp.stack(scaled_values),
+                marginal_log_scales=jnp.stack(marginal_log_scales),
+                marginal_mantissas=jnp.stack(marginal_mantissas),
+                probs=jnp.stack(probs),
+                risk_aversion=risk_aversion,
+            )
+            return ez_invert_partials(
+                log_anchor=joint_anchor,
+                weight_sum=blended_weight,
+                scaled_value=blended_value,
+                marginal_log_scale=joint_marginal_scale,
+                marginal_mantissa=blended_mantissa,
+                risk_aversion=risk_aversion,
+            )
+        blended_marginal = jnp.asarray(0.0, dtype=dtype)
+        blended_value = jnp.asarray(0.0, dtype=dtype)
         for target in plan.carry_targets:
-            # The smoothed marginal is already in savings space: the composed
-            # gradient factor is applied per carry row inside the read.
-            smoothed_value, smoothed_marginal = child_readers[target](savings_value)
+            # Linear mode: the reader returns the plain (value, marginal) pair.
+            target_value, target_marginal = cast(
+                "tuple[ScalarFloat, ScalarFloat]",
+                child_readers[target](savings_value),
+            )
             prob = regime_transition_probs[target]
             # Zero unreachable-target contributions on the results, never by
             # multiplying into a possibly non-finite value. The else branch is
             # `prob * 0.0` (not `0.0`) so a NaN probability poisons the sum
             # instead of vanishing.
-            expected_marginal = expected_marginal + jnp.where(
-                prob > 0.0, prob * smoothed_marginal, prob * 0.0
+            blended_marginal = blended_marginal + jnp.where(
+                prob > 0.0, prob * target_marginal, prob * 0.0
             )
-            expected_value = expected_value + jnp.where(
-                prob > 0.0, prob * smoothed_value, prob * 0.0
+            blended_value = blended_value + jnp.where(
+                prob > 0.0, prob * target_value, prob * 0.0
             )
         for target in plan.scalar_targets:
             prob = regime_transition_probs[target]
-            constant_value = next_regime_to_egm_carry[target].value[0]
-            expected_value = expected_value + jnp.where(
+            constant_value = next_regime_to_continuation[target].value[0]
+            blended_value = blended_value + jnp.where(
                 prob > 0.0, prob * constant_value, prob * 0.0
             )
-        return expected_value, expected_marginal
+        return blended_value, blended_marginal
 
     return continuation
+
+
+def build_continuation_plan(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    functions: EconFunctionsMapping,
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
+    carry_targets: tuple[RegimeName, ...],
+    scalar_targets: tuple[RegimeName, ...],
+    compute_regime_transition_probs: RegimeTransitionFunction,
+    post_decision_name: FunctionName,
+    stochastic_node_batch_size: int,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    risk_aversion_param_name: str | None = None,
+) -> ContinuationPlan:
+    """Assemble a `ContinuationPlan` from the regime's continuation statics.
+
+    The plan binds (via `bind_continuation`) to one combo pool and the next
+    period's carries to yield the expected continuation as a function of
+    end-of-period savings. The post-decision function names the savings slot the
+    child next-state reads consume; `stochastic_node_batch_size` splays the child
+    stochastic-node expectation. Both the DC-EGM kernel and the NBEGM case-piece
+    solver build their plan through this seam, so the continuation construction
+    lives in one place.
+
+    Returns:
+        The assembled continuation plan.
+
+    """
+    child_reads = _build_child_reads(
+        user_regimes=user_regimes,
+        functions=functions,
+        transitions=transitions,
+        stochastic_transition_names=stochastic_transition_names,
+        carry_targets=carry_targets,
+        post_decision_name=post_decision_name,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+    )
+    return ContinuationPlan(
+        carry_targets=carry_targets,
+        scalar_targets=scalar_targets,
+        child_reads=child_reads,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        post_decision_name=post_decision_name,
+        stochastic_node_batch_size=stochastic_node_batch_size,
+        risk_aversion_param_name=risk_aversion_param_name,
+    )
+
+
+def _fold_stochastic_dims(
+    *,
+    read: _ChildRead,
+    carry: EGMCarry,
+    stochastic_node_values: tuple[FloatND | IntND, ...],
+    weight_vecs: tuple[Float1D, ...],
+) -> tuple[_ChildRead, EGMCarry, tuple[FloatND | IntND, ...], tuple[Float1D, ...]]:
+    """Pre-apply the foldable stochastic dims' expectation to the carry rows.
+
+    Each foldable dimension's intrinsic weights are savings-independent, its
+    node values never reach the resources queries, and (under the fold gates)
+    every node row shares the abscissae — so its expectation commutes with the
+    per-row interpolation and folds into the carry once per cell. The folded
+    carry's value and marginal rows are the guarded weighted sums over the
+    dimension's node axis (`w * 0` on zero-weight nodes, so a `-inf`
+    infeasible row on a zero-weight node contributes exactly zero and a NaN
+    weight still poisons the sum); the abscissae are taken from the first
+    node (identical across nodes under the gate). The read's per-dimension
+    tuples shrink to the unfolded dims, so the remaining node loop — or, when
+    everything folds, the loop-free branch — runs unchanged downstream.
+
+    Returns:
+        Tuple of the reduced read, the folded carry, and the unfolded dims'
+        node values and weight vectors.
+
+    """
+    folded_names = frozenset(
+        name
+        for name, foldable in zip(
+            read.stochastic_state_names, read.foldable_stochastic_flags, strict=True
+        )
+        if foldable
+    )
+
+    def fold_rows(rows: FloatND, axis: int, weights: Float1D) -> FloatND:
+        moved = jnp.moveaxis(rows, axis, 0)
+        broadcast_weights = weights.reshape(
+            (weights.shape[0],) + (1,) * (moved.ndim - 1)
+        )
+        return jnp.sum(
+            jnp.where(
+                broadcast_weights > 0.0,
+                broadcast_weights * moved,
+                broadcast_weights * 0.0,
+            ),
+            axis=0,
+        )
+
+    weight_by_name = dict(zip(read.stochastic_state_names, weight_vecs, strict=True))
+    endog_grid = carry.endog_grid
+    value = carry.value
+    marginal_utility = carry.marginal_utility
+    breakpoints = carry.breakpoints
+
+    def _carry_axis(name: StateName) -> int:
+        """Axis of a discrete state in the carry rows.
+
+        A co-mapped fixed distributed state is sliced off the carry's leading
+        axis before the continuation reads it, so its axis is absent from the
+        rows. The carry axis of any other state is its position in
+        `discrete_state_names` less the co-mapped states that precede it.
+        """
+        position = read.discrete_state_names.index(name)
+        co_mapped_before = sum(
+            1
+            for earlier in read.discrete_state_names[:position]
+            if earlier in read.co_map_state_names
+        )
+        return position - co_mapped_before
+
+    for name in sorted(folded_names, key=_carry_axis, reverse=True):
+        axis = _carry_axis(name)
+        node_weights = weight_by_name[name]
+        endog_grid = jnp.take(endog_grid, 0, axis=axis)
+        value = fold_rows(value, axis, node_weights)
+        marginal_utility = fold_rows(marginal_utility, axis, node_weights)
+        if breakpoints is not None:
+            # Jump locations are identical along a foldable dim (its rows
+            # share the duplicated abscissae), so the first node's row stands
+            # for all of them.
+            breakpoints = jnp.take(breakpoints, 0, axis=axis)
+    folded_carry = replace(
+        carry,
+        endog_grid=endog_grid,
+        value=value,
+        marginal_utility=marginal_utility,
+        breakpoints=breakpoints,
+    )
+
+    keep_stochastic = tuple(
+        name not in folded_names for name in read.stochastic_state_names
+    )
+
+    def kept[T](entries: tuple[T, ...]) -> tuple[T, ...]:
+        return tuple(
+            entry for entry, keep in zip(entries, keep_stochastic, strict=True) if keep
+        )
+
+    reduced_read = replace(
+        read,
+        discrete_state_names=tuple(
+            name for name in read.discrete_state_names if name not in folded_names
+        ),
+        stochastic_flags=tuple(
+            flag
+            for name, flag in zip(
+                read.discrete_state_names, read.stochastic_flags, strict=True
+            )
+            if name not in folded_names
+        ),
+        stochastic_state_names=kept(read.stochastic_state_names),
+        foldable_stochastic_flags=kept(read.foldable_stochastic_flags),
+        stochastic_node_values=kept(read.stochastic_node_values),
+        process_grid_names=kept(read.process_grid_names),
+        weight_keys=kept(read.weight_keys),
+    )
+    return (
+        reduced_read,
+        folded_carry,
+        kept(stochastic_node_values),
+        kept(weight_vecs),
+    )
+
+
+def _with_co_map_states(
+    read: _ChildRead, co_map_state_names: tuple[StateName, ...]
+) -> _ChildRead:
+    """Tag a child read with the co-mapped states among its discrete-state axes.
+
+    Only the co-mapped states this read carries as discrete axes are tagged; the
+    read then drops their (caller-sliced) carry axes from its deterministic index
+    while still binding them for the resources read from the combo pool.
+    """
+    present = tuple(
+        name for name in co_map_state_names if name in read.discrete_state_names
+    )
+    if not present:
+        return read
+    return replace(read, co_map_state_names=present)
 
 
 def _get_child_carry_reader(
@@ -345,7 +717,12 @@ def _get_child_carry_reader(
     post_decision_name: FunctionName,
     stochastic_node_batch_size: int,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
-) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
+    risk_aversion: FloatND | None = None,
+) -> Callable[
+    [ScalarFloat],
+    tuple[ScalarFloat, ScalarFloat]
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+]:
     """Build the per-savings-node carry read of one target for one combo.
 
     The returned callable maps a savings node to the target's smoothed
@@ -378,6 +755,22 @@ def _get_child_carry_reader(
     if read.weights_func is not None:
         weights = read.weights_func(**combo_pool)
         weight_vecs = tuple(weights[key] for key in read.weight_keys)
+    # A foldable dim of a topology-bearing carry shares the duplicated jump
+    # abscissae across its rows (no jump source reads it — enforced by the
+    # fold flags), so averaging the rows preserves both one-sided limits and
+    # the fold applies exactly as for a smooth carry. Folding is a linear
+    # expectation over the dim's rows, so it is valid only for the linear
+    # expected-utility read: a nonlinear certainty equivalent must transform
+    # every node's value before the lottery sum (`E[g(V)] != g(E[V])`), so
+    # under Epstein-Zin the node axis stays and the per-node loop transforms
+    # each row.
+    if risk_aversion is None and any(read.foldable_stochastic_flags):
+        read, carry, stochastic_node_values, weight_vecs = _fold_stochastic_dims(
+            read=read,
+            carry=carry,
+            stochastic_node_values=stochastic_node_values,
+            weight_vecs=weight_vecs,
+        )
     resources_reads_stochastic = bool(
         set(read.stochastic_state_names) & read.resources_arg_names
     )
@@ -395,7 +788,12 @@ def _get_child_carry_reader(
     prepared_search_grid = flat_search.reshape(carry.endog_grid.shape)
     prepared_valid_length = flat_valid.reshape(carry.endog_grid.shape[:-1])
 
-    def read_child(savings_value: ScalarFloat) -> tuple[ScalarFloat, ScalarFloat]:
+    def read_child(
+        savings_value: ScalarFloat,
+    ) -> (
+        tuple[ScalarFloat, ScalarFloat]
+        | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+    ):
         """Read the child's carry at one savings node."""
         # The solution-phase next-state function returns a flat mapping of
         # `next_<state>` names to scalars; the shared protocol's nested
@@ -410,7 +808,7 @@ def _get_child_carry_reader(
             for name, is_stochastic in zip(
                 read.discrete_state_names, read.stochastic_flags, strict=True
             )
-            if not is_stochastic
+            if not is_stochastic and name not in read.co_map_state_names
         )
         # A passive next-state is normally produced by `next_state_func`. Under
         # NEGM the outer post-decision's transition is stripped (it is bound per
@@ -458,7 +856,7 @@ def _get_child_carry_reader(
 
         if not read.stochastic_state_names:
             queries, gradients = queries_and_gradients(())
-            return _aggregate_child_choices(
+            value, marginal = _aggregate_child_choices(
                 carry=carry,
                 prepared_search_grid=prepared_search_grid,
                 prepared_valid_length=prepared_valid_length,
@@ -468,7 +866,23 @@ def _get_child_carry_reader(
                 child_passive_grids=read.passive_grids,
                 row_queries=queries,
                 row_gradients=gradients,
+                paired_marginal_read=risk_aversion is not None,
+                n_outer_candidates=read.n_outer_candidates,
             )
+            if risk_aversion is not None:
+                # A target whose continuation carries no shock lottery at this
+                # seam — a stateless terminal value, or one whose stochastic
+                # states are ride-along co-states integrated in the outer
+                # envelope — contributes its anchored Epstein-Zin partials to
+                # the joint regime blend: `ez_transform_partials` on a single
+                # unit-weight node.
+                return ez_transform_partials(
+                    child_values=value[..., None],
+                    child_marginals=marginal[..., None],
+                    weights=jnp.ones(1, dtype=value.dtype),
+                    risk_aversion=risk_aversion,
+                )
+            return value, marginal
 
         return _expect_over_stochastic_nodes(
             read=read,
@@ -482,6 +896,7 @@ def _get_child_carry_reader(
             queries_and_gradients=queries_and_gradients,
             resources_reads_stochastic=resources_reads_stochastic,
             stochastic_node_batch_size=stochastic_node_batch_size,
+            risk_aversion=risk_aversion,
         )
 
     return read_child
@@ -572,7 +987,11 @@ def _expect_over_stochastic_nodes(
     ],
     resources_reads_stochastic: bool,
     stochastic_node_batch_size: int,
-) -> tuple[ScalarFloat, ScalarFloat]:
+    risk_aversion: FloatND | None = None,
+) -> (
+    tuple[ScalarFloat, ScalarFloat]
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+):
     """Weight the carry read over the child's stochastic-node combos.
 
     Runs the full read (per-row queries, mixed passive interpolation, choice
@@ -618,6 +1037,8 @@ def _expect_over_stochastic_nodes(
             child_passive_grids=read.passive_grids,
             row_queries=queries,
             row_gradients=gradients,
+            paired_marginal_read=risk_aversion is not None,
+            n_outer_candidates=read.n_outer_candidates,
         )
 
     node_index_mesh = jnp.meshgrid(
@@ -667,6 +1088,15 @@ def _expect_over_stochastic_nodes(
         blocked_weights = jnp.concatenate(
             [joint_weights, jnp.zeros(pad, dtype=joint_weights.dtype)]
         ).reshape(n_blocks, stochastic_node_batch_size)
+        zero = jnp.zeros((), dtype=joint_weights.dtype)
+
+        if risk_aversion is not None:
+            return _accumulate_ez_partials_over_blocks(
+                read_at_nodes=read_at_nodes,
+                blocked_indices=blocked_indices,
+                blocked_weights=blocked_weights,
+                risk_aversion=risk_aversion,
+            )
 
         def accumulate(
             carry: tuple[ScalarFloat, ScalarFloat],
@@ -680,16 +1110,92 @@ def _expect_over_stochastic_nodes(
                 acc_marginal + _weighted_node_sum(block_marginals, block_weights),
             ), None
 
-        zero = jnp.zeros((), dtype=joint_weights.dtype)
         (smoothed_value, smoothed_marginal), _ = jax.lax.scan(
             accumulate, (zero, zero), (blocked_indices, blocked_weights)
         )
         return smoothed_value, smoothed_marginal
 
     node_values, node_marginals = jax.vmap(read_at_nodes)(flat_node_indices)
+    if risk_aversion is not None:
+        # Epstein-Zin: reduce this target's shock lottery into the certainty
+        # equivalent's transform space — the transformed value and marginal
+        # partials `(S, T)`, NOT the inverted `(nu, dnu/ds)`. The regime blend sums
+        # these per-target partials with the regime probabilities and inverts once
+        # (`ez_invert_partials`), so the joint certainty equivalent spans the full
+        # (regime x shock) lottery. A single reachable target recovers M1's
+        # per-regime power mean.
+        return ez_transform_partials(
+            child_values=node_values,
+            child_marginals=node_marginals,
+            weights=joint_weights,
+            risk_aversion=risk_aversion,
+        )
     smoothed_value = _weighted_node_sum(node_values, joint_weights)
     smoothed_marginal = _weighted_node_sum(node_marginals, joint_weights)
     return smoothed_value, smoothed_marginal
+
+
+def _accumulate_ez_partials_over_blocks(
+    *,
+    read_at_nodes: Callable[
+        [tuple[ScalarInt, ...] | tuple[IntND, ...]], tuple[FloatND, FloatND]
+    ],
+    blocked_indices: tuple[IntND, ...],
+    blocked_weights: FloatND,
+    risk_aversion: ScalarFloat,
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
+    """Accumulate one target's Epstein-Zin transform partials in node blocks.
+
+    The anchored partials `(a, W, E, b, T~)` are additive across node blocks —
+    each block is a partial sum of the same lottery — so each scan step
+    transforms its block and folds it into the carry with a unit-probability
+    blend. The single inversion happens downstream of the regime blend,
+    exactly as in the fused path, so the block scan is a memory lever only.
+    """
+    dtype = blocked_weights.dtype
+    exponent = 1.0 - risk_aversion
+    neutral_anchor = jnp.where(
+        exponent == 0.0,
+        0.0,
+        jnp.where(exponent >= 0.0, -jnp.inf, jnp.inf),
+    ).astype(dtype)
+    unit_probs = jnp.ones(2, dtype=dtype)
+    zero = jnp.zeros((), dtype=dtype)
+
+    def accumulate_partials(
+        carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+        block: tuple[tuple[IntND, ...], FloatND],
+    ) -> tuple[
+        tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None
+    ]:
+        block_indices, block_weights = block
+        block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
+        block_quint = ez_transform_partials(
+            child_values=block_values,
+            child_marginals=block_marginals,
+            weights=block_weights,
+            risk_aversion=risk_aversion,
+        )
+        combined = ez_blend_partials(
+            log_anchors=jnp.stack([carry[0], block_quint[0]]),
+            weight_sums=jnp.stack([carry[1], block_quint[1]]),
+            scaled_values=jnp.stack([carry[2], block_quint[2]]),
+            marginal_log_scales=jnp.stack([carry[3], block_quint[3]]),
+            marginal_mantissas=jnp.stack([carry[4], block_quint[4]]),
+            probs=unit_probs,
+            risk_aversion=risk_aversion,
+        )
+        return combined, None
+
+    # The neutral carry: an empty partial sum whose anchor sits on the
+    # non-dominating side, so the first real block's anchor wins the joint
+    # extremum and the empty term contributes exactly zero.
+    quint, _ = jax.lax.scan(
+        accumulate_partials,
+        (neutral_anchor, zero, zero, zero, zero),
+        (blocked_indices, blocked_weights),
+    )
+    return quint
 
 
 def _interleave_child_index(
@@ -754,6 +1260,8 @@ def _aggregate_child_choices(
     child_passive_grids: tuple[Float1D, ...],
     row_queries: FloatND,
     row_gradients: FloatND,
+    paired_marginal_read: bool = False,
+    n_outer_candidates: int = 0,
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Read one child's carry with mixed interpolation and aggregate its choices.
 
@@ -764,9 +1272,10 @@ def _aggregate_child_choices(
     row is interpolated 1-D at its own resources query and its marginal is
     multiplied by its own composed gradient $(\\partial R'/\\partial A)$ —
     per row, because each row's envelope lives in its own resources space.
-    The passive axes are then blended away with edge-clamped linear weights
-    on the two neighboring nodes of each passive grid — *before* the choice
-    aggregation, so the logsum sees blended choice-specific values. Finally
+    The passive axes are then blended away (`_blend_passive_axes`) with
+    edge-clamped linear weights on the two neighboring nodes of each passive
+    grid — *before* the choice aggregation, so the logsum sees blended
+    choice-specific values. Finally
     the discrete-action rows are aggregated with the child's taste-shock
     scale: the smoothed value is the logsum and the smoothed marginal is
     $\\sum_{d'} P_{d'} \\mu_{d'} (\\partial R'/\\partial A)_{d'}$ — exact
@@ -792,6 +1301,20 @@ def _aggregate_child_choices(
             (passive dims, then action dims).
         row_gradients: Per-row composed gradients $\\partial R'/\\partial A$
             with the row block's shape.
+        n_outer_candidates: Candidate-axis length of a stacked NEGM child
+            carry, `0` for a child without one. When positive, the carry's row
+            block carries a trailing candidate axis (the outer durable
+            candidates lifted into common cash-on-hand); each candidate row is
+            read at the *same* query (they share the coh axis), masked to
+            `-inf` below its own first finite coh node (its
+            borrowing-constrained support has not started — the lift moves
+            adjuster supports up by the credited cost, so the edge clamp would
+            otherwise let an infeasible candidate win on a boundary value),
+            and the axis is collapsed by the exact hard max at the query with
+            the winner's marginal (Danskin) — *before* the passive blend, so
+            the blend interpolates the nodewise outer maximum
+            `sum_k w_k max_j W_j(q; d_k)` rather than the lower bound
+            `max_j sum_k w_k W_j(q; d_k)`.
 
     Returns:
         Tuple of the smoothed continuation value and the smoothed marginal
@@ -808,8 +1331,23 @@ def _aggregate_child_choices(
     search_block = prepared_search_grid[child_index]
     valid_block = prepared_valid_length[child_index]
     # Leading axes of the blocks: the child's passive nodes, then its
-    # discrete-action combos.
+    # discrete-action combos (then the candidate axis of a stacked NEGM child).
     block_shape = value_block.shape[:-1]
+    _fail_if_carry_shape_mismatches_declaration(
+        block_shape=block_shape,
+        row_queries_shape=row_queries.shape,
+        n_outer_candidates=n_outer_candidates,
+    )
+    if n_outer_candidates:
+        # The stacked candidates share the lifted common-coh axis, so every
+        # candidate row of a block cell is read at that cell's single query and
+        # scaled by its single gradient.
+        row_queries = jnp.broadcast_to(
+            row_queries[..., None], (*row_queries.shape, n_outer_candidates)
+        )
+        row_gradients = jnp.broadcast_to(
+            row_gradients[..., None], (*row_gradients.shape, n_outer_candidates)
+        )
     grid_rows = grid_block.reshape(-1, n_pad)
     value_rows = value_block.reshape(-1, n_pad)
     marginal_rows = marginal_block.reshape(-1, n_pad)
@@ -819,61 +1357,114 @@ def _aggregate_child_choices(
     gradients_flat = row_gradients.reshape(-1)
 
     # The marginal-utility row is the value row's exact slope (envelope
-    # theorem), upgrading the value read to cubic Hermite; the mu read itself
-    # stays linear (a policy-grade quantity, and its interpolation error
-    # enters the value only at second order through the Euler inversion).
-    def interp_value_row(
-        search_grid: Float1D,
-        valid_length: ScalarInt,
-        xp: Float1D,
-        fp: Float1D,
-        fp_slopes: Float1D,
-        x_query: ScalarFloat,
-    ) -> ScalarFloat:
-        """Interpolate one carry value row at its query; positional per `jax.vmap`."""
-        return interp_on_prepared_grid(
-            x_query=x_query,
-            search_grid=search_grid,
-            valid_length=valid_length,
-            xp=xp,
-            fp=fp,
-            fp_slopes=fp_slopes,
+    # theorem), upgrading the value read to cubic Hermite. The marginal read
+    # comes in two conventions:
+    # - linear expected utility reads the marginal row itself linearly (a
+    #   policy-grade quantity whose interpolation error enters the value only
+    #   at second order through the Euler inversion);
+    # - a paired read (`paired_marginal_read`, the Epstein-Zin transform
+    #   marginal) differentiates the value interpolant itself, so the marginal
+    #   is exactly the derivative of the value the certainty equivalent
+    #   carries — where the slope limiter binds, the two conventions differ at
+    #   leading order.
+    if paired_marginal_read:
+        value_at_child, marginal_at_child = jax.vmap(_value_and_slope_row)(
+            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
         )
-
-    def interp_row(
-        search_grid: Float1D,
-        valid_length: ScalarInt,
-        xp: Float1D,
-        fp: Float1D,
-        x_query: ScalarFloat,
-    ) -> ScalarFloat:
-        """Interpolate one carry row at its own query; positional per `jax.vmap`."""
-        return interp_on_prepared_grid(
-            x_query=x_query,
-            search_grid=search_grid,
-            valid_length=valid_length,
-            xp=xp,
-            fp=fp,
+    else:
+        value_at_child = jax.vmap(_interp_value_row)(
+            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
         )
+        marginal_at_child = jax.vmap(_interp_row)(
+            search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
+        )
+    # The passive blend interpolates a list of finite marginal-like payloads.
+    # The regular path carries the single marginal read; the stacked NEGM path
+    # carries side-separated payloads plus a right-liveness indicator, so the
+    # ownership side is chosen after the blend rather than committed per node.
+    if n_outer_candidates:
+        value_at_child, marginal_arrays = _stacked_blend_payloads(
+            value_at_child=value_at_child,
+            marginal_at_child=marginal_at_child,
+            search_rows=search_rows,
+            valid_rows=valid_rows,
+            grid_rows=grid_rows,
+            value_rows=value_rows,
+            marginal_rows=marginal_rows,
+            queries_flat=queries_flat,
+            gradients_flat=gradients_flat,
+            block_shape=block_shape,
+            paired_marginal_read=paired_marginal_read,
+        )
+    else:
+        # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
+        # exactly-zero marginal utility, so an infeasible-everywhere row reads
+        # as the `-inf` / zero pair while a row with isolated `-inf` nodes
+        # (e.g. a bequest at zero wealth) keeps its finite region intact. A
+        # `-inf` value read pins the marginal read to zero so the pair stays
+        # consistent at queries clamped onto a `-inf` node.
+        marginal_at_child = jnp.where(
+            jnp.isneginf(value_at_child), 0.0, marginal_at_child * gradients_flat
+        )
+        value_at_child = value_at_child.reshape(block_shape)
+        marginal_arrays = [marginal_at_child.reshape(block_shape)]
 
-    value_at_child = jax.vmap(interp_value_row)(
-        search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+    value_at_child, marginal_at_child = _blend_passive_axes(
+        value_at_child=value_at_child,
+        marginal_arrays=marginal_arrays,
+        child_passive_values=child_passive_values,
+        child_passive_grids=child_passive_grids,
+        n_outer_candidates=n_outer_candidates,
     )
-    marginal_at_child = jax.vmap(interp_row)(
-        search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
-    )
-    # `-inf` entries interpolate pointwise to `-inf` (never NaN) and carry
-    # exactly-zero marginal utility, so an infeasible-everywhere row reads as
-    # the `-inf` / zero pair while a row with isolated `-inf` nodes (e.g. a
-    # bequest at zero wealth) keeps its finite region intact. A `-inf` value
-    # read pins the marginal read to zero so the pair stays consistent at
-    # queries clamped onto a `-inf` node.
-    marginal_at_child = jnp.where(
-        jnp.isneginf(value_at_child), 0.0, marginal_at_child * gradients_flat
-    )
-    value_at_child = value_at_child.reshape(block_shape)
-    marginal_at_child = marginal_at_child.reshape(block_shape)
 
+    value_at_child = value_at_child.reshape(-1)
+    marginal_at_child = marginal_at_child.reshape(-1)
+    if has_taste_shocks:
+        smoothed_value, choice_probs = logsum_and_softmax(
+            values=value_at_child, scale=carry.taste_shock_scale, axes=(0,)
+        )
+    else:
+        smoothed_value, choice_probs = _hard_max_and_one_hot(
+            values=value_at_child, axes=(0,)
+        )
+    smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
+    return smoothed_value, smoothed_marginal
+
+
+def _blend_passive_axes(
+    *,
+    value_at_child: FloatND,
+    marginal_arrays: list[FloatND],
+    child_passive_values: tuple[ScalarFloat, ...],
+    child_passive_grids: tuple[Float1D, ...],
+    n_outer_candidates: int,
+) -> tuple[FloatND, FloatND]:
+    """Blend each passive axis away with edge-clamped linear node weights.
+
+    Runs before the choice aggregation, so the logsum sees blended
+    choice-specific values. Every marginal-like payload is blended through the
+    same node weights; the ownership side is chosen only after the blend
+    (`_choose_blended_side`), so a blend of heterogeneous-support nodes stays
+    inside the blended read's generalized gradient instead of averaging
+    independently side-committed marginals.
+
+    Args:
+        value_at_child: Read values with the row block's shape (passive dims,
+            then action dims).
+        marginal_arrays: List of marginal-like payloads with the same shape —
+            the single marginal read on the regular path, the
+            `[right_side, left_side, right_alive]` triple on the stacked path.
+        child_passive_values: The child's passive values at this savings node,
+            aligned with `child_passive_grids`.
+        child_passive_grids: The child's passive grids in carry-axis order.
+        n_outer_candidates: Candidate-axis length of a stacked NEGM child
+            carry, `0` for a child without one; selects the side-choice rule.
+
+    Returns:
+        Tuple of the value and published marginal with every passive axis
+        blended away.
+
+    """
     for passive_value, passive_grid in zip(
         child_passive_values, child_passive_grids, strict=True
     ):
@@ -888,25 +1479,397 @@ def _aggregate_child_choices(
         value_at_child = jnp.where(
             weight_lower > 0.0, weight_lower * value_at_child[lower], 0.0
         ) + jnp.where(weight_upper > 0.0, weight_upper * value_at_child[upper], 0.0)
-        # Marginal rows are finite everywhere (exactly 0.0 on infeasible
-        # rows), so a plain blend is safe.
-        marginal_at_child = (
-            weight_lower * marginal_at_child[lower]
-            + weight_upper * marginal_at_child[upper]
-        )
+        # Marginal-like payloads are finite everywhere (exactly 0.0 on
+        # infeasible rows), so a plain blend never produces NaN.
+        marginal_arrays = [
+            weight_lower * arr[lower] + weight_upper * arr[upper]
+            for arr in marginal_arrays
+        ]
 
-    value_at_child = value_at_child.reshape(-1)
-    marginal_at_child = marginal_at_child.reshape(-1)
-    if has_taste_shocks:
-        smoothed_value, choice_probs = logsum_and_softmax(
-            values=value_at_child, scale=carry.taste_shock_scale, axes=(0,)
+    marginal_at_child = _choose_blended_side(
+        marginal_arrays=marginal_arrays, n_outer_candidates=n_outer_candidates
+    )
+
+    # A positive-weight blend of a dead node with a live one yields a `-inf`
+    # value alongside a finite averaged marginal; re-pin the marginal to zero
+    # so the `(-inf, 0)` infeasible pair survives the passive blend and no
+    # finite marginal of an infeasible cell reaches the Euler inversion.
+    marginal_at_child = jnp.where(jnp.isneginf(value_at_child), 0.0, marginal_at_child)
+    return value_at_child, marginal_at_child
+
+
+def _fail_if_carry_shape_mismatches_declaration(
+    *,
+    block_shape: tuple[int, ...],
+    row_queries_shape: tuple[int, ...],
+    n_outer_candidates: int,
+) -> None:
+    """Check the carry block's leading shape against the stacking declaration.
+
+    The declaration and the published carry must agree before any
+    broadcasting: a mismatch would otherwise surface as an opaque vmap
+    axis-size error deep in the batched interpolation instead of naming the
+    violated solver contract.
+    """
+    expected_block_shape = (
+        (*row_queries_shape, n_outer_candidates)
+        if n_outer_candidates
+        else row_queries_shape
+    )
+    if block_shape != expected_block_shape:
+        msg = (
+            "The child's published carry block has leading shape "
+            f"{block_shape}, but its solver declares "
+            f"n_stacked_carry_candidates={n_outer_candidates}, which requires "
+            f"{expected_block_shape}. The solver's declaration must match the "
+            "candidate-axis structure of the carry it publishes."
         )
-    else:
-        smoothed_value, choice_probs = _hard_max_and_one_hot(
-            values=value_at_child, axes=(0,)
+        raise ValueError(msg)
+
+
+def _stacked_blend_payloads(
+    *,
+    value_at_child: FloatND,
+    marginal_at_child: FloatND,
+    search_rows: FloatND,
+    valid_rows: IntND,
+    grid_rows: FloatND,
+    value_rows: FloatND,
+    marginal_rows: FloatND,
+    queries_flat: FloatND,
+    gradients_flat: FloatND,
+    block_shape: tuple[int, ...],
+    paired_marginal_read: bool,
+) -> tuple[FloatND, list[FloatND]]:
+    """Collapse a stacked candidate axis into passive-blend payloads.
+
+    Masks each candidate to `-inf` below its own first finite coh node (so the
+    edge clamp cannot hand an infeasible lifted candidate a boundary value that
+    wins the max), reads the right/left germs and the left record, applies the
+    `(-inf, 0)` pin and the composed gradient scaling, and collapses the
+    candidate axis via `_collapse_stacked_candidates`. The germs of each
+    candidate's value read feed the tie rule at the candidate max; they need no
+    support mask of their own — the left germ is dead at or below the first
+    finite node by construction, and a below-support candidate enters the tie
+    set only when every candidate is below support, where all published
+    marginals are exactly zero regardless of the winner.
+
+    Under `paired_marginal_read` both side payloads are the value
+    interpolant's own one-sided derivatives (the Epstein-Zin transform
+    marginal): the caller passes the paired right derivative as
+    `marginal_at_child` and the left payload is re-read as the paired left
+    slope instead of the linear left record.
+
+    Returns:
+        Tuple of the reshaped value maximum and the finite marginal-like
+        payloads `[right_side, left_side, right_alive]` for the passive blend.
+
+    """
+    right_germ_at_child, left_germ_at_child, left_marginal_at_child = jax.vmap(
+        _germ_and_left_record_rows
+    )(search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat)
+    # Only rows with a finite first node have a support to fall below;
+    # `row_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read must
+    # reach the candidate maximum fail-loud instead of becoming an ordinary
+    # infeasible `(-inf, 0)` pair. `row_upper` is `-inf` on the same row.
+    row_lower = jnp.min(jnp.where(jnp.isfinite(grid_rows), grid_rows, jnp.inf), axis=1)
+    row_upper = jnp.max(jnp.where(jnp.isfinite(grid_rows), grid_rows, -jnp.inf), axis=1)
+    below_row_support = (queries_flat < row_lower) & jnp.isfinite(row_lower)
+    value_at_child = jnp.where(below_row_support, -jnp.inf, value_at_child)
+    # Strictly above a candidate's own last finite node its value read is a
+    # constant clamp: re-pin both marginal payloads to zero per candidate,
+    # before the collapse, so an earlier-ending clamp winner publishes the
+    # locally constant envelope's zero slope instead of a terminal record from
+    # a node strictly below the query. At exact equality the node's own record
+    # stands.
+    above_row_support = (queries_flat > row_upper) & jnp.isfinite(row_upper)
+    marginal_at_child = jnp.where(above_row_support, 0.0, marginal_at_child)
+    left_marginal_at_child = jnp.where(above_row_support, 0.0, left_marginal_at_child)
+    # The paired (Epstein-Zin) marginal is the value interpolant's own
+    # derivative; its left payload follows the same convention: the derivative
+    # of the value object seen from the LEFT of the query, so a left-owned tie
+    # at a duplicated terminal abscissa publishes the left duplicate's piece
+    # slope, not the ordinary right/clamp derivative.
+    if paired_marginal_read:
+        left_marginal_at_child = jax.vmap(_left_slope_row)(
+            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
         )
-    smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
-    return smoothed_value, smoothed_marginal
+        left_marginal_at_child = jnp.where(
+            above_row_support, 0.0, left_marginal_at_child
+        )
+    # The right-continuous payload additionally clamps to zero *at* the last
+    # finite node (the value read is already flat to the right there, so the
+    # node contributes a zero right-derivative to a passive blend), and the
+    # left-continuous payload *at* the first finite node. These inclusive flags
+    # let the blend mix a side-dead node with a live one without averaging the
+    # dead node's boundary record into the published one-sided marginal.
+    at_or_above_row_support = (queries_flat >= row_upper) & jnp.isfinite(row_upper)
+    at_or_below_row_support = (queries_flat <= row_lower) & jnp.isfinite(row_lower)
+    # `-inf` value reads pin both marginal payloads to zero (the `(-inf, 0)`
+    # infeasible contract) and both carry the composed gradient scaling.
+    is_dead = jnp.isneginf(value_at_child)
+    marginal_at_child = jnp.where(is_dead, 0.0, marginal_at_child * gradients_flat)
+    left_marginal_at_child = jnp.where(
+        is_dead, 0.0, left_marginal_at_child * gradients_flat
+    )
+    value_at_child, right_side, left_side, right_alive = _collapse_stacked_candidates(
+        value_at_child=value_at_child.reshape(block_shape),
+        ordinary_marginal_at_child=marginal_at_child.reshape(block_shape),
+        left_marginal_at_child=left_marginal_at_child.reshape(block_shape),
+        right_dead_at_child=at_or_above_row_support.reshape(block_shape),
+        left_dead_at_child=at_or_below_row_support.reshape(block_shape),
+        right_germ_at_child=tuple(
+            component.reshape(block_shape) for component in right_germ_at_child
+        ),
+        left_germ_at_child=tuple(
+            component.reshape(block_shape) for component in left_germ_at_child
+        ),
+    )
+    return value_at_child, [right_side, left_side, right_alive]
+
+
+def _choose_blended_side(
+    *, marginal_arrays: list[FloatND], n_outer_candidates: int
+) -> FloatND:
+    """Pick the published marginal from the blended payloads.
+
+    The regular path carries the single blended marginal. The stacked NEGM path
+    chooses the ownership side after the blend: where any positive-weight node
+    keeps a live right derivative, the right-continuous marginal is what the
+    parent's Euler inversion consumes; where every contributing node is
+    right-dead (a shared terminal), the left-continuous record applies. This is
+    a value-ownership rule, not a projection onto a generalized gradient: it
+    publishes the economic marginal `u'(c)` of whichever side wins the value
+    read, so the parent Euler inversion consumes a genuine marginal utility even
+    when the blended nodes own opposite sides.
+    """
+    if n_outer_candidates:
+        right_side, left_side, right_alive = marginal_arrays
+        return jnp.where(right_alive > 0.0, right_side, left_side)
+    (marginal_at_child,) = marginal_arrays
+    return marginal_at_child
+
+
+def _interp_value_row(
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+    x_query: ScalarFloat,
+) -> ScalarFloat:
+    """Interpolate one carry value row at its query; positional per `jax.vmap`."""
+    return interp_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+
+def _interp_row(
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    x_query: ScalarFloat,
+) -> ScalarFloat:
+    """Interpolate one carry row at its own query; positional per `jax.vmap`."""
+    return interp_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+    )
+
+
+def _value_and_slope_row(
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+    x_query: ScalarFloat,
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Value read and its analytic derivative; positional per `jax.vmap`.
+
+    The closed-form derivative of the selected piece — not autodiff through
+    the bracket-selection program, whose `searchsorted`/`clip` representation
+    returns arbitrary subgradients at exact grid nodes (a routine alignment: a
+    zero-savings corner on a child grid that starts at zero).
+    """
+    return interp_and_derivative_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+
+def _left_slope_row(
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+    x_query: ScalarFloat,
+) -> ScalarFloat:
+    """Left-side analytic derivative of the value read; positional per `jax.vmap`.
+
+    The paired left payload: an on-node query lands in its LEFT bracket
+    (evaluated at the bracket's right edge), so a duplicated terminal abscissa
+    publishes the left duplicate's piece slope — the derivative of the value
+    object a left-owned tie selected — instead of the ordinary right/clamp
+    derivative.
+    """
+    return interp_and_derivative_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        side="left",
+    )[1]
+
+
+def _germ_and_left_record_rows(
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D,
+    x_query: ScalarFloat,
+) -> tuple[
+    tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
+    tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
+    ScalarFloat,
+]:
+    """Germs and left-record marginal of one row; positional per `jax.vmap`."""
+    right_germ = interp_right_germ_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+    left_germ = interp_left_germ_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+    # The payload companion of the left germ: the marginal row read
+    # left-continuously, so a left-owned tie publishes the record that
+    # justified ownership at a duplicated abscissa.
+    left_marginal = interp_left_record_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp_slopes,
+    )
+    return right_germ, left_germ, left_marginal
+
+
+def _collapse_stacked_candidates(
+    *,
+    value_at_child: FloatND,
+    ordinary_marginal_at_child: FloatND,
+    left_marginal_at_child: FloatND,
+    right_dead_at_child: BoolND,
+    left_dead_at_child: BoolND,
+    right_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
+    left_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
+) -> tuple[FloatND, FloatND, FloatND, FloatND]:
+    """Collapse the candidate axis by the exact hard max at the query.
+
+    This runs *before* the passive blend, so the blend interpolates the
+    nodewise outer maximum. An exact value tie resolves right-continuously in
+    the value read itself: the tied candidates are compared by the complete
+    right germ of their own value interpolants (`right_germ_winner` —
+    right-finiteness, then the first three one-sided derivatives), so the
+    branch whose read actually wins immediately to the right owns the marginal
+    the parent's Euler inversion consumes; right-identical candidates (a shared
+    terminal abscissa, where every candidate clamps) are separated by their
+    left germs, and only branches identical on both sides fall back to the
+    lowest index. (The germs use the unscaled interpolant derivatives: the
+    composed gradient is shared by all candidates of a cell and positive, so
+    scaling could never reorder them.)
+
+    Rather than commit the ownership side per cell, the collapse publishes both
+    the winner's right-continuous marginal (zero once its right side is dead —
+    at or above its last finite node) and its left-continuous record, plus a
+    `right_alive` indicator. The passive blend interpolates all three and the
+    side is chosen after it, so a blend of heterogeneous-support nodes commits to
+    a single ownership side after interpolation instead of averaging
+    independently side-committed marginals. The published payload is always the
+    value-winning branch's economic marginal `u'(c)` — the two objects stay
+    separate: the value germ ranks branch ownership, the marginal row supplies
+    the utility derivative the parent Euler inversion consumes. With no passive
+    blend the choice
+    reduces to the per-node contract: an interior winner publishes its ordinary
+    marginal, a terminal (right-dead) winner its left record — the left
+    duplicate at a shared terminal abscissa. A cell whose candidates are all
+    `-inf` (no live support) keeps the `(-inf, 0)` infeasible contract: every
+    masked marginal is exactly zero.
+
+    Args:
+        value_at_child: Candidate value reads; the candidate axis is last.
+        ordinary_marginal_at_child: Gradient-scaled right-continuous candidate
+            marginal reads, same shape.
+        left_marginal_at_child: Gradient-scaled left-record marginal reads
+            (`interp_left_record_on_prepared_grid`), same shape.
+        right_dead_at_child: Per candidate, whether the query is at or above the
+            candidate's last finite node (its right side is a flat clamp).
+        left_dead_at_child: Per candidate, whether the query is at or below the
+            candidate's first finite node (its left side is a flat clamp).
+        right_germ_at_child: Tuple of the right-finiteness flag and the first
+            three right derivatives of the candidate value reads, same shape.
+        left_germ_at_child: Tuple of the left-finiteness flag and the first
+            three left derivatives of the candidate value reads, same shape.
+
+    Returns:
+        Tuple of the collapsed value maximum, the winner's right-continuous
+        marginal, its left-continuous record, and the `right_alive` indicator
+        (1.0 where the winner's right side is live, 0.0 where it is dead).
+
+    """
+    winner = right_germ_winner(
+        value=value_at_child,
+        right_germ=right_germ_at_child,
+        left_germ=left_germ_at_child,
+    )[0]
+    ordinary = jnp.take_along_axis(ordinary_marginal_at_child, winner, axis=-1)[..., 0]
+    left_record = jnp.take_along_axis(left_marginal_at_child, winner, axis=-1)[..., 0]
+    right_dead = jnp.take_along_axis(right_dead_at_child, winner, axis=-1)[..., 0]
+    left_dead = jnp.take_along_axis(left_dead_at_child, winner, axis=-1)[..., 0]
+    right_side = jnp.where(right_dead, 0.0, ordinary)
+    left_side = jnp.where(left_dead, 0.0, left_record)
+    right_alive = jnp.where(right_dead, 0.0, 1.0)
+    # The published value is the maximum itself: identical to the winner's read
+    # at any tie, and NaN-propagating when a poisoned candidate row (whose NaN
+    # empties the tie set) must surface fail-loud. Both side payloads are
+    # pinned to NaN alongside so the published pair never looks healthy over a
+    # poisoned cell — the germ selector falls back to a finite competitor's
+    # index when the NaN empties the tie set, and that competitor's marginal
+    # must not ship beside a NaN value.
+    collapsed_value = jnp.max(value_at_child, axis=-1)
+    poisoned = jnp.isnan(collapsed_value)
+    return (
+        collapsed_value,
+        jnp.where(poisoned, jnp.nan, right_side),
+        jnp.where(poisoned, jnp.nan, left_side),
+        right_alive,
+    )
 
 
 def _build_child_reads(
@@ -1027,9 +1990,16 @@ def _build_child_reads(
             )
             for name in passive_state_names
         )
-        action_names, action_values = _get_child_discrete_actions(
-            user_regime=target_regime
-        )
+        # A value-only child (brute `GridSearch`, the case-piece `NBEGM`)
+        # publishes a value array already maxed over its discrete actions, so the
+        # read carries no per-action rows; only a choice-retaining child (DC-EGM)
+        # leaves them for the parent to aggregate.
+        if target_regime.solver.carry_retains_discrete_action_rows:
+            action_names, action_values = _get_child_discrete_actions(
+                user_regime=target_regime
+            )
+        else:
+            action_names, action_values = (), ()
         resources_func = _get_child_resources_function(user_regime=target_regime)
         resources_arg_names = frozenset(
             _get_child_resources_arg_names(user_regime=target_regime)
@@ -1044,6 +2014,27 @@ def _build_child_reads(
             | set(action_names)
         )
         resources_param_names = resources_arg_names - child_binding_names
+        child_carry_rows_uniform = (
+            target_regime.solver.carry_rows_share_state_grid
+            and not target_regime.solver.carry_retains_discrete_action_rows
+        )
+        # Under a topology-publishing read, a dim is only foldable when no
+        # jump source reads its node value — otherwise the published jump
+        # preimages (and so the rows' duplicated abscissae) vary along it.
+        if getattr(target_regime.solver, "jump_read", None) == "one_sided":
+            jump_moving = jump_moving_state_names(
+                functions=target_regime.functions,
+                state_names=frozenset(target_regime.states),
+                euler_state_name=euler_state_name,
+            )
+        else:
+            jump_moving = frozenset()
+        foldable_stochastic_flags = tuple(
+            child_carry_rows_uniform
+            and name not in resources_arg_names
+            and name not in jump_moving
+            for name in stochastic_state_names
+        )
         row_grids = passive_grids + action_values
         if row_grids:
             row_mesh = jnp.meshgrid(*row_grids, indexing="ij")
@@ -1052,6 +2043,14 @@ def _build_child_reads(
         else:
             row_values = ()
             row_block_shape = ()
+        # The candidate-axis length comes from the child solver's own
+        # declaration: only a solver whose published carry actually stacks
+        # outer candidates (NEGM's keeper + per-node rows) reports a nonzero
+        # count. Merely having an outer margin is not enough — a solver that
+        # folds its outer axis before publishing (the nested N-NB-EGM upper
+        # envelope) carries no candidate axis, and broadcasting queries over a
+        # phantom axis would desync rows and queries in the read.
+        n_outer_candidates = target_regime.solver.n_stacked_carry_candidates
         reads[target] = _ChildRead(
             next_state_func=get_next_state_function_for_solution(
                 transitions=transitions[target],
@@ -1068,6 +2067,7 @@ def _build_child_reads(
             discrete_state_names=discrete_state_names,
             stochastic_flags=stochastic_flags,
             stochastic_state_names=stochastic_state_names,
+            foldable_stochastic_flags=foldable_stochastic_flags,
             stochastic_node_values=stochastic_node_values,
             process_grid_names=process_grid_names,
             weight_keys=weight_keys,
@@ -1077,5 +2077,6 @@ def _build_child_reads(
             row_arg_names=passive_state_names + action_names,
             row_values=row_values,
             row_block_shape=row_block_shape,
+            n_outer_candidates=n_outer_candidates,
         )
     return MappingProxyType(reads)
