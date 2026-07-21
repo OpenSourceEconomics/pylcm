@@ -25,7 +25,11 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.temporal_aggregation import H_epstein_zin
-from lcm.transition import MarkovTransition
+from lcm.transition import (
+    AgeSpecializedFunction,
+    AgeSpecializedGrid,
+    MarkovTransition,
+)
 
 if TYPE_CHECKING:
     import lcm.regime
