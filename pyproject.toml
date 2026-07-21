@@ -44,10 +44,13 @@ dependencies = [
 [[project.authors]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
+
 [[project.authors]]
 name = "Maximilian Jahn"
+
 [[project.authors]]
 name = "Janos Gabler"
+
 [[project.authors]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
@@ -56,6 +59,7 @@ file = "LICENSE"
 [[project.maintainers]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
+
 [[project.maintainers]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
