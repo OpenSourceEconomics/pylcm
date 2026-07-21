@@ -251,6 +251,7 @@ def _get_solve_one_combo(
                 policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
                 value=jnp.where(candidate_dead, jnp.nan, candidate_value),
                 marginal_utility=candidate_marginal,
+                savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
             )
         )
 

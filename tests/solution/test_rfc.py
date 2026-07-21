@@ -316,7 +316,11 @@ def test_rfc_backend_is_selected_by_solver_config():
 
     grid, policy, value, marginal = _crossing_segments_candidates()
     *via_backend, read_supported = backend(
-        endog_grid=grid, policy=policy, value=value, marginal_utility=marginal
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal,
+        savings=grid - policy,
     )
     direct = rfc.refine_envelope(
         endog_grid=grid,
