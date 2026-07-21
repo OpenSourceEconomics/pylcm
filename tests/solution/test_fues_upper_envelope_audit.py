@@ -16,10 +16,14 @@ not on which raw points survive.
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.step_core import _publish_V_and_carry_rows
-from _lcm.egm.upper_envelope.fues import _intersect_lines, refine_envelope
+from _lcm.egm.upper_envelope.fues import (
+    _intersect_lines,
+    refine_envelope,
+)
 from tests.conftest import X64_ENABLED
 
 _ATOL = 1e-8 if X64_ENABLED else 1e-5
@@ -29,6 +33,21 @@ def _kept(grid, *arrays):
     """Drop the NaN-padded tail, returning the kept prefix of each array."""
     keep = ~np.isnan(np.asarray(grid))
     return (np.asarray(grid)[keep], *(np.asarray(a)[keep] for a in arrays))
+
+
+def _read_value(grid, policy, value, query):
+    """Hermite value read with node slopes `1/c` (the production convention)."""
+    slopes = jnp.where(jnp.isnan(policy), jnp.nan, 1.0 / policy)
+    return float(
+        interp_on_padded_grid(
+            x_query=jnp.asarray(query), xp=grid, fp=value, fp_slopes=slopes
+        )
+    )
+
+
+def _read_policy(grid, policy, query):
+    """Linear (right-continuous at a duplicated kink) policy read."""
+    return float(interp_on_padded_grid(x_query=jnp.asarray(query), xp=grid, fp=policy))
 
 
 # ---------------------------------------------------------------------------
@@ -319,3 +338,135 @@ def test_intersect_lines_parallel_branch_keeps_gradients_finite():
     )
     assert bool(jnp.isnan(x))  # the abscissa contract: NaN for parallel lines
     assert bool(jnp.isfinite(jax.grad(ordinate)(one)))
+
+
+def test_segment_crossing_on_a_node_emits_both_branch_policies():
+    """A branch crossing exactly on one branch's sampled node keeps both policies.
+
+    Branch A (`c=8`, `V=4.875+.125(R-9)`) is sampled at R=9,10; branch B (`c=2`,
+    `V=4.75+.5(R-9.5)`) at R=9.5,10.5. The two lines meet exactly at R=10, which
+    is A's endpoint — B spans the node without a candidate there. The refined row
+    must carry both R=10 policies (left owner 8, right owner 2), so the read just
+    right of the node is the right branch's `c=2`, not an interpolation across the
+    collapsed discontinuity.
+    """
+    grid = jnp.asarray([9.0, 10.0, 9.5, 10.5])
+    policy = jnp.asarray([8.0, 8.0, 2.0, 2.0])
+    value = jnp.asarray([4.875, 5.0, 4.75, 5.25])
+    savings = grid - policy
+
+    g, p, v, _n_kept = refine_envelope(
+        endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=10
+    )
+    kept_grid, kept_policy = _kept(g, p)
+    at_node = np.isclose(kept_grid, 10.0, atol=_ATOL)
+    assert int(at_node.sum()) == 2
+    np.testing.assert_allclose(sorted(kept_policy[at_node]), [2.0, 8.0], atol=_ATOL)
+    np.testing.assert_allclose(_read_policy(g, p, 10.1), 2.0, atol=_ATOL)
+    np.testing.assert_allclose(_read_value(g, p, v, 10.1), 5.05, atol=_ATOL)
+
+
+def test_same_source_duplicates_collapse_across_an_interleaved_source():
+    """A same-source duplicate collapses even with another source between the copies.
+
+    At R=10 three candidates share value 5: two from source A (`c=8`, savings 2)
+    and one from source B (`c=4`, savings 6), ordered A, B, A. The two A copies are
+    the same exogenous source and collapse to one, so the group keeps A and B — the
+    kept count is 4, not 5, and no false overflow occurs.
+    """
+    grid = jnp.asarray([9.0, 10.0, 10.0, 10.0, 11.0])
+    policy = jnp.asarray([8.0, 8.0, 4.0, 8.0, 4.0])
+    value = jnp.asarray([4.875, 5.0, 5.0, 5.0, 5.25])
+    savings = jnp.asarray([1.0, 2.0, 6.0, 2.0, 7.0])
+
+    _, _, _, n_kept = refine_envelope(
+        endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=10
+    )
+    assert int(n_kept) == 4
+
+
+def test_exact_node_tie_ordering_is_invariant_to_input_order():
+    """Two branches meeting at a node publish the same envelope under any input order.
+
+    Branch A (`c=8`) and branch B (`c=4`) cross exactly at R=10 with equal value 5.
+    A owns the interval to the left (shallower value slope), B to the right. The
+    published value and policy read must not depend on which of the two coincident
+    R=10 candidates appears first in the input: side ownership, not input order,
+    fixes the left/right copies.
+    """
+    base_grid = jnp.asarray([9.0, 10.0, 10.0, 11.0])
+    base_policy = jnp.asarray([8.0, 8.0, 4.0, 4.0])
+    base_value = jnp.asarray([4.875, 5.0, 5.0, 5.25])
+
+    reads = []
+    for perm in ([0, 1, 2, 3], [0, 2, 1, 3]):
+        order = jnp.asarray(perm)
+        grid, policy, value = base_grid[order], base_policy[order], base_value[order]
+        g, p, v, _ = refine_envelope(
+            endog_grid=grid,
+            policy=policy,
+            value=value,
+            savings=grid - policy,
+            n_refined=10,
+        )
+        reads.append(
+            (
+                _read_value(g, p, v, 9.5),
+                _read_policy(g, p, 9.5),
+                _read_policy(g, p, 10.1),
+            )
+        )
+    np.testing.assert_allclose(reads[1], reads[0], atol=_ATOL)
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Known limitation (audit F1): the coincident-group reducer keeps pointwise "
+        "node maxima, so a branch that is lower at a shared node but owns the "
+        "adjacent interval loses its slope anchor. A one-sided interval-ownership "
+        "reducer is deferred pending a production-reachability check."
+    ),
+    strict=True,
+)
+def test_pointwise_lower_branch_that_owns_an_interval_is_retained():
+    """A branch lower at a shared node but owning the adjacent interval survives.
+
+    Branches A (`c=8`) and B (`c=4`) are both sampled at R=9,10 and cross at
+    R=9.92. A is higher at R=9 and owns `[9, 9.92]`; B is higher at R=10 and owns
+    `[9.92, ...]`. Keeping only the pointwise node maxima drops A@10 and B@9, so the
+    read at R=9.5 must still be A's `(V,c)=(4.9375, 8)`, not B's bridge.
+    """
+    grid = jnp.asarray([9.0, 10.0, 9.0, 10.0, 11.0])
+    policy = jnp.asarray([8.0, 8.0, 4.0, 4.0, 4.0])
+    value = jnp.asarray([4.875, 5.0, 4.76, 5.01, 5.26])
+    savings = grid - policy
+
+    g, p, v, _ = refine_envelope(
+        endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=12
+    )
+    np.testing.assert_allclose(_read_value(g, p, v, 9.5), 4.9375, atol=_ATOL)
+    np.testing.assert_allclose(_read_policy(g, p, 9.5), 8.0, atol=_ATOL)
+
+
+def test_segment_crossing_on_the_later_node_emits_both_branch_policies():
+    """The mirror of the endpoint crossing: the intersection lands on `grid_i`.
+
+    Branch A (`c=8`) is sampled at R=9,9.5 and branch B (`c=2`) at R=10,11; their
+    lines meet exactly at R=10, which is B's first sampled node. A owns the left,
+    B the right. The refined row must carry both R=10 policies (left 8, right 2),
+    so the read just left of the node is A's `c=8` and just right is B's `c=2`.
+    """
+    grid = jnp.asarray([9.0, 9.5, 10.0, 11.0])
+    policy = jnp.asarray([8.0, 8.0, 2.0, 2.0])
+    value = jnp.asarray([4.875, 4.9375, 5.0, 5.5])
+    savings = grid - policy
+
+    g, p, _v, _ = refine_envelope(
+        endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=12
+    )
+    kept_grid, kept_policy = _kept(g, p)
+    at_node = np.isclose(kept_grid, 10.0, atol=_ATOL)
+    assert int(at_node.sum()) == 2
+    np.testing.assert_allclose(sorted(kept_policy[at_node]), [2.0, 8.0], atol=_ATOL)
+    np.testing.assert_allclose(_read_policy(g, p, 9.9), 8.0, atol=_ATOL)
+    np.testing.assert_allclose(_read_policy(g, p, 10.1), 2.0, atol=_ATOL)

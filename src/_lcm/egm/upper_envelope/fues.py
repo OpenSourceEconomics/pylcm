@@ -208,15 +208,21 @@ def refine_envelope(
 
     """
     # Sort ascending in the endogenous grid, breaking ties by descending value
-    # so the maximal-value candidate leads each run of coincident abscissae;
-    # NaN grid points sort to the tail. Coincident abscissae with *unequal*
-    # values are not envelope kinks (those are inserted later, with equal
-    # value): the lower copies are dominated and collapsed away here — NaN-ed
-    # in place — before the scan, so a dominated duplicate can never reach the
-    # output and corrupt the index-keyed interpolation of a kink.
+    # so the maximal-value candidate leads each run of coincident abscissae, and
+    # finally by descending policy so a *node crossing* (two branches meeting at
+    # one abscissa with equal value) is ordered left-owner-then-right-owner
+    # independently of input order: under the EGM envelope condition the value
+    # slope is `u'(c)`, decreasing in consumption, so the higher-policy branch has
+    # the shallower slope and owns the interval just left of the node. NaN grid
+    # points sort to the tail. Coincident abscissae with *unequal* values are not
+    # envelope kinks (those are inserted later, with equal value): the lower
+    # copies are dominated and collapsed away here — NaN-ed in place — before the
+    # scan, so a dominated duplicate can never reach the output and corrupt the
+    # index-keyed interpolation of a kink.
     grid_key = jnp.where(jnp.isnan(endog_grid), jnp.inf, endog_grid)
     value_key = jnp.where(jnp.isnan(value), -jnp.inf, value)
-    order = jnp.lexsort(jnp.stack([-value_key, grid_key]))
+    policy_key = jnp.where(jnp.isnan(policy), -jnp.inf, policy)
+    order = jnp.lexsort(jnp.stack([-policy_key, -value_key, grid_key]))
     grid_sorted = endog_grid[order]
     policy_sorted = policy[order]
     value_sorted = value[order]
@@ -335,15 +341,25 @@ def _reduce_coincident_groups(
     - collapse maximizers that share an exogenous savings source (or, without
       provenance, an equal policy) to a single copy, so a true duplicate is one
       point while a genuine branch switch keeps both branch policies. The
-      comparison is against the immediate predecessor, which resolves the
-      reachable two-branch node crossing exactly; three-plus branches meeting at
-      one abscissa with interleaved sources are not distinguished (out of the
-      pylcm problem class).
+      collapse is group-wide — a maximizer is dropped when its source already
+      appears on any earlier maximizer of the group — so same-source copies split
+      by a different source (an A, B, A run) still reduce to A, B.
 
     Points equal in exact arithmetic but split by a single ULP of construction
     rounding are treated as one maximizer and its off-by-one-ULP shadow; the
     shadow is dropped, publishing one branch's policy across the node — a benign
     ULP-level degradation, and translation-invariant.
+
+    Known limitation (pointwise vs interval dominance). Group membership is
+    decided by the value *at the node*, not by segment ownership on the adjacent
+    interval. When two branches are both sampled at the *same* pair of abscissae
+    and swap ownership strictly between them, the branch that is pointwise-lower
+    at each shared node is dropped here, losing its slope anchor, so the scan
+    bridges the surviving node maxima instead of reconstructing the true crossing.
+    A one-sided interval-ownership reducer would be needed to close this. The
+    trigger requires exact endogenous-grid coincidence across branches, which the
+    production models do not exhibit (their oracle gates hold); see
+    `test_pointwise_lower_branch_that_owns_an_interval_is_retained` (xfail).
     """
     n = grid_sorted.shape[0]
     finite = ~jnp.isnan(grid_sorted)
@@ -359,15 +375,19 @@ def _reduce_coincident_groups(
     group_max = jax.ops.segment_max(value_or_neg, group_id, num_segments=n)[group_id]
     is_max = finite & (value_sorted == group_max)
 
-    prev_same_group = jnp.concatenate(
-        [jnp.zeros((1,), dtype=bool), group_id[1:] == group_id[:-1]]
-    )
-    prev_is_max = jnp.concatenate([jnp.zeros((1,), dtype=bool), is_max[:-1]])
+    # Collapse a maximizer whose exogenous source already appears on an earlier
+    # maximizer of the same group. The test is group-wide, not only against the
+    # immediate predecessor, so an A, B, A run — two same-source copies split by a
+    # different source — keeps one A and the B rather than all three.
     source = savings_sorted if use_savings else policy_sorted
-    prev_same_source = jnp.concatenate(
-        [jnp.zeros((1,), dtype=bool), source[1:] == source[:-1]]
+    idx = jnp.arange(n)
+    earlier_same_source_max = (
+        (group_id[:, None] == group_id[None, :])
+        & (source[:, None] == source[None, :])
+        & (idx[None, :] < idx[:, None])
+        & is_max[None, :]
     )
-    collapse = prev_same_group & is_max & prev_is_max & prev_same_source
+    collapse = is_max & jnp.any(earlier_same_source_max, axis=1)
 
     keep = finite & is_max & ~collapse
     grid_out = jnp.where(keep, grid_sorted, jnp.nan)
@@ -504,7 +524,10 @@ def _emission_block(
     plain: ScalarBool,
     kink_5: ScalarBool,
     kink_6: ScalarBool,
+    kink_on_j: ScalarBool,
+    kink_on_i: ScalarBool,
     grid_j: ScalarFloat,
+    grid_i: ScalarFloat,
     policy_j: ScalarFloat,
     value_j: ScalarFloat,
     kink_grid_5: ScalarFloat,
@@ -518,19 +541,36 @@ def _emission_block(
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Assemble a scan step's up-to-three emission rows in ascending grid order.
 
-    A step emits, at most: a `j`-dominated crossing kink (`kink_6`, two copies —
-    left then right policy at one abscissa), the finalized `j` (`plain` or when a
-    strictly-between crossing `kink_5` also fires), and a strictly-between
-    crossing kink (`kink_5`, two copies). The flags are mutually consistent by
-    construction, so the three slots pack the valid emissions densely and `count`
-    is the number of filled slots.
+    A step emits, at most:
+
+    - a `j`-dominated crossing kink (`kink_6`, two copies — left then right policy
+      at one abscissa; `j` itself is dominated, so not emitted),
+    - the finalized `j` (`plain`, or when a crossing also fires),
+    - a strictly-between crossing kink (`kink_5`, two more copies at the crossing),
+    - a crossing snapped to an endpoint: on `grid_j` (`kink_on_j`, one right copy
+      at `grid_j` — `j` is the left copy) or on `grid_i` (`kink_on_i`, one left
+      copy at `grid_i` — the accepted `i` is the right copy, emitted next step).
+
+    The flags are mutually exclusive by construction, so the three slots pack the
+    valid emissions densely and `count` is the number of filled slots.
     """
     nan_scalar = jnp.full((), jnp.nan, dtype=grid_j.dtype)
-    emits_j = plain | kink_5
+    emits_j = plain | kink_5 | kink_on_j | kink_on_i
+    crossing_value = kink_5 | kink_on_j | kink_on_i
     row_grid = jnp.stack(
         [
             jnp.where(kink_6, kink_grid_6, jnp.where(emits_j, grid_j, nan_scalar)),
-            jnp.where(kink_6, kink_grid_6, jnp.where(kink_5, kink_grid_5, nan_scalar)),
+            jnp.where(
+                kink_6,
+                kink_grid_6,
+                jnp.where(
+                    kink_5,
+                    kink_grid_5,
+                    jnp.where(
+                        kink_on_j, grid_j, jnp.where(kink_on_i, grid_i, nan_scalar)
+                    ),
+                ),
+            ),
             jnp.where(kink_5, kink_grid_5, nan_scalar),
         ]
     )
@@ -544,7 +584,11 @@ def _emission_block(
             jnp.where(
                 kink_6,
                 kink_policy_right_6,
-                jnp.where(kink_5, kink_policy_left_5, nan_scalar),
+                jnp.where(
+                    kink_5 | kink_on_i,
+                    kink_policy_left_5,
+                    jnp.where(kink_on_j, kink_policy_right_5, nan_scalar),
+                ),
             ),
             jnp.where(kink_5, kink_policy_right_5, nan_scalar),
         ]
@@ -553,14 +597,16 @@ def _emission_block(
         [
             jnp.where(kink_6, kink_value_6, jnp.where(emits_j, value_j, nan_scalar)),
             jnp.where(
-                kink_6, kink_value_6, jnp.where(kink_5, kink_value_5, nan_scalar)
+                kink_6,
+                kink_value_6,
+                jnp.where(crossing_value, kink_value_5, nan_scalar),
             ),
             jnp.where(kink_5, kink_value_5, nan_scalar),
         ]
     )
-    count = jnp.where(kink_5, 3, jnp.where(kink_6, 2, jnp.where(plain, 1, 0))).astype(
-        jnp.int32
-    )
+    count = jnp.where(
+        kink_5, 3, jnp.where(kink_6 | kink_on_j | kink_on_i, 2, jnp.where(plain, 1, 0))
+    ).astype(jnp.int32)
     return row_grid, row_policy, row_value, count
 
 
@@ -777,21 +823,42 @@ def _inspect_candidate(
     )
     kink_policy_left_5 = policy_j + j_seg_policy_slope * (kink_grid_5 - grid_j)
     kink_policy_right_5 = policy_i + i_seg_policy_slope * (kink_grid_5 - grid_i)
+    # The crossing of j's and i's segment lines can land strictly between them (an
+    # interior kink: both nodes kept, the intersection inserted twice), or on an
+    # existing endpoint `grid_j` / `grid_i` — a node-aligned crossing where one
+    # branch spans the node without a coincident candidate there. An endpoint
+    # landing (within rounding) is snapped to that node and emitted as a canonical
+    # two-copy kink; the redundant endpoint copy is suppressed so `n_kept` is not
+    # inflated. `near_tol` is a few ULP of the node scale — "certified within
+    # rounding error", not a tolerance that would swallow a genuine interior kink.
+    # A coincident node crossing (`grid_i == grid_j`, handled by `node_crossing`
+    # with both copies kept) is excluded: its segment-line intersection is not a
+    # separate inserted kink.
+    crossing = ~dropped & ~j_dominated & ~node_crossing & switches & partner_found
+    near_tol = (
+        16.0
+        * jnp.finfo(grid_sorted.dtype).eps
+        * jnp.maximum(jnp.maximum(jnp.abs(grid_j), jnp.abs(grid_i)), 1.0)
+    )
+    kink_on_j = crossing & (jnp.abs(kink_grid_5 - grid_j) <= near_tol)
+    kink_on_i = crossing & ~kink_on_j & (jnp.abs(kink_grid_5 - grid_i) <= near_tol)
     kink_5 = (
-        ~dropped
-        & ~j_dominated
-        & switches
-        & partner_found
+        crossing
+        & ~kink_on_j
+        & ~kink_on_i
         & (kink_grid_5 > grid_j)
         & (kink_grid_5 < grid_i)
     )
 
-    plain = ~dropped & ~j_dominated & ~kink_5
+    plain = ~dropped & ~j_dominated & ~kink_5 & ~kink_on_j & ~kink_on_i
     row_grid, row_policy, row_value, count = _emission_block(
         plain=plain,
         kink_5=kink_5,
         kink_6=kink_6,
+        kink_on_j=kink_on_j,
+        kink_on_i=kink_on_i,
         grid_j=grid_j,
+        grid_i=grid_i,
         policy_j=policy_j,
         value_j=value_j,
         kink_grid_5=kink_grid_5,
@@ -806,8 +873,11 @@ def _inspect_candidate(
 
     # New k is the point emitted last this step: the right-policy copy of an
     # inserted kink, the finalized j on a plain accept, or unchanged when
-    # nothing was emitted (drop, or j dominated without a valid kink). New j
-    # is the accepted candidate i.
+    # nothing was emitted (drop, or j dominated without a valid kink). For a
+    # crossing on `grid_j` the last emitted node is the right copy at `grid_j`;
+    # for a crossing on `grid_i` the left copy sits at `grid_i` (coincident with
+    # the accepted `i`), so k carries the plain-accept `j` and the left copy is an
+    # inserted node only. New j is the accepted candidate i.
     keeps_k = dropped | (j_dominated & ~kink_6)
     new_k_grid = jnp.where(
         keeps_k,
@@ -820,19 +890,34 @@ def _inspect_candidate(
         jnp.where(
             kink_5,
             kink_policy_right_5,
-            jnp.where(kink_6, kink_policy_right_6, policy_j),
+            jnp.where(
+                kink_6,
+                kink_policy_right_6,
+                jnp.where(kink_on_j, kink_policy_right_5, policy_j),
+            ),
         ),
     )
     new_k_value = jnp.where(
         keeps_k,
         value_k,
-        jnp.where(kink_5, kink_value_5, jnp.where(kink_6, kink_value_6, value_j)),
+        jnp.where(
+            kink_5,
+            kink_value_5,
+            jnp.where(
+                kink_6,
+                kink_value_6,
+                jnp.where(kink_on_j, kink_value_5, value_j),
+            ),
+        ),
     )
     # New k inherits the segment of the point it represents: an inserted kink
-    # carries `i`'s segment (the crossing continues to the right on i's
-    # segment), a plain accept carries the finalized `j`'s segment, and a
-    # retained k keeps its own. New j is the accepted candidate `i`.
-    new_k_seg = jnp.where(keeps_k, seg_k, jnp.where(kink_5 | kink_6, seg_i, seg_j))
+    # (interior, or the right copy of a crossing on `grid_j`) carries `i`'s
+    # segment as the crossing continues to the right; a plain accept and the
+    # `grid_i` crossing carry the finalized `j`'s segment; a retained k keeps its
+    # own. New j is the accepted candidate `i`.
+    new_k_seg = jnp.where(
+        keeps_k, seg_k, jnp.where(kink_5 | kink_6 | kink_on_j, seg_i, seg_j)
+    )
     # New j is the accepted candidate `i`, so its source savings become
     # `savings_i`. Only `savings_j` is carried (the clause never reads a `k`
     # source), so no `k` savings slot is threaded.

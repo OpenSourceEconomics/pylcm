@@ -858,9 +858,9 @@ def _interp_between_nodes(
 
     The pure two-node arithmetic of the padded-grid interpolant, shared by
     `interp_on_prepared_grid` (which gathers the bracket from a full row) and
-    the streamed asset-row publish (which captures the bracket directly during
-    the upper-envelope scan). Having both paths reduce to this one function
-    guarantees the streamed value cannot diverge from the row-then-interpolate
+    the asset-row publish (which slices its bracket from the same refined row via
+    `refine_to_bracket`). Having both paths reduce to this one function
+    guarantees the bracket publish cannot diverge from the row-then-interpolate
     value: only *which two nodes* differs, not the arithmetic on them.
 
     The bracket must already be edge-clamped to a real pair of nodes (queries

@@ -209,27 +209,21 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
     returns envelope geometry; the asset-row module owns the EGM economics
     (utility gradients, the borrowing limit, the constrained floor).
 
-    The backends differ in how they reach that bracket:
-
-    - `"fues"` streams it: `refine_to_bracket` runs the FUES scan and folds each
-      step's emissions into an O(1) bracket-capture carry, so the NaN-padded
-      `n_pad` envelope never materializes.
-    - `"rfc"`, `"ltm"`, and `"mss"` do *not* stream: their dense scans have no
-      sequential carry to fold a bracket out of, so the finder materializes the
-      full refined envelope and locates the same
-      `searchsorted(side="right")`-clamped bracket the row path would read. The
-      published `(value, policy)` is therefore identical to a
-      full-envelope-then-interpolate, but these asset-row paths do *not* yet get
-      refine-to-query's `n_pad` memory win — a streamed dense bracket finder is
-      future work.
+    Every backend reaches the bracket the same way: it materializes the full
+    refined envelope row of static length `n_refined` and locates the
+    `searchsorted(side="right")`-clamped bracketing node pair. `"fues"`'s
+    `refine_to_bracket` builds that row via `refine_envelope` and slices it, so
+    the published `(value, policy)` is identical to a
+    full-envelope-then-interpolate by construction (it reads the same row). A
+    genuinely streamed, sub-`n_refined`-memory bracket finder is future work for
+    all backends.
 
     Args:
         solver: The regime's DC-EGM solver configuration; the `fues_*` / `rfc_*`
             fields parametrize the scan.
-        n_refined: Static length of the refined envelope row the dense finder
-            materializes before locating the bracket (unused by FUES, which
-            streams). This is the `n_pad` overflow threshold the asset-row
-            publish compares `n_kept` against.
+        n_refined: Static length of the refined envelope row every finder
+            materializes before locating the bracket. This is the `n_pad`
+            overflow threshold the asset-row publish compares `n_kept` against.
 
     Returns:
         The configured bracket finder.

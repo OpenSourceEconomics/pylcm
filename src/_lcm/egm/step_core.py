@@ -112,7 +112,8 @@ class _EgmKernelPieces:
     """The configured upper-envelope backend (single-post-state carry)."""
 
     refine_to_bracket: Callable[..., QueryBracket]
-    """The streaming single-query bracket finder (asset-row publish)."""
+    """The single-query bracket finder for the asset-row publish (builds the full
+    refined row and slices the bracketing node pair)."""
 
     continuation_plan: ContinuationPlan
     """Build-time statics of the per-savings-node continuation aggregation."""

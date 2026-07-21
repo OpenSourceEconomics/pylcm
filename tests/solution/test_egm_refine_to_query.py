@@ -1,15 +1,14 @@
-"""Spec for streamed refine-to-query in asset-row mode.
+"""Spec for refine-to-query in asset-row mode.
 
 In asset-row mode the per-node solve refines a full NaN-padded upper envelope
 and interpolates it at exactly one query point (`resources_at_node`) to publish
-a scalar `(V_node, policy_node)`. Refine-to-query folds that single-query
-interpolation into the upper-envelope scan: the scan keeps only the two
-envelope points bracketing the query (plus the first point and the kept count)
-and returns the scalar result, so the `n_pad` envelope rows are never
-materialized.
+a scalar `(V_node, policy_node)`. Refine-to-query builds that same full refined
+row (`refine_to_bracket` calls `refine_envelope`) and slices the two envelope
+points bracketing the query (plus the first point and the kept count), returning
+the scalar result.
 
 Correctness is defined by the existing composition: for the *same* candidates,
-query, and utility, the streamed pair
+query, and utility, the bracket pair
 
     refine_to_bracket(...) -> publish_node_from_bracket(...)
 
