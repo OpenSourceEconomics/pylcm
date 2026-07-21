@@ -74,6 +74,17 @@ def resources(
     )
 
 
+def resources_before_outer_cost(wealth: ContinuousState) -> FloatND:
+    """Cost-free base of the liquid resources, `wealth + y`.
+
+    The NEGM variant declares `outer_cost="credited"`, so pylcm composes its
+    resources function as `resources_before_outer_cost - credited` at model
+    build — the same quantity `resources` states directly for the other
+    variants.
+    """
+    return wealth + LABOUR_INCOME
+
+
 def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Inner post-decision liquid balance."""
     return resources - consumption
@@ -159,6 +170,7 @@ def build_solver(*, variant: str, outer_batch_size: int = 0) -> Solver:
             outer_post_decision="next_illiquid",
             outer_grid=OUTER_GRID,
             outer_no_adjustment_candidate="keep_illiquid",
+            outer_cost="credited",
             outer_batch_size=outer_batch_size,
         )
     if variant == "n_nbegm":
@@ -197,6 +209,11 @@ def build_model(
         "credited": credited,
     }
     if variant == "negm":
+        # With `outer_cost` declared, pylcm composes the resources function
+        # as `resources_before_outer_cost - credited` at model build; the
+        # direct `resources` definition would double-declare it.
+        del functions["resources"]
+        functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
     constraints = (
         {"illiquid_feasible": illiquid_feasible, "budget_feasible": budget_feasible}

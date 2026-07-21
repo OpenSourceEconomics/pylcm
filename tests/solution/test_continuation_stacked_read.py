@@ -11,11 +11,17 @@ independent host computation through the same interpolation primitive.
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.continuation import _aggregate_child_choices
+from _lcm.egm.continuation import (
+    _aggregate_child_choices,
+    _collapse_stacked_candidates,
+)
 from _lcm.egm.interp import interp_on_padded_grid, prepare_padded_grid
+from lcm.solvers import GridSearch
 from tests.conftest import X64_ENABLED
+from tests.test_models import negm_kinked_toy as negm_toy
 
 # The host comparison reruns the identical interpolation arithmetic, so the two
 # sides agree to the active float precision's roundoff, not better.
@@ -143,6 +149,173 @@ def test_stacked_read_masks_a_candidate_below_its_lifted_support():
     np.testing.assert_allclose(float(smoothed_marginal), 1.5, atol=_READ_ATOL)
 
 
+def test_stacked_read_pins_an_earlier_clamp_winners_marginal_to_zero():
+    """Strictly above a winner's own support the published marginal is zero.
+
+    One durable node, two candidates. Candidate A's support ends at coh 1
+    (value 2, node marginal 2); candidate B reaches value 2 exactly at coh 2
+    with marginal 1. At query 2 both represented values are 2 and the
+    represented maximum is locally constant on both sides, so its only
+    generalized gradient is zero. Candidate A owns the left neighborhood
+    (constant 2 versus B rising to 2) and wins the tie; the published
+    marginal must be zero — the clamped extension's derivative — not A's
+    stale terminal node slope. At A's exact last node its declared node
+    slope still applies.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [jnp.array([0.0, 1.0, jnp.nan]), jnp.array([0.0, 1.0, 2.0])]
+        )[None, :, :],
+        value=jnp.stack([jnp.array([0.0, 2.0, jnp.nan]), jnp.array([0.0, 1.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([2.0, 2.0, jnp.nan]), jnp.array([1.0, 1.0, 1.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([2.0]),
+        row_gradients=jnp.asarray([1.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
+
+
+def test_paired_read_publishes_the_left_derivative_at_a_left_owned_terminal_tie():
+    """The paired (Epstein-Zin) marginal follows tie ownership to the left side.
+
+    One durable node, two candidates tying at value 12 exactly at query 2.
+    Candidate A carries a duplicated terminal abscissa (values `[10, 11, 12,
+    12]`, Hermite node slopes `[1, 1, 1, 100]`); candidate B rises to 12 with
+    slope 2. Both right germs are the constant clamp, so the left germ
+    decides ownership: A's left neighborhood (slope 1) beats B's (slope 2 —
+    lower value just below the tie). The published paired marginal must be
+    the derivative of A's value interpolant from the left — its left
+    duplicate's node slope 1 — not the right/clamp derivative of the ordinary
+    paired read.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [jnp.array([0.0, 1.0, 2.0, 2.0]), jnp.array([0.0, 1.0, 2.0, jnp.nan])]
+        )[None, :, :],
+        value=jnp.stack(
+            [jnp.array([10.0, 11.0, 12.0, 12.0]), jnp.array([8.0, 10.0, 12.0, jnp.nan])]
+        )[None, :, :],
+        marginal_utility=jnp.stack(
+            [jnp.array([1.0, 1.0, 1.0, 100.0]), jnp.array([2.0, 2.0, 2.0, jnp.nan])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([2.0]),
+        row_gradients=jnp.asarray([1.0]),
+        paired_marginal_read=True,
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 12.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 1.0, atol=_READ_ATOL)
+
+
+def test_stacked_read_propagates_a_poisoned_candidate_row():
+    """An all-NaN (poisoned) candidate row poisons the stacked read's value.
+
+    A poisoned carry row marks an upstream overflow; the production read must
+    keep the NaN through the candidate maximum — fail-loud for the runtime
+    diagnostics — instead of masking the row as ordinarily infeasible and
+    letting the live candidate win silently.
+    """
+    poisoned = jnp.full((3,), jnp.nan)
+    live = jnp.array([0.0, 5.0, 10.0])
+    carry = EGMCarry(
+        endog_grid=jnp.stack([poisoned, live])[None, :, :],
+        value=jnp.stack([poisoned, jnp.array([1.0, 2.0, 3.0])])[None, :, :],
+        marginal_utility=jnp.stack([poisoned, jnp.array([0.5, 0.5, 0.5])])[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, _ = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([4.0]),
+        row_gradients=jnp.asarray([1.0]),
+        n_outer_candidates=2,
+    )
+
+    assert bool(jnp.isnan(smoothed_value))
+
+
+def test_stacked_read_with_a_singleton_candidate_is_differentiable():
+    """A singleton candidate keeps the read differentiable in the query.
+
+    Asset-row mode publishes the Euler marginal by differentiating the
+    continuation read, so a one-node candidate carry — a constant clamp in the
+    query — must contribute a zero tangent, not a NaN one leaked from its
+    padded bracket. The singleton's clamp value wins here, so the read's query
+    derivative is exactly zero.
+    """
+    singleton = jnp.array([2.0, jnp.nan, jnp.nan])
+    live = jnp.array([0.0, 5.0, 10.0])
+    carry = EGMCarry(
+        endog_grid=jnp.stack([singleton, live])[None, :, :],
+        value=jnp.stack(
+            [jnp.array([10.0, jnp.nan, jnp.nan]), jnp.array([1.0, 2.0, 3.0])]
+        )[None, :, :],
+        marginal_utility=jnp.stack(
+            [jnp.array([0.0, jnp.nan, jnp.nan]), jnp.array([0.5, 0.5, 0.5])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    def read_value(query):
+        smoothed_value, _ = _aggregate_child_choices(
+            carry=carry,
+            prepared_search_grid=prepared_search_grid,
+            prepared_valid_length=prepared_valid_length,
+            has_taste_shocks=False,
+            child_index=(),
+            child_passive_values=(jnp.asarray(0.0),),
+            child_passive_grids=(jnp.asarray([0.0]),),
+            row_queries=query[None],
+            row_gradients=jnp.asarray([1.0]),
+            n_outer_candidates=2,
+        )
+        return smoothed_value
+
+    value, derivative = jax.value_and_grad(read_value)(jnp.asarray(4.0))
+
+    np.testing.assert_allclose(float(value), 10.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(derivative), 0.0, atol=_READ_ATOL)
+
+
 def test_stacked_read_tie_publishes_the_right_continuous_marginal():
     """At an exact candidate crossing the production read selects the right winner.
 
@@ -179,6 +352,121 @@ def test_stacked_read_tie_publishes_the_right_continuous_marginal():
 
     np.testing.assert_allclose(float(smoothed_value), 0.5, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
+
+
+def test_stacked_read_tie_owner_follows_the_limited_value_slope():
+    """At a tie the production read ranks by the value read's actual right slope.
+
+    Candidate A carries a raw node marginal of `100` at the tie query, but its
+    value row rises only by `0.1` per bracket, so the Fritsch-Carlson limiter
+    caps the value read's right slope at three times the secant (`0.3`).
+    Candidate B's value rises by `1.0` per bracket, so B actually wins
+    immediately right of the tie and B's gradient-scaled marginal (`1.0 * 2.0`)
+    must be published — ranking by the raw marginal would publish A's
+    `100 * 2.0`.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.broadcast_to(jnp.array([0.0, 1.0, 2.0]), (1, 2, 3)),
+        value=jnp.stack([jnp.array([0.9, 1.0, 1.1]), jnp.array([0.0, 1.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([0.1, 100.0, 0.1]), jnp.array([1.0, 1.0, 1.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([1.0]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 1.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
+
+
+def test_stacked_read_tie_with_equal_right_slopes_follows_the_curvature():
+    """Equal first right derivatives at a tie resolve by the read's curvature.
+
+    Both candidates tie at the query `q = 1` with limited right derivative
+    exactly 3 (A's raw node slope 100 is limiter-capped, B's slope 3 passes),
+    but B's Hermite piece curves less steeply downward, so B's read is strictly
+    larger for every `q > 1`. The published marginal must be B's, scaled by the
+    composed gradient (`3.0 * 2.0`), not the lower-index candidate A's raw 100.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.broadcast_to(jnp.array([0.0, 1.0, 2.0]), (1, 2, 3)),
+        value=jnp.stack([jnp.array([-1.0, 0.0, 1.0]), jnp.array([-2.0, 0.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([1.0, 100.0, 1.0]), jnp.array([2.0, 3.0, 2.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([1.0]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 0.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 6.0, atol=_READ_ATOL)
+
+
+def test_blend_of_a_dead_and_a_live_passive_node_keeps_the_infeasible_pair():
+    """A `-inf` blended value carries an exactly-zero marginal.
+
+    At the lower passive node every candidate's lifted support starts above the
+    query, so that node reads the infeasible pair `(-inf, 0)`; the upper node is
+    live with marginal `2.0`. With positive weights on both nodes the blended
+    value is `-inf` — the cell is infeasible — so the published marginal must be
+    exactly zero, not the finite average `0.5 * 2.0 = 1.0` that could be Euler-
+    inverted before the `-inf` value kills the branch.
+    """
+    dead = jnp.array([10.0, 11.0, 12.0])
+    live = jnp.array([0.0, 5.0, 10.0])
+    carry = EGMCarry(
+        endog_grid=jnp.stack([jnp.stack([dead, dead]), jnp.stack([live, live])]),
+        value=jnp.ones((2, 2, 3)),
+        marginal_utility=jnp.full((2, 2, 3), 2.0),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.5),),
+        child_passive_grids=(jnp.asarray([0.0, 1.0]),),
+        row_queries=jnp.asarray([4.0, 4.0]),
+        row_gradients=jnp.asarray([1.0, 1.0]),
+        n_outer_candidates=2,
+    )
+
+    assert float(smoothed_value) == float("-inf")
+    assert float(smoothed_marginal) == 0.0
 
 
 def test_stacked_read_matches_host_max_of_reads_on_curved_rows():
@@ -245,3 +533,266 @@ def test_stacked_read_matches_host_max_of_reads_on_curved_rows():
     np.testing.assert_allclose(
         float(smoothed_marginal), expected_marginal, rtol=_READ_RTOL, atol=_READ_ATOL
     )
+
+
+def test_a_poisoned_candidate_at_a_nonzero_index_keeps_the_collapse_nan():
+    """A NaN candidate value survives the stacked collapse as NaN.
+
+    A poisoned carry row (loud upper-envelope overflow) reads as a NaN
+    candidate value. The candidate collapse must propagate that NaN to the
+    published value — a finite competitor at another index must not win the
+    maximum silently — and the published marginal must not pretend the pair
+    is healthy.
+    """
+
+    value, right_side, left_side, _right_alive = _collapse_stacked_candidates(
+        value_at_child=jnp.array([[1.0, jnp.nan]]),
+        ordinary_marginal_at_child=jnp.array([[1.0, jnp.nan]]),
+        left_marginal_at_child=jnp.array([[1.0, jnp.nan]]),
+        right_dead_at_child=jnp.array([[False, False]]),
+        left_dead_at_child=jnp.array([[False, False]]),
+        right_germ_at_child=(
+            jnp.array([[True, False]]),
+            jnp.array([[0.0, 0.0]]),
+            jnp.array([[0.0, 0.0]]),
+            jnp.array([[0.0, 0.0]]),
+        ),
+        left_germ_at_child=(
+            jnp.array([[True, False]]),
+            jnp.array([[0.0, 0.0]]),
+            jnp.array([[0.0, 0.0]]),
+            jnp.array([[0.0, 0.0]]),
+        ),
+    )
+
+    assert bool(jnp.isnan(value[0]))
+    assert bool(jnp.isnan(right_side[0]))
+    assert bool(jnp.isnan(left_side[0]))
+
+
+def test_negm_solver_declares_its_stacked_candidate_count():
+    """A NEGM solver's published carry stacks one row per outer node plus keeper.
+
+    The parent's continuation read sizes its candidate axis off this
+    declaration, so it must equal the outer-grid length plus the keeper slot.
+    """
+    assert (
+        negm_toy.NEGM_SOLVER.n_stacked_carry_candidates
+        == negm_toy.OUTER_GRID.n_points + 1
+    )
+
+
+def test_non_stacking_solvers_declare_zero_stacked_candidates():
+    """A solver that publishes an already-collapsed carry declares no candidates.
+
+    An outer margin folded inside the solver (or no outer margin at all)
+    leaves the carry without a candidate axis; the parent read must then
+    query each carry row once instead of broadcasting queries over a
+    phantom axis.
+    """
+    assert GridSearch().n_stacked_carry_candidates == 0
+
+
+def test_a_carry_without_the_declared_candidate_axis_fails_with_a_contract_error():
+    """A stacking declaration that disagrees with the carry shape names itself.
+
+    When the declared candidate count is positive but the carry block carries
+    no matching candidate axis, the read must raise a solver-contract error
+    that names the declaration — not fall through to an opaque vmap axis-size
+    mismatch deep in the batched interpolation.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.broadcast_to(jnp.array([0.0, 5.0, 10.0]), (2, 3)),
+        value=jnp.ones((2, 3)),
+        marginal_utility=jnp.zeros((2, 3)),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    with pytest.raises(ValueError, match="n_stacked_carry_candidates"):
+        _aggregate_child_choices(
+            carry=carry,
+            prepared_search_grid=prepared_search_grid,
+            prepared_valid_length=prepared_valid_length,
+            has_taste_shocks=False,
+            child_index=(),
+            child_passive_values=(jnp.asarray(0.0),),
+            child_passive_grids=(jnp.asarray([0.0]),),
+            row_queries=jnp.asarray([4.0, 4.0]),
+            row_gradients=jnp.asarray([1.0, 1.0]),
+            n_outer_candidates=2,
+        )
+
+
+def test_stacked_read_terminal_tie_is_owned_by_the_left_envelope_owner():
+    """At a shared terminal abscissa the production read publishes the left owner.
+
+    Both candidates end at the query `q = 2` with value 2 and identical clamp
+    right germs, so right-side ownership cannot discriminate. The stacked
+    envelope's left neighborhood belongs to the flatter candidate (marginal
+    row 1); the steeper candidate (index 0, marginal row 2) touches the
+    envelope only at the terminal point. The published marginal must be the
+    left owner's, scaled by the composed gradient (`1.0 * 2.0`), not the
+    lower-index candidate's `2.0 * 2.0`.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.broadcast_to(jnp.array([0.0, 1.0, 2.0]), (1, 2, 3)),
+        value=jnp.stack([jnp.array([-2.0, 0.0, 2.0]), jnp.array([0.0, 1.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([2.0, 2.0, 2.0]), jnp.array([1.0, 1.0, 1.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([2.0]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
+
+
+def test_stacked_read_terminal_duplicate_left_owner_publishes_left_record():
+    """The production read publishes a left-germ winner's left marginal record.
+
+    The left owner ends in a duplicated terminal abscissa (marginal records 1
+    left, 100 right); the other candidate touches only at the terminal point.
+    Left-neighborhood ownership must carry through to the published payload:
+    the winner's left record scaled by the composed gradient (`1.0 * 2.0`),
+    not the right duplicate's `100 * 2.0`.
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [jnp.array([0.0, 1.0, 1.0]), jnp.array([0.0, 1.0, jnp.nan])]
+        )[None, :, :],
+        value=jnp.stack([jnp.array([0.0, 1.0, 1.0]), jnp.array([-1.0, 1.0, jnp.nan])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([1.0, 1.0, 100.0]), jnp.array([2.0, 2.0, jnp.nan])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([1.0]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 1.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
+
+
+def test_stacked_read_earlier_clamp_winner_publishes_zero_marginal():
+    """The production read zeroes a winner's marginal past its own support.
+
+    The winning candidate's support ends at coh 1 (its value clamps at 2); the
+    other candidate rises to 2 exactly at the query `q = 2`. The stacked
+    envelope is locally constant at the query, so the published marginal must
+    be exactly zero — not the winner's stale terminal record scaled by the
+    composed gradient (`2.0 * 2.0`).
+    """
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [jnp.array([0.0, 1.0, jnp.nan]), jnp.array([0.0, 1.0, 2.0])]
+        )[None, :, :],
+        value=jnp.stack([jnp.array([0.0, 2.0, jnp.nan]), jnp.array([0.0, 1.0, 2.0])])[
+            None, :, :
+        ],
+        marginal_utility=jnp.stack(
+            [jnp.array([2.0, 2.0, jnp.nan]), jnp.array([1.0, 1.0, 1.0])]
+        )[None, :, :],
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    prepared_search_grid, prepared_valid_length = _prepare(carry)
+
+    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([0.0]),),
+        row_queries=jnp.asarray([2.0]),
+        row_gradients=jnp.asarray([2.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
+
+
+def test_passive_blend_publishes_a_marginal_inside_the_clarke_interval():
+    """A passive blend of heterogeneous-support nodes stays a subgradient.
+
+    Two passive nodes are read at the same query `q = 2`. Node 0 is a
+    shared-terminal envelope (the query sits on its last valid node, so its
+    value read is flat to the right — one-sided derivatives 10 left, 0 right).
+    Node 1 is an interior tie (one-sided derivatives 1 left, 2 right). At the
+    passive weight `1/2` the blended value read has one-sided derivatives 5.5
+    (left) and 1 (right), so every subgradient — the published marginal
+    included — lies in the Clarke generalized gradient `[1, 5.5]`. Committing a
+    side per node *before* the blend (node 0 left-owned marginal 10, node 1
+    right-owned marginal 2) publishes `0.5*10 + 0.5*2 = 6`, outside the
+    interval; blending both side payloads and choosing the side after the blend
+    keeps it inside.
+    """
+    x_terminal = jnp.array([0.0, 1.0, 2.0, jnp.nan])
+    x_interior = jnp.array([0.0, 1.0, 2.0, 3.0])
+    carry = EGMCarry(
+        endog_grid=jnp.stack(
+            [jnp.stack([x_terminal, x_terminal]), jnp.stack([x_interior, x_interior])]
+        ),
+        value=jnp.array(
+            [
+                [[80.0, 90.0, 100.0, jnp.nan], [60.0, 80.0, 100.0, jnp.nan]],
+                [[98.0, 99.0, 100.0, 101.0], [96.0, 98.0, 100.0, 102.0]],
+            ]
+        ),
+        marginal_utility=jnp.array(
+            [
+                [[10.0, 10.0, 10.0, jnp.nan], [20.0, 20.0, 20.0, jnp.nan]],
+                [[1.0, 1.0, 1.0, 1.0], [2.0, 2.0, 2.0, 2.0]],
+            ]
+        ),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    search, valid = _prepare(carry)
+
+    value, marginal = _aggregate_child_choices(
+        carry=carry,
+        prepared_search_grid=search,
+        prepared_valid_length=valid,
+        has_taste_shocks=False,
+        child_index=(),
+        child_passive_values=(jnp.asarray(0.5),),
+        child_passive_grids=(jnp.array([0.0, 1.0]),),
+        row_queries=jnp.array([2.0, 2.0]),
+        row_gradients=jnp.array([1.0, 1.0]),
+        n_outer_candidates=2,
+    )
+
+    np.testing.assert_allclose(float(value), 100.0, atol=_READ_ATOL)
+    assert 1.0 - _READ_ATOL <= float(marginal) <= 5.5 + _READ_ATOL

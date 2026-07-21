@@ -28,13 +28,9 @@ Skips until the kernel exists.
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
+from _lcm.egm.upper_envelope import ltm
 from tests.conftest import X64_ENABLED
-
-ltm = pytest.importorskip(
-    "_lcm.egm.upper_envelope.ltm", reason="LTM kernel not yet implemented"
-)
 
 # Tolerance for kernel-computed quantities (segment interpolation): float32
 # carries a few ulp through the bracketing arithmetic.

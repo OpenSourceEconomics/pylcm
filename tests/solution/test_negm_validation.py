@@ -17,6 +17,7 @@ The cases mutate the valid kinked-toy NEGM regime one rule at a time:
 """
 
 import dataclasses
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
@@ -25,8 +26,10 @@ from _lcm.egm.negm_validation import (
     _fail_if_margins_not_distinct,
     validate_negm_regimes,
 )
-from lcm import DiscreteGrid, ExtremeValueTasteShocks, categorical
-from lcm.exceptions import ModelInitializationError
+from _lcm.regime_building.finalize import finalize_regimes
+from lcm import DiscreteGrid, ExtremeValueTasteShocks, Phased, categorical
+from lcm.certainty_equivalent import PowerMean
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,
@@ -34,6 +37,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserFunction,
 )
 from tests.test_models import negm_kinked_toy
 
@@ -120,8 +124,8 @@ def test_outer_margin_entering_inner_euler_law_is_rejected_with_2d_pointer():
     """The DS pension coupling fails fast with a pointer to the 2-D foundation.
 
     When the inner Euler-state transition reads the outer post-decision, the
-    inner Euler inversion is no longer independent of the outer choice, so
-    NEGM's deterministic outer max is invalid.
+    inner Euler inversion depends on the outer choice, so NEGM's deterministic
+    outer max is invalid.
     """
     regime = _VALID.replace(
         state_transitions={
@@ -231,4 +235,229 @@ def test_passive_state_after_the_durable_is_rejected_with_layout_explanation():
         },
     )
     with pytest.raises(ModelInitializationError, match="last"):
+        _validate(regime)
+
+
+def _credited_reading_the_euler_state(
+    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: ContinuousState
+) -> FloatND:
+    """A cost whose wedge scales with liquid wealth — no constant lift exists."""
+    return (1.0 + 0.01 * wealth) * (next_illiquid - illiquid)
+
+
+def test_outer_cost_reading_the_euler_state_is_rejected():
+    """The declared outer cost may read only the durable, the target, and params.
+
+    A cost that reads the liquid Euler state varies along the cash-on-hand axis,
+    so no constant per-(durable, outer-node) translation exists and the stacked
+    lift would place candidates on the wrong axis. The regime is rejected at
+    model build.
+    """
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "credited": _credited_reading_the_euler_state,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="may read only the durable"):
+        _validate(regime)
+
+
+def _base_reading_the_outer_margin(
+    wealth: ContinuousState, next_illiquid: ContinuousState
+) -> FloatND:
+    """A cost-free resources base that reads the outer margin directly."""
+    return wealth + 5.0 + 0.01 * next_illiquid
+
+
+def test_resources_base_reading_the_outer_margin_is_rejected():
+    """The cost-free resources base must be independent of the outer margin.
+
+    With a declared outer cost, pylcm composes `resources = base - cost`, so
+    the base's only legitimate outer-margin channel is the subtracted cost
+    itself; a base that reads the outer post-decision directly is rejected at
+    model build.
+    """
+    regime = _VALID.replace(
+        functions={
+            **{
+                name: func
+                for name, func in _VALID.functions.items()
+                if name != "resources"
+            },
+            "resources_before_outer_cost": _base_reading_the_outer_margin,
+        },
+    )
+    with pytest.raises(
+        ModelInitializationError, match="must not read the outer post-decision"
+    ):
+        _validate(regime)
+
+
+def _resources_defined_by_the_user(
+    wealth: ContinuousState, credited: FloatND
+) -> FloatND:
+    """A user-defined resources function alongside a declared outer cost."""
+    return wealth + 5.0 - credited
+
+
+def _cost_free_base(wealth: ContinuousState) -> FloatND:
+    """A cost-free resources base for the composed-resources tests."""
+    return wealth + 5.0
+
+
+def test_negm_regime_rejects_nonlinear_certainty_equivalent():
+    """NEGM, like every continuation-based solver, rejects a nonlinear CE.
+
+    The rejection is keyed on the solver requiring a continuation, not on the
+    concrete `DCEGM` type, so an `NEGM` regime declaring a nonlinear certainty
+    equivalent is caught at model build with the same expected-utility pointer.
+    """
+    regime = _VALID.replace(certainty_equivalent=PowerMean())
+    with pytest.raises(RegimeInitializationError, match="does not support a nonlinear"):
+        finalize_regimes(user_regimes={"alive": regime}, derived_categoricals={})
+
+
+def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
+    """With a declared outer cost the resources function is composed by pylcm.
+
+    Affineness of resources in the cost holds by construction only when pylcm
+    performs the subtraction itself; a user-defined resources function
+    alongside a declared `NEGM.outer_cost` is rejected at model build with a
+    pointer to the cost-free base.
+    """
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "resources": _resources_defined_by_the_user,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="composed by pylcm"):
+        finalize_regimes(user_regimes={"alive": regime}, derived_categoricals={})
+
+
+def test_missing_resources_base_with_a_declared_outer_cost_is_rejected():
+    """A declared outer cost requires the cost-free resources base function."""
+    regime = _VALID.replace(
+        functions={
+            name: func
+            for name, func in _VALID.functions.items()
+            if name not in ("resources", "resources_before_outer_cost")
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="resources_before_outer_cost"):
+        finalize_regimes(user_regimes={"alive": regime}, derived_categoricals={})
+
+
+def test_finalize_composes_resources_as_base_minus_outer_cost():
+    """With a declared outer cost, `resources = base - cost` is injected.
+
+    The finalized regime carries a synthesized resources function whose inputs
+    are the cost-free base and the declared cost, and whose value is exactly
+    their difference — affine in the cost by construction.
+    """
+    regime = _VALID.replace(
+        functions={
+            **{
+                name: func
+                for name, func in _VALID.functions.items()
+                if name != "resources"
+            },
+            "resources_before_outer_cost": _cost_free_base,
+        },
+    )
+
+    finalized = finalize_regimes(
+        user_regimes={"alive": regime}, derived_categoricals={}
+    )["alive"]
+    composed = cast("UserFunction", finalized.functions["resources"])
+
+    assert float(
+        composed(
+            resources_before_outer_cost=jnp.asarray(7.0), credited=jnp.asarray(2.0)
+        )
+    ) == pytest.approx(5.0)
+
+
+def test_finalize_composes_resources_with_a_phased_base():
+    """A `Phased` cost-free base still yields the composed resources function.
+
+    The synthesized resources function reads the base and the cost by name, so
+    phase resolution happens at the producer level: composition succeeds with a
+    `Phased` base slot and the injected function is the plain difference of its
+    two inputs in either phase.
+    """
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "resources_before_outer_cost": Phased(
+                solve=_cost_free_base, simulate=_cost_free_base
+            ),
+        },
+    )
+
+    finalized = finalize_regimes(
+        user_regimes={"alive": regime}, derived_categoricals={}
+    )["alive"]
+    composed = cast("UserFunction", finalized.functions["resources"])
+
+    assert float(
+        composed(
+            resources_before_outer_cost=jnp.asarray(7.0), credited=jnp.asarray(2.0)
+        )
+    ) == pytest.approx(5.0)
+
+
+def test_missing_outer_cost_with_costful_resources_is_rejected():
+    """Omitting `NEGM.outer_cost` while resources reads the outer margin fails.
+
+    With `outer_cost=None` the user defines the resources function directly and
+    the lift credits nothing, so a resources function that depends on the outer
+    post-decision (here through the `credited` function it reads) is rejected
+    with a pointer to `NEGM.outer_cost`.
+    """
+    solver = dataclasses.replace(negm_kinked_toy.NEGM_SOLVER, outer_cost=None)
+    regime = _VALID.replace(
+        solver=solver,
+        functions={
+            **dict(_VALID.functions),
+            "resources": _resources_defined_by_the_user,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="declares no outer cost"):
+        _validate(regime)
+
+
+def test_undeclared_outer_cost_function_is_rejected():
+    """An `outer_cost` name that is not a regime function fails at model build."""
+    solver = dataclasses.replace(
+        negm_kinked_toy.NEGM_SOLVER, outer_cost="not_a_function"
+    )
+    regime = _VALID.replace(solver=solver)
+    with pytest.raises(ModelInitializationError, match="not a declared function"):
+        _validate(regime)
+
+
+def _keep_reading_the_euler_state(
+    illiquid: ContinuousState, wealth: ContinuousState
+) -> FloatND:
+    """A no-adjustment candidate that reads more than the durable state."""
+    return illiquid + 0.0 * wealth
+
+
+def test_no_adjustment_candidate_with_extra_arguments_is_rejected():
+    """The no-adjustment candidate must be a unary function of the durable.
+
+    The keeper's no-adjustment level is evaluated as `keep(durable)` in both
+    the credited-cost lift and the child-resources query map, so a candidate
+    whose signature reads anything else cannot be bound there and is rejected
+    at model build.
+    """
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "keep_illiquid": _keep_reading_the_euler_state,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="unary function of the durable"):
         _validate(regime)

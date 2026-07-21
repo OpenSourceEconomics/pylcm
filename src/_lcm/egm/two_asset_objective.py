@@ -19,6 +19,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from jax.scipy.ndimage import map_coordinates
 
+from _lcm.egm.crra import crra_utility
 from lcm.typing import BoolND, Float1D, Float2D, FloatND, ScalarFloat
 
 
@@ -47,7 +48,7 @@ def build_two_asset_objective(
             out-of-domain transformed state carries a fabricated continuation; where the
             mask is `False`, a candidate whose reconstructed `(a, b)` reads it (its
             bilinear stencil touches a `False` node) is infeasible. `None` treats every
-            node as in-domain (backward-compatible).
+            node as in-domain.
 
     Returns:
         A callable mapping a state `(m, n)` and policy `(c, d)` to the recomputed
@@ -76,7 +77,7 @@ def build_two_asset_objective(
         # Clamp consumption before the utility so an infeasible candidate's value is
         # finite (it is masked out by `feasible`), never NaN.
         safe_consumption = jnp.where(consumption > 0.0, consumption, 1.0)
-        value = _crra_utility(safe_consumption, crra) + discount_factor * post_value
+        value = crra_utility(safe_consumption, crra) + discount_factor * post_value
         # The continuation reader clamps post-states to the grid boundary, so a
         # candidate whose reconstructed `(a, b)` leaves the post-decision grid gets a
         # fabricated continuation. Require the post-state inside the grid (subsuming the
@@ -105,11 +106,3 @@ def build_two_asset_objective(
         return value, feasible
 
     return objective
-
-
-def _crra_utility(consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
-    )

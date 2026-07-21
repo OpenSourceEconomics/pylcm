@@ -616,6 +616,15 @@ def _get_deterministic_transitions(
     name would silently bind one target's law; the caller rejects the model if a
     conflicting name is actually read by the decision evaluation.
 
+    Non-identity is tested by object identity (`is not`), not structural
+    equality. This is a conservative proxy that relies on the canonicalization
+    pipeline installing the *same* function object for a target-independent
+    own-regime within-period law across every bundle: a shared reference is
+    correctly seen as non-conflicting, and a distinct object genuinely signals a
+    different target's law. Two behaviourally-equal but distinct objects would be
+    over-reported as conflicting — harmless, since the conflict set only matters
+    for names the decision evaluation actually reads.
+
     Returns:
         Tuple of the immutable merged `next_<state>` mapping and the frozenset of
         conflicting `next_<state>` names.

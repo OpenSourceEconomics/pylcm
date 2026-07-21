@@ -19,24 +19,20 @@ import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.outer_envelope import build_stacked_outer_carry, outer_envelope_at_query
-from _lcm.solution.solvers import _build_coh_shift_function
+from _lcm.solution.negm import _build_coh_shift_function
 from _lcm.typing import EconFunction, EconFunctionsMapping
 from lcm.exceptions import InvalidParamsError
 from lcm.typing import Float1D, FloatND
 
 
-def test_coh_shift_cancels_a_separable_state_in_the_resources_difference() -> None:
-    """The credited-cost shift ignores a resources term that is constant in `next`.
+def test_coh_shift_derives_from_the_declared_cost_alone() -> None:
+    """The credited-cost shift evaluates only the declared cost DAG.
 
-    The cash-on-hand shift is the keeper-minus-adjuster difference of the
-    regime's inner resources, where only the outer post-decision (`next_housing`)
-    varies between the two evaluations. Any resources term that does not depend on
-    that outer choice — here a separable wage income `y(wage)` and the
-    `(1+r)·liquid` wealth term — appears identically in both legs and cancels, so
-    the shift equals `housing_cost(next=outer) - housing_cost(next=keep)` and is
-    independent of the wage state. The builder must therefore evaluate the
-    resources function even though the model reads a `wage` state the shift does
-    not depend on, rather than failing because no `wage` value was supplied.
+    With a declared `NEGM.outer_cost` the resources function is composed at
+    model build as `base - cost`, so the shift is exactly
+    `cost(z, z'_j) - cost(z, keep(z))` — nothing about the wider function set
+    (a wage-only income node, params other states read) enters the evaluation,
+    and no binding for them is demanded.
     """
 
     def income(wage: FloatND) -> FloatND:
@@ -47,41 +43,22 @@ def test_coh_shift_cancels_a_separable_state_in_the_resources_difference() -> No
         """Round-trip cost of moving the house from `housing` to `next_housing`."""
         return next_housing - housing
 
-    def resources(
-        liquid: FloatND, income: FloatND, housing_cost: FloatND, return_liquid: float
-    ) -> FloatND:
-        """`(1+r)*liquid + y - housing_cost`, separable in wage and wealth."""
-        return (1.0 + return_liquid) * liquid + income - housing_cost
-
     shift_func = _build_coh_shift_function(
         functions=cast(
             "EconFunctionsMapping",
-            MappingProxyType(
-                {
-                    "resources": resources,
-                    "income": income,
-                    "housing_cost": housing_cost,
-                }
-            ),
+            MappingProxyType({"income": income, "housing_cost": housing_cost}),
         ),
-        resources_name="resources",
-        euler_state_name="liquid",
         durable_state_name="housing",
         outer_post_decision="next_housing",
         no_adjustment_func=None,
+        outer_cost_name="housing_cost",
     )
 
     durable_values = jnp.asarray([1.0, 2.0])
     outer_values = jnp.asarray([0.5, 1.5, 3.0])
-    shifts = shift_func(
-        durable_values=durable_values,
-        outer_values=outer_values,
-        return_liquid=0.05,
-    )
+    shifts = shift_func(durable_values=durable_values, outer_values=outer_values)
 
-    # shift(z, z') = resources(next=z) - resources(next=z')
-    #             = housing_cost(next=z') - housing_cost(next=z) = z' - z,
-    # with the wage income and (1+r)*liquid terms cancelling.
+    # shift(z, z') = cost(z, z') - cost(z, keep(z) = z) = z' - z.
     expected = outer_values[None, :] - durable_values[:, None]
     assert shifts.shape == (2, 3)
     np.testing.assert_allclose(np.asarray(shifts), np.asarray(expected), atol=1e-12)
@@ -92,20 +69,15 @@ def test_coh_shift_keeper_leg_uses_the_no_adjustment_level() -> None:
 
     The keeper core realises the outer post-decision at its no-adjustment level
     `keep(z) = z (1 - delta)`, so the credited-cost lift must difference the
-    resources at that level: `shift(z, z') = resources(next=keep(z)) -
-    resources(next=z')`. With `housing_cost(next) = next - z` this is
-    `z' - keep(z)` — larger than the identity reference by the depreciation
-    `z - keep(z)`.
+    declared cost at that level: `shift(z, z') = cost(z, z') - cost(z,
+    keep(z))`. With `housing_cost(next) = next - z` this is `z' - keep(z)` —
+    larger than the identity reference by the depreciation `z - keep(z)`.
     """
     keep_rate = 0.9
 
     def housing_cost(housing: FloatND, next_housing: FloatND) -> FloatND:
         """Round-trip cost of moving the house from `housing` to `next_housing`."""
         return next_housing - housing
-
-    def resources(liquid: FloatND, housing_cost: FloatND) -> FloatND:
-        """Liquid wealth net of the housing cost."""
-        return liquid - housing_cost
 
     def keep_housing(housing: FloatND) -> FloatND:
         """The keeper's depreciated no-adjustment level."""
@@ -114,13 +86,12 @@ def test_coh_shift_keeper_leg_uses_the_no_adjustment_level() -> None:
     shift_func = _build_coh_shift_function(
         functions=cast(
             "EconFunctionsMapping",
-            MappingProxyType({"resources": resources, "housing_cost": housing_cost}),
+            MappingProxyType({"housing_cost": housing_cost}),
         ),
-        resources_name="resources",
-        euler_state_name="liquid",
         durable_state_name="housing",
         outer_post_decision="next_housing",
         no_adjustment_func=cast("EconFunction", keep_housing),
+        outer_cost_name="housing_cost",
     )
 
     durable_values = jnp.asarray([1.0, 2.0])
@@ -342,77 +313,65 @@ def test_keeper_wins_when_no_adjuster_improves() -> None:
     np.testing.assert_allclose(np.asarray(enveloped), np.asarray(expected), atol=1e-3)
 
 
-def test_coh_shift_rejects_a_liquid_dependent_resources_difference() -> None:
-    """An outer choice that changes the liquid slope has no additive coh lift.
-
-    With `resources = (1 + next_housing) * liquid - housing_cost`, the keeper and
-    adjuster legs carry different coefficients on `liquid`, so their difference
-    depends on liquid wealth and no constant translation onto a common
-    cash-on-hand axis exists. The shift builder must reject the evaluation
-    instead of silently lifting every candidate by the zero-wealth difference.
-    """
-
-    def housing_cost(housing: FloatND, next_housing: FloatND) -> FloatND:
-        """Cost of moving the house from `housing` to `next_housing`."""
-        return next_housing - housing
-
-    def resources(
-        liquid: FloatND, next_housing: FloatND, housing_cost: FloatND
-    ) -> FloatND:
-        """Liquid return depends on the outer choice — not NEGM-liftable."""
-        return (1.0 + next_housing) * liquid - housing_cost
-
-    shift_func = _build_coh_shift_function(
-        functions=cast(
-            "EconFunctionsMapping",
-            MappingProxyType({"resources": resources, "housing_cost": housing_cost}),
-        ),
-        resources_name="resources",
-        euler_state_name="liquid",
-        durable_state_name="housing",
-        outer_post_decision="next_housing",
-        no_adjustment_func=None,
-    )
-
-    with pytest.raises(InvalidParamsError, match="additive"):
-        shift_func(
-            durable_values=jnp.asarray([1.0, 2.0]),
-            outer_values=jnp.asarray([0.5, 3.0]),
-        )
-
-
 def test_coh_shift_rejects_a_state_dependent_adjustment_wedge() -> None:
     """An adjustment cost scaled by a ride-along state has no constant lift.
 
-    With `housing_cost = (1 + wage) * (next_housing - housing)`, the
-    keeper-adjuster resources difference depends on the wage state the shift
-    matrix cannot represent (it is indexed by durable and outer node only), so
-    the builder must reject the evaluation instead of broadcasting the
-    zero-wage difference to every wage.
+    With `housing_cost = (1 + wage) * (next_housing - housing)`, the declared
+    cost varies with a state the shift matrix cannot represent (it is indexed
+    by durable and outer node only). Model build rejects this structurally; the
+    shift builder itself must also refuse to evaluate the declaration instead
+    of broadcasting the zero-wage cost to every wage.
     """
 
     def housing_cost(wage: FloatND, housing: FloatND, next_housing: FloatND) -> FloatND:
         """A wage-scaled cost of moving the house — not NEGM-liftable."""
         return (1.0 + wage) * (next_housing - housing)
 
-    def resources(liquid: FloatND, housing_cost: FloatND) -> FloatND:
-        """Liquid wealth net of the housing cost."""
-        return liquid - housing_cost
-
     shift_func = _build_coh_shift_function(
         functions=cast(
             "EconFunctionsMapping",
-            MappingProxyType({"resources": resources, "housing_cost": housing_cost}),
+            MappingProxyType({"housing_cost": housing_cost}),
         ),
-        resources_name="resources",
-        euler_state_name="liquid",
         durable_state_name="housing",
         outer_post_decision="next_housing",
         no_adjustment_func=None,
+        outer_cost_name="housing_cost",
     )
 
-    with pytest.raises(InvalidParamsError, match="additive"):
+    with pytest.raises(InvalidParamsError, match="may read only"):
         shift_func(
             durable_values=jnp.asarray([1.0, 2.0]),
             outer_values=jnp.asarray([0.5, 3.0]),
         )
+
+
+def test_coh_shift_is_zero_without_a_declared_cost() -> None:
+    """With `outer_cost=None` every candidate shares the keeper's coh axis.
+
+    A regime whose resources never read the outer post-decision declares no
+    outer cost; the shift matrix is exactly zero for every (durable, outer)
+    cell, so the lift is the identity.
+    """
+
+    def resources(liquid: FloatND) -> FloatND:
+        """Liquid wealth only — independent of the outer choice."""
+        return liquid
+
+    shift_func = _build_coh_shift_function(
+        functions=cast(
+            "EconFunctionsMapping",
+            MappingProxyType({"resources": resources}),
+        ),
+        durable_state_name="housing",
+        outer_post_decision="next_housing",
+        no_adjustment_func=None,
+        outer_cost_name=None,
+    )
+
+    shifts = shift_func(
+        durable_values=jnp.asarray([1.0, 2.0]),
+        outer_values=jnp.asarray([0.5, 1.5, 3.0]),
+    )
+
+    assert shifts.shape == (2, 3)
+    np.testing.assert_array_equal(np.asarray(shifts), np.zeros((2, 3)))

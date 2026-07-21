@@ -45,6 +45,7 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    ScalarBool,
     ScalarFloat,
     ScalarInt,
 )
@@ -55,13 +56,13 @@ def _get_solve_one_combo_asset_rows(
     pieces: _EgmKernelPieces,
     pool: dict[str, Any],
     state_grid: Float1D,
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
     savings_batch_size: int,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+    tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
 ]:
     """Build the per-combo EGM computation solving per exogenous asset node.
 
@@ -88,7 +89,7 @@ def _get_solve_one_combo_asset_rows(
 
     def solve_one_combo(
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
         """Run the per-asset-node EGM step for one (discrete x passive) combo.
 
         Takes the combo's values (discrete codes and passive node values)
@@ -97,8 +98,9 @@ def _get_solve_one_combo_asset_rows(
         Returns:
             Tuple of the combo's value row on the exogenous state grid and
             its per-node endogenous grid, the published consumption policy on
-            that grid, and the value and marginal-utility carry
-            rows.
+            that grid, the value and marginal-utility carry rows, and the
+            read-support verdict (constant `False`: per-node rows never
+            qualify for the off-grid read).
 
         """
         combo_pool = {
@@ -128,7 +130,7 @@ def _get_solve_one_combo_asset_rows(
             expected_continuation = _get_expected_continuation_value(
                 pieces=pieces,
                 combo_pool=node_pool,
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                next_regime_to_continuation=next_regime_to_continuation,
                 dtype=dtype,
                 resolved_process_grids=resolved_process_grids,
             )
@@ -150,7 +152,7 @@ def _get_solve_one_combo_asset_rows(
                 combo_pool=node_pool,
                 discount_factor=discount_factor,
                 utility_of_action=utility_of_action,
-                next_regime_to_egm_carry=next_regime_to_egm_carry,
+                next_regime_to_continuation=next_regime_to_continuation,
                 dtype=dtype,
                 resolved_process_grids=resolved_process_grids,
             )
@@ -179,6 +181,17 @@ def _get_solve_one_combo_asset_rows(
             )
             candidate_policy = jnp.concatenate([constrained_actions, actions])
             candidate_value = jnp.concatenate([constrained_values, values])
+            # Exogenous source savings per candidate: the savings node for each
+            # Euler candidate (`endog_grid = savings_node + action`, so the
+            # implied `endog_grid - policy` equals it in exact arithmetic), the
+            # borrowing limit for the constrained candidates (their savings is
+            # pinned there). FUES compares these pristine sources exactly.
+            candidate_savings = jnp.concatenate(
+                [
+                    jnp.full_like(constrained_actions, pieces.borrowing_limit),
+                    pieces.savings_nodes,
+                ]
+            )
             # Same `-inf` masking as the default per-combo computation: dead
             # candidates become the envelope scan's absent form (NaN).
             candidate_dead = jnp.isneginf(candidate_value)
@@ -188,16 +201,16 @@ def _get_solve_one_combo_asset_rows(
                 utility_of_action=utility_of_action,
             )
             # The node reads its refined envelope at one query
-            # (`resources_at_node`): FUES streams the bracketing pair (the
-            # `n_pad` envelope never materializes), while RFC has no streamed
-            # finder and materializes the full envelope before locating the same
-            # bracket — the published `(V, policy)` is identical, but RFC's
-            # asset-row path does not yet get the streaming `n_pad` memory win.
+            # (`resources_at_node`): every finder materializes the full refined
+            # envelope row and locates the bracketing pair, so the published
+            # `(V, policy)` is a full-envelope-then-interpolate. A sub-`n_pad`
+            # streamed finder is future work for all backends.
             bracket = pieces.refine_to_bracket(
                 endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
                 policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
                 value=jnp.where(candidate_dead, jnp.nan, candidate_value),
                 marginal_utility=candidate_marginal,
+                savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
                 x_query=resources_at_node,
             )
 
@@ -263,12 +276,17 @@ def _get_solve_one_combo_asset_rows(
             value_row = jnp.where(feasible, value_row, -jnp.inf)
             marginal_row = jnp.where(feasible, marginal_row, 0.0)
 
+        # Asset-row regimes never qualify for the off-grid policy read (each
+        # row publishes one point per exogenous node, not a crossing-complete
+        # resources-space row), so the read-support verdict is the fail-closed
+        # constant.
         return (
             V_vec.astype(dtype),
             grid_row,
             policy_row,
             value_row,
             marginal_row,
+            jnp.asarray(False),  # noqa: FBT003
         )
 
     return solve_one_combo
@@ -309,7 +327,7 @@ def _get_expected_continuation_value(
     *,
     pieces: _EgmKernelPieces,
     combo_pool: dict[str, Any],
-    next_regime_to_egm_carry: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], ScalarFloat]:
@@ -331,7 +349,7 @@ def _get_expected_continuation_value(
     continuation = bind_continuation(
         plan=pieces.continuation_plan,
         combo_pool=combo_pool,
-        next_regime_to_egm_carry=next_regime_to_egm_carry,
+        next_regime_to_continuation=next_regime_to_continuation,
         dtype=dtype,
         resolved_process_grids=resolved_process_grids,
     )
@@ -366,6 +384,11 @@ def _publish_node_V_and_policy(
     constrained value wins, the interpolated refined policy otherwise.
     Envelope overflow NaN-poisons both outputs so the solve loop's NaN
     diagnostics surface the offending (regime, period).
+
+    The production solve uses the streamed `_publish_V_and_carry_rows`; this
+    materialized single-query form is the readable reference the row-path
+    equivalence tests (`test_egm_refine_to_query.py`) check the streamed
+    publisher against.
 
     Args:
         refined_grid: Refined endogenous grid row from the envelope backend.
@@ -436,11 +459,9 @@ def publish_node_from_bracket(
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Publish one asset node's value and optimal action from its query bracket.
 
-    The streamed counterpart of `_publish_node_V_and_policy`: it consumes the
-    two envelope nodes that `refine_to_bracket` captured around
-    `resources_at_node` instead of the full NaN-padded refined row, so the
-    `n_pad` envelope is never materialized. The published economics are
-    identical:
+    The single-bracket counterpart of `_publish_node_V_and_policy`: it consumes
+    the two envelope nodes `refine_to_bracket` sliced around `resources_at_node`
+    from the full refined row. The published economics are identical:
 
     - The value is the cubic-Hermite read of the envelope between the two
       bracket nodes (the value slope at each node is `grad(utility_of_action)`
@@ -456,8 +477,8 @@ def publish_node_from_bracket(
 
     Because the value and policy arithmetic is the shared `_interp_between_nodes`
     primitive — the same one the row path reaches through
-    `interp_on_padded_grid` — the streamed publish cannot diverge from
-    row-then-interpolate: only the bracket-finding differs.
+    `interp_on_padded_grid`, reading the same refined row — the bracket publish
+    cannot diverge from row-then-interpolate.
 
     Args:
         bracket: The query bracket from `refine_to_bracket`.
@@ -509,6 +530,18 @@ def publish_node_from_bracket(
         fp_lower=bracket.lower_policy,
         fp_upper=bracket.upper_policy,
     )
+    # Degenerate envelopes mirror the row read's contract exactly
+    # (`interp_on_prepared_grid`): a single kept node — always the bracket's
+    # lower slot, the upper is a NaN pad — is a constant clamp on both sides,
+    # and an empty envelope reads NaN.
+    single_node = bracket.n_kept == 1
+    empty_envelope = bracket.n_kept == 0
+    value_interpolated = jnp.where(single_node, bracket.lower_value, value_interpolated)
+    value_interpolated = jnp.where(empty_envelope, jnp.nan, value_interpolated)
+    policy_interpolated = jnp.where(
+        single_node, bracket.lower_policy, policy_interpolated
+    )
+    policy_interpolated = jnp.where(empty_envelope, jnp.nan, policy_interpolated)
 
     closed_form_action = resources_at_node - borrowing_limit
     value_constrained = jnp.where(

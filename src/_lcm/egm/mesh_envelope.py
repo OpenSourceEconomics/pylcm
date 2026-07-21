@@ -123,7 +123,18 @@ def first_envelope(
         candidates, policies = jax.vmap(per_triangle)(
             triangle_states, triangle_policies, triangle_valid
         )
-        best = jnp.argmax(candidates)
+        # Pick the lowest-index triangle within a scale-aware band of the max
+        # value rather than a raw first-index argmax: two triangles whose Bellman
+        # values tie to a ulp would otherwise select different policies across
+        # backends (the value is safe — it is the max). All-dead rows (`value`
+        # `-inf`) keep index 0, unchanged.
+        best_value = jnp.max(candidates)
+        tie_floor = (
+            16.0
+            * jnp.finfo(candidates.dtype).eps
+            * jnp.maximum(1.0, jnp.abs(best_value))
+        )
+        best = jnp.argmax(candidates >= best_value - tie_floor)
         return candidates[best], policies[best]
 
     return jax.vmap(at_target)(targets)
@@ -149,8 +160,15 @@ def second_envelope(
         KKT region label, and a per-target flag for whether any candidate was finite.
 
     """
-    winning_segment = jnp.argmax(segment_values, axis=0).astype(jnp.int32)
     value = jnp.max(segment_values, axis=0)
+    # Lowest-index segment within a scale-aware band of the per-target max, so a
+    # 1-ulp value tie between segments does not select different policies across
+    # backends (the value is safe — it is the max).
+    tie_floor = (
+        16.0 * jnp.finfo(segment_values.dtype).eps * jnp.maximum(1.0, jnp.abs(value))
+    )
+    in_tie = segment_values >= value[None, :] - tie_floor[None, :]
+    winning_segment = jnp.argmax(in_tie, axis=0).astype(jnp.int32)
     target_index = jnp.arange(segment_values.shape[1])
     policy = segment_policies[winning_segment, target_index]
     region_label = region_labels[winning_segment]

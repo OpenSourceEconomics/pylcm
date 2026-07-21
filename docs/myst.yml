@@ -42,6 +42,7 @@ project:
         - file: user_guide/regimes.ipynb
         - file: user_guide/grids.md
         - file: user_guide/transitions.ipynb
+        - file: user_guide/age_specialized.md
         - file: user_guide/continuous_stochastic_processes.md
         - file: user_guide/parameters.md
         - file: user_guide/pandas_interop.md
@@ -63,6 +64,7 @@ project:
         - file: explanations/beta_delta.ipynb
         - file: explanations/iskhakov_et_al_2017.ipynb
         - file: explanations/architecture.md
+        - file: explanations/adding_a_solver.md
     - file: examples/index.md
       title: Examples
       children:

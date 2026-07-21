@@ -31,10 +31,11 @@ N_PERIODS = 4
 # Pooled-interior thresholds. The value function is O(1)-O(10) on the interior.
 # Comparisons against the brute grid-search twin are limited by the brute
 # consumption grid's undershoot, so they agree in bulk up to grid resolution
-# rather than exactly at every cell. The NEGM-vs-VFI-oracle comparison is
-# limited only by the shared grid resolution — the exact query-side outer
-# envelope keeps the depreciating keeper at the same agreement as the identity
-# keeper — so its thresholds are much tighter.
+# rather than exactly at every cell. The NEGM-vs-VFI-oracle comparison is much
+# tighter: with the exact query-side outer envelope the observed disagreement
+# is dominated by the shared state/liquid grid resolution (an empirical
+# statement at these grids, not a bound), and the depreciating keeper matches
+# the identity keeper's agreement.
 BRUTE_MEAN_TOL = 0.20
 BRUTE_CELL_TOL = 0.60
 ORACLE_MEAN_TOL = 0.06

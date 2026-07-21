@@ -35,7 +35,19 @@ only the *outer*/nesting contract. The rules, in the order they are checked:
 - carry layout: the stacked outer continuation carry addresses the durable as
   the last passive row axis, so a (hard) discrete action or a passive
   continuous state declared after the durable is rejected — the per-durable
-  candidate lift would otherwise address the wrong axis.
+  candidate lift would otherwise address the wrong axis,
+- outer-cost contract: with a declared `NEGM.outer_cost`, the resources
+  function is composed by `finalize_regimes` as
+  `<resources>_before_outer_cost - <outer_cost>` (affine in the cost by
+  construction; a user-defined resources function is rejected at
+  finalization); the declared cost may read only the durable state, the outer
+  post-decision, and params, and the cost-free base must not read the outer
+  post-decision (with `outer_cost=None`, resources must be independent of the
+  outer post-decision) — otherwise no constant credited-cost translation onto
+  a common cash-on-hand axis exists and the stacked lift would be wrong,
+- the no-adjustment candidate is a unary function of the durable state — it is
+  evaluated as `keep(durable)` in the credited-cost lift and the
+  child-resources query map.
 
 The coupled-2-Euler detector is structural and deliberately over-rejects:
 catching the DS pension coupling (the outer post-decision feeding the inner
@@ -119,6 +131,15 @@ def _validate_negm_regime(
     )
     _fail_if_carry_layout_unsupported(
         regime_name=regime_name, user_regime=user_regime, solver=solver, inner=inner
+    )
+    _fail_if_outer_cost_contract_violated(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=functions,
+        solver=solver,
+    )
+    _fail_if_no_adjustment_candidate_not_unary(
+        regime_name=regime_name, functions=functions, solver=solver
     )
 
 
@@ -329,6 +350,133 @@ def _fail_if_taste_shock_ordering_violated(
         raise ModelInitializationError(msg)
 
 
+def _fail_if_outer_cost_contract_violated(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: NEGM,
+) -> None:
+    """The declared outer cost must be the sole outer-margin channel of resources.
+
+    The stacked-carry lift places every outer candidate on the keeper's
+    cash-on-hand axis by crediting a constant per (durable, outer-node) cell.
+    That constant exists exactly when the inner resources depend on the outer
+    post-decision through a single additive cost term that itself varies only
+    with the durable margin. The contract is enforced fail-closed:
+
+    - `NEGM.outer_cost` declared ⇒ the resources function is composed by
+      `finalize_regimes` as `<resources>_before_outer_cost - <outer_cost>`, so
+      its affine use of the cost holds by construction (a user-defined
+      resources function is rejected at finalization). Here: the cost must be
+      a regime function whose DAG ancestors contain no state or action other
+      than the durable state and the outer post-decision (params are fine),
+      and the cost-free base must not read the outer post-decision — its only
+      outer-margin channel is the subtracted cost itself,
+    - `NEGM.outer_cost=None` ⇒ the inner resources must be independent of the
+      outer post-decision altogether (every candidate already shares the
+      keeper's axis; the shift is zero).
+    """
+    inner = solver.inner
+    durable_state = solver.outer_post_decision.removeprefix("next_")
+
+    if solver.outer_cost is None:
+        resources_func = functions.get(inner.resources)
+        if resources_func is None:
+            return
+        resources_ancestors = _dag_ancestors(
+            functions=functions, target_func=resources_func
+        )
+        if solver.outer_post_decision in resources_ancestors:
+            msg = (
+                f"In regime '{regime_name}', the inner resources "
+                f"'{inner.resources}' reads the outer post-decision "
+                f"'{solver.outer_post_decision}' but the solver declares no "
+                "outer cost (`NEGM.outer_cost=None`). Declare the credited-cost "
+                "function via `NEGM.outer_cost` so the stacked-carry lift can "
+                "place every candidate on a common cash-on-hand axis, or use "
+                "`GridSearch` for this regime."
+            )
+            raise ModelInitializationError(msg)
+        return
+
+    cost_func = functions.get(solver.outer_cost)
+    if cost_func is None:
+        msg = (
+            f"NEGM.outer_cost '{solver.outer_cost}' is not a declared function "
+            f"of regime '{regime_name}'. The credited outer cost must be a "
+            "regime function reading only the durable state, the outer "
+            "post-decision, and params."
+        )
+        raise ModelInitializationError(msg)
+
+    cost_ancestors = _dag_ancestors(functions=functions, target_func=cost_func)
+    state_and_action_names = set(user_regime.states) | set(user_regime.actions)
+    offenders = sorted((cost_ancestors & state_and_action_names) - {durable_state})
+    if offenders:
+        msg = (
+            f"NEGM.outer_cost '{solver.outer_cost}' of regime '{regime_name}' "
+            f"reads {offenders}. The declared outer cost may read only the "
+            f"durable state '{durable_state}', the outer post-decision "
+            f"'{solver.outer_post_decision}', and params: the credited-cost "
+            "lift is a constant per (durable, outer-node) cell, so a cost that "
+            "varies with the Euler state or a ride-along state/action has no "
+            "constant translation onto a common cash-on-hand axis. Restructure "
+            "the cost, or use `GridSearch` for this regime."
+        )
+        raise ModelInitializationError(msg)
+
+    base_func = functions.get(f"{inner.resources}_before_outer_cost")
+    if base_func is not None:
+        base_ancestors = _dag_ancestors(functions=functions, target_func=base_func)
+        if solver.outer_post_decision in base_ancestors:
+            msg = (
+                f"In regime '{regime_name}', the cost-free resources base "
+                f"'{inner.resources}_before_outer_cost' reads the outer "
+                f"post-decision '{solver.outer_post_decision}'. It must not "
+                "read the outer post-decision: pylcm composes "
+                f"`{inner.resources} = {inner.resources}_before_outer_cost - "
+                f"{solver.outer_cost}`, so the base's only outer-margin "
+                "channel is the subtracted declared cost itself. Route the "
+                f"dependence through '{solver.outer_cost}', or use "
+                "`GridSearch` for this regime."
+            )
+            raise ModelInitializationError(msg)
+
+
+def _fail_if_no_adjustment_candidate_not_unary(
+    *,
+    regime_name: RegimeName,
+    functions: dict[FunctionName, UserFunction],
+    solver: NEGM,
+) -> None:
+    """The no-adjustment candidate must be a unary function of the durable state.
+
+    The keeper's no-adjustment level is evaluated as `keep(durable)` in the
+    credited-cost lift and in the parent's child-resources query map, so a
+    candidate whose signature reads anything else — another state, an action,
+    or a param — cannot be bound at those call sites.
+    """
+    if solver.outer_no_adjustment_candidate is None:
+        return
+    candidate_func = functions.get(solver.outer_no_adjustment_candidate)
+    if candidate_func is None:
+        return
+    durable_state = solver.outer_post_decision.removeprefix("next_")
+    arg_names = set(inspect.signature(candidate_func).parameters)
+    if arg_names != {durable_state}:
+        msg = (
+            f"NEGM.outer_no_adjustment_candidate "
+            f"'{solver.outer_no_adjustment_candidate}' of regime "
+            f"'{regime_name}' must be a unary function of the durable state "
+            f"'{durable_state}' (its signature reads {sorted(arg_names)}). The "
+            "keeper's no-adjustment level is evaluated as `keep(durable)` in "
+            "the credited-cost lift and the child-resources query map, so no "
+            "other state, action, or param can be bound there."
+        )
+        raise ModelInitializationError(msg)
+
+
 def _fail_if_carry_layout_unsupported(
     *,
     regime_name: RegimeName,
@@ -376,14 +524,22 @@ def _fail_if_carry_layout_unsupported(
         )
         if name != inner.continuous_state
     ]
-    if passive_state_names and passive_state_names[-1] != durable_state:
-        msg = (
-            f"Regime '{regime_name}' declares passive continuous state(s) "
-            f"{[n for n in passive_state_names if n != durable_state]} after "
-            f"the durable margin '{durable_state}'. The stacked outer "
-            "continuation carry lifts each candidate by a per-durable-state "
-            "credited cost, so the durable must be the last passive continuous "
-            "state the regime declares — reorder `states` so "
-            f"'{durable_state}' comes last."
-        )
-        raise ModelInitializationError(msg)
+    # Only meaningful when the durable is itself a passive continuous state:
+    # the "last passive axis" requirement is a statement about its position
+    # among the passive states. A durable that is not a passive continuous
+    # state at all is a separate error caught upstream, so skip here rather
+    # than emit an "after the durable" message that lists states preceding it.
+    if durable_state in passive_state_names:
+        after_durable = passive_state_names[
+            passive_state_names.index(durable_state) + 1 :
+        ]
+        if after_durable:
+            msg = (
+                f"Regime '{regime_name}' declares passive continuous state(s) "
+                f"{after_durable} after the durable margin '{durable_state}'. "
+                "The stacked outer continuation carry lifts each candidate by a "
+                "per-durable-state credited cost, so the durable must be the "
+                "last passive continuous state the regime declares — reorder "
+                f"`states` so '{durable_state}' comes last."
+            )
+            raise ModelInitializationError(msg)

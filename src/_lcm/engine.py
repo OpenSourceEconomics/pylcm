@@ -344,7 +344,7 @@ class SolutionPhase:
 
     Populated for every continuation-producing regime (DC-EGM regimes and
     terminal regimes in a model with a DC-EGM regime). Initializes the rolling
-    `next_regime_to_egm_carry` mapping and serves as the lowering argument when
+    `next_regime_to_continuation` mapping and serves as the lowering argument when
     AOT-compiling a parent's kernel; `None` for a regime that publishes none.
     """
 
@@ -366,13 +366,30 @@ class SolutionPhase:
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 
-    @property
-    def solves_via_dcegm(self) -> bool:
-        """Whether this regime is solved by the DC-EGM kernel.
+    period_state_axes: (
+        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+    ) = None
+    """Per-period node arrays for age-varying (`AgeSpecializedGrid`) states.
 
-        A DC-EGM regime is the non-terminal regime that publishes a
-        continuation: a grid-search regime publishes none, and a terminal
-        carry-producing regime is terminal (no regime-transition probs).
+    `{period: {state_name: nodes}}` — the current period's grid nodes for each
+    age-varying continuous state, used by backward induction to override the
+    (representative) base axis so period `t`'s value function is tabulated on
+    period `t`'s grid. `None` for age-invariant regimes (the base axis is used
+    unchanged)."""
+
+    @property
+    def solves_from_continuation(self) -> bool:
+        """Whether this regime's V is built from interpolated continuations.
+
+        True exactly for a non-terminal regime that publishes a continuation
+        payload — such a regime's kernels solve by reading its targets'
+        continuations rather than by the compiled Q-and-F grid program. A
+        grid-search regime publishes no continuation, and a terminal
+        carry-producing regime publishes one without reading any (no
+        regime-transition probs). Downstream consumers ask this capability —
+        the brute U/F/E/Q breakdown cannot reproduce such a regime's failure
+        rows, and its inversion-internal functions are not simulate-readable
+        targets — instead of asking which solver produced the regime.
         """
         return (
             self.compute_regime_transition_probs is not None
@@ -551,8 +568,17 @@ class SimulationPhase:
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
 
-    next_state: NextStateSimulationFunction
-    """Compiled function to compute next-period states."""
+    next_state: MappingProxyType[int, NextStateSimulationFunction]
+    """Immutable mapping of period to next-period-state functions."""
+
+    age_specialized_function_names: frozenset[FunctionName] = frozenset()
+    """Function names that were `AgeSpecializedFunction` in the user regime.
+
+    The published `functions` hold these resolved at the regime's representative
+    age only — the per-period programs (`argmax_and_max_Q_over_a`, `next_state`)
+    carry the true per-age closures. Consumers computing period-specific outputs
+    from `functions` (e.g. `additional_targets`) must reject targets that depend
+    on these names."""
 
     egm_policy_read: EGMPolicyRead | None = None
     """Off-grid read of the published EGM simulation policy, or `None`.

@@ -125,7 +125,11 @@ from lcm.solvers import (  # noqa: E402
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.temporal_aggregation import H_epstein_zin, H_linear  # noqa: E402
-from lcm.transition import fixed_transition  # noqa: E402
+from lcm.transition import (  # noqa: E402
+    AgeSpecializedFunction,
+    AgeSpecializedGrid,
+    fixed_transition,
+)
 
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
@@ -148,6 +152,8 @@ __all__ = [
     "NEGM",
     "NNBEGM",
     "AgeGrid",
+    "AgeSpecializedFunction",
+    "AgeSpecializedGrid",
     "CertaintyEquivalent",
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
