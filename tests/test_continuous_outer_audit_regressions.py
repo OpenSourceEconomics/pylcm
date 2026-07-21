@@ -30,7 +30,7 @@ from _lcm.optimization.implicit_outer_derivative import (
     _continuous_outer_optimum_primal,
     implicit_optimum_diagnostics,
 )
-from lcm.exceptions import OuterSearchConvergenceError
+from lcm.exceptions import OuterSearchConvergenceError, RegimeInitializationError
 from lcm.grids import LinSpacedGrid
 
 
@@ -616,3 +616,69 @@ def test_genuine_smooth_optimum_stays_resolved() -> None:
     )
     assert not bool(diag.nonstationary)
     assert not bool(diag.unresolved)
+
+
+# --- F2 -----------------------------------------------------------------
+# Midpoint-only validation is mesh-relative, not a global safeguard: a peak
+# narrower than the mesh that misses every sampled midpoint is neither seen nor
+# bounded. An opt-in Lipschitz constant upgrades refinement to a certified
+# branch-and-bound (Piyavskii-Shubert interval upper bounds).
+
+
+def _narrow_peak_surface(nodes: jnp.ndarray) -> jnp.ndarray:
+    """A ramp `4x` with a narrow spike at 0.3125 that peaks ABOVE the ramp top.
+
+    On [0,.25,.5,.75,1] and their first-pass midpoints the spike is invisible
+    (its width 0.04 falls between the samples), so the best node is the ramp top
+    (value 4) while the true global max is `Q(0.3125) = 1.25 + 10 = 11.25`.
+    """
+    ramp = 4.0 * nodes
+    bump = 10.0 * jnp.exp(-(((nodes - 0.3125) / 0.04) ** 2))
+    return ramp + bump
+
+
+def _f2_config(**overrides) -> AdaptiveOuterMesh:
+    return AdaptiveOuterMesh(
+        initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=5),
+        value_atol=1e-2,
+        value_rtol=1e-2,
+        max_nodes=129,
+        max_refinement_rounds=10,
+        **overrides,
+    )
+
+
+def test_midpoint_validation_alone_misses_a_sub_mesh_peak() -> None:
+    initial = jnp.linspace(0.0, 1.0, 5)
+    # The spike is invisible at the initial midpoints too.
+    assert float(_narrow_peak_surface(jnp.array([0.375]))[0]) < 4.0
+
+    result = refine_outer_mesh(
+        initial_nodes=initial,
+        solve_at=_narrow_peak_surface,
+        config=_f2_config(),
+        fail_closed=False,
+    )
+    # Mesh-relative validation certifies a mesh that never saw the spike.
+    assert float(jnp.max(result.node_values)) < 5.0
+
+
+def test_certified_lipschitz_bound_captures_a_sub_mesh_peak() -> None:
+    initial = jnp.linspace(0.0, 1.0, 5)
+    # True Lipschitz constant of the surface is ~215; 250 is a safe upper bound.
+    result = refine_outer_mesh(
+        initial_nodes=initial,
+        solve_at=_narrow_peak_surface,
+        config=_f2_config(outer_lipschitz_bound=250.0),
+        fail_closed=False,
+    )
+    # The certified branch-and-bound refines every interval whose Lipschitz upper
+    # bound could beat the incumbent, so it samples the spike (peak ~11.25).
+    assert float(jnp.max(result.node_values)) > 10.0
+    peak_node = result.nodes[int(jnp.argmax(result.node_values))]
+    assert abs(float(peak_node) - 0.3125) < 0.05
+
+
+def test_outer_lipschitz_bound_must_be_positive() -> None:
+    with pytest.raises(RegimeInitializationError, match="outer_lipschitz_bound"):
+        _f2_config(outer_lipschitz_bound=0.0)

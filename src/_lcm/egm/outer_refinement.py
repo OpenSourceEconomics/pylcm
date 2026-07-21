@@ -516,6 +516,28 @@ def _mark_intervals(
     state_axes = tuple(range(1, error.ndim))
     interval_error = jnp.max(error, axis=state_axes) if state_axes else error  # (C-1,)
 
+    # Certified global safeguard (round-2 audit F2). Midpoint validation alone is
+    # mesh-relative: a peak narrower than the mesh that misses every sampled
+    # midpoint is neither seen nor bounded. With a Lipschitz constant `L` of the
+    # outer surface, interval `[a, b]` cannot exceed `max(V(a), V(b)) + L*(b-a)/2`
+    # (Piyavskii-Shubert). Refine any interval whose upper bound could still beat
+    # the incumbent best node by more than the value band; the branch prunes
+    # (upper bound below the incumbent -> never refined) and terminates when
+    # every surviving interval is width < 2*band/L, so the returned optimum is
+    # global to tolerance under `L`. Without `L` this is a no-op and the default
+    # mesh-relative behaviour is unchanged.
+    if config.outer_lipschitz_bound is None:
+        beats_incumbent_ub = jnp.zeros_like(beats_best)
+    else:
+        widths = (nodes[1:] - nodes[:-1]).reshape(
+            nodes.shape[0] - 1, *([1] * state_ndim)
+        )
+        endpoint_max = jnp.maximum(finite_values[:-1], finite_values[1:])
+        lipschitz_ub = endpoint_max + config.outer_lipschitz_bound * widths / 2.0
+        beats_incumbent_ub = has_finite_incumbent & (
+            lipschitz_ub > finite_threshold
+        )  # (C-1, *S)
+
     # Optimum-containing intervals: the two intervals flanking each cell's
     # best node, held to a tighter standard plus the margin rule.
     best_idx = jnp.argmax(finite_values, axis=0)  # (*S,)
@@ -538,6 +560,7 @@ def _mark_intervals(
     per_cell_marked = (
         (error > 1.0)
         | beats_best
+        | beats_incumbent_ub
         | (contains_opt & (error > _OPTIMUM_TIGHTENING))
         | (contains_opt & margin_at_risk)
     )

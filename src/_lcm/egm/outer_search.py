@@ -11,10 +11,15 @@ is configured here, separately from the solver's economic wiring:
   grid-snapped.
 - `AdaptiveOuterMesh` — the canonical continuous-outer approximation: exact
   inner solves on a shared adaptive mesh, a validated interpolant between the
-  nodes, and globally safeguarded bracket-local refinement. No global
+  nodes, and bracket-local refinement of every node-local optimum. No global
   unimodality is assumed; golden-section refinement only ever runs inside
   brackets identified on the exact candidate mesh, and the exact keeper is
-  always evaluated separately.
+  always evaluated separately. Midpoint validation is a *mesh-relative*
+  guarantee: it certifies the interpolant against exact solves at the sampled
+  points and refines any interval whose exact midpoint beats the incumbent, but
+  absent a smoothness bound it cannot rule out an arbitrarily narrow peak that
+  falls between the samples. Set `outer_lipschitz_bound` to make refinement a
+  genuine global branch-and-bound certificate under that Lipschitz constant.
 - `LegacyGoldenSection` — historical-algorithm compatibility (a single
   golden-section search with source-specific endpoint and tie rules); never
   the canonical paper mode.
@@ -68,9 +73,16 @@ class AdaptiveOuterMesh(OuterSearch):
 
     Exact inner solves at a shared set of outer nodes; a validated
     interpolant between them; adaptive midpoint insertion until the
-    interpolant reproduces exact solves to tolerance; then globally
-    safeguarded bracket-local refinement of the per-state optimum. Inference
-    runs must fail closed: unresolved intervals raise instead of degrading.
+    interpolant reproduces exact solves to tolerance; then bracket-local
+    refinement of the per-state optimum. Inference runs must fail closed:
+    unresolved intervals raise instead of degrading.
+
+    The midpoint validation is mesh-relative: it does not, on its own, rule out
+    a peak narrower than the mesh that falls between the sampled midpoints. Set
+    `outer_lipschitz_bound` to upgrade refinement to a certified global
+    branch-and-bound: any interval whose Lipschitz upper bound could beat the
+    incumbent is refined, so the returned optimum is global to tolerance under
+    that constant.
     """
 
     initial_grid: ContinuousGrid
@@ -96,6 +108,19 @@ class AdaptiveOuterMesh(OuterSearch):
     value_rtol: float = 1e-8
     """Relative tolerance for the exact-vs-interpolated value at proposed
     midpoints."""
+
+    outer_lipschitz_bound: float | None = None
+    """Optional Lipschitz constant `L` of the outer value surface in the
+    outer-action metric. When set, refinement gains a certified global
+    branch-and-bound guarantee: an interval `[a, b]` can hide a point above
+    `max(V(a), V(b)) + L*(b-a)/2`, so any interval whose Lipschitz upper bound
+    exceeds the incumbent (best node) by more than the value band is refined,
+    and the returned optimum is global to tolerance under `L`. `None` keeps the
+    default mesh-relative validation, which refines optima that perturb a
+    sampled midpoint or the interpolant but cannot certify against a peak
+    narrower than the mesh. Must be `> 0` when set; a value below the true
+    Lipschitz constant forfeits the global guarantee (garbage-in), a large
+    value is safe but costs nodes."""
 
     # Policy convergence checks.
     outer_policy_atol: float = 1e-5
@@ -159,6 +184,15 @@ class AdaptiveOuterMesh(OuterSearch):
             if not value > 0.0:
                 msg = f"{name} must be > 0, got {value}."
                 raise RegimeInitializationError(msg)
+        if (
+            self.outer_lipschitz_bound is not None
+            and not self.outer_lipschitz_bound > 0.0
+        ):
+            msg = (
+                "outer_lipschitz_bound must be > 0 when set, got "
+                f"{self.outer_lipschitz_bound}."
+            )
+            raise RegimeInitializationError(msg)
 
 
 @dataclass(frozen=True, kw_only=True)
