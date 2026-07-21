@@ -861,14 +861,19 @@ def _certify_chord_point_relations(
     chord_gap = high + (high_err + left_term_err + right_term_err + cross_terms)
     eps = jnp.finfo(query_grid.dtype).eps
     term_scale = jnp.abs(left_term) + jnp.abs(right_term)
-    # The noise floor bounds the compensated evaluation's own residual (a small
-    # multiple of the second-order-in-epsilon term error); the certified-above
-    # margin sits a further order above it so a certified-above verdict never
-    # fires on rounding noise. Only an exactly-zero gap is a certified tie — a
-    # nonzero gap whose error interval merely straddles zero is unresolved, not
-    # equal — so anything from just below the noise floor up to the margin
-    # (excluding exact zero) is the unresolved band, and only a gap at or below
-    # `-noise` is certified strictly below.
+    # The thresholds are multiples of the second-order-in-epsilon term scale, so
+    # every relation is exactly invariant to a common value or resource shift
+    # (the certificate terms are all differences). A genuine interior tie of
+    # representable endpoints does not evaluate to exactly zero — the compensated
+    # cross product carries its own bounded residual — so the tie band is the
+    # residual floor, not exact zero:
+    # - `tie_floor` sits above the compensated evaluation's own worst-case
+    #   residual, so a true tie (`D = 0` in exact arithmetic) lands inside it
+    #   while any gap the arithmetic genuinely resolves lands outside.
+    # - `noise` is the wider unresolved reach and `margin` the certified-above
+    #   threshold, both a further order up, so a certified-above verdict never
+    #   fires on rounding noise.
+    tie_floor = 1.0 * eps * eps * term_scale
     noise = 4.0 * eps * eps * term_scale
     margin = 32.0 * eps * eps * term_scale
 
@@ -878,15 +883,17 @@ def _certify_chord_point_relations(
         stored_ge=stored_ge,
         stored_eq=stored_eq,
         above=chord_gap > margin,
-        tied=chord_gap == 0.0,
-        unresolved=(chord_gap != 0.0) & (chord_gap > -noise) & (chord_gap <= margin),
+        tied=jnp.abs(chord_gap) <= tie_floor,
+        unresolved=(jnp.abs(chord_gap) > tie_floor)
+        & (chord_gap > -noise)
+        & (chord_gap <= margin),
     )
 
 
 def _endpoint_faithful_value(
     *, x: Float1D, link: Int1D, links: _LinkLines
 ) -> tuple[Float1D, Float1D]:
-    """Evaluate a link's stored-endpoint chord at `x`, compensated.
+    """Evaluate a link's stored-endpoint chord at `x`, correctly rounded.
 
     The chord through the link's two stored endpoints,
     `[lower_value (upper - x) + upper_value (x - lower)] / (upper - lower)`,
@@ -895,9 +902,19 @@ def _endpoint_faithful_value(
     `value_at`, whose `value_slope` carries an eps-relative error that swamps a
     crossing value orders of magnitude below the endpoint magnitudes.
 
-    Returns the chord value and the magnitude scale of its compensated
-    numerator (the sum of the two endpoint-product magnitudes over the span), a
-    conservative size for the evaluation's own residual.
+    The numerator is a compensated double-float pair and the division carries a
+    one-step remainder correction, so the returned value is the exact
+    stored-endpoint chord rounded to working precision — a single rounded
+    divide of a collapsed numerator can otherwise land a couple of steps off
+    the exact envelope and let a representable competitor reverse the ordering.
+
+    Returns:
+        Tuple of the chord value and the magnitude scale of its numerator over
+        the span (the sum of the two endpoint-product magnitudes divided by the
+        span). At a crossing whose value collapses far below the endpoint
+        magnitudes the value carries an absolute cancellation floor of a few ulp
+        of that scale, so an ordering decision on the value alone is only as
+        sharp as the scale permits.
     """
     lower = links.lower[link]
     upper = links.upper[link]
@@ -907,33 +924,63 @@ def _endpoint_faithful_value(
     left_span, left_span_err = _two_sum(x, -lower)
     left_term, left_term_err = _two_product(lower_value, right_span)
     right_term, right_term_err = _two_product(upper_value, left_span)
-    high, high_err = _two_sum(left_term, right_term)
-    numerator = high + (
-        high_err
+    num_high, num_high_err = _two_sum(left_term, right_term)
+    num_low = (
+        num_high_err
         + left_term_err
         + right_term_err
         + lower_value * right_span_err
         + upper_value * left_span_err
     )
     span = upper - lower
+    # Double-float division: correct the leading quotient by the compensated
+    # remainder `numerator - quotient * span`, so a near-zero numerator is not
+    # lost to a single rounded divide. The remainder product `_two_product`
+    # returns a nonfinite residual once a factor crosses the overflow boundary
+    # (a huge dead-region link value), so the correction is applied only where
+    # it is finite; elsewhere the plain rounded quotient stands, which those
+    # extreme magnitudes get masked out of downstream regardless.
+    quotient = num_high / span
+    prod_high, prod_low = _two_product(quotient, span)
+    remainder = ((num_high - prod_high) - prod_low) + num_low
+    correction = remainder / span
+    value = quotient + jnp.where(jnp.isfinite(correction), correction, 0.0)
     scale = (jnp.abs(left_term) + jnp.abs(right_term)) / span
-    return numerator / span, scale
+    return value, scale
 
 
 def _branch_envelope_value(
     *, x: Float1D, winner: Int1D, incoming: Int1D, links: _LinkLines
-) -> Float1D:
-    """Envelope value of the two switching branches at `x`.
+) -> tuple[Float1D, Int1D]:
+    """Envelope value and owning branch of the two switching branches at `x`.
 
     The larger of the outgoing and incoming branch values, each read from the
-    stored-endpoint compensated chord. At a crossing the two agree; where the
-    emitted abscissa rounds off the intersection the maximum stays at or above
-    the envelope, never above the higher branch — so the published row cannot
-    overstate the envelope and let a representable competitor wrongly lose.
+    stored-endpoint compensated chord, together with the link that attains it.
+    Where the emitted abscissa rounds off the intersection the maximum stays at
+    or above the envelope, never above the higher branch — so the published row
+    cannot overstate the envelope. The owning link is the branch that holds the
+    emitted float: when the outgoing branch leads by more than a representable
+    value step there (the true intersection is a fraction of a float to the
+    right), it owns the float and the switch to the incoming branch is deferred
+    past it.
     """
-    winner_value, _ = _endpoint_faithful_value(x=x, link=winner, links=links)
-    incoming_value, _ = _endpoint_faithful_value(x=x, link=incoming, links=links)
-    return jnp.maximum(winner_value, incoming_value)
+    winner_value, winner_scale = _endpoint_faithful_value(x=x, link=winner, links=links)
+    incoming_value, incoming_scale = _endpoint_faithful_value(
+        x=x, link=incoming, links=links
+    )
+    # The right record goes to the outgoing winner only when it leads the emitted
+    # float beyond the value's own cancellation floor: a lead within that floor
+    # is a crossing at the abscissa, where the incoming (steeper) branch that
+    # wins for every larger abscissa owns the record. The floor is a few ulp of
+    # the numerator scale (large when a near-zero crossing value collapses from
+    # large endpoint magnitudes), not of the collapsed value itself, so a
+    # cancellation-noise lead never wrongly defers the switch.
+    eps = jnp.finfo(winner_value.dtype).eps
+    competitor_margin = 4.0 * eps * jnp.maximum(winner_scale, incoming_scale)
+    winner_owns = (winner_value - incoming_value) > competitor_margin
+    value = jnp.maximum(winner_value, incoming_value)
+    owner = jnp.where(winner_owns, winner, incoming).astype(jnp.int32)
+    return value, owner
 
 
 def _crossing_off_intersection(
@@ -944,17 +991,27 @@ def _crossing_off_intersection(
     The two switching branches must cross at the emitted abscissa. Both are read
     from the same stored-endpoint compensated chord — the identical primitive
     the published value uses — so the guard and the payload cannot disagree on
-    the line geometry. The branches are the intersection of the *rounded* lines,
-    so at the representable abscissa their exact chords stand at most one
-    one-ulp abscissa displacement apart; a stored-endpoint gap wider than that
-    `|slope gap| * ulp(x)` window means the rounded abscissa is not the
+    the line geometry. The rounded abscissa carries the emitted crossing's own
+    computation error, so the window admits two sources of a nonzero gap at a
+    genuine intersection:
+
+    - one abscissa displacement of the rounded position, `|slope gap| * ulp(x)`;
+    - the value's own cancellation floor, a few ulp of the endpoint-product
+      scale, which dominates when a near-zero crossing value collapses from
+      large endpoint magnitudes.
+
+    A stored-endpoint gap wider than both means the rounded abscissa is not the
     intersection and the interval fails loudly.
     """
-    winner_value, _ = _endpoint_faithful_value(x=x, link=winner, links=links)
-    incoming_value, _ = _endpoint_faithful_value(x=x, link=incoming, links=links)
+    winner_value, winner_scale = _endpoint_faithful_value(x=x, link=winner, links=links)
+    incoming_value, incoming_scale = _endpoint_faithful_value(
+        x=x, link=incoming, links=links
+    )
     slope_gap = links.value_slope[winner] - links.value_slope[incoming]
-    abscissa_ulp = jnp.finfo(x.dtype).eps * jnp.abs(x)
-    window = jnp.abs(slope_gap) * abscissa_ulp
+    eps = jnp.finfo(x.dtype).eps
+    abscissa_window = jnp.abs(slope_gap) * eps * jnp.abs(x)
+    cancellation_window = 8.0 * eps * jnp.maximum(winner_scale, incoming_scale)
+    window = abscissa_window + cancellation_window
     return jnp.abs(winner_value - incoming_value) > window
 
 
@@ -1128,10 +1185,14 @@ def _enumerate_interval_crossings(
         lands_in_place = found & ~lands_on_node & (x_next <= x_current)
         emit = found & ~lands_on_node & ~lands_in_place
         # The published crossing value is the envelope at the emitted abscissa —
-        # the larger of the two switching branches read from their nearer stored
-        # endpoints — never the outgoing line's own far-anchored product, which
-        # can round below both branches when the anchor is distant.
-        crossing_value = _branch_envelope_value(
+        # the larger of the two switching branches read from their stored
+        # endpoints — and the right record carries the branch that owns that
+        # float. The duplicated-node reader takes the right record at the shared
+        # abscissa, so when the outgoing branch still dominates the emitted float
+        # (the true switch is a fraction of a float to the right) the right
+        # record must carry the outgoing policy, deferring the switch, not the
+        # incoming policy of a branch that does not yet win there.
+        crossing_value, right_owner = _branch_envelope_value(
             x=x_next, winner=winner, incoming=incoming, links=links
         )
         emitted = _IntervalCrossings(
@@ -1139,8 +1200,9 @@ def _enumerate_interval_crossings(
             value=crossing_value,
             policy_left=links.anchor_policy[winner]
             + links.policy_slope[winner] * (x_next - links.anchor_grid[winner]),
-            policy_right=links.anchor_policy[incoming]
-            + links.policy_slope[incoming] * (x_next - links.anchor_grid[incoming]),
+            policy_right=links.anchor_policy[right_owner]
+            + links.policy_slope[right_owner]
+            * (x_next - links.anchor_grid[right_owner]),
             valid=emit,
         )
         # An emitted crossing whose rounded abscissa is not the true
@@ -1156,6 +1218,14 @@ def _enumerate_interval_crossings(
             )
         )
 
+        # The running winner hands off to the incoming branch at every emitted
+        # switch and every in-place landing; only a crossing onto the node or no
+        # overtake keeps it. The right record's own owner may still be the
+        # outgoing branch when it leads the emitted float beyond the competitor
+        # margin (a deferred policy switch), but that ownership choice does not
+        # change which line the scan tracks forward — carrying a marginally
+        # leading winner across a run of floats would re-enumerate the same
+        # crossing each step and exhaust the per-interval budget.
         new_winner = jnp.where(found & ~lands_on_node, incoming, winner).astype(
             jnp.int32
         )
