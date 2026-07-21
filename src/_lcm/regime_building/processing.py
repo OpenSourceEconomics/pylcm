@@ -379,6 +379,7 @@ def process_regimes(
             certainty_equivalent=user_regime.certainty_equivalent,
             stakeholders=stakeholders,
             weights=weights,
+            fold_only_regimes=fold_only_regimes,
         )
 
         stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -1659,6 +1660,7 @@ def _build_simulation_phase(
     certainty_equivalent: CertaintyEquivalent | None,
     stakeholders: tuple[str, ...] | None = None,
     weights: Mapping[str, float] | None = None,
+    fold_only_regimes: frozenset[RegimeName] = frozenset(),
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -1738,6 +1740,7 @@ def _build_simulation_phase(
         all_grids=all_grids,
         regime_params_template=regime_params_template,
         variables=variables,
+        fold_only_regimes=fold_only_regimes,
     )
     functions = core.functions
     constraints = core.constraints
@@ -1857,6 +1860,23 @@ def _build_simulation_phase(
         else:
             value_constraints = MappingProxyType({})
             same_period_refs = MappingProxyType({})
+        # fold-round6/round7 simulate parity: simulate re-optimizes Q over the
+        # grid and reads the continuation exactly as solve does, off the SAME
+        # `solve_transitions` (which already carries the folded-only target's
+        # injected empty bundle, keeping it enumerable). But a folded-only
+        # target's stored V is a scalar with its folded axes integrated out,
+        # while its `VInterpolationInfo` still lists them — so the unstripped
+        # info makes the continuation read demand a `next_<shock>` coordinate
+        # the source never realises. Strip those folded axes for the simulate
+        # Q read exactly as the solve phase does (reusing the same helper,
+        # keyed on the transitions the Q read actually enumerates); every other
+        # simulate consumer keeps the unstripped info.
+        regime_to_v_interpolation_info_for_Q = _strip_folded_axes_for_scalar_targets(
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            transitions=solve_transitions,
+            fold_only_regimes=fold_only_regimes,
+            all_grids=all_grids,
+        )
         Q_and_F_functions = _build_Q_and_F_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
             functions=functions,
@@ -1864,7 +1884,7 @@ def _build_simulation_phase(
             transitions=solve_transitions,
             stochastic_transition_names=solve_stochastic_transition_names,
             compute_regime_transition_probs=solve_compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
             ages=ages,
             flat_param_names=flat_param_names,
             certainty_equivalent=certainty_equivalent,

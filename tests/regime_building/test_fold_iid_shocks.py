@@ -1228,3 +1228,152 @@ def test_folded_only_per_target_target_is_enumerable_in_transitions():
     assert "folded_B" in transitions
     assert dict(transitions["folded_B"]) == {}
     assert "dead_C" not in transitions
+
+
+# --------------------------------------------------------------------------------------
+# simulate-side parity for fold-round6/round7: pylcm's simulate RE-OPTIMIZES Q over
+# the grid (it does not interpolate the stored policy), so it reads the continuation
+# exactly as solve does. The folded-only per-target continuation must therefore enter
+# the SIMULATED argmax the same way it enters the solved E[V] — the folded target must
+# stay enumerable AND be read as its scalar V (no phantom `next_<shock>` coordinate).
+# --------------------------------------------------------------------------------------
+
+
+def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
+    """`_make_route_to_folded_target_regimes` with an inert `wealth` state on `src`.
+
+    Identical routing/values, but `src` declares a continuous `wealth` state that
+    does not enter utility (`+ 0.0 * wealth`) and is not carried to any target. It
+    exists only to give the forward simulation a per-subject state axis: a stateless
+    SINGLETON regime with actions is a separate, pre-existing simulate limitation (a
+    0-d argmax index reaches `vmapped_unravel_index`; the guard at
+    `simulate._simulate_regime_in_period` only broadcasts the stateless COLLECTIVE
+    case). Adding the state isolates the fold-only continuation behavior under test.
+
+    The fold-only bug is preserved: `folded_B`'s only state is still the target-local
+    folded `bshock`, and `wealth` is a plain (non-process) state the source does not
+    carry into `folded_B`, so `src`'s transition bundle to `folded_B` is still empty.
+    """
+    from lcm import LinSpacedGrid, fixed_transition  # noqa: PLC0415
+    from lcm.transition import MarkovTransition  # noqa: PLC0415
+
+    def _route_to_B(work: DiscreteAction) -> FloatND:
+        return jnp.asarray(work, dtype=float)
+
+    def _route_to_C(work: DiscreteAction) -> FloatND:
+        return 1.0 - jnp.asarray(work, dtype=float)
+
+    def _u_src(work: DiscreteAction, wealth: FloatND) -> FloatND:
+        # leisure (code 0) -> 0.5; work (code 1) -> 0.0. `wealth` is inert.
+        return 0.5 * (1.0 - jnp.asarray(work, dtype=float)) + 0.0 * wealth
+
+    def _u_folded_B(bshock: FloatND, work: DiscreteAction) -> FloatND:
+        return 1.0 + bshock + 0.0 * jnp.asarray(work, dtype=float)
+
+    src = Regime(
+        transition={
+            "folded_B": MarkovTransition(_route_to_B),
+            "dead_C": MarkovTransition(_route_to_C),
+        },
+        active=lambda age: age < 1,
+        states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=3)},
+        state_transitions={"wealth": fixed_transition("wealth")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
+    )
+    folded_B = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"bshock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_folded_B},
+    )
+    dead_C = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        functions={"utility": lambda: 0.0},
+    )
+    return {"src": src, "folded_B": folded_B, "dead_C": dead_C}
+
+
+def _simulate_route(
+    regimes: dict[str, Regime], *, discount: float
+) -> tuple[MappingProxyType, object]:
+    """Solve then simulate the route-to-folded-target model; return the sim result."""
+    from _lcm.simulation.simulate import simulate  # noqa: PLC0415
+
+    regime_names_to_ids = MappingProxyType(
+        {"src": jnp.int32(0), "folded_B": jnp.int32(1), "dead_C": jnp.int32(2)}
+    )
+    processed = process_regimes(
+        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        ages=_AGES,
+        regime_names_to_ids=regime_names_to_ids,
+        enable_jit=False,
+    )
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType({"H__discount_factor": jnp.asarray(discount)}),
+            "folded_B": MappingProxyType({}),
+            "dead_C": MappingProxyType({}),
+        }
+    )
+    solution, _sim_policies, dissolution_flags = solve(
+        flat_params=flat_params,
+        ages=_AGES,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    )
+    initial_conditions = MappingProxyType(
+        {
+            "age": jnp.array([0.0]),
+            "regime_id": jnp.array([0], dtype=jnp.int32),
+            "wealth": jnp.array([0.0]),
+        }
+    )
+    result = simulate(
+        flat_params=flat_params,
+        initial_conditions=initial_conditions,
+        regimes=processed,
+        regime_names_to_ids=regime_names_to_ids,
+        logger=get_logger(log_level="off"),
+        period_to_regime_to_V_arr=solution,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
+        ages=_AGES,
+        simulation_output_dtypes={},
+        seed=0,
+    )
+    return solution, result
+
+
+def test_folded_only_per_target_continuation_enters_simulated_value():
+    """The folded-only continuation enters the SIMULATED argmax (round6/7 parity).
+
+    Simulate re-optimizes Q over the grid, so `src`'s simulated period-0 decision
+    must value the folded-only target `folded_B` (scalar V = 1.0) exactly as solve
+    does: route to B for the discounted continuation `discount * 1.0 = 0.9`, which
+    beats `dead_C`'s immediate 0.5.
+
+    Pre-fix (simulate side of fold-round6 unpatched), the simulate Q read passed the
+    UNSTRIPPED interpolation info for `folded_B` (whose stored V is the scalar 1.0 but
+    whose `VInterpolationInfo` still lists the folded `bshock` axis), so it demanded a
+    `next_bshock` coordinate the source never realises / indexed an axis the scalar V
+    lacks — the simulated decision was wrong or the run crashed. Post-fix, the folded
+    axis is stripped for the simulate continuation read (parity with solve), so `src`
+    simulates `work == 1` (route to B) with recomputed V = discount.
+    """
+    discount = 0.9
+    solution, result = _simulate_route(
+        _make_route_to_folded_target_regimes_stateful(), discount=discount
+    )
+    # Sanity: the solve side already values B correctly at every `wealth` node
+    # (V_src == discount; `wealth` is inert).
+    np.testing.assert_allclose(np.asarray(solution[0]["src"]), discount, atol=1e-5)
+    # The simulated period-0 decision must reflect the folded-only continuation:
+    # route to B (work code 1), recomputed value = discount * 1.0.
+    period_0 = result.raw_results["src"][0]
+    np.testing.assert_array_equal(np.asarray(period_0.actions["work"]), [1])
+    np.testing.assert_allclose(
+        np.asarray(period_0.V_arr).reshape(-1), [discount], atol=1e-5
+    )
