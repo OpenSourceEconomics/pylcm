@@ -1,3 +1,5 @@
+from typing import Any
+
 import pandas as pd
 import pytest
 from jax import numpy as jnp
@@ -575,7 +577,7 @@ def _lag1_autocorrelation(gridpoints, P):
 def test_iid_normal_stationary_moments(gauss_hermite):
     """IID Normal stationary mean and std match mu and sigma."""
     mu, sigma = 1.5, 0.8
-    extra = {"gauss_hermite": gauss_hermite}
+    extra: dict[str, Any] = {"gauss_hermite": gauss_hermite}
     if not gauss_hermite:
         extra["n_std"] = 4.0
     grid = NormalIIDProcess(n_points=21, mu=mu, sigma=sigma, **extra)
@@ -590,7 +592,7 @@ def test_iid_normal_stationary_moments(gauss_hermite):
 def test_iid_lognormal_stationary_moments(gauss_hermite):
     """IID LogNormal stationary log-mean and log-std match mu and sigma."""
     mu, sigma = 0.5, 0.3
-    extra = {"gauss_hermite": gauss_hermite}
+    extra: dict[str, Any] = {"gauss_hermite": gauss_hermite}
     if not gauss_hermite:
         extra["n_std"] = 4.0
     grid = LogNormalIIDProcess(n_points=21, mu=mu, sigma=sigma, **extra)

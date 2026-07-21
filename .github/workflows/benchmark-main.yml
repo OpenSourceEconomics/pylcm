@@ -24,7 +24,7 @@ jobs:
             sleep 60
           done
           echo "GPU is free."
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install environment
