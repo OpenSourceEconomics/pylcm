@@ -1428,17 +1428,19 @@ def _assemble_gate_kwargs(
                 # flag for every active collective regime, so this branch is
                 # unreachable there; it fires only when a SIMULATE caller
                 # invoked the internal `simulate()` without threading
-                # `period_to_regime_to_dissolution_flags` (e.g. the public
-                # `Model.simulate()`, which does not yet surface it — see
-                # `pylcm-extension-collective-regimes.md` v2.1, slice 6). Fail
-                # clearly instead of `None > 0.5`.
+                # `period_to_regime_to_dissolution_flags`. `Model.simulate`
+                # surfaces the flags publicly (via the auto-solve path or the
+                # `period_to_regime_to_dissolution_flags` argument), so this is
+                # reachable only when the flags were neither auto-solved nor
+                # supplied. Fail clearly instead of `None > 0.5`.
                 msg = (
                     "This gate reads 'D_target', but no dissolution-flag array "
-                    "was supplied for the target regime at this period. "
-                    "Forward simulation needs `period_to_regime_to_dissolution_flags` "
-                    "(the third element `backward_induction.solve` returns) "
-                    "threaded through to `simulate()`; the public "
-                    "`Model.simulate()` does not yet surface it."
+                    "was supplied for the target regime at this period. Forward "
+                    "simulation needs `period_to_regime_to_dissolution_flags` "
+                    "(the `dissolution_flags` field of `solve`'s result). Either "
+                    "let `Model.simulate` solve first (auto-solve threads them), "
+                    "or pass `Model.solve(return_dissolution_flags=True)`'s flags "
+                    "to `Model.simulate(period_to_regime_to_dissolution_flags=...)`."
                 )
                 raise NotImplementedError(msg)
             gate_kwargs[arg] = d_value > _D_THRESHOLD

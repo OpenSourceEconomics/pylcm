@@ -133,9 +133,11 @@ def simulate(
             COLLECTIVE regime's dissolution flag `D` (E2/E4), as returned by
             `backward_induction.solve`'s third element. Empty (the default)
             for models without gated edges reading `D_target`, or when the
-            caller does not have it at hand — not yet surfaced through the
-            public `Model.solve`/`Model.simulate` API (mirrors solve's own
-            internal-only status; a public accessor is a follow-up).
+            caller does not have it at hand. Surfaced publicly by
+            `Model.solve(return_dissolution_flags=True)` and the
+            `period_to_regime_to_dissolution_flags` argument of
+            `Model.simulate` (and threaded automatically through the
+            auto-solve path when `Model.simulate` solves first).
         own_stakeholder: ROW-SPLIT (synthetic mode). This simulate() call's
             fixed own-role for dissolution routing on a COLLECTIVE source's
             gated edge — e.g. "f" for an all-women population tracking
@@ -144,8 +146,8 @@ def simulate(
             `_lcm.simulation.gated_routing._select_own_leg`). `None`
             (default) preserves the original "first declared leg" routing
             convention exactly — byte-identical for any caller that does
-            not pass it (e.g. the public `Model.simulate()`, not yet
-            surfaced here either).
+            not pass it. Surfaced publicly as the `own_stakeholder`
+            argument of `Model.simulate`.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.

@@ -629,6 +629,7 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
+        own_stakeholder: str | None = None,
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
@@ -691,6 +692,19 @@ class Model:
                 compilation. Only used when `period_to_regime_to_V_arr` is `None`
                 (i.e. when solve runs automatically). Defaults to the number of
                 physical CPU cores.
+            own_stakeholder: For a model with a COLLECTIVE dissolution `GatedEdge`,
+                the row's own fixed role (a source stakeholder name, e.g. `"f"` for
+                an all-women synthetic-partner population, `"m"` for all-men): the
+                leg whose `source_stakeholder` matches it decides each dissolutiond
+                row's own continuing regime membership (ROW-SPLIT "synthetic mode",
+                EKL Appendix F's two independent single-gender cohorts). `None`
+                (the default) falls back to the FIRST declared leg — correct for a
+                singleton source, but for a collective source it silently picks
+                one partner's role, so a collective-simulate caller should set it.
+                A value matching no leg of a collective source's edge raises
+                `ValueError`. Genuinely mixed populations with differing per-row
+                roles, or two linked rows that unlink on dissolution, remain the
+                deferred "linked mode".
 
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
@@ -831,6 +845,7 @@ class Model:
             seed=seed,
             subject_batch_size=compile_batch_size,
             original_n_subjects=original_n_subjects,
+            own_stakeholder=own_stakeholder,
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads

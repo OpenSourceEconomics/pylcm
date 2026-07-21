@@ -374,6 +374,7 @@ def process_regimes(
     _fail_if_gated_edges_invalid(
         user_regimes=user_regimes,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        regimes_to_active_periods=regimes_to_active_periods,
     )
 
     # COLLECTIVE-REGIMES (fold / E2 / E3' interaction, completed guard):
@@ -923,6 +924,7 @@ def _fail_if_gated_edges_invalid(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
 ) -> None:
     """Validate every `gated_edges` declaration against the other regimes (E3').
 
@@ -930,7 +932,10 @@ def _fail_if_gated_edges_invalid(
     leg's OPEN-branch target component names a target stakeholder (or is `None`
     for a singleton target); each fallback and gate reference names an existing
     regime, with a stakeholder iff that regime is collective, and a projection
-    covering exactly that regime's states.
+    covering exactly that regime's states; and every regime the edge reads
+    (fallbacks + gate references) is active in every period its target is active
+    (F4 co-activity: the edge's Wbar reads those same-period Vs whenever the
+    target is solved, so a reference that was never solved cannot be read).
 
     Raises:
         ModelInitializationError: On the first violated declaration.
@@ -967,6 +972,67 @@ def _fail_if_gated_edges_invalid(
                     user_regimes=user_regimes,
                     regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 )
+            _fail_if_gated_edge_references_inactive(
+                prefix=prefix,
+                source_name=regime_name,
+                target_name=target_name,
+                edge=edge,
+                regimes_to_active_periods=regimes_to_active_periods,
+            )
+
+
+def _fail_if_gated_edge_references_inactive(
+    *,
+    prefix: str,
+    source_name: RegimeName,
+    target_name: RegimeName,
+    edge: object,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+) -> None:
+    """Reject a gated edge whose fallback / gate reference is not co-active with
+    its target on every period whose ``Wbar`` is actually consumed (E3', F4).
+
+    COLLECTIVE-REGIMES (E3', F4). `_roll_gated_edges` folds the edge's ``Wbar``
+    in each period ``t`` the TARGET regime is solved, reading each fallback's and
+    gate reference's SAME-PERIOD V, and that ``Wbar`` is consumed by the SOURCE
+    one period earlier (at ``t-1``). If a referenced regime is inactive in a
+    period whose ``Wbar`` is consumed, its V does not exist and silently rolling
+    the previous ``Wbar`` would feed the source a STALE later-period value.
+
+    The consumed periods are exactly ``{t : t in active(target) and
+    (t-1) in active(source)}`` — NOT every period the target is active. A period
+    ``t`` where the target is active but the source is not active at ``t-1``
+    (e.g. a self-loop edge at the target's earliest active period) produces a
+    ``Wbar`` no source ever reads, so a reference may legitimately be inactive
+    there; requiring co-activity across ALL target-active periods would wrongly
+    reject such a model (see
+    ``test_repeating_self_loop_gated_edge_simulates_past_activity_boundary``).
+    Require every referenced regime to be active on every consumed period so the
+    roll is well defined wherever its result is used.
+    """
+    edge = cast("Any", edge)
+    reference_regime_names = {leg.fallback.regime for leg in edge.legs.values()} | {
+        ref.regime for ref in edge.gate_refs.values()
+    }
+    source_periods = set(regimes_to_active_periods[source_name])
+    consumed_periods = {
+        t for t in regimes_to_active_periods[target_name] if (t - 1) in source_periods
+    }
+    for ref_regime_name in sorted(reference_regime_names):
+        missing_periods = sorted(
+            consumed_periods - set(regimes_to_active_periods[ref_regime_name])
+        )
+        if missing_periods:
+            msg = (
+                f"{prefix}reference regime '{ref_regime_name}' must be active "
+                "(and hence solved) in every period the edge target "
+                f"'{target_name}' is active AND the source '{source_name}' is "
+                "active one period earlier (so the edge's Wbar is actually "
+                f"consumed); but it is not active in such period(s) "
+                f"{missing_periods}. A gated-edge reference V that was never "
+                "solved cannot be read."
+            )
+            raise ModelInitializationError(msg)
 
 
 def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: object) -> None:

@@ -590,6 +590,19 @@ def _roll_gated_edges(
             if target_name not in period_solution:
                 continue
             if any(ref not in period_solution for ref in edge.reference_regimes):
+                # COLLECTIVE-REGIMES (E3', F4). The target was solved this period
+                # but a reference regime it reads was not — so its same-period V
+                # does not exist and this edge's Wbar cannot be folded here. This
+                # is reached ONLY at an unconsumed boundary: the construction-time
+                # guard `_fail_if_gated_edge_references_inactive` rejects any model
+                # where a reference is absent in a period whose Wbar is actually
+                # consumed (target active at t AND source active at t-1). What
+                # survives to here is a target-active period with no source one
+                # period earlier (e.g. a self-loop edge at the target's earliest
+                # active period), whose rolled Wbar is never read — so keeping the
+                # previous value is correct, not a stale-value bug. (Simulate
+                # tolerates the same boundary; see
+                # test_repeating_self_loop_gated_edge_simulates_past_activity_boundary.)
                 continue
             fold = source.gated_edge_folds[target_name]
             same_period_mapping = build_same_period_mapping_for_fold(

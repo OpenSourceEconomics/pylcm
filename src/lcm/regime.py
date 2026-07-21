@@ -350,9 +350,17 @@ class Regime:
     `pylcm-extension-collective-regimes.md` v2.1, §2 E1). A non-terminal
     collective regime's transition targets must all be collective regimes with
     the identical `stakeholders` tuple — per-stakeholder routing to different
-    regimes (value gates, dissolution) is E3'. Collective-regime simulation, EV1
-    taste shocks, nonlinear certainty equivalents, and non-GridSearch solvers
-    on a collective regime still raise `NotImplementedError`.
+    regimes (value gates, dissolution) is E3'. EV1 taste shocks, nonlinear
+    certainty equivalents, and non-GridSearch solvers on a collective regime
+    still raise `NotImplementedError`. Collective-regime **simulation** (E4) is
+    implemented for the reduced synthetic-cohort envelope: one fixed-size
+    population, an APPROXIMATE off-grid value-gate router (the simulate gate
+    interpolates already-maximized target V — not the exact E4 recompute; see
+    `get_edge_simulate_gate_evaluator`), and a per-call `own_stakeholder` (or
+    first-declared-leg) row role. Deliberately deferred follow-ups: an exact
+    off-grid E4 max-recompute, linked two-row dissolution reallocation,
+    between-period child-age (carried-state) reassignment, and transient-node
+    shock folding (full-scale EKL's x27-81 node memory).
     """
 
     weights: Mapping[str, float] | None = None

@@ -15,14 +15,17 @@ IR mask empties, ``D=True``). The mixture is the strict ``jnp.where`` — never 
 linear ``kappa*V + (1-kappa)*V`` — so a ``-inf`` target cell never leaks NaN.
 """
 
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.processing import (
+    _fail_if_gated_edge_references_inactive,
+    process_regimes,
+)
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
@@ -765,3 +768,101 @@ def test_singleton_source_with_two_legs_is_rejected():
                 )
             },
         )
+
+
+def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> object:
+    """A minimal stand-in for a user gated edge exposing only the attributes the
+    F4 co-activity guard reads: `.legs[*].fallback.regime` and
+    `.gate_refs[*].regime`.
+    """
+    leg = SimpleNamespace(fallback=SimpleNamespace(regime=fallback_regime))
+    ref = SimpleNamespace(regime=gate_ref_regime)
+    return SimpleNamespace(
+        legs=MappingProxyType({"f": leg}),
+        gate_refs=MappingProxyType({"g": ref}),
+    )
+
+
+def test_gated_edge_reference_inactive_in_consumed_period_is_rejected():
+    """F4: a gate reference (or fallback) inactive in a period whose ``Wbar`` is
+    actually CONSUMED (target active at t, source active at t-1) must be rejected
+    at construction, so the solve-side `_roll_gated_edges` never feeds the source
+    a stale later-period ``Wbar``.
+    """
+    edge = _edge_with_refs(
+        fallback_regime="single_f_terminal", gate_ref_regime="single_m_terminal"
+    )
+    regimes_to_active_periods = MappingProxyType(
+        {
+            "single_f": (0,),  # source active in period 0
+            "married_terminal": (1,),  # target active in period 1 -> consumed
+            "single_f_terminal": (1,),  # co-active — fine
+            "single_m_terminal": (2,),  # NOT active in consumed period 1
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"single_m_terminal.*active.*\[1\]",
+    ):
+        _fail_if_gated_edge_references_inactive(
+            prefix="Regime 'single_f', gated_edges['married_terminal']: ",
+            source_name="single_f",
+            target_name="married_terminal",
+            edge=edge,
+            regimes_to_active_periods=regimes_to_active_periods,
+        )
+
+
+def test_gated_edge_coactive_references_pass():
+    """F4: references active in every consumed period pass the guard."""
+    edge = _edge_with_refs(
+        fallback_regime="single_f_terminal", gate_ref_regime="single_m_terminal"
+    )
+    regimes_to_active_periods = MappingProxyType(
+        {
+            "single_f": (0,),
+            "married_terminal": (1,),
+            "single_f_terminal": (1,),
+            "single_m_terminal": (1,),
+        }
+    )
+    # No raise: every referenced regime covers the consumed period {1}.
+    _fail_if_gated_edge_references_inactive(
+        prefix="Regime 'single_f', gated_edges['married_terminal']: ",
+        source_name="single_f",
+        target_name="married_terminal",
+        edge=edge,
+        regimes_to_active_periods=regimes_to_active_periods,
+    )
+
+
+def test_gated_edge_reference_inactive_at_unconsumed_boundary_passes():
+    """F4 (over-reach guard): a self-loop edge's reference may be inactive in a
+    target-active period whose ``Wbar`` is NEVER consumed — the target's earliest
+    active period, where no source exists one period earlier. Requiring
+    co-activity across ALL target-active periods would wrongly reject the
+    legitimate repeating self-loop model (regression: see
+    ``test_collective_regime_simulate.py::
+    test_repeating_self_loop_gated_edge_simulates_past_activity_boundary``).
+    """
+    # Self-loop: source == target == "src", active in periods {0, 1}; the
+    # fallback is active in {1, 2}, i.e. NOT in target-active period 0 — but
+    # period 0's Wbar is unconsumed (no source at period -1), so it is legal.
+    edge = _edge_with_refs(
+        fallback_regime="src_fallback", gate_ref_regime="src_fallback"
+    )
+    regimes_to_active_periods = MappingProxyType(
+        {
+            "src": (0, 1),
+            "src_fallback": (1, 2),
+        }
+    )
+    # Consumed = {t in {0,1} : t-1 in {0,1}} = {1}; fallback active {1,2} covers
+    # it. No raise, even though the fallback is absent in target-active period 0.
+    _fail_if_gated_edge_references_inactive(
+        prefix="Regime 'src', gated_edges['src']: ",
+        source_name="src",
+        target_name="src",
+        edge=edge,
+        regimes_to_active_periods=regimes_to_active_periods,
+    )
