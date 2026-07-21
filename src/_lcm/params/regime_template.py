@@ -17,15 +17,25 @@ from _lcm.typing import (
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import UserFunction
 
 
-def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTemplate:
+def create_regime_params_template(
+    user_regime: UserRegime, *, representative_age: float | None = None
+) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
     Discover parameters from function signatures via `dags.tree`. Parameters
     are function arguments that are not states, actions, regime functions,
     `next_<state>` outputs, or special variables (`period`, `age`, `E_next_V`).
+
+    `AgeSpecializedFunction` nodes carry a `(*args, **kwargs)` wrapper signature, so the
+    template is read off a **representative** concrete resolution `build(age)` at
+    `representative_age` (the first active age). The `AgeSpecializedFunction`
+    contract makes the call signature age-invariant, so the representative's
+    template is every age's template. `representative_age` is required whenever
+    the regime contains an `AgeSpecializedFunction` node.
 
     For `Phased` entries, the template contains the **union** of both
     variants' parameters so the user can provide a single flat params dict
@@ -56,7 +66,9 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
     function_params: dict[FunctionName, dict[str, str]] = {}
     per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
 
-    for name, func in _collect_all_functions_for_template(user_regime).items():
+    for name, func in _collect_all_functions_for_template(
+        user_regime, representative_age=representative_age
+    ).items():
         if isinstance(func, Phased):
             tree_solve = dt.create_tree_with_input_types({name: func.solve})
             tree_sim = dt.create_tree_with_input_types({name: func.simulate})
@@ -215,7 +227,7 @@ def _fail_if_runtime_grid_shadows_function(
 
 
 def _collect_all_functions_for_template(
-    user_regime: UserRegime,
+    user_regime: UserRegime, *, representative_age: float | None = None
 ) -> dict[FunctionName | TransitionFunctionName, UserFunction | Phased]:
     """Collect all regime functions, preserving phase-variant entries.
 
@@ -243,7 +255,47 @@ def _collect_all_functions_for_template(
             user_regime.states, user_regime.state_transitions
         )
         result |= _regime_transition_entries(user_regime.transition)
-    return result
+    return _resolve_age_specialized(result, representative_age)
+
+
+def _resolve_age_specialized(
+    collected: dict[FunctionName | TransitionFunctionName, UserFunction | Phased],
+    representative_age: float | None,
+) -> dict[FunctionName | TransitionFunctionName, UserFunction | Phased]:
+    """Replace every `AgeSpecializedFunction` leaf with its representative resolution.
+
+    Descends into both sides of a `Phased` entry, so phase-split specialized
+    functions also surface their concrete parameters. The template only needs
+    each node's (age-invariant) call signature, so a single
+    `build(representative_age)` per node suffices. Raise if the regime carries
+    an `AgeSpecializedFunction` node but no representative age was supplied.
+    """
+
+    def _has_marker(value: object) -> bool:
+        if isinstance(value, Phased):
+            return _has_marker(value.solve) or _has_marker(value.simulate)
+        return isinstance(value, AgeSpecializedFunction)
+
+    if not any(_has_marker(func) for func in collected.values()):
+        return collected
+    if representative_age is None:
+        raise ValueError(
+            "The regime contains an `AgeSpecializedFunction` node, so "
+            "`representative_age` is required to read its concrete function's "
+            "parameters."
+        )
+
+    def _resolve(value: UserFunction | Phased) -> UserFunction | Phased:
+        if isinstance(value, Phased):
+            return Phased(
+                solve=_resolve(value.solve),  # ty: ignore[invalid-argument-type]
+                simulate=_resolve(value.simulate),  # ty: ignore[invalid-argument-type]
+            )
+        if isinstance(value, AgeSpecializedFunction):
+            return value.build(representative_age)
+        return value
+
+    return {name: _resolve(func) for name, func in collected.items()}
 
 
 def _drop_engine_provided_args(

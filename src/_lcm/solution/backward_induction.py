@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 import gc
 import logging
@@ -37,6 +38,24 @@ from _lcm.utils.logging import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND
+
+
+def _states_for_period(
+    regime: Regime, state_action_space: StateActionSpace, period: int
+) -> Mapping[str, object]:
+    """Current-period state axes, overriding age-varying states with period-t nodes.
+
+    For a regime with `AgeSpecializedGrid` states, replace the representative base
+    axis with this period's grid nodes so period-t's value function is tabulated on
+    period-t's grid (consistent with the continuation interpolation, which reads
+    V_{t+1} on period-(t+1)'s grid). Same shape as the base, so the shared compiled
+    kernel is not retraced. Age-invariant regimes return the base axis unchanged.
+    """
+    # getattr (not direct access) so a duck-typed mock regime without the field works.
+    axes = getattr(regime.solution, "period_state_axes", None)
+    if axes is not None and period in axes:
+        return {**state_action_space.states, **axes[period]}
+    return state_action_space.states
 
 
 def solve(
