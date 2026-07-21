@@ -494,6 +494,119 @@ def test_sum_regime_mixture_collective_allows_unequal_target_and_stakeholder_cou
     assert [float(x) for x in out] == pytest.approx([2.3, 2.3])
 
 
+# The round-10 counterexample (external re-review): a valid strictly-positive
+# 5-target float64 mixture (probs sum to exactly 1.0) on which the round-8 name-sort
+# made the float64 bits — and a NON-TIED household argmax — a function of the
+# arbitrary regime LABELS. A pure alpha-renaming (same probabilities, same
+# continuations, only the dict keys change) reorders the non-associative name-sorted
+# sum: across the 120 name bijections the name-sort produces 37 distinct outputs,
+# 20 of which choose the action OPPOSITE to exact arithmetic. `_sum_regime_mixture`
+# now reduces the per-target contributions in VALUE order, provably invariant to
+# alpha-renaming. See `_sum_regime_mixture`.
+_ALPHA_RENAME_PROBS = [
+    0.17226549255821572,
+    0.33944387307107820,
+    0.06951303254907440,
+    0.15995998262955247,
+    0.25881761919207920,
+]
+_ALPHA_RENAME_VALS = [
+    -6.744894126570187,
+    -9.669040336801100,
+    4.023434514395978,
+    0.244618606567219,
+    15.911066759940047,
+]
+# A representable competing action strictly between the exact mixture and the
+# name-sorted variants: some relabelings pick it, others the stochastic action.
+_ALPHA_RENAME_COMPETING = -0.007134269741330662
+
+
+def _old_name_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
+    """PRE-round-10 recipe: sort `(name, p, V)` by NAME, stack, one zero-safe sum.
+
+    Replays the label-dependent reduction in-process so the regression can PROVE the
+    name-sort flips the bits (and a non-tied argmax) under a pure alpha-renaming
+    without reverting `src/`. The ONLY difference from `_sum_regime_mixture` is the
+    missing value-sort of the zero-safe contributions before `jnp.sum`.
+    """
+    order = sorted(range(len(names)), key=lambda i: names[i])
+    probs = jnp.stack([w[i] for i in order], axis=0)
+    values = jnp.stack([v[i] for i in order], axis=0)
+    return jnp.sum(zero_safe_weighted_term(probs, values), axis=0)
+
+
+def _new_value_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
+    """Drive `_sum_regime_mixture` (the code under test) under an alpha-renaming.
+
+    Each economic term `i` keeps its own `(prob, value)`; only its NAME (`names[i]`)
+    changes across relabelings.
+    """
+    terms = [(names[i], w[i], v[i]) for i in range(len(names))]
+    return _sum_regime_mixture(terms, like=v[0])
+
+
+def _alpha_rename_mixture(reducer: object, names: list[str]) -> FloatND:
+    """Broadcast the round-10 mixture over an 8x8 carrier through two nested `vmap`s
+    inside `jit` — exactly the collective site's structure — and reduce it with
+    `reducer` under the alpha-renaming `names`, returning one carrier cell."""
+
+    def core(w: FloatND, v: FloatND) -> FloatND:
+        return reducer(names, w, v)
+
+    carrier = jnp.ones((8, 8))
+    w = jnp.asarray(_ALPHA_RENAME_PROBS)[:, None, None] * carrier
+    v = jnp.asarray(_ALPHA_RENAME_VALS)[:, None, None] * carrier
+    f = jax.jit(jax.vmap(jax.vmap(core, in_axes=(1, 1)), in_axes=(2, 2)))
+    return f(w, v)[0, 0]
+
+
+def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
+    """F1 (round-10): the value-ordered reduction is BIT-invariant to a pure
+    alpha-renaming of the regimes, where the round-8 name-sort was not.
+
+    A pure alpha-renaming is economically inert (same probabilities, same
+    continuations, only the dict keys change), so the household argmax must not
+    depend on it. `_sum_regime_mixture` now reduces the per-target contributions in
+    VALUE order (`jnp.sort` of the zero-safe `p_r*V_r` along the target axis before
+    `jnp.sum`), which is a deterministic function of the contribution MULTISET and
+    hence provably invariant to relabeling. This asserts bit-identity AND a single
+    policy across ALL 120 name bijections, and PROVES the pre-round-10 name-sort
+    (`_old_name_sorted_mixture`, replayed in-process) produced many distinct bit
+    patterns AND reversed the non-tied argmax.
+    """
+    exact = float(
+        sum(
+            Fraction(p) * Fraction(v)
+            for p, v in zip(_ALPHA_RENAME_PROBS, _ALPHA_RENAME_VALS, strict=True)
+        )
+    )
+    exact_side = exact > _ALPHA_RENAME_COMPETING
+
+    new_bits: set[object] = set()
+    new_policy: set[bool] = set()
+    old_bits: set[object] = set()
+    old_policy: set[bool] = set()
+    with _x64(enabled=True):
+        for perm in itertools.permutations(range(5)):
+            names = [str(p) for p in perm]
+            new_val = _alpha_rename_mixture(_new_value_sorted_mixture, names)
+            old_val = _alpha_rename_mixture(_old_name_sorted_mixture, names)
+            new_bits.add(_bits(new_val))
+            new_policy.add(bool(float(new_val) > _ALPHA_RENAME_COMPETING))
+            old_bits.add(_bits(old_val))
+            old_policy.add(bool(float(old_val) > _ALPHA_RENAME_COMPETING))
+
+    # pass-post: bit-identical across ALL 120 relabelings -> ONE label-independent
+    # policy, and it is the exact-arithmetic decision.
+    assert len(new_bits) == 1
+    assert new_policy == {exact_side}
+    # fail-pre proof: the name-sort's float64 bits AND its non-tied argmax both
+    # depend on the arbitrary regime labels.
+    assert len(old_bits) > 1
+    assert old_policy == {True, False}
+
+
 def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
     """F2: the real interpolation path is bit-exact vs the raw `w*v` corner sum.
 

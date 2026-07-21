@@ -39,36 +39,55 @@ def _sum_regime_mixture(
     """Reduce the regime mixture ``E[V']=Σ p_r·V_r`` as ONE zero-safe contraction.
 
     ``mixture_terms`` is a list of ``(target_name, prob_r, expected_V_r)`` — the
-    UNMULTIPLIED per-target probability and expected continuation. They are sorted by
-    target name (canonical, declaration-order-independent), stacked along a new leading
-    axis, and reduced with a single ``zero_safe_weighted_term`` + ``jnp.sum`` over that
-    axis. Two properties this buys over the earlier sequential left-fold
-    ``E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`` (round-8 external
+    UNMULTIPLIED per-target probability and expected continuation. The per-target
+    probabilities and continuations are stacked along a new leading (target) axis and
+    multiplied ONCE inside a single ``zero_safe_weighted_term``; the resulting
+    per-target contributions ``p_r·V_r`` are then reduced by a VALUE-ORDERED
+    ``jnp.sum`` — the contributions are ``jnp.sort``-ed along the target axis
+    before the sum. Two
+    properties this buys over the earlier sequential left-fold
+    ``E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`` (round-8/round-10 external
     re-review, both MEASURED reproduce-first):
 
     - **Accuracy.** Stacking the OPERANDS and multiplying once inside the reduction —
       NOT stacking the already-formed products — lands on the exact-policy side of the
-      round-8 pinned 5-target fixture (bits ...858) where the left-fold and
-      ``jnp.sum(jnp.stack(products))`` both land on the wrong side (bits ...842). It is
-      still NOT correctly-rounded: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the
+      round-8 pinned 5-target fixture (``> alternative`` bits ...843) where the
+      left-fold and ``jnp.sum(jnp.stack(products))`` both land on the wrong side
+      (bits ...842). It
+      is still NOT correctly-rounded: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the
       error scales with Σ|p_r·V_r|, hundreds of result-ULP, so a genuine knife-edge
-      argmax can still resolve either way. Deterministic knife-edge resolution would
-      need compensated/exact summation, which is not implemented.
-    - **Reproducibility.** The sort makes the reduction independent of the transition
-      mapping's iteration order; the left-fold changed a pinned-fixture policy under a
-      mere target permutation on the SAME backend (round-8 F2).
+      argmax can still resolve either way. Deterministic resolution AT a genuine
+      knife-edge would need compensated/exact summation, which is not implemented (a
+      value-sorted Neumaier compensated sum WAS measured and, on the round-10
+      counterexample, landed on the WRONG side of the competing action while the plain
+      value-sorted reduction landed exact-side, so it was NOT adopted).
+    - **Reproducibility (label-independence).** The reduction ORDER is a deterministic
+      function of the contribution VALUES — economically meaningful — and NEVER of the
+      arbitrary regime NAMES. The pre-round-10 code ``sorted(mixture_terms, key=name)``
+      removed the transition-mapping ITERATION-ORDER dependence but made the float64
+      summation order a function of the user's regime LABELS: a pure ALPHA-RENAMING of
+      the regimes (same probabilities, same continuations, only the dict keys change)
+      reordered the non-associative float64 sum and, MEASURED, moved the result across
+      37 distinct outputs over the 120 name bijections of a valid 5-target float64
+      mixture — reversing a non-tied household argmax on the round-10 counterexample.
+      Sorting the CONTRIBUTION MULTISET (``jnp.sort`` along the target axis) makes the
+      sum provably invariant to alpha-renaming: the multiset ``{p_r·V_r}`` is unchanged
+      by relabeling, and the sorted order (hence the summation order and its bits) is a
+      function of that multiset alone. The stacking order of ``mixture_terms`` is
+      therefore irrelevant (the sort canonicalises it), so no name-sort is needed.
 
-    Zero-mass safety is preserved (a zero ``p_r`` beside an admissible ``±inf`` V_r
-    contributes exactly 0). Cost: the K per-target continuations are materialised
-    together for the stacked reduction rather than folded one at a time — K is the
-    number of active next-period targets (small). ``mixture_terms`` is empty in a
+    Zero-mass safety is preserved (a zero ``p_r`` beside an admissible ``±inf`` V_r is
+    masked to exactly 0 by ``zero_safe_weighted_term`` BEFORE the sort, so a zero-mass
+    ``-inf`` contributes 0 and never survives the sort as ``-inf``). Cost: the K
+    per-target contributions are materialised together and sorted along the (small)
+    target axis, an O(K log K) sort on a tiny axis, rather than folded one at a time — K
+    is the number of active next-period targets. ``mixture_terms`` is empty in a
     terminal period with no active target; the mixture is then exactly ``zeros_like``.
     """
     if not mixture_terms:
         return jnp.zeros_like(like)
-    ordered = sorted(mixture_terms, key=lambda term: term[0])
-    probs = jnp.stack([prob for _, prob, _ in ordered], axis=0)
-    values = jnp.stack([value for _, _, value in ordered], axis=0)
+    probs = jnp.stack([prob for _, prob, _ in mixture_terms], axis=0)
+    values = jnp.stack([value for _, _, value in mixture_terms], axis=0)
     # Right-pad the probability rank to the value rank so the per-target weight
     # broadcasts over the TARGET axis (leading, axis 0) and is constant across any
     # trailing value-only axes. The collective site carries a trailing stakeholder
@@ -79,7 +98,15 @@ def _sum_regime_mixture(
     # or raising when K!=S. A no-op at the scalar/singleton sites (equal ranks).
     if probs.ndim < values.ndim:
         probs = probs.reshape(probs.shape + (1,) * (values.ndim - probs.ndim))
-    return jnp.sum(zero_safe_weighted_term(probs, values), axis=0)
+    # Reduce in VALUE order, not label order. `zero_safe_weighted_term` forms the
+    # zero-mass-safe per-target contributions `p_r*V_r` (masking a zero-mass `+-inf`
+    # to 0); sorting them along the target axis (axis 0) before `jnp.sum` makes the
+    # non-associative float64 reduction order a deterministic function of the
+    # contribution multiset -- provably invariant to an economically-inert
+    # alpha-renaming of the regimes -- where the previous name-sort made the bits
+    # (and a non-tied argmax) depend on the arbitrary regime labels. See the docstring.
+    contributions = zero_safe_weighted_term(probs, values)
+    return jnp.sum(jnp.sort(contributions, axis=0), axis=0)
 
 
 def get_Q_and_F(

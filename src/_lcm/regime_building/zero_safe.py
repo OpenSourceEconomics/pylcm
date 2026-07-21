@@ -187,8 +187,12 @@ Two round-7 statements were wrong, both confirmed reproduce-first on hmg-office 
   exact — the honest bound is absolute-plus-relative in the SUMMAND scale Σ|p_r·V_r|,
   not a fixed few result-ULP. And the left-fold's order-dependence meant a mere
   permutation of the target-declaration order could flip a pinned-fixture policy on
-  one backend; `_sum_regime_mixture` SORTS by target name before stacking, so the
-  result is invariant to declaration order.
+  one backend; `_sum_regime_mixture` reduces the per-target contributions in VALUE
+  order (round-10; a `jnp.sort` of the zero-safe `p_r*V_r` terms along the target
+  axis before the sum), so the result is invariant to declaration order AND to an
+  economically-inert alpha-renaming of the regimes. (Round 8 sorted by target NAME,
+  which fixed iteration order but still made the float64 bits — and a non-tied argmax
+  — a function of the arbitrary regime labels; see `_sum_regime_mixture`.)
 
 HONEST CONTRACT (supersedes every unconditional "bit-identical" statement below).
 `zero_safe_average` / `zero_safe_weighted_term` are (i) exact-zero-mass-SAFE
@@ -199,11 +203,15 @@ across backends, NOT removable by any vmap-safe expression restructuring (ROUND-
 and (iii) in float64, `zero_safe_average` is bit-identical to the exact `jnp.average`
 on the cases measured. Guarantee (iii) is scoped to the AVERAGE HELPER — a single
 vectorised reduction. The `Q_and_F` regime mixture is now `_sum_regime_mixture`, a
-single zero-safe contraction over the STACKED UNMULTIPLIED operands, sorted by target
-name (ROUND-8) — it lands on the exact-policy side of the pinned knife-edge fixture
-where the old `E += zero_safe_weighted_term(p_r, V_r)` left-fold did not, and is
-invariant to target-declaration order. It is still NOT correctly-rounded at every
-knife-edge: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the error is bounded by the
+single zero-safe contraction over the STACKED UNMULTIPLIED operands whose per-target
+contributions are reduced in VALUE order (ROUND-10: a `jnp.sort` along the target axis
+before `jnp.sum`; ROUND-8 sorted by target NAME) — it lands on the exact-policy side of
+the pinned knife-edge fixture where the old `E += zero_safe_weighted_term(p_r, V_r)`
+left-fold did not, and is invariant to target-declaration order AND to an
+economically-inert alpha-renaming of the regimes (the name-sort was not: it left the
+float64 bits, and a non-tied argmax, a function of the arbitrary regime labels).
+It is still NOT correctly-rounded at every knife-edge: under cancellation
+(Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the error is bounded by the
 SUMMAND scale, not a fixed few result-ULP, so a float32 (and, at a genuine knife-edge,
 even a float64) difference can still flip an ill-conditioned NEAR-tie — NOT an equality;
 the exact value has a unique correctly-rounded representative and the reduction error
