@@ -57,6 +57,14 @@ def _build_compute_intermediates_per_period(
     enable_jit: bool,
     certainty_equivalent: CertaintyEquivalent | None = None,
     next_state_names: frozenset[TransitionFunctionName] = frozenset(),
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
+    continuation_grid_signature: Callable[
+        [MappingProxyType[RegimeName, VInterpolationInfo], tuple[RegimeName, ...]],
+        Hashable,
+    ]
+    | None = None,
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
