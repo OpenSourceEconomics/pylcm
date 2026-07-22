@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
 
+from _lcm.certainty_equivalent import PowerMean
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
@@ -22,6 +23,8 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
+from lcm.solvers import NBEGM, NNBEGM, GridSearch
+from lcm.temporal_aggregation import H_epstein_zin
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -457,10 +460,13 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
     - terminal regimes have no continuation value to aggregate
-    - only `GridSearch` supports a nonlinear certainty equivalent; every
-      continuation-based solver inverts the Euler equation against its
-      targets' marginal value, which assumes an expected-utility (linear)
-      continuation
+    - `GridSearch` and `NBEGM` support a nonlinear certainty equivalent (the
+      Epstein-Zin recursion); the other endogenous-grid solvers' Euler inversion
+      assumes expected utility, so a declared certainty equivalent must be
+      rejected rather than silently ignored
+    - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
+      logsum is not invariant under the certainty-equivalent transform, so the
+      combination is rejected
     """
     if regime.certainty_equivalent is None:
         return []
@@ -470,12 +476,46 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if regime.solver.requires_continuation:
-        solver_name = type(regime.solver).__name__
+    if not isinstance(regime.solver, (GridSearch, NBEGM, NNBEGM)):
         error_messages.append(
-            f"The {solver_name} solver does not support a nonlinear "
-            "`certainty_equivalent`: the Euler inversion assumes expected "
-            "utility. Use GridSearch() for this regime."
+            f"The {type(regime.solver).__name__} solver does not support a "
+            "nonlinear `certainty_equivalent`: its Euler inversion assumes "
+            "expected utility. Use GridSearch(), NBEGM(), or NNBEGM() for "
+            "this regime."
+        )
+    if isinstance(regime.solver, (NBEGM, NNBEGM)):
+        # The endogenous-grid kernels implement the Epstein-Zin recursion for
+        # exactly one pairing: they read the power mean's `risk_aversion`
+        # parameter for the transform partials and the aggregator's
+        # intertemporal elasticity for the Euler inversion and period value.
+        # NNBEGM's inner solve runs the same NBEGM kernels, so the contract
+        # binds it identically. GridSearch aggregates any certainty
+        # equivalent in concrete values, so only the endogenous-grid routes
+        # are narrowed.
+        solver_name = type(regime.solver).__name__
+        if not isinstance(regime.certainty_equivalent, PowerMean):
+            error_messages.append(
+                f"{solver_name} implements the recursive certainty "
+                f"equivalent for `PowerMean` only, got "
+                f"{type(regime.certainty_equivalent).__name__}. Use "
+                f"`certainty_equivalent=PowerMean()` or solve the regime with "
+                f"GridSearch()."
+            )
+        if regime.functions.get("H") is not H_epstein_zin:
+            error_messages.append(
+                f"{solver_name} with a `certainty_equivalent` requires the "
+                "regime's aggregator to be `H_epstein_zin` "
+                '(`functions={"H": lcm.H_epstein_zin, ...}`): the Euler '
+                "inversion and period value read its intertemporal "
+                "elasticity. With a different `H` the kernels would solve a "
+                "recursion the regime does not declare."
+            )
+    if regime.taste_shocks is not None:
+        error_messages.append(
+            "A regime cannot combine `certainty_equivalent` with "
+            "`taste_shocks`: the extreme-value logsum is not invariant under "
+            "the certainty-equivalent transform, so the Epstein-Zin recursion "
+            "and taste shocks do not compose."
         )
     return error_messages
 

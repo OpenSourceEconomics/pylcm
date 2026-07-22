@@ -180,6 +180,11 @@ class NEGM(Solver):
         """NEGM nests a DC-EGM solve that inverts the Euler equation."""
         return True
 
+    @property
+    def n_stacked_carry_candidates(self) -> int:
+        """The published carry stacks the keeper plus one row per outer node."""
+        return int(self.outer_grid.to_jax().shape[0]) + 1
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
 
@@ -758,28 +763,37 @@ def _with_no_adjustment_outer_function(
     The inner resources function reads the outer post-decision (`next_<durable>`)
     by name. The adjuster binds it as a per-node param; the keeper instead holds
     it at its no-adjustment level, so the resources DAG computes
-    `next_<durable> = keep(<durable>)` from the durable leaf state. The injected
-    function declares the durable state as its single parameter, so DAG
-    concatenation wires the durable combo value into resources. With no
-    `no_adjustment_func`, `keep` is the identity (hold the stock).
+    `next_<durable> = keep(...)`. The injected function declares every argument the
+    map reads — the durable leaf state and any further states, params, or DAG nodes
+    (e.g. a permanent-income growth factor) — so concatenation wires each combo/DAG
+    value into resources. With no `no_adjustment_func`, `keep` is the identity.
     """
     durable_state = outer_post_decision.removeprefix("next_")
-    # Copy the durable's annotation (and the outer post-decision's consumer
-    # annotation) off the existing functions so the DAG's annotation-consistency
-    # check, which requires every consumer of a leaf to agree, stays satisfied.
-    durable_annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
+    # The outer post-decision keeps its consumer annotation off the existing
+    # functions so the DAG's annotation-consistency check stays satisfied.
     outer_annotation = _annotation_of_arg(
         functions=functions, arg_name=outer_post_decision
     )
+    if no_adjustment_func is None:
+        arg_names: tuple[str, ...] = (durable_state,)
+        args_spec = {
+            durable_state: _annotation_of_arg(
+                functions=functions, arg_name=durable_state
+            )
+        }
+    else:
+        annotations = ensure_annotations_are_strings(
+            get_annotations(no_adjustment_func)
+        )
+        arg_names = tuple(name for name in annotations if name != "return")
+        args_spec = {name: annotations[name] for name in arg_names}
+        args_spec[durable_state] = "ContinuousState"
 
-    @with_signature(
-        args={durable_state: durable_annotation},
-        return_annotation=outer_annotation,
-    )
+    @with_signature(args=args_spec, return_annotation=outer_annotation)
     def keep_outer_post_decision(**kwargs: FloatND) -> FloatND:
         if no_adjustment_func is None:
             return kwargs[durable_state]
-        return no_adjustment_func(**{durable_state: kwargs[durable_state]})
+        return no_adjustment_func(**{name: kwargs[name] for name in arg_names})
 
     keep_outer_post_decision.__name__ = outer_post_decision
     return MappingProxyType(
@@ -798,18 +812,27 @@ def _durable_keeper_transition(
 ) -> TransitionFunction:
     """Wrap the no-adjustment map as the keeper's durable transition.
 
-    The map reads the durable state alone and returns the kept next stock, so it
-    is a decision-independent passive law `next_<durable> = keep(<durable>)`. The
-    wrapper carries the `next_<durable>` name and a `ContinuousState` signature so
-    the engine's transition collector classifies it like any passive durable law.
+    The map returns the kept next stock and may depend on more than the durable
+    stock itself: the wrapper threads every argument the map declares (the
+    durable state and any further states, params, or DAG-computed function nodes
+    it reads), copying each argument's annotation from the map's own signature.
+    A permanent-income deflator `keep(car, growth) = (1 - vs*delta) car / growth`,
+    for instance, reads the durable and a growth node. It stays a
+    decision-independent passive law `next_<durable> = keep(...)`; the wrapper
+    carries the `next_<durable>` name and a `ContinuousState` return so the
+    engine's transition collector classifies it like any passive durable law and
+    resolves the declared arguments from the regime's DAG.
     """
+    annotations = ensure_annotations_are_strings(get_annotations(no_adjustment_func))
+    arg_names = tuple(name for name in annotations if name != "return")
+    # The durable margin is a continuous state regardless of how the map annotates
+    # it; every other declared argument keeps the map's own annotation.
+    args_spec = {name: annotations[name] for name in arg_names}
+    args_spec[durable_state] = "ContinuousState"
 
-    @with_signature(
-        args={durable_state: "ContinuousState"},
-        return_annotation="ContinuousState",
-    )
+    @with_signature(args=args_spec, return_annotation="ContinuousState")
     def keeper_transition(**kwargs: ContinuousState) -> ContinuousState:
-        return no_adjustment_func(**{durable_state: kwargs[durable_state]})
+        return no_adjustment_func(**{name: kwargs[name] for name in arg_names})
 
     keeper_transition.__name__ = outer_post_decision
     return cast("TransitionFunction", keeper_transition)

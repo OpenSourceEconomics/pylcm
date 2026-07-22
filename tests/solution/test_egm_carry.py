@@ -19,6 +19,7 @@ def test_egm_carry_fields_exclude_policy():
         "value",
         "marginal_utility",
         "taste_shock_scale",
+        "breakpoints",
     }
     assert not hasattr(EGMCarry, "policy")
     field_names = {f.name for f in EGMCarry.__dataclass_fields__.values()}

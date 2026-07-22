@@ -336,6 +336,50 @@ regime level, never both (ambiguity errors, also when the grids match). Function
 as derived categoricals must return **integer** types, not booleans — JAX cannot use
 booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
+### Case-piece solver (NB-EGM)
+
+`NBEGM` (from `lcm.solvers`) is the endogenous-grid solver for a 1-D consumption-saving
+regime whose budget is split by a binary case boundary on the liquid state (e.g. a
+Medicaid asset test). The model author exposes the split with metadata-only decorators
+(`lcm.case_boundary`, `lcm.piece`, `lcm.boundary`); the solver runs EGM per case,
+NaN-dead masks each case to the region where its predicate is consistent with the
+recovered state, and merges the cases on the liquid grid with the branch-aware upper
+envelope.
+
+```python
+import lcm
+
+
+@lcm.case_boundary(
+    lcm.boundary("assets", "medicaid_asset_limit", equality="otherwise", kind="jump")
+)
+def medicaid_eligible(assets, medicaid_asset_limit):
+    return assets < medicaid_asset_limit
+
+
+@lcm.piece("oop", when=medicaid_eligible)
+def oop_medicaid(medical_expense): ...
+
+
+@lcm.piece("oop", otherwise=medicaid_eligible)
+def oop_private(medical_expense, insurance_plan): ...
+```
+
+- `lcm.boundary(variable, threshold, *, equality, kind)` declares one equality surface:
+  `equality` is `"when"` or `"otherwise"` — the side that owns the exact boundary point;
+  `kind` is `"continuous_kink"`, `"jump"`, or `"hard_constraint"`. A bare
+  `(variable, threshold)` tuple is rejected.
+- `lcm.case_boundary(*boundaries)` marks a Boolean DAG predicate;
+  `lcm.piece(output, when=…|otherwise=…)` marks the smooth formula for one side of an
+  output. The decorators only attach metadata and return the function unchanged, so the
+  model still solves identically under `GridSearch`. v1 requires exactly one split
+  output per regime, each output covered by exactly one `when` and one `otherwise`
+  piece.
+- The solver's `validate` runs an AST + JAXPR smoothness gate over the user economic
+  nodes reachable in each case (rejecting hidden `if`/`where`/`searchsorted` branching);
+  mark a reviewed numerical `clip`/`max`/`abs` helper with `@lcm.smooth_helper` to
+  exempt it.
+
 ### SimulationResult
 
 `simulate()` returns a `SimulationResult` object:

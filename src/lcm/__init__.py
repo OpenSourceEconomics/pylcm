@@ -64,6 +64,14 @@ from _lcm.variables import (  # noqa: E402
 )
 from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.case_piece import (  # noqa: E402
+    affine_breakpoint,
+    boundary,
+    case_boundary,
+    piece,
+    piecewise_affine,
+    smooth_helper,
+)
 from lcm.certainty_equivalent import (  # noqa: E402
     CertaintyEquivalent,
     PowerMean,
@@ -107,7 +115,9 @@ from lcm.regime import (  # noqa: E402
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import (  # noqa: E402
     DCEGM,
+    NBEGM,
     NEGM,
+    NNBEGM,
     GridSearch,
     OneAssetEGM,
     TwoDimEGM,
@@ -137,7 +147,9 @@ jax.tree_util.register_pytree_node(
 
 __all__ = [
     "DCEGM",
+    "NBEGM",
     "NEGM",
+    "NNBEGM",
     "AgeGrid",
     "AgeSpecializedFunction",
     "AgeSpecializedGrid",
@@ -172,9 +184,15 @@ __all__ = [
     "TwoDimEGM",
     "UniformIIDProcess",
     "__version__",
+    "affine_breakpoint",
+    "boundary",
+    "case_boundary",
     "categorical",
     "fixed_transition",
     "load_snapshot",
     "load_solution",
+    "piece",
+    "piecewise_affine",
     "save_solution",
+    "smooth_helper",
 ]

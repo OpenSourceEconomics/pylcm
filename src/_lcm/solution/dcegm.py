@@ -63,15 +63,38 @@ class DCEGM(Solver):
     and an `inverse_marginal_utility` regime function — which is validated at
     `Model` construction time.
 
-    Forward simulation works but is *grid-restricted*: `simulate` recomputes
-    the argmax over the regime's gridded continuous action against the
-    stored value function, rather than interpolating the exact EGM policy.
-    Simulated continuous actions therefore live on the action grid, and with
-    taste shocks the simulated choice frequencies follow the grid-restricted
-    choice-specific values, not exactly the solve's choice probabilities.
-    The budget constraint the solve enforces intrinsically
-    (`continuous_action <= resources - savings_grid lower bound`) is applied
-    as a feasibility mask during simulation.
+    Forward simulation reads the continuous action *off-grid* where the
+    regime qualifies: the solve publishes the refined consumption function
+    (`EGMSimPolicy`) and `simulate` interpolates the subject's row at its
+    resources, following the standard EGM convention, then accepts the read
+    only when it lies inside the row's live support and satisfies the
+    intrinsic budget (`continuous_action <= resources - savings_grid lower
+    bound`), positivity, and finiteness — any other read keeps that
+    subject's grid value. Regimes where replaying the solve-phase policy is
+    invalid keep the gridded continuous action entirely:
+    - a nested (`NEGM`) solver — the published policy is keeper-conditional
+      while the value maximizes over adjusters;
+    - a non-crossing-inserting `upper_envelope` backend (`rfc`, `ltm`) —
+      their rows leave envelope switches between retained nodes, so linear
+      policy interpolation would mix two branch policies;
+    - asset-row mode (a savings-stage function reads the Euler state) — the
+      per-node solve publishes one point per exogenous asset node, not a
+      crossing-complete row, so interpolating across nodes would mix branches;
+    - a continuous stochastic-process state — the process is a node-valued row
+      axis whose simulation transition draws an off-node continuous value that
+      nearest-node row selection cannot resolve;
+    - a passive continuous state — each row is the envelope policy conditional
+      on one passive node, so blending across a passive-dimension branch switch
+      would read neither branch;
+    - any `Phased` declaration (a phase-variant utility, budget, transition,
+      or state domain changes the simulate-phase decision problem);
+    - discrete actions (the branch is chosen from grid-restricted values and
+      need not remain optimal after continuous refinement);
+    - EV1 taste shocks (the realized draws perturb the decision, and the
+      simulated choice frequencies follow the grid-restricted
+      choice-specific values).
+    The intrinsic budget constraint is also applied as a feasibility mask in
+    the grid-argmax path.
 
     """
 
@@ -220,7 +243,6 @@ class DCEGM(Solver):
         Numerical-builder imports are function-local so the public `lcm.solvers`
         façade stays a thin re-export that pulls in no engine modules.
         """
-
         from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
 
         assert context.compute_regime_transition_probs is not None  # noqa: S101

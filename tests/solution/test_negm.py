@@ -11,13 +11,24 @@ budget constraint. Nothing here solves a model.
 """
 
 import dataclasses
+import inspect
+from types import MappingProxyType
+from typing import cast
 
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.grids import ContinuousGrid
+from _lcm.solution.negm import (
+    _durable_keeper_transition,
+    _with_no_adjustment_outer_function,
+)
+from _lcm.typing import EconFunction, EconFunctionsMapping
 from lcm import DCEGM, NEGM, LinSpacedGrid, NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
+from lcm.typing import ContinuousState, FloatND
 from tests.test_models import negm_kinked_toy
 
 _INNER = DCEGM(
@@ -107,3 +118,89 @@ def test_negm_simulate_phase_synthesizes_inner_budget_constraint():
     alive = model._regimes["alive"]
     assert DCEGM_BUDGET_CONSTRAINT_NAME in alive.simulation.constraints
     assert DCEGM_BUDGET_CONSTRAINT_NAME not in alive.solution.constraints
+
+
+def test_keeper_no_adjustment_map_threads_every_declared_argument() -> None:
+    """A keeper map threads every argument it declares, not only the durable stock.
+
+    A permanent-income deflator `keep(car, growth) = 0.9 * car / growth` reads the
+    durable stock and a growth node; the keeper transition carries both arguments
+    (copying the map's own annotations) and applies the map, so a stored-value
+    normalization can divide the kept stock by the current growth factor.
+    """
+
+    def keep(car: ContinuousState, growth: FloatND) -> ContinuousState:
+        return car * 0.9 / growth
+
+    transition = _durable_keeper_transition(
+        no_adjustment_func=cast("EconFunction", keep),
+        durable_state="car",
+        outer_post_decision="next_car",
+    )
+
+    assert set(inspect.signature(transition).parameters) == {"car", "growth"}
+    result = transition(car=jnp.asarray(100.0), growth=jnp.asarray(1.02))
+    # The composed transition reruns the same arithmetic at the active float
+    # precision, so agreement holds to that dtype's roundoff.
+    rtol = 64.0 * float(np.finfo(np.asarray(result).dtype).eps)
+    np.testing.assert_allclose(np.asarray(result), 100.0 * 0.9 / 1.02, rtol=rtol)
+
+
+def test_keeper_outer_function_threads_every_declared_argument() -> None:
+    """The injected outer post-decision reads every argument the keeper map declares.
+
+    A growth-deflating keeper `keep(car, growth)` feeds the econ-function DAG through
+    `_with_no_adjustment_outer_function`, which must declare and thread both the
+    durable stock and the growth node so concatenation wires the DAG's growth value
+    in — not only the durable leaf.
+    """
+
+    def resources(next_car: ContinuousState) -> FloatND:
+        return next_car
+
+    def growth(perm_income: FloatND) -> FloatND:
+        return perm_income
+
+    def keep(car: ContinuousState, growth: FloatND) -> ContinuousState:
+        return car * 0.9 / growth
+
+    functions = cast(
+        "EconFunctionsMapping",
+        MappingProxyType({"resources": resources, "growth": growth}),
+    )
+    updated = _with_no_adjustment_outer_function(
+        functions=functions,
+        outer_post_decision="next_car",
+        no_adjustment_func=cast("EconFunction", keep),
+    )
+    injected = updated["next_car"]
+
+    assert set(inspect.signature(injected).parameters) == {"car", "growth"}
+    result = injected(car=jnp.asarray(100.0), growth=jnp.asarray(1.02))
+    # Same arithmetic at the active float precision; see above.
+    rtol = 64.0 * float(np.finfo(np.asarray(result).dtype).eps)
+    np.testing.assert_allclose(np.asarray(result), 100.0 * 0.9 / 1.02, rtol=rtol)
+
+
+def test_keeper_outer_function_identity_holds_the_durable_stock() -> None:
+    """With no keeper map the injected outer post-decision holds the durable stock.
+
+    A plain durable regime has `no_adjustment_func=None`, so `next_<durable>` is the
+    identity on the durable leaf: it declares only the durable stock and returns it
+    unchanged.
+    """
+
+    def resources(next_car: ContinuousState) -> FloatND:
+        return next_car
+
+    functions = cast("EconFunctionsMapping", MappingProxyType({"resources": resources}))
+    updated = _with_no_adjustment_outer_function(
+        functions=functions,
+        outer_post_decision="next_car",
+        no_adjustment_func=None,
+    )
+    injected = updated["next_car"]
+
+    assert set(inspect.signature(injected).parameters) == {"car"}
+    result = injected(car=jnp.asarray(42.0))
+    np.testing.assert_allclose(np.asarray(result), 42.0, rtol=1e-10)

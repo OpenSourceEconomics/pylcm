@@ -45,6 +45,7 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    ScalarBool,
     ScalarFloat,
     ScalarInt,
 )
@@ -61,7 +62,7 @@ def _get_solve_one_combo_asset_rows(
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+    tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
 ]:
     """Build the per-combo EGM computation solving per exogenous asset node.
 
@@ -88,7 +89,7 @@ def _get_solve_one_combo_asset_rows(
 
     def solve_one_combo(
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
         """Run the per-asset-node EGM step for one (discrete x passive) combo.
 
         Takes the combo's values (discrete codes and passive node values)
@@ -97,8 +98,9 @@ def _get_solve_one_combo_asset_rows(
         Returns:
             Tuple of the combo's value row on the exogenous state grid and
             its per-node endogenous grid, the published consumption policy on
-            that grid, and the value and marginal-utility carry
-            rows.
+            that grid, the value and marginal-utility carry rows, and the
+            read-support verdict (constant `False`: per-node rows never
+            qualify for the off-grid read).
 
         """
         combo_pool = {
@@ -274,12 +276,17 @@ def _get_solve_one_combo_asset_rows(
             value_row = jnp.where(feasible, value_row, -jnp.inf)
             marginal_row = jnp.where(feasible, marginal_row, 0.0)
 
+        # Asset-row regimes never qualify for the off-grid policy read (each
+        # row publishes one point per exogenous node, not a crossing-complete
+        # resources-space row), so the read-support verdict is the fail-closed
+        # constant.
         return (
             V_vec.astype(dtype),
             grid_row,
             policy_row,
             value_row,
             marginal_row,
+            jnp.asarray(False),  # noqa: FBT003
         )
 
     return solve_one_combo

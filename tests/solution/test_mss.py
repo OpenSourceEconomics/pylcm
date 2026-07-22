@@ -249,7 +249,7 @@ def test_mss_backend_is_selected_by_solver_config():
 
     grid, policy, value = _crossing_segments_candidates()
     marginal = jnp.ones_like(grid)
-    via_backend = backend(
+    *via_backend, read_supported = backend(
         endog_grid=grid,
         policy=policy,
         value=value,
@@ -259,6 +259,7 @@ def test_mss_backend_is_selected_by_solver_config():
     direct = mss.refine_envelope(
         endog_grid=grid, policy=policy, value=value, n_refined=16
     )
+    assert bool(read_supported)
     for via_arr, direct_arr in zip(via_backend, direct, strict=True):
         np.testing.assert_array_equal(np.asarray(via_arr), np.asarray(direct_arr))
 

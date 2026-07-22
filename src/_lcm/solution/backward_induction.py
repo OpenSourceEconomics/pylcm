@@ -196,6 +196,16 @@ def solve(
                 next_regime_to_continuation=next_regime_to_continuation,
             )
             V_arr = result.V_arr
+            # The published V mapping is the calling convention for every
+            # downstream consumer — the parents' cores and the AOT-lowered
+            # simulate programs are both compiled against the per-regime V
+            # topology — so a kernel output arriving with a different
+            # sharding (the compiled program's output sharding is the
+            # backend's choice) is placed back on the template's mesh here.
+            V_arr = _match_leaf_template_sharding(
+                leaf=V_arr,
+                template_leaf=next_regime_to_V_arr[regime_name],
+            )
             _fail_if_continuation_publisher_returned_none(
                 result=result,
                 regime_name=regime_name,
@@ -397,21 +407,64 @@ def _roll_continuation_inputs(
     """
     rolled_V_arr = MappingProxyType(
         {
-            regime_name: period_solution.get(
-                regime_name, next_regime_to_V_arr[regime_name]
+            regime_name: _match_leaf_template_sharding(
+                leaf=period_solution[regime_name],
+                template_leaf=next_regime_to_V_arr[regime_name],
             )
+            if regime_name in period_solution
+            else next_regime_to_V_arr[regime_name]
             for regime_name in regimes
         }
     )
     rolled_continuation = MappingProxyType(
         {
-            regime_name: period_continuations.get(
-                regime_name, next_regime_to_continuation[regime_name]
+            regime_name: _match_continuation_template_sharding(
+                continuation=period_continuations[regime_name],
+                template=next_regime_to_continuation[regime_name],
             )
+            if regime_name in period_continuations
+            else next_regime_to_continuation[regime_name]
             for regime_name in next_regime_to_continuation
         }
     )
     return rolled_V_arr, rolled_continuation
+
+
+def _match_continuation_template_sharding(
+    *, continuation: ContinuationPayload, template: ContinuationPayload
+) -> ContinuationPayload:
+    """Place a solved period's continuation on its template's device sharding.
+
+    The parent's cores are AOT-compiled against the continuation template, so
+    the template's per-leaf sharding is the calling convention. A producer can
+    emit mixed-sharding leaves (value rows derived from the sharded value
+    array, endogenous-grid rows broadcast replicated from the asset grid);
+    every leaf is placed onto its template counterpart's sharding, a no-op
+    where they already agree. Assumes the template of a distributed regime is
+    itself sharded — an unsharded template under a distributed state would
+    pull the continuation onto one device.
+    """
+    return jax.tree.map(
+        lambda leaf, template_leaf: _match_leaf_template_sharding(
+            leaf=leaf, template_leaf=template_leaf
+        ),
+        continuation,
+        template,
+    )
+
+
+def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
+    """Place one solved array on its template's device sharding (no-op on match).
+
+    Applied where a solved value array is published and where the continuation
+    mappings roll forward, for the same reason as the continuations: a compiled
+    kernel's output sharding is the backend's choice, so a value array can
+    arrive replicated while the templates every consumer (parent cores and the
+    AOT-lowered simulate programs) was lowered against are sharded.
+    """
+    if leaf.sharding == template_leaf.sharding:
+        return leaf
+    return jax.device_put(leaf, template_leaf.sharding)
 
 
 def _fail_if_continuation_publisher_returned_none(

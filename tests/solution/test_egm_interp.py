@@ -11,9 +11,8 @@ Contract under test — `_lcm.egm.interp.interp_on_padded_grid`:
 Behavior:
 
 - linear interpolation between neighboring non-NaN nodes,
-- below the first node the first bracket's secant extends linearly (a
-  below-support query is priced on the edge slope); at or above the last
-  non-NaN node the boundary value clamps,
+- below the first node: linear extrapolation along the first bracket's secant;
+  at or above the last non-NaN node: clamp to the boundary value,
 - tie-safe at duplicated abscissae (zero-width brackets from envelope kinks):
   queries strictly below the duplicate interpolate toward the left value, queries
   at or above it use the right value — never a division by the zero bracket,
@@ -74,11 +73,17 @@ def test_nan_tail_is_ignored():
     np.testing.assert_allclose(got, expected, atol=1e-12)
 
 
-def test_below_extends_the_first_bracket_secant_and_above_clamps():
-    """Below the first node the first bracket's secant extends; above clamps.
+def test_below_support_extrapolates_and_above_support_clamps():
+    """Below the first node the first bracket's secant continues; above clamps.
 
-    At `q = 0` the read continues the first bracket's secant (`0 + (0 - 1)·3`);
-    at `q = 100`, far above the last node, it clamps to the boundary value.
+    Below support the carry read matches the canonical state-grid read
+    (`map_coordinates` extrapolates linearly), so a transition landing below
+    the child grid (a borrowing corner whose savings undershoot the grid
+    start) is priced on the edge slope rather than credited with the boundary
+    value — which no feasible action attains there. At or above the last node
+    the boundary value applies: a refined envelope row can end in a
+    crossing-inserted near-duplicate bracket whose secant slope is arbitrarily
+    steep, so extending it would poison every above-support read.
     """
     xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
@@ -86,7 +91,28 @@ def test_below_extends_the_first_bracket_secant_and_above_clamps():
 
     got = interp.interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
 
-    np.testing.assert_allclose(got, jnp.array([-3.0, 5.0]), atol=1e-12)
+    below = 0.0 + (0.0 - 1.0) * (3.0 - 0.0) / (2.0 - 1.0)
+    above = 5.0
+    np.testing.assert_allclose(got, jnp.array([below, above]), atol=1e-12)
+
+
+def test_out_of_range_reads_ignore_the_hermite_correction():
+    """With slopes, out-of-range queries follow the slope-free convention.
+
+    The Hermite correction vanishes at the bracket endpoints, so extending it
+    outside the bracket would leave the cubic's tail; the read instead
+    continues the first bracket's secant below support and clamps to the
+    boundary value above, matching the slope-free convention.
+    """
+    xp = jnp.array([1.0, 2.0, 4.0])
+    fp = jnp.array([0.0, 3.0, 5.0])
+    fp_slopes = jnp.array([0.0, 0.0, 0.0])
+
+    got = interp.interp_on_padded_grid(
+        x_query=jnp.array([0.5, 5.0]), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(got, jnp.array([-1.5, 5.0]), atol=1e-12)
 
 
 def test_duplicated_abscissa_is_tie_safe():
@@ -276,14 +302,8 @@ def test_exact_slopes_reproduce_a_monotone_cubic():
     np.testing.assert_allclose(got, np.asarray(x_query) ** 3, atol=1e-12)
 
 
-def test_slopes_keep_nan_tail_boundary_rules_and_node_values():
-    """The Hermite path preserves NaN-tail handling, boundary rules, and nodes.
-
-    Below the first node the read extends the first bracket's *secant* (the
-    Hermite correction vanishes at the bracket edge, so the extension is the
-    same linear continuation as without slopes); at and above the last node
-    it clamps; on-node reads reproduce the node values.
-    """
+def test_slopes_keep_nan_tail_boundary_reads_and_node_values():
+    """The Hermite path preserves NaN-tail handling, boundary reads, and nodes."""
     xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     fp_slopes = jnp.array([3.0, 2.0, 0.5, jnp.nan])
@@ -293,7 +313,11 @@ def test_slopes_keep_nan_tail_boundary_rules_and_node_values():
         x_query=x_query, xp=xp, fp=fp, fp_slopes=fp_slopes
     )
 
-    np.testing.assert_allclose(got, jnp.array([-3.0, 0.0, 3.0, 5.0, 5.0]), atol=1e-12)
+    below = 0.0 + (0.0 - 1.0) * 3.0
+    above = 5.0
+    np.testing.assert_allclose(
+        got, jnp.array([below, 0.0, 3.0, 5.0, above]), atol=1e-12
+    )
 
 
 def test_slopes_keep_duplicated_abscissa_tie_safe():
@@ -473,6 +497,191 @@ def test_prepared_interpolation_holds_no_grid_by_query_intermediate():
     assert not offenders, "grid-by-query intermediate present:\n" + "\n".join(offenders)
 
 
+def test_paired_read_derivative_at_an_interior_node_is_the_right_side_slope():
+    """At an exact interior node the paired derivative is the right piece's slope.
+
+    The value read at a node selects the right bracket (`side="right"`), whose
+    Hermite derivative at its left endpoint is that node's limited slope. RT1
+    of the external audit: with zero node slopes both adjacent pieces have
+    derivative zero at the node, so anything else (an autodiff subgradient of
+    the clip/where representation) is wrong.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([1.0, 2.0, 4.0])
+    fp_slopes = jnp.array([0.0, 0.0, 0.0])
+
+    value, derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(1.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(np.asarray(value), 2.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(derivative), 0.0, atol=1e-12)
+
+
+def test_paired_read_derivative_uses_node_slopes_at_first_and_last_node():
+    """The first node reads its right-side slope, the last its left-side slope.
+
+    With exact node slopes that pass the monotonicity limiter untouched, the
+    selected piece's endpoint derivative is the node's own slope on both
+    boundaries — the first node starts the first bracket, the last node ends
+    the last bracket (the read clamps to it).
+    """
+    xp = jnp.array([1.0, 1.5, 2.0])
+    fp = xp**3
+    fp_slopes = 3.0 * xp**2
+
+    _, at_first = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(1.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+    _, at_last = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(2.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(np.asarray(at_first), 3.0, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(at_last), 12.0, rtol=1e-12)
+
+
+def test_paired_read_derivative_matches_finite_differences_off_node(
+    x64_enabled: None,
+):
+    """Between nodes the paired derivative is the value read's exact slope."""
+    xp = jnp.array([1.0, 1.5, 2.0])
+    fp = xp**3
+    fp_slopes = 3.0 * xp**2
+    step = 1e-6
+
+    for query in (1.1, 1.25, 1.7, 1.95):
+        _, derivative = interp.interp_and_derivative_on_padded_grid(
+            x_query=jnp.asarray(query), xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+        left = interp.interp_on_padded_grid(
+            x_query=jnp.asarray(query - step), xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+        right = interp.interp_on_padded_grid(
+            x_query=jnp.asarray(query + step), xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+        np.testing.assert_allclose(
+            np.asarray(derivative),
+            (np.asarray(right) - np.asarray(left)) / (2.0 * step),
+            rtol=1e-5,
+        )
+
+
+def test_paired_read_derivative_out_of_support_matches_the_value_conventions():
+    """Below support the derivative is the first bracket's secant; above it is zero.
+
+    The value read extends the first bracket's secant below support and clamps
+    to the boundary value above; the paired derivative is the exact slope of
+    that value read on both sides.
+    """
+    xp = jnp.array([1.0, 2.0, 4.0, jnp.nan])
+    fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
+    fp_slopes = jnp.array([3.0, 2.0, 0.5, jnp.nan])
+
+    _, below = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+    _, above = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(100.0), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(np.asarray(below), 3.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(above), 0.0, atol=1e-12)
+
+
+def test_paired_read_derivative_at_a_duplicated_abscissa_reads_the_right_piece():
+    """At a duplicated kink abscissa the derivative belongs to the right piece.
+
+    The value read at the duplicate returns the right value (`side="right"`);
+    the paired derivative is the right piece's left-endpoint slope, so the
+    (value, derivative) pair describes one consistent branch of the kink.
+    """
+    xp = jnp.array([0.0, 1.0, 1.0, 2.0])
+    fp = jnp.array([0.0, 10.0, 2.0, 3.0])
+
+    value, derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(1.0), xp=xp, fp=fp
+    )
+
+    np.testing.assert_allclose(np.asarray(value), 2.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(derivative), 1.0, atol=1e-12)
+
+
+def test_paired_read_derivative_is_zero_on_neg_inf_brackets():
+    """A `-inf` endpoint pins the paired derivative to zero, matching the value.
+
+    Infeasible (`-inf`) values read as `-inf` with exactly zero marginal, so
+    the pair stays consistent and the transform space never sees `inf * 0`.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([-jnp.inf, 3.0, 5.0])
+
+    _, derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.5), xp=xp, fp=fp
+    )
+
+    np.testing.assert_allclose(np.asarray(derivative), 0.0, atol=1e-12)
+
+
+def test_paired_read_linear_derivative_at_a_node_is_the_right_secant():
+    """Without slopes, an exact-node read pairs with the right bracket's secant."""
+    xp = jnp.array([0.0, 1.0, 2.0])
+    fp = jnp.array([1.0, 2.0, 4.0])
+
+    _, at_interior = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(1.0), xp=xp, fp=fp
+    )
+    _, at_last = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(2.0), xp=xp, fp=fp
+    )
+
+    np.testing.assert_allclose(np.asarray(at_interior), 2.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(at_last), 2.0, atol=1e-12)
+
+
+def test_value_read_on_a_singleton_row_is_the_constant_node_value():
+    """A one-node row reads as the constant `fp[0]` at any query."""
+    xp = jnp.array([0.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+
+    value = interp.interp_on_padded_grid(x_query=jnp.asarray(0.25), xp=xp, fp=fp)
+
+    np.testing.assert_allclose(np.asarray(value), 5.0, atol=1e-12)
+
+
+def test_paired_read_on_a_singleton_row_is_the_node_value_with_zero_slope():
+    """A one-node row's paired read is the constant pair `(fp[0], 0)`."""
+    xp = jnp.array([0.0, jnp.nan, jnp.nan])
+    fp = jnp.array([5.0, jnp.nan, jnp.nan])
+    fp_slopes = jnp.array([2.0, jnp.nan, jnp.nan])
+
+    value, derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.25), xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+
+    np.testing.assert_allclose(np.asarray(value), 5.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(derivative), 0.0, atol=1e-12)
+
+
+def test_reads_on_an_empty_row_propagate_nan():
+    """An all-NaN (poisoned) row reads as NaN, never as a finite constant.
+
+    A poisoned carry row must surface in the runtime NaN diagnostics; a read
+    that converts it to a finite value would let a poisoned candidate lose a
+    downstream maximum silently instead of failing loudly.
+    """
+    empty = jnp.full(3, jnp.nan)
+
+    value = interp.interp_on_padded_grid(x_query=jnp.asarray(0.25), xp=empty, fp=empty)
+    paired_value, paired_derivative = interp.interp_and_derivative_on_padded_grid(
+        x_query=jnp.asarray(0.25), xp=empty, fp=empty, fp_slopes=empty
+    )
+
+    assert bool(jnp.isnan(value))
+    assert bool(jnp.isnan(paired_value))
+    assert bool(jnp.isnan(paired_derivative))
+
+
 def _host_right_germ(
     xp: np.ndarray, fp: np.ndarray, slopes: np.ndarray, x_query: float
 ) -> tuple[bool, float, float, float]:
@@ -519,6 +728,84 @@ def _host_right_germ(
     ) / width**2
     third = 6.0 * (coeff_lower - coeff_upper) / width**3
     return right_finite, float(first), float(second), float(third)
+
+
+def test_paired_left_read_at_a_duplicated_terminal_returns_the_left_piece_slope(
+    x64_enabled: None,
+):
+    """`side="left"` pairs a duplicated terminal query with its left piece.
+
+    On `xp = [0, 1, 2, 2]` with values `[10, 11, 12, 12]` and node slopes
+    `[1, 1, 1, 100]`, a query exactly at the duplicated abscissa 2 lands in
+    the `[1, 2]` bracket under the left convention, so the pair is the left
+    duplicate's record and that piece's right-endpoint slope: `(12, 1)`. The
+    ordinary right-side read at the same query pairs the zero-width terminal
+    bracket: `(12, 0)`.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0, 2.0])
+    fp = jnp.array([10.0, 11.0, 12.0, 12.0])
+    fp_slopes = jnp.array([1.0, 1.0, 1.0, 100.0])
+    search_grid, valid_length = interp.prepare_padded_grid(xp)
+
+    left_value, left_derivative = interp.interp_and_derivative_on_prepared_grid(
+        x_query=jnp.asarray(2.0),
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        side="left",
+    )
+    right_value, right_derivative = interp.interp_and_derivative_on_prepared_grid(
+        x_query=jnp.asarray(2.0),
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+    np.testing.assert_allclose(float(left_value), 12.0, rtol=1e-12)
+    np.testing.assert_allclose(float(left_derivative), 1.0, rtol=1e-12)
+    np.testing.assert_allclose(float(right_value), 12.0, rtol=1e-12)
+    np.testing.assert_allclose(float(right_derivative), 0.0, atol=1e-12)
+
+
+def test_paired_left_read_matches_the_right_read_strictly_inside_a_bracket(
+    x64_enabled: None,
+):
+    """Strictly interior queries locate the same bracket under either side.
+
+    On a strictly increasing row both side conventions gather the identical
+    bracket for an off-node query, so the paired values and derivatives agree
+    bitwise.
+    """
+    xp = jnp.array([0.0, 1.0, 2.0, 3.0])
+    fp = jnp.array([0.0, 1.0, 4.0, 9.0])
+    fp_slopes = jnp.array([1.0, 2.0, 3.0, 5.0])
+    search_grid, valid_length = interp.prepare_padded_grid(xp)
+    query = jnp.asarray(1.6)
+
+    left_pair = interp.interp_and_derivative_on_prepared_grid(
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        side="left",
+    )
+    right_pair = interp.interp_and_derivative_on_prepared_grid(
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+    assert float(left_pair[0]) == float(right_pair[0])
+    assert float(left_pair[1]) == float(right_pair[1])
 
 
 def test_right_germ_reproduces_a_cubic_interior_derivatives():

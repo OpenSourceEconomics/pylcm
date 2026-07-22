@@ -20,15 +20,20 @@ from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     get_intrinsic_budget_constraint,
 )
-from _lcm.egm.carry import EGMCarry, build_template_egm_carry
+from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
 from _lcm.egm.negm_validation import validate_negm_regimes
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
+    get_brute_child_carry_producer,
     get_stateless_terminal_carry_producer,
     get_terminal_wealth_carry_producer,
 )
-from _lcm.egm.validation import validate_dcegm_regimes
+from _lcm.egm.validation import (
+    savings_stage_reads_euler_state,
+    validate_dcegm_regimes,
+)
 from _lcm.engine import (
+    EGMPolicyRead,
     Regime,
     SimulationPhase,
     SolutionPhase,
@@ -117,6 +122,7 @@ from _lcm.variables import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import (
@@ -386,6 +392,7 @@ def process_regimes(
 
         simulation = _build_simulation_phase(
             spec=spec,
+            user_regime=user_regime,
             regime_name=regime_name,
             nested_transitions=simulate_nested_transitions[regime_name],
             all_grids=all_grids,
@@ -458,6 +465,8 @@ def _build_solution_phase(
 
     Args:
         spec: The regime's per-phase specification.
+        user_regime: The finalized user regime, scanned for `Phased`
+            declarations by the policy-replay gate.
         regime_name: The name of the regime.
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
@@ -567,6 +576,7 @@ def _build_solution_phase(
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
+            period_to_regime_v_interp=period_to_regime_v_interp,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             flat_param_names=flat_param_names,
@@ -623,12 +633,13 @@ def _build_solution_phase(
     # and marginal utility. Build the producer engine-side and compose it as an
     # output decorator around each period adapter, so the solver stays unaware
     # of the continuation it is being asked to emit.
-    egm_carry_producer, egm_carry_template = _build_terminal_carry_producer(
+    egm_carry_producer, egm_carry_template = _build_egm_child_carry_producer(
         user_regime=user_regimes[regime_name],
         functions=core.functions,
         variables=variables,
         grids=all_grids[regime_name],
         model_has_egm_regime=model_has_egm_regime,
+        solver_produces_carry=solver_kernels.continuation_template is not None,
         enable_jit=enable_jit,
     )
     period_kernels = solver_kernels.period_kernels
@@ -810,36 +821,41 @@ class _TerminalCarryPeriodKernel:
         return KernelResult(V_arr=result.V_arr, continuation=carry)
 
 
-def _build_terminal_carry_producer(
+def _build_egm_child_carry_producer(
     *,
     user_regime: UserRegime,
     functions: EconFunctionsMapping,
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
     model_has_egm_regime: bool,
+    solver_produces_carry: bool,
     enable_jit: bool,
 ) -> tuple[EGMCarryProducer | None, EGMCarry | None]:
-    """Build the EGM carry producer and template for a terminal regime.
+    """Build the carry producer and template for an EGM regime's carry target.
 
-    Terminal regimes produce closed-form carries when the model contains an
-    endogenous-grid regime, so an EGM parent can interpolate their value and
-    marginal utility. Cases:
+    A regime an endogenous-grid regime transitions into must publish its value
+    and marginal value of resources so the parent can interpolate them. The
+    regime's own solver already builds its carry when it is endogenous-grid
+    (`solver_produces_carry`); this engine-side producer covers the brute
+    (`GridSearch`) targets that do not. Cases:
 
-    - no states ⇒ constant-value, zero-marginal-utility broadcast rows
-    - exactly one continuous state, no actions, and discrete states only of
-      the fixed (non-process) kind ⇒ terminal utility and its wealth gradient
-      on the regime's own state grid, with the discrete states as the carry's
-      leading axes (one wealth row per discrete combo)
-    - anything else ⇒ no producer (an EGM regime targeting such a terminal
-      regime is rejected by the EGM kernel builder)
+    - no states (terminal) ⇒ constant-value, zero-marginal-utility broadcast rows
+    - terminal with ≥1 continuous state, no actions, and discrete states only of
+      the fixed (non-process) kind ⇒ terminal utility and its wealth gradient on
+      the regime's own state grid, the discrete states leading
+    - living brute regime with a continuous Euler state ⇒ its solved value array
+      and the array's Euler-state gradient, discrete states (process states
+      included) and passive continuous states leading
+    - anything else ⇒ no producer (an EGM regime targeting an unsupported shape
+      is rejected by the EGM kernel builder)
 
     Returns:
-        Tuple of the producer and the regime's carry template, both `None`
-        for non-terminal regimes, for models without an endogenous-grid
-        regime, and for unsupported terminal shapes.
+        Tuple of the producer and the regime's carry template, both `None` for
+        models without an endogenous-grid regime, for regimes whose own solver
+        already produces a carry, and for unsupported shapes.
 
     """
-    if not (model_has_egm_regime and user_regime.terminal):
+    if not model_has_egm_regime or solver_produces_carry:
         return None, None
     producer: EGMCarryProducer
     discrete_state_names = tuple(
@@ -847,30 +863,61 @@ def _build_terminal_carry_producer(
         for name in variables.state_names
         if name in set(variables.discrete_state_names)
     )
-    has_only_fixed_discrete_states = all(
-        not isinstance(grids[name], _ContinuousStochasticProcess)
-        for name in discrete_state_names
-    )
     continuous_state_names = tuple(variables.continuous_state_names)
     euler_state_name = next(iter(user_regime.states), None)
-    if not variables.state_names:
-        producer = get_stateless_terminal_carry_producer()
-        template = build_template_egm_carry(n_rows=N_STATELESS_CARRY_ROWS)
+    if user_regime.terminal:
+        has_only_fixed_discrete_states = all(
+            not isinstance(grids[name], _ContinuousStochasticProcess)
+            for name in discrete_state_names
+        )
+        if not variables.state_names:
+            producer = get_stateless_terminal_carry_producer()
+            template = build_template_egm_carry(n_rows=N_STATELESS_CARRY_ROWS)
+        elif (
+            len(continuous_state_names) >= 1
+            and has_only_fixed_discrete_states
+            and not user_regime.actions
+            and euler_state_name in continuous_state_names
+        ):
+            # The parent's child read picks the terminal's Euler state as its
+            # first declared state (`_get_child_state_name`); the remaining
+            # continuous states are the passive (durable / outer) margins it
+            # interpolates as leading carry axes — the NEGM housing-bequest shape.
+            passive_state_names = tuple(
+                name for name in continuous_state_names if name != euler_state_name
+            )
+            producer = get_terminal_wealth_carry_producer(
+                functions=functions,
+                state_name=euler_state_name,
+                discrete_state_names=discrete_state_names,
+                passive_state_names=passive_state_names,
+                continuous_state_order=continuous_state_names,
+            )
+            leading_shape = tuple(
+                int(grids[name].to_jax().shape[0])
+                for name in discrete_state_names + passive_state_names
+            )
+            template = shard_carry_template(
+                template=build_template_egm_carry(
+                    n_rows=int(grids[euler_state_name].to_jax().shape[0]),
+                    leading_shape=leading_shape,
+                ),
+                grids=grids,
+                leading_axis_names=discrete_state_names + passive_state_names,
+            )
+        else:
+            return None, None
     elif (
-        len(continuous_state_names) >= 1
-        and has_only_fixed_discrete_states
-        and not user_regime.actions
-        and euler_state_name in continuous_state_names
+        len(continuous_state_names) >= 1 and euler_state_name in continuous_state_names
     ):
-        # The parent's child read picks the terminal's Euler state as its first
-        # declared state (`_get_child_state_name`); the remaining continuous
-        # states are the passive (durable / outer) margins it interpolates as
-        # leading carry axes — the NEGM housing-bequest shape.
+        # A living brute target: its solved value array is the carry value and the
+        # array's Euler-state gradient is the marginal value of resources. The
+        # parent reads it in M-space ($R \\equiv M$) via the same child read it
+        # uses for an endogenous-grid target.
         passive_state_names = tuple(
             name for name in continuous_state_names if name != euler_state_name
         )
-        producer = get_terminal_wealth_carry_producer(
-            functions=functions,
+        producer = get_brute_child_carry_producer(
             state_name=euler_state_name,
             discrete_state_names=discrete_state_names,
             passive_state_names=passive_state_names,
@@ -880,9 +927,13 @@ def _build_terminal_carry_producer(
             int(grids[name].to_jax().shape[0])
             for name in discrete_state_names + passive_state_names
         )
-        template = build_template_egm_carry(
-            n_rows=int(grids[euler_state_name].to_jax().shape[0]),
-            leading_shape=leading_shape,
+        template = shard_carry_template(
+            template=build_template_egm_carry(
+                n_rows=int(grids[euler_state_name].to_jax().shape[0]),
+                leading_shape=leading_shape,
+            ),
+            grids=grids,
+            leading_axis_names=discrete_state_names + passive_state_names,
         )
     else:
         return None, None
@@ -894,6 +945,7 @@ def _build_terminal_carry_producer(
 def _build_simulation_phase(
     *,
     spec: PhasedRegimeSpec,
+    user_regime: UserRegime,
     regime_name: RegimeName,
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
@@ -937,6 +989,8 @@ def _build_simulation_phase(
 
     Args:
         spec: The regime's per-phase specification.
+        user_regime: The finalized user regime, scanned for `Phased`
+            declarations by the policy-replay gate.
         regime_name: The name of the regime.
         nested_transitions: Per-target transition bundles for internal
             processing.
@@ -1095,6 +1149,65 @@ def _build_simulation_phase(
         enable_jit=enable_jit,
     )
 
+    # Replaying the solve-phase EGM policy in simulation is valid only when
+    # the simulate-phase decision problem is the one the solve optimized and
+    # the published rows carry both the coordinates and the branch topology
+    # the read interpolates over at every state dimension:
+    # - a standalone `DCEGM` solver — a NEGM regime maximizes its value over
+    #   keeper and adjuster candidates but publishes only the keeper's inner
+    #   consumption function, so replaying it would pair an adjuster-won
+    #   value with the keeper's policy;
+    # - a crossing-certifying upper-envelope backend (MSS only) — RFC and LTM
+    #   leave the envelope switch between two retained nodes, and FUES decides
+    #   segment identity by a slope-threshold heuristic with no labels from
+    #   the kernel, so its row can bridge a missed switch; only MSS inserts
+    #   the exact crossing by construction (see
+    #   `_envelope_publishes_crossings`);
+    # - the single-post-state kernel (not asset-row mode) — when a
+    #   savings-stage function reads the Euler state, DC-EGM solves per
+    #   exogenous asset node and publishes one optimal point per node, not a
+    #   crossing-complete resources-space row, so interpolating across nodes
+    #   would mix branches wherever the winner changes between adjacent nodes;
+    # - no continuous stochastic-process state — a process is stored as a
+    #   node-valued row axis, but its simulation transition draws a continuous
+    #   value that need not land on a node, so nearest-node row selection
+    #   reads the wrong conditional policy;
+    # - no passive continuous state — each row is the upper-envelope policy
+    #   conditional on one passive node, and blending two rows across a
+    #   passive-dimension branch switch yields an action from neither branch;
+    # - no `Phased` declaration anywhere on the regime (a phase-variant
+    #   utility, budget, transition, or state domain changes the
+    #   simulate-phase FOC or the policy-row coordinates even under an
+    #   unchanged `H`) — `Phased` is the grammar's only source of phase
+    #   variance, so its absence is the exact test;
+    # - no carried-only states (their simulate-phase domain has no solve-side
+    #   row coordinates to read the policy on);
+    # - no taste shocks (the realized discrete draw perturbs the decision).
+    # The process, passive, and asset-row exclusions each lift once the read
+    # publishes conditional values and re-decides the branch at the simulated
+    # state; today the gate keeps those regimes on the grid-argmax path.
+    phase_invariant = (
+        not regime_declares_phased(user_regime) and not spec.carried_only_state_names
+    )
+    own_v_info = regime_to_v_interpolation_info[regime_name]
+    egm_policy_read = None
+    if (
+        isinstance(solver, DCEGM)
+        and _envelope_publishes_crossings(solver)
+        and phase_invariant
+        and not has_taste_shocks
+        and not _regime_has_process_state(own_v_info)
+        and not _regime_has_passive_state(
+            v_interpolation_info=own_v_info, euler_state_name=solver.continuous_state
+        )
+        and not savings_stage_reads_euler_state(user_regime=user_regime, solver=solver)
+    ):
+        egm_policy_read = EGMPolicyRead(
+            action_name=solver.continuous_action,
+            resources_target=solver.resources,
+            savings_lower_bound=float(solver.savings_grid.to_jax()[0]),
+        )
+
     # Inventory the specialized nodes the additional-target guard must reject —
     # built from the marker-bearing (pre-publication) `functions` AND `constraints`.
     # `_process_regime_core` excludes constraint names from `functions`, but the
@@ -1150,6 +1263,88 @@ def _build_simulation_phase(
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         next_state=next_state,
+        egm_policy_read=egm_policy_read,
+    )
+
+
+def _envelope_publishes_crossings(solver: DCEGM) -> bool:
+    """Whether the solver's upper envelope certifies every segment crossing.
+
+    A branch-faithful policy read interpolates a row whose envelope switches sit
+    at duplicated abscissae carrying both branch records:
+    - `"mss"` ⇒ yes: the refinement enumerates every envelope switch — interior
+      crossings via iterated earliest-overtake between adjacent candidate
+      abscissae (where the bracketing segments are full lines), switches and
+      value jumps landing exactly on a candidate abscissa via two-sided node
+      records — and an interval whose switch sequence exceeds the enumeration
+      budget overflows loudly through `n_kept` — as does a live candidate
+      point whose value no interval read can represent — so a published row
+      is never a silently truncated envelope. The guarantee covers the
+      live-covered domain; a row whose segment chain splits (NaN-dead
+      candidates or a finite value decrease between consecutive candidates)
+      is NaN-poisoned in the published policy via the kernel's read-support
+      verdict, so the reader falls back to grid-argmax instead of bridging
+      the gap linearly.
+    - `"fues"` ⇒ no: segment identity is decided by thresholding the
+      implied-savings slope (`fues_jump_thresh`) — a heuristic — and the
+      DC-EGM kernel supplies no segment labels. Two value branches whose
+      cross-segment slope stays below the threshold merge into one row with
+      no crossing inserted; the row then bridges the switch, and neither an
+      exhaustive scan nor a wider window repairs that, because the scan can
+      only search within the segment identity it was given. A FUES row is
+      therefore not certified crossing-complete for the read.
+    - `"rfc"` / `"ltm"` ⇒ no: the switch lands between retained nodes.
+    """
+    return solver.upper_envelope == "mss"
+
+
+def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:
+    """Whether the regime carries a continuous stochastic-process state.
+
+    A process is stored among the node-valued discrete states, so its policy
+    row is a discrete axis. Its simulation transition draws a continuous value
+    off the process grid, which a nearest-node row read cannot resolve.
+    """
+    return any(
+        isinstance(grid, _ContinuousStochasticProcess)
+        for grid in v_interpolation_info.discrete_states.values()
+    )
+
+
+def _regime_has_passive_state(
+    *, v_interpolation_info: VInterpolationInfo, euler_state_name: StateName
+) -> bool:
+    """Whether the regime carries a passive continuous state.
+
+    Every continuous state other than the Euler state is passive; the DC-EGM
+    policy row is conditional on each passive node, so blending rows across the
+    passive axis is only branch-faithful where no envelope switch lies between.
+    """
+    return any(
+        name != euler_state_name for name in v_interpolation_info.continuous_states
+    )
+
+
+def regime_declares_phased(user_regime: UserRegime) -> bool:
+    """Whether any regime slot carries a `Phased` (phase-variant) declaration.
+
+    Scans `functions`, `state_transitions` (including per-target dicts), the
+    regime `transition`, and `states`. `Phased` is outermost-only in every
+    slot except a per-target transition dict, whose cells it may wrap.
+    """
+
+    def is_phased(value: object) -> bool:
+        if isinstance(value, Phased):
+            return True
+        if isinstance(value, Mapping):
+            return any(isinstance(cell, Phased) for cell in value.values())
+        return False
+
+    return (
+        any(is_phased(value) for value in user_regime.functions.values())
+        or any(is_phased(value) for value in user_regime.state_transitions.values())
+        or is_phased(user_regime.transition)
+        or any(is_phased(value) for value in user_regime.states.values())
     )
 
 

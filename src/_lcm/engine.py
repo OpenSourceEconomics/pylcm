@@ -503,6 +503,26 @@ class SolutionPhase:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class EGMPolicyRead:
+    """Names for the off-grid read of a published `EGMSimPolicy` in simulate.
+
+    The stored policy maps the endogenous resources value to the optimal
+    continuous action; simulation interpolates it at each subject's resources
+    instead of argmaxing over the action grid.
+    """
+
+    action_name: ActionName
+    """The EGM continuous action the interpolated policy value replaces."""
+
+    resources_target: FunctionName
+    """DAG function computing the endogenous resources the policy is read at."""
+
+    savings_lower_bound: float
+    """Lower bound of the solver's savings grid — the borrowing limit the
+    post-read feasibility check enforces (`action <= resources - bound`)."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
     """Simulate-phase view of a canonical regime.
 
@@ -559,6 +579,17 @@ class SimulationPhase:
     carry the true per-age closures. Consumers computing period-specific outputs
     from `functions` (e.g. `additional_targets`) must reject targets that depend
     on these names."""
+
+    egm_policy_read: EGMPolicyRead | None = None
+    """Off-grid read of the published EGM simulation policy, or `None`.
+
+    Present only where replaying the solve-phase policy is valid:
+    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`;
+    - the temporal aggregator `H` is phase-invariant (a phase-variant `H`
+      changes the simulate-phase FOC, so the stored policy is wrong there);
+    - the regime declares no taste shocks.
+    `None` keeps the grid-argmax decision path for the continuous action.
+    """
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
@@ -825,7 +856,13 @@ class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
 
     V_arr: Float1D
-    """Value function array for all subjects at this period."""
+    """Value function array for all subjects at this period.
+
+    The grid-argmax value: where the off-grid policy read replaces the
+    continuous action, this value belongs to the pre-replacement gridded
+    action combination, not to the recorded action — the pair is not a
+    consistent (action, value) evaluation there.
+    """
 
     actions: MappingProxyType[ActionName, FloatND | IntND]
     """Immutable mapping of action names to optimal action arrays for all subjects."""

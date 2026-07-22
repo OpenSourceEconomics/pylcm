@@ -175,7 +175,8 @@ class Regime:
     `g⁻¹(Σ_r p_r · E_w[g(V')])` instead of the linear expectation, and the
     transform parameters become runtime params under the pseudo-function
     name `certainty_equivalent`. Only non-terminal regimes solved by
-    `GridSearch` support it.
+    `GridSearch`, `NBEGM`, or `NNBEGM` support it, and it cannot be combined with
+    `taste_shocks`.
     """
 
     description: str = ""

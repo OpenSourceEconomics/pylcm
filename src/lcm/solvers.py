@@ -12,6 +12,9 @@ backward induction:
   consumption-savings problem conditional on that margin (Druedahl 2021,
   Computational Economics 58(3), 747-775,
   [doi:10.1007/s10614-020-10045-x](https://doi.org/10.1007/s10614-020-10045-x)).
+- `NNBEGM(...)`: the same outer keeper/adjuster search with an inner
+  `NBEGM` solve, so declared liquid kinks, jumps, and hard constraints keep
+  their exact NB-EGM treatment inside every outer candidate.
 - `OneAssetEGM(...)`: the single-asset endogenous grid method for a regime
   with one continuous (Euler) state and no discrete kinks — the
   specialization whose step needs no upper envelope.
@@ -29,13 +32,17 @@ solver instance (`solver.build_period_kernels(context)`), not on its type.
 from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
 from _lcm.solution.dcegm import DCEGM
 from _lcm.solution.grid_search import GridSearch
+from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
+from _lcm.solution.nnbegm import NNBEGM
 from _lcm.solution.one_asset_egm import OneAssetEGM
 from _lcm.solution.two_dim_egm import TwoDimEGM
 
 __all__ = [
     "DCEGM",
+    "NBEGM",
     "NEGM",
+    "NNBEGM",
     "GridSearch",
     "OneAssetEGM",
     "SolutionKernels",

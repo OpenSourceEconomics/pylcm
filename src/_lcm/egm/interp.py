@@ -5,6 +5,8 @@ tail slots hold NaN and whose kink abscissae appear twice (left- and
 right-extrapolated function values). `interp_on_padded_grid` interpolates on
 such rows without ever dividing by a zero-width bracket; passing the row's
 exact slopes upgrades the linear interpolant to a monotone cubic Hermite one.
+Value jumps ride on rows as duplicated abscissae carrying one-sided limits,
+so reads near a jump are one-sided by construction.
 `locate_on_grid` produces edge-clamped bracket indices and weights on
 ordinary (unpadded) grids, e.g. the passive-state grids of the mixed carry
 read.
@@ -941,6 +943,149 @@ def _interp_between_nodes(
     )
 
 
+def interp_and_derivative_on_padded_grid(
+    *,
+    x_query: FloatND,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D | None = None,
+) -> tuple[FloatND, FloatND]:
+    """Read a NaN-padded row and the analytic derivative of that exact read.
+
+    The value channel is identical to `interp_on_padded_grid`. The derivative
+    channel is the closed-form slope of the *selected piece* of that
+    interpolant — never an automatic derivative of the bracket-selection
+    program, whose `searchsorted`/`clip` representation returns arbitrary
+    subgradients at exact grid nodes. Side conventions at the boundaries of a
+    piece:
+
+    - at an ordinary node (including the first) the read selects the right
+      bracket (`side="right"`), so the derivative is the right piece's
+      left-endpoint slope — the node's limited slope under Hermite, the right
+      secant under linear;
+    - at the EXACT last non-NaN node the read clamps into the last bracket
+      and the derivative is that piece's right-endpoint slope — the node's
+      own limited slope, the economic marginal a parent Euler inversion
+      consumes there. The clamped interpolant is constant only STRICTLY
+      above the last node, where the derivative is zero: the zero is a
+      grid-truncation artifact and must not leak onto the node itself. (A
+      right-germ ranking of the clamped interpolant reads zero AT the node —
+      a deliberate two-object split: the germ describes the published
+      interpolant's right behavior for tie selection, this channel publishes
+      the economics.);
+    - at a duplicated jump abscissa the right piece applies, matching the
+      value read's one-sided convention;
+    - below support the derivative is the first bracket's secant (the slope
+      of the value read's linear extension);
+    - zero-width and `-inf` brackets read a zero derivative, keeping the
+      (value, derivative) pair consistent with the value conventions;
+    - a singleton row is the constant pair `(fp[0], 0)`; an empty row is
+      `(NaN, NaN)` — the NaN value carries a poisoned carry to the runtime
+      diagnostics and the derivative is non-authoritative.
+
+    Args:
+        x_query: Points at which to evaluate; any shape.
+        xp: Weakly ascending grid row with NaNs only in the tail.
+        fp: Function values on `xp`, NaN-padded in lockstep.
+        fp_slopes: Node derivatives, NaN-padded in lockstep; `None` selects
+            linear interpolation.
+
+    Returns:
+        Tuple of the interpolated values and the read's analytic derivative,
+        each with the shape of `x_query`.
+
+    """
+    search_grid, valid_length = prepare_padded_grid(xp)
+    return interp_and_derivative_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+
+def interp_and_derivative_on_prepared_grid(
+    *,
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D | None = None,
+    side: Literal["left", "right"] = "right",
+) -> tuple[FloatND, FloatND]:
+    """Paired value-and-derivative read on a prepared row.
+
+    The contract is `interp_and_derivative_on_padded_grid`'s; this form takes
+    the row's `search_grid` and `valid_length` precomputed (via
+    `prepare_padded_grid`), mirroring `interp_on_prepared_grid`. With the
+    default `side="right"` the value channel matches `interp_on_prepared_grid`
+    bit for bit — both gather the same bracket and share the two-node
+    arithmetic.
+
+    `side` selects which bracket an exactly-on-node query lands in, mirroring
+    `_read_prepared_row`: `"right"` reads the node as the start of its right
+    bracket (the ordinary one-sided convention); `"left"` reads it as the end
+    of its left bracket, so at a duplicated abscissa the pair is the left
+    duplicate's record and its piece's right-endpoint slope — the derivative
+    of the value object a left-owned tie selected. Strictly interior queries
+    locate the same bracket either way.
+    """
+    upper = jnp.clip(
+        jnp.searchsorted(search_grid, x_query, side=side),
+        1,
+        jnp.maximum(valid_length - 1, 1),
+    ).astype(jnp.int32)
+    lower = upper - 1
+    # Degenerate valid prefixes gather NaN padding into the bracket; feed the
+    # arithmetic a finite dummy bracket on those rows (mirroring
+    # `interp_on_prepared_grid`, AD-safe under a further differentiation) and
+    # publish the contract values through the overrides below.
+    degenerate = valid_length < 2  # noqa: PLR2004
+
+    def _sanitized(gathered: FloatND, dummy: float) -> FloatND:
+        return jnp.where(degenerate, dummy, gathered)
+
+    value = _interp_between_nodes(
+        x_query=x_query,
+        xp_lower=_sanitized(xp[lower], 0.0),
+        xp_upper=_sanitized(xp[upper], 1.0),
+        fp_lower=_sanitized(fp[lower], 0.0),
+        fp_upper=_sanitized(fp[upper], 0.0),
+        slope_lower=None if fp_slopes is None else _sanitized(fp_slopes[lower], 0.0),
+        slope_upper=None if fp_slopes is None else _sanitized(fp_slopes[upper], 0.0),
+    )
+    derivative = _derivative_between_nodes(
+        x_query=x_query,
+        xp_lower=_sanitized(xp[lower], 0.0),
+        xp_upper=_sanitized(xp[upper], 1.0),
+        fp_lower=_sanitized(fp[lower], 0.0),
+        fp_upper=_sanitized(fp[upper], 0.0),
+        slope_lower=None if fp_slopes is None else _sanitized(fp_slopes[lower], 0.0),
+        slope_upper=None if fp_slopes is None else _sanitized(fp_slopes[upper], 0.0),
+    )
+    # Degenerate valid prefixes share the value channel's contract (see
+    # `interp_on_prepared_grid`): a singleton row is the constant pair
+    # `(fp[0], 0)`; an empty row is `(NaN, NaN)` — the NaN value carries the
+    # poison and the derivative is non-authoritative.
+    value = jnp.where(valid_length <= 1, fp[0], value)
+    derivative = jnp.where(
+        valid_length == 0,
+        jnp.nan,
+        jnp.where(valid_length == 1, 0.0, derivative),
+    )
+    # A NaN query marks an upstream failure; re-pin both channels so the
+    # degenerate-row constants above cannot mask it (the value reader's
+    # fail-loud contract).
+    query_is_nan = jnp.isnan(x_query)
+    return (
+        jnp.where(query_is_nan, jnp.nan, value),
+        jnp.where(query_is_nan, jnp.nan, derivative),
+    )
+
+
 def locate_on_grid(
     *,
     x_query: ScalarFloat,
@@ -983,29 +1128,90 @@ def locate_on_grid(
     return lower, upper, weight_upper
 
 
-def _hermite_correction(
+def _derivative_between_nodes(
     *,
-    relative_position: FloatND,
+    x_query: FloatND,
+    xp_lower: FloatND,
+    xp_upper: FloatND,
+    fp_lower: FloatND,
+    fp_upper: FloatND,
+    slope_lower: FloatND | None = None,
+    slope_upper: FloatND | None = None,
+) -> FloatND:
+    """Analytic derivative of the two-node read `_interp_between_nodes` makes.
+
+    Closed-form differentiation of the selected piece — the bracket indices
+    are data, not differentiated program structure, so exact-node queries get
+    the declared side's slope instead of an autodiff subgradient of the
+    `clip`/`where` representation. Cases, with $t$ the raw relative position:
+
+    - $t < 0$ (below support): the value read extends the bracket's secant
+      linearly, so the derivative is that secant; a non-finite bracket keeps
+      the clamped value, so the derivative is zero.
+    - $0 \\le t \\le 1$: the secant plus, on Hermite-applicable brackets, the
+      correction polynomial's slope $C'(t)/h$ — at $t = 0$ this is exactly the
+      lower node's limited slope, at $t = 1$ the upper node's.
+    - $t > 1$ (above support): the value clamps, so the derivative is zero.
+    - Zero-width brackets and brackets with a `-inf` endpoint read zero,
+      matching the value conventions (the right value at a kink duplicate,
+      `-inf` in a `-inf` bracket's interior).
+    """
+    bracket_width = xp_upper - xp_lower
+    safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
+    raw_position = (x_query - xp_lower) / safe_width
+    finite_pair = jnp.isfinite(fp_lower) & jnp.isfinite(fp_upper)
+    secant = (fp_upper - fp_lower) / safe_width
+
+    if slope_lower is None or slope_upper is None:
+        in_bracket_slope = secant
+    else:
+        coeff_lower, coeff_upper, applicable = _hermite_coefficients(
+            bracket_width=bracket_width,
+            safe_width=safe_width,
+            fp_lower=fp_lower,
+            fp_upper=fp_upper,
+            slope_lower=slope_lower,
+            slope_upper=slope_upper,
+        )
+        # C(t) = t(1-t)[(1-t) a + t b] with a = coeff_lower, b = coeff_upper,
+        # so C'(t) = a + 2 (b - 2a) t + 3 (a - b) t^2; at the endpoints
+        # C'(0) = a and C'(1) = -b, recovering the limited node slopes.
+        position = jnp.clip(raw_position, 0.0, 1.0)
+        correction_slope = (
+            coeff_lower
+            + 2.0 * (coeff_upper - 2.0 * coeff_lower) * position
+            + 3.0 * (coeff_lower - coeff_upper) * position**2
+        ) / safe_width
+        in_bracket_slope = secant + jnp.where(applicable, correction_slope, 0.0)
+
+    derivative = jnp.where(
+        raw_position < 0.0,
+        jnp.where(finite_pair, secant, 0.0),
+        jnp.where(raw_position > 1.0, 0.0, in_bracket_slope),
+    )
+    derivative = jnp.where(bracket_width == 0.0, 0.0, derivative)
+    return jnp.where(jnp.isneginf(fp_lower) | jnp.isneginf(fp_upper), 0.0, derivative)
+
+
+def _hermite_coefficients(
+    *,
     bracket_width: FloatND,
     safe_width: FloatND,
     fp_lower: FloatND,
     fp_upper: FloatND,
     slope_lower: FloatND,
     slope_upper: FloatND,
-) -> FloatND:
-    """Cubic Hermite correction on top of the linear blend, per bracket.
+) -> tuple[FloatND, FloatND, BoolND]:
+    """Cubic-correction coefficients and applicability mask, per bracket.
 
-    With $t$ the relative position, $h$ the bracket width, $\\Delta f$ the
-    value difference, and limited node slopes $m_0, m_1$, the cubic Hermite
-    interpolant is the linear blend plus
-    $t (1-t) \\left[ (1-t)(h m_0 - \\Delta f) + t (\\Delta f - h m_1) \\right]$,
-    which vanishes at both endpoints — boundary clamps and zero-width-bracket
-    reads are untouched. The slopes are Fritsch-Carlson limited (same sign as
-    the secant, magnitude at most three times it), a sufficient condition for
-    the interpolant to be monotone on each monotone bracket. The correction
-    is applied only on positive-width brackets whose endpoint values and
-    slopes are all finite; everywhere else it is zero and the linear rule
-    (with its `-inf` and NaN-padding contracts) stands.
+    With $h$ the bracket width, $\\Delta f$ the value difference, and
+    Fritsch-Carlson limited node slopes $m_0, m_1$ (same sign as the secant,
+    magnitude at most three times it — a sufficient condition for the cubic
+    to be monotone on each monotone bracket), the coefficients are
+    $a = h m_0 - \\Delta f$ and $b = \\Delta f - h m_1$. The correction is
+    applicable only on positive-width brackets whose endpoint values and
+    slopes are all finite; everywhere else the linear rule (with its `-inf`
+    and NaN-padding contracts) stands.
     """
     df = fp_upper - fp_lower
     safe_df = jnp.where(jnp.isfinite(df), df, 0.0)
@@ -1018,16 +1224,45 @@ def _hermite_correction(
 
     coeff_lower = safe_width * limit(slope_lower) - safe_df
     coeff_upper = safe_df - safe_width * limit(slope_upper)
-    correction = (
-        relative_position
-        * (1.0 - relative_position)
-        * ((1.0 - relative_position) * coeff_lower + relative_position * coeff_upper)
-    )
     applicable = (
         (bracket_width > 0.0)
         & jnp.isfinite(fp_lower)
         & jnp.isfinite(fp_upper)
         & jnp.isfinite(slope_lower)
         & jnp.isfinite(slope_upper)
+    )
+    return coeff_lower, coeff_upper, applicable
+
+
+def _hermite_correction(
+    *,
+    relative_position: FloatND,
+    bracket_width: FloatND,
+    safe_width: FloatND,
+    fp_lower: FloatND,
+    fp_upper: FloatND,
+    slope_lower: FloatND,
+    slope_upper: FloatND,
+) -> FloatND:
+    """Cubic Hermite correction on top of the linear blend, per bracket.
+
+    With $t$ the relative position and $a, b$ the coefficients from
+    `_hermite_coefficients`, the cubic Hermite interpolant is the linear
+    blend plus $t (1-t) \\left[ (1-t) a + t b \\right]$, which vanishes at
+    both endpoints — boundary clamps and zero-width-bracket reads are
+    untouched.
+    """
+    coeff_lower, coeff_upper, applicable = _hermite_coefficients(
+        bracket_width=bracket_width,
+        safe_width=safe_width,
+        fp_lower=fp_lower,
+        fp_upper=fp_upper,
+        slope_lower=slope_lower,
+        slope_upper=slope_upper,
+    )
+    correction = (
+        relative_position
+        * (1.0 - relative_position)
+        * ((1.0 - relative_position) * coeff_lower + relative_position * coeff_upper)
     )
     return jnp.where(applicable, correction, 0.0)
