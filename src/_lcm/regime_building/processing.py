@@ -82,6 +82,7 @@ from _lcm.regime_building.phases import (
     RegimePhaseSpec,
 )
 from _lcm.regime_building.Q_and_F import (
+    LAW_SOURCE_ATTR,
     get_period_targets,
     get_Q_and_F,
     get_Q_and_F_terminal,
@@ -124,6 +125,7 @@ from _lcm.typing import (
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from _lcm.utils.error_messages import format_messages
+from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 from _lcm.variables import (
     from_regime,
@@ -417,6 +419,11 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
+            # Unresolved (marker-bearing) solve pool so the simulation continuation
+            # resolves AgeSpecializedFunction per period age, not at the representative
+            # age frozen into `solution.functions` (round-11 F1). Falls back to the
+            # published pool when no specialization is present.
+            solve_functions=solution.continuation_functions,
             solve_transitions=solution.transitions,
             solve_stochastic_transition_names=solution.stochastic_transition_names,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
@@ -520,6 +527,9 @@ def _build_solution_phase(
         all_grids=all_grids,
         regime_params_template=regime_params_template,
         variables=variables,
+        coarse_state_law_names=_phase_coarse_state_law_names(
+            user_regime=user_regimes[regime_name], phase="solve"
+        ),
     )
 
     flat_param_names = _engine_flat_param_names(
@@ -533,12 +543,15 @@ def _build_solution_phase(
     co_map_state_names: tuple[StateName, ...] = ()
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
 
+    next_state_names = _declared_next_state_names(user_regimes[regime_name])
+
     if spec.terminal:
         compute_regime_transition_probs = None
         terminal_func = get_Q_and_F_terminal(
             flat_param_names=flat_param_names,
             functions=core.functions,
             constraints=core.constraints,
+            next_state_names=next_state_names,
         )
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(range(ages.n_periods), terminal_func)
@@ -586,6 +599,7 @@ def _build_solution_phase(
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
+            next_state_names=next_state_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
@@ -602,6 +616,7 @@ def _build_solution_phase(
             ages=ages,
             enable_jit=enable_jit,
             certainty_equivalent=certainty_equivalent,
+            next_state_names=next_state_names,
             # F4: diagnostics recompute on the SAME period-specific target grid as the
             # primary solve (not the representative grid).
             period_to_regime_v_interp=period_to_regime_v_interp,
@@ -695,6 +710,9 @@ def _build_solution_phase(
         _variables=variables,
         grids=all_grids[regime_name],
         functions=published_solution_functions,
+        # Marker-bearing (unresolved) pool for the simulation continuation, resolved
+        # per period's age there rather than frozen at the representative age (F1).
+        _continuation_functions=core.functions,
         constraints=core.constraints,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
@@ -972,6 +990,7 @@ def _build_simulation_phase(
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
+    solve_functions: EconFunctionsMapping,
     solve_transitions: TransitionFunctionsMapping,
     solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
@@ -1017,6 +1036,10 @@ def _build_simulation_phase(
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
+        solve_functions: The solve phase's function pool. Q prices the continuation
+            under the agent's perceived law, so the continuation sub-DAG (state laws,
+            stochastic weights, and every helper they read) is resolved against this
+            pool rather than the simulate one.
         solve_transitions: Transitions from the solve phase (reused).
         solve_stochastic_transition_names: Stochastic transition names from solve
             (reused).
@@ -1045,6 +1068,9 @@ def _build_simulation_phase(
         all_grids=all_grids,
         regime_params_template=regime_params_template,
         variables=variables,
+        coarse_state_law_names=_phase_coarse_state_law_names(
+            user_regime=user_regime, phase="simulate"
+        ),
     )
     functions = core.functions
     constraints = core.constraints
@@ -1101,12 +1127,15 @@ def _build_simulation_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
+    next_state_names = _declared_next_state_names(user_regime)
+
     if spec.terminal:
         compute_regime_transition_probs = None
         terminal_func = get_Q_and_F_terminal(
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
+            next_state_names=next_state_names,
         )
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(range(ages.n_periods), terminal_func)
@@ -1127,6 +1156,28 @@ def _build_simulation_phase(
         # it evaluates on the Cartesian grid, not per-subject. The solve
         # phase built that function unconditionally for non-terminal regimes.
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
+        # The simulated agent acts on its BELIEFS about the FUTURE and lives in the
+        # TRUTH NOW. So Q is built from two phase-closed halves:
+        #   flow         = simulate transitions + simulate pool (`functions`)
+        #   continuation = solve transitions    + solve pool (`solve_functions`)
+        # Each half needs BOTH its transitions and its function pool: `dags` resolves a
+        # transition's argument names against the pool it is handed, transitively, so
+        # passing `transitions=solve_transitions` alone would still read `Phased`
+        # helpers (and, for `MarkovTransition`, the whole `weight_*` node) from the
+        # simulate phase — and passing the solve transitions into the flow would leave
+        # the flow's `next_<state>` a solve law wearing simulate helpers, a sub-DAG that
+        # is neither phase. The same `next_<state>` name therefore legitimately resolves
+        # to different callables in the two halves. The realized next state stays on the
+        # simulate laws — see `next_state`/`compute_regime_transition_probs` below.
+        #
+        # ONE EXCEPTION to "flow = simulate truth": `functions` here is the
+        # imputation-augmented decision pool built above — for a carried-only state
+        # it carries the solve IMPUTATION, not the realized carried value. So flow
+        # utility/feasibility that reads a carried state decides on the imputation,
+        # by design (the continuation was solved there; policy-consistency). The
+        # realized carried value is used for the forward transition via
+        # `simulate_functions`. See the carried-state comment at the top of this
+        # function and the `Phased` semantics contract in `lcm/phased.py`.
         Q_and_F_functions = _build_Q_and_F_per_period(
             regimes_to_active_periods=regimes_to_active_periods,
             functions=functions,
@@ -1138,6 +1189,10 @@ def _build_simulation_phase(
             ages=ages,
             flat_param_names=flat_param_names,
             certainty_equivalent=certainty_equivalent,
+            continuation_functions=solve_functions,
+            flow_transitions=core.transitions,
+            flow_stochastic_transition_names=core.stochastic_transition_names,
+            next_state_names=next_state_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
         )
 
@@ -1392,6 +1447,7 @@ def _process_regime_core(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variables: Variables,
+    coarse_state_law_names: frozenset[StateName],
 ) -> _CoreResult:
     """Process one phase's regime functions and transitions.
 
@@ -1409,6 +1465,12 @@ def _process_regime_core(
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         variables: States and actions of the regime with kind/topology/process tags.
+        coarse_state_law_names: State names whose deterministic law is COARSE
+            (a bare law, not a per-target dict) in THIS phase. A coarse law's
+            `next_<state>` cells are stamped at the shared bare location so a
+            within-period read MERGES; a per-target law's cells keep their
+            target-qualified location so the read CONFLICTS. See
+            `_phase_coarse_state_law_names`.
 
     Returns:
         Core processing result with functions, constraints, transitions, stochastic
@@ -1480,11 +1542,27 @@ def _process_regime_core(
         )
 
     for func_name, func in deterministic_transition_functions.items():
+        # `func_name` is `<target>__next_<state>`; its last path part is the bare
+        # law name `next_<state>` and the state name drops the `next_` prefix.
+        bare_law_name = tree_path_from_qname(func_name)[-1]
+        state_name = bare_law_name.removeprefix("next_")
+        # Provenance location keys a within-period read's merge/conflict (see
+        # `_law_sources_differ`). For a law COARSE in THIS phase, stamp at the bare
+        # `next_<state>` shared by all its target cells so the read MERGES; a
+        # per-target law keeps its target-qualified `names_key` so the read CONFLICTS.
+        # Decoupled from `names_key` (param binding), so the coarse side of a
+        # map-vs-bare `Phased` merges even though the phase-union template binds its
+        # params per target.
+        names_key = _extract_template_names_key(func_name, regime_params_template)
+        law_source_location = (
+            bare_law_name if state_name in coarse_state_law_names else names_key
+        )
         processed_functions[func_name] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
             param_key=func_name,
-            names_key=_extract_template_names_key(func_name, regime_params_template),
+            names_key=names_key,
+            law_source_location=law_source_location,
         )
 
     for func_name, func in stochastic_transition_functions.items():
@@ -1707,6 +1785,50 @@ def _get_stochastic_transition_names(
     )
 
 
+def _declared_next_state_names(user_regime: UserRegime) -> frozenset[str]:
+    """Engine `next_<state>` node names for a regime (own + target-only states).
+
+    A `next_<state>` DAG node exists for every state the regime grids AND every
+    target-only state it hands off (a `state_transitions` key not in `states`). This
+    is phase-invariant and read from the USER declaration, so it still lists a
+    target-only state whose carrier does not grid it in some phase — exactly the
+    no-producer case the read guard must catch. A user may LEGALLY name a current
+    state/action `next_stock`; its own node is `next_next_stock`, so `next_stock`
+    itself is absent here and a read of it is not mistaken for a next-state node.
+    """
+    return frozenset(
+        f"next_{name}"
+        for name in set(user_regime.states) | set(user_regime.state_transitions)
+    )
+
+
+def _phase_coarse_state_law_names(
+    *, user_regime: UserRegime, phase: Literal["solve", "simulate"]
+) -> frozenset[StateName]:
+    """State names whose deterministic law is COARSE (bare) in the given phase.
+
+    A coarse law binds ONE shared law across all its target cells, so a within-period
+    read of its `next_<state>` is unambiguous and must MERGE across targets; a
+    per-target dict binds a distinct cell per target, so the read is target-dependent
+    and CONFLICTS. `Phased` resolves per phase — the side facing `phase` decides.
+
+    Read from the USER declaration shape (bare callable vs `Mapping`), because after
+    canonicalization a broadcast coarse law and a per-target dict that reuses one
+    callable are indistinguishable by object identity — the very ambiguity the
+    provenance stamp exists to resolve. `Phased(solve=coarse, simulate={...})` (and its
+    mirror) is therefore coarse in exactly one phase, which is why the location must be
+    keyed per phase rather than off the phase-union template.
+    """
+    coarse: set[StateName] = set()
+    for state_name, raw in user_regime.state_transitions.items():
+        side: object = raw
+        if isinstance(raw, Phased):
+            side = raw.solve if phase == "solve" else raw.simulate
+        if side is not None and not isinstance(side, Mapping):
+            coarse.add(state_name)
+    return frozenset(coarse)
+
+
 def _process_one_function(
     *,
     func: UserFunction,
@@ -1750,6 +1872,7 @@ def _rename_params_to_qnames(
     regime_params_template: RegimeParamsTemplate,
     param_key: str,
     names_key: str | None = None,
+    law_source_location: str | None = None,
 ) -> EconFunction:
     """Rename function params to qualified names using dags.signature.rename_arguments.
 
@@ -1764,6 +1887,15 @@ def _rename_params_to_qnames(
             differs from `param_key` — a coarse law's names sit at the bare
             law name while its params bind per target. Defaults to
             `param_key`.
+        law_source_location: The location recorded in the provenance stamp used
+            by `_law_sources_differ` for the within-period conflict guard, when
+            it must differ from `names_key`. This decouples a `next_<state>`
+            cell's merge/conflict identity from where its params BIND: the caller
+            passes the bare `next_<state>` for a law that is COARSE in THIS phase
+            (so its cells share a location and MERGE) and the target-qualified
+            `names_key` for a per-target law (so its cells CONFLICT), even in a
+            `Phased` map-vs-bare law whose phase-union template would otherwise
+            give the coarse side per-target leaves. Defaults to `names_key`.
 
     Returns:
         The function with renamed parameters.
@@ -1774,12 +1906,38 @@ def _rename_params_to_qnames(
     branch: Mapping[str, object] = regime_params_template
     for part in tree_path_from_qname(names_key if names_key is not None else param_key):
         branch = cast("Mapping[str, object]", branch[part])
-    param_names = list(branch)
+    # Scope the rename to THIS cell's OWN parameters. A `Phased` state-transition
+    # cell's template branch is the UNION of both phases' params, so a cell that is
+    # parameter-free (or coarse) in its own phase must not be renamed/stamped merely
+    # because the OTHER phase contributed a param to the union — that is the false
+    # conflict of the map-vs-bare and asymmetric both-per-target cases.
+    own_args = get_union_of_args([func])
+    param_names = [p for p in branch if p in own_args]
     if not param_names:
+        # No engine wrapper is added, so no provenance stamp: the cell's own object
+        # identity distinguishes one coarse law (the same object broadcast to every
+        # target) from distinct per-target laws. A parameter-free law reused across
+        # per-target cells is genuinely identical (no parameter can differ), so
+        # shared identity is the right verdict here. See `_law_sources_differ`.
         return cast("EconFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
-
-    return cast("EconFunction", rename_arguments(func, mapper=mapper))
+    renamed = rename_arguments(func, mapper=mapper)
+    # Stamp the engine-created wrapper with (user law, provenance location). The
+    # conflict guard compares this token instead of unwrapping (which cannot tell the
+    # engine's rename layer from a user's own `rename_arguments` wrapper). The location
+    # is decisive: a COARSE law (this phase) is stamped at the BARE `next_<state>`,
+    # shared by every target cell (same location -> merge), whereas a PER-TARGET dict's
+    # cells carry a TARGET-QUALIFIED location, distinct per cell -- so cells that reuse
+    # the SAME callable still get different tokens and remain a conflict. The caller
+    # supplies `law_source_location` from this phase's declaration shape; it defaults to
+    # `names_key`. Keep the base user law, not a nested token, as origin.
+    location = law_source_location
+    if location is None:
+        location = names_key if names_key is not None else param_key
+    prior = getattr(func, LAW_SOURCE_ATTR, None)
+    base = prior[0] if isinstance(prior, tuple) else (func if prior is None else prior)
+    setattr(renamed, LAW_SOURCE_ATTR, (base, location))
+    return cast("EconFunction", renamed)
 
 
 def _engine_flat_param_names(
@@ -2370,7 +2528,24 @@ def _get_simple_transition_discrete_grid(
     (fixed state), not a DiscreteGrid, or the state is not present in the
     source regime.
 
+    A `Phased` entry is unwrapped: the source grid is the same for both variants, so
+    the only question is whether either variant is a *simple* (broadcast) law. The grid
+    is returned when at least one variant is — that variant is the one that could
+    silently clip — and None only when every variant handles targets explicitly. Left
+    wrapped, a `Phased` of two per-target dicts would be mistaken for one broadcast law
+    and rejected for the very category difference the dicts exist to express.
+
     """
+    if isinstance(raw, Phased):
+        variants = [
+            variant
+            for variant in (raw.solve, raw.simulate)
+            if _get_simple_transition_discrete_grid(user_regime, state_name, variant)
+            is not None
+        ]
+        if not variants:
+            return None
+        raw = variants[0]
     # Per-target dicts handle category differences explicitly
     if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition):
         return None
@@ -2817,6 +2992,10 @@ def _build_Q_and_F_per_period(
     flat_param_names: frozenset[str],
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
+    continuation_functions: EconFunctionsMapping | None = None,
+    flow_transitions: TransitionFunctionsMapping | None = None,
+    flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
@@ -2851,6 +3030,15 @@ def _build_Q_and_F_per_period(
         flat_param_names: Frozenset of flat parameter names for the regime.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
+        continuation_functions: Solve-phase pool the continuation sub-DAG resolves
+            against; `None` in the solve phase, where it coincides with `functions`.
+        flow_transitions: Simulate-phase transitions the flow `next_<state>` nodes are
+            taken from; `None` in the solve phase, where they coincide with
+            `transitions`. See `get_Q_and_F` for the phase-closure contract.
+        flow_stochastic_transition_names: Stochastic names of `flow_transitions`.
+        next_state_names: Declared `next_<state>` node names for this regime,
+            used by the no-producer guard to distinguish a genuine missing
+            next-state producer from a current variable merely named `next_*`.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -2886,10 +3074,20 @@ def _build_Q_and_F_per_period(
         continuation_sig = _continuation_grid_signature(
             continuation_info(period), complete
         )
+        # The perceived (solve) continuation pool is resolved per age below, so ages
+        # whose continuation functions resolve to different closures must NOT share a
+        # kernel — fold its per-age signature in too (round-11 F1). `None` (solve
+        # phase / no specialization) contributes a constant, collapsing the grouping.
+        continuation_functions_sig = (
+            tree_signature(continuation_functions, age)
+            if continuation_functions is not None
+            else ()
+        )
         signature = (
             tree_signature(functions, age),
             tree_signature(constraints, age),
             continuation_sig,
+            continuation_functions_sig,
         )
         configs.setdefault((complete, signature), []).append(period)
 
@@ -2916,6 +3114,19 @@ def _build_Q_and_F_per_period(
             regime_to_v_interpolation_info=continuation_info(periods[0]),
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
+            # Resolve the perceived continuation pool at THIS group's age (F1) — not
+            # the representative age frozen into the published solve functions.
+            continuation_functions=(
+                cast(
+                    "EconFunctionsMapping",
+                    resolve_specialized_nodes(continuation_functions, age),
+                )
+                if continuation_functions is not None
+                else None
+            ),
+            flow_transitions=flow_transitions,
+            flow_stochastic_transition_names=flow_stochastic_transition_names,
+            next_state_names=next_state_names,
         )
 
     # Map each period to its group's function

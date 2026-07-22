@@ -56,6 +56,7 @@ def _build_compute_intermediates_per_period(
     ages: AgeGrid,
     enable_jit: bool,
     certainty_equivalent: CertaintyEquivalent | None = None,
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
@@ -94,6 +95,8 @@ def _build_compute_intermediates_per_period(
         enable_jit: Whether to JIT-compile the fused closure.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
+        next_state_names: Declared `next_<state>` node names for this regime,
+            forwarded to the no-producer guard.
 
     Returns:
         Immutable mapping of period index to fused closure.
@@ -165,6 +168,7 @@ def _build_compute_intermediates_per_period(
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(periods[0]),
             certainty_equivalent=certainty_equivalent,
+            next_state_names=next_state_names,
         )
         mapped = _productmap_over_state_action_space(
             func=scalar,

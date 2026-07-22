@@ -315,7 +315,25 @@ class SolutionPhase:
     """Immutable mapping of variable names to grid objects (productmap order)."""
 
     functions: EconFunctionsMapping
-    """Immutable mapping of function names to internal user functions."""
+    """Immutable mapping of function names to internal user functions.
+
+    `AgeSpecializedFunction` markers are resolved at the regime's REPRESENTATIVE
+    age here, because this mapping feeds the unresolved-consumption paths
+    (feasibility checks, additional-target display). The SIMULATION continuation
+    must NOT read this pool — it needs per-age resolution; see
+    `_continuation_functions`.
+    """
+
+    _continuation_functions: EconFunctionsMapping | None = None
+    """Marker-bearing (unresolved) solve pool for the simulation continuation sub-DAG.
+
+    Threaded to `_build_simulation_phase` as `solve_functions`, it lets
+    `_build_Q_and_F_per_period` resolve each `AgeSpecializedFunction` at the
+    CURRENT period's age when pricing the perceived (solve) continuation — rather
+    than reusing `functions`' representative-age closure, which would freeze a
+    later-age belief at the first active age and reverse the simulated argmax
+    (round-11 F1). `None` (mocks / no specialization) falls back to `functions`.
+    """
 
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of constraint names to feasibility predicates."""
@@ -395,6 +413,18 @@ class SolutionPhase:
             self.compute_regime_transition_probs is not None
             and self.continuation_template is not None
         )
+
+    @property
+    def continuation_functions(self) -> EconFunctionsMapping:
+        """Marker-bearing solve pool for the simulation continuation sub-DAG.
+
+        Falls back to the representative-age `functions` when no per-age
+        specialization was threaded (mocks / no `AgeSpecializedFunction`). Read
+        this instead of `_continuation_functions` so the fallback is applied
+        once, at the single call site that prices the perceived continuation
+        (round-11 F1).
+        """
+        return self._continuation_functions or self.functions
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
@@ -633,11 +663,18 @@ class SimulationPhase:
 class _StochasticStateTransition:
     """Metadata for a stochastic state transition, used by automatic validation.
 
-    One entry exists for every `MarkovTransition` state — and for each target
-    of a per-target dict. The pre-solve state-transition validator consumes
-    these to evaluate the function on the regime's grid Cartesian product and
-    check that the output has the expected outcome-axis size, lies in [0, 1],
-    and has rows summing to 1.
+    One entry exists for every `MarkovTransition` state — for each target of a
+    per-target dict, and for each phase variant of a `Phased` law. The pre-solve
+    state-transition validator consumes these to evaluate the function on the
+    regime's grid Cartesian product and check that the output has the expected
+    outcome-axis size, lies in [0, 1], and has rows summing to 1.
+
+    A `Phased` law contributes one entry PER PHASE. Both must be kept: they are
+    different functions and each is fatal if malformed, but for DIFFERENT reasons —
+    the perceived (solve) law prices every action in backward induction, while the
+    true (simulate) law governs the realized draw and the simulation-side checks.
+    Collapsing them onto one key would silently validate only whichever was
+    inserted last.
     """
 
     func: Callable[..., FloatND]
@@ -658,6 +695,13 @@ class _StochasticStateTransition:
     Derived statically at process time from the function's AST. Empty
     when the function doesn't use the `probs_array[...]` pattern, in
     which case the AST subscript-order check is permissively skipped.
+    """
+
+    phase: Literal["solve", "simulate"] | None = None
+    """Phase this law belongs to; `None` for a bare (phase-invariant) law.
+
+    Carried only so failures name the offending phase — a bare law and a `Phased`
+    pair are otherwise validated identically.
     """
 
 

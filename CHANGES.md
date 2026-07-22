@@ -7,18 +7,28 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
-- A continuous stochastic process may condition its `sigma` on a discrete regime
-  state via `sigma=StateConditioned(on="<discrete state>", by={<category>: sigma})`.
-  The scalar `sigma` field then defines a FIXED common node grid; each regime's
-  transition row is evaluated directly at the from-value with that regime's `sigma`
-  (no precomputed-row interpolation). This expresses regime-switching income risk /
-  stochastic volatility. Supported for CDF-binned `NormalIIDProcess`
-  (`gauss_hermite=False`) and `TauchenAR1Process`; Gauss-Hermite node placement and
-  Rouwenhorst are rejected at construction (their fixed-node kernels cannot carry a
-  state-conditioned `sigma`). Solving and simulating use the same conditioned law.
-  Every grid parameter must be fixed at construction, and the conditioning state must
-  map its categories to the same integer codes in every regime that carries it.
-  Current-regime conditioning only. See `lcm_examples/stochastic_volatility.py`.
+- Fixes the simulate-phase Q so a simulated agent prices its continuation under
+  its *perceived* law. `Phased` state transitions are now supported for
+  `MarkovTransition` laws, and the simulate-phase Q is assembled from two
+  phase-closed halves: the current flow (utility, feasibility, `H`) from the
+  simulate transitions and simulate function pool, the continuation (state laws,
+  stochastic weights, and every helper they read) from the solve ones. The
+  realized draw is unchanged and still follows the simulate laws.
+
+  **Behaviour change.** A model is numerically unchanged unless a *phase-varying*
+  (`Phased`) function lies in the dependency ancestry of a continuation
+  transition or of a `next_<state>` read by within-period utility or
+  feasibility — the solve phase is untouched, and for every non-`Phased` name
+  both pools hold the same object. Models that do have such a dependency change,
+  by design: they previously resolved that helper from the simulate pool in the
+  continuation (and the solve law with simulate helpers in the flow), which is
+  the bug being fixed. This pattern was reachable before this release via a
+  `Phased` helper under a bare law, so the correction can move results for
+  existing models.
+
+  Two variants of a `Phased` stochastic law are validated separately; previously
+  only one of them was checked numerically. A per-target dict inside `Phased`
+  must be per-target in both phases and cover the same targets.
 
 - Adds the DC-EGM solver (Iskhakov, Jørgensen, Rust & Schjerning 2017) as a
   per-regime alternative to grid search: `Regime(solver=lcm.DCEGM(...))`.

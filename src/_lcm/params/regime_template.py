@@ -57,7 +57,13 @@ def create_regime_params_template(
         *set(user_regime.states),
         *set(user_regime.actions),
         *user_regime.functions,
+        # `next_<state>` is an engine-provided DAG node for EVERY declared state
+        # transition, including target-only states (in `state_transitions` but not
+        # `states`). Discovering it only from `states` would misclassify a
+        # target-only `next_<state>` read by utility/a constraint as a user
+        # parameter, silently disconnecting the decision from the transition.
         *(f"next_{name}" for name in user_regime.states),
+        *(f"next_{name}" for name in user_regime.state_transitions),
         "period",
         "age",
         "E_next_V",
