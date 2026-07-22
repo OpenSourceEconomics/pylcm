@@ -258,7 +258,12 @@ def test_near_equal_slope_tie_picks_the_larger_slope_branch(dtype, block_size):
         endog_grid=jnp.array([1.0, 2.0, 1.0, 2.0], dtype=dtype),
         policy=jnp.array([20.0, 20.0, 10.0, 10.0], dtype=dtype),
         value=jnp.array(
-            [-s_small * half + adv, s_small * half + adv, -s_large * half, s_large * half],
+            [
+                -s_small * half + adv,
+                s_small * half + adv,
+                -s_large * half,
+                s_large * half,
+            ],
             dtype=dtype,
         ),
         marginal=jnp.array([200.0, 200.0, 100.0, 100.0], dtype=dtype),
