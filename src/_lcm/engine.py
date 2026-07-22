@@ -36,7 +36,6 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
-    Float1D,
     FloatND,
     IntND,
     ScalarFloat,
@@ -50,6 +49,7 @@ from lcm.typing import (
 type ContinuationPayload = EGMCarry
 
 if TYPE_CHECKING:
+    from _lcm.regime_building.gated_edges import ResolvedGatedEdge
     from _lcm.solution.contract import PeriodKernel
 
     # The contract module imports this one at runtime, so `PeriodKernel` is
@@ -745,6 +745,16 @@ class Regime:
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
+    fold_state_names: tuple[StateName, ...] = ()
+    """IID-process states declared `fold=True`, or empty (the default).
+
+    A folded state is integrated out of the stored value by quadrature at
+    solve time, so it is NOT an axis of the regime's stored `V`-array: the
+    backward-induction V topology (`_get_regime_V_shapes_and_shardings`)
+    excludes it from the shape/sharding it computes for this regime. Empty
+    keeps the default path byte-identical.
+    """
+
     certainty_equivalent: CertaintyEquivalent | None = None
     """Nonlinear certainty equivalent declared by the regime, if any."""
 
@@ -761,6 +771,81 @@ class Regime:
     lists every such prefix across both phases so canonical flat params can
     materialize one shared leaf per target. Empty when every law's params
     are user-granular or absent.
+    """
+
+    stakeholders: tuple[str, ...] | None = None
+    """Ordered stakeholder names for a collective regime, or `None` (singleton).
+
+    COLLECTIVE-REGIMES (E1). When set, the regime's value-function array carries a
+    trailing length-`len(stakeholders)` axis: the backward-induction V topology
+    appends it so the zero template and the roll match the collective kernel's
+    stakeholder-valued output.
+    """
+
+    same_period_ref_regimes: tuple[RegimeName, ...] = ()
+    """Regimes whose SAME-period V this regime's solve kernel reads, or empty.
+
+    COLLECTIVE-REGIMES (E2). Non-empty only for a collective regime declaring
+    `same_period_refs`. The backward-induction loop orders each period's active
+    regimes topologically by these edges (references solved first) and passes
+    the referenced regimes' freshly solved V arrays into this regime's kernel
+    call. Empty for every other regime — the default path is unchanged.
+    """
+
+    gated_edges: MappingProxyType[RegimeName, ResolvedGatedEdge] = MappingProxyType({})
+    """This regime's gated edges keyed by TARGET regime name, or empty (E3').
+
+    COLLECTIVE-REGIMES (E3'). Non-empty only for a source regime declaring
+    `gated_edges`: each entry folds a gated continuation object ``Wbar`` on the
+    target regime's grid at each period's end, which this regime's continuation
+    reads in place of the raw target V. Empty for every other regime.
+    """
+
+    gated_edge_folds: MappingProxyType[RegimeName, Callable] = MappingProxyType({})
+    """Compiled ``Wbar`` producers per gated-edge target regime, or empty (E3').
+
+    Built once at model processing (a second pass, once every regime's grid and
+    functions are known); the backward-induction loop evaluates each at the end
+    of the period the target was solved in, storing ``Wbar`` in the rolled edge
+    continuation mapping this regime's kernel reads. Forward simulation (E4)
+    evaluates the same fold once per period from the solved solution and
+    substitutes ``Wbar`` into the source's own continuation. Simulated regime
+    ROUTING no longer reads anything off this fold (simulate F1 fix) — see
+    `gated_edge_simulate_gate_evaluators` instead.
+    """
+
+    gated_edge_leg_projectors: MappingProxyType[RegimeName, tuple[Callable, ...]] = (
+        MappingProxyType({})
+    )
+    """Per-leg FALLBACK state projectors per gated-edge target regime (E4).
+
+    One callable per `ResolvedGatedEdge.legs` entry (same order), mapping a
+    target-grid-coordinate point to the leg's fallback regime's own state
+    coordinates (`build_fallback_state_projector`). Used only by forward
+    simulation's value router to compute the states a routed-away stakeholder
+    carries into its fallback regime; the solve-side fold never needs the
+    fallback's raw coordinates, only its (interpolated) value.
+    """
+
+    gated_edge_simulate_gate_evaluators: MappingProxyType[RegimeName, Callable] = (
+        MappingProxyType({})
+    )
+    """Per gated-edge target regime, the SIMULATE-side gate evaluator (E4).
+
+    COLLECTIVE-REGIMES (E4, simulate F1 fix). Built by
+    `get_edge_simulate_gate_evaluator`
+    (`_lcm.regime_building.gated_edges`): recomputes the gate PREDICATE at a
+    realized (off-grid or on-grid) candidate target-state point by
+    interpolating its VALUE operands (the target's own value components,
+    every declared `gate_refs` entry) and re-applying the SAME predicate the
+    solve-side fold uses — rather than interpolating the fold's baked
+    boolean `gate` array and thresholding the result, which does not
+    commute with a nonlinear predicate and can flip routing decisions near a
+    grid-cell boundary the fold never evaluated. Forward simulation
+    (`_lcm.simulation.gated_routing.route_gated_edges`) calls this directly
+    to decide routing; a `D_target`-reading gate still linearly interpolates
+    the dissolution flag and thresholds it (a documented residual — see
+    `get_edge_simulate_gate_evaluator`'s docstring).
     """
 
 
@@ -899,8 +984,13 @@ def _distribute_states_to_devices(
 class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
 
-    V_arr: Float1D
+    V_arr: FloatND
     """Value function array for all subjects at this period.
+
+    Shape `(n_subjects,)` for a singleton regime; `(n_subjects,
+    n_stakeholders)` for a collective regime (E4) — each stakeholder's own
+    value at the household's shared argmax, mirroring the solve-side V's
+    trailing stakeholder axis.
 
     The grid-argmax value: where the off-grid policy read replaces the
     continuous action, this value belongs to the pre-replacement gridded

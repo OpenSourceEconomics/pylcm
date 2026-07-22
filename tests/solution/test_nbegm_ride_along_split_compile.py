@@ -31,8 +31,11 @@ def _ride_along_kernel(
 ) -> tuple[Any, dict[str, Any]]:
     """Return a representative ride-along period kernel and its lowering context."""
     flat_params = model._process_params(params)
-    next_regime_to_V_arr, next_regime_to_continuation = _build_continuation_templates(
-        regimes=model._regimes, flat_params=flat_params
+    # `_build_continuation_templates` returns a third element (the gated-edge Wbar
+    # templates, E3') on the collective-regimes scaffold; this edge-free NBEGM
+    # model has no gated edges, so it is empty and unused here.
+    next_regime_to_V_arr, next_regime_to_continuation, _next_edge_to_V_arr = (
+        _build_continuation_templates(regimes=model._regimes, flat_params=flat_params)
     )
     regime = model._regimes["alive"]
     period = regime.active_periods[len(regime.active_periods) // 2]

@@ -44,6 +44,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatParams,
+    PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     QAndFFunction,
@@ -55,7 +56,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
-from lcm.typing import FloatND
+from lcm.typing import BoolND, FloatND
 
 # The cross-period continuation channel a continuation-based parent
 # interpolates. Named solver-agnostically on the seam so the engine threads it
@@ -176,6 +177,49 @@ class SolverBuildContext:
     slice it) or `None` (the state is pruned from that regime — pass the leaf through).
     """
 
+    stakeholders: tuple[str, ...] | None = None
+    """Ordered stakeholder names for a collective regime, or `None` (singleton).
+
+    COLLECTIVE-REGIMES (E1). When set, the grid-search kernel reads off each
+    stakeholder's own value at the shared household argmax of the Pareto-weighted
+    scalarization, and the regime's value-function array gains a trailing
+    stakeholder axis.
+    """
+
+    weights: Mapping[str, float] | None = None
+    """Household Pareto weights per stakeholder; set together with `stakeholders`."""
+
+    edge_target_regimes: tuple[RegimeName, ...] = ()
+    """Target regimes this regime reaches through a gated edge, or empty (E3').
+
+    COLLECTIVE-REGIMES (E3'). Non-empty only for a source regime declaring
+    `gated_edges`. The grid-search kernel then substitutes each such target's
+    gated continuation object ``Wbar`` (supplied by the solve loop under
+    ``edge_regime_to_V_arr``) for the raw target V in the ``next_regime_to_V_arr``
+    mapping it reads and lowers against. Empty for every other regime.
+    """
+
+    fold_state_names: tuple[StateName, ...] = ()
+    """IID-process states declared `fold=True`, or empty (the default).
+
+    Only `GridSearch` consumes this: the grid-search kernel weighted-averages
+    each named state's axis out of the stored value immediately after the
+    max-over-actions / collective readout, using the process's own
+    quadrature weights. Empty keeps the default path byte-identical.
+    """
+
+    same_period_ref_regimes: tuple[RegimeName, ...] = ()
+    """Reference regimes whose SAME-period V this regime's kernels read (E2).
+
+    COLLECTIVE-REGIMES (E2). Non-empty only for a collective regime declaring
+    `same_period_refs`. The grid-search kernel then accepts the extra call
+    argument `same_period_regime_to_V_arr` (the mapping of these regimes to
+    their current-period V arrays, supplied by the solve loop after solving
+    them earlier in the same period) and includes matching zero templates in
+    its lowering arguments. Empty for every other regime, whose kernel
+    signatures are unchanged.
+    """
+
 
 @dataclass(frozen=True, kw_only=True)
 class KernelResult:
@@ -201,6 +245,17 @@ class KernelResult:
     simulation_policy: SimulationPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
 
+    dissolution: BoolND | None = None
+    """The dissolution / empty-feasible-set flag `D` on the state axes, or `None`.
+
+    COLLECTIVE-REGIMES (E2). Published by every collective regime's kernel:
+    `True` exactly where NO action satisfies the combined (ordinary AND value)
+    constraints, so the household argmax was taken over an empty set. Distinct
+    from a numeric `-inf` value, which occurs on-path; gates must consume this
+    flag, never test `V == -inf`. `None` for singleton regimes (the default
+    path is unchanged).
+    """
+
     diagnostics: SolverDiagnostics | None = None
     """Published numerical diagnostics, or `None`."""
 
@@ -220,6 +275,14 @@ class BackwardInductionResult:
     """Immutable mapping of period to each regime's published simulation policy.
 
     Sparse over regimes: only kernels that publish a policy contribute entries.
+    """
+
+    dissolution_flags: PeriodToRegimeToDissolutionFlags = MappingProxyType({})
+    """Immutable mapping of period to each COLLECTIVE regime's dissolution flag `D`.
+
+    COLLECTIVE-REGIMES (E2). `True` on the state cells whose action mask is empty
+    (distinct from a numeric `-inf` value); empty inner mappings for models
+    without collective regimes, so the default (singleton) path is unchanged.
     """
 
 

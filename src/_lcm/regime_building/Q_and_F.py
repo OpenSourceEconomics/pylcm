@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -6,12 +7,14 @@ import jax.numpy as jnp
 from dags import concatenate_functions, get_ancestors, with_signature
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, resolve_certainty_equivalent
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
+from _lcm.regime_building.zero_safe import zero_safe_average, zero_safe_weighted_term
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
@@ -28,6 +31,82 @@ from _lcm.typing import (
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from lcm.typing import BoolND, Float1D, FloatND
+
+
+def _sum_regime_mixture(
+    mixture_terms: list[tuple[RegimeName, FloatND, FloatND]], *, like: FloatND
+) -> FloatND:
+    """Reduce the regime mixture ``E[V']=Σ p_r·V_r`` as ONE zero-safe contraction.
+
+    ``mixture_terms`` is a list of ``(target_name, prob_r, expected_V_r)`` — the
+    UNMULTIPLIED per-target probability and expected continuation. The per-target
+    probabilities and continuations are stacked along a new leading (target) axis and
+    multiplied ONCE inside a single ``zero_safe_weighted_term``; the resulting
+    per-target contributions ``p_r·V_r`` are then reduced by a VALUE-ORDERED
+    ``jnp.sum`` — the contributions are ``jnp.sort``-ed along the target axis
+    before the sum. Two
+    properties this buys over the earlier sequential left-fold
+    ``E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`` (round-8/round-10 external
+    re-review, both MEASURED reproduce-first):
+
+    - **Accuracy.** Stacking the OPERANDS and multiplying once inside the reduction —
+      NOT stacking the already-formed products — lands on the exact-policy side of the
+      round-8 pinned 5-target fixture (``> alternative`` bits ...843) where the
+      left-fold and ``jnp.sum(jnp.stack(products))`` both land on the wrong side
+      (bits ...842). It
+      is still NOT correctly-rounded: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the
+      error scales with Σ|p_r·V_r|, hundreds of result-ULP, so a genuine knife-edge
+      argmax can still resolve either way. Deterministic resolution AT a genuine
+      knife-edge would need compensated/exact summation, which is not implemented (a
+      value-sorted Neumaier compensated sum WAS measured and, on the round-10
+      counterexample, landed on the WRONG side of the competing action while the plain
+      value-sorted reduction landed exact-side, so it was NOT adopted).
+    - **Reproducibility (label-independence).** The reduction ORDER is a deterministic
+      function of the contribution VALUES — economically meaningful — and NEVER of the
+      arbitrary regime NAMES. The pre-round-10 code ``sorted(mixture_terms, key=name)``
+      removed the transition-mapping ITERATION-ORDER dependence but made the float64
+      summation order a function of the user's regime LABELS: a pure ALPHA-RENAMING of
+      the regimes (same probabilities, same continuations, only the dict keys change)
+      reordered the non-associative float64 sum and, MEASURED, moved the result across
+      37 distinct outputs over the 120 name bijections of a valid 5-target float64
+      mixture — reversing a non-tied household argmax on the round-10 counterexample.
+      Sorting the CONTRIBUTION MULTISET (``jnp.sort`` along the target axis) makes the
+      sum provably invariant to alpha-renaming: the multiset ``{p_r·V_r}`` is unchanged
+      by relabeling, and the sorted order (hence the summation order and its bits) is a
+      function of that multiset alone. The stacking order of ``mixture_terms`` is
+      therefore irrelevant (the sort canonicalises it), so no name-sort is needed.
+
+    Zero-mass safety is preserved (a zero ``p_r`` beside an admissible ``±inf`` V_r is
+    masked to exactly 0 by ``zero_safe_weighted_term`` BEFORE the sort, so a zero-mass
+    ``-inf`` contributes 0 and never survives the sort as ``-inf``). Cost: the K
+    per-target contributions are materialised together and sorted along the (small)
+    target axis, an O(K log K) sort on a tiny axis, rather than folded one at a time — K
+    is the number of active next-period targets. ``mixture_terms`` is empty in a
+    terminal period with no active target; the mixture is then exactly ``zeros_like``.
+    """
+    if not mixture_terms:
+        return jnp.zeros_like(like)
+    probs = jnp.stack([prob for _, prob, _ in mixture_terms], axis=0)
+    values = jnp.stack([value for _, _, value in mixture_terms], axis=0)
+    # Right-pad the probability rank to the value rank so the per-target weight
+    # broadcasts over the TARGET axis (leading, axis 0) and is constant across any
+    # trailing value-only axes. The collective site carries a trailing stakeholder
+    # axis on the continuation (`values` is (K, *cell, S)) that the scalar regime
+    # probability (K, *cell) does not: without this alignment `zero_safe_weighted_
+    # term` right-aligns and weights the STAKEHOLDER axis instead of the target axis
+    # -- silently reversing a household action when K==S, leaking a zero-mass -inf,
+    # or raising when K!=S. A no-op at the scalar/singleton sites (equal ranks).
+    if probs.ndim < values.ndim:
+        probs = probs.reshape(probs.shape + (1,) * (values.ndim - probs.ndim))
+    # Reduce in VALUE order, not label order. `zero_safe_weighted_term` forms the
+    # zero-mass-safe per-target contributions `p_r*V_r` (masking a zero-mass `+-inf`
+    # to 0); sorting them along the target axis (axis 0) before `jnp.sum` makes the
+    # non-associative float64 reduction order a deterministic function of the
+    # contribution multiset -- provably invariant to an economically-inert
+    # alpha-renaming of the regimes -- where the previous name-sort made the bits
+    # (and a non-tied argmax) depend on the arbitrary regime labels. See the docstring.
+    contributions = zero_safe_weighted_term(probs, values)
+    return jnp.sum(jnp.sort(contributions, axis=0), axis=0)
 
 
 def get_Q_and_F(
@@ -240,12 +319,19 @@ def get_Q_and_F(
         regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             compute_regime_transition_probs(**states_actions_params)
         )
+        # COLLECTIVE-REGIMES (E2): F_arr is built here, before and independently
+        # of Q (it never reads E_next_V). A value-aware mask cannot stay here:
+        # it needs per-stakeholder Q^s, so E2 splits this into (i) build the
+        # state-independent F here, (ii) compute Q^s, (iii) `mask = F ∧ g(...)`
+        # applied in max_Q_over_a. This site also returns the explicit dissolution
+        # flag D = 1[mask empty], distinct from a numeric -inf. See design doc
+        # §2 (E2) / §3.
         U_arr, F_arr = U_and_F(**states_actions_params)
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in period_targets}
         )
 
-        E_next_V = jnp.zeros_like(U_arr)
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -284,13 +370,24 @@ def get_Q_and_F(
 
             # We then take the weighted average of the next value function at the
             # stochastic states to get the expected next value function.
-            next_V_expected_arr = jnp.average(
+            # Zero-safe: a zero-probability stochastic node next to an
+            # admissible on-path -inf must not turn the average into a nan.
+            next_V_expected_arr = zero_safe_average(
                 next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
             )
-            E_next_V = (
-                E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
+            # Collect the UNMULTIPLIED (prob, expected-V) per target; the mixture is
+            # reduced once by `_sum_regime_mixture` (stack operands, one zero-safe
+            # contraction, canonical target order) — see that helper for why this is
+            # more accurate and order-independent than a sequential left-fold (round-8).
+            mixture_terms.append(
+                (
+                    target_regime_name,
+                    active_regime_probs[target_regime_name],
+                    next_V_expected_arr,
+                )
             )
+        E_next_V = _sum_regime_mixture(mixture_terms, like=U_arr)
 
         if ce is not None:
             E_next_V = ce.inverse(
@@ -454,7 +551,7 @@ def get_compute_intermediates(
             {r: regime_transition_probs[r] for r in period_targets}
         )
 
-        E_next_V = jnp.zeros_like(U_arr)
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -480,8 +577,16 @@ def get_compute_intermediates(
                         for arg, flat_name in ce_transform_flat_names.items()
                     },
                 )
-            contribution = jnp.average(next_V_stoch, weights=joint)
-            E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
+            # Zero-safe, mirroring `get_Q_and_F` above: see the guards there.
+            contribution = zero_safe_average(next_V_stoch, weights=joint)
+            mixture_terms.append(
+                (
+                    target_regime_name,
+                    active_regime_probs[target_regime_name],
+                    contribution,
+                )
+            )
+        E_next_V = _sum_regime_mixture(mixture_terms, like=U_arr)
 
         if ce is not None:
             E_next_V = ce.inverse(
@@ -565,6 +670,858 @@ def get_Q_and_F_terminal(
     return Q_and_F
 
 
+def get_Q_and_F_terminal_collective(
+    *,
+    flat_param_names: frozenset[str],
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    stakeholders: tuple[str, ...],
+) -> QAndFFunction:
+    """Terminal (Q, F) for a collective regime — stacked per-stakeholder U + shared F.
+
+    COLLECTIVE-REGIMES (E1). Separate from `get_Q_and_F_terminal` so the singleton
+    terminal path (shared with the simulate / compute-intermediates machinery) is
+    byte-identical; this builder is used only at the collective solve site.
+
+    Builds one `U^s`-and-`F` closure per stakeholder from its own `utility_<s>`
+    DAG target (feasibility is regime-level, so it is identical across
+    stakeholders — the first one is kept). The returned `Q_and_F` stacks the
+    per-stakeholder utilities on a trailing stakeholder axis: for a scalar
+    (state, action) cell it returns `U` of shape `(n_stakeholders,)` and a scalar
+    `F`. After the action product-map in `get_max_Q_over_a`, `U` has shape
+    `(*action_axes, n_stakeholders)` and `F` `(*action_axes,)`; the stakeholder
+    branch there splits `U` by stakeholder and calls `collective_readout`.
+
+    Args:
+        flat_param_names: Frozenset of flat parameter names for the regime.
+        functions: Immutable mapping of function names to internal user functions;
+            carries `utility_<s>` for each stakeholder in place of `utility`.
+        constraints: Immutable mapping of constraint names to internal user functions.
+        stakeholders: Ordered stakeholder names; fixes the trailing-axis order.
+
+    Returns:
+        A function computing the stacked per-stakeholder utilities (Q) and the
+        shared feasibility mask (F) for a terminal collective period.
+
+    """
+    U_and_F_by_stakeholder = {
+        stakeholder: _get_U_and_F(
+            functions=functions,
+            constraints=constraints,
+            utility_name=f"utility_{stakeholder}",
+        )
+        for stakeholder in stakeholders
+    }
+
+    arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
+        deps=list(U_and_F_by_stakeholder.values()),
+        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        exclude=frozenset(),
+    )
+
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    )
+    def Q_and_F(
+        next_regime_to_V_arr: FloatND,  # noqa: ARG001
+        **states_actions_params: _ParamsLeaf,
+    ) -> tuple[FloatND, BoolND]:
+        """Stacked per-stakeholder utilities and the shared feasibility mask.
+
+        Args:
+            next_regime_to_V_arr: Unused in a terminal period; accepted so solve
+                treats all periods uniformly.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            A tuple of the stacked per-stakeholder utility array (trailing
+            stakeholder axis) and the shared feasibility mask.
+
+        """
+        U_arrays: list[FloatND] = []
+        F_arr: BoolND | None = None
+        for u_and_f in U_and_F_by_stakeholder.values():
+            U_s, F_arr = u_and_f(**states_actions_params)
+            U_arrays.append(jnp.asarray(U_s))
+        U_stack = jnp.stack(U_arrays, axis=-1)
+        return U_stack, jnp.asarray(F_arr)
+
+    return Q_and_F
+
+
+# COLLECTIVE-REGIMES (E2): the name under which the mapping of same-period
+# reference regimes to their current-period V arrays enters the kernel
+# signature. Only regimes declaring `same_period_refs` carry it.
+SAME_PERIOD_V_ARG = "same_period_regime_to_V_arr"
+
+# COLLECTIVE-REGIMES (E2, F4 fix): the name under which the mapping of
+# same-period reference regimes to THEIR OWN flat params enters the kernel
+# signature, alongside `SAME_PERIOD_V_ARG`. Carried by every reader built by
+# `_build_same_period_ref_reader`, and hence by every regime that reads another
+# regime's same-period V.
+#
+# A reference reader interpolates the REFERENCE regime's V over the REFERENCE
+# regime's grid, so the interpolator's runtime grid helpers (an
+# `IrregSpacedGrid(pass_points_at_runtime=True)` reference state's `points`, via
+# `V._get_coordinate_finder`) are parameters of the REFERENCE regime: they live
+# in `flat_params[ref.regime]`, never in the READING regime's own namespace.
+# Before this argument existed the reader exposed those helpers as extra outer
+# arguments named after the PREFIXED coordinate variable
+# (`__same_period_ref__x__points`), which no caller supplies and no params
+# template ever emits (`_lcm.params.regime_template._add_runtime_grid_params`
+# emits `x__points`, in the reference regime's own template): all four consumers
+# of `_build_same_period_ref_reader` — ordinary E2 same-period refs, solve-side
+# gate refs, solve-side leg-fallback value readers, and simulate-side gate refs
+# — raised a missing-argument error the moment a reference regime declared a
+# runtime irregular grid. Coordinate VARIABLES stay prefixed (internal wiring
+# that must not collide with the reading regime's own state names); PARAMETER
+# qnames are separated from them and resolved against the reference regime's
+# explicit namespace through this mapping instead.
+SAME_PERIOD_PARAMS_ARG = "same_period_regime_to_params"
+
+# Internal argument names of the same-period reference interpolation; never
+# surfaced in the kernel signature.
+_REF_STATE_PREFIX = "__same_period_ref__"
+_REF_V_ARR_NAME = "__same_period_ref_V_arr__"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResolvedSamePeriodRef:
+    """Engine-side form of a user `SamePeriodRef`, resolved at model processing.
+
+    COLLECTIVE-REGIMES (E2). The user declaration names a stakeholder; the
+    engine resolves it to the index on the reference regime's trailing
+    stakeholder axis (`None` for a singleton reference, whose V has no such
+    axis).
+    """
+
+    regime: RegimeName
+    """Name of the reference regime whose same-period V is read."""
+
+    projection: Mapping[StateName, Callable[..., Any]]
+    """Per-reference-state projection functions (user vocabulary, DAG-resolved)."""
+
+    stakeholder_index: int | None
+    """Index into the reference V's trailing stakeholder axis, or `None`."""
+
+
+def _build_same_period_ref_reader(
+    *,
+    ref: ResolvedSamePeriodRef,
+    v_interpolation_info: VInterpolationInfo,
+    functions: EconFunctionsMapping,
+    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction],
+    conflicting_deterministic_transition_names: frozenset[
+        TransitionFunctionName
+    ] = frozenset(),
+) -> Callable[..., FloatND]:
+    """Build the reader of one same-period reference value at a (state, action) cell.
+
+    COLLECTIVE-REGIMES (E2). Each projection entry is concatenated with the
+    regime's function DAG (so it may read states, actions, helper functions,
+    and the merged deterministic `next_<state>` laws), producing one coordinate
+    per reference state; the reference regime's CURRENT-period V array — passed
+    per solve step under `SAME_PERIOD_V_ARG` — is then interpolated at those
+    coordinates with the ordinary V-interpolation machinery
+    (`get_V_interpolator`), sliced to the named stakeholder first when the
+    reference is collective. The returned callable's signature carries only
+    user-level names (states / actions / params reached by the projections,
+    plus `SAME_PERIOD_V_ARG` and `SAME_PERIOD_PARAMS_ARG`), so the kernel
+    signature stays clean.
+
+    The projections are expressed in the READING regime's vocabulary and their
+    free parameters are bound from the reading regime's own params (every caller
+    passes exactly that); the INTERPOLATION helpers instead belong to the
+    REFERENCE regime's grid and are resolved against `SAME_PERIOD_PARAMS_ARG`
+    (F4 fix — see that constant). The two provenances are separated here rather
+    than merged into one namespace, because a runtime irregular grid names its
+    helper after the STATE alone (`x__points`), so a reading regime that happens
+    to declare an identically named state would otherwise silently supply its
+    OWN grid points for the reference regime's interpolation.
+
+    A projection produces a genuine VALUE for every reference state
+    (interpolation-worthy, possibly off-grid) — unlike the ordinary
+    continuation-value path, which always feeds a process axis its exact
+    on-grid Markov-chain index. When the reference regime carries a
+    non-folded process state (`_ContinuousStochasticProcess`, classified
+    `discrete_states` for the Markov-chain solve path but read here as a
+    genuine value), `get_V_interpolator`'s process-aware mode
+    (`interpolate_process_axes=True`) is used so that axis is linearly
+    interpolated instead of integer-looked-up; a reference regime without a
+    process state is unaffected (`interpolate_process_axes=False`, the
+    ordinary path, byte-identical).
+
+    Args:
+        ref: Resolved same-period reference declaration.
+        v_interpolation_info: V-interpolation info of the reference regime.
+        functions: Immutable mapping of function names to internal user
+            functions.
+        deterministic_transitions: Mapping of `next_<state>` names to merged
+            deterministic own-regime transition functions, made available to
+            the projection like an ordinary same-period-ref read.
+        conflicting_deterministic_transition_names: Frozenset of `next_<state>`
+            names whose deterministic law differs across target bundles (see
+            `_get_deterministic_transitions`). Rejected exactly like an
+            ordinary utility/feasibility read
+            (`_fail_if_conflicting_transition_is_read`) if a projection
+            actually reads one of them, since the merged law would silently
+            disagree with the simulate state-update there too.
+    """
+    _reference_has_process_axis = any(
+        isinstance(grid, _ContinuousStochasticProcess)
+        for grid in v_interpolation_info.discrete_states.values()
+    )
+    interpolator = get_V_interpolator(
+        v_interpolation_info=v_interpolation_info,
+        state_prefix=_REF_STATE_PREFIX,
+        V_arr_name=_REF_V_ARR_NAME,
+        interpolate_process_axes=_reference_has_process_axis,
+    )
+    dag_pool = {
+        **dict(deterministic_transitions),
+        **{k: v for k, v in functions.items() if k != "H"},
+    }
+    _fail_if_conflicting_transition_is_read(
+        combined={
+            **dag_pool,
+            **{
+                f"{_REF_STATE_PREFIX}{state_name}": projection
+                for state_name, projection in ref.projection.items()
+            },
+        },
+        targets=[
+            f"{_REF_STATE_PREFIX}{state_name}"
+            for state_name in v_interpolation_info.state_names
+        ],
+        conflicting_deterministic_transition_names=(
+            conflicting_deterministic_transition_names
+        ),
+    )
+    projection_funcs: dict[StateName, Callable[..., FloatND]] = {}
+    projection_args: dict[StateName, tuple[str, ...]] = {}
+    for state_name in v_interpolation_info.state_names:
+        target = f"{_REF_STATE_PREFIX}{state_name}"
+        projection_funcs[state_name] = concatenate_functions(
+            functions={**dag_pool, target: ref.projection[state_name]},
+            targets=target,
+            enforce_signature=False,
+            set_annotations=True,
+        )
+        projection_args[state_name] = tuple(
+            get_union_of_args([projection_funcs[state_name]])
+        )
+    coordinate_names = {
+        f"{_REF_STATE_PREFIX}{state}" for state in v_interpolation_info.state_names
+    }
+    # Extra interpolator inputs beyond the coordinates and the V array (e.g.
+    # runtime-supplied irregular-grid points). F4 fix: these are the REFERENCE
+    # regime's own parameters, so they are NOT exposed as outer arguments of
+    # this reader (the reading regime's caller has no such param, and the
+    # prefixed name they carried was unsatisfiable by anyone) — they are looked
+    # up per call in `SAME_PERIOD_PARAMS_ARG[ref.regime]` under their qname in
+    # the reference regime's OWN namespace.
+    interpolator_extra_qnames = _reference_interpolator_param_qnames(
+        extra_args=get_union_of_args([interpolator])
+        - coordinate_names
+        - {_REF_V_ARR_NAME},
+        ref=ref,
+    )
+    arg_names = sorted(
+        {arg for args in projection_args.values() for arg in args}
+        | {SAME_PERIOD_V_ARG, SAME_PERIOD_PARAMS_ARG}
+    )
+
+    @with_signature(args=arg_names, return_annotation="FloatND")
+    def read_reference_value(**kwargs: _ParamsLeaf) -> FloatND:
+        same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
+        V_ref = same_period_V[ref.regime]
+        if ref.stakeholder_index is not None:
+            # A collective reference V carries a trailing stakeholder axis;
+            # read the declared stakeholder's slice (state axes only remain).
+            V_ref = V_ref[..., ref.stakeholder_index]
+        coordinates = {
+            f"{_REF_STATE_PREFIX}{state}": projection_funcs[state](
+                **{arg: kwargs[arg] for arg in projection_args[state]}
+            )
+            for state in v_interpolation_info.state_names
+        }
+        return interpolator(
+            **coordinates,
+            **_lookup_reference_params(
+                qnames=interpolator_extra_qnames,
+                regime_to_params=kwargs[SAME_PERIOD_PARAMS_ARG],
+                ref_regime=ref.regime,
+            ),
+            **{_REF_V_ARR_NAME: V_ref},
+        )
+
+    return read_reference_value
+
+
+def _reference_interpolator_param_qnames(
+    *,
+    extra_args: set[str],
+    ref: ResolvedSamePeriodRef,
+) -> MappingProxyType[str, str]:
+    """Map each extra interpolator input to its qname in the REFERENCE namespace.
+
+    COLLECTIVE-REGIMES (E2, F4 fix). `get_V_interpolator` derives its runtime
+    grid-helper names from the COORDINATE VARIABLE it was given
+    (`_get_coordinate_finder`: `qname_from_tree_path((in_name.removeprefix(
+    "next_"), "points"))`), so with `state_prefix=_REF_STATE_PREFIX` the helper
+    for reference state `x` is called `__same_period_ref__x__points` while the
+    reference regime's params template calls the very same quantity `x__points`.
+    Stripping the coordinate prefix is exactly the inverse of the prefixing
+    `get_V_interpolator` applied, and recovers the reference regime's own qname.
+
+    Any extra input that does NOT carry the prefix cannot be attributed to a
+    reference state this way; rather than bind it from an arbitrary namespace
+    (the defect class this whole mechanism exists to end), fail loudly at build
+    time.
+
+    Raises:
+        NotImplementedError: An interpolator input could not be attributed to a
+            prefixed reference coordinate.
+    """
+    qnames: dict[str, str] = {}
+    for arg in sorted(extra_args):
+        if not arg.startswith(_REF_STATE_PREFIX):
+            msg = (
+                f"The same-period reference reader for regime '{ref.regime}' "
+                f"needs an interpolation helper argument '{arg}' that does not "
+                f"derive from a prefixed reference coordinate "
+                f"('{_REF_STATE_PREFIX}...'), so pylcm cannot tell which "
+                "regime's parameter namespace it belongs to. Binding it from a "
+                "guessed namespace would silently read another regime's "
+                "parameter; this is not supported."
+            )
+            raise NotImplementedError(msg)
+        qnames[arg] = arg.removeprefix(_REF_STATE_PREFIX)
+    return MappingProxyType(qnames)
+
+
+def _lookup_reference_params(
+    *,
+    qnames: Mapping[str, str],
+    regime_to_params: object,
+    ref_regime: RegimeName,
+) -> dict[str, _ParamsLeaf]:
+    """Resolve a reader's interpolation helpers in the REFERENCE regime's params.
+
+    COLLECTIVE-REGIMES (E2, F4 fix). See `SAME_PERIOD_PARAMS_ARG`.
+
+    Raises:
+        KeyError: The reference regime's params are missing from the mapping, or
+            do not carry a helper the reference regime's own grid needs.
+    """
+    if not qnames:
+        return {}
+    params_per_regime = cast(
+        "Mapping[RegimeName, Mapping[str, _ParamsLeaf]]", regime_to_params
+    )
+    if ref_regime not in params_per_regime:
+        msg = (
+            f"Reading regime '{ref_regime}''s same-period V requires that "
+            f"regime's own params (it declares runtime grid points), but "
+            f"'{ref_regime}' is missing from '{SAME_PERIOD_PARAMS_ARG}' "
+            f"(present: {sorted(params_per_regime)})."
+        )
+        raise KeyError(msg)
+    ref_params = params_per_regime[ref_regime]
+    resolved: dict[str, _ParamsLeaf] = {}
+    for arg, qname in qnames.items():
+        if qname not in ref_params:
+            msg = (
+                f"Interpolating regime '{ref_regime}''s same-period V needs its "
+                f"parameter '{qname}', which is not in flat_params"
+                f"['{ref_regime}'] (present: {sorted(ref_params)})."
+            )
+            raise KeyError(msg)
+        resolved[arg] = ref_params[qname]
+    return resolved
+
+
+def get_Q_and_F_collective(
+    *,
+    flat_param_names: frozenset[str],
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    period_targets: tuple[RegimeName, ...],
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
+    compute_regime_transition_probs: RegimeTransitionFunction,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    stakeholders: tuple[str, ...],
+    co_map_state_names: tuple[StateName, ...] = (),
+    value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
+    same_period_refs: Mapping[str, ResolvedSamePeriodRef] = MappingProxyType({}),
+) -> QAndFFunction:
+    """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
+
+    COLLECTIVE-REGIMES (E1, slice 2). Separate from `get_Q_and_F` so the
+    singleton path is byte-identical; this builder is used only at the
+    collective solve site.
+
+    Per stakeholder `s`, computes `Q^s = H(u^s, E[V'^s])` with the shared
+    Bellman aggregator `H` (the default `H_linear` applies `u + beta * E[V']`
+    elementwise, so every stakeholder is discounted with the SAME beta). Each
+    transition target must itself be a collective regime with the identical
+    `stakeholders` tuple (validated at model processing), so its
+    `next_V_arr` leaf carries the trailing stakeholder axis. The continuation
+    interpolates the target's V over STATE axes only: the interpolator is
+    evaluated once per stakeholder on the leaf's slice `next_V_arr[..., s]` and
+    the results are re-stacked on a trailing axis, so the stakeholder axis
+    provably rides through the stochastic-node product-map (which stacks its
+    mapped axes at the front) as the last axis. For a scalar (state, action)
+    cell the returned `Q` has shape `(n_stakeholders,)` while `F` is scalar;
+    after the action product-map in `get_max_Q_over_a`, `Q` is
+    `(*action_axes, n_stakeholders)` and `F` `(*action_axes,)` — exactly what
+    the stakeholder branch there (`collective_readout`) consumes.
+
+    No taste shocks and no nonlinear certainty equivalent: both are rejected at
+    regime construction for collective regimes.
+
+    Args:
+        flat_param_names: Frozenset of flat parameter names for the regime.
+        functions: Immutable mapping of function names to internal user
+            functions; carries `utility_<s>` for each stakeholder in place of
+            `utility`, plus the shared `H`.
+        constraints: Immutable mapping of constraint names to internal user
+            functions.
+        period_targets: Target regimes whose continuation enters E[V^s] this
+            period (all collective with the identical stakeholder tuple).
+        transitions: Immutable mapping of transition names to transition
+            functions.
+        stochastic_transition_names: Frozenset of stochastic transition function
+            names.
+        compute_regime_transition_probs: Regime transition probability function
+            for solve (stakeholder-independent — per-stakeholder gates are E3').
+        regime_to_v_interpolation_info: Mapping of regime names to
+            V-interpolation info (state axes only; the stakeholder axis is not
+            an interpolation axis).
+        stakeholders: Ordered stakeholder names; fixes the trailing-axis order.
+        co_map_state_names: Tuple of state names co-mapped with the continuation
+            V (see `get_Q_and_F`).
+        value_constraints: Immutable mapping of value-constraint names to
+            predicates (params already renamed to qnames). COLLECTIVE-REGIMES
+            (E2): evaluated AFTER the per-stakeholder `Q^s`, each predicate may
+            read `Q_<s>` per stakeholder, the `same_period_refs` reference
+            values, and ordinary states / actions / functions / params via the
+            DAG; the results are ANDed into the feasibility mask, so the
+            household argmax runs over `F ∧ g(Q^s, V_ref, ...)` and an
+            all-infeasible cell publishes the dissolution flag `D` downstream.
+        same_period_refs: Immutable mapping of reference-value names to resolved
+            same-period reference declarations. When non-empty, the returned
+            `Q_and_F` carries the extra argument `SAME_PERIOD_V_ARG` — the
+            mapping of reference regime names to their CURRENT-period V arrays,
+            supplied per period by the solve loop (which orders the period's
+            regimes so references are solved first).
+
+    Returns:
+        A function computing the stacked per-stakeholder state-action values
+        (trailing stakeholder axis) and the shared feasibility mask for a
+        non-terminal collective period.
+
+    """
+    deterministic_transitions, conflicting_deterministic_transition_names = (
+        _get_deterministic_transitions(
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+        )
+    )
+    U_and_F_by_stakeholder = {
+        stakeholder: _get_U_and_F(
+            functions=functions,
+            constraints=constraints,
+            deterministic_transitions=deterministic_transitions,
+            conflicting_deterministic_transition_names=(
+                conflicting_deterministic_transition_names
+            ),
+            utility_name=f"utility_{stakeholder}",
+        )
+        for stakeholder in stakeholders
+    }
+    n_stakeholders = len(stakeholders)
+
+    state_transitions = {}
+    next_stochastic_states_weights = {}
+    joint_weights_from_marginals = {}
+    next_V = {}
+
+    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
+
+    for target_regime_name in period_targets:
+        bundle = transitions[target_regime_name]
+        state_transitions[target_regime_name] = get_next_state_function_for_solution(
+            functions=functions,
+            transitions=bundle,
+        )
+        next_stochastic_states_weights[target_regime_name] = (
+            get_next_stochastic_weights_function(
+                functions=functions,
+                transitions=bundle,
+                stochastic_transition_names=stochastic_transition_names,
+                regime_name=target_regime_name,
+            )
+        )
+        joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
+            transitions=bundle,
+            stochastic_transition_names=stochastic_transition_names,
+            regime_name=target_regime_name,
+        )
+        V_arr_name = "next_V_arr"
+        next_V_interpolator = get_V_interpolator(
+            v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
+            state_prefix="next_",
+            V_arr_name=V_arr_name,
+            co_map_state_names=co_map_state_names,
+        )
+        next_V_extra_param_names[target_regime_name] = frozenset(
+            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
+        )
+        stochastic_variables = tuple(
+            key for key in bundle if key in stochastic_transition_names
+        )
+        next_V[target_regime_name] = productmap(
+            func=_get_stakeholder_sliced_interpolator(
+                base_interpolator=next_V_interpolator,
+                V_arr_name=V_arr_name,
+                n_stakeholders=n_stakeholders,
+            ),
+            variables=stochastic_variables,
+            batch_sizes=dict.fromkeys(stochastic_variables, 0),
+        )
+
+    _build_H_kwargs = _get_build_H_kwargs(functions)
+    _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
+
+    # COLLECTIVE-REGIMES (E2): build the same-period reference readers and the
+    # value-constraint evaluators once; their engine-supplied arguments —
+    # `Q_<s>` and the reference-value names — are excluded from the kernel
+    # signature and bound per (state, action) cell inside `Q_and_F`.
+    value_constraint_machinery = _build_value_constraint_machinery(
+        value_constraints=value_constraints,
+        same_period_refs=same_period_refs,
+        stakeholders=stakeholders,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        functions=functions,
+        deterministic_transitions=deterministic_transitions,
+        conflicting_deterministic_transition_names=(
+            conflicting_deterministic_transition_names
+        ),
+    )
+
+    arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
+        deps=[
+            *list(U_and_F_by_stakeholder.values()),
+            compute_regime_transition_probs,
+            *list(state_transitions.values()),
+            *list(next_stochastic_states_weights.values()),
+            *list(value_constraint_machinery.evaluators.values()),
+            *list(value_constraint_machinery.reference_readers.values()),
+        ],
+        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        exclude=value_constraint_machinery.engine_supplied_names,
+    )
+
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    )
+    def Q_and_F(
+        next_regime_to_V_arr: FloatND,
+        **states_actions_params: _ParamsLeaf,
+    ) -> tuple[FloatND, BoolND]:
+        """Per-stakeholder state-action values and the shared feasibility mask.
+
+        Args:
+            next_regime_to_V_arr: The next period's value function arrays, each
+                target leaf carrying a trailing stakeholder axis.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            A tuple of the stacked per-stakeholder state-action value array
+            (trailing stakeholder axis) and the shared feasibility mask.
+
+        """
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
+            compute_regime_transition_probs(**states_actions_params)
+        )
+        U_arrays: list[FloatND] = []
+        F_arr: BoolND | None = None
+        for u_and_f in U_and_F_by_stakeholder.values():
+            U_s, F_arr = u_and_f(**states_actions_params)
+            U_arrays.append(jnp.asarray(U_s))
+        U_stack = jnp.stack(U_arrays, axis=-1)
+        active_regime_probs = MappingProxyType(
+            {r: regime_transition_probs[r] for r in period_targets}
+        )
+
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
+        for target_regime_name in period_targets:
+            next_states = state_transitions[target_regime_name](
+                **states_actions_params,
+            )
+            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
+                target_regime_name
+            ](**states_actions_params)
+            joint_next_stochastic_states_weights = joint_weights_from_marginals[
+                target_regime_name
+            ](**marginal_next_stochastic_states_weights)
+
+            extra_kw = {
+                k: states_actions_params[k]
+                for k in next_V_extra_param_names[target_regime_name]
+            }
+            # Shape (*stochastic_axes, n_stakeholders): the product-map stacks
+            # the stochastic-node axes at the front, the stakeholder axis stays
+            # trailing.
+            next_V_at_stochastic_states_arr = next_V[target_regime_name](
+                **{
+                    name: val
+                    for name, val in next_states.items()
+                    if name not in _co_map_next_names
+                },
+                next_V_arr=next_regime_to_V_arr[target_regime_name],
+                **extra_kw,
+            )
+
+            # Per-stakeholder weighted average over the stochastic nodes only —
+            # never over the trailing stakeholder axis. Zero-safe: see the
+            # guards in `get_Q_and_F` above.
+            next_V_expected_arr = zero_safe_average(
+                next_V_at_stochastic_states_arr.reshape(-1, n_stakeholders),
+                axis=0,
+                weights=jnp.asarray(joint_next_stochastic_states_weights).reshape(-1),
+            )
+            mixture_terms.append(
+                (
+                    target_regime_name,
+                    active_regime_probs[target_regime_name],
+                    next_V_expected_arr,
+                )
+            )
+        E_next_V = _sum_regime_mixture(mixture_terms, like=U_stack)
+
+        # H applied on the stacked arrays is H per stakeholder: `utility` and
+        # `E_next_V` share the trailing stakeholder axis and H's parameters
+        # (e.g. the default `H_linear`'s discount factor) are shared across
+        # stakeholders, so the elementwise aggregation is exactly
+        # Q^s = H(u^s, E[V'^s], beta) with the same beta for every s.
+        Q_arr = functions["H"](
+            utility=U_stack,
+            E_next_V=E_next_V,
+            **_build_H_kwargs(states_actions_params),
+        )
+
+        # COLLECTIVE-REGIMES (E2): value-aware feasibility. Evaluated AFTER
+        # Q^s — this is the reorder the singleton path never needs (there,
+        # F is built before and independently of Q). Interpolate each declared
+        # same-period reference value at the projected coordinates, then AND
+        # every predicate — reading its own `Q_<s>` gathers, the reference
+        # values, and ordinary cell kwargs — into the mask. The household
+        # argmax downstream runs over the masked set; an all-infeasible cell
+        # sets the dissolution flag D there (`collective_readout`).
+        if value_constraint_machinery.evaluators:
+            F_arr = _apply_value_constraints(
+                machinery=value_constraint_machinery,
+                Q_arr=jnp.asarray(Q_arr),
+                # A constraint-less regime's F is the Python `True` scalar.
+                F_arr=jnp.asarray(F_arr),
+                states_actions_params=states_actions_params,
+            )
+
+        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
+
+    return Q_and_F
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ValueConstraintMachinery:
+    """Prebuilt E2 evaluation machinery closed over by a collective `Q_and_F`."""
+
+    reference_readers: Mapping[str, Callable[..., FloatND]]
+    """Per reference-value name, the same-period reference reader."""
+
+    reference_reader_args: Mapping[str, tuple[str, ...]]
+    """Each reader's argument names (fetched off the cell kwargs)."""
+
+    evaluators: Mapping[str, Callable[..., BoolND]]
+    """Per value-constraint name, the DAG-concatenated predicate."""
+
+    evaluator_args: Mapping[str, tuple[str, ...]]
+    """Each evaluator's argument names (split engine-supplied vs cell kwargs)."""
+
+    q_value_index: Mapping[str, int]
+    """`Q_<s>` argument name -> index on the trailing stakeholder axis."""
+
+    engine_supplied_names: frozenset[str]
+    """Names bound by the engine per cell — excluded from the kernel signature."""
+
+
+def _build_value_constraint_machinery(
+    *,
+    value_constraints: ConstraintFunctionsMapping,
+    same_period_refs: Mapping[str, ResolvedSamePeriodRef],
+    stakeholders: tuple[str, ...],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    functions: EconFunctionsMapping,
+    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction],
+    conflicting_deterministic_transition_names: frozenset[
+        TransitionFunctionName
+    ] = frozenset(),
+) -> _ValueConstraintMachinery:
+    """Build the E2 reference readers and value-constraint evaluators once.
+
+    COLLECTIVE-REGIMES (E2). Each evaluator is the predicate concatenated with
+    the regime's function DAG (so it may read helper functions and the merged
+    deterministic `next_<state>` laws, exactly like ordinary constraints); its
+    engine-supplied arguments — `Q_<s>` and the reference-value names — are
+    bound per (state, action) cell by `_apply_value_constraints`.
+
+    `conflicting_deterministic_transition_names` is threaded to the reference
+    readers and enforced on the value-constraint predicates themselves
+    (`_fail_if_conflicting_transition_is_read`), exactly as for the ordinary
+    utility/feasibility read in `_get_U_and_F`: an E2 predicate or projection
+    reading a target-dependent `next_<state>` law would silently bind one
+    target's law while the simulate state-update uses the per-target one.
+    """
+    reference_readers: dict[str, Callable[..., FloatND]] = {}
+    reference_reader_args: dict[str, tuple[str, ...]] = {}
+    for ref_name, ref in same_period_refs.items():
+        reader = _build_same_period_ref_reader(
+            ref=ref,
+            v_interpolation_info=regime_to_v_interpolation_info[ref.regime],
+            functions=functions,
+            deterministic_transitions=deterministic_transitions,
+            conflicting_deterministic_transition_names=(
+                conflicting_deterministic_transition_names
+            ),
+        )
+        reference_readers[ref_name] = reader
+        reference_reader_args[ref_name] = tuple(get_union_of_args([reader]))
+
+    dag_pool = {
+        **dict(deterministic_transitions),
+        **{k: v for k, v in functions.items() if k != "H"},
+    }
+    evaluators: dict[str, Callable[..., BoolND]] = {}
+    evaluator_args: dict[str, tuple[str, ...]] = {}
+    for constraint_name, predicate in value_constraints.items():
+        combined = {**dag_pool, constraint_name: predicate}
+        _fail_if_conflicting_transition_is_read(
+            combined=combined,
+            targets=[constraint_name],
+            conflicting_deterministic_transition_names=(
+                conflicting_deterministic_transition_names
+            ),
+        )
+        evaluator = concatenate_functions(
+            functions=combined,
+            targets=constraint_name,
+            enforce_signature=False,
+            set_annotations=True,
+        )
+        evaluators[constraint_name] = evaluator
+        evaluator_args[constraint_name] = tuple(get_union_of_args([evaluator]))
+
+    q_value_index = {f"Q_{s}": index for index, s in enumerate(stakeholders)}
+    return _ValueConstraintMachinery(
+        reference_readers=MappingProxyType(reference_readers),
+        reference_reader_args=MappingProxyType(reference_reader_args),
+        evaluators=MappingProxyType(evaluators),
+        evaluator_args=MappingProxyType(evaluator_args),
+        q_value_index=MappingProxyType(q_value_index),
+        engine_supplied_names=(frozenset(q_value_index) | frozenset(reference_readers)),
+    )
+
+
+def _apply_value_constraints(
+    *,
+    machinery: _ValueConstraintMachinery,
+    Q_arr: FloatND,
+    F_arr: BoolND,
+    # `object` values: besides ordinary `_ParamsLeaf` leaves, the cell kwargs
+    # carry the same-period V mapping under `SAME_PERIOD_V_ARG`.
+    states_actions_params: Mapping[str, object],
+) -> BoolND:
+    """AND every value constraint into the feasibility of one (state, action) cell.
+
+    COLLECTIVE-REGIMES (E2). Reads each declared same-period reference value at
+    the projected coordinates (the readers pull the current-period reference V
+    arrays off `states_actions_params[SAME_PERIOD_V_ARG]`), then evaluates each
+    predicate with its `Q_<s>` arguments gathered from the trailing stakeholder
+    axis of `Q_arr`, its reference-value arguments, and its remaining arguments
+    from the cell kwargs.
+    """
+    reference_values = {
+        ref_name: reader(
+            **{
+                arg: states_actions_params[arg]
+                for arg in machinery.reference_reader_args[ref_name]
+            }
+        )
+        for ref_name, reader in machinery.reference_readers.items()
+    }
+    for constraint_name, evaluate in machinery.evaluators.items():
+        predicate_kwargs: dict[str, object] = {}
+        for arg in machinery.evaluator_args[constraint_name]:
+            if arg in machinery.q_value_index:
+                predicate_kwargs[arg] = Q_arr[..., machinery.q_value_index[arg]]
+            elif arg in reference_values:
+                predicate_kwargs[arg] = reference_values[arg]
+            else:
+                predicate_kwargs[arg] = states_actions_params[arg]
+        F_arr = jnp.logical_and(F_arr, evaluate(**predicate_kwargs))
+    return F_arr
+
+
+def _get_stakeholder_sliced_interpolator(
+    *,
+    base_interpolator: Callable[..., FloatND],
+    V_arr_name: str,
+    n_stakeholders: int,
+) -> Callable[..., FloatND]:
+    """Evaluate a V-interpolator per stakeholder slice of a stacked V array.
+
+    COLLECTIVE-REGIMES (E1, slice 2). The target regime's `next_V_arr` leaf has
+    shape `(*target_state_axes, n_stakeholders)`; the base interpolator
+    interpolates over the state axes of a plain `(*target_state_axes,)` array.
+    Calling it once per stakeholder on the slice `next_V_arr[..., s]` and
+    re-stacking on a trailing axis keeps the interpolation semantics untouched
+    and puts the stakeholder axis last by construction — no axis bookkeeping
+    can reorder it. The wrapper carries the base interpolator's exact argument
+    names so the stochastic-variable product-map and the extra-param discovery
+    treat it like the singleton interpolator.
+
+    Args:
+        base_interpolator: The singleton V-interpolator from
+            `get_V_interpolator` (state axes only).
+        V_arr_name: Name of the interpolator's value-array argument.
+        n_stakeholders: Number of stakeholder slices on the trailing axis.
+
+    Returns:
+        A callable with the base interpolator's signature returning the
+        per-stakeholder interpolated values, stakeholder axis trailing.
+
+    """
+    arg_names = tuple(get_union_of_args([base_interpolator]))
+
+    @with_signature(args=arg_names, return_annotation="FloatND")
+    def next_V_per_stakeholder(**kwargs: _ParamsLeaf) -> FloatND:
+        stacked_V_arr = cast("FloatND", kwargs.pop(V_arr_name))
+        return jnp.stack(
+            [
+                base_interpolator(**kwargs, **{V_arr_name: stacked_V_arr[..., s]})
+                for s in range(n_stakeholders)
+            ],
+            axis=-1,
+        )
+
+    return next_V_per_stakeholder
+
+
 def get_period_targets(
     *,
     period: int,
@@ -576,8 +1533,23 @@ def get_period_targets(
     The canonical transition bundles (`transitions` keys) carry exactly the
     reachable targets with at least one state law; the period filter keeps
     those active in the next period. A reachable target absent from the
-    bundles has no states (its V is identically zero) and contributes
-    nothing to the continuation.
+    bundles is ASSUMED to have no states — its V identically zero, so it
+    contributes nothing to the continuation.
+
+    That assumption is load-bearing, and only as good as the bundle
+    construction in `_process_regime_core`: a target that DOES declare states
+    yet ends up with an empty bundle is dropped from E[V] SILENTLY — no error,
+    and its value is not in fact zero. Known remaining hole (fold-review F2,
+    deliberately NOT closed in this slice): a target declaring a state the
+    SOURCE does not also declare gets nothing wired for it —
+    `target_process_grids` intersects each target's grids with the SOURCE
+    regime's own `process_names`, and an ordinary state reached only via the
+    regime transition has no auto-wiring at all — so such a target vanishes
+    from the continuation and its actions are valued as if it were worthless.
+    Closing it needs an unconditional-marginal transition primitive (a
+    process's weight/next functions currently take the source's realized value
+    of that same state as an argument, which a source that never declares it
+    cannot supply); that is a separate feature, not a fold concern.
 
     Args:
         period: The period to enumerate targets for.
@@ -786,6 +1758,7 @@ def _get_U_and_F(
     conflicting_deterministic_transition_names: frozenset[
         TransitionFunctionName
     ] = frozenset(),
+    utility_name: str = "utility",
     stochastic_transition_names: frozenset[TransitionFunctionName] = frozenset(),
     next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> Callable[..., tuple[FloatND, BoolND]]:
@@ -810,6 +1783,10 @@ def _get_U_and_F(
             rejected if any of them is read by the within-period decision (utility
             or feasibility), because the merged law would disagree with the
             simulate state-update.
+        utility_name: DAG target name of the felicity function. `"utility"` (the
+            default) is the singleton case; a collective regime passes a
+            per-stakeholder `"utility_<s>"` so this builder returns that
+            stakeholder's own `U^s` alongside the shared feasibility.
 
     Returns:
         The instantaneous utility and feasibility function.
@@ -827,7 +1804,7 @@ def _get_U_and_F(
         **dict(constraints),
         **{k: v for k, v in functions.items() if k != "H"},
     }
-    guard_targets = ["utility", *constraints]
+    guard_targets = [utility_name, *constraints]
     _fail_if_conflicting_transition_is_read(
         combined=raw_decision_graph,
         targets=guard_targets,
@@ -854,9 +1831,16 @@ def _get_U_and_F(
         **dict(deterministic_transitions),
         **{k: v for k, v in functions.items() if k != "H"},
     }
+    _fail_if_conflicting_transition_is_read(
+        combined=combined,
+        targets=[utility_name, "feasibility"],
+        conflicting_deterministic_transition_names=(
+            conflicting_deterministic_transition_names
+        ),
+    )
     return concatenate_functions(
         functions=combined,
-        targets=["utility", "feasibility"],
+        targets=[utility_name, "feasibility"],
         enforce_signature=False,
         set_annotations=True,
     )
@@ -890,12 +1874,19 @@ def _fail_if_conflicting_transition_is_read(
         names = ", ".join(offending)
         msg = (
             "Within-period utility or feasibility reads a target-dependent "
-            f"deterministic state law ({names}), but its implementation differs "
-            "across target regimes. The decision DAG would bind one target's law "
-            "while the simulate state-update uses the right one, so they would "
-            "disagree silently. Make the law identical across all targets that "
-            "carry the state, or stop reading the chosen next state in the "
-            "within-period utility/feasibility."
+            f"deterministic state law ({names}), but the targets that carry the "
+            "state supply DIFFERENT callable OBJECTS for it (the conflict test is "
+            "Python object identity, `merged[name] is not func` -- see "
+            "`_get_deterministic_transitions`; two separately-declared but "
+            "extensionally-equal functions are conservatively treated as a "
+            "conflict, never merged silently). The decision DAG would bind one "
+            "target's law while the simulate state-update uses the right one, so "
+            "they would disagree silently. Target-independent laws must currently "
+            "REUSE ONE callable object across every target that carries the state "
+            "(assign the function once and reference it, do not redefine it per "
+            "target); or stop reading the chosen next state in the within-period "
+            "utility/feasibility. A registry-backed law identity that accepts "
+            "extensionally-equal declarations is a future refinement."
         )
         raise ValueError(msg)
 

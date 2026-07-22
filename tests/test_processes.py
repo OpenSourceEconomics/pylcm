@@ -1,3 +1,5 @@
+from typing import Any
+
 import pandas as pd
 import pytest
 from jax import numpy as jnp

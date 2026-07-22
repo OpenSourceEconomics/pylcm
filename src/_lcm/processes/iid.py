@@ -1,6 +1,7 @@
 from abc import abstractmethod
 from dataclasses import dataclass, fields
 from types import MappingProxyType
+from typing import ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -21,6 +22,45 @@ from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 @dataclass(frozen=True, kw_only=True)
 class _IIDProcess(_ContinuousStochasticProcess):
     """Base for IID processes — draw does not depend on previous value."""
+
+    fold: bool = False
+    """Integrate this shock into the stored value instead of keeping its axis.
+
+    `False` (the default) is today's behavior, byte-identical: the shock's
+    discretization nodes stay a materialized axis of every stored value
+    function, exactly like an ordinary state. `True` folds the shock out of
+    storage — the solve still evaluates every node (the max-over-actions /
+    collective readout runs per node, unchanged), but immediately
+    weighted-averages the node axis away with the process's own quadrature
+    weights *before* the result is written into the stored value, so the
+    published `V` has one fewer axis. Only an IID process may set this (a
+    persistent process has no `fold` field at all — the type system rejects
+    it). Further restrictions (no same-period gate / value-constraint reads
+    the realized node, no next-period transition or continuation depends on
+    it, `GridSearch` only, not combined with `taste_shocks`, not combined
+    with a nonlinear `certainty_equivalent` — the fold average is exact only
+    for the linear expectation, and only a fully-specified process — no
+    runtime-supplied distribution params) are enforced by
+    `Regime.__post_init__` / model processing; see
+    `_validate_fold_declarations`.
+
+    SCOPE (nonpersistent-only, no continuation support yet):
+    `_fail_if_folded_state_persists` rejects a fold whenever ANY reachable
+    regime's continuation still carries a `next_<name>` for this state — a
+    self-transition, or the same IID shock redeclared in a later period of
+    the SAME regime. This slice only reduces a shock that is used and
+    discarded within the one period that folds it; it does NOT implement
+    fold-aware continuation interpolation, so a shock that is genuinely
+    redrawn every period across many periods (the multi-period,
+    "repeated-IID" topology — e.g. a wage/match shock redrawn each age) is
+    out of scope and is rejected at construction, not silently
+    mishandled. Continuation support for a persistent fold is a deferred,
+    separate feature.
+    """
+
+    _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (
+        _ContinuousStochasticProcess._NON_PARAM_FIELDS | {"fold"}  # noqa: SLF001
+    )
 
     @abstractmethod
     def draw_shock(

@@ -53,8 +53,28 @@ def _get_regime_V_shapes_and_shardings(
         state_action_space = regime.solution.state_action_space(
             regime_params=flat_params[regime_name],
         )
-        state_order: tuple[StateName, ...] = tuple(state_action_space.states.keys())
-        shape = tuple(len(v) for v in state_action_space.states.values())
+        # Folded IID-process states are integrated out of the stored value by
+        # quadrature at solve time (`get_max_Q_over_a`'s fold reduction), so
+        # they are NOT an axis of this regime's V-array — exclude them from
+        # the shape/sharding topology the same way a co-mapped state's axis
+        # is still present (co-map only relocates an axis for sharding; fold
+        # removes it).
+        state_order: tuple[StateName, ...] = tuple(
+            name
+            for name in state_action_space.states
+            if name not in regime.fold_state_names
+        )
+        shape = tuple(
+            len(v)
+            for name, v in state_action_space.states.items()
+            if name not in regime.fold_state_names
+        )
+        # COLLECTIVE-REGIMES (E1): a collective regime's V carries a trailing
+        # stakeholder axis, so the zero template and the roll must too. The
+        # sharding plan spans the state axes only; the trailing stakeholder
+        # axis is replicated.
+        if regime.stakeholders is not None:
+            shape = (*shape, len(regime.stakeholders))
         sharding_plan = _build_regime_sharding(
             grids=regime.solution.grids, n_devices=n_devices
         )

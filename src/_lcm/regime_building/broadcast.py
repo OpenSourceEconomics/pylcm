@@ -350,7 +350,14 @@ def _needed_names(
 
     """
     pool: dict[str, UserFunction] = dict(phase_slice.functions)
-    targets = [name for name in ("utility", "H") if name in pool]
+    # A collective regime carries a per-stakeholder `utility_<s>` in place of a
+    # single `utility`; a broadcast variable read only by those must survive.
+    utility_names: tuple[str, ...] = (
+        tuple(f"utility_{s}" for s in user_regime.stakeholders)
+        if user_regime.stakeholders is not None
+        else ("utility",)
+    )
+    targets = [name for name in (*utility_names, "H") if name in pool]
     targets += [name for name in user_regime.derived_categoricals if name in pool]
 
     roots = {

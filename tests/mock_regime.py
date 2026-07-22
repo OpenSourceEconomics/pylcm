@@ -56,6 +56,10 @@ class MockRegime(UserRegime):
         object.__setattr__(self, "active", lambda _age: True)
         object.__setattr__(self, "derived_categoricals", MappingProxyType({}))
         object.__setattr__(self, "description", "")
+        # `value_constraints` / `same_period_refs` use default_factory on the
+        # real dataclass, so no class-level fallback exists — set them here.
+        object.__setattr__(self, "value_constraints", MappingProxyType({}))
+        object.__setattr__(self, "same_period_refs", MappingProxyType({}))
         # `finalize_regimes` injects the default `H` for non-terminal
         # regimes; mirror that here.
         if not self.terminal and "H" not in self.functions:
