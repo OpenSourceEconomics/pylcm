@@ -18934,7 +18934,7 @@ packages:
   - beartype>=0.21
   - cloudpickle>=3.1.2
   - h5py>=3.12
-  - jax>=0.9
+  - jax>=0.11
   - jaxtyping>=0.3.10
   - orbax-checkpoint>=0.11
   - pandas
