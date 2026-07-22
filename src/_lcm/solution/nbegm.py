@@ -3409,12 +3409,19 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     marginal_stack=marginal_stack,
                     taste_shock_scale=0.0,
                 )
+                policy_row = None
             else:
-                value_row, marginal_row, _policy_row = solve_branch(
+                value_row, marginal_row, policy_row = solve_branch(
                     {}, cont_value, cont_marginal, extra_cont_value, cliff_savings
                 )
 
             if statics.n_published_jumps == 0:
+                # Continuous-only, jump-free rows carry the exact consumption so
+                # the continuous-outer replay reads it instead of re-inverting a
+                # slope-scaled marginal (round-3 audit F2). Discrete-branch rows
+                # never reach that replay, so they keep the two-array shape.
+                if policy_row is not None:
+                    return (value_row, marginal_row, policy_row)
                 return (value_row, marginal_row)
             # The carry keeps the whole augmented row — the jump rides inside
             # the endogenous grid as a duplicated abscissa carrying its exact
@@ -3443,6 +3450,10 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         value_arr, carry = _assemble_ride_carry(
             stacks=stacks,
             n_jumps=statics.n_published_jumps,
+            carry_policy=(
+                schedule_spec.discrete_action_name is None
+                and statics.n_published_jumps == 0
+            ),
             liquid=liquid,
             ride_shape=ride_shape,
             liquid_axis_pos=schedule_spec.liquid_axis_pos,
@@ -3865,6 +3876,7 @@ def _assemble_ride_carry(
     *,
     stacks: tuple[FloatND, ...],
     n_jumps: int,
+    carry_policy: bool,
     liquid: Float1D,
     ride_shape: tuple[int, ...],
     liquid_axis_pos: int,
@@ -3900,6 +3912,18 @@ def _assemble_ride_carry(
             row_marginal_stack.reshape(*ride_shape, n_row).astype(dtype),
         )
         breakpoint_rows = breakpoint_stack.reshape(*ride_shape, n_jumps).astype(dtype)
+        policy_rows = None
+    elif carry_policy:
+        # Continuous-only, jump-free rows: the cell solve returns the exact
+        # consumption alongside value and marginal (round-3 audit F2).
+        value_stack, marginal_stack, policy_stack = stacks
+        carry_rows = (
+            jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
+            value_stack.reshape(*ride_shape, n_liquid).astype(dtype),
+            marginal_stack.reshape(*ride_shape, n_liquid).astype(dtype),
+        )
+        breakpoint_rows = None
+        policy_rows = policy_stack.reshape(*ride_shape, n_liquid).astype(dtype)
     else:
         value_stack, marginal_stack = stacks
         carry_rows = (
@@ -3908,6 +3932,7 @@ def _assemble_ride_carry(
             marginal_stack.reshape(*ride_shape, n_liquid).astype(dtype),
         )
         breakpoint_rows = None
+        policy_rows = None
     value_arr = jnp.moveaxis(
         value_stack.reshape(*ride_shape, n_liquid), -1, liquid_axis_pos
     )
@@ -3917,6 +3942,7 @@ def _assemble_ride_carry(
         marginal_utility=carry_rows[2],
         taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
         breakpoints=breakpoint_rows,
+        policy=policy_rows,
     )
     return value_arr, carry
 

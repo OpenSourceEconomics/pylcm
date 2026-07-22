@@ -19,6 +19,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.carry import EGMCarry
+from _lcm.egm.nested_published_policy import derive_inner_sim_policy
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
 from _lcm.egm.outer_refinement import (
     _consider,
@@ -793,3 +795,72 @@ def test_certified_lipschitz_bound_captures_a_sub_mesh_peak() -> None:
 def test_outer_lipschitz_bound_must_be_positive() -> None:
     with pytest.raises(RegimeInitializationError, match="outer_lipschitz_bound"):
         _f2_config(outer_lipschitz_bound=0.0)
+
+
+def test_nested_policy_reads_exact_consumption_not_the_slope_scaled_marginal() -> None:
+    """F2: the published inner consumption is the exact solved policy, not
+    ``inverse_marginal(marginal)``.
+
+    The ride-along carry's marginal is ``(d cash_on_hand/d liquid) * u'(c)``
+    (the envelope theorem through the affine budget), so inverting it recovers
+    ``c`` only when that budget slope is unit. A general affine budget
+    (``coh = net_income + R*wealth``, slope ``R``) breaks the inversion. The
+    fix carries the exact consumption; this test builds a non-unit-slope carry
+    and asserts the published policy is the true consumption, not the
+    slope-distorted inverse.
+    """
+    liquid_grid = jnp.linspace(1.0, 5.0, 6)
+    true_c = jnp.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
+    crra = 2.0
+    slope = 1.7  # non-unit budget slope, e.g. a gross interest rate
+    # Exactly what `nbegm_multi_interval_step_savings` stores: slope * u'(c).
+    marginal = slope * true_c ** (-crra)
+    value = jnp.linspace(-3.0, -0.5, 6)
+
+    carry = EGMCarry(
+        endog_grid=liquid_grid,
+        value=value,
+        marginal_utility=marginal,
+        taste_shock_scale=jnp.asarray(0.0),
+        policy=true_c,
+    )
+    sim_policy = derive_inner_sim_policy(
+        carry=carry,
+        state_grid_values=liquid_grid,
+        row_discrete_state_names=(),
+        row_passive_state_names=(),
+    )
+    assert sim_policy is not None
+    np.testing.assert_allclose(
+        np.asarray(sim_policy.policy), np.asarray(true_c), rtol=1e-12
+    )
+
+    # The pre-fix recovery inverted the slope-scaled marginal:
+    #   inverse_marginal(slope * c**-crra) = slope**(-1/crra) * c  != c  (slope != 1).
+    # Confirm the correct policy genuinely diverges from that buggy value, so
+    # the test would fail on the old code path (guards against slope == 1).
+    wrong_c = slope ** (-1.0 / crra) * true_c
+    assert not np.allclose(np.asarray(true_c), np.asarray(wrong_c))
+
+
+def test_nested_policy_fails_closed_without_carried_consumption() -> None:
+    """F2: a carry that did not retain the exact consumption (``policy is
+    None``) fails closed (returns ``None``) rather than silently falling back
+    to the unsound marginal inversion."""
+    liquid_grid = jnp.linspace(1.0, 5.0, 6)
+    carry = EGMCarry(
+        endog_grid=liquid_grid,
+        value=jnp.linspace(-3.0, -0.5, 6),
+        marginal_utility=jnp.linspace(2.0, 0.5, 6),
+        taste_shock_scale=jnp.asarray(0.0),
+        policy=None,
+    )
+    assert (
+        derive_inner_sim_policy(
+            carry=carry,
+            state_grid_values=liquid_grid,
+            row_discrete_state_names=(),
+            row_passive_state_names=(),
+        )
+        is None
+    )
