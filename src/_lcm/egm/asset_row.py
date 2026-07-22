@@ -378,10 +378,11 @@ def _publish_node_V_and_policy(
     Envelope overflow NaN-poisons both outputs so the solve loop's NaN
     diagnostics surface the offending (regime, period).
 
-    The production solve uses the streamed `_publish_V_and_carry_rows`; this
-    materialized single-query form is the readable reference the row-path
-    equivalence tests (`test_egm_refine_to_query.py`) check the streamed
-    publisher against.
+    The production asset-row solve publishes via `_publish_V_and_carry_rows`,
+    which likewise materializes the full refined row and slices the bracket (no
+    streaming); this single-query form is the readable reference the row-path
+    equivalence tests (`test_egm_refine_to_query.py`) check that publisher
+    against.
 
     Args:
         refined_grid: Refined endogenous grid row from the envelope backend.
