@@ -755,7 +755,6 @@ class _NNBEGMPeriodKernel:
             else derive_inner_sim_policy(
                 carry=cast("EGMCarry", keeper_result.continuation),
                 state_grid_values=self.liquid_grid_values,
-                inverse_marginal=self.inverse_marginal,
                 row_discrete_state_names=self.row_discrete_state_names,
                 row_passive_state_names=self.row_passive_state_names,
             )
@@ -766,7 +765,6 @@ class _NNBEGMPeriodKernel:
             else derive_inner_sim_policy(
                 carry=bank.carry,
                 state_grid_values=self.liquid_grid_values,
-                inverse_marginal=self.inverse_marginal,
                 row_discrete_state_names=self.row_discrete_state_names,
                 row_passive_state_names=self.row_passive_state_names,
                 extra_leading_axes=1,

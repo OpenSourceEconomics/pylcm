@@ -553,6 +553,7 @@ def _raw_results_to_array_tree(
                 "actions": dict(data.actions),
                 "states": dict(data.states),
                 "in_regime": data.in_regime,
+                "nested_policy_fallback": data.nested_policy_fallback,
             }
             for period, data in regime_dict.items()
         }
@@ -573,6 +574,10 @@ def _array_tree_to_raw_results(
                         actions=MappingProxyType(period_dict["actions"]),
                         states=MappingProxyType(period_dict["states"]),
                         in_regime=period_dict["in_regime"],
+                        nested_policy_fallback=period_dict.get(
+                            "nested_policy_fallback",
+                            jnp.zeros_like(period_dict["in_regime"], dtype=bool),
+                        ),
                     )
                     for period, period_dict in regime_dict.items()
                 }

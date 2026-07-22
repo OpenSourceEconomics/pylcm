@@ -166,6 +166,12 @@ def collapse_continuous_candidate_bank(
         keeper_carry,
         value=collapsed_value,
         marginal_utility=collapsed_marginal,
+        # The exact-consumption `policy` rows (round-3 audit F2) are a
+        # publication channel read off the *raw* keeper/adjuster carries in the
+        # same period; the collapsed carry is the cross-period continuation,
+        # whose pytree must match the policy-free `build_template_egm_carry`
+        # template. Drop it so the two structures agree.
+        policy=None,
     )
 
     return ContinuousCollapse(

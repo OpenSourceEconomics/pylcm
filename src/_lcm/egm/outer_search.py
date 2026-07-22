@@ -122,15 +122,6 @@ class AdaptiveOuterMesh(OuterSearch):
     Lipschitz constant forfeits the global guarantee (garbage-in), a large
     value is safe but costs nodes."""
 
-    # Policy convergence checks.
-    outer_policy_atol: float = 1e-5
-    """Largest admissible move of the selected outer action under one more
-    refinement round, in outer-action units."""
-
-    inner_policy_atol: float = 1e-6
-    """Largest admissible move of the interpolated inner policy under one
-    more refinement round, in inner-action units."""
-
     # Local continuous refinement.
     local_refiner: Literal["golden", "quadratic"] = "golden"
     """Bracket-local refinement method; brackets always come from the exact
@@ -177,8 +168,6 @@ class AdaptiveOuterMesh(OuterSearch):
         for name in (
             "value_atol",
             "value_rtol",
-            "outer_policy_atol",
-            "inner_policy_atol",
         ):
             value = getattr(self, name)
             if not value > 0.0:

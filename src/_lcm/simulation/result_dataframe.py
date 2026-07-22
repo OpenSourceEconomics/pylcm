@@ -169,6 +169,10 @@ def _extract_period_data(
         "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "_in_regime": result.in_regime,
         "value": result.V_arr,
+        # F4: per-subject flag that the continuous-outer off-grid policy read
+        # was refused and the grid-argmax pair kept. All-False off that path;
+        # inference on the continuous-outer path must refuse any True.
+        "nested_policy_fallback": result.nested_policy_fallback,
     }
 
     for name in regime_states:

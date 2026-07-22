@@ -25,7 +25,6 @@ Both containers are registered as JAX pytrees (explicit
 `register_pytree_node`, matching `EGMSimPolicy` / `EGMCarry`).
 """
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import jax
@@ -33,14 +32,13 @@ import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
-from lcm.typing import ActionName, Float1D, FloatND, FunctionName, StateName
+from lcm.typing import ActionName, Float1D, FunctionName, StateName
 
 
 def derive_inner_sim_policy(
     *,
     carry: EGMCarry,
     state_grid_values: Float1D,
-    inverse_marginal: Callable[..., FloatND] | None,
     row_discrete_state_names: tuple[StateName, ...],
     row_passive_state_names: tuple[StateName, ...],
     extra_leading_axes: int = 0,
@@ -49,22 +47,23 @@ def derive_inner_sim_policy(
 
     An NB-EGM inner publishes its carry rows *re-read on the shared liquid
     state grid* (`carry_rows_share_state_grid`), so the row abscissae are the
-    state grid itself and no consumption row survives the solve. On the
-    smooth v1 scope the envelope theorem recovers it exactly at the nodes:
-    the row's marginal is `u'(c)` (interior optimum and the credit-constrained
-    corner alike, since consumption absorbs a marginal unit of the liquid
-    state in both), so `c = inverse_marginal(marginal_continuation=mu)` —
-    the same closed-form inverse the Euler inversion used. Nodes with a
-    nonfinite value or a nonpositive marginal (the infeasible-row `0.0`
-    convention) publish NaN, which the simulation read's acceptance check
-    rejects.
+    state grid itself. The exact optimal consumption on that grid is computed
+    during the solve and carried in `carry.policy` (round-3 audit F2): the
+    marginal is NOT `u'(c)` but `(d cash_on_hand/d liquid) * u'(c)`, so
+    inverting it would recover `c` only for a unit budget slope — a general
+    affine budget (e.g. `coh = net_income + R*wealth`, slope `R`) would
+    publish the wrong consumption. Reading the carried policy is correct for
+    any slope. Nodes with a nonfinite value or a nonpositive marginal (the
+    infeasible-row `0.0` convention) publish NaN, which the simulation read's
+    acceptance check rejects.
 
     Fails closed (returns `None`, so the caller publishes no nested payload
-    and simulation keeps the grid-argmax path) when the closed-form inverse
-    is unavailable, the rows are not on the state grid, the carry keeps axes
-    the given row names do not describe (`extra_leading_axes` covers a
-    candidate-stacked carry's leading axis), or the rows carry declared
-    topology (`breakpoints`).
+    and simulation keeps the grid-argmax path) when the carry did not retain
+    the exact consumption (`carry.policy is None` — any path but the
+    continuous-only, jump-free ride-along core), the rows are not on the state
+    grid, the carry keeps axes the given row names do not describe
+    (`extra_leading_axes` covers a candidate-stacked carry's leading axis), or
+    the rows carry declared topology (`breakpoints`).
 
     Works elementwise, so a candidate-stacked carry (leading axis `C`)
     yields the candidate-stacked policy.
@@ -76,7 +75,7 @@ def derive_inner_sim_policy(
         + 1
     )
     if (
-        inverse_marginal is None
+        carry.policy is None
         or carry.value.shape[-1] != state_grid_values.shape[0]
         or carry.value.ndim != expected_ndim
         or carry.breakpoints is not None
@@ -92,13 +91,7 @@ def derive_inner_sim_policy(
         # the simulated draws would contradict.
         return None
     node_valid = jnp.isfinite(carry.value) & (carry.marginal_utility > 0.0)
-    policy = jnp.where(
-        node_valid,
-        inverse_marginal(
-            marginal_continuation=jnp.where(node_valid, carry.marginal_utility, 1.0)
-        ),
-        jnp.nan,
-    )
+    policy = jnp.where(node_valid, carry.policy, jnp.nan)
     return EGMSimPolicy(
         endog_grid=carry.endog_grid,
         policy=policy,
