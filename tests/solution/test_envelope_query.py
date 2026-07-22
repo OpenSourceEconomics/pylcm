@@ -214,6 +214,63 @@ def test_large_magnitude_value_tie_is_precision_scaled(dtype, base, gap):
     assert np.isclose(float(marginal), 1.0), "B's marginal must be published"
 
 
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("block_size", [0, 1, 2, 3])
+def test_near_equal_slope_tie_picks_the_larger_slope_branch(dtype, block_size):
+    """A value tie between two branches with near-equal slopes must resolve to the
+    larger-slope branch in BOTH the dense and blocked paths.
+
+    Audit finding F2 (round 4, second half): the tie-break folded the
+    right-extends bit and the value-slope into one scalar
+    (``arctan(slope)/pi + right_available``). For two genuinely-distinct but
+    near-equal small slopes that fold rounds to the SAME value in float32, so
+    ``argmax`` fell back to the lower index — the smaller-slope branch — reversing
+    right-continuity. Comparing the slope directly at native precision picks the
+    larger-slope branch.
+
+    Both segments span ``[1, 2]`` and cross to ~0 at ``q=1.5``; segment A (policy
+    20) carries the SMALLER slope, segment B (policy 10) the LARGER. Right-continuity
+    publishes B.
+    """
+    s_small = np.asarray(3.06852285802961e-07, dtype=dtype)
+    s_large = np.asarray(3.0687496632708644e-07, dtype=dtype)
+    half = np.asarray(0.5, dtype=dtype)
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.array([1.0, 2.0, 1.0, 2.0], dtype=dtype),
+        policy=jnp.array([20.0, 20.0, 10.0, 10.0], dtype=dtype),
+        value=jnp.array(
+            [-s_small * half, s_small * half, -s_large * half, s_large * half],
+            dtype=dtype,
+        ),
+        marginal=jnp.array([200.0, 200.0, 100.0, 100.0], dtype=dtype),
+        segment_id=jnp.array([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+        x_query=jnp.array([1.5], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    assert np.isclose(float(policy[0]), 10.0), "larger-slope branch B must win"
+    assert np.isclose(float(marginal[0]), 100.0), "B's marginal must be published"
+
+    # DC-3 counterpart: a genuine advantage on the SMALLER-slope branch A (far above
+    # the operand-scaled rounding band) must NOT be swallowed by the tie band — A
+    # then strictly dominates and wins in every path.
+    adv = np.asarray(1e-4, dtype=dtype)
+    _, policy_dc3, _ = envelope_at_query(
+        endog_grid=jnp.array([1.0, 2.0, 1.0, 2.0], dtype=dtype),
+        policy=jnp.array([20.0, 20.0, 10.0, 10.0], dtype=dtype),
+        value=jnp.array(
+            [-s_small * half + adv, s_small * half + adv, -s_large * half, s_large * half],
+            dtype=dtype,
+        ),
+        marginal=jnp.array([200.0, 200.0, 100.0, 100.0], dtype=dtype),
+        segment_id=jnp.array([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+        x_query=jnp.array([1.5], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    assert np.isclose(float(policy_dc3[0]), 20.0), (
+        "a genuine off-node advantage must not be swallowed by the tie band"
+    )
+
+
 def test_query_outside_all_branches_is_nan():
     """A query beyond every branch's support yields NaN value/policy/marginal."""
     got_value, got_policy, got_marginal = envelope_at_query(
