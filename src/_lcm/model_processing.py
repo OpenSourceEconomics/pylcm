@@ -235,7 +235,9 @@ def validate_model_inputs(
             user_regimes, broadcast_variables=broadcast_variables, ages=ages
         )
     )
-    error_messages.extend(_validate_constraint_phase_invariance(user_regimes))
+    error_messages.extend(
+        _validate_constraint_phase_invariance(user_regimes, ages=ages)
+    )
 
     for name, user_regime in user_regimes.items():
         if user_regime.taste_shocks is not None and not any(
@@ -412,6 +414,8 @@ def _law_phase_varies(solve_obj: object, sim_obj: object) -> bool:
 
 def _validate_constraint_phase_invariance(
     user_regimes: Mapping[RegimeName, UserRegime],
+    *,
+    ages: AgeGrid | None = None,
 ) -> list[str]:
     """Reject a constraint whose dependency ancestry contains a phase-varying node.
 
@@ -481,9 +485,29 @@ def _validate_constraint_phase_invariance(
         )
         if not phase_varying and not carried_next:
             continue
+        # Resolve any `AgeSpecializedFunction` marker in the solve graph to its
+        # concrete per-age function before walking constraint ancestry, so
+        # `get_ancestors` sees the real argument dependencies *below* the marker
+        # (mirrors `_validate_all_variables_used`). A marker exposes only a generic
+        # `(*args, **kwargs)` wrapper signature, so an unresolved graph stops the
+        # ancestry at the marker and hides a transitively-reached `Phased` helper --
+        # letting a phase-specific feasible set slip past this guard (round-12 F1).
+        # The dependency structure is age-invariant, so any active age serves.
+        ancestry_funcs = solve_funcs
+        if ages is not None:
+            active_periods = ages.get_periods_where(user_regime.active)
+            if active_periods:
+                representative_age = float(ages.period_to_age(active_periods[0]))
+                ancestry_funcs = cast(
+                    "dict[str, Callable[..., object]]",
+                    {
+                        name: resolve_node(func, representative_age)
+                        for name, func in solve_funcs.items()
+                    },
+                )
         for constraint_name in user_regime.constraints:
             ancestors = get_ancestors(
-                solve_funcs, targets=[constraint_name], include_targets=False
+                ancestry_funcs, targets=[constraint_name], include_targets=False
             )
             offending = sorted(ancestors & phase_varying)
             if offending:
