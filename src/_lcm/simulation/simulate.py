@@ -723,25 +723,26 @@ def _redecide_branch_and_read_policy(
     regime DAG at the candidate action values. The comparison mirrors the
     decision problem the solve encodes:
     - a branch failing a discrete-only user constraint at the subject's state
-      is excluded (its value reads as `-inf`), exactly as the constraint masks
-      the grid argmax;
-    - among feasible branches the interpolated conditional values — each at
-      its own resources — pick the winner;
-    - the winner's policy row is interpolated at the winner's resources, and
-      the recorded discrete actions switch to the winning branch.
+      is excluded (its objective reads as `-inf`), exactly as the constraint
+      masks the grid argmax;
+    - each feasible branch's candidate action is its piecewise-linear policy
+      read at that branch's resources, and branches are ranked by the objective
+      that action actually attains, `u(c) + W(R - c)` — so the winning
+      (branch, action) pair is an associated optimizer pair;
+    - the recorded discrete actions switch to the winning branch, whose
+      continuous action is that branch's candidate.
     A subject keeps the grid-argmax pair (discrete and continuous alike) when
     any feasible branch's resources fall outside that branch's live row
-    support (the value comparison would be incomplete), no branch is feasible,
-    or the winning read is non-finite, non-positive, or outside the intrinsic
-    budget.
+    support (the objective comparison would be incomplete), no branch is
+    feasible, or the winning read is non-finite, non-positive, or outside the
+    intrinsic budget.
     """
     if "inverse_marginal_utility" not in regime.simulation.functions:
-        # The branch action must be the one that attains the value the branch is
-        # ranked by. Without a closed-form `inverse_marginal_utility` the value's
-        # own derivative cannot be inverted to that action, and the
-        # separately-interpolated policy row need not attain the ranked value — a
-        # value-ranked branch could return a dominated pair. Keep the
-        # constraint-masked grid pair instead.
+        # Scope: the off-grid branch re-decision applies only where the solve
+        # publishes a closed-form `inverse_marginal_utility`; every other regime
+        # keeps the constraint-masked grid pair. (The re-decision itself reads
+        # the branch action from the published policy row, not the inverse, but
+        # broadening the scope to numeric-inverse regimes is left to a follow-up.)
         return MappingProxyType(dict(optimal_actions))
 
     action_names = sim_policy.row_discrete_action_names
@@ -759,7 +760,7 @@ def _redecide_branch_and_read_policy(
         if name != DCEGM_BUDGET_CONSTRAINT_NAME
     ]
 
-    values_per_combo = []
+    objectives_per_combo = []
     policies_per_combo = []
     resources_per_combo = []
     feasible_per_combo = []
@@ -792,58 +793,56 @@ def _redecide_branch_and_read_policy(
                 jnp.asarray(targets[constraint_name]), (n_subjects,)
             ).astype(bool)
         index = (*state_positions, *combo)
-        value, in_support = _interp_rows_with_support(
+        candidate_action, in_support = _interp_rows_with_support(
             sim_policy=sim_policy,
-            field="value",
+            field="policy",
             index=index,
             resources=resources,
             n_subjects=n_subjects,
         )
-        # The action associated with the ranked value: the value read's own
-        # resource-derivative is `dV/dR = u'(c*)` (envelope theorem), and the
-        # regime's `inverse_marginal_utility` maps it back to the branch optimum
-        # `c*` that attains the value. Reading a separately-interpolated policy row
-        # instead can return an action worth less than the value the branch is
-        # ranked by, so a value-ranked branch's pair could be dominated.
-        marginal_value = _hermite_value_derivative_rows(
+        # Rank each branch by the objective its returned action actually attains,
+        # `u(c) + W(R - c)`, so the (branch, action) pair the re-decision emits is
+        # an associated optimizer pair. The candidate action is the branch's own
+        # piecewise-linear policy read at the subject's resources; the branch
+        # continuation `W` is reconstructed from the published rows. Ranking by
+        # the interpolated value and inverting its (shape-limited) derivative for
+        # the action does not yield an associated pair — the returned action can
+        # attain less than the value the branch is ranked by.
+        objective = _branch_conditional_objective(
             sim_policy=sim_policy,
             index=index,
             resources=resources,
-            n_subjects=n_subjects,
-        )
-        associated = _compute_targets(
-            data={**data, "marginal_continuation": marginal_value},
-            targets=["inverse_marginal_utility"],
+            candidate_action=candidate_action,
+            combo_data=data,
             regime=regime,
-            regime_params=flat_params,
+            flat_params=flat_params,
+            action_name=read.action_name,
+            n_subjects=n_subjects,
         )
-        policy = jnp.reshape(
-            jnp.asarray(associated["inverse_marginal_utility"]), (n_subjects,)
-        )
-        values_per_combo.append(jnp.where(feasible, value, -jnp.inf))
-        policies_per_combo.append(policy)
+        objectives_per_combo.append(jnp.where(feasible, objective, -jnp.inf))
+        policies_per_combo.append(candidate_action)
         resources_per_combo.append(resources)
         feasible_per_combo.append(feasible)
         in_support_per_combo.append(in_support)
 
-    values = jnp.stack(values_per_combo)
+    objectives = jnp.stack(objectives_per_combo)
     policies = jnp.stack(policies_per_combo)
     resources = jnp.stack(resources_per_combo)
     feasible = jnp.stack(feasible_per_combo)
     in_support = jnp.stack(in_support_per_combo)
 
-    winner = jnp.argmax(values, axis=0)
+    winner = jnp.argmax(objectives, axis=0)
 
     def at_winner(stacked: FloatND) -> FloatND:
         return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
 
     off_grid_action = at_winner(policies)
     winner_resources = at_winner(resources)
-    winner_value = at_winner(values)
+    winner_objective = at_winner(objectives)
     accepted = (
         jnp.any(feasible, axis=0)
         & jnp.all(~feasible | in_support, axis=0)
-        & jnp.isfinite(winner_value)
+        & jnp.isfinite(winner_objective)
         & jnp.isfinite(off_grid_action)
         & (off_grid_action > 0.0)
         & (off_grid_action <= winner_resources - read.savings_lower_bound)
@@ -911,43 +910,108 @@ def _interp_rows_with_support(
     return values, in_support
 
 
-def _hermite_value_derivative_rows(
+def _branch_conditional_objective(
     *,
     sim_policy: EGMSimPolicy,
     index: tuple[IntND | int, ...],
     resources: FloatND,
+    candidate_action: FloatND,
+    combo_data: Mapping[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]],
+    regime: Regime,
+    flat_params: FlatRegimeParams,
+    action_name: ActionName,
     n_subjects: int,
 ) -> FloatND:
-    """Resource-derivative of the Hermite value read per subject: `V'(R_q)`.
+    """Objective the branch attains at `candidate_action`: `u(c) + W(R - c)`.
 
-    The value read's own slope in resources. By the envelope theorem this is the
-    marginal value of resources `dV/dR = u'(c*)`, so inverting it with the regime's
-    `inverse_marginal_utility` recovers the branch optimum `c*` that attains the
-    ranked value — the action associated with the value the branch is ranked by,
-    where the separately-linear policy read need not attain it.
+    Ranking branches by the value their returned action actually achieves makes
+    the (branch, action) pair the re-decision emits an associated optimizer pair
+    — unlike ranking by the interpolated value and reading the action from a
+    separate interpolant, which need not attain that value.
 
-    Uses the value read's custom-JVP query tangent (`_hermite_prepared_read`, the
-    same published derivative asset-row mode consumes), so the slope is the analytic
-    one-sided Hermite piece slope rather than autodiff through the bracket search.
+    The branch continuation `W(s)` is reconstructed from the published rows:
+    `W(s_i) = value_i - u(c_i)` at the post-decision nodes `s_i = endog_i - c_i`,
+    with `W'(s_i) = marginal_utility_i` (the node Euler equation `u'(c_i) =
+    W'(s_i)`) as the cubic-Hermite slope, read at the candidate savings
+    `s = R - c`. Evaluating `u` at the candidate and at the node consumptions
+    goes through the regime's `utility` DAG, so it honours whatever else utility
+    depends on at the subject's state and this branch's discrete actions.
     """
     rows_x = sim_policy.endog_grid
-    rows_f = sim_policy.value
+    rows_policy = sim_policy.policy
+    rows_value = sim_policy.value
     rows_slope = sim_policy.marginal_utility
     if index:
         rows_x = rows_x[index]
-        rows_f = rows_f[index]
+        rows_policy = rows_policy[index]
+        rows_value = rows_value[index]
         rows_slope = rows_slope[index]
     if rows_x.ndim == 1:
         rows_x = jnp.broadcast_to(rows_x, (n_subjects, *rows_x.shape))
-        rows_f = jnp.broadcast_to(rows_f, (n_subjects, *rows_f.shape))
+        rows_policy = jnp.broadcast_to(rows_policy, (n_subjects, *rows_policy.shape))
+        rows_value = jnp.broadcast_to(rows_value, (n_subjects, *rows_value.shape))
         rows_slope = jnp.broadcast_to(rows_slope, (n_subjects, *rows_slope.shape))
+    n_nodes = rows_x.shape[-1]
 
-    def value_read(
-        x_query: FloatND, xp: Float1D, fp: Float1D, fp_slopes: Float1D
-    ) -> FloatND:
-        return interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp, fp_slopes=fp_slopes)
+    utility_at_candidate = jnp.reshape(
+        jnp.asarray(
+            _compute_targets(
+                data={**combo_data, action_name: candidate_action},
+                targets=["utility"],
+                regime=regime,
+                regime_params=flat_params,
+            )["utility"]
+        ),
+        (n_subjects,),
+    )
 
-    return vmap(jax.grad(value_read, argnums=0))(resources, rows_x, rows_f, rows_slope)
+    # Utility at each node's optimal consumption, per subject. The utility DAG is
+    # vmapped over subject rows, so the (subject, node) grid is flattened to a
+    # single row axis and reshaped back.
+    node_data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
+        key: jnp.reshape(
+            jnp.broadcast_to(jnp.asarray(value)[:, None], (n_subjects, n_nodes)),
+            (n_subjects * n_nodes,),
+        )
+        for key, value in combo_data.items()
+    }
+    node_data[action_name] = jnp.reshape(rows_policy, (n_subjects * n_nodes,))
+    utility_at_nodes = jnp.reshape(
+        jnp.asarray(
+            _compute_targets(
+                data=node_data,
+                targets=["utility"],
+                regime=regime,
+                regime_params=flat_params,
+            )["utility"]
+        ),
+        (n_subjects, n_nodes),
+    )
+
+    # The post-decision continuation `W(s)` is single-valued and increasing in
+    # savings, but the reconstruction nodes are not in a form the padded read
+    # accepts: `s_i = endog_i - c_i` need not be ascending in node order (coarse
+    # policy noise, a near-duplicate final bracket), and dead nodes (an unsupported
+    # value, or the row's NaN tail) carry a NaN continuation at a finite savings.
+    # Re-order by savings with every dead node keyed last and its savings NaN'd,
+    # so the read sees a weakly ascending live grid followed by a NaN tail.
+    continuation_nodes = rows_value - utility_at_nodes
+    savings_nodes = rows_x - rows_policy
+    dead = jnp.isnan(continuation_nodes) | jnp.isnan(savings_nodes)
+    order = jnp.argsort(jnp.where(dead, jnp.inf, savings_nodes))
+    savings_sorted = jnp.take_along_axis(
+        jnp.where(dead, jnp.nan, savings_nodes), order, axis=-1
+    )
+    continuation_sorted = jnp.take_along_axis(continuation_nodes, order, axis=-1)
+    slope_sorted = jnp.take_along_axis(rows_slope, order, axis=-1)
+
+    savings_at_candidate = resources - candidate_action
+    continuation = vmap(
+        lambda s, xp, fp, fp_slopes: interp_on_padded_grid(
+            x_query=s, xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+    )(savings_at_candidate, savings_sorted, continuation_sorted, slope_sorted)
+    return utility_at_candidate + continuation
 
 
 def _resources_at_subjects(
