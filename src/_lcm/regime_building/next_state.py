@@ -148,8 +148,24 @@ def get_next_stochastic_weights_function(
         for func_name in transitions
         if func_name in stochastic_transition_names
     ]
+    # A stochastic weight law may read another transition's *deterministic*
+    # `next_<state>` output within the same target's DAG -- the supported
+    # transition-reads-transition composition that the solution next-state builder
+    # (`get_next_state_function_for_solution`) already relies on. Those producers live
+    # in `transitions`, not `functions`, so include the deterministic transitions in
+    # the weight DAG; otherwise the read is left as an unsupplied argument and the Q
+    # build fails with a missing input (round-12 F2).
+    # Stochastic stubs are excluded on purpose: they are the realised draws, not
+    # closed-form producers, and a weight depending on another stochastic next-state
+    # would need a conditional joint kernel the product-of-marginals form cannot
+    # represent -- leaving it unresolved surfaces that unsupported composition loudly.
+    deterministic_transitions = {
+        name: func
+        for name, func in transitions.items()
+        if name not in stochastic_transition_names
+    }
     return concatenate_functions(
-        functions=functions,
+        functions=dict(deterministic_transitions) | dict(functions),
         targets=targets,
         return_type="dict",
         enforce_signature=False,

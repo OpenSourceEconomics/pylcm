@@ -27,6 +27,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period, ScalarInt
 
 
@@ -150,6 +151,48 @@ def test_phase_invariant_constraint_still_builds():
         constraints={"capacity": capacity},
     )
     assert model is not None
+
+
+def test_constraint_reaching_phased_helper_through_age_specialized_marker_is_rejected():
+    """R12 F1: an age-specialized helper hides a `Phased` helper from the guard.
+
+    The bare constraint `capacity` reads the `AgeSpecializedFunction` helper
+    `policy_target`, whose concrete per-age function reads the `Phased` helper
+    `threshold` (solve resolves to `stay`, simulate to `switch`). The solve and
+    simulate feasible sets therefore differ. But the marker exposes only a generic
+    `(*args, **kwargs)` wrapper signature, so a raw-graph ancestry walk stops at the
+    marker and never sees `threshold`. `_validate_constraint_phase_invariance` must
+    resolve the marker at a representative active age before walking ancestry (as
+    `_validate_all_variables_used` already does) and reject the model.
+    """
+
+    def threshold_solve() -> ScalarInt:
+        return jnp.array(Move.stay)
+
+    def threshold_simulate() -> ScalarInt:
+        return jnp.array(Move.switch)
+
+    def _policy_target_of_age(_age: float):
+        def policy_target(threshold: ScalarInt) -> ScalarInt:
+            return threshold
+
+        return policy_target
+
+    def capacity(move: DiscreteAction, policy_target: ScalarInt) -> FloatND:
+        return move == policy_target
+
+    with pytest.raises(ModelInitializationError, match="phase-varying"):
+        _model(
+            live_functions={
+                "utility": _flat_utility,
+                "threshold": Phased(solve=threshold_solve, simulate=threshold_simulate),
+                "policy_target": AgeSpecializedFunction(
+                    build=_policy_target_of_age, signature=lambda _age: 0
+                ),
+            },
+            state_transitions={"stock": _next_stock_actual},
+            constraints={"capacity": capacity},
+        )
 
 
 def test_per_target_phased_next_state_is_rejected():
