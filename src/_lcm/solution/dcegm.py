@@ -140,11 +140,15 @@ class DCEGM(Solver):
     error compounds across periods.
     """
 
-    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues"
+    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "mss"
     """Upper-envelope refinement backend removing dominated Euler candidates.
 
     - `"fues"`: the Fast Upper-Envelope Scan — a sequential scan that inserts
-      exact segment-crossing points.
+      exact segment-crossing points. Fastest, but shares the fast-scan lineage's
+      accepted limitation at *exact* endogenous-grid coincidence across branches
+      (pointwise-node reduction can bridge a coincident-node crossing; endpoint
+      crossings are snapped within a fixed band). Prefer `"mss"` when a model can
+      realize exact coincidence and needs it resolved exactly.
     - `"rfc"`: the Rooftop-Cut algorithm — a parallel dominance test that only
       deletes points (a kink lands between retained points, recovered by the
       Hermite carry read) and generalizes to multidimensional grids.
@@ -155,7 +159,11 @@ class DCEGM(Solver):
     - `"mss"`: HARK's EGM upper envelope — a left-to-right sweep that keeps the
       max-value branch at every abscissa *and* inserts the exact
       segment-crossing point, so it tracks the FUES envelope tightly (the `MSS`
-      method of Dobrescu & Shanker 2026).
+      method of Dobrescu & Shanker 2026). A segment-envelope method: it resolves
+      exact coincident-node interval ownership by construction, so it is the
+      correct choice for models with exact cross-branch endogenous-grid
+      coincidence (where `"fues"`, `"rfc"`, and `"ltm"` share a fast-scan
+      limitation).
     """
 
     fues_jump_thresh: float = 2.0
