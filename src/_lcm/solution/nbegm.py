@@ -705,6 +705,17 @@ class NBEGM(Solver):
                         if statics_by_key
                         else 0
                     ),
+                    # Match `_assemble_ride_carry`'s carry_policy predicate:
+                    # continuous-only (no ride discrete action) and jump-free.
+                    carry_policy=(
+                        schedule_spec.discrete_action_name is None
+                        and (
+                            next(iter(statics_by_key.values())).n_published_jumps
+                            if statics_by_key
+                            else 0
+                        )
+                        == 0
+                    ),
                 ),
                 grids=context.grids,
                 ride_along_state_names=schedule_spec.ride_along_state_names,
@@ -3992,7 +4003,11 @@ def _shard_ride_carry_template(
 
 
 def _build_ride_along_carry_template(
-    *, liquid_grid: Float1D, ride_shape: tuple[int, ...], n_breakpoints: int
+    *,
+    liquid_grid: Float1D,
+    ride_shape: tuple[int, ...],
+    n_breakpoints: int,
+    carry_policy: bool,
 ) -> EGMCarry:
     """Build the all-finite case-piece carry template with ride-along axes leading.
 
@@ -4005,7 +4020,13 @@ def _build_ride_along_carry_template(
     # per jump) and publishes the jump locations (kink breakpoints leave the
     # value continuous and add no row slots), so the lowering template shares
     # both fixed shapes. Repeating the top node keeps the template rows
-    # weakly ascending and all-finite.
+    # weakly ascending and all-finite. `carry_policy` must match
+    # `_assemble_ride_carry`'s predicate (continuous-only, jump-free): that path
+    # returns a `policy` array leaf, so the template must carry the same leaf or
+    # a standalone ride-along NBEGM continuation (rolled cross-period, lowered
+    # against this template) would have a different pytree than the runtime carry
+    # (round-4 audit F1). The NNBEGM collapse strips its own runtime leaf, so its
+    # outer continuation stays policy-free against its own template.
     row = jnp.concatenate(
         [liquid_grid, jnp.repeat(liquid_grid[-1:], 2 * n_breakpoints)]
     )
@@ -4020,4 +4041,5 @@ def _build_ride_along_carry_template(
             if n_breakpoints
             else None
         ),
+        policy=jnp.zeros_like(block) if carry_policy else None,
     )
