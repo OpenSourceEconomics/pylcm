@@ -37,6 +37,25 @@ and keeps only the points on the upper envelope:
 bracketing a single query, so the streamed asset-row read agrees with the full
 row by construction (no separate streaming geometry to keep in sync).
 
+Known limitations (accepted, structural to the single-pass scan — not bugs).
+Both are exact-endogenous-grid-coincidence degeneracies that the fast-scan
+(FUES) lineage does not resolve; the Dobrescu-Shanker reference and the
+`OpenSourceEconomics/upper-envelope` ancestor forbid coincident abscissae
+outright rather than solving them. A model that can realize exact coincidence
+and needs it handled must select a segment-envelope backend
+(`upper_envelope="mss"`, HARK's exact segment-crossing method), which resolves
+both by construction:
+
+- Pointwise vs interval dominance at a coincident node
+  (`_reduce_coincident_groups`): two branches sampled at the same pair of
+  abscissae and swapping ownership between them keep only the pointwise node
+  maxima, so a pointwise-lower interval owner loses its slope anchor and the
+  scan bridges the wrong nodes.
+- Endpoint-crossing snap (`_inspect_candidate`): a crossing is snapped to a
+  bracketing node within a fixed relative band, which cannot certify an
+  ill-conditioned exact endpoint crossing nor distinguish it from a genuine
+  interior crossing a few ULP from the node.
+
 All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
 """
@@ -350,16 +369,24 @@ def _reduce_coincident_groups(
     shadow is dropped, publishing one branch's policy across the node — a benign
     ULP-level degradation, and translation-invariant.
 
-    Known limitation (pointwise vs interval dominance). Group membership is
-    decided by the value *at the node*, not by segment ownership on the adjacent
-    interval. When two branches are both sampled at the *same* pair of abscissae
-    and swap ownership strictly between them, the branch that is pointwise-lower
-    at each shared node is dropped here, losing its slope anchor, so the scan
-    bridges the surviving node maxima instead of reconstructing the true crossing.
-    A one-sided interval-ownership reducer would be needed to close this. The
-    trigger requires exact endogenous-grid coincidence across branches, which the
-    production models do not exhibit (their oracle gates hold); see
-    `test_pointwise_lower_branch_that_owns_an_interval_is_retained` (xfail).
+    Known limitation (pointwise vs interval dominance) — accepted, by design.
+    Group membership is decided by the value *at the node*, not by segment
+    ownership on the adjacent interval. When two branches are sampled at the
+    *same* pair of abscissae and swap ownership strictly between them, the branch
+    that is pointwise-lower at each shared node is dropped here, losing its slope
+    anchor, so the scan bridges the surviving node maxima instead of
+    reconstructing the true crossing. This is the exact-coincidence limitation
+    shared by the fast-scan (FUES) lineage — the Dobrescu-Shanker reference and
+    the `OpenSourceEconomics/upper-envelope` ancestor forbid coincident abscissae
+    outright — and is a deliberate cost of the single-pass scan, not a deferred
+    fix. It is reachable within the class (a log-utility DC-EGM whose savings grid
+    aligns two candidates on one endogenous node), so a model that needs exact
+    coincident-node correctness must select a segment-envelope backend
+    (`upper_envelope="mss"`, HARK's exact segment-crossing method), which resolves
+    interval ownership by construction. See
+    `test_pointwise_lower_branch_that_owns_an_interval_is_retained` (the pinned
+    FUES limitation) and `test_mss_resolves_the_coincident_interval_ownership`
+    (the correct backend on the same row).
     """
     n = grid_sorted.shape[0]
     finite = ~jnp.isnan(grid_sorted)
