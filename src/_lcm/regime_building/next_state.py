@@ -1,17 +1,23 @@
 """Generate function that compute the next states for solution and simulation."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
+from typing import Any
 
 import jax
 from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 
 from _lcm.engine import Variables
-from _lcm.grids import Grid
+from _lcm.grids import DiscreteGrid, Grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.ar1 import _AR1Process
 from _lcm.processes.iid import _IIDProcess
+from _lcm.processes.state_conditioned import (
+    StateConditioned,
+    gather_sigma,
+    sigma_array_by_code,
+)
 from _lcm.typing import (
     EconFunctionsMapping,
     NextStateSimulationFunction,
@@ -24,7 +30,8 @@ from _lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
-from lcm.typing import ContinuousState, DiscreteState, FloatND, IntND
+from lcm.exceptions import ModelInitializationError
+from lcm.typing import ContinuousState, DiscreteState, Float1D, FloatND, IntND
 
 
 def get_next_state_function_for_solution(
@@ -289,17 +296,55 @@ def _create_continuous_stochastic_next_func(
     grid: _ContinuousStochasticProcess = all_grids[target_regime_name][state_name]  # ty: ignore [invalid-assignment]
     qname = qname_from_tree_path((target_regime_name, next_state_name))
 
+    # A state-conditioned process must DRAW with the current regime's sigma, not the
+    # scalar common-grid sigma — otherwise solve and simulate run different laws
+    # (code-review F1).
+    conditioned = _resolve_conditioned_sigma(
+        grid=grid, grids=all_grids[target_regime_name]
+    )
+
     if isinstance(grid, _AR1Process):
-        return _create_ar1_next_func(qname=qname, state_name=state_name, grid=grid)
+        return _create_ar1_next_func(
+            qname=qname, state_name=state_name, grid=grid, conditioned=conditioned
+        )
     if isinstance(grid, _IIDProcess):
-        return _create_iid_next_func(qname=qname, state_name=state_name, grid=grid)
+        return _create_iid_next_func(
+            qname=qname, state_name=state_name, grid=grid, conditioned=conditioned
+        )
 
     msg = f"Expected _IIDProcess or _AR1Process, got {type(grid)}"
     raise TypeError(msg)
 
 
+def _resolve_conditioned_sigma(
+    *,
+    grid: _ContinuousStochasticProcess,
+    grids: Mapping[StateOrActionName, Grid],
+) -> tuple[StateConditioned, Float1D] | None:
+    """Resolve the code-ordered sigma array of a state-conditioned process, else None.
+
+    Reuses `sigma_array_by_code` so simulation gathers sigma under exactly the
+    category-code ordering the solve-side transition rows use (code-review F1).
+    """
+    sc = grid.state_conditioned
+    if sc is None:
+        return None
+    conditioning_grid = grids.get(sc.on)
+    if not isinstance(conditioning_grid, DiscreteGrid):
+        msg = (
+            f"state_conditioned.on='{sc.on}' must name a DiscreteGrid state in the "
+            f"same regime as the process."
+        )
+        raise ModelInitializationError(msg)
+    return sc, sigma_array_by_code(conditioning_grid, sc.by)
+
+
 def _create_ar1_next_func(
-    *, qname: str, state_name: StateName, grid: _AR1Process
+    *,
+    qname: str,
+    state_name: StateName,
+    grid: _AR1Process,
+    conditioned: tuple[StateConditioned, Float1D] | None = None,
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {
@@ -310,6 +355,8 @@ def _create_ar1_next_func(
         state_name: "ContinuousState",
         **dict.fromkeys(runtime_param_names, "FloatND"),
     }
+    if conditioned is not None:
+        args[conditioned[0].on] = "DiscreteState"
     _draw_shock = grid.draw_shock
 
     @with_signature(args=args, return_annotation="ContinuousState")
@@ -318,6 +365,7 @@ def _create_ar1_next_func(
             {
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+                **_conditioned_sigma(conditioned, kwargs),
             }
         )
         return _draw_shock(
@@ -330,7 +378,11 @@ def _create_ar1_next_func(
 
 
 def _create_iid_next_func(
-    *, qname: str, state_name: StateName, grid: _IIDProcess
+    *,
+    qname: str,
+    state_name: StateName,
+    grid: _IIDProcess,
+    conditioned: tuple[StateConditioned, Float1D] | None = None,
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {
@@ -340,6 +392,8 @@ def _create_iid_next_func(
         f"key_{qname}": "PRNGKeyND",
         **dict.fromkeys(runtime_param_names, "FloatND"),
     }
+    if conditioned is not None:
+        args[conditioned[0].on] = "DiscreteState"
     _draw_shock = grid.draw_shock
 
     @with_signature(args=args, return_annotation="ContinuousState")
@@ -348,6 +402,7 @@ def _create_iid_next_func(
             {
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+                **_conditioned_sigma(conditioned, kwargs),
             }
         )
         return _draw_shock(
@@ -356,3 +411,18 @@ def _create_iid_next_func(
         )
 
     return next_stochastic_state
+
+
+def _conditioned_sigma(
+    conditioned: tuple[StateConditioned, Float1D] | None,
+    kwargs: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """`{"sigma": <current regime's sigma>}` for a conditioned process, else `{}`.
+
+    Overrides the scalar common-grid sigma the draw would otherwise use, which is what
+    makes the simulated law match the solved one (code-review F1).
+    """
+    if conditioned is None:
+        return {}
+    sc, sigma_by_code = conditioned
+    return {"sigma": gather_sigma(sigma_by_code, kwargs[sc.on])}
