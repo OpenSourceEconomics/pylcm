@@ -403,17 +403,21 @@ def _envelope_at_query_blocked(
     ) -> tuple[tuple[BoolND, FloatND, FloatND, FloatND], None]:
         best_has_elig, best_slope, best_policy, best_marginal = carry
         block, block_live = block_and_live
-        brackets, value_interp, policy_interp, marginal_interp, slope, upper, error_scale = (
-            _block_query_terms(block=block, live=block_live, flat=flat)
-        )
+        (
+            brackets,
+            value_interp,
+            policy_interp,
+            marginal_interp,
+            slope,
+            upper,
+            error_scale,
+        ) = _block_query_terms(block=block, live=block_live, flat=flat)
         # Operand-scaled tie band with the max side's error (round-4 audit F2),
         # identical scale to the dense path so both select the same branch.
         eps = jnp.finfo(value_interp.dtype).eps
         err = _TIE_BAND_ULPS * eps * error_scale
         err_at_max = _TIE_BAND_ULPS * eps * env_max_scale[:, None]
-        near_max = brackets & (
-            value_interp >= env_value[:, None] - (err + err_at_max)
-        )
+        near_max = brackets & (value_interp >= env_value[:, None] - (err + err_at_max))
         block_has_elig, key = _tie_break_slope_key(
             near_max=near_max, right_available=flat[:, None] < upper, slope=slope
         )
