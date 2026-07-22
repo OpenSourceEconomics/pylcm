@@ -419,7 +419,11 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
-            solve_functions=solution.functions,
+            # Unresolved (marker-bearing) solve pool so the simulation continuation
+            # resolves AgeSpecializedFunction per period age, not at the representative
+            # age frozen into `solution.functions` (round-11 F1). Falls back to the
+            # published pool when no specialization is present.
+            solve_functions=solution.continuation_functions,
             solve_transitions=solution.transitions,
             solve_stochastic_transition_names=solution.stochastic_transition_names,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
@@ -611,10 +615,12 @@ def _build_solution_phase(
             grids=all_grids[regime_name],
             ages=ages,
             enable_jit=enable_jit,
-            period_to_regime_v_interp=period_to_regime_v_interp,
-            continuation_grid_signature=_continuation_grid_signature,
             certainty_equivalent=certainty_equivalent,
             next_state_names=next_state_names,
+            # F4: diagnostics recompute on the SAME period-specific target grid as the
+            # primary solve (not the representative grid).
+            period_to_regime_v_interp=period_to_regime_v_interp,
+            continuation_grid_signature=_continuation_grid_signature,
         )
 
     # Dispatch the per-period kernel build polymorphically on the regime's
@@ -704,6 +710,9 @@ def _build_solution_phase(
         _variables=variables,
         grids=all_grids[regime_name],
         functions=published_solution_functions,
+        # Marker-bearing (unresolved) pool for the simulation continuation, resolved
+        # per period's age there rather than frozen at the representative age (F1).
+        _continuation_functions=core.functions,
         constraints=core.constraints,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
@@ -1264,25 +1273,47 @@ def _build_simulation_phase(
             savings_lower_bound=float(solver.savings_grid.to_jax()[0]),
         )
 
-    # Publish representative-age-resolved functions (feasibility checks and
-    # additional-target computation consume them unresolved); `next_state` above
-    # keeps resolving the marker-bearing `simulate_functions` per age.
+    # Inventory the specialized nodes the additional-target guard must reject —
+    # built from the marker-bearing (pre-publication) `functions` AND `constraints`.
+    # `_process_regime_core` excludes constraint names from `functions`, but the
+    # additional-target pool re-merges constraints (`_build_functions_pool`) and
+    # advertises them as targets; without the constraint namespace here a
+    # specialized constraint would escape the guard (round-11 F3). Both mappings are
+    # core-processed and still carry `_SpecializedEconFunction` markers.
+    age_specialized_function_names = frozenset(
+        name
+        for name, func in (*simulate_functions.items(), *constraints.items())
+        if isinstance(func, _SpecializedEconFunction)
+    )
+
+    # Publish representative-age-resolved functions AND constraints: the feasibility
+    # check (`_get_feasibility` at initial-conditions validation) and additional-
+    # target computation consume both as plain callables, so an unresolved
+    # `AgeSpecializedFunction` marker leaking into either raises at build/eval time.
+    # `next_state` above keeps resolving the marker-bearing `simulate_functions` per
+    # age; per-period *target* reads of a specialized node are still rejected by the
+    # guard via `age_specialized_function_names` (a rep-age closure would be wrong).
     simulation_active_periods = regimes_to_active_periods[regime_name]
+    representative_age = (
+        float(ages.period_to_age(simulation_active_periods[0]))
+        if simulation_active_periods
+        else None
+    )
     published_simulate_functions = (
         cast(
             "EconFunctionsMapping",
-            resolve_specialized_nodes(
-                simulate_functions,
-                float(ages.period_to_age(simulation_active_periods[0])),
-            ),
+            resolve_specialized_nodes(simulate_functions, representative_age),
         )
-        if simulation_active_periods
+        if representative_age is not None
         else simulate_functions
     )
-    age_specialized_function_names = frozenset(
-        name
-        for name, func in simulate_functions.items()
-        if isinstance(func, _SpecializedEconFunction)
+    published_simulate_constraints = (
+        cast(
+            "ConstraintFunctionsMapping",
+            resolve_specialized_nodes(constraints, representative_age),
+        )
+        if representative_age is not None
+        else constraints
     )
 
     return SimulationPhase(
@@ -1290,7 +1321,7 @@ def _build_simulation_phase(
         grids=simulate_grids,
         carried_only_state_names=frozenset(carried_grids),
         functions=published_simulate_functions,
-        constraints=constraints,
+        constraints=published_simulate_constraints,
         age_specialized_function_names=age_specialized_function_names,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
@@ -1806,6 +1837,8 @@ def _process_one_function(
     names_key: str | None = None,
 ) -> EconFunction:
     """Rename a function's params to qnames, or wrap an `AgeSpecializedFunction`.
+
+    An `AgeSpecializedFunction` is wrapped as a marker.
 
     A plain function is renamed once. An `AgeSpecializedFunction` becomes a
     `_SpecializedEconFunction` whose `build(age)` renames the concrete function
@@ -2771,7 +2804,7 @@ def _wrap_deterministic_regime_transition(
     # the decorator stack can drop them when `func` carries deferred (PEP 649)
     # annotations through `functools.wraps`.
     wrapped.__annotations__ = {**annotations, "return": "FloatND"}
-    return wrapped  # ty: ignore[invalid-return-type]
+    return wrapped
 
 
 def _get_vmap_params(
@@ -3045,10 +3078,20 @@ def _build_Q_and_F_per_period(
         continuation_sig = _continuation_grid_signature(
             continuation_info(period), complete
         )
+        # The perceived (solve) continuation pool is resolved per age below, so ages
+        # whose continuation functions resolve to different closures must NOT share a
+        # kernel — fold its per-age signature in too (round-11 F1). `None` (solve
+        # phase / no specialization) contributes a constant, collapsing the grouping.
+        continuation_functions_sig = (
+            tree_signature(continuation_functions, age)
+            if continuation_functions is not None
+            else ()
+        )
         signature = (
             tree_signature(functions, age),
             tree_signature(constraints, age),
             continuation_sig,
+            continuation_functions_sig,
         )
         configs.setdefault((complete, signature), []).append(period)
 
@@ -3075,7 +3118,16 @@ def _build_Q_and_F_per_period(
             regime_to_v_interpolation_info=continuation_info(periods[0]),
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
-            continuation_functions=continuation_functions,
+            # Resolve the perceived continuation pool at THIS group's age (F1) — not
+            # the representative age frozen into the published solve functions.
+            continuation_functions=(
+                cast(
+                    "EconFunctionsMapping",
+                    resolve_specialized_nodes(continuation_functions, age),
+                )
+                if continuation_functions is not None
+                else None
+            ),
             flow_transitions=flow_transitions,
             flow_stochastic_transition_names=flow_stochastic_transition_names,
             next_state_names=next_state_names,

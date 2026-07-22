@@ -315,7 +315,25 @@ class SolutionPhase:
     """Immutable mapping of variable names to grid objects (productmap order)."""
 
     functions: EconFunctionsMapping
-    """Immutable mapping of function names to internal user functions."""
+    """Immutable mapping of function names to internal user functions.
+
+    `AgeSpecializedFunction` markers are resolved at the regime's REPRESENTATIVE
+    age here, because this mapping feeds the unresolved-consumption paths
+    (feasibility checks, additional-target display). The SIMULATION continuation
+    must NOT read this pool — it needs per-age resolution; see
+    `_continuation_functions`.
+    """
+
+    _continuation_functions: EconFunctionsMapping | None = None
+    """Marker-bearing (unresolved) solve pool for the simulation continuation sub-DAG.
+
+    Threaded to `_build_simulation_phase` as `solve_functions`, it lets
+    `_build_Q_and_F_per_period` resolve each `AgeSpecializedFunction` at the
+    CURRENT period's age when pricing the perceived (solve) continuation — rather
+    than reusing `functions`' representative-age closure, which would freeze a
+    later-age belief at the first active age and reverse the simulated argmax
+    (round-11 F1). `None` (mocks / no specialization) falls back to `functions`.
+    """
 
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of constraint names to feasibility predicates."""
@@ -395,6 +413,18 @@ class SolutionPhase:
             self.compute_regime_transition_probs is not None
             and self.continuation_template is not None
         )
+
+    @property
+    def continuation_functions(self) -> EconFunctionsMapping:
+        """Marker-bearing solve pool for the simulation continuation sub-DAG.
+
+        Falls back to the representative-age `functions` when no per-age
+        specialization was threaded (mocks / no `AgeSpecializedFunction`). Read
+        this instead of `_continuation_functions` so the fallback is applied
+        once, at the single call site that prices the perceived continuation
+        (round-11 F1).
+        """
+        return self._continuation_functions or self.functions
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:

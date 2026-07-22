@@ -104,13 +104,33 @@ def _last_regime() -> Regime:
     ).replace(active=lambda age: age >= 2)
 
 
-def _make_model(*, stock_law: object, utility: object) -> Model:
+def _helper(stock: DiscreteState) -> DiscreteState:
+    """A named regime function (a DAG node), NOT a free parameter."""
+    return stock
+
+
+def _belief_reads_helper(
+    stock: DiscreteState, move: DiscreteAction, helper: DiscreteState
+) -> DiscreteState:
+    """A bare (coarse) solve law whose only non-state/action arg is the fn `helper`."""
+    return jnp.where(move == Move.stay, stock, helper)
+
+
+def _make_model(
+    *,
+    stock_law: object,
+    utility: object,
+    extra_functions: dict[str, object] | None = None,
+) -> Model:
+    functions: dict[str, Any] = {"utility": cast("Any", utility)}
+    if extra_functions is not None:
+        functions.update(cast("dict[str, Any]", extra_functions))
     live = Regime(
         transition=_next_regime,
         state_transitions={"stock": cast("Any", stock_law)},
         states={"stock": DiscreteGrid(Stock)},
         actions={"move": DiscreteGrid(Move)},
-        functions={"utility": cast("Any", utility)},
+        functions=functions,
     ).replace(active=lambda age: age < 2)
     return Model(
         regimes={"live": live, "last": _last_regime()},
@@ -199,6 +219,27 @@ def test_parameterized_coarse_in_both_phases_is_accepted() -> None:
     _make_model(
         stock_law=Phased(solve=_belief_param, simulate=_truth_param),
         utility=Phased(solve=_util_reads, simulate=_util_reads),
+    )
+
+
+def test_map_vs_bare_bare_law_reading_named_helper_is_accepted() -> None:
+    """Round-11 F2: a param-FREE bare (coarse) law that reads a named regime FUNCTION
+    (a DAG node) is accepted, not rejected as parameterized-coarse.
+
+    `_belief_reads_helper` reads `helper`, a phase-invariant regime function, and has
+    NO free parameter. `_law_has_free_parameter` must count `helper` among the regime's
+    own names (states | actions | functions | next_*), so there is nothing to replicate
+    per target and the map-vs-bare shape merges. Before the fix, `functions` was omitted
+    from that name set, so `helper` was misclassified as a free parameter and the build
+    was falsely rejected with `_PARAM_COARSE_REJECT`.
+    """
+    _make_model(
+        stock_law=Phased(
+            solve=_belief_reads_helper,
+            simulate={"live": _truth_param, "last": _truth_param},
+        ),
+        utility=Phased(solve=_util_reads, simulate=_util_plain),
+        extra_functions={"helper": _helper},
     )
 
 

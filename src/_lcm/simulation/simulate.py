@@ -740,7 +740,9 @@ def _replace_continuous_action_with_policy_read(
     )
     off_grid_action = jnp.where(accepted, off_grid_action, grid_action)
 
-    return MappingProxyType({**optimal_actions, read.action_name: off_grid_action}), None
+    return MappingProxyType(
+        {**optimal_actions, read.action_name: off_grid_action}
+    ), None
 
 
 def _redecide_branch_and_read_policy(
@@ -775,6 +777,15 @@ def _redecide_branch_and_read_policy(
     or the winning read is non-finite, non-positive, or outside the intrinsic
     budget.
     """
+    if "inverse_marginal_utility" not in regime.simulation.functions:
+        # The branch action must be the one that attains the value the branch is
+        # ranked by. Without a closed-form `inverse_marginal_utility` the value's
+        # own derivative cannot be inverted to that action, and the
+        # separately-interpolated policy row need not attain the ranked value — a
+        # value-ranked branch could return a dominated pair. Keep the
+        # constraint-masked grid pair instead.
+        return MappingProxyType(dict(optimal_actions))
+
     action_names = sim_policy.row_discrete_action_names
     action_grids = tuple(
         jnp.asarray(regime.simulation.grids[name].to_jax()) for name in action_names
@@ -830,12 +841,26 @@ def _redecide_branch_and_read_policy(
             resources=resources,
             n_subjects=n_subjects,
         )
-        policy, _ = _interp_rows_with_support(
+        # The action associated with the ranked value: the value read's own
+        # resource-derivative is `dV/dR = u'(c*)` (envelope theorem), and the
+        # regime's `inverse_marginal_utility` maps it back to the branch optimum
+        # `c*` that attains the value. Reading a separately-interpolated policy row
+        # instead can return an action worth less than the value the branch is
+        # ranked by, so a value-ranked branch's pair could be dominated.
+        marginal_value = _hermite_value_derivative_rows(
             sim_policy=sim_policy,
-            field="policy",
             index=index,
             resources=resources,
             n_subjects=n_subjects,
+        )
+        associated = _compute_targets(
+            data={**data, "marginal_continuation": marginal_value},
+            targets=["inverse_marginal_utility"],
+            regime=regime,
+            regime_params=flat_params,
+        )
+        policy = jnp.reshape(
+            jnp.asarray(associated["inverse_marginal_utility"]), (n_subjects,)
         )
         values_per_combo.append(jnp.where(feasible, value, -jnp.inf))
         policies_per_combo.append(policy)
@@ -1331,6 +1356,45 @@ def _interp_rows_with_support(
     last_live = jnp.take_along_axis(rows_x, (valid_length - 1)[:, None], axis=-1)[:, 0]
     in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)
     return values, in_support
+
+
+def _hermite_value_derivative_rows(
+    *,
+    sim_policy: EGMSimPolicy,
+    index: tuple[IntND | int, ...],
+    resources: FloatND,
+    n_subjects: int,
+) -> FloatND:
+    """Resource-derivative of the Hermite value read per subject: `V'(R_q)`.
+
+    The value read's own slope in resources. By the envelope theorem this is the
+    marginal value of resources `dV/dR = u'(c*)`, so inverting it with the regime's
+    `inverse_marginal_utility` recovers the branch optimum `c*` that attains the
+    ranked value — the action associated with the value the branch is ranked by,
+    where the separately-linear policy read need not attain it.
+
+    Uses the value read's custom-JVP query tangent (`_hermite_prepared_read`, the
+    same published derivative asset-row mode consumes), so the slope is the analytic
+    one-sided Hermite piece slope rather than autodiff through the bracket search.
+    """
+    rows_x = sim_policy.endog_grid
+    rows_f = sim_policy.value
+    rows_slope = sim_policy.marginal_utility
+    if index:
+        rows_x = rows_x[index]
+        rows_f = rows_f[index]
+        rows_slope = rows_slope[index]
+    if rows_x.ndim == 1:
+        rows_x = jnp.broadcast_to(rows_x, (n_subjects, *rows_x.shape))
+        rows_f = jnp.broadcast_to(rows_f, (n_subjects, *rows_f.shape))
+        rows_slope = jnp.broadcast_to(rows_slope, (n_subjects, *rows_slope.shape))
+
+    def value_read(
+        x_query: FloatND, xp: Float1D, fp: Float1D, fp_slopes: Float1D
+    ) -> FloatND:
+        return interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp, fp_slopes=fp_slopes)
+
+    return vmap(jax.grad(value_read, argnums=0))(resources, rows_x, rows_f, rows_slope)
 
 
 def _resources_at_subjects(

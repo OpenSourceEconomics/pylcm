@@ -270,11 +270,14 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             savings: Float1D,
             x_query: ScalarFloat,
         ) -> QueryBracket:
-            """Run the streaming FUES scan with the solver's thresholds.
+            """Build FUES's full refined row and slice the query bracket.
 
             FUES recovers segment slopes from its own forward scan, so the
             candidate supgradient is not consumed; the exogenous source savings
-            resolve the savings-monotonicity test exactly.
+            resolve the savings-monotonicity test exactly. Like every backend it
+            materializes the full `n_refined` row (`refine_to_bracket` builds it
+            via `refine_envelope`) and slices the bracketing pair — there is no
+            O(1) streamed carry.
             """
             del marginal_utility
             return refine_to_bracket(
@@ -348,10 +351,10 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             the bracket the row path would: the `searchsorted(side="right")`
             pair clamped to `[1, max(n_kept - 1, 1)]` (the
             `interp_on_prepared_grid` rule), so the published value cannot
-            diverge from full-envelope-then-interpolate. Like RFC, LTM has no
-            sequential carry to stream a bracket from, so it does not get
-            refine-to-query's `n_pad` memory win; the exogenous source savings
-            are a FUES-only refinement.
+            diverge from full-envelope-then-interpolate. Like every backend —
+            FUES's `refine_to_bracket` included — it materializes the full
+            `n_pad` row and slices; no backend streams an O(1) carry. The
+            exogenous source savings are a FUES-only refinement.
             """
             del marginal_utility, savings
             refined_grid, refined_policy, refined_value, n_kept = refine_envelope_ltm(
@@ -387,10 +390,10 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             bracket the row path would: the `searchsorted(side="right")` pair
             clamped to `[1, max(n_kept - 1, 1)]` (the `interp_on_prepared_grid`
             rule), so the published value cannot diverge from
-            full-envelope-then-interpolate. Like RFC and LTM, MSS has no
-            sequential carry to stream a bracket from, so it does not get
-            refine-to-query's `n_pad` memory win; the exogenous source savings
-            are a FUES-only refinement.
+            full-envelope-then-interpolate. Like every backend —
+            FUES's `refine_to_bracket` included — it materializes the full
+            `n_pad` row and slices; no backend streams an O(1) carry. The
+            exogenous source savings are a FUES-only refinement.
             """
             del marginal_utility, savings
             refined_grid, refined_policy, refined_value, n_kept = refine_envelope_mss(
