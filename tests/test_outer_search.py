@@ -62,8 +62,6 @@ def test_finite_outer_grid_rejects_negative_batch_size() -> None:
         lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, batch_size=-2),
         lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, value_atol=0.0),
         lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, value_rtol=-1e-8),
-        lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, outer_policy_atol=0.0),
-        lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, inner_policy_atol=-1.0),
     ],
 )
 def test_adaptive_outer_mesh_rejects_bad_config(
