@@ -305,9 +305,15 @@ class NBEGM(Solver):
         # piecewise-affine schedules either, the partition is empty — a single
         # interval covering the whole liquid axis, solved as plain EGM — so a
         # declaration-free budget is in scope. A declaration-free regime with a
-        # discrete action keeps the dedicated discrete path below.
+        # discrete action keeps the dedicated discrete path below — unless it
+        # carries a ride-along co-state: the dedicated path is a single-target
+        # one-asset kernel, while the ride-along route solves per discrete
+        # branch through the transition-aware (multi-target) continuation
+        # readers, which such regimes need (e.g. stochastic survival).
         has_schedule = not registry.piece_sets and (
-            bool(registry.piecewise_affine_schedules) or not has_discrete
+            bool(registry.piecewise_affine_schedules)
+            or not has_discrete
+            or self._schedule_has_ride_along(context=context)
         )
         # A discrete action over a cliffed single-liquid budget composes the
         # discrete upper envelope with the schedule's per-branch intervals. A
@@ -375,6 +381,7 @@ class NBEGM(Solver):
                 context=context,
                 budget_target=self.budget_target,
                 post_decision_function=self.post_decision_function,
+                continuous_state=self.continuous_state,
             )
             if is_discrete
             else None
@@ -704,6 +711,17 @@ class NBEGM(Solver):
                         next(iter(statics_by_key.values())).n_published_jumps
                         if statics_by_key
                         else 0
+                    ),
+                    # Match `_assemble_ride_carry`'s carry_policy predicate:
+                    # continuous-only (no ride discrete action) and jump-free.
+                    carry_policy=(
+                        schedule_spec.discrete_action_name is None
+                        and (
+                            next(iter(statics_by_key.values())).n_published_jumps
+                            if statics_by_key
+                            else 0
+                        )
+                        == 0
                     ),
                 ),
                 grids=context.grids,
@@ -3457,12 +3475,19 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     marginal_stack=marginal_stack,
                     taste_shock_scale=0.0,
                 )
+                policy_row = None
             else:
-                value_row, marginal_row, _policy_row = solve_branch(
+                value_row, marginal_row, policy_row = solve_branch(
                     {}, cont_value, cont_marginal, extra_cont_value, cliff_savings
                 )
 
             if statics.n_published_jumps == 0:
+                # Continuous-only, jump-free rows carry the exact consumption so
+                # the continuous-outer replay reads it instead of re-inverting a
+                # slope-scaled marginal (round-3 audit F2). Discrete-branch rows
+                # never reach that replay, so they keep the two-array shape.
+                if policy_row is not None:
+                    return (value_row, marginal_row, policy_row)
                 return (value_row, marginal_row)
             # The carry keeps the whole augmented row — the jump rides inside
             # the endogenous grid as a duplicated abscissa carrying its exact
@@ -3491,6 +3516,10 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         value_arr, carry = _assemble_ride_carry(
             stacks=stacks,
             n_jumps=statics.n_published_jumps,
+            carry_policy=(
+                schedule_spec.discrete_action_name is None
+                and statics.n_published_jumps == 0
+            ),
             liquid=liquid,
             ride_shape=ride_shape,
             liquid_axis_pos=schedule_spec.liquid_axis_pos,
@@ -3529,8 +3558,15 @@ def _collect_nbegm_discrete_spec(
     context: SolverBuildContext,
     budget_target: str = "resources",
     post_decision_function: str | None = None,
+    continuous_state: str | None = None,
 ) -> _NBEGMDiscreteSpec:
-    """Collect the single binary/multi-valued discrete action of a smooth regime."""
+    """Collect the single binary/multi-valued discrete action of a smooth regime.
+
+    `continuous_state` names the Euler (liquid) axis explicitly; without it
+    the single-state inference `state_names[0]` applies — wrong for a regime
+    with ride-along states (discrete states order first), so a multi-state
+    config must pass its declared axis.
+    """
     import inspect  # noqa: PLC0415
 
     space = context.state_action_space
@@ -3542,7 +3578,9 @@ def _collect_nbegm_discrete_spec(
         raise RegimeInitializationError(msg)
     discrete_action_name = next(iter(space.discrete_actions))
     codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
-    liquid_state_name = space.state_names[0]
+    liquid_state_name = (
+        continuous_state if continuous_state is not None else space.state_names[0]
+    )
     _fail_if_discrete_action_feeds_continuation(
         context=context,
         action_name=discrete_action_name,
@@ -3904,6 +3942,7 @@ def _assemble_ride_carry(
     *,
     stacks: tuple[FloatND, ...],
     n_jumps: int,
+    carry_policy: bool,
     liquid: Float1D,
     ride_shape: tuple[int, ...],
     liquid_axis_pos: int,
@@ -3939,6 +3978,18 @@ def _assemble_ride_carry(
             row_marginal_stack.reshape(*ride_shape, n_row).astype(dtype),
         )
         breakpoint_rows = breakpoint_stack.reshape(*ride_shape, n_jumps).astype(dtype)
+        policy_rows = None
+    elif carry_policy:
+        # Continuous-only, jump-free rows: the cell solve returns the exact
+        # consumption alongside value and marginal (round-3 audit F2).
+        value_stack, marginal_stack, policy_stack = stacks
+        carry_rows = (
+            jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
+            value_stack.reshape(*ride_shape, n_liquid).astype(dtype),
+            marginal_stack.reshape(*ride_shape, n_liquid).astype(dtype),
+        )
+        breakpoint_rows = None
+        policy_rows = policy_stack.reshape(*ride_shape, n_liquid).astype(dtype)
     else:
         value_stack, marginal_stack = stacks
         carry_rows = (
@@ -3947,6 +3998,7 @@ def _assemble_ride_carry(
             marginal_stack.reshape(*ride_shape, n_liquid).astype(dtype),
         )
         breakpoint_rows = None
+        policy_rows = None
     value_arr = jnp.moveaxis(
         value_stack.reshape(*ride_shape, n_liquid), -1, liquid_axis_pos
     )
@@ -3956,6 +4008,7 @@ def _assemble_ride_carry(
         marginal_utility=carry_rows[2],
         taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
         breakpoints=breakpoint_rows,
+        policy=policy_rows,
     )
     return value_arr, carry
 
@@ -4005,7 +4058,11 @@ def _shard_ride_carry_template(
 
 
 def _build_ride_along_carry_template(
-    *, liquid_grid: Float1D, ride_shape: tuple[int, ...], n_breakpoints: int
+    *,
+    liquid_grid: Float1D,
+    ride_shape: tuple[int, ...],
+    n_breakpoints: int,
+    carry_policy: bool,
 ) -> EGMCarry:
     """Build the all-finite case-piece carry template with ride-along axes leading.
 
@@ -4018,7 +4075,13 @@ def _build_ride_along_carry_template(
     # per jump) and publishes the jump locations (kink breakpoints leave the
     # value continuous and add no row slots), so the lowering template shares
     # both fixed shapes. Repeating the top node keeps the template rows
-    # weakly ascending and all-finite.
+    # weakly ascending and all-finite. `carry_policy` must match
+    # `_assemble_ride_carry`'s predicate (continuous-only, jump-free): that path
+    # returns a `policy` array leaf, so the template must carry the same leaf or
+    # a standalone ride-along NBEGM continuation (rolled cross-period, lowered
+    # against this template) would have a different pytree than the runtime carry
+    # (round-4 audit F1). The NNBEGM collapse strips its own runtime leaf, so its
+    # outer continuation stays policy-free against its own template.
     row = jnp.concatenate(
         [liquid_grid, jnp.repeat(liquid_grid[-1:], 2 * n_breakpoints)]
     )
@@ -4033,4 +4096,5 @@ def _build_ride_along_carry_template(
             if n_breakpoints
             else None
         ),
+        policy=jnp.zeros_like(block) if carry_policy else None,
     )

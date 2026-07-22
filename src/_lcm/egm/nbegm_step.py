@@ -59,6 +59,21 @@ from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 # Euler inversion is degenerate (consumption diverges) and the candidate is dropped.
 _DEGENERATE_MARGINAL_TOL = 1e-10
 
+
+def _next_segment_id(segment: Float1D, *, offset: float = 1.0) -> ScalarFloat:
+    """First unused segment id after `segment`, safe for all-NaN segments.
+
+    A flat (zero-marginal) continuation — e.g. the last alive period of a
+    model whose terminal target has no bequest motive — drops *every*
+    interior Euler candidate, leaving the interior segment ids all-NaN; a
+    bare `nanmax` would then poison the corner chains' ids (and with them
+    the whole envelope). Fall back to `0` so the live corners still get
+    finite segment ids.
+    """
+    segment_max = jnp.nanmax(segment)
+    return jnp.where(jnp.isnan(segment_max), 0.0, segment_max) + offset
+
+
 # Below this |xi| = |phi (1-rho) - 1| the Euler equation is treated as constant in
 # consumption: the closed-form inversion `c = x^(1/xi)` is undefined at xi = 0, so
 # the exponent is NaN-poisoned and the solve's NaN fail-fast reports it.
@@ -206,7 +221,7 @@ def nbegm_multi_interval_step(
     # A non-concave (convex-kinked) budget can fold the interior path back, so keep
     # its monotone runs apart for the upper envelope.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    next_segment = jnp.nanmax(interior_segment) + 1.0
+    next_segment = _next_segment_id(interior_segment)
 
     endog_parts: list[Float1D] = [liquid_endog]
     value_parts: list[Float1D] = [value_endog]
@@ -463,7 +478,7 @@ def nbegm_multi_interval_step_savings(
     degenerate = cont_marginal <= _DEGENERATE_MARGINAL_TOL
     liquid_endog = jnp.where(degenerate, jnp.nan, liquid_endog)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    next_segment = jnp.nanmax(interior_segment) + 1.0
+    next_segment = _next_segment_id(interior_segment)
 
     # Savings-node corner points: for every post-decision node `s_i`, consume
     # `coh - s_i` at each liquid grid point and earn that node's continuation. The
@@ -753,11 +768,8 @@ def nbegm_per_interval_continuation_step_savings(
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        # A flat interval kills every interior candidate, so `segment` is all-NaN and
-        # `nanmax` would be NaN; fall back to `0` there so the live corners still get a
-        # finite segment id.
-        segment_max = jnp.nanmax(segment)
-        next_segment = jnp.where(jnp.isnan(segment_max), 0.0, segment_max) + 1.0
+        # A flat interval kills every interior candidate; see `_next_segment_id`.
+        next_segment = _next_segment_id(segment)
 
         # Corners consume the true cash-on-hand at each grid point when supplied, so a
         # no-save/upper-savings corner stays feasible where the interval's affine budget
@@ -1109,7 +1121,7 @@ def nbegm_unified_step_savings(
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        next_segment = jnp.nanmax(segment) + 1.0
+        next_segment = _next_segment_id(segment)
         endog_parts.append(interior[0])
         value_parts.append(interior[1])
         policy_parts.append(interior[2])
@@ -1409,7 +1421,7 @@ def nbegm_unified_step(  # noqa: PLR0915
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        next_segment = jnp.nanmax(segment) + 1.0
+        next_segment = _next_segment_id(segment)
         endog_parts.append(interior[0])
         value_parts.append(interior[1])
         policy_parts.append(interior[2])
@@ -1666,7 +1678,7 @@ def _recurring_jump_case(
     value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    next_segment = jnp.nanmax(interior_segment) + 1.0
+    next_segment = _next_segment_id(interior_segment)
 
     endog_parts: list[Float1D] = [liquid_endog]
     value_parts: list[Float1D] = [value_endog]
@@ -1940,7 +1952,7 @@ def _case_step(
         prev_limit=liquid_grid[0] - 1.0,
     )
     kink_segment = jnp.where(
-        jnp.isnan(kink_grid), jnp.nan, jnp.nanmax(interior_segment) + 1.0
+        jnp.isnan(kink_grid), jnp.nan, _next_segment_id(interior_segment)
     )
 
     # Hard borrowing corner: saving nothing consumes all cash-on-hand and lands
@@ -1954,7 +1966,9 @@ def _case_step(
     s0_consumption = liquid_grid + subsidy
     s0_value = _crra_utility(s0_consumption, crra) + discount_factor * value_at_income
     s0_marginal = s0_consumption ** (-crra)
-    s0_segment = jnp.full_like(liquid_grid, jnp.nanmax(interior_segment) + 2.0)
+    s0_segment = jnp.full_like(
+        liquid_grid, _next_segment_id(interior_segment, offset=2.0)
+    )
 
     value, consumption_on_grid, marginal = envelope_at_query(
         endog_grid=jnp.concatenate([liquid_endog, kink_grid, liquid_grid]),

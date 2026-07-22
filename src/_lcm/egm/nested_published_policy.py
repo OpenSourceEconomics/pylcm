@@ -1,0 +1,235 @@
+"""The nested (continuous-outer) simulation-policy payload.
+
+A continuous-outer solve is only complete if simulation can *replay the same
+continuous policy class*: re-decide keeper vs adjuster off-grid, re-run the
+same interpolant/search across the outer axis, and read the inner
+consumption policy at the subject's actual resources. Storing only the final
+outer action on the state grid cannot do that — simulation arrives off the
+liquid grid, and a different branch can win there than at the nearest grid
+node. So the payload keeps the *conditional* ingredients:
+
+- the keeper's inner `EGMSimPolicy`;
+- one `EGMSimPolicy` per shared outer mesh node, stacked along a leading
+  candidate axis (`OuterPolicyBank`) — each is the exact inner solve's
+  published policy conditional on that outer action;
+- the static names and search settings the reader needs to rebuild the
+  outer-value interpolant and refine it per subject.
+
+All rows are re-reads on the *shared liquid state grid* (the NB-EGM inner's
+`carry_rows_share_state_grid` contract), so every branch is queried at the
+same abscissa — the subject's liquid state. Each branch's conditional
+resources shift (the keeper's held durable, each candidate's credited outer
+move) is already inside its conditional solve, not applied at read time.
+
+Both containers are registered as JAX pytrees (explicit
+`register_pytree_node`, matching `EGMSimPolicy` / `EGMCarry`).
+"""
+
+from dataclasses import dataclass
+
+import jax
+import jax.numpy as jnp
+
+from _lcm.egm.carry import EGMCarry
+from _lcm.egm.published_policy import EGMSimPolicy
+from lcm.typing import ActionName, Float1D, FunctionName, StateName
+
+
+def derive_inner_sim_policy(
+    *,
+    carry: EGMCarry,
+    state_grid_values: Float1D,
+    row_discrete_state_names: tuple[StateName, ...],
+    row_passive_state_names: tuple[StateName, ...],
+    extra_leading_axes: int = 0,
+) -> EGMSimPolicy | None:
+    """Derive the published inner policy from a state-grid NB-EGM carry.
+
+    An NB-EGM inner publishes its carry rows *re-read on the shared liquid
+    state grid* (`carry_rows_share_state_grid`), so the row abscissae are the
+    state grid itself. The exact optimal consumption on that grid is computed
+    during the solve and carried in `carry.policy` (round-3 audit F2): the
+    marginal is NOT `u'(c)` but `(d cash_on_hand/d liquid) * u'(c)`, so
+    inverting it would recover `c` only for a unit budget slope — a general
+    affine budget (e.g. `coh = net_income + R*wealth`, slope `R`) would
+    publish the wrong consumption. Reading the carried policy is correct for
+    any slope. Nodes with a nonfinite value or a nonpositive marginal (the
+    infeasible-row `0.0` convention) publish NaN, which the simulation read's
+    acceptance check rejects.
+
+    Fails closed (returns `None`, so the caller publishes no nested payload
+    and simulation keeps the grid-argmax path) when the carry did not retain
+    the exact consumption (`carry.policy is None` — any path but the
+    continuous-only, jump-free ride-along core), the rows are not on the state
+    grid, the carry keeps axes the given row names do not describe
+    (`extra_leading_axes` covers a candidate-stacked carry's leading axis), or
+    the rows carry declared topology (`breakpoints`).
+
+    Works elementwise, so a candidate-stacked carry (leading axis `C`)
+    yields the candidate-stacked policy.
+    """
+    expected_ndim = (
+        extra_leading_axes
+        + len(row_discrete_state_names)
+        + len(row_passive_state_names)
+        + 1
+    )
+    if (
+        carry.policy is None
+        or carry.value.shape[-1] != state_grid_values.shape[0]
+        or carry.value.ndim != expected_ndim
+        or carry.breakpoints is not None
+    ):
+        return None
+    try:
+        hard_max = bool(jnp.all(carry.taste_shock_scale == 0.0))
+    except jax.errors.ConcretizationTypeError:
+        return None
+    if not hard_max:
+        # A taste shock perturbs the realized decision away from the hard
+        # maximum the reader replays; publish nothing rather than a policy
+        # the simulated draws would contradict.
+        return None
+    node_valid = jnp.isfinite(carry.value) & (carry.marginal_utility > 0.0)
+    policy = jnp.where(node_valid, carry.policy, jnp.nan)
+    return EGMSimPolicy(
+        endog_grid=carry.endog_grid,
+        policy=policy,
+        value=carry.value,
+        marginal_utility=carry.marginal_utility,
+        row_discrete_state_names=row_discrete_state_names,
+        row_passive_state_names=row_passive_state_names,
+        # No inner discrete-action provenance rides in the carry: the NNBEGM
+        # kernel gates nested publication off `inner_discrete_action_names`
+        # (round-3 audit F8), so this derivation is only ever reached for a
+        # continuous-only inner where there is no discrete branch to record.
+        row_discrete_action_names=(),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class OuterPolicyBank:
+    """Per-outer-node published inner policies on the shared mesh.
+
+    `policies` is an `EGMSimPolicy` whose every array leaf carries a leading
+    candidate axis of length `C = outer_nodes.shape[0]` (the stacked form
+    `OuterCandidateBank` collects); the row-name metadata applies to the
+    axes *after* that leading candidate axis.
+    """
+
+    outer_nodes: Float1D
+    """Shared outer mesh nodes, shape `(C,)`, strictly increasing."""
+
+    policies: EGMSimPolicy
+    """The candidate-stacked published policies (leading axis `C`)."""
+
+    @property
+    def n_candidates(self) -> int:
+        """Number of outer candidate nodes in the bank."""
+        return int(self.outer_nodes.shape[0])
+
+
+def _flatten_outer_policy_bank(
+    bank: OuterPolicyBank,
+) -> tuple[tuple[Float1D, EGMSimPolicy], None]:
+    return (bank.outer_nodes, bank.policies), None
+
+
+def _unflatten_outer_policy_bank(
+    _aux: None, children: tuple[Float1D, EGMSimPolicy]
+) -> OuterPolicyBank:
+    bank = object.__new__(OuterPolicyBank)
+    object.__setattr__(bank, "outer_nodes", children[0])
+    object.__setattr__(bank, "policies", children[1])
+    return bank
+
+
+jax.tree_util.register_pytree_node(
+    OuterPolicyBank, _flatten_outer_policy_bank, _unflatten_outer_policy_bank
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class NestedEGMSimPolicy:
+    """Keeper plus conditional adjuster policies for continuous replay.
+
+    The simulation reader indexes both sides' rows at the subject's discrete
+    and passive states, reads every branch's value at the subject's liquid
+    state (the keeper holds the durable via the no-adjustment map; each
+    adjuster candidate's solve already binds the outer post-decision to its
+    node), rebuilds the outer-value interpolant from the conditional value
+    reads, refines with the same safeguarded search the solve used, and
+    compares against the keeper.
+    """
+
+    keeper: EGMSimPolicy
+    """The keeper branch's ordinary published policy."""
+
+    adjuster: OuterPolicyBank
+    """The conditional adjuster policies on the shared outer mesh."""
+
+    outer_action_name: ActionName
+    """The regime's outer continuous action the reader replaces."""
+
+    outer_post_decision_name: FunctionName
+    """The outer post-decision the candidate nodes are values of."""
+
+    inner_action_name: ActionName
+    """The inner continuous action (consumption) the reader replaces."""
+
+    liquid_state_name: StateName
+    """The inner Euler (liquid) state — the abscissa every branch's rows are
+    read at (the rows share the liquid state grid)."""
+
+    outer_no_adjustment_name: FunctionName | None
+    """The keeper's no-adjustment candidate function (`s' = keep(Z)`), or
+    `None` when keeping means holding the current durable unchanged."""
+
+    resources_target_name: FunctionName
+    """DAG function computing the accepted subject's resources for the
+    intrinsic budget check (the rows themselves are read at the liquid
+    state, not at resources)."""
+
+    savings_lower_bound: float
+    """Inner savings-grid lower bound for the intrinsic budget check."""
+
+    golden_iterations: int
+    """Static golden-section budget of the subject-level outer refinement —
+    the same setting the solve's search used."""
+
+
+_NESTED_STATIC_FIELDS = (
+    "outer_action_name",
+    "outer_post_decision_name",
+    "inner_action_name",
+    "liquid_state_name",
+    "outer_no_adjustment_name",
+    "resources_target_name",
+    "savings_lower_bound",
+    "golden_iterations",
+)
+
+
+def _flatten_nested_egm_sim_policy(
+    policy: NestedEGMSimPolicy,
+) -> tuple[tuple[EGMSimPolicy, OuterPolicyBank], tuple[object, ...]]:
+    aux = tuple(getattr(policy, name) for name in _NESTED_STATIC_FIELDS)
+    return (policy.keeper, policy.adjuster), aux
+
+
+def _unflatten_nested_egm_sim_policy(
+    aux: tuple[object, ...], children: tuple[EGMSimPolicy, OuterPolicyBank]
+) -> NestedEGMSimPolicy:
+    policy = object.__new__(NestedEGMSimPolicy)
+    object.__setattr__(policy, "keeper", children[0])
+    object.__setattr__(policy, "adjuster", children[1])
+    for name, value in zip(_NESTED_STATIC_FIELDS, aux, strict=True):
+        object.__setattr__(policy, name, value)
+    return policy
+
+
+jax.tree_util.register_pytree_node(
+    NestedEGMSimPolicy,
+    _flatten_nested_egm_sim_policy,
+    _unflatten_nested_egm_sim_policy,
+)

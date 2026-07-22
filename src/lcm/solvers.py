@@ -37,16 +37,36 @@ from _lcm.solution.negm import NEGM
 from _lcm.solution.nnbegm import NNBEGM
 from _lcm.solution.one_asset_egm import OneAssetEGM
 from _lcm.solution.two_dim_egm import TwoDimEGM
+from lcm.branch_aggregation import (
+    BranchAggregateResult,
+    DeterministicOuterMaximum,
+    OuterBranchAggregator,
+    UniformObservedFixedCost,
+)
+from lcm.outer_search import (
+    AdaptiveOuterMesh,
+    FiniteOuterGrid,
+    LegacyGoldenSection,
+    OuterSearch,
+)
 
 __all__ = [
     "DCEGM",
     "NBEGM",
     "NEGM",
     "NNBEGM",
+    "AdaptiveOuterMesh",
+    "BranchAggregateResult",
+    "DeterministicOuterMaximum",
+    "FiniteOuterGrid",
     "GridSearch",
+    "LegacyGoldenSection",
     "OneAssetEGM",
+    "OuterBranchAggregator",
+    "OuterSearch",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
     "TwoDimEGM",
+    "UniformObservedFixedCost",
 ]

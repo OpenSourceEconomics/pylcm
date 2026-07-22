@@ -31,20 +31,39 @@ import jax.numpy as jnp
 
 from lcm.typing import BoolND, Float1D, FloatND
 
-# Right-continuous tie tolerance (relative): among bracketing segments whose
-# interpolated value is within this fraction of the envelope maximum, the larger
-# value-slope wins (it is higher just to the right). Both the dense and blocked
-# paths use it, so they select the same policy/marginal at a tie. Applied
-# relative to the value scale (`* max(1, |envelope value|)`) so the tie band does
-# not collapse below cancellation noise at large lifetime-value magnitudes, which
-# would make the near-max set — and the published policy/marginal — depend on the
-# backend's `jnp.max` reduction order.
-_VALUE_TIE_ATOL = 1e-12
+# Right-continuous tie band: among bracketing segments whose interpolated value
+# is within this of the envelope maximum, the larger value-slope wins (it is
+# higher just to the right). Both the dense and blocked paths use it, so they
+# select the same policy/marginal at a tie.
+#
+# The band MUST bound the interpolation ROUNDING ERROR, which is set by the
+# endpoint OPERANDS, not by the interpolated output magnitude (round-3 audit F6
+# opened this as DC-1; round-4 audit F2 reopened it). `value = left + r*(right -
+# left)` rounds with error ~ eps*(|left| + |r|*(|right| + |left|)); near a
+# crossing the output cancels to ~0, so scaling the band by `max(|a|, |b|)` of
+# the OUTPUTS collapses it to ~0 and excludes the mathematically tied segment
+# with the larger right-hand slope — the wrong branch then wins. Scale the band
+# to the operands instead (`_interp_error_scale`), and compare against the max
+# segment's own operand error too, since `max_value - value` carries rounding on
+# both sides. This supersedes the earlier output-magnitude band
+# (`64*eps*max(|a|,|b|)`) and, before it, an interim `1e-12*max(1,|ref|)` band —
+# both precision-/cancellation-blind, exactly what F6/F2 flag.
+_TIE_BAND_ULPS = 64.0
 
 
-def _value_tie_band(reference: FloatND) -> FloatND:
-    """Scale-aware absolute tie band around a reference envelope value."""
-    return _VALUE_TIE_ATOL * jnp.maximum(1.0, jnp.abs(reference))
+def _interp_error_scale(
+    left_value: FloatND, right_value: FloatND, relative: FloatND
+) -> FloatND:
+    """Operand-scaled bound on the linear-interpolation rounding error.
+
+    For `value = left + relative*(right - left)`, the rounding error tracks the
+    endpoint magnitudes (and the `right - left` cancellation), NOT the possibly-
+    cancelled result. Multiply by `_TIE_BAND_ULPS * eps(dtype)` at the call site
+    to get the tie half-width (DC-1 floor).
+    """
+    return jnp.abs(left_value) + jnp.abs(relative) * (
+        jnp.abs(right_value) + jnp.abs(left_value)
+    )
 
 
 class _SegmentLinks(NamedTuple):
@@ -169,19 +188,29 @@ def envelope_at_query(
     # Break a value tie right-continuously, matching the kernel's `side="right"`
     # read: among the bracketing segments attaining the maximum, prefer one that
     # extends strictly to the right of the query (so "larger value-slope is higher
-    # just to the right" is meaningful), and among those the larger slope. Only at the
-    # global upper endpoint, where nothing continues right, fall back to the largest
-    # near-max slope. `_right_continuous_rank` folds both keys into one comparable
-    # scalar so this dense reduction and the blocked scan select the same winner.
+    # just to the right" is meaningful), and among those the larger slope. Only at
+    # the global upper endpoint, where nothing continues right, fall back to the
+    # largest near-max slope. `_tie_break_slope_key` compares the slope at native
+    # precision so this dense reduction and the blocked scan select the same winner.
     slope = (right_value - left_value)[None, :] / safe_width
-    near_max = brackets & (masked_value >= max_value - _value_tie_band(max_value))
-    right_available = flat < upper
-    best = jnp.argmax(
-        _right_continuous_rank(
-            near_max=near_max, right_available=right_available, slope=slope
-        ),
-        axis=1,
+    # Operand-scaled tie band (round-4 audit F2, DC-1): scale to the endpoint
+    # operands, not the interpolated output (which cancels near a crossing), and
+    # add the max segment's own error since both sides of `max_value - value`
+    # round.
+    eps = jnp.finfo(value_interp.dtype).eps
+    err = (
+        _TIE_BAND_ULPS
+        * eps
+        * _interp_error_scale(left_value[None, :], right_value[None, :], relative)
     )
+    err_at_max = jnp.take_along_axis(
+        err, jnp.argmax(masked_value, axis=1)[:, None], axis=1
+    )
+    near_max = brackets & (masked_value >= max_value - (err + err_at_max))
+    _, tie_key = _tie_break_slope_key(
+        near_max=near_max, right_available=flat < upper, slope=slope
+    )
+    best = jnp.argmax(tie_key, axis=1)
     env_value = jnp.where(any_bracket, max_value[:, 0], jnp.nan)
     env_policy = jnp.where(
         any_bracket,
@@ -200,34 +229,42 @@ def envelope_at_query(
     )
 
 
-def _right_continuous_rank(
+def _tie_break_slope_key(
     *, near_max: BoolND, right_available: BoolND, slope: FloatND
-) -> FloatND:
-    """One comparable scalar per segment for the right-continuous tie-break.
+) -> tuple[BoolND, FloatND]:
+    """Per-query eligibility flag + per-segment slope key for the tie-break.
 
-    Ranks a right-extending near-max segment above one that ends at the query, and
-    among equally-eligible segments the larger value-slope. `arctan` bounds the slope
-    into `(-pi/2, pi/2)`, so the integer right-extends bit dominates it; non-near-max
-    segments get `-inf`. `argmax` over this key reproduces "prefer a right-extending
-    near-max segment, else the largest near-max slope" with no global reduction, so
-    the dense path and the blocked scan (which compares this scalar across blocks)
-    select the same winner.
+    Implements "prefer a right-extending near-max segment, else the largest near-max
+    slope" WITHOUT folding the two keys into one scalar. Folding the right-extends
+    bit and the slope into a single float (an `arctan(slope)/pi + right_available`
+    rank) loses the slope bits for near-equal small slopes in float32, so two
+    genuinely-distinct slopes round to the same rank and `argmax` falls back to the
+    lower index — the wrong branch (round-4 audit F2, second half). Instead: among
+    the near-max segments, if ANY extends strictly right, only those compete; else
+    all near-max compete. The returned `key` is the raw `slope` for the competing
+    segments and `-inf` otherwise, so `argmax(key)` compares slopes at native
+    precision. `any_eligible` (per query) is also returned so the blocked scan can
+    reconcile the global right-extends priority across blocks lexicographically:
+    the dense path sees every segment on one axis and argmaxes the key directly.
     """
-    bounded_slope = jnp.arctan(slope) / jnp.pi + 0.5
-    rank = right_available.astype(bounded_slope.dtype) + bounded_slope
-    return jnp.where(near_max, rank, -jnp.inf)
+    eligible = near_max & right_available
+    any_eligible = jnp.any(eligible, axis=1, keepdims=True)
+    compete = jnp.where(any_eligible, eligible, near_max)
+    key = jnp.where(compete, slope, -jnp.inf)
+    return any_eligible[:, 0], key
 
 
 def _block_query_terms(
     *, block: FloatND, live: BoolND, flat: Float1D
-) -> tuple[BoolND, FloatND, FloatND, FloatND, FloatND, FloatND]:
+) -> tuple[BoolND, FloatND, FloatND, FloatND, FloatND, FloatND, FloatND]:
     """Bracket-and-interpolate one segment block against every query.
 
     `block` is one `(block_size, 8)` slice of the stacked link endpoint columns
     and `live` its `(block_size,)` live-flag slice. Returns the
     `(n_query, block_size)` bracket mask; the value, policy, marginal, and
-    value-slope interpolated at each query for each link in the block; and the
-    link's upper endpoint (for the right-continuous tie-break) — the same
+    value-slope interpolated at each query for each link in the block; the
+    link's upper endpoint (for the right-continuous tie-break); and the
+    operand-scaled interpolation error scale (for the DC-1 tie band) — the same
     quantities the dense path forms over all segments at once, but only for this
     block, so the peak working set is `(n_query, block_size)`.
     """
@@ -252,7 +289,18 @@ def _block_query_terms(
         left_marginal[None, :] + relative * (right_marginal - left_marginal)[None, :]
     )
     slope = (right_value - left_value)[None, :] / safe_width
-    return brackets, value_interp, policy_interp, marginal_interp, slope, upper
+    error_scale = _interp_error_scale(
+        left_value[None, :], right_value[None, :], relative
+    )
+    return (
+        brackets,
+        value_interp,
+        policy_interp,
+        marginal_interp,
+        slope,
+        upper,
+        error_scale,
+    )
 
 
 def _envelope_at_query_blocked(
@@ -267,11 +315,15 @@ def _envelope_at_query_blocked(
     - Pass 1 accumulates the running per-query max over segment blocks — the
       envelope value, with a running `any_bracket` flag.
     - Pass 2 re-scans the blocks and, among segments whose value is within
-      `_VALUE_TIE_ATOL` of that (now fixed) envelope value, keeps the winner of the
-      right-continuous rank (`_right_continuous_rank`: a right-extending near-max
-      segment over one ending at the query, then larger value-slope) — the dense
-      path's tie-break. The strict cross-block `>` keeps the earliest such winner,
-      matching the dense `argmax`.
+      the operand-scaled tie band (`_interp_error_scale`, plus the max
+      segment's own error tracked in pass 1) of that (now fixed) envelope value,
+      keeps the right-continuous winner (`_tie_break_slope_key`: a right-extending
+      near-max segment over one ending at the query, then larger value-slope) — the
+      dense path's tie-break. The scan carries the two keys separately —
+      `(has_eligible, slope)` — and reconciles them across blocks lexicographically,
+      so the right-extends priority is global while the slope stays at native
+      precision; the strict cross-block `>` keeps the earliest winner, matching the
+      dense `argmax`.
 
     The links are padded to a multiple of `block_size` with dead segments (which
     never bracket) and reshaped to `(n_block, block_size)`; the scan peaks at
@@ -311,24 +363,34 @@ def _envelope_at_query_blocked(
     dtype = links.left_grid.dtype
 
     def max_step(
-        carry: tuple[FloatND, BoolND],
+        carry: tuple[FloatND, FloatND, BoolND],
         block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, BoolND], None]:
-        running_max, any_bracket = carry
+    ) -> tuple[tuple[FloatND, FloatND, BoolND], None]:
+        running_max, running_max_scale, any_bracket = carry
         block, block_live = block_and_live
-        brackets, value_interp, *_ = _block_query_terms(
+        brackets, value_interp, _, _, _, _, error_scale = _block_query_terms(
             block=block, live=block_live, flat=flat
         )
-        block_max = jnp.max(jnp.where(brackets, value_interp, -jnp.inf), axis=1)
+        block_masked = jnp.where(brackets, value_interp, -jnp.inf)
+        block_max = jnp.max(block_masked, axis=1)
+        # Track the operand error scale OF the running-max segment (round-4
+        # audit F2): the tie band needs the max side's rounding error, and the
+        # max segment can live in any block. A cross-block tie keeps the earlier
+        # block's scale, matching the dense `argmax` (first max wins).
+        block_argmax = jnp.argmax(block_masked, axis=1)[:, None]
+        block_max_scale = jnp.take_along_axis(error_scale, block_argmax, axis=1)[:, 0]
+        take = block_max > running_max
         return (
-            jnp.maximum(running_max, block_max),
+            jnp.where(take, block_max, running_max),
+            jnp.where(take, block_max_scale, running_max_scale),
             any_bracket | jnp.any(brackets, axis=1),
         ), None
 
-    (running_max, any_bracket), _ = jax.lax.scan(
+    (running_max, env_max_scale, any_bracket), _ = jax.lax.scan(
         max_step,
         (
             jnp.full((n_query,), -jnp.inf, dtype=dtype),
+            jnp.zeros((n_query,), dtype=dtype),
             jnp.zeros((n_query,), dtype=bool),
         ),
         (blocks, live_blocks),
@@ -336,34 +398,52 @@ def _envelope_at_query_blocked(
     env_value = jnp.where(any_bracket, running_max, jnp.nan)
 
     def policy_step(
-        carry: tuple[FloatND, FloatND, FloatND],
+        carry: tuple[BoolND, FloatND, FloatND, FloatND],
         block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, FloatND, FloatND], None]:
-        best_rank, best_policy, best_marginal = carry
+    ) -> tuple[tuple[BoolND, FloatND, FloatND, FloatND], None]:
+        best_has_elig, best_slope, best_policy, best_marginal = carry
         block, block_live = block_and_live
-        brackets, value_interp, policy_interp, marginal_interp, slope, upper = (
-            _block_query_terms(block=block, live=block_live, flat=flat)
-        )
-        near_max = brackets & (
-            value_interp >= env_value[:, None] - _value_tie_band(env_value[:, None])
-        )
-        rank = _right_continuous_rank(
+        (
+            brackets,
+            value_interp,
+            policy_interp,
+            marginal_interp,
+            slope,
+            upper,
+            error_scale,
+        ) = _block_query_terms(block=block, live=block_live, flat=flat)
+        # Operand-scaled tie band with the max side's error (round-4 audit F2),
+        # identical scale to the dense path so both select the same branch.
+        eps = jnp.finfo(value_interp.dtype).eps
+        err = _TIE_BAND_ULPS * eps * error_scale
+        err_at_max = _TIE_BAND_ULPS * eps * env_max_scale[:, None]
+        near_max = brackets & (value_interp >= env_value[:, None] - (err + err_at_max))
+        block_has_elig, key = _tie_break_slope_key(
             near_max=near_max, right_available=flat[:, None] < upper, slope=slope
         )
-        winner = jnp.argmax(rank, axis=1)[:, None]
-        block_rank = jnp.take_along_axis(rank, winner, axis=1)[:, 0]
+        winner = jnp.argmax(key, axis=1)[:, None]
+        block_slope = jnp.take_along_axis(key, winner, axis=1)[:, 0]
         block_policy = jnp.take_along_axis(policy_interp, winner, axis=1)[:, 0]
         block_marginal = jnp.take_along_axis(marginal_interp, winner, axis=1)[:, 0]
-        take = block_rank > best_rank
+        # Cross-block lexicographic on (has_eligible desc, slope desc): a block
+        # with a right-extending near-max beats one without; within the same class
+        # the larger value-slope wins, the strict `>` keeping the earliest winner
+        # to match the dense `argmax`. Comparing the slope directly preserves its
+        # native precision (round-4 audit F2, second half).
+        take = (block_has_elig & ~best_has_elig) | (
+            (block_has_elig == best_has_elig) & (block_slope > best_slope)
+        )
         return (
-            jnp.where(take, block_rank, best_rank),
+            jnp.where(take, block_has_elig, best_has_elig),
+            jnp.where(take, block_slope, best_slope),
             jnp.where(take, block_policy, best_policy),
             jnp.where(take, block_marginal, best_marginal),
         ), None
 
-    (_, env_policy_flat, env_marginal_flat), _ = jax.lax.scan(
+    (_, _, env_policy_flat, env_marginal_flat), _ = jax.lax.scan(
         policy_step,
         (
+            jnp.zeros((n_query,), dtype=bool),
             jnp.full((n_query,), -jnp.inf, dtype=dtype),
             jnp.full((n_query,), jnp.nan, dtype=dtype),
             jnp.full((n_query,), jnp.nan, dtype=dtype),

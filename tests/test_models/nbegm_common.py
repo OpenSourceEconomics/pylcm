@@ -135,6 +135,7 @@ def make_alive_dead_model(
     extra_state_transitions: Mapping[str, Any] | None = None,
     survival_transition: Mapping[str, Any] | None = None,
     model_states: Mapping[str, Grid] | None = None,
+    dead_functions: Mapping[str, Callable[..., object]] | None = None,
 ) -> Model:
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 
@@ -158,6 +159,9 @@ def make_alive_dead_model(
         extra_states: Additional state grids beyond `liquid` (ride-along
             co-states, stochastic processes).
         extra_state_transitions: Transition entries for the extra states.
+        dead_functions: Override for the dead regime's function pool (defaults
+            to the CRRA bequest); e.g. a constant utility for a zero-marginal
+            (flat) continuation.
 
     Returns:
         The assembled `Model`.
@@ -195,7 +199,9 @@ def make_alive_dead_model(
     dead = Regime(
         transition=None,
         states={"liquid": liquid_grid},
-        functions={"utility": bequest},
+        functions=dict(dead_functions)
+        if dead_functions is not None
+        else {"utility": bequest},
         active=lambda age, fa=final_age: age >= fa,
         solver=GridSearch(),
     )

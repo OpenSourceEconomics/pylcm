@@ -35,9 +35,11 @@ from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
+from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
@@ -61,10 +63,16 @@ from lcm.typing import FloatND
 # the EGM carry itself.
 type ContinuationPayload = EGMCarry
 
-# The published off-grid simulation-policy artifact, under the same rule: the
-# engine stores and returns it opaquely; today the only implementation is the
-# EGM-published policy.
-type SimulationPolicy = EGMSimPolicy
+# The published off-grid simulation-policy artifact. The engine threads it
+# opaquely across periods (store/return), but — unlike `ContinuationPayload`
+# — the simulation read dispatches on the concrete payload type over this
+# CLOSED union (round-3 audit F11): a `NestedEGMSimPolicy` routes to the
+# engine-owned nested continuous-outer reader (`_read_nested_policy`, which the
+# self-describing payload parameterizes), a flat `EGMSimPolicy` routes to the
+# solver-supplied `egm_policy_read`. So it is a deliberate closed-union dispatch
+# in the engine's simulation loop, not an open solver-owned reader seam; adding
+# a payload class means extending both this union and that dispatch.
+type SimulationPolicy = EGMSimPolicy | NestedEGMSimPolicy
 
 if TYPE_CHECKING:
     from _lcm.regime_building.V import VInterpolationInfo
@@ -180,6 +188,8 @@ class KernelResult:
       interpolates; `None` for a regime that publishes no continuation.
     - `simulation_policy` is the off-grid policy forward simulation can
       interpolate; `None` for a regime that publishes none.
+    - `diagnostics` is the solver's numerical self-report; `None` for a solver
+      that measures nothing (every finite-grid solver today).
     """
 
     V_arr: FloatND
@@ -190,6 +200,9 @@ class KernelResult:
 
     simulation_policy: SimulationPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
+
+    diagnostics: SolverDiagnostics | None = None
+    """Published numerical diagnostics, or `None`."""
 
 
 @dataclass(frozen=True, kw_only=True)

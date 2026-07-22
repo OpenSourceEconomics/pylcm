@@ -597,10 +597,10 @@ def _build_solution_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             ages=ages,
             flat_param_names=flat_param_names,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
             next_state_names=next_state_names,
-            period_to_regime_v_interp=period_to_regime_v_interp,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             flat_param_names=flat_param_names,
@@ -1188,12 +1188,12 @@ def _build_simulation_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             ages=ages,
             flat_param_names=flat_param_names,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             certainty_equivalent=certainty_equivalent,
             continuation_functions=solve_functions,
             flow_transitions=core.transitions,
             flow_stochastic_transition_names=core.stochastic_transition_names,
             next_state_names=next_state_names,
-            period_to_regime_v_interp=period_to_regime_v_interp,
         )
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
@@ -1845,6 +1845,10 @@ def _process_one_function(
     the wrapper produces for that age under the **same** `param_key` / `names_key`,
     so every age carries identical qnames — sound because the wrapper's call
     signature is age-invariant by contract.
+
+    (Restored: a cascade merge dropped this helper while keeping its call site,
+    so age-specialized deterministic functions were never wrapped into the
+    `_SpecializedEconFunction` marker the per-period builders resolve.)
     """
     if isinstance(func, AgeSpecializedFunction):
         concrete_build = func.build
@@ -2990,15 +2994,15 @@ def _build_Q_and_F_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
     flat_param_names: frozenset[str],
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
     continuation_functions: EconFunctionsMapping | None = None,
     flow_transitions: TransitionFunctionsMapping | None = None,
     flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
     next_state_names: frozenset[TransitionFunctionName] = frozenset(),
-    period_to_regime_v_interp: (
-        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
-    ) = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
