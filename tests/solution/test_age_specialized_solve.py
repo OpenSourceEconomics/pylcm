@@ -24,7 +24,7 @@ from lcm import (
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import ScalarInt, UserFunction
+from lcm.typing import FloatND, ScalarInt, UserFunction
 
 
 @categorical(ordered=True)
@@ -184,3 +184,97 @@ def test_additional_target_depending_on_age_specialized_function_is_rejected():
 
     with pytest.raises(InvalidAdditionalTargetsError, match="policy-specialized"):
         result.to_dataframe(additional_targets=["policy_bonus"])
+
+
+def _utility_of_consumption(consumption: float) -> FloatND:
+    return jnp.log(consumption)
+
+
+def _feasible_consumption(consumption: float, wealth: float) -> bool:
+    return consumption <= wealth
+
+
+def _next_wealth_spend(wealth: float, consumption: float) -> float:
+    return wealth - consumption + 1.0
+
+
+def _cap_of_age(age: float) -> Callable[..., bool]:
+    """Return the age's concrete feasibility constraint (an `AgeSpecializedFunction`).
+
+    `wealth_cap` is slack for every grid cell (age >= 60, wealth <= 100), so the
+    feasible set is unchanged and the model solves; the point is only that a
+    specialized *constraint* node exists in the target pool.
+    """
+
+    def wealth_cap(consumption: float, wealth: float) -> bool:
+        return consumption <= wealth + age
+
+    return wealth_cap
+
+
+def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
+    working_life = UserRegime(
+        transition=_next_regime,
+        active=lambda age: age < 75,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        state_transitions={"wealth": _next_wealth_spend},
+        constraints={
+            "feasible_consumption": _feasible_consumption,
+            "wealth_cap": wealth_cap,
+        },
+        functions={"utility": _utility_of_consumption},
+    )
+    dead = UserRegime(
+        transition=None,
+        active=lambda age: age >= 75,
+        functions={"utility": lambda: 0.0},
+    )
+    return Model(
+        regimes={"working_life": working_life, "dead": dead},
+        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def _simulate_specialized_constraint_model():
+    model = _make_specialized_constraint_model(
+        AgeSpecializedFunction(build=_cap_of_age, signature=lambda age: age)
+    )
+    return model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(3, 25.0),
+            "wealth": jnp.array([10.0, 50.0, 100.0]),
+            "regime_id": jnp.full(3, RegimeId.working_life),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+    )
+
+
+def test_additional_target_of_age_specialized_constraint_is_rejected():
+    """Round-11 F3: a specialized *constraint* requested as a target is rejected.
+
+    A constraint carries its own namespace: `_process_regime_core` excludes
+    constraint names from `functions`, so an `AgeSpecializedFunction` constraint
+    was omitted from `age_specialized_function_names` and escaped the guard, even
+    though the additional-target pool re-merges constraints and advertises them as
+    targets. Requesting the specialized constraint by name must raise, not reach
+    target construction as an unresolved representative-age marker.
+    """
+    result = _simulate_specialized_constraint_model()
+    with pytest.raises(InvalidAdditionalTargetsError, match="policy-specialized"):
+        result.to_dataframe(additional_targets=["wealth_cap"])
+
+
+def test_additional_targets_all_rejects_age_specialized_constraint():
+    """Round-11 F3: `additional_targets='all'` rejects a specialized constraint.
+
+    `'all'` expands to every advertised target, which includes the specialized
+    constraint; the guard must reject the batch rather than silently compute it at
+    the wrong age's policy closure.
+    """
+    result = _simulate_specialized_constraint_model()
+    with pytest.raises(InvalidAdditionalTargetsError, match="policy-specialized"):
+        result.to_dataframe(additional_targets="all")
