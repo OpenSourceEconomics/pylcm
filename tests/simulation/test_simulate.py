@@ -180,6 +180,7 @@ def test_simulate_using_model_methods(
         "borrowing_constraint",
         "subject_id",
         "regime_name",
+        "nested_policy_fallback",
     }
     assert expected_cols == set(df.columns)
 

@@ -887,6 +887,22 @@ class PeriodRegimeSimulationData:
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
 
+    nested_policy_fallback: Bool1D
+    """Per-subject flag that the continuous-outer (nested) off-grid policy read
+    was refused and fell back to the grid-argmax action pair at this period.
+
+    True only for subjects in a regime whose simulation published a nested
+    (continuous-outer) policy where the runtime replay could not certify the
+    off-grid read — per subject (branch read off its live row support, a
+    non-affine outer transition surfacing at the recovered action, a
+    non-finite/non-positive/over-budget inner action) or for the whole regime
+    (payload shape outside the v1 scope, an unresolvable outer transition).
+    All-False for every other path: no nested payload, the flat single-EGM
+    read, passive rows, or the grid path. Inference on the continuous-outer
+    path must refuse whenever any entry is True — the recorded action there is
+    the gridded fallback, not the model's off-grid optimum.
+    """
+
 
 # Register as a JAX pytree so traversals like `jax.block_until_ready` and
 # `jax.tree.map` recurse into the fields instead of treating the dataclass
@@ -897,6 +913,6 @@ class PeriodRegimeSimulationData:
 # whose materialisation workspace dwarfs the per-period output.
 jax.tree_util.register_dataclass(
     PeriodRegimeSimulationData,
-    data_fields=("V_arr", "actions", "states", "in_regime"),
+    data_fields=("V_arr", "actions", "states", "in_regime", "nested_policy_fallback"),
     meta_fields=(),
 )

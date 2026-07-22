@@ -413,6 +413,9 @@ def _concatenate_chunk_results(
                     }
                 ),
                 in_regime=jnp.concatenate([data.in_regime for data in per_chunk]),
+                nested_policy_fallback=jnp.concatenate(
+                    [data.nested_policy_fallback for data in per_chunk]
+                ),
             )
     return combined
 
@@ -540,7 +543,7 @@ def _simulate_regime_in_period(
         flat_indices=indices_optimal_actions,
         grids=state_action_space.actions,
     )
-    optimal_actions = _replace_continuous_action_with_policy_read(
+    optimal_actions, nested_fallback = _replace_continuous_action_with_policy_read(
         optimal_actions=optimal_actions,
         regime=regime,
         sim_policy=sim_policy,
@@ -556,11 +559,21 @@ def _simulate_regime_in_period(
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_chunk_subjects,))
 
+    # F4: `None` from the reader means no nested continuous-outer read ran for
+    # this regime-period (no payload, the flat single-EGM path, passive rows,
+    # the discrete-branch redecide), so no subject fell back on that path.
+    nested_policy_fallback = (
+        jnp.zeros(n_chunk_subjects, dtype=bool)
+        if nested_fallback is None
+        else nested_fallback
+    )
+
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
         states=states[regime_name],
         in_regime=subject_ids_in_regime,
+        nested_policy_fallback=nested_policy_fallback,
     )
 
     # Update states and regime membership for next period
@@ -615,7 +628,7 @@ def _replace_continuous_action_with_policy_read(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-) -> MappingProxyType[ActionName, FloatND | IntND]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND | None]:
     """Interpolate the published EGM policy at each subject's resources.
 
     Replaces the grid-argmax value of the EGM continuous action with the
@@ -637,9 +650,15 @@ def _replace_continuous_action_with_policy_read(
       incomplete value comparison cannot pick the winner), or whose winning
       read is non-finite, non-positive, or outside the intrinsic budget
       (`action <= resources - savings_lower_bound`).
+
+    Returns the recovered actions and a nested-fallback flag: the per-subject
+    Boolean array from `_read_nested_policy` on the continuous-outer path, or
+    `None` on every other path (no policy, the flat single-EGM read, passive
+    rows, the discrete-branch redecide). The caller resolves `None` to all-False
+    where the regime's subject count is known (F4).
     """
     if sim_policy is None:
-        return optimal_actions
+        return optimal_actions, None
     if isinstance(sim_policy, NestedEGMSimPolicy):
         # The nested (continuous-outer) payload is self-describing (it names
         # both actions, the liquid state, and the search settings), so it
@@ -655,9 +674,9 @@ def _replace_continuous_action_with_policy_read(
         )
     read = regime.simulation.egm_policy_read
     if read is None:
-        return optimal_actions
+        return optimal_actions, None
     if sim_policy.row_passive_state_names:
-        return optimal_actions
+        return optimal_actions, None
 
     n_subjects = next(iter(states.values())).shape[0]
 
@@ -673,17 +692,20 @@ def _replace_continuous_action_with_policy_read(
     )
 
     if sim_policy.row_discrete_action_names:
-        return _redecide_branch_and_read_policy(
-            optimal_actions=optimal_actions,
-            regime=regime,
-            sim_policy=sim_policy,
-            states=states,
-            flat_params=flat_params,
-            period=period,
-            age=age,
-            read=read,
-            n_subjects=n_subjects,
-            state_positions=state_positions,
+        return (
+            _redecide_branch_and_read_policy(
+                optimal_actions=optimal_actions,
+                regime=regime,
+                sim_policy=sim_policy,
+                states=states,
+                flat_params=flat_params,
+                period=period,
+                age=age,
+                read=read,
+                n_subjects=n_subjects,
+                state_positions=state_positions,
+            ),
+            None,
         )
 
     resources = _resources_at_subjects(
@@ -718,7 +740,7 @@ def _replace_continuous_action_with_policy_read(
     )
     off_grid_action = jnp.where(accepted, off_grid_action, grid_action)
 
-    return MappingProxyType({**optimal_actions, read.action_name: off_grid_action})
+    return MappingProxyType({**optimal_actions, read.action_name: off_grid_action}), None
 
 
 def _redecide_branch_and_read_policy(
@@ -891,7 +913,7 @@ def _read_nested_policy(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-) -> MappingProxyType[ActionName, FloatND | IntND]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND]:
     """Replay the continuous-outer keeper/adjuster decision off-grid.
 
     Reconstructs, per subject, exactly the solve's decision problem in the
@@ -917,16 +939,21 @@ def _read_nested_policy(
     transition), and per subject when any branch read leaves its live row
     support, or the winning consumption is non-finite, non-positive, or
     outside the intrinsic budget (`c <= resources - savings_lower_bound`).
+
+    Returns the recovered actions and a per-subject Boolean `fallback` flag
+    (True where the off-grid read was refused and the grid-argmax pair kept):
+    all-True on the whole-regime fallbacks above, `~accepted` on the normal
+    path. Inference must refuse whenever any entry is True (see F4).
     """
     keeper_pol = payload.keeper
     bank = payload.adjuster
+    n_subjects = next(iter(states.values())).shape[0]
     if (
         keeper_pol.row_discrete_action_names
         or bank.policies.row_discrete_action_names
         or len(keeper_pol.row_passive_state_names) > 1
     ):
-        return optimal_actions
-    n_subjects = next(iter(states.values())).shape[0]
+        return optimal_actions, jnp.ones(n_subjects, dtype=bool)
     liquid = jnp.asarray(states[payload.liquid_state_name])
 
     def grid_position(name: StateOrActionName) -> IntND:
@@ -1029,7 +1056,7 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
     if outer_offset_slope is None:
-        return optimal_actions
+        return optimal_actions, jnp.ones(n_subjects, dtype=bool)
     offset, slope_is_unit, transition_at = outer_offset_slope
     keep_value = _keeper_post_decision(
         payload=payload,
@@ -1041,7 +1068,7 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
     if keep_value is None:
-        return optimal_actions
+        return optimal_actions, jnp.ones(n_subjects, dtype=bool)
 
     chosen_post_decision = jnp.where(adjust, search.x, keep_value)
     outer_action = chosen_post_decision - offset
@@ -1087,7 +1114,7 @@ def _read_nested_policy(
     new_actions[payload.outer_action_name] = jnp.where(
         accepted, outer_action, jnp.asarray(optimal_actions[payload.outer_action_name])
     )
-    return MappingProxyType(new_actions)
+    return MappingProxyType(new_actions), ~accepted
 
 
 def _nested_resources(
