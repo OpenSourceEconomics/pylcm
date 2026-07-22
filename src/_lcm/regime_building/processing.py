@@ -62,6 +62,7 @@ from _lcm.processes.state_conditioned import (
     sigma_array_by_code,
 )
 from _lcm.regime_building.age_specialization import (
+    _SpecializedEconFunction,
     has_age_specialized_grid,
     resolve_specialized_nodes,
     resolve_state_grids,
@@ -151,6 +152,7 @@ from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import (
+    AgeSpecializedFunction,
     MarkovTransition,
 )
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
@@ -397,7 +399,14 @@ def process_regimes(
     # the union of the source and its reachable carry targets' fixed params.
     regime_to_params_template = MappingProxyType(
         {
-            regime_name: create_regime_params_template(user_regime)
+            regime_name: create_regime_params_template(
+                user_regime,
+                representative_age=(
+                    ages.period_to_age(regimes_to_active_periods[regime_name][0])
+                    if regimes_to_active_periods[regime_name]
+                    else None
+                ),
+            )
             for regime_name, user_regime in user_regimes.items()
         }
     )
@@ -1525,13 +1534,13 @@ def _build_solution_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
             ages=ages,
             flat_param_names=flat_param_names,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
             value_constraints=value_constraints,
             same_period_refs=same_period_refs,
             next_state_names=next_state_names,
-            period_to_regime_v_interp=period_to_regime_v_interp,
         )
         if stakeholders is not None:
             # COLLECTIVE-REGIMES (E1): the NaN-diagnostics intermediates mirror
@@ -1540,6 +1549,11 @@ def _build_solution_phase(
             # missing closure gracefully (no U/F/E/Q breakdown).
             compute_intermediates = MappingProxyType({})
         else:
+            # continuous-outer: thread the per-period continuation grids
+            # (`period_to_regime_v_interp` / `continuation_grid_signature`) so an
+            # age-specialized model's NaN-diagnostics intermediates read V_{t+1}
+            # on the same per-period grid the Q-and-F build uses; both are the
+            # age-invariant defaults (`None`) for a baseline / EKL model.
             compute_intermediates = _build_compute_intermediates_per_period(
                 flat_param_names=flat_param_names,
                 regimes_to_active_periods=regimes_to_active_periods,
@@ -1553,6 +1567,8 @@ def _build_solution_phase(
                 grids=all_grids[regime_name],
                 ages=ages,
                 enable_jit=enable_jit,
+                period_to_regime_v_interp=period_to_regime_v_interp,
+                continuation_grid_signature=_continuation_grid_signature,
                 certainty_equivalent=certainty_equivalent,
                 next_state_names=next_state_names,
             )
@@ -2200,6 +2216,7 @@ def _build_simulation_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
             ages=ages,
             flat_param_names=flat_param_names,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
             value_constraints=value_constraints,
@@ -2208,7 +2225,6 @@ def _build_simulation_phase(
             flow_transitions=core.transitions,
             flow_stochastic_transition_names=core.stochastic_transition_names,
             next_state_names=next_state_names,
-            period_to_regime_v_interp=period_to_regime_v_interp,
         )
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
@@ -2310,13 +2326,15 @@ def _build_simulation_phase(
         else simulate_functions
     )
     # The set of simulate function names carrying an `AgeSpecializedFunction`
-    # marker (so simulation re-resolves them per period). Empty for every
-    # age-invariant model — all current models, including EKL. `SimulationPhase`
-    # defaults this field to the empty set; only age-specialized-FUNCTION support
-    # (distinct from age-specialized GRIDS, which this merge wires end to end)
-    # would populate it, and that half of continuous-outer's feature is not yet
-    # complete, so the age-invariant value is published explicitly here.
-    age_specialized_function_names: frozenset[FunctionName] = frozenset()
+    # marker (so simulation re-resolves them per period) — continuous-outer's
+    # age-specialized-FUNCTION support, now complete on `feat/continuous-outer`.
+    # Empty for every age-invariant model (all baseline / EKL models), so the
+    # published value is byte-identical there.
+    age_specialized_function_names: frozenset[FunctionName] = frozenset(
+        name
+        for name, func in simulate_functions.items()
+        if isinstance(func, _SpecializedEconFunction)
+    )
 
     return SimulationPhase(
         _variables=simulation_variables,
@@ -2553,7 +2571,14 @@ def _process_regime_core(  # noqa: C901
     processed_functions: dict[str, EconFunction] = {}
 
     for func_name, func in deterministic_functions.items():
-        processed_functions[func_name] = _rename_params_to_qnames(
+        # `_process_one_function` (not a bare `_rename_params_to_qnames`) so an
+        # `AgeSpecializedFunction` is wrapped into the `_SpecializedEconFunction`
+        # marker the per-period builders (and `resolve_specialized_nodes`)
+        # resolve; a plain function is renamed identically. A cascade merge onto
+        # the collective-port function loop had dropped this call site, leaving
+        # age-specialized deterministic functions unwrapped (they then reached
+        # `jax.jit(...).lower()` as a bare `(*args, **kwargs)` marker).
+        processed_functions[func_name] = _process_one_function(
             func=func,
             regime_params_template=regime_params_template,
             param_key=func_name,
@@ -2926,6 +2951,45 @@ def _phase_coarse_state_law_names(
         if side is not None and not isinstance(side, Mapping):
             coarse.add(state_name)
     return frozenset(coarse)
+
+
+def _process_one_function(
+    *,
+    func: UserFunction,
+    regime_params_template: RegimeParamsTemplate,
+    param_key: str,
+    names_key: str | None = None,
+) -> EconFunction:
+    """Rename a function's params to qnames, or wrap an `AgeSpecializedFunction`.
+
+    A plain function is renamed once. An `AgeSpecializedFunction` becomes a
+    `_SpecializedEconFunction` whose `build(age)` renames the concrete function
+    the wrapper produces for that age under the **same** `param_key` / `names_key`,
+    so every age carries identical qnames — sound because the wrapper's call
+    signature is age-invariant by contract.
+
+    (Restored: a cascade merge dropped this helper while keeping its call site,
+    so age-specialized deterministic functions were never wrapped into the
+    `_SpecializedEconFunction` marker the per-period builders resolve.)
+    """
+    if isinstance(func, AgeSpecializedFunction):
+        concrete_build = func.build
+
+        def build(age: float) -> EconFunction:
+            return _rename_params_to_qnames(
+                func=concrete_build(age),
+                regime_params_template=regime_params_template,
+                param_key=param_key,
+                names_key=names_key,
+            )
+
+        return _SpecializedEconFunction(build=build, signature=func.signature)
+    return _rename_params_to_qnames(
+        func=func,
+        regime_params_template=regime_params_template,
+        param_key=param_key,
+        names_key=names_key,
+    )
 
 
 def _rename_params_to_qnames(
@@ -4249,6 +4313,9 @@ def _build_Q_and_F_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
     flat_param_names: frozenset[str],
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
     stakeholders: tuple[str, ...] | None = None,
@@ -4260,9 +4327,6 @@ def _build_Q_and_F_per_period(
     flow_transitions: TransitionFunctionsMapping | None = None,
     flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
     next_state_names: frozenset[TransitionFunctionName] = frozenset(),
-    period_to_regime_v_interp: (
-        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
-    ) = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each period of a non-terminal regime.
 
@@ -4407,7 +4471,21 @@ def _build_Q_and_F_per_period(
             regime_to_v_interpolation_info=continuation_info(periods[0]),
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
-            continuation_functions=continuation_functions,
+            # Resolve the continuation function pool at this group's age too:
+            # `get_Q_and_F` evaluates `continuation_functions` for the
+            # continuation sub-DAG, so an `AgeSpecializedFunction` marker left
+            # unresolved here reaches `jax.jit(...).lower()` as a bare
+            # `(*args, **kwargs)` wrapper (age-specialized-FUNCTION support x the
+            # collective-port flow/continuation split). Passthrough when the pool
+            # carries no age-specialized node (all baseline / EKL models).
+            continuation_functions=(
+                cast(
+                    "EconFunctionsMapping",
+                    resolve_specialized_nodes(continuation_functions, age),
+                )
+                if continuation_functions is not None
+                else None
+            ),
             flow_transitions=flow_transitions,
             flow_stochastic_transition_names=flow_stochastic_transition_names,
             next_state_names=next_state_names,

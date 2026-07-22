@@ -124,7 +124,7 @@ def safeguarded_continuous_argmax(
     nodes: FloatND,
     node_values: FloatND,
     golden_iterations: int,
-    max_brackets: int = 8,
+    max_brackets: int | None = None,
 ) -> SafeguardedSearchResult:
     """Continuous outer argmax, safeguarded by the exact candidate mesh.
 
@@ -136,9 +136,15 @@ def safeguarded_continuous_argmax(
         nodes: Shared exact outer nodes, shape `(C,)`, strictly increasing.
         node_values: Exact candidate values, shape `(C, *S)`.
         golden_iterations: Static golden-section budget per bracket.
-        max_brackets: Node-local maxima refined per cell (the top ones by
-            exact value); further local maxima still compete as exact nodes,
-            just without continuous refinement.
+        max_brackets: Node-local maxima refined per cell. ``None`` (the default)
+            refines EVERY node so no local maximum is left un-polished — the
+            correctness default: a fixed top-K cap can skip a basin whose
+            off-node interpolant peak beats the reported optimum (round-3 audit
+            F7), because the skipped basin's local maximum then competes only at
+            its exact node. An explicit integer caps the number of refined
+            brackets (the top ones by exact value) as a performance knob; the
+            remaining local maxima still compete as exact nodes, so only their
+            OFF-node peaks are at risk — set it only when that is acceptable.
 
     The deterministic action fold breaks value ties within a dtype-aware
     rounding band (``_TIE_BAND_ULPS`` ULPs) toward the smaller abscissa, so a
@@ -157,8 +163,9 @@ def safeguarded_continuous_argmax(
     valid = jnp.any(jnp.isfinite(node_values), axis=0)
     is_local_max = _node_local_max_mask(finite_values)
 
-    # --- Top-K local maxima per cell; unused slots masked invalid. ---
-    n_brackets = min(n_nodes, max_brackets)
+    # --- Local maxima per cell; unused slots masked invalid. Default refines
+    # every node (max_brackets=None) so no local-max basin is skipped (F7). ---
+    n_brackets = n_nodes if max_brackets is None else min(n_nodes, max_brackets)
     masked = jnp.where(is_local_max, finite_values, -jnp.inf)
     masked_last = jnp.moveaxis(masked, 0, -1)  # (*S, C)
     top_values, top_idx = jax.lax.top_k(masked_last, n_brackets)  # (*S, K)
@@ -534,8 +541,19 @@ def _mark_intervals(
         )
         endpoint_max = jnp.maximum(finite_values[:-1], finite_values[1:])
         lipschitz_ub = endpoint_max + config.outer_lipschitz_bound * widths / 2.0
-        beats_incumbent_ub = has_finite_incumbent & (
-            lipschitz_ub > finite_threshold
+        # F9 (round-3 audit): a finite-surface Lipschitz regularity bound is only
+        # valid on an interval that lies ENTIRELY in the finite (feasible) region.
+        # Applied across a finite/nonfinite feasibility boundary it never
+        # terminates: `endpoint_max` stays finite off the one live endpoint while
+        # the interval straddling the discontinuity is marked every round until the
+        # budget is exhausted. Require BOTH endpoints finite before the bound may
+        # mark an interval; a boundary interval falls through to the ordinary
+        # value-error / beats_best rules.
+        both_endpoints_finite = jnp.isfinite(values[:-1]) & jnp.isfinite(values[1:])
+        beats_incumbent_ub = (
+            has_finite_incumbent
+            & both_endpoints_finite
+            & (lipschitz_ub > finite_threshold)
         )  # (C-1, *S)
 
     # Optimum-containing intervals: the two intervals flanking each cell's

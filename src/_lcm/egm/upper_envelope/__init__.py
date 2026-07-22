@@ -66,16 +66,20 @@ class UpperEnvelopeBackend(Protocol):
         policy: Float1D,
         value: Float1D,
         marginal_utility: Float1D,
+        savings: Float1D,
     ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
         """Return refined rows, the kept-point count, and read support.
 
         The supgradient `marginal_utility` carries $\\mu = \\partial v /
         \\partial R$ per candidate — the exact value-row slope by the envelope
-        theorem. The refined rows are NaN-padded to a static length; a
-        kept-point count exceeding that length signals overflow (the rows then
-        hold a truncated prefix of the envelope). The final flag certifies the
-        row for the off-grid simulation read: `True` only when the row's
-        linear span coincides with the live-covered domain (no compacted
+        theorem. `savings` carries each candidate's exogenous source savings
+        (the savings node for Euler candidates, the borrowing limit for
+        constrained ones); FUES uses it to judge savings monotonicity exactly,
+        the other backends ignore it. The refined rows are NaN-padded to a
+        static length; a kept-point count exceeding that length signals overflow
+        (the rows then hold a truncated prefix of the envelope). The final flag
+        certifies the row for the off-grid simulation read: `True` only when the
+        row's linear span coincides with the live-covered domain (no compacted
         coverage gap). MSS computes it; the other backends return `False`
         unconditionally — the replay gate admits only MSS, so the flag is
         consumed nowhere else and `False` is the fail-closed value.
@@ -104,13 +108,15 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
         ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
             """Run the FUES scan with the solver's thresholds.
 
             FUES recovers segment slopes from its own forward scan, so the
-            candidate supgradient is not consumed. FUES rows are never
-            certified for the off-grid read (segment identity is heuristic),
-            so read support is unconditionally `False`.
+            candidate supgradient is not consumed; the exogenous source savings
+            resolve the savings-monotonicity test exactly. FUES rows are never
+            certified for the off-grid read (segment identity is heuristic), so
+            read support is unconditionally `False`.
             """
             del marginal_utility
             return (
@@ -121,6 +127,7 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
                     n_refined=n_refined,
                     jump_thresh=solver.fues_jump_thresh,
                     n_points_to_scan=solver.fues_n_points_to_scan,
+                    savings=savings,
                     scan_unroll=solver.fues_scan_unroll,
                 ),
                 jnp.asarray(False),  # noqa: FBT003
@@ -136,12 +143,15 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
         ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
             """Run the rooftop cut with the solver's thresholds.
 
-            RFC rows leave switches between retained nodes, so read support is
-            unconditionally `False`.
+            The exogenous source savings are a FUES-only refinement; RFC judges
+            monotonicity from its own geometry. RFC rows leave switches between
+            retained nodes, so read support is unconditionally `False`.
             """
+            del savings
             return (
                 *refine_envelope_rfc(
                     endog_grid=endog_grid,
@@ -165,15 +175,16 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
         ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
             """Run the brute local-upper-bound scan.
 
-            LTM recovers segment slopes from the candidate chain, so the
-            candidate supgradient is not consumed. LTM rows leave switches
-            between retained nodes, so read support is unconditionally
-            `False`.
+            LTM recovers segment slopes from the candidate chain, so neither the
+            candidate supgradient nor the exogenous source savings are consumed.
+            LTM rows leave switches between retained nodes, so read support is
+            unconditionally `False`.
             """
-            del marginal_utility
+            del marginal_utility, savings
             return (
                 *refine_envelope_ltm(
                     endog_grid=endog_grid,
@@ -194,15 +205,17 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             policy: Float1D,
             value: Float1D,
             marginal_utility: Float1D,
+            savings: Float1D,
         ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
             """Run the MSS crossing-complete refinement with read support.
 
-            MSS recovers segment slopes from the candidate chain, so the
-            candidate supgradient is not consumed. The read-support flag is
-            the refinement's coverage verdict: `False` when a compacted
-            interior gap makes the row's linear span fabricate values.
+            MSS recovers segment slopes from the candidate chain, so neither the
+            candidate supgradient nor the exogenous source savings are consumed.
+            The read-support flag is the refinement's coverage verdict: `False`
+            when a compacted interior gap makes the row's linear span fabricate
+            values.
             """
-            del marginal_utility
+            del marginal_utility, savings
             return refine_envelope_with_support_mss(
                 endog_grid=endog_grid,
                 policy=policy,

@@ -385,6 +385,50 @@ def test_constant_surface_does_not_flip_the_outer_action() -> None:
     assert float(result.x) == 0.0
 
 
+def test_ninth_basin_off_node_peak_is_not_missed_by_a_bracket_cap() -> None:
+    """The global off-node optimum in a low-ranked basin must not be skipped.
+
+    Audit finding F7: ``safeguarded_continuous_argmax`` refined only the top-8
+    node-local maxima (``max_brackets=8``). A surface with nine local maxima
+    whose ninth-ranked basin (by exact node value) hides the tallest OFF-node
+    interpolant peak then had that basin refined only as its exact node — the
+    peak between the nodes was never polished and was silently discarded. The
+    fixed default ``max_brackets=None`` refines every node-local maximum, so the
+    peak is found; passing ``max_brackets=8`` reproduces the miss.
+
+    Nine local maxima sit at odd nodes with descending heights 100, 90, ..., 20;
+    the height-20 basin (rank 9) carries a tall bump (~220) between its nodes.
+    """
+    node_x = jnp.linspace(0.0, 1.0, 19)
+    heights = {1 + 2 * k: 100.0 - 10.0 * k for k in range(9)}  # idx 1,3,..,17
+    node_values = jnp.asarray(
+        [heights.get(i, 0.0) for i in range(19)], dtype=jnp.float64
+    )
+    q_peak = float(node_x[17])  # ninth (lowest, height 20) local maximum's node
+
+    def objective(q: jnp.ndarray) -> jnp.ndarray:
+        base = jnp.interp(q, node_x, node_values)  # peaks at nodes, <= 100
+        bump = 200.0 * jnp.exp(-(((q - q_peak) / 0.004) ** 2))  # off-node, basin 9
+        return base + bump
+
+    found = safeguarded_continuous_argmax(
+        objective, nodes=node_x, node_values=node_values, golden_iterations=48
+    )
+    assert float(found.value) > 150.0, "the ninth-basin off-node peak is the global max"
+    assert node_x[16] < float(found.x) < node_x[18], "winner sits in the ninth basin"
+
+    # The old top-8 cap refines only basins 1-8, so the ninth basin competes as
+    # its exact node (value 20) and the ~100 node peak wins instead.
+    capped = safeguarded_continuous_argmax(
+        objective,
+        nodes=node_x,
+        node_values=node_values,
+        golden_iterations=48,
+        max_brackets=8,
+    )
+    assert float(capped.value) < 150.0, "top-8 cap misses the ninth-basin peak"
+
+
 def test_below_tolerance_value_difference_resolves_to_the_smaller_action() -> None:
     one = np.float64(1.0)
     up = np.nextafter(one, np.inf)  # 2.22e-16 above 1, far below any real band
@@ -616,6 +660,73 @@ def test_genuine_smooth_optimum_stays_resolved() -> None:
     )
     assert not bool(diag.nonstationary)
     assert not bool(diag.unresolved)
+
+
+def test_branch_certificate_flags_a_kink_the_value_heuristic_misses() -> None:
+    """The exact branch-identity certificate catches a sub-heuristic kink (F1).
+
+    Round-3 finding F1: the multi-radius slope-jump contraction test is still a
+    value-only HEURISTIC, not a differentiability certificate. A kink whose jump
+    is drowned by the smooth curvature at the probe radius passes as stationary,
+    yet the IFT tangent `-Q_ftheta/Q_ff = 1` is order-one wrong (`df*/dtheta = 0`
+    for the pinned optimum). Here `kink_coef = 1e-7` is far below the radius-scale
+    curvature term, so the heuristic reports the winner resolved. Supplying a
+    `branch_id` oracle labelling the analytic piece (`sign(f - 0.3)`) marks the
+    breakpoint winner nonstationary regardless of amplitude — and reports that the
+    verdict now rests on the exact certificate.
+    """
+    objective = _pinned_kink_objective(1e-7)
+    theta = jnp.asarray(0.0)
+    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
+    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
+        objective, theta, bounds
+    )
+    assert abs(float(f_star) - 0.3) < 1e-3
+
+    heuristic = implicit_optimum_diagnostics(
+        objective, theta=theta, f_star=f_star, basin_margin=basin_margin, bounds=bounds
+    )
+    # The value-only screen misses this kink and does not claim a certificate.
+    assert not bool(heuristic.nonstationary)
+    assert not bool(heuristic.branch_certified)
+
+    certified = implicit_optimum_diagnostics(
+        objective,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=basin_margin,
+        bounds=bounds,
+        branch_id=lambda f, _theta: jnp.sign(f - 0.3),
+    )
+    # The exact branch certificate flags the breakpoint winner and says so.
+    assert bool(certified.nonstationary)
+    assert bool(certified.unresolved)
+    assert bool(certified.branch_certified)
+
+
+def test_branch_certificate_does_not_over_flag_a_smooth_optimum() -> None:
+    """A constant branch across the probe neighborhood leaves a smooth optimum
+    resolved — the exact certificate adds no false positives (F1)."""
+
+    def objective(f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+        return -0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
+
+    theta = jnp.asarray(0.0)
+    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
+    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
+        objective, theta, bounds
+    )
+    diag = implicit_optimum_diagnostics(
+        objective,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=basin_margin,
+        bounds=bounds,
+        branch_id=lambda f, _theta: jnp.zeros_like(f),  # one analytic branch
+    )
+    assert not bool(diag.nonstationary)
+    assert not bool(diag.unresolved)
+    assert bool(diag.branch_certified)
 
 
 # --- F2 -----------------------------------------------------------------

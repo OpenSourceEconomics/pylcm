@@ -222,12 +222,14 @@ def test_the_mss_backend_propagates_the_read_support_flag():
         policy=jnp.array([1.0, 1.0, 0.5, 0.5]),
         value=jnp.array([10.0, 11.0, 0.0, 2.0]),
         marginal_utility=jnp.ones(4),
+        savings=jnp.ones(4),
     )
     *_, clean = backend(
         endog_grid=jnp.array([1.0, 2.0, 3.0, 4.0]),
         policy=jnp.array([0.3, 0.6, 0.9, 1.2]),
         value=jnp.array([0.0, 0.7, 1.1, 1.4]),
         marginal_utility=jnp.ones(4),
+        savings=jnp.ones(4),
     )
 
     assert not bool(gapped)
@@ -251,6 +253,7 @@ def test_non_certified_backends_report_no_read_support():
         policy=jnp.array([0.3, 0.6, 0.9, 1.2]),
         value=jnp.array([0.0, 0.7, 1.1, 1.4]),
         marginal_utility=jnp.ones(4),
+        savings=jnp.ones(4),
     )
 
     assert not bool(read_supported)

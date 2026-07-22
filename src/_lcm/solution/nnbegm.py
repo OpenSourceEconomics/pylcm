@@ -406,6 +406,9 @@ class NNBEGM(Solver):
                     inverse_marginal=inverse_marginal,
                     row_discrete_state_names=row_discrete_state_names,
                     row_passive_state_names=row_passive_state_names,
+                    inner_discrete_action_names=tuple(
+                        context.state_action_space.discrete_actions
+                    ),
                     branch_fixed_cost=branch_fixed_cost,
                     branch_scale_function=branch_scale_function,
                 )
@@ -504,6 +507,14 @@ class _NNBEGMPeriodKernel:
     """Names of the carry rows' passive continuous-state axes (every
     continuous state except the inner Euler state), after the discrete
     states."""
+
+    inner_discrete_action_names: tuple[ActionName, ...]
+    """The regime's discrete action names. When non-empty the inner solve makes
+    a discrete choice whose winning branch is collapsed out of the published
+    carry rows (`derive_inner_sim_policy` cannot recover which branch won
+    off-grid), so the nested payload is NOT published and simulation keeps the
+    grid-argmax path (round-3 audit F8). Empty for the v1 continuous-only
+    scope, where publication proceeds."""
 
     branch_fixed_cost: UniformObservedFixedCost | None
     """The uniform observed fixed-cost aggregator, or `None` for the
@@ -762,17 +773,20 @@ class _NNBEGMPeriodKernel:
             )
         )
         # Publish the nested payload only when both inner policies are
-        # derivation-safe AND the branch is a deterministic hard maximum: the
-        # continuous reader replays keeper vs adjuster off-grid from exactly
-        # these conditional ingredients. Under a fixed-cost aggregation the
-        # realized branch depends on the drawn cost, so the reader cannot
-        # replay it and simulation falls back to the grid argmax — which is
-        # precisely what `policy_fallback_mask` reports, so the mask is set from
-        # this same condition rather than hard-coded.
+        # derivation-safe AND the branch is a deterministic hard maximum AND the
+        # inner solve makes no discrete choice: the continuous reader replays
+        # keeper vs adjuster off-grid from exactly these conditional ingredients.
+        # Under a fixed-cost aggregation the realized branch depends on the drawn
+        # cost, and an inner DISCRETE action's winning branch is collapsed out of
+        # the published carry rows (round-3 audit F8) — the reader cannot replay
+        # either, so simulation falls back to the grid argmax, which is precisely
+        # what `policy_fallback_mask` reports (so the mask is set from this same
+        # condition rather than hard-coded).
         nested_published = (
             keeper_policy is not None
             and adjuster_policies is not None
             and self.branch_fixed_cost is None
+            and not self.inner_discrete_action_names
         )
         diagnostics = SolverDiagnostics(
             max_outer_interpolation_error=jnp.asarray(mesh.max_validation_error),

@@ -250,7 +250,11 @@ def test_mss_backend_is_selected_by_solver_config():
     grid, policy, value = _crossing_segments_candidates()
     marginal = jnp.ones_like(grid)
     *via_backend, read_supported = backend(
-        endog_grid=grid, policy=policy, value=value, marginal_utility=marginal
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal,
+        savings=grid - policy,
     )
     direct = mss.refine_envelope(
         endog_grid=grid, policy=policy, value=value, n_refined=16
