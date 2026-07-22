@@ -829,6 +829,7 @@ def _law_has_free_parameter(law: object, regime: lcm.regime.Regime) -> bool:
     variables = (
         set(regime.states)
         | set(regime.actions)
+        | set(regime.functions)
         | {f"next_{state_name}" for state_name in regime.states}
         | {f"next_{state_name}" for state_name in regime.state_transitions}
         | {"period", "age", "E_next_V"}

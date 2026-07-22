@@ -419,7 +419,11 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
-            solve_functions=solution.functions,
+            # Unresolved (marker-bearing) solve pool so the simulation continuation
+            # resolves AgeSpecializedFunction per period age, not at the representative
+            # age frozen into `solution.functions` (round-11 F1). Falls back to the
+            # published pool when no specialization is present.
+            solve_functions=solution.continuation_functions,
             solve_transitions=solution.transitions,
             solve_stochastic_transition_names=solution.stochastic_transition_names,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
@@ -706,6 +710,9 @@ def _build_solution_phase(
         _variables=variables,
         grids=all_grids[regime_name],
         functions=published_solution_functions,
+        # Marker-bearing (unresolved) pool for the simulation continuation, resolved
+        # per period's age there rather than frozen at the representative age (F1).
+        _continuation_functions=core.functions,
         constraints=core.constraints,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
@@ -3045,10 +3052,20 @@ def _build_Q_and_F_per_period(
         continuation_sig = _continuation_grid_signature(
             continuation_info(period), complete
         )
+        # The perceived (solve) continuation pool is resolved per age below, so ages
+        # whose continuation functions resolve to different closures must NOT share a
+        # kernel — fold its per-age signature in too (round-11 F1). `None` (solve
+        # phase / no specialization) contributes a constant, collapsing the grouping.
+        continuation_functions_sig = (
+            tree_signature(continuation_functions, age)
+            if continuation_functions is not None
+            else ()
+        )
         signature = (
             tree_signature(functions, age),
             tree_signature(constraints, age),
             continuation_sig,
+            continuation_functions_sig,
         )
         configs.setdefault((complete, signature), []).append(period)
 
@@ -3075,7 +3092,16 @@ def _build_Q_and_F_per_period(
             regime_to_v_interpolation_info=continuation_info(periods[0]),
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
-            continuation_functions=continuation_functions,
+            # Resolve the perceived continuation pool at THIS group's age (F1) — not
+            # the representative age frozen into the published solve functions.
+            continuation_functions=(
+                cast(
+                    "EconFunctionsMapping",
+                    resolve_specialized_nodes(continuation_functions, age),
+                )
+                if continuation_functions is not None
+                else None
+            ),
             flow_transitions=flow_transitions,
             flow_stochastic_transition_names=flow_stochastic_transition_names,
             next_state_names=next_state_names,
