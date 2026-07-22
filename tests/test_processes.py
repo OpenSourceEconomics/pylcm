@@ -1,5 +1,3 @@
-from typing import Any
-
 import pandas as pd
 import pytest
 from jax import numpy as jnp
@@ -28,6 +26,9 @@ from tests.test_models.processes import (
     get_multi_regime_params,
     get_params,
 )
+
+# Grid centering is float-eps-limited at the active precision.
+_CENTERING_DECIMAL = 10 if X64_ENABLED else 5
 
 
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
@@ -209,7 +210,7 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
     points = grid.get_gridpoints()
     midpoint = (points[0] + points[-1]) / 2
     expected = mu / (1 - rho)
-    aaae(midpoint, expected, decimal=10)
+    aaae(midpoint, expected, decimal=_CENTERING_DECIMAL)
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
@@ -357,7 +358,7 @@ def test_tauchen_gauss_hermite_centers_on_unconditional_mean():
     points = grid.get_gridpoints()
     midpoint = (points[0] + points[-1]) / 2
     expected = mu / (1 - rho)
-    aaae(midpoint, expected, decimal=10)
+    aaae(midpoint, expected, decimal=_CENTERING_DECIMAL)
 
 
 def test_lognormal_correct_shape_without_params():
@@ -469,7 +470,7 @@ def test_tauchen_normal_mixture_centers_on_unconditional_mean():
     midpoint = (points[0] + points[-1]) / 2
     mean_eps = kwargs["p1"] * kwargs["mu1"] + (1 - kwargs["p1"]) * kwargs["mu2"]
     expected = (kwargs["mu"] + mean_eps) / (1 - kwargs["rho"])
-    aaae(midpoint, expected, decimal=10)
+    aaae(midpoint, expected, decimal=_CENTERING_DECIMAL)
 
 
 def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation():
@@ -577,10 +578,13 @@ def _lag1_autocorrelation(gridpoints, P):
 def test_iid_normal_stationary_moments(gauss_hermite):
     """IID Normal stationary mean and std match mu and sigma."""
     mu, sigma = 1.5, 0.8
-    extra: dict[str, Any] = {"gauss_hermite": gauss_hermite}
-    if not gauss_hermite:
-        extra["n_std"] = 4.0
-    grid = NormalIIDProcess(n_points=21, mu=mu, sigma=sigma, **extra)
+    grid = NormalIIDProcess(
+        n_points=21,
+        mu=mu,
+        sigma=sigma,
+        gauss_hermite=gauss_hermite,
+        n_std=None if gauss_hermite else 4.0,
+    )
     got_mean, got_std = _stationary_moments(
         grid.get_gridpoints(), grid.get_transition_probs()
     )
@@ -592,10 +596,13 @@ def test_iid_normal_stationary_moments(gauss_hermite):
 def test_iid_lognormal_stationary_moments(gauss_hermite):
     """IID LogNormal stationary log-mean and log-std match mu and sigma."""
     mu, sigma = 0.5, 0.3
-    extra: dict[str, Any] = {"gauss_hermite": gauss_hermite}
-    if not gauss_hermite:
-        extra["n_std"] = 4.0
-    grid = LogNormalIIDProcess(n_points=21, mu=mu, sigma=sigma, **extra)
+    grid = LogNormalIIDProcess(
+        n_points=21,
+        mu=mu,
+        sigma=sigma,
+        gauss_hermite=gauss_hermite,
+        n_std=None if gauss_hermite else 4.0,
+    )
     points = grid.get_gridpoints()
     P = grid.get_transition_probs()
     got_mean, got_std = _stationary_moments(jnp.log(points), P)

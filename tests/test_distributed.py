@@ -11,7 +11,7 @@ from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.solution.backward_induction import (
+from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
 )
@@ -24,11 +24,17 @@ from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.typing import ScalarInt
 
-# Run these tests on the CPU for parallelization, does not work if pytest runs
-# multiple workers, because jax will be initialized already
+# Run these tests on a four-CPU-device topology. The pin only applies in a
+# process whose JAX backends are not yet initialized (a serial run importing
+# this module early); otherwise the tests skip. The device-count update is
+# attempted FIRST because it is the one that raises after initialization —
+# this keeps the pin atomic. The reverse order would flip the default
+# platform to CPU (that update succeeds at any time) and then skip, leaving
+# every later model build in the process compiled for CPU while arrays from
+# earlier accelerator computations stay committed to their device.
 try:
-    jax.config.update("jax_platform_name", "cpu")
     jax.config.update("jax_num_cpu_devices", 4)
+    jax.config.update("jax_platform_name", "cpu")
     _PYTEST_PARALLEL = False
 except RuntimeError:
     _PYTEST_PARALLEL = True
@@ -221,20 +227,29 @@ def _compiled_solve_kernel_hlo(model: Model, *, regime_name: str, period: int) -
         {name: _build_zero_V_arr(topology=topo) for name, topo in topology.items()}
     )
     regime = regimes[regime_name]
-    state_action_space = regime.solution.state_action_space(
-        regime_params=flat_params[regime_name]
-    )
-    lower_args = {
-        **dict(state_action_space.states),
-        **dict(state_action_space.actions),
-        "next_regime_to_V_arr": next_regime_to_V_arr,
-        **dict(flat_params[regime_name]),
-        "period": jnp.int32(period),
-        "age": model.ages.values[period],  # noqa: PD011
-    }
-    kernel = regime.solution.max_Q_over_a[period]
-    hlo = jax.jit(kernel).lower(**lower_args).compile().as_text()
-    assert hlo is not None
+    period_kernel = regime.solution.period_kernels[period]
+    # Lower every shared core the period kernel carries exactly as backward
+    # induction does (a brute regime carries the single `"main"` core); the
+    # continuation V enters through `build_lower_args`, so the optimized HLO
+    # reflects the real sharded read.
+    texts: list[str] = []
+    for core_key, core in period_kernel.cores().items():
+        lower_args = period_kernel.build_lower_args(
+            core_key=core_key,
+            state_action_space=regime.solution.state_action_space(
+                regime_params=flat_params[regime_name]
+            ),
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=MappingProxyType({}),
+            flat_params=flat_params,
+            period=period,
+            ages=model.ages,
+        )
+        text = jax.jit(core).lower(**lower_args).compile().as_text()
+        assert text is not None
+        texts.append(text)
+    hlo = "\n".join(texts)
+    assert hlo
     return hlo
 
 

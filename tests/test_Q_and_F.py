@@ -4,7 +4,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pytest
-from numpy.testing import assert_array_equal
+from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from _lcm.params.processing import (
@@ -15,6 +15,7 @@ from _lcm.params.processing import (
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
+    _get_deterministic_transitions,
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
@@ -265,6 +266,117 @@ def test_get_U_and_F_with_annotated_constraints():
     assert F.item() is False
 
 
+def test_identical_target_specific_deterministic_laws_are_accepted():
+    """Identical `next_<state>` laws across targets bind into the decision DAG.
+
+    When every target bundle carries the same `next_durable` function object and
+    `utility` reads it, the within-period law is unambiguous, so the merged
+    decision DAG builds without error.
+    """
+
+    def next_durable(durable: float) -> float:
+        return durable
+
+    def utility(consumption: float, next_durable: float) -> FloatND:
+        return jnp.log(consumption) + next_durable
+
+    transitions = MappingProxyType(
+        {
+            "stay": MappingProxyType({"next_durable": next_durable}),
+            "leave": MappingProxyType({"next_durable": next_durable}),
+        }
+    )
+    deterministic_transitions, conflicting = _get_deterministic_transitions(
+        transitions=transitions,  # ty: ignore[invalid-argument-type]
+        stochastic_transition_names=frozenset(),
+    )
+    assert conflicting == frozenset()
+    U_and_F = _get_U_and_F(
+        functions=MappingProxyType({"utility": utility}),  # ty: ignore[invalid-argument-type]
+        constraints=MappingProxyType({}),
+        deterministic_transitions=deterministic_transitions,
+        conflicting_deterministic_transition_names=conflicting,
+    )
+    U, _F = U_and_F(consumption=jnp.asarray(2.0), durable=jnp.asarray(3.0))
+    assert jnp.isclose(U, jnp.log(2.0) + 3.0)
+
+
+def test_conflicting_target_specific_deterministic_law_read_by_utility_is_rejected():
+    """A `next_<state>` read by `utility` must agree across all targets.
+
+    When two target bundles supply *different* implementations of the same
+    `next_durable` law and `utility` reads it, the merged decision DAG would bind
+    one target's law while the simulate state-update uses the right one — a silent
+    disagreement. The build rejects this, naming the conflicting state.
+    """
+
+    def next_durable_stay(durable: float) -> float:
+        return durable
+
+    def next_durable_leave(durable: float) -> float:
+        return 0.0 * durable
+
+    def utility(consumption: float, next_durable: float) -> FloatND:
+        return jnp.log(consumption) + next_durable
+
+    transitions = MappingProxyType(
+        {
+            "stay": MappingProxyType({"next_durable": next_durable_stay}),
+            "leave": MappingProxyType({"next_durable": next_durable_leave}),
+        }
+    )
+    deterministic_transitions, conflicting = _get_deterministic_transitions(
+        transitions=transitions,  # ty: ignore[invalid-argument-type]
+        stochastic_transition_names=frozenset(),
+    )
+    assert conflicting == frozenset({"next_durable"})
+    with pytest.raises(ValueError, match="next_durable"):
+        _get_U_and_F(
+            functions=MappingProxyType({"utility": utility}),  # ty: ignore[invalid-argument-type]
+            constraints=MappingProxyType({}),
+            deterministic_transitions=deterministic_transitions,
+            conflicting_deterministic_transition_names=conflicting,
+        )
+
+
+def test_conflicting_deterministic_law_not_read_by_decision_is_accepted():
+    """An unread conflicting `next_<state>` law does not block the build.
+
+    When the conflicting `next_durable` is pruned away because neither `utility`
+    nor any constraint reads it, the decision DAG never binds it, so the
+    disagreement is harmless and the build succeeds.
+    """
+
+    def next_durable_stay(durable: float) -> float:
+        return durable
+
+    def next_durable_leave(durable: float) -> float:
+        return 0.0 * durable
+
+    def utility(consumption: float) -> FloatND:
+        return jnp.log(consumption)
+
+    transitions = MappingProxyType(
+        {
+            "stay": MappingProxyType({"next_durable": next_durable_stay}),
+            "leave": MappingProxyType({"next_durable": next_durable_leave}),
+        }
+    )
+    deterministic_transitions, conflicting = _get_deterministic_transitions(
+        transitions=transitions,  # ty: ignore[invalid-argument-type]
+        stochastic_transition_names=frozenset(),
+    )
+    assert conflicting == frozenset({"next_durable"})
+    U_and_F = _get_U_and_F(
+        functions=MappingProxyType({"utility": utility}),  # ty: ignore[invalid-argument-type]
+        constraints=MappingProxyType({}),
+        deterministic_transitions=deterministic_transitions,
+        conflicting_deterministic_transition_names=conflicting,
+    )
+    U, _F = U_and_F(consumption=jnp.asarray(2.0))
+    assert jnp.isclose(U, jnp.log(2.0))
+
+
 def _health_probs(health: DiscreteState, probs_array: FloatND) -> FloatND:
     return probs_array[health]
 
@@ -374,6 +486,25 @@ def test_partial_state_laws_solve_with_declared_targets():
         work_transition=work_transition, next_regime_func=_next_regime
     )
     period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
+
+    # Consumption is unconstrained by wealth in this model, so the optimum is
+    # the largest consumption node (c = 2) in every state, giving flow utility
+    # log(2) each active period. The value is the discounted sum of log(2) over
+    # the remaining active periods (discount_factor 0.9) and is constant across
+    # the (health, wealth) grid; the terminal "dead" regime yields exactly 0.
+    log_two = float(jnp.log(2.0))
+    beta = 0.9
+    expected_alive = {
+        0: log_two * (1 + beta + beta**2),
+        1: log_two * (1 + beta),
+        2: log_two,
+    }
+    for period, expected in expected_alive.items():
+        for regime_name in ("work", "retire"):
+            V_arr = period_to_regime_to_V_arr[period][regime_name]
+            assert V_arr.shape == (2, 3)
+            assert_allclose(V_arr, expected, atol=1e-5)
     for regime_to_V_arr in period_to_regime_to_V_arr.values():
-        for V_arr in regime_to_V_arr.values():
-            assert not jnp.any(jnp.isnan(V_arr))
+        dead_V = regime_to_V_arr["dead"]
+        assert dead_V.shape == ()
+        assert_allclose(dead_V, 0.0, atol=1e-6)

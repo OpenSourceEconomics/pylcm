@@ -44,10 +44,11 @@ pixi run pytest tests/test_specific_module.py::test_function_name
 ## Code Quality
 
 ```bash
-# Type checking (ty, not mypy)
-pixi run ty
+# Type checking (ty, not mypy; a pre-commit hook that resolves third-party
+# imports from the pixi env named in `[tool.ty] environment.python`)
+prek run ty --all-files
 
-# Run all pre-commit hooks
+# Run all pre-commit hooks (includes the ty hook)
 prek run --all-files
 ```
 

@@ -26,11 +26,13 @@ from _lcm.engine import Regime
 from _lcm.simulation.initial_conditions import subject_array_sharding
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.solution.backward_induction import (
-    _build_zero_V_arr,
     _func_dedup_key,
+    _resolve_compilation_workers,
+)
+from _lcm.solution.v_topology import (
+    _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
     _RegimeVTopology,
-    _resolve_compilation_workers,
 )
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName
 from _lcm.utils.logging import format_duration

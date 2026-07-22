@@ -44,13 +44,10 @@ dependencies = [
 [[project.authors]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
-
 [[project.authors]]
 name = "Maximilian Jahn"
-
 [[project.authors]]
 name = "Janos Gabler"
-
 [[project.authors]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
@@ -59,7 +56,6 @@ file = "LICENSE"
 [[project.maintainers]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
-
 [[project.maintainers]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
@@ -87,8 +83,7 @@ cloudpickle = ">=3.1.2,<4"
 h5py = ">=3.12"
 jupyterlab = "*"
 memory_profiler = "*"
-# Required until numba accepts numpy>=2.5.0
-numpy = ">=2.4, <2.5.0"
+numpy = ">=2.4,<2.5"
 plotly = ">=6.5"
 prek = "*"
 pyarrow = "*"
@@ -100,11 +95,9 @@ benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "cuda
 cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
 cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
 docs = { features = [ "docs" ], solve-group = "default" }
-metal = { features = [ "metal" ], solve-group = "metal" }
 tests-cpu = { features = [ "tests" ], solve-group = "default" }
 tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
-tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
 # Pinned to the aca-model version this solver-seam work is developed against
@@ -132,11 +125,6 @@ quantecon = "*"
 build-docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
 explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
 view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
-[tool.pixi.feature.metal]
-platforms = [ "osx-arm64" ]
-[tool.pixi.feature.metal.target.osx-arm64.pypi-dependencies]
-jax = ">=0.11"
-jax-metal = ">=0.1.1"
 [tool.pixi.feature.tests.dependencies]
 pytest = "*"
 pytest-cov = "*"
@@ -144,9 +132,14 @@ pytest-xdist = "*"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
-tests = "pytest tests"
-tests-32bit = "pytest tests --precision=32"
-tests-with-cov = "pytest tests --cov-report=xml --cov=./"
+# Run the suite across 4 xdist workers (`--dist loadfile` in addopts keeps each
+# file on one worker). `XLA_PYTHON_CLIENT_PREALLOCATE=false` is a no-op on CPU but
+# required on GPU: it stops each of the 4 worker processes from preallocating ~75%
+# of the device and OOMing — they grow to their actual (small) per-test need
+# instead, and `loadfile` keeps the one heavy file (Mahler-Yum) on a single worker.
+tests = { cmd = "pytest tests -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+tests-32bit = { cmd = "pytest tests --precision=32 -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 [tool.pixi.feature.type-checking.dependencies]
 # The env ty analyzes against (`[tool.ty] environment.python`); the ty binary
 # itself is managed by the `ty` pre-commit hook (`prek run ty --all-files`).
@@ -336,6 +329,7 @@ ini_options.addopts = [
 ini_options.markers = [
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
+  "slow: heavy DC-EGM solve/oracle tests (deselected on small runners)",
 ]
 ini_options.filterwarnings = [
   # JAX emits this UserWarning when user code asks for a dtype wider

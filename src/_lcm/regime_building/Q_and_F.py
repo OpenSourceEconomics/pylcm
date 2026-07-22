@@ -1,9 +1,9 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
 import jax.numpy as jnp
-from dags import concatenate_functions, with_signature
+from dags import concatenate_functions, get_ancestors, with_signature
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, resolve_certainty_equivalent
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
@@ -23,10 +23,11 @@ from _lcm.typing import (
     TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
+    _ParamsLeaf,
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import BoolND, Float1D, FloatND, IntND
+from lcm.typing import BoolND, Float1D, FloatND
 
 
 def get_Q_and_F(
@@ -72,7 +73,20 @@ def get_Q_and_F(
         for a non-terminal period.
 
     """
-    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
+    deterministic_transitions, conflicting_deterministic_transition_names = (
+        _get_deterministic_transitions(
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+        )
+    )
+    U_and_F = _get_U_and_F(
+        functions=functions,
+        constraints=constraints,
+        deterministic_transitions=deterministic_transitions,
+        conflicting_deterministic_transition_names=(
+            conflicting_deterministic_transition_names
+        ),
+    )
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
@@ -153,7 +167,7 @@ def get_Q_and_F(
     )
     def Q_and_F(
         next_regime_to_V_arr: FloatND,
-        **states_actions_params: FloatND | IntND | BoolND,
+        **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
@@ -285,7 +299,20 @@ def get_compute_intermediates(
         Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
 
     """
-    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
+    deterministic_transitions, conflicting_deterministic_transition_names = (
+        _get_deterministic_transitions(
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+        )
+    )
+    U_and_F = _get_U_and_F(
+        functions=functions,
+        constraints=constraints,
+        deterministic_transitions=deterministic_transitions,
+        conflicting_deterministic_transition_names=(
+            conflicting_deterministic_transition_names
+        ),
+    )
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
@@ -354,7 +381,7 @@ def get_compute_intermediates(
     )
     def compute_intermediates(
         next_regime_to_V_arr: FloatND,
-        **states_actions_params: FloatND | IntND | BoolND,
+        **states_actions_params: _ParamsLeaf,
     ) -> tuple[
         FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
     ]:
@@ -452,7 +479,7 @@ def get_Q_and_F_terminal(
     )
     def Q_and_F(
         next_regime_to_V_arr: FloatND,  # noqa: ARG001
-        **states_actions_params: FloatND | IntND | BoolND,
+        **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
 
@@ -565,10 +592,65 @@ def _get_joint_weights_function(
     )
 
 
+def _get_deterministic_transitions(
+    *,
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
+) -> tuple[
+    Mapping[TransitionFunctionName, TransitionFunction],
+    frozenset[TransitionFunctionName],
+]:
+    """Merge the deterministic `next_<state>` transitions across all targets.
+
+    Iterates every target bundle, not just this period's targets: the within-
+    period durable law (`next_<durable>`) lives in the source regime's own
+    self-transition bundle and is needed even in periods bound for a terminal
+    target that does not carry it. Own-regime within-period laws are
+    target-independent, so the first occurrence of each `next_<state>` name is
+    kept. Stochastic transitions are excluded — a within-period utility or
+    constraint cannot read an unrealised stochastic next state.
+
+    Returns the merged mapping and the set of `next_<state>` names that appear in
+    more than one target bundle with non-identical implementations. The merge
+    keeps one of them, so a within-period utility or constraint reading such a
+    name would silently bind one target's law; the caller rejects the model if a
+    conflicting name is actually read by the decision evaluation.
+
+    Non-identity is tested by object identity (`is not`), not structural
+    equality. This is a conservative proxy that relies on the canonicalization
+    pipeline installing the *same* function object for a target-independent
+    own-regime within-period law across every bundle: a shared reference is
+    correctly seen as non-conflicting, and a distinct object genuinely signals a
+    different target's law. Two behaviourally-equal but distinct objects would be
+    over-reported as conflicting — harmless, since the conflict set only matters
+    for names the decision evaluation actually reads.
+
+    Returns:
+        Tuple of the immutable merged `next_<state>` mapping and the frozenset of
+        conflicting `next_<state>` names.
+    """
+    merged: dict[TransitionFunctionName, TransitionFunction] = {}
+    conflicting: set[TransitionFunctionName] = set()
+    for bundle in transitions.values():
+        for name, func in bundle.items():
+            if name in stochastic_transition_names:
+                continue
+            if name in merged and merged[name] is not func:
+                conflicting.add(name)
+            merged.setdefault(name, func)
+    return MappingProxyType(merged), frozenset(conflicting)
+
+
 def _get_U_and_F(
     *,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
+    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
+        MappingProxyType({})
+    ),
+    conflicting_deterministic_transition_names: frozenset[
+        TransitionFunctionName
+    ] = frozenset(),
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -580,15 +662,38 @@ def _get_U_and_F(
     Args:
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
+        deterministic_transitions: Mapping of `next_<state>` names to deterministic
+            own-regime transition functions, made available so within-period utility
+            or feasibility that reads a chosen next state (the NEGM service-flow
+            `next_<durable>`, or a budget constraint reading it) resolves it from the
+            current states and actions. Pruned away when unread, so the grid-search
+            path is unchanged.
+        conflicting_deterministic_transition_names: Frozenset of `next_<state>`
+            names whose deterministic law differs across target bundles. A model is
+            rejected if any of them is read by the within-period decision (utility
+            or feasibility), because the merged law would disagree with the
+            simulate state-update.
 
     Returns:
         The instantaneous utility and feasibility function.
 
     """
     combined = {
-        "feasibility": _get_feasibility(functions=functions, constraints=constraints),
+        "feasibility": _get_feasibility(
+            functions=functions,
+            constraints=constraints,
+            deterministic_transitions=deterministic_transitions,
+        ),
+        **dict(deterministic_transitions),
         **{k: v for k, v in functions.items() if k != "H"},
     }
+    _fail_if_conflicting_transition_is_read(
+        combined=combined,
+        targets=["utility", "feasibility"],
+        conflicting_deterministic_transition_names=(
+            conflicting_deterministic_transition_names
+        ),
+    )
     return concatenate_functions(
         functions=combined,
         targets=["utility", "feasibility"],
@@ -597,16 +702,61 @@ def _get_U_and_F(
     )
 
 
+def _fail_if_conflicting_transition_is_read(
+    *,
+    combined: Mapping[str, Callable[..., Any]],
+    targets: list[str],
+    conflicting_deterministic_transition_names: frozenset[TransitionFunctionName],
+) -> None:
+    """Reject a model whose decision reads a target-dependent `next_<state>` law.
+
+    A `next_<state>` whose deterministic law differs across target bundles is
+    merged down to one implementation; binding it into the decision DAG while the
+    simulate state-update uses the per-target law produces a silent disagreement.
+    Raise naming each such state actually read by `targets`.
+
+    Args:
+        combined: Mapping of function names to the functions assembled for the
+            decision DAG.
+        targets: List of target function names the decision evaluates.
+        conflicting_deterministic_transition_names: Frozenset of `next_<state>`
+            names with non-identical implementations across target bundles.
+    """
+    if not conflicting_deterministic_transition_names:
+        return
+    read_names = get_ancestors(combined, targets, include_targets=True)
+    offending = sorted(conflicting_deterministic_transition_names & read_names)
+    if offending:
+        names = ", ".join(offending)
+        msg = (
+            "Within-period utility or feasibility reads a target-dependent "
+            f"deterministic state law ({names}), but its implementation differs "
+            "across target regimes. The decision DAG would bind one target's law "
+            "while the simulate state-update uses the right one, so they would "
+            "disagree silently. Make the law identical across all targets that "
+            "carry the state, or stop reading the chosen next state in the "
+            "within-period utility/feasibility."
+        )
+        raise ValueError(msg)
+
+
 def _get_feasibility(
     *,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
+    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
+        MappingProxyType({})
+    ),
 ) -> ConstraintFunction:
     """Create a function that combines all constraint functions into a single one.
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
+        deterministic_transitions: Mapping of `next_<state>` names to deterministic
+            transition functions, so a constraint reading a chosen next state (the
+            NEGM budget constraint reading `next_<durable>`) resolves it. Pruned when
+            unread.
 
     Returns:
         The combined constraint function (feasibility).
@@ -614,7 +764,9 @@ def _get_feasibility(
     """
     if constraints:
         combined_constraint = concatenate_functions(
-            functions=dict(constraints) | dict(functions),
+            functions=dict(deterministic_transitions)
+            | dict(constraints)
+            | dict(functions),
             targets=list(constraints),
             aggregator=jnp.logical_and,
             aggregator_return_type="Feasibility",

@@ -14,7 +14,7 @@ analytical oracle (`tests/data/analytical_solution/`). The discrete retirement c
 makes the value function non-concave and produces the paper's signature saw-tooth
 consumption function — see the
 [discrete-continuous choice explanation](../explanations/iskhakov_et_al_2017.ipynb) for
-figures and the upcoming brute-force vs DC-EGM comparison.
+figures and the brute-force vs DC-EGM comparison.
 
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/iskhakov_et_al_2017.py)
 
@@ -22,7 +22,7 @@ figures and the upcoming brute-force vs DC-EGM comparison.
 
 ```python
 import jax.numpy as jnp
-from lcm_examples.iskhakov_et_al_2017 import get_model, get_params
+from lcm_examples.iskhakov_et_al_2017 import get_dcegm_model, get_model, get_params
 
 model = get_model(n_periods=6)
 params = get_params(

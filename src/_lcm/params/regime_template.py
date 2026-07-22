@@ -82,9 +82,13 @@ def create_regime_params_template(
         # user-facing params in the template.
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
 
-        # Per-target entries (`<func>__<target>`) nest under the target — the
-        # target is a genuine tree level, mirroring the canonical transition
-        # bundles, so param qnames parallel engine function qnames.
+        _drop_engine_provided_args(name=name, params=params, user_regime=user_regime)
+
+        # A dotted qname (`<func>__<target>`) marks a per-target function — a
+        # transition cell whose parameters must nest under the target regime
+        # (`template[target][func]`), so each target's cell keeps its own params.
+        # A bare name is a plain regime-level function whose params sit at the
+        # top level.
         path = tree_path_from_qname(name)
         if len(path) > 1:
             func_name, target_regime_name = path[0], path[1]
@@ -292,6 +296,22 @@ def _resolve_age_specialized(
         return value
 
     return {name: _resolve(func) for name, func in collected.items()}
+
+
+def _drop_engine_provided_args(
+    *, name: FunctionName, params: dict[str, str], user_regime: UserRegime
+) -> None:
+    """Remove a function's engine-supplied arguments from its discovered params.
+
+    In a continuation-based (Euler-inversion) regime the inversion function
+    `inverse_marginal_utility` receives `marginal_continuation` from the EGM
+    kernel (in a regime whose solver reads no continuation, a function of that
+    name is ordinary). This must not surface as a user-facing param, so it is
+    popped in place. Gated on the `requires_continuation` capability, not the
+    concrete solver type, so every Euler-inversion solver is covered.
+    """
+    if name == "inverse_marginal_utility" and user_regime.solver.requires_continuation:
+        params.pop("marginal_continuation", None)
 
 
 def _regime_transition_entries(

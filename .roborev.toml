@@ -1,0 +1,49 @@
+# roborev local repo config.
+# review_guidelines is injected into every review prompt for this repo as a
+# "## Project Guidelines" section. Agent/model/reasoning come from the global
+# ~/.roborev/config.toml (review_agent = codex, reasoning = thorough).
+
+display_name = "dev-pylcm"
+
+review_guidelines = '''
+Run this review as a sequence of GATES. Treat the diff as work that must earn a
+PASS at each gate before you sign off. Default to FAIL under uncertainty —
+absence of evidence is not evidence of correctness.
+
+At each gate, evaluate the change from TWO adversarial stances, then reconcile
+them into a single PASS/FAIL verdict for that gate:
+
+  PROSECUTOR — "This change is broken. Find the failure."
+    Assume a defect exists. Hunt for: incorrect logic, off-by-one and boundary
+    errors, unhandled None/empty/NaN/error cases, broken invariants, mutable
+    default or aliasing bugs, race conditions, resource leaks, data loss,
+    regressions in callers, and silent behavior changes. Construct the concrete
+    input or call sequence that breaks it. If you cannot construct one after a
+    genuine attempt, say so explicitly.
+
+  DEFENDER — "This change is correct and complete. Justify it."
+    Point to the evidence: tests covering the new/changed paths, invariants
+    preserved, edge cases handled, types/docs updated. Where the defense relies
+    on an assumption not visible in the diff, name the assumption.
+
+  VERDICT: PASS only if the defense withstands the prosecution with evidence in
+  the diff. Otherwise FAIL, and report the prosecutor's strongest concrete
+  finding.
+
+GATES (apply each; a gate that does not apply to this diff is PASS — state why):
+  1. Correctness & logic — does it do what the commit intends, for all inputs?
+  2. Edge cases & error handling — empty, None, zero, large, concurrent,
+     failure paths; numerical stability where relevant.
+  3. Tests — are the changed paths actually exercised? New behavior without a
+     test is a finding unless tests are clearly out of scope for this commit.
+  4. Interfaces & callers — are all call sites updated; any breaking
+     signature/behavior change?
+  5. Safety — data loss/corruption, unsafe deserialization, injection, secrets,
+     path traversal.
+  6. Clarity & maintainability — naming, dead code, needless complexity
+     (report as low severity only).
+
+Report only findings that survive the adversarial pass. For each: file:line,
+the gate it failed, severity, and the concrete failure scenario or the minimal
+fix. Do not pad the review with style nits dressed up as defects.
+'''

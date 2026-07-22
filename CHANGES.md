@@ -56,6 +56,28 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   other model-level slots: a name declared at model level and regime level is
   an ambiguity error, also when the grids match.
 
+### Discrete-continuous choice: DC-EGM, NEGM, and taste shocks
+
+- Adds the DC-EGM solver (Iskhakov, Jørgensen, Rust & Schjerning 2017) as a
+  per-regime alternative to grid search: `Regime(solver=lcm.DCEGM(...))`.
+  Euler-equation inversion on an exogenous savings grid with a fast
+  upper-envelope scan (Dobrescu & Shanker 2022) — no consumption grid enters
+  the solve, and the credit-constrained segment is exact. Requires declared
+  `resources`, post-decision, and `inverse_marginal_utility` regime functions;
+  the model contract is validated at `Model` construction. Supports discrete
+  states and actions, EV1 taste shocks, stochastic processes, and passive
+  continuous states. Forward simulation works with grid-restricted consumption
+  (the intrinsic budget constraint is applied as a feasibility mask).
+
+- Adds regime-level EV1 taste shocks as a model property:
+  `Regime(taste_shocks=lcm.ExtremeValueTasteShocks())` with the scale as the
+  runtime param `{"taste_shocks": {"scale": ...}}`. The solve aggregates
+  discrete actions by the smoothed expected maximum and simulation draws the
+  discrete action by Gumbel-max — identical solutions under either solver.
+
+- Promotes the Iskhakov et al. (2017) retirement model to
+  `lcm_examples.iskhakov_et_al_2017` (brute-force and DC-EGM variants) with an
+  explanation notebook comparing the two solvers.
 
 ## 0.0.1
 

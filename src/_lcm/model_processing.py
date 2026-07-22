@@ -15,6 +15,8 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
+from _lcm.egm.negm_validation import validate_negm_regimes
+from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
 from _lcm.params.processing import (
@@ -179,6 +181,13 @@ def validate_model_inputs(
     function still counts as used.
     """
     _fail_if_invalid_n_subjects(n_subjects=n_subjects)
+
+    # DC-EGM contract checks run before the generic checks below: a contract
+    # violation (e.g. a missing resources function) typically also leaves
+    # variables unused, and the contract-specific message is the actionable
+    # one.
+    validate_dcegm_regimes(user_regimes=user_regimes)
+    validate_negm_regimes(user_regimes=user_regimes)
 
     error_messages: list[str] = []
 
@@ -415,21 +424,42 @@ def _partial_fixed_params_into_regimes(
     result: dict[RegimeName, Regime] = {}
     for regime_name, regime in raw_regimes.items():
         regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
-        if not regime_fixed:
+        # A DC-EGM source carrying into a *different* target regime also binds
+        # that target's fixed params (it reads the target's resources /
+        # transition functions in its per-asset-node solve). Gate the rebuild on
+        # whether any fixed param reachable from this regime — its own or a
+        # transition target's — exists; the per-adapter `with_fixed_params`
+        # decides which of them actually reach each core.
+        reachable_fixed = bool(regime_fixed) or any(
+            fixed_flat_params.get(target_name, MappingProxyType({}))
+            for target_name in regime.solution.transitions
+        )
+        if not reachable_fixed:
             result[regime_name] = regime
             continue
 
         # Build new solution phase with partialled functions. The resolved
         # fixed params also land on the phase itself — its
         # `state_action_space` consults them for runtime grid substitution.
+        #
+        # Each period adapter owns its solver's binding rule: a grid-search
+        # adapter binds the regime's own fixed params into its core; a DC-EGM
+        # adapter binds the union of the regime's and its carry targets' fixed
+        # params (a source reads a different target's params in its per-asset
+        # solve); a terminal carry-producing adapter binds the regime's fixed
+        # params into both its base core and the carry producer. So the engine
+        # threads fixed params through `with_fixed_params` without a solver-type
+        # switch.
         solution = regime.solution
         new_solve = dataclasses.replace(
             solution,
             resolved_fixed_params=MappingProxyType(regime_fixed),
-            max_Q_over_a=MappingProxyType(
+            period_kernels=MappingProxyType(
                 {
-                    period: functools.partial(func, **regime_fixed)
-                    for period, func in solution.max_Q_over_a.items()
+                    period: kernel.with_fixed_params(
+                        fixed_flat_params=fixed_flat_params
+                    )
+                    for period, kernel in solution.period_kernels.items()
                 }
             ),
             compute_regime_transition_probs=(

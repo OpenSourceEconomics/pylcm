@@ -5,7 +5,7 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast, overload
 
 import jax
 import pandas as pd
@@ -52,12 +52,14 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
+from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
     FlatParams,
     FunctionName,
     ParamsTemplate,
+    PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
@@ -330,6 +332,45 @@ class Model:
 
         return cast("UserFacingParamsTemplate", _readable(mutable))
 
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        return_simulation_policy: Literal[False] = ...,
+    ) -> PeriodToRegimeToVArr: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        return_simulation_policy: Literal[True],
+    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        return_simulation_policy: bool,
+    ) -> (
+        PeriodToRegimeToVArr
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
+    ): ...
+
     @beartype(conf=PARAMS_CONF)
     def solve(
         self,
@@ -339,8 +380,12 @@ class Model:
         max_compilation_workers: int | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
-    ) -> PeriodToRegimeToVArr:
-        """Solve the model using the pre-computed functions.
+        return_simulation_policy: bool = False,
+    ) -> (
+        PeriodToRegimeToVArr
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
+    ):
+        """Solve the model by backward induction, using each regime's solver.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -371,8 +416,19 @@ class Model:
                 every level; snapshots are written only when it is set.
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
 
+            return_simulation_policy: When `True`, also return the per-period
+                simulation-policy artifacts published by the configured
+                solvers, as `(value_functions, policies)`. A policy is the
+                artifact a future off-grid `simulate` will interpolate; the
+                current `simulate` is grid-restricted and consumes only the
+                value functions, so it does not yet take the policies back.
+                Regimes whose solver publishes no policy have no entry in the
+                policy mapping. Defaults to `False` (value functions only).
+
         Returns:
-            Immutable mapping of period to a value function array for each regime.
+            Immutable mapping of period to a value function array for each
+            regime; or, when `return_simulation_policy=True`, that mapping
+            paired with the per-period simulation-policy mapping.
 
         """
         log = get_logger(log_level=log_level)
@@ -383,7 +439,7 @@ class Model:
             ages=self.ages,
             logger=log,
         )
-        return self._solve_compiled(
+        internal_result = self._solve_compiled(
             flat_params=flat_params,
             params=params,
             log=log,
@@ -391,6 +447,9 @@ class Model:
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
         )
+        if return_simulation_policy:
+            return internal_result.value_functions, internal_result.simulation_policies
+        return internal_result.value_functions
 
     def _solve_compiled(
         self,
@@ -401,16 +460,18 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
-    ) -> PeriodToRegimeToVArr:
+    ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
-        With `log_path` set, a snapshot is written at `log_level="debug"`
-        (every solve) and at `"warning"` / `"progress"` whenever the returned
-        solution contains NaN. `_enforce_retention` caps the snapshot count at
+        Returns the named backward-induction outputs (value-function arrays and
+        each regime's published per-period simulation policy). With `log_path`
+        set, a snapshot is written at `log_level="debug"` (every solve) and at
+        `"warning"` / `"progress"` whenever the returned solution contains
+        NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
         try:
-            period_to_regime_to_V_arr = solve(
+            internal_result = solve(
                 flat_params=flat_params,
                 ages=self.ages,
                 regimes=self._regimes,
@@ -432,16 +493,18 @@ class Model:
         if (
             log_path is not None
             and validation_enabled(log)
-            and (validation_raises(log) or contains_nan(period_to_regime_to_V_arr))
+            and (
+                validation_raises(log) or contains_nan(internal_result.value_functions)
+            )
         ):
             _save_solve_snapshot(
                 model=self,
                 params=params,
-                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                period_to_regime_to_V_arr=internal_result.value_functions,
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
             )
-        return period_to_regime_to_V_arr
+        return internal_result
 
     def _resolve_simulate_regimes(
         self,
@@ -616,6 +679,9 @@ class Model:
             log=log,
         )
         if period_to_regime_to_V_arr is None:
+            # Simulation is grid-restricted: it interpolates only the value
+            # functions, so any published simulation policy is dropped here.
+            # Off-grid simulation would interpolate the policy instead.
             period_to_regime_to_V_arr = self._solve_compiled(
                 flat_params=flat_params,
                 params=params,
@@ -623,7 +689,7 @@ class Model:
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
                 max_compilation_workers=max_compilation_workers,
-            )
+            ).value_functions
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             compile_batch_size=compile_batch_size,

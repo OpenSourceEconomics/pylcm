@@ -3,6 +3,7 @@ import inspect
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
@@ -15,6 +16,18 @@ from jax import numpy as jnp
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.coarse_transition import _CoarseTransitionCell
+from _lcm.egm.budget import (
+    DCEGM_BUDGET_CONSTRAINT_NAME,
+    get_intrinsic_budget_constraint,
+)
+from _lcm.egm.carry import EGMCarry, build_template_egm_carry
+from _lcm.egm.negm_validation import validate_negm_regimes
+from _lcm.egm.terminal import (
+    N_STATELESS_CARRY_ROWS,
+    get_stateless_terminal_carry_producer,
+    get_terminal_wealth_carry_producer,
+)
+from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.engine import (
     Regime,
     SimulationPhase,
@@ -44,7 +57,9 @@ from _lcm.regime_building.age_specialization import (
 from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
-from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
+from _lcm.regime_building.max_Q_over_a import (
+    get_argmax_and_max_Q_over_a,
+)
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.next_state import get_next_state_function_for_simulation
 from _lcm.regime_building.phases import (
@@ -60,14 +75,22 @@ from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
-from _lcm.solution.contract import SolverBuildContext
+from _lcm.solution.contract import (
+    ContinuationPayload,
+    KernelResult,
+    PeriodKernel,
+    SolverBuildContext,
+)
 from _lcm.state_action_space import create_state_action_space
 from _lcm.typing import (
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
+    EGMCarryProducer,
+    FlatParams,
     FunctionName,
+    MappingLeaf,
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
@@ -75,6 +98,7 @@ from _lcm.typing import (
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    SequenceLeaf,
     StateName,
     StateOrActionName,
     TransitionFunction,
@@ -94,12 +118,12 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import Solver
+from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import (
     AgeSpecializedFunction,
     MarkovTransition,
 )
-from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
+from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
     RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
@@ -210,6 +234,13 @@ def process_regimes(
         The processed canonical regimes.
 
     """
+    # DC-EGM regimes must satisfy the EGM model contract before any kernel
+    # is built. `Model.__init__` validates earlier (so contract violations
+    # beat the generic unused-variable check); this call covers direct
+    # `process_regimes` callers.
+    validate_dcegm_regimes(user_regimes=user_regimes)
+    validate_negm_regimes(user_regimes=user_regimes)
+
     # Age-varying continuous-state grids (`AgeSpecializedGrid`) are resolved to a
     # representative-age concrete grid for all age-invariant machinery (specs,
     # variables, grids, template, base state-action space), and to a per-period
@@ -273,34 +304,72 @@ def process_regimes(
         }
     )
 
+    model_has_egm_regime = any(
+        user_regime.solver.requires_continuation
+        for user_regime in user_regimes.values()
+    )
+
+    # Each regime's flat param names in the engine's binding vocabulary, keyed
+    # by regime. A DC-EGM source regime that carries into a *different* target
+    # regime evaluates that target's resources / transition functions in its
+    # per-asset-node solve, so it must know the target's param leaves (e.g. a
+    # pension factor the source itself never reads); the kernel binds them from
+    # the union of the source and its reachable carry targets' fixed params.
+    regime_to_params_template = MappingProxyType(
+        {
+            regime_name: create_regime_params_template(
+                user_regime,
+                representative_age=(
+                    ages.period_to_age(regimes_to_active_periods[regime_name][0])
+                    if regimes_to_active_periods[regime_name]
+                    else None
+                ),
+            )
+            for regime_name, user_regime in user_regimes.items()
+        }
+    )
+    regime_to_granular_param_expansions = MappingProxyType(
+        {
+            regime_name: _granular_param_expansions(
+                nested_transitions_by_phase=(
+                    solve_nested_transitions[regime_name],
+                    simulate_nested_transitions[regime_name],
+                ),
+                regime_params_template=regime_to_params_template[regime_name],
+            )
+            for regime_name in user_regimes
+        }
+    )
+    regime_to_flat_param_names = MappingProxyType(
+        {
+            regime_name: _engine_flat_param_names(
+                regime_params_template=regime_to_params_template[regime_name],
+                granular_param_expansions=regime_to_granular_param_expansions[
+                    regime_name
+                ],
+            )
+            for regime_name in user_regimes
+        }
+    )
+
     canonical_regimes: dict[RegimeName, Regime] = {}
     # Iterate the representative-resolved regimes: identical to the user regimes
     # except that any `AgeSpecializedGrid` state is a concrete representative-age
     # grid, so every grid-derived call below is age-invariant.
     for regime_name, user_regime in representative_user_regimes.items():
         spec = specs[regime_name]
-        active_periods = regimes_to_active_periods[regime_name]
-        representative_age = (
-            ages.period_to_age(active_periods[0]) if active_periods else None
-        )
-        regime_params_template = create_regime_params_template(
-            user_regime, representative_age=representative_age
-        )
-        granular_param_expansions = _granular_param_expansions(
-            nested_transitions_by_phase=(
-                solve_nested_transitions[regime_name],
-                simulate_nested_transitions[regime_name],
-            ),
-            regime_params_template=regime_params_template,
-        )
+        regime_params_template = regime_to_params_template[regime_name]
+        granular_param_expansions = regime_to_granular_param_expansions[regime_name]
 
         solution = _build_solution_phase(
             spec=spec,
             regime_name=regime_name,
+            user_regimes=user_regimes,
             nested_transitions=solve_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
             granular_param_expansions=granular_param_expansions,
+            regime_to_flat_param_names=regime_to_flat_param_names,
             regime_names_to_ids=regime_names_to_ids,
             variables=regime_to_variables[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
@@ -309,9 +378,10 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
-            has_taste_shocks=user_regime.taste_shocks is not None,
             certainty_equivalent=user_regime.certainty_equivalent,
             solver=user_regime.solver,
+            model_has_egm_regime=model_has_egm_regime,
+            has_taste_shocks=user_regime.taste_shocks is not None,
         )
 
         simulation = _build_simulation_phase(
@@ -334,6 +404,7 @@ def process_regimes(
             solve_stochastic_transition_names=solution.stochastic_transition_names,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
             has_taste_shocks=user_regime.taste_shocks is not None,
+            solver=user_regime.solver,
             certainty_equivalent=user_regime.certainty_equivalent,
         )
 
@@ -362,10 +433,12 @@ def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
+    user_regimes: Mapping[RegimeName, UserRegime],
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
+    regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     regime_names_to_ids: RegimeNamesToIds,
     variables: Variables,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
@@ -376,21 +449,29 @@ def _build_solution_phase(
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
-    has_taste_shocks: bool,
     certainty_equivalent: CertaintyEquivalent | None,
     solver: Solver,
+    model_has_egm_regime: bool,
+    has_taste_shocks: bool,
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
 
     Args:
         spec: The regime's per-phase specification.
         regime_name: The name of the regime.
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances.
         nested_transitions: Per-target transition bundles for internal
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         granular_param_expansions: Immutable mapping of coarse-template law
             keys to granular qname prefixes.
+        regime_to_flat_param_names: Immutable mapping of every regime name to
+            its flat param names in the engine's binding vocabulary. A DC-EGM
+            source carrying into a different target regime reads the target's
+            params in its per-asset-node solve, so the kernel build needs the
+            whole mapping, not only the source regime's own params.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         variables: States and actions of the regime with kind/topology/process tags.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
@@ -398,12 +479,15 @@ def _build_solution_phase(
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
-        has_taste_shocks: Whether the regime declares EV1 taste shocks on its
-            discrete actions.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
         solver: The regime's solver; the engine calls `validate` then
             `build_period_kernels` on it to obtain the per-period kernels.
+        model_has_egm_regime: Whether any regime of the model uses a solver
+            that reads continuation carries (an endogenous-grid solver);
+            terminal regimes then produce their closed-form carries.
+        has_taste_shocks: Whether the regime declares EV1 taste shocks on its
+            discrete actions.
 
     Returns:
         Complete solve functions container.
@@ -483,7 +567,6 @@ def _build_solution_phase(
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
             certainty_equivalent=certainty_equivalent,
-            period_to_regime_v_interp=period_to_regime_v_interp,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             flat_param_names=flat_param_names,
@@ -507,12 +590,24 @@ def _build_solution_phase(
 
     # Dispatch the per-period kernel build polymorphically on the regime's
     # solver: `validate` rejects out-of-scope configurations at build time,
-    # then `build_period_kernels` returns the per-period kernels. `GridSearch`
-    # builds the max-Q-over-a grid-search kernels.
+    # then `build_period_kernels` returns one uniform period adapter per period
+    # plus the regime's continuation template. `GridSearch` wraps the
+    # max-Q-over-a grid search; `DCEGM` wraps the EGM step.
     context = SolverBuildContext(
+        regime_name=regime_name,
+        user_regimes=user_regimes,
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
+        functions=core.functions,
+        constraints=core.constraints,
+        transitions=core.transitions,
+        stochastic_transition_names=core.stochastic_transition_names,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        regimes_to_active_periods=regimes_to_active_periods,
+        flat_param_names=flat_param_names,
+        regime_to_flat_param_names=regime_to_flat_param_names,
         enable_jit=enable_jit,
         has_taste_shocks=has_taste_shocks,
         certainty_equivalent=certainty_equivalent,
@@ -521,7 +616,35 @@ def _build_solution_phase(
     )
     solver.validate(context=context)
     solver_kernels = solver.build_period_kernels(context=context)
-    max_Q_over_a = solver_kernels.max_Q_over_a
+
+    # The terminal continuation publisher is a cross-solver concern, not the
+    # grid search's: a terminal regime in a model with a DC-EGM regime must
+    # publish a closed-form carry so a DC-EGM parent can interpolate its value
+    # and marginal utility. Build the producer engine-side and compose it as an
+    # output decorator around each period adapter, so the solver stays unaware
+    # of the continuation it is being asked to emit.
+    egm_carry_producer, egm_carry_template = _build_terminal_carry_producer(
+        user_regime=user_regimes[regime_name],
+        functions=core.functions,
+        variables=variables,
+        grids=all_grids[regime_name],
+        model_has_egm_regime=model_has_egm_regime,
+        enable_jit=enable_jit,
+    )
+    period_kernels = solver_kernels.period_kernels
+    continuation_template = solver_kernels.continuation_template
+    if egm_carry_producer is not None:
+        period_kernels = MappingProxyType(
+            {
+                period: _TerminalCarryPeriodKernel(
+                    base=kernel,
+                    carry_producer=egm_carry_producer,
+                    regime_name=regime_name,
+                )
+                for period, kernel in period_kernels.items()
+            }
+        )
+        continuation_template = egm_carry_template
 
     # The published function set is consumed unresolved by feasibility checks and
     # additional-target computation, so resolve any `AgeSpecializedFunction`
@@ -555,11 +678,217 @@ def _build_solution_phase(
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
-        max_Q_over_a=max_Q_over_a,
+        period_kernels=period_kernels,
         compute_intermediates=compute_intermediates,
+        continuation_template=continuation_template,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
     )
+
+
+def _filter_kwargs_for_func(
+    *, func: Callable, kwargs: Mapping[str, object]
+) -> Mapping[str, object]:
+    """Filter kwargs to only those accepted by func's signature."""
+    try:
+        sig = inspect.signature(func)
+    except ValueError, TypeError:
+        return kwargs
+    params = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return kwargs
+    return {k: v for k, v in kwargs.items() if k in params}
+
+
+@dataclass(frozen=True, kw_only=True)
+class _TerminalCarryPeriodKernel:
+    """Engine-owned output decorator publishing a terminal regime's carry.
+
+    Wraps a grid-search period adapter so that, after the base kernel computes
+    the value-function array, the regime's closed-form carry producer turns that
+    array into the continuation a DC-EGM parent interpolates. Publishing a carry
+    is a cross-solver concern, so the wrapped solver stays unaware of it.
+
+    `core` and `build_lower_args` delegate to the base adapter: the carry
+    producer is a separately built (and jitted) closure invoked inline, not part
+    of the AOT-compiled core, so AOT compilation deduplicates and lowers exactly
+    the base grid-search core.
+    """
+
+    base: PeriodKernel
+    """The wrapped grid-search period adapter."""
+
+    carry_producer: EGMCarryProducer
+    """Closed-form producer mapping the value array to the regime's carry."""
+
+    regime_name: RegimeName
+    """Name of the terminal regime whose flat params the producer reads."""
+
+    @property
+    def core(self) -> Callable:
+        """The base adapter's shared jitted core, for any single-core reader."""
+        return self.base.core
+
+    def cores(self) -> Mapping[str, Callable]:
+        """Delegate to the base adapter's cores (a terminal regime is single-core)."""
+        return self.base.cores()
+
+    def with_fixed_params(
+        self, *, fixed_flat_params: FlatParams
+    ) -> _TerminalCarryPeriodKernel:
+        """Bind fixed params into both the base core and the carry producer.
+
+        A terminal regime's carry producer evaluates the regime's own bequest
+        utility on the wealth grid; that utility may reach a model-level fixed
+        param (e.g. a consumption-equivalence scale) through a helper. The solve
+        loop invokes the producer with only the live (free) params, so bind the
+        regime's fixed params here — matching the base adapter's core binding.
+        """
+        regime_fixed = dict(
+            fixed_flat_params.get(self.regime_name, MappingProxyType({}))
+        )
+        base = self.base.with_fixed_params(fixed_flat_params=fixed_flat_params)
+        carry_producer = self.carry_producer
+        if regime_fixed:
+            carry_producer = functools.partial(
+                carry_producer,
+                **_filter_kwargs_for_func(func=carry_producer, kwargs=regime_fixed),
+            )
+        return dataclass_replace(self, base=base, carry_producer=carry_producer)
+
+    def build_lower_args(
+        self,
+        *,
+        core_key: str = "main",
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> Mapping[str, object]:
+        """Build the base core's lowering arguments (the carry producer is jitted
+        separately at build time, so it is not part of the AOT-compiled core)."""
+        return self.base.build_lower_args(
+            core_key=core_key,
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+        )
+
+    def __call__(
+        self,
+        *,
+        compiled_cores: Mapping[str, Callable],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Run the base kernel, then publish the regime's continuation carry."""
+        result = self.base(
+            compiled_cores=compiled_cores,
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+        )
+        carry = self.carry_producer(
+            V_arr=result.V_arr,
+            **state_action_space.states,
+            **flat_params[self.regime_name],
+            period=jnp.int32(period),
+            age=ages.values[period],
+        )
+        return KernelResult(V_arr=result.V_arr, continuation=carry)
+
+
+def _build_terminal_carry_producer(
+    *,
+    user_regime: UserRegime,
+    functions: EconFunctionsMapping,
+    variables: Variables,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    model_has_egm_regime: bool,
+    enable_jit: bool,
+) -> tuple[EGMCarryProducer | None, EGMCarry | None]:
+    """Build the EGM carry producer and template for a terminal regime.
+
+    Terminal regimes produce closed-form carries when the model contains an
+    endogenous-grid regime, so an EGM parent can interpolate their value and
+    marginal utility. Cases:
+
+    - no states ⇒ constant-value, zero-marginal-utility broadcast rows
+    - exactly one continuous state, no actions, and discrete states only of
+      the fixed (non-process) kind ⇒ terminal utility and its wealth gradient
+      on the regime's own state grid, with the discrete states as the carry's
+      leading axes (one wealth row per discrete combo)
+    - anything else ⇒ no producer (an EGM regime targeting such a terminal
+      regime is rejected by the EGM kernel builder)
+
+    Returns:
+        Tuple of the producer and the regime's carry template, both `None`
+        for non-terminal regimes, for models without an endogenous-grid
+        regime, and for unsupported terminal shapes.
+
+    """
+    if not (model_has_egm_regime and user_regime.terminal):
+        return None, None
+    producer: EGMCarryProducer
+    discrete_state_names = tuple(
+        name
+        for name in variables.state_names
+        if name in set(variables.discrete_state_names)
+    )
+    has_only_fixed_discrete_states = all(
+        not isinstance(grids[name], _ContinuousStochasticProcess)
+        for name in discrete_state_names
+    )
+    continuous_state_names = tuple(variables.continuous_state_names)
+    euler_state_name = next(iter(user_regime.states), None)
+    if not variables.state_names:
+        producer = get_stateless_terminal_carry_producer()
+        template = build_template_egm_carry(n_rows=N_STATELESS_CARRY_ROWS)
+    elif (
+        len(continuous_state_names) >= 1
+        and has_only_fixed_discrete_states
+        and not user_regime.actions
+        and euler_state_name in continuous_state_names
+    ):
+        # The parent's child read picks the terminal's Euler state as its first
+        # declared state (`_get_child_state_name`); the remaining continuous
+        # states are the passive (durable / outer) margins it interpolates as
+        # leading carry axes — the NEGM housing-bequest shape.
+        passive_state_names = tuple(
+            name for name in continuous_state_names if name != euler_state_name
+        )
+        producer = get_terminal_wealth_carry_producer(
+            functions=functions,
+            state_name=euler_state_name,
+            discrete_state_names=discrete_state_names,
+            passive_state_names=passive_state_names,
+            continuous_state_order=continuous_state_names,
+        )
+        leading_shape = tuple(
+            int(grids[name].to_jax().shape[0])
+            for name in discrete_state_names + passive_state_names
+        )
+        template = build_template_egm_carry(
+            n_rows=int(grids[euler_state_name].to_jax().shape[0]),
+            leading_shape=leading_shape,
+        )
+    else:
+        return None, None
+    if enable_jit:
+        producer = jax.jit(producer)
+    return producer, template
 
 
 def _build_simulation_phase(
@@ -585,6 +914,7 @@ def _build_simulation_phase(
     solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     has_taste_shocks: bool,
+    solver: Solver,
     certainty_equivalent: CertaintyEquivalent | None,
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
@@ -597,6 +927,13 @@ def _build_simulation_phase(
 
     Q_and_F always uses the solve (non-vmapped) regime transition probs because
     it evaluates on the Cartesian grid, not per-subject.
+
+    For a DC-EGM or NEGM regime, the budget constraint the EGM solve enforces
+    intrinsically is synthesized and injected into the constraint set: the
+    simulate-phase grid argmax needs it as a feasibility mask exactly like a
+    user-declared borrowing constraint of a brute-force regime. NEGM nests the
+    same inner 1-D solve, so the mask comes from its inner DC-EGM config. The
+    solve phase is unaffected — the EGM kernels never see it.
 
     Args:
         spec: The regime's per-phase specification.
@@ -623,6 +960,8 @@ def _build_simulation_phase(
             function, used for Q_and_F in both phases.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
+        solver: The regime's solver configuration; a DC-EGM or NEGM regime
+            gets the synthesized intrinsic budget constraint.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
 
@@ -645,6 +984,26 @@ def _build_simulation_phase(
     )
     functions = core.functions
     constraints = core.constraints
+    if isinstance(solver, (DCEGM, NEGM)):
+        if (
+            DCEGM_BUDGET_CONSTRAINT_NAME in core.functions
+            or DCEGM_BUDGET_CONSTRAINT_NAME in core.constraints
+        ):
+            msg = (
+                f"Regime '{regime_name}' declares a function or constraint "
+                f"named '{DCEGM_BUDGET_CONSTRAINT_NAME}'. That name is "
+                "reserved for the budget constraint the simulate phase "
+                "synthesizes for DC-EGM and NEGM regimes; rename it."
+            )
+            raise ModelInitializationError(msg)
+        constraints = MappingProxyType(
+            {
+                **core.constraints,
+                DCEGM_BUDGET_CONSTRAINT_NAME: get_intrinsic_budget_constraint(
+                    solver=solver, functions=core.functions
+                ),
+            }
+        )
 
     # Every published simulate-phase consumer (next_state, the realized
     # regime draw, the feasibility check, additional targets) reads each
@@ -1855,8 +2214,8 @@ def _wrap_deterministic_regime_transition(
     @with_signature(args=annotations, return_annotation="FloatND")
     @functools.wraps(func)
     def wrapped(
-        *args: FloatND | IntND | int,
-        **kwargs: FloatND | IntND | int,
+        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
     ) -> FloatND:
         regime_idx = func(*args, **kwargs)
         return jax.nn.one_hot(regime_idx, n_regimes)
@@ -1866,7 +2225,7 @@ def _wrap_deterministic_regime_transition(
     # the decorator stack can drop them when `func` carries deferred (PEP 649)
     # annotations through `functools.wraps`.
     wrapped.__annotations__ = {**annotations, "return": "FloatND"}
-    return wrapped  # ty: ignore[invalid-return-type]
+    return wrapped
 
 
 def _get_vmap_params(
