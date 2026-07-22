@@ -24,7 +24,15 @@ from lcm import (
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import ScalarInt, UserFunction
+from lcm.typing import (
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    IntND,
+    Period,
+    ScalarInt,
+    UserFunction,
+)
 
 
 @categorical(ordered=True)
@@ -184,3 +192,192 @@ def test_additional_target_depending_on_age_specialized_function_is_rejected():
 
     with pytest.raises(InvalidAdditionalTargetsError, match="policy-specialized"):
         result.to_dataframe(additional_targets=["policy_bonus"])
+
+
+@categorical(ordered=True)
+class _Capital:
+    c0: ScalarInt
+    c1: ScalarInt
+    c2: ScalarInt
+
+
+@categorical(ordered=True)
+class _Invest:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+def _f1_next_regime(period: Period) -> ScalarInt:
+    return jnp.where(period >= 2, RegimeId.dead, RegimeId.working_life)
+
+
+def _f1_next_capital(
+    capital: DiscreteState, invest: DiscreteAction, boost: IntND
+) -> DiscreteState:
+    return jnp.clip(capital + invest * boost, 0, 2)
+
+
+def _f1_utility(capital: DiscreteState, invest: DiscreteAction) -> FloatND:
+    return capital * 1.0 - invest * 0.5
+
+
+def _f1_boost_runtime(age: float) -> IntND:
+    return jnp.where(age < 30.0, 0, 1)
+
+
+def _f1_boost_of_age(age: float):
+    value = 0 if age < 30.0 else 1
+
+    def boost() -> IntND:
+        return jnp.asarray(value, dtype=jnp.int32)
+
+    return boost
+
+
+def _f1_make_model(boost: UserFunction) -> Model:
+    working = UserRegime(
+        transition=_f1_next_regime,
+        active=lambda age: age < 55,
+        states={"capital": DiscreteGrid(_Capital)},
+        actions={"invest": DiscreteGrid(_Invest)},
+        state_transitions={"capital": _f1_next_capital},
+        functions={"utility": _f1_utility, "boost": boost},
+    )
+    dead = UserRegime(
+        transition=None,
+        active=lambda age: age >= 55,
+        functions={"utility": lambda: 0.0},
+    )
+    return Model(
+        regimes={"working_life": working, "dead": dead},
+        ages=AgeGrid(start=25, stop=55, step="10Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def test_simulation_continuation_resolves_age_specialized_helper_per_age():
+    """Round-11 F1: the simulation continuation resolves a solve-side
+    `AgeSpecializedFunction` helper at each period's age, not frozen at the regime's
+    representative (first active) age.
+
+    `next_capital = clip(capital + invest*boost, 0, 2)` reads `boost` (0 at age < 30,
+    1 at age >= 30). Investing at age 35 raises next capital only under the correct
+    age-35 boost, so the age-35 continuation (V at age 45) makes investing worth its
+    cost -> invest. A pool frozen at the first active age (25, boost=0) would make
+    investing useless -> a reversed no-invest argmax. The specialized model must match
+    the runtime-`age` baseline, which never reads the frozen pool.
+    """
+
+    def _invest_at_age35(boost: UserFunction) -> str:
+        result = _f1_make_model(boost).simulate(
+            params={"discount_factor": 0.95},
+            initial_conditions={
+                "age": jnp.array([35.0]),
+                "capital": jnp.array([0]),
+                "regime_id": jnp.array([RegimeId.working_life]),
+            },
+            period_to_regime_to_V_arr=None,
+            log_level="debug",
+        )
+        return str(result.to_dataframe()["invest"].to_numpy()[0])
+
+    baseline = _invest_at_age35(_f1_boost_runtime)
+    specialized = _invest_at_age35(
+        AgeSpecializedFunction(build=_f1_boost_of_age, signature=lambda age: age < 30.0)
+    )
+    assert baseline == "yes"
+    assert specialized == baseline
+
+
+def _utility_of_consumption(consumption: float) -> FloatND:
+    return jnp.log(consumption)
+
+
+def _feasible_consumption(consumption: float, wealth: float) -> bool:
+    return consumption <= wealth
+
+
+def _next_wealth_spend(wealth: float, consumption: float) -> float:
+    return wealth - consumption + 1.0
+
+
+def _cap_of_age(age: float) -> Callable[..., bool]:
+    """Return the age's concrete feasibility constraint (an `AgeSpecializedFunction`).
+
+    `wealth_cap` is slack for every grid cell (age >= 60, wealth <= 100), so the
+    feasible set is unchanged and the model solves; the point is only that a
+    specialized *constraint* node exists in the target pool.
+    """
+
+    def wealth_cap(consumption: float, wealth: float) -> bool:
+        return consumption <= wealth + age
+
+    return wealth_cap
+
+
+def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
+    working_life = UserRegime(
+        transition=_next_regime,
+        active=lambda age: age < 75,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        state_transitions={"wealth": _next_wealth_spend},
+        constraints={
+            "feasible_consumption": _feasible_consumption,
+            "wealth_cap": wealth_cap,
+        },
+        functions={"utility": _utility_of_consumption},
+    )
+    dead = UserRegime(
+        transition=None,
+        active=lambda age: age >= 75,
+        functions={"utility": lambda: 0.0},
+    )
+    return Model(
+        regimes={"working_life": working_life, "dead": dead},
+        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def _simulate_specialized_constraint_model():
+    model = _make_specialized_constraint_model(
+        AgeSpecializedFunction(build=_cap_of_age, signature=lambda age: age)
+    )
+    return model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.full(3, 25.0),
+            "wealth": jnp.array([10.0, 50.0, 100.0]),
+            "regime_id": jnp.full(3, RegimeId.working_life),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+    )
+
+
+def test_additional_target_of_age_specialized_constraint_is_rejected():
+    """Round-11 F3: a specialized *constraint* requested as a target is rejected.
+
+    A constraint carries its own namespace: `_process_regime_core` excludes
+    constraint names from `functions`, so an `AgeSpecializedFunction` constraint
+    was omitted from `age_specialized_function_names` and escaped the guard, even
+    though the additional-target pool re-merges constraints and advertises them as
+    targets. Requesting the specialized constraint by name must raise, not reach
+    target construction as an unresolved representative-age marker.
+    """
+    result = _simulate_specialized_constraint_model()
+    with pytest.raises(InvalidAdditionalTargetsError, match="policy-specialized"):
+        result.to_dataframe(additional_targets=["wealth_cap"])
+
+
+def test_additional_targets_all_rejects_age_specialized_constraint():
+    """Round-11 F3: `additional_targets='all'` rejects a specialized constraint.
+
+    `'all'` expands to every advertised target, which includes the specialized
+    constraint; the guard must reject the batch rather than silently compute it at
+    the wrong age's policy closure.
+    """
+    result = _simulate_specialized_constraint_model()
+    with pytest.raises(InvalidAdditionalTargetsError, match="policy-specialized"):
+        result.to_dataframe(additional_targets="all")

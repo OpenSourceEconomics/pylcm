@@ -14,6 +14,7 @@ façade stays a thin re-export that pulls in no numerical engine modules.
 """
 
 import functools
+import inspect
 import math
 import warnings
 from collections.abc import Callable, Mapping
@@ -572,6 +573,9 @@ class NBEGM(Solver):
                 ),
                 regime_name=context.regime_name,
                 int_arg_values=_int_probe_arg_values(context.grids),
+                array_float_arg_names=_array_float_arg_names(
+                    functions=context.functions
+                ),
                 probe_failure=self.probe_failure,
             )
         reachable_targets = frozenset(
@@ -608,6 +612,9 @@ class NBEGM(Solver):
                     liquid_name=schedule_spec.liquid_state_name,
                     regime_name=context.regime_name,
                     int_arg_values=_int_probe_arg_values(context.grids),
+                    array_float_arg_names=_array_float_arg_names(
+                        functions=context.functions
+                    ),
                     probe_failure=self.probe_failure,
                 )
                 statics = _nbegm_ride_along_statics(
@@ -704,6 +711,17 @@ class NBEGM(Solver):
                         next(iter(statics_by_key.values())).n_published_jumps
                         if statics_by_key
                         else 0
+                    ),
+                    # Match `_assemble_ride_carry`'s carry_policy predicate:
+                    # continuous-only (no ride discrete action) and jump-free.
+                    carry_policy=(
+                        schedule_spec.discrete_action_name is None
+                        and (
+                            next(iter(statics_by_key.values())).n_published_jumps
+                            if statics_by_key
+                            else 0
+                        )
+                        == 0
                     ),
                 ),
                 grids=context.grids,
@@ -1340,6 +1358,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     require_unit_slope: bool,
     regime_name: str,
     int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
+    array_float_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
@@ -1386,7 +1405,13 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
                 if name == liquid_name
                 else jnp.asarray(int_overrides[name], dtype=jnp.int32)
                 if name in int_overrides
-                else _probe_fill(name, fill, int_arg_names, array_floats=array_floats)
+                else _probe_fill(
+                    name,
+                    fill,
+                    int_arg_names,
+                    array_float_arg_names,
+                    array_floats=array_floats,
+                )
             )
             for name in arg_names
         }
@@ -1502,6 +1527,7 @@ def _fail_if_flow_not_single_power(
     consumption_action_name: str,
     regime_name: RegimeName,
     int_arg_values: Mapping[str, tuple[int, ...]],
+    array_float_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"],
 ) -> None:
     """Probe the flow's consumption elasticity for the single-power contract.
@@ -1540,7 +1566,7 @@ def _fail_if_flow_not_single_power(
                 if name == consumption_action_name
                 else jnp.asarray(int_overrides[name], dtype=jnp.int32)
                 if name in int_overrides
-                else _probe_fill(name, fill, int_arg_names)
+                else _probe_fill(name, fill, int_arg_names, array_float_arg_names)
             )
             for name in arg_names
         }
@@ -1623,6 +1649,7 @@ def _probe_fill(
     name: str,
     fill: float,
     int_arg_names: frozenset[str],
+    array_float_arg_names: frozenset[str] = frozenset(),
     *,
     array_floats: bool = False,
 ) -> ScalarFloat | ScalarInt | Float1D:
@@ -1631,16 +1658,49 @@ def _probe_fill(
     Integer-coded arguments — discrete states/actions (their grids are
     `DiscreteGrid`s) and the period index — receive an int32 scalar fill so
     runtime type contracts accept the probe. Every other argument receives the
-    float fill: a scalar by default, or a unit-length 1-D array with
-    `array_floats` — the retry mode for DAGs holding array-valued schedule
-    parameters (JAX clamps a scalar index into a unit-length table, and
-    equal-length interpolation rows stay consistent).
+    float fill, at the rank its annotation declares:
+
+    - a 0-d scalar by default (a scalar parameter such as a rate);
+    - a unit-length 1-D array when `name` is in `array_float_arg_names` (an
+      array-valued schedule parameter: JAX clamps a scalar index into a
+      unit-length table, and equal-length interpolation rows stay consistent).
+
+    `array_floats` forces the unit-1D fill for every float argument — the
+    coarse whole-DAG fallback kept for a DAG whose per-argument annotations do
+    not resolve.
     """
     if name in int_arg_names or name == "period":
         return jnp.asarray(round(fill), dtype=jnp.int32)
-    if array_floats:
+    if array_floats or name in array_float_arg_names:
         return jnp.full((1,), fill)
     return jnp.asarray(fill)
+
+
+def _array_float_arg_names(
+    *,
+    functions: Mapping[str, Callable[..., object]],
+) -> frozenset[str]:
+    """Leaf parameter names that must be filled as unit-1D arrays, from annotations.
+
+    A budget DAG mixes 0-d scalar parameters with array-valued schedule tables.
+    The probe reads each leaf function's parameter annotations — jaxtyping array
+    aliases carry a shape (`dim_str`) that strips to empty for a 0-d scalar
+    (`ScalarFloat`) and to a non-empty spec for an array (`Float1D`, `FloatND`,
+    `ContinuousState`). A parameter any consumer annotates as a 0-d scalar stays
+    scalar-filled; otherwise an array-typed parameter is filled unit-1D so a
+    scalar index clamps into its table. A parameter whose annotation carries no
+    resolvable shape is left to the scalar default.
+    """
+    scalar_args: set[str] = set()
+    array_args: set[str] = set()
+    for func in functions.values():
+        for arg_name, param in inspect.signature(func).parameters.items():
+            resolved = getattr(param.annotation, "__value__", param.annotation)
+            dim_str = getattr(resolved, "dim_str", None)
+            if dim_str is None:
+                continue
+            (scalar_args if dim_str.strip() == "" else array_args).add(arg_name)
+    return frozenset(array_args - scalar_args)
 
 
 def _int_code_sweeps(
@@ -1685,6 +1745,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     liquid_name: str,
     regime_name: str,
     int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
+    array_float_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
@@ -1742,7 +1803,11 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
                     for sample in (0.37, 1.63, 2.71):
                         args = [
                             _probe_fill(
-                                name, fill, int_arg_names, array_floats=array_floats
+                                name,
+                                fill,
+                                int_arg_names,
+                                array_float_arg_names,
+                                array_floats=array_floats,
                             )
                             if name not in overrides
                             else jnp.asarray(overrides[name], dtype=jnp.int32)
@@ -1990,6 +2055,7 @@ def _collect_nbegm_schedule_spec(
         ),
         regime_name=context.regime_name,
         int_arg_values=_int_probe_arg_values(context.grids),
+        array_float_arg_names=_array_float_arg_names(functions=context.functions),
         probe_failure=probe_failure,
     )
     return _NBEGMScheduleSpec(
@@ -3992,7 +4058,11 @@ def _shard_ride_carry_template(
 
 
 def _build_ride_along_carry_template(
-    *, liquid_grid: Float1D, ride_shape: tuple[int, ...], n_breakpoints: int
+    *,
+    liquid_grid: Float1D,
+    ride_shape: tuple[int, ...],
+    n_breakpoints: int,
+    carry_policy: bool,
 ) -> EGMCarry:
     """Build the all-finite case-piece carry template with ride-along axes leading.
 
@@ -4005,7 +4075,13 @@ def _build_ride_along_carry_template(
     # per jump) and publishes the jump locations (kink breakpoints leave the
     # value continuous and add no row slots), so the lowering template shares
     # both fixed shapes. Repeating the top node keeps the template rows
-    # weakly ascending and all-finite.
+    # weakly ascending and all-finite. `carry_policy` must match
+    # `_assemble_ride_carry`'s predicate (continuous-only, jump-free): that path
+    # returns a `policy` array leaf, so the template must carry the same leaf or
+    # a standalone ride-along NBEGM continuation (rolled cross-period, lowered
+    # against this template) would have a different pytree than the runtime carry
+    # (round-4 audit F1). The NNBEGM collapse strips its own runtime leaf, so its
+    # outer continuation stays policy-free against its own template.
     row = jnp.concatenate(
         [liquid_grid, jnp.repeat(liquid_grid[-1:], 2 * n_breakpoints)]
     )
@@ -4020,4 +4096,5 @@ def _build_ride_along_carry_template(
             if n_breakpoints
             else None
         ),
+        policy=jnp.zeros_like(block) if carry_policy else None,
     )

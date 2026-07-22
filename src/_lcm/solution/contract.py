@@ -369,33 +369,6 @@ class PeriodKernel(Protocol):
         ...
 
 
-@runtime_checkable
-class SimulationPolicyReader(Protocol):
-    """Solver-supplied off-grid policy read for forward simulation.
-
-    Matches the engine's one policy-read seam: given the grid-argmax actions
-    and the solver's published payload, return the (possibly) updated action
-    mapping for this regime-period. The reader owns every payload-specific
-    decision — row indexing, interpolation, branch re-decision, acceptance,
-    fallbacks — so the simulation loop never switches on payload type. A
-    reader must fall back to the grid-argmax value for any subject it cannot
-    read confidently, never fabricate one.
-    """
-
-    def __call__(
-        self,
-        *,
-        payload: SimulationPolicy,
-        optimal_actions: MappingProxyType[StateOrActionName, FloatND],
-        states: Mapping[StateOrActionName, FloatND],
-        flat_params: FlatParams,
-        period: int,
-        age: FloatND,
-    ) -> MappingProxyType[StateOrActionName, FloatND]:
-        """Return the action mapping with off-grid reads applied."""
-        ...
-
-
 @dataclass(frozen=True, kw_only=True)
 class SolutionKernels:
     """Per-period solve adapters produced by a solver."""
@@ -465,23 +438,6 @@ class Solver(ABC):
 
     def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Check the regime is in scope for this solver. Default: no-op."""
-
-    def build_simulation_policy_reader(
-        self,
-        *,
-        context: SolverBuildContext,
-    ) -> SimulationPolicyReader | None:
-        """Build the reader that consumes this solver's `sim_policy` payload.
-
-        `None` (the default) keeps the engine's built-in behavior: the DC-EGM
-        `EGMSimPolicy` read where the regime qualifies, grid argmax otherwise.
-        A solver that publishes a payload the engine cannot read (the nested
-        continuous-outer policy) supplies its own reader here, so the
-        simulation loop dispatches through the solver — never through an
-        `isinstance` switch on the payload.
-        """
-        _ = context
-        return None
 
     @property
     def requires_continuation(self) -> bool:

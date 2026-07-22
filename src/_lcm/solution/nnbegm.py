@@ -341,7 +341,21 @@ class NNBEGM(Solver):
             ),
         )
         keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
-        template = keeper_kernels.continuation_template
+        # The inner ride-along template may carry the exact-consumption `policy`
+        # leaf (round-3 audit F2) so a STANDALONE ride-along NBEGM continuation
+        # matches its policy-carrying runtime carry (round-4 audit F1). NNBEGM,
+        # though, republishes the BRIDGED outer collapse as its cross-period
+        # continuation, and that collapse is policy-free (publication reads the
+        # RAW keeper/adjuster carries, not the collapsed one). Strip the leaf from
+        # the republished template so the cross-period roll sees the same pytree
+        # as the policy-free continuation — the standalone F1 leaf must not leak
+        # into the NNBEGM continuation template.
+        inner_template = keeper_kernels.continuation_template
+        template = (
+            replace(inner_template, policy=None)
+            if isinstance(inner_template, EGMCarry)
+            else inner_template
+        )
         _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
         search = self.resolved_outer_search
         match search:
