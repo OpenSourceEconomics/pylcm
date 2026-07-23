@@ -1,8 +1,9 @@
+import dataclasses
 import functools
 import logging
 import os
 import time
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -26,6 +27,24 @@ from _lcm.utils.logging import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import BoolND, FloatND
+
+
+def _states_for_period(
+    regime: Regime, state_action_space: StateActionSpace, period: int
+) -> Mapping[str, object]:
+    """Current-period state axes, overriding age-varying states with period-t nodes.
+
+    For a regime with `AgeSpecializedGrid` states, replace the representative base
+    axis with this period's grid nodes so period-t's value function is tabulated on
+    period-t's grid (consistent with the continuation interpolation, which reads
+    V_{t+1} on period-(t+1)'s grid). Same shape as the base, so the shared compiled
+    kernel is not retraced. Age-invariant regimes return the base axis unchanged.
+    """
+    # getattr (not direct access) so a duck-typed mock regime without the field works.
+    axes = getattr(regime.solution, "period_state_axes", None)
+    if axes is not None and period in axes:
+        return {**state_action_space.states, **axes[period]}
+    return state_action_space.states
 
 
 def solve(
@@ -149,16 +168,17 @@ def solve(
             n_active_regimes=len(active_regimes),
         )
 
-        for regime_name in active_regimes:
+        for regime_name, regime in active_regimes.items():
             state_action_space = base_state_action_spaces[regime_name]
 
             # evaluate Q-function on states and actions, and maximize over
             # actions (the compiled function is the period's max_Q_over_a).
             # Pass period/age as JAX arrays (not Python scalars) so the shared
             # jax.jit function is traced once with abstract shapes, not
-            # recompiled for every distinct (period, age) pair.
+            # recompiled for every distinct (period, age) pair. Age-varying
+            # (`AgeSpecializedGrid`) states get this period's grid nodes.
             V_arr = compiled_functions[(regime_name, period)](
-                **state_action_space.states,
+                **_states_for_period(regime, state_action_space, period),
                 **state_action_space.actions,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **flat_params[regime_name],
@@ -609,6 +629,15 @@ def _raise_at(
         {**regime.resolved_fixed_params, **regime_params}
     )
     state_action_space = regime.solution.state_action_space(regime_params=regime_params)
+    # The live solve tabulated period t on period t's grid, so the diagnostic has to as
+    # well — otherwise a moving current-state grid reports U/F/E/Q fractions on state
+    # values the failing solve never saw (audit F5).
+    state_action_space = dataclasses.replace(
+        state_action_space,
+        states=MappingProxyType(
+            dict(_states_for_period(regime, state_action_space, row.period))
+        ),
+    )
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
         period=row.period,
         regimes=regimes,
