@@ -16,7 +16,7 @@ _PARAMS = {"discount_factor": 0.95, "alive": {}}
 
 
 def _solve_period0_alive(model) -> jnp.ndarray:
-    return model.solve(params=_PARAMS, log_level="off")[0]["alive"]
+    return model.solve(params=_PARAMS, log_level="debug")[0]["alive"]
 
 
 def test_negm_solves_with_a_two_continuous_state_terminal_bequest():

@@ -215,7 +215,7 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
 @pytest.fixture(scope="module")
 def matched_negm_value() -> FloatND:
     """The matched 3-period NEGM model's period-0 `alive` value array."""
-    return _build_matched_negm_model().solve(params=_PARAMS, log_level="off")[0][
+    return _build_matched_negm_model().solve(params=_PARAMS, log_level="debug")[0][
         "alive"
     ]
 
@@ -224,7 +224,7 @@ def matched_negm_value() -> FloatND:
 def oracle_value() -> FloatND:
     """The 4-period brute oracle's period-0 `alive` value array."""
     return kinked_toy_oracle.build_model().solve(
-        params=kinked_toy_oracle.PARAMS, log_level="off"
+        params=kinked_toy_oracle.PARAMS, log_level="debug"
     )[0]["alive"]
 
 
@@ -302,7 +302,7 @@ def test_negm_weakly_improves_on_the_matched_brute_value(
     """
     brute_value = _build_matched_brute_model(
         n_consumption=n_consumption, n_investment=n_investment
-    ).solve(params=_PARAMS, log_level="off")[0]["alive"]
+    ).solve(params=_PARAMS, log_level="debug")[0]["alive"]
     improvement = matched_negm_value - brute_value
     assert bool(jnp.all(jnp.isfinite(brute_value)))
     assert float(jnp.min(improvement)) >= -1e-4
@@ -323,7 +323,7 @@ def test_brute_value_converges_up_to_negm_as_grids_refine(
     for n_points in (15, 25, 45, 80):
         brute_value = _build_matched_brute_model(
             n_consumption=n_points, n_investment=n_points
-        ).solve(params=_PARAMS, log_level="off")[0]["alive"]
+        ).solve(params=_PARAMS, log_level="debug")[0]["alive"]
         max_gaps.append(float(jnp.max(jnp.abs(matched_negm_value - brute_value))))
     # The finest grid is strictly closer to NEGM than the coarsest (overall
     # convergence), and lands within a tight band of NEGM everywhere.
@@ -344,9 +344,9 @@ def test_outer_batch_size_leaves_value_function_unchanged(outer_batch_size: int)
     by two solves that agree only in being NaN, which is how a solver that gave
     up on every cell would look.
     """
-    base = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")
+    base = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="debug")
     chunked = negm_kinked_toy.build_model(outer_batch_size=outer_batch_size).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
     assert base.keys() == chunked.keys()
     for period in base:
