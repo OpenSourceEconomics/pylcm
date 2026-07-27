@@ -26,12 +26,17 @@ from lcm.typing import BoolND, Float1D, Int1D, ScalarInt
 NO_RUN: int = -1
 
 
-def monotone_run_ids(*, endog_grid: Float1D, dead: BoolND) -> Int1D:
+def monotone_run_ids(
+    *, endog_grid: Float1D, dead: BoolND, segment_id: Float1D | Int1D | None = None
+) -> Int1D:
     """Label each candidate with the maximal x-monotone run it belongs to.
 
     Args:
         endog_grid: Candidate endogenous grid points in producer (savings) order.
         dead: Per-candidate dead mask; a dead candidate joins no run.
+        segment_id: Optional per-candidate branch label. When supplied, a change
+            of label also ends a run, so explicit topology can only split runs
+            further — never bridge a fold the resource order already separates.
 
     Returns:
         Per-candidate run label, consecutive from `0` over the live candidates in
@@ -40,7 +45,9 @@ def monotone_run_ids(*, endog_grid: Float1D, dead: BoolND) -> Int1D:
         so `count_linked_runs` does not count it.
 
     """
-    continues = _link_continues_run(endog_grid=endog_grid, dead=dead)
+    continues = _link_continues_run(
+        endog_grid=endog_grid, dead=dead, segment_id=segment_id
+    )
     # A live candidate opens a run unless the link from its predecessor continues
     # one. Dead candidates open nothing, so labels stay gap-free over live runs.
     continues_from_predecessor = jnp.concatenate(
@@ -51,7 +58,9 @@ def monotone_run_ids(*, endog_grid: Float1D, dead: BoolND) -> Int1D:
     return jnp.where(dead, NO_RUN, run_id).astype(jnp.int32)
 
 
-def count_linked_runs(*, endog_grid: Float1D, dead: BoolND) -> ScalarInt:
+def count_linked_runs(
+    *, endog_grid: Float1D, dead: BoolND, segment_id: Float1D | Int1D | None = None
+) -> ScalarInt:
     """Count the runs that carry at least one link.
 
     A run of a single candidate spans no interval and contributes no value
@@ -61,22 +70,32 @@ def count_linked_runs(*, endog_grid: Float1D, dead: BoolND) -> ScalarInt:
     Args:
         endog_grid: Candidate endogenous grid points in producer (savings) order.
         dead: Per-candidate dead mask; a dead candidate joins no run.
+        segment_id: Optional per-candidate branch label; a change of label ends a
+            run.
 
     Returns:
         Number of runs holding at least one live, strictly increasing link.
 
     """
-    continues = _link_continues_run(endog_grid=endog_grid, dead=dead)
+    continues = _link_continues_run(
+        endog_grid=endog_grid, dead=dead, segment_id=segment_id
+    )
     # A linked run is counted at its first link: one that no live link precedes.
     preceded = jnp.concatenate([jnp.zeros((1,), dtype=jnp.bool_), continues[:-1]])
     return jnp.sum(continues & ~preceded, dtype=jnp.int32)
 
 
-def _link_continues_run(*, endog_grid: Float1D, dead: BoolND) -> BoolND:
+def _link_continues_run(
+    *, endog_grid: Float1D, dead: BoolND, segment_id: Float1D | Int1D | None = None
+) -> BoolND:
     """Return, per consecutive pair, whether it continues the same run.
 
-    A pair continues a run when both endpoints are live and resources strictly
-    increase across it. Equal abscissae give a zero-width link, which carries no
+    A pair continues a run when both endpoints are live, resources strictly
+    increase across it, and — where explicit labels are supplied — both endpoints
+    carry the same label. Equal abscissae give a zero-width link, which carries no
     affine value line, so they break the run rather than joining it.
     """
-    return (~dead[:-1]) & (~dead[1:]) & (endog_grid[1:] > endog_grid[:-1])
+    continues = (~dead[:-1]) & (~dead[1:]) & (endog_grid[1:] > endog_grid[:-1])
+    if segment_id is not None:
+        continues = continues & (segment_id[1:] == segment_id[:-1])
+    return continues
