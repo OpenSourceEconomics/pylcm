@@ -294,15 +294,11 @@ def process_regimes(
     # the union of the source and its reachable carry targets' fixed params.
     regime_to_params_template = MappingProxyType(
         {
-            regime_name: create_regime_params_template(
-                user_regime,
-                representative_age=(
-                    ages.period_to_age(regimes_to_active_periods[regime_name][0])
-                    if regimes_to_active_periods[regime_name]
-                    else None
-                ),
-            )
-            for regime_name, user_regime in user_regimes.items()
+            # The representative regime already carries first-active concrete
+            # functions and representative-age grids, so the template is built
+            # from it and needs no age argument of its own.
+            regime_name: create_regime_params_template(user_regime)
+            for regime_name, user_regime in representative_user_regimes.items()
         }
     )
     regime_to_granular_param_expansions = MappingProxyType(
@@ -335,16 +331,8 @@ def process_regimes(
     # grid, so every grid-derived call below is age-invariant.
     for regime_name, user_regime in representative_user_regimes.items():
         spec = specs[regime_name]
-        # The representative regime already carries first-active concrete functions,
-        # so the parameter template no longer needs to know about age specialization.
-        regime_params_template = create_regime_params_template(user_regime)
-        granular_param_expansions = _granular_param_expansions(
-            nested_transitions_by_phase=(
-                solve_nested_transitions[regime_name],
-                simulate_nested_transitions[regime_name],
-            ),
-            regime_params_template=regime_params_template,
-        )
+        regime_params_template = regime_to_params_template[regime_name]
+        granular_param_expansions = regime_to_granular_param_expansions[regime_name]
 
         solution = _build_solution_phase(
             spec=spec,
