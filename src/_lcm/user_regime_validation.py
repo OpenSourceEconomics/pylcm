@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
 
-from _lcm.certainty_equivalent import PowerMean
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
@@ -24,7 +23,6 @@ from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import GridSearch
-from lcm.temporal_aggregation import H_epstein_zin
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
