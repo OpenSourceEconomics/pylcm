@@ -135,14 +135,23 @@ def get_full_model(
     solver: Literal["brute_force", "dcegm"],
     n_periods: int,
     *,
-    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "fues",
+    upper_envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] | None = None,
 ) -> Model:
-    """Build the three-regime worker/retirement/dead model for the requested solver."""
+    """Build the three-regime worker/retirement/dead model for the requested solver.
+
+    `upper_envelope=None` keeps `DCEGM_SOLVER`'s backend, so a model built here
+    is comparable to one built directly from the shared regimes. Naming a
+    backend overrides it for tests that compare backends against each other.
+    """
     if solver == "brute_force":
         return base.get_model(n_periods)
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
-    dcegm_solver = dataclasses.replace(DCEGM_SOLVER, upper_envelope=upper_envelope)
+    dcegm_solver = (
+        DCEGM_SOLVER
+        if upper_envelope is None
+        else dataclasses.replace(DCEGM_SOLVER, upper_envelope=upper_envelope)
+    )
     return Model(
         regimes={
             "working_life": dcegm_working_life.replace(
