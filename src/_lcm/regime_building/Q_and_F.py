@@ -1056,6 +1056,10 @@ def get_Q_and_F_collective(
     co_map_state_names: tuple[StateName, ...] = (),
     value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
     same_period_refs: Mapping[str, ResolvedSamePeriodRef] = MappingProxyType({}),
+    continuation_functions: EconFunctionsMapping | None = None,
+    flow_transitions: TransitionFunctionsMapping | None = None,
+    flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> QAndFFunction:
     """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
 
@@ -1117,6 +1121,24 @@ def get_Q_and_F_collective(
             mapping of reference regime names to their CURRENT-period V arrays,
             supplied per period by the solve loop (which orders the period's
             regimes so references are solved first).
+        continuation_functions: Function pool the continuation sub-DAG (per-target
+            state transitions and stochastic weights) is resolved against. `None`
+            (the solve phase) defaults to `functions`; the simulate phase passes
+            the SOLVE pool here so each stakeholder compares actions under the
+            perceived law while the world is realized under the true one. Exactly
+            as `get_Q_and_F` — the collective builder must not drop the phase split.
+        flow_transitions: Transition bundle the *flow* `next_<state>` nodes (and the
+            E2 value-constraint machinery) are taken from. `None` (solve) defaults
+            to `transitions`; the simulate phase passes the SIMULATE transitions so
+            the flow sub-DAG is closed under the simulate pool supplied as
+            `functions`.
+        flow_stochastic_transition_names: Stochastic names to exclude when merging
+            `flow_transitions`. `None` defaults to `stochastic_transition_names`; a
+            state may be stochastic in one phase and deterministic in the other.
+        next_state_names: `next_<state>` names a within-period per-stakeholder
+            utility or feasibility may legitimately read (the NEGM service-flow
+            pattern); pruned when unread, so a collective regime with no such read
+            is unchanged.
 
     Returns:
         A function computing the stacked per-stakeholder state-action values
@@ -1124,10 +1146,27 @@ def get_Q_and_F_collective(
         non-terminal collective period.
 
     """
+    # Phase split, mirroring get_Q_and_F: in the solve phase the flow and
+    # continuation roles coincide (all `None`), so this is byte-identical to the
+    # prior single-pool build; only the simulate phase passes them apart. The flow
+    # (per-stakeholder utility, feasibility, E2 value constraints) pairs
+    # `flow_transitions` with the decision `functions` pool; the continuation
+    # prices the target V under the perceived law, pairing `transitions` with
+    # `continuation_pool`. Dropping any of these — as the collective branch did —
+    # yields a sub-DAG that is neither phase and can reverse the household argmax.
+    continuation_pool = (
+        functions if continuation_functions is None else continuation_functions
+    )
+    flow_pool = transitions if flow_transitions is None else flow_transitions
+    flow_stochastic_names = (
+        stochastic_transition_names
+        if flow_stochastic_transition_names is None
+        else flow_stochastic_transition_names
+    )
     deterministic_transitions, conflicting_deterministic_transition_names = (
         _get_deterministic_transitions(
-            transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
+            transitions=flow_pool,
+            stochastic_transition_names=flow_stochastic_names,
         )
     )
     U_and_F_by_stakeholder = {
@@ -1139,6 +1178,8 @@ def get_Q_and_F_collective(
                 conflicting_deterministic_transition_names
             ),
             utility_name=f"utility_{stakeholder}",
+            stochastic_transition_names=flow_stochastic_names,
+            next_state_names=next_state_names,
         )
         for stakeholder in stakeholders
     }
@@ -1153,13 +1194,16 @@ def get_Q_and_F_collective(
 
     for target_regime_name in period_targets:
         bundle = transitions[target_regime_name]
+        # Continuation helpers read `continuation_pool` (the perceived / solve pool),
+        # NOT `functions`: the continuation is priced under the agent's perceived law,
+        # helpers included — mirroring get_Q_and_F.
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
-            functions=functions,
+            functions=continuation_pool,
             transitions=bundle,
         )
         next_stochastic_states_weights[target_regime_name] = (
             get_next_stochastic_weights_function(
-                functions=functions,
+                functions=continuation_pool,
                 transitions=bundle,
                 stochastic_transition_names=stochastic_transition_names,
                 regime_name=target_regime_name,

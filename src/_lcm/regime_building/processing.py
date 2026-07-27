@@ -4485,6 +4485,24 @@ def _build_Q_and_F_per_period(
                 co_map_state_names=co_map_state_names,
                 value_constraints=value_constraints,
                 same_period_refs=same_period_refs,
+                # Thread the flow/continuation phase split, exactly as the singleton
+                # branch below: dropping these made the collective simulator build
+                # current flow from the SOLVE transitions and the continuation from
+                # the SIMULATE/decision pool — a hybrid sub-DAG that can reverse the
+                # household argmax (collective-regimes-branch-2 audit F1). `None` /
+                # solve-phase values are a passthrough, so the solve build is
+                # unchanged.
+                continuation_functions=(
+                    cast(
+                        "EconFunctionsMapping",
+                        resolve_specialized_nodes(continuation_functions, age),
+                    )
+                    if continuation_functions is not None
+                    else None
+                ),
+                flow_transitions=flow_transitions,
+                flow_stochastic_transition_names=flow_stochastic_transition_names,
+                next_state_names=next_state_names,
             )
             continue
         built[group_key] = get_Q_and_F(
