@@ -68,8 +68,11 @@ class UpperEnvelopeBackend(Protocol):
         value: Float1D,
         marginal_utility: Float1D,
         savings: Float1D,
-    ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
-        """Return refined rows, the kept-point count, and read support.
+    ) -> (
+        tuple[Float1D, Float1D, Float1D, ScalarInt]
+        | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
+    ):
+        """Return refined rows, the kept-point count, and optional read support.
 
         The supgradient `marginal_utility` carries $\\mu = \\partial v /
         \\partial R$ per candidate — the exact value-row slope by the envelope
@@ -81,8 +84,10 @@ class UpperEnvelopeBackend(Protocol):
         (the rows then hold a truncated prefix of the envelope). The final flag
         certifies the row for the off-grid simulation read: `True` only when the
         row's linear span coincides with the live-covered domain (no compacted
-        coverage gap). MSS computes it; the other backends return `False`
-        unconditionally — the replay gate admits only MSS, so the flag is
+        coverage gap). A backend that cannot certify the span omits the flag
+        entirely and returns the four-element row; the step then treats the read
+        as supported. MSS computes it; the other five-element backends return
+        `False` unconditionally — the replay gate admits only MSS, so the flag is
         consumed nowhere else and `False` is the fail-closed value.
         """
         ...

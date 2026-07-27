@@ -354,15 +354,14 @@ def test_rfc_bracket_finder_matches_full_envelope_interpolation(x_query):
     grid, policy, value, marginal = _crossing_segments_candidates()
     n_pad = 12
 
-    refined_grid, refined_policy, refined_value, n_kept, _ = get_upper_envelope(
-        solver=solver, n_refined=n_pad
-    )(
+    refined = get_upper_envelope(solver=solver, n_refined=n_pad)(
         endog_grid=grid,
         policy=policy,
         value=value,
         marginal_utility=marginal,
         savings=grid - policy,
     )
+    refined_grid, refined_policy, refined_value, n_kept = refined[:4]
 
     query = jnp.asarray(x_query)
     ref_value = interp_on_padded_grid(x_query=query, xp=refined_grid, fp=refined_value)
