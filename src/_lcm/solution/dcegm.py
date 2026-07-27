@@ -163,7 +163,7 @@ class DCEGM(Solver):
       Use `"exact"` unless you are reproducing the published method.
     """
 
-    envelope_max_runs: int = 4
+    envelope_max_runs: int = 24
     """Fold capacity of the `"exact"` upper envelope.
 
     The candidate chain is split into maximal resource-increasing runs; this
@@ -172,10 +172,10 @@ class DCEGM(Solver):
     chain exceeding it poisons the row and surfaces through the solve loop's NaN
     diagnostics instead of silently dropping a branch.
 
-    Cost grows roughly quadratically in this value, because the envelope tests
-    every pair of runs active on a cell. `4` spans the secondary kinks a
-    discrete-continuous model typically produces; raise it only for a model that
-    genuinely folds more, and expect to pay for it.
+    Work grows roughly quadratically in this value and memory linearly, because
+    the envelope walk visits each cell's active runs once per sub-cell it opens.
+    `24` covers the fold counts pylcm's own NEGM and DC-EGM models realize, with
+    headroom; lower it for a model known to stay concave to buy back some speed.
     """
 
     fues_jump_thresh: float = 2.0
@@ -211,8 +211,18 @@ class DCEGM(Solver):
     rfc_search_radius: int = 10
     """Number of neighbors on each side the rooftop-cut dominance test inspects."""
 
-    refined_grid_factor: float = 1.2
-    """Headroom factor sizing the refined (NaN-padded) envelope arrays."""
+    refined_grid_factor: float = 2.0
+    """Headroom factor sizing the refined (NaN-padded) envelope arrays.
+
+    The refined row holds one slot per envelope point, and every kink costs two
+    (the outgoing owner's reading, then the incoming one). How often a row kinks
+    is a property of the candidate cloud rather than of the grid, so this is
+    headroom, not a bound: a row needing more slots than it has reports overflow
+    and is NaN-poisoned rather than silently truncated. The default is sized for
+    the `"exact"` upper envelope, which emits every ownership change — including
+    the interior-only and node-aligned ones the fast scans miss — and therefore
+    kinks more often than they do.
+    """
 
     n_constrained_points: int = 20
     """Number of closed-form points on the credit-constrained segment."""

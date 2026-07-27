@@ -14,11 +14,17 @@ The construction here is therefore driven by *cells*, not by nodes:
 2. sorting the live abscissae partitions resources into node cells. Inside a node
    cell no run starts or ends, so each run contributes at most one link and the
    envelope there is the maximum of at most `max_runs` affine pieces;
-3. those pieces cross at most pairwise, and every crossing certified to lie
-   strictly inside the cell splits it further into sub-cells;
-4. each sub-cell is an open interval on which one link owns the envelope. The
-   owner is read at an interior representative — the midpoint — which is what
-   recovers a branch that only ties at its boundaries.
+3. the envelope of those pieces is traced left to right: starting from the link
+   owning the cell's left edge, the next boundary is the earliest point at which
+   another link overtakes the current owner. Since a link can take over only once
+   the walk yields at most `max_runs` sub-cells with their owners, and a branch
+   owning only an interior subinterval is picked up as one of them;
+4. each sub-cell is an open interval on which one link owns the envelope.
+
+Walking is what keeps the cost linear in the branch count: splitting a cell at
+every pairwise crossing instead would give `max_runs**2` sub-cells and cost a
+further `max_runs` to find each one's owner, which is what makes a capacity wide
+enough for a repeatedly folding model unaffordable.
 
 Emission then follows from ownership alone. At a sub-cell boundary the readings
 from the owner on either side are compared: equal readings are one point of a
@@ -28,11 +34,18 @@ policy discontinuity in a weakly ascending row. A crossing that coincides with a
 node needs no special case — it is simply a boundary whose two sides have
 different owners.
 
-Structural decisions use `certified_sign.certified_margin_sign`, so they are
-exact with respect to the represented inputs and invariant to a common value
-level. Where a sign cannot be certified, or the realized run count exceeds the
-static capacity, the row is NaN-poisoned and reported as an overflow so the
-solve loop's diagnostics name the offending cell instead of publishing a guess.
+The walk locates boundaries in ordinary arithmetic, so what it proposes is
+checked rather than trusted: at every sub-cell boundary the leading link is
+established with `certified_sign.certified_margin_sign` and must be one of the
+two sub-cells meeting there. A link that led at a boundary without owning either
+side would be one the walk had missed, and since the links are affine, a link
+that leads at neither end of a sub-cell cannot lead inside it — so the check
+covers the whole cell, not just its boundaries. Certification is exact with
+respect to the represented inputs and invariant to a common value level. Where a
+sign cannot be certified, where the leading link owns neither side, or where the
+realized run count exceeds the static capacity, the row is NaN-poisoned and
+reported as an overflow so the solve loop's diagnostics name the offending cell
+instead of publishing a guess.
 """
 
 import jax
@@ -48,7 +61,7 @@ from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarBool, Scala
 # Static capacity for the number of x-monotone runs a candidate chain may fold
 # into. One discrete action can fold arbitrarily often, so this is a validated
 # capacity, never an assumed bound: exceeding it poisons the row.
-DEFAULT_MAX_RUNS: int = 8
+DEFAULT_MAX_RUNS: int = 24
 
 
 def refine_envelope_exact(
@@ -216,14 +229,11 @@ def _sub_cells_per_node_cell(
     value: Float1D,
     max_runs: int,
 ) -> _SubCells:
-    """Split every node cell at its certified interior crossings and pick owners.
+    """Trace the envelope across every node cell and check the trace.
 
     Ownership is decided on value alone; the policy is read afterwards from the
     owning link, so it never influences which branch wins.
     """
-    raw_pair_a, raw_pair_b = jnp.triu_indices(max_runs, k=1)
-    pair_a = raw_pair_a.astype(jnp.int32)
-    pair_b = raw_pair_b.astype(jnp.int32)
 
     def split(
         left: FloatND,
@@ -232,45 +242,35 @@ def _sub_cells_per_node_cell(
         low: IntND,
         high: IntND,
     ) -> tuple[FloatND, FloatND, IntND, IntND, BoolND, ScalarBool]:
-        crossing, crossing_live, unresolved = _interior_crossings(
+        bounds, owner = _walk_envelope(
             left=left,
             right=right,
             live=live,
             low=low,
             high=high,
-            pair_a=pair_a,
-            pair_b=pair_b,
             endog_grid=endog_grid,
             value=value,
+            max_runs=max_runs,
         )
-        # Crossings that do not exist collapse onto the right boundary, so the
-        # sub-cells they would open have zero width and drop out.
-        bounds = jnp.concatenate(
-            [
-                left[None],
-                jnp.sort(jnp.where(crossing_live, crossing, right)),
-                right[None],
-            ]
-        )
-        sub_left = bounds[:-1]
-        sub_right = bounds[1:]
-        owner, owner_found, owner_unresolved = _owner_of_each_sub_cell(
-            sub_left=sub_left,
-            sub_right=sub_right,
+        unresolved = _fails_boundary_check(
+            bounds=bounds,
+            owner=owner,
             live=live,
             low=low,
             high=high,
             endog_grid=endog_grid,
             value=value,
         )
-        sub_live = (sub_right > sub_left) & owner_found
+        sub_left = bounds[:-1]
+        sub_right = bounds[1:]
+        sub_live = (sub_right > sub_left) & jnp.any(live)
         return (
             sub_left,
             sub_right,
             low[owner],
             high[owner],
             sub_live,
-            unresolved | owner_unresolved,
+            unresolved,
         )
 
     sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.vmap(
@@ -287,82 +287,95 @@ def _sub_cells_per_node_cell(
     )
 
 
-def _interior_crossings(
+def _walk_envelope(
     *,
     left: FloatND,
     right: FloatND,
     live: BoolND,
     low: IntND,
     high: IntND,
-    pair_a: IntND,
-    pair_b: IntND,
     endog_grid: Float1D,
     value: Float1D,
-) -> tuple[FloatND, BoolND, ScalarBool]:
-    """Find the crossings certified to lie strictly inside one node cell."""
-    both_live = live[pair_a] & live[pair_b]
+    max_runs: int,
+) -> tuple[Float1D, Int1D]:
+    """Trace one node cell's envelope from its left edge to its right edge.
 
-    def margin_sign_at(x_query: FloatND) -> IntND:
-        return certified_margin_sign(
-            a_x0=endog_grid[low[pair_a]],
-            a_x1=endog_grid[high[pair_a]],
-            a_v0=value[low[pair_a]],
-            a_v1=value[high[pair_a]],
-            b_x0=endog_grid[low[pair_b]],
-            b_x1=endog_grid[high[pair_b]],
-            b_v0=value[low[pair_b]],
-            b_v1=value[high[pair_b]],
-            x_query=x_query,
+    Returns:
+        Tuple of the `max_runs + 1` sub-cell boundaries in ascending order and
+        the `max_runs` owning link indices. Once no link overtakes the current
+        owner the remaining boundaries sit on the cell's right edge, so the
+        sub-cells they would open have zero width.
+
+    """
+    at_left = jnp.where(live, _line_value(low, high, left, endog_grid, value), -jnp.inf)
+    at_right = jnp.where(
+        live, _line_value(low, high, right, endog_grid, value), -jnp.inf
+    )
+    # The link leading at the left edge starts the walk; a tie there is broken by
+    # the link that is higher at the right edge, which is the one owning ground
+    # to the right of the edge.
+    leads_at_left = at_left == jnp.max(at_left)
+    first = jnp.argmax(jnp.where(leads_at_left, at_right, -jnp.inf)).astype(jnp.int32)
+
+    def advance(
+        carry: tuple[FloatND, IntND], _step: None
+    ) -> tuple[tuple[FloatND, IntND], tuple[FloatND, IntND]]:
+        x_owned_from, owner = carry
+        margin_left = at_left[owner] - at_left
+        margin_right = at_right[owner] - at_right
+        span = margin_left - margin_right
+        safe_span = jnp.where(span == 0.0, 1.0, span)
+        crossing = left + (margin_left / safe_span) * (right - left)
+        # A link takes over where it crosses the owner and stays above it, which
+        # inside this cell is exactly a crossing it enters from below.
+        overtakes = (
+            live & (margin_right < 0.0) & (crossing > x_owned_from) & (crossing < right)
         )
+        candidate = jnp.where(overtakes, crossing, jnp.inf)
+        successor = jnp.argmin(candidate).astype(jnp.int32)
+        found = jnp.isfinite(candidate[successor])
+        next_x = jnp.where(found, candidate[successor], right)
+        next_owner = jnp.where(found, successor, owner).astype(jnp.int32)
+        return (next_x, next_owner), (next_x, next_owner)
 
-    sign_left = margin_sign_at(left)
-    sign_right = margin_sign_at(right)
-    unresolved = jnp.any(
-        both_live & ((sign_left == UNRESOLVED_SIGN) | (sign_right == UNRESOLVED_SIGN))
+    _carry, (later_bounds, later_owners) = jax.lax.scan(
+        advance, (left, first), None, length=max_runs - 1
     )
-    # A crossing lies strictly inside exactly when the two ends are certified to
-    # have opposite strict signs; a zero at either end is that node's own event.
-    crosses = both_live & (sign_left * sign_right == -1)
-
-    margin_left = _line_value(low[pair_a], high[pair_a], left, endog_grid, value) - (
-        _line_value(low[pair_b], high[pair_b], left, endog_grid, value)
-    )
-    margin_right = _line_value(low[pair_a], high[pair_a], right, endog_grid, value) - (
-        _line_value(low[pair_b], high[pair_b], right, endog_grid, value)
-    )
-    span = margin_left - margin_right
-    safe_span = jnp.where(span == 0.0, 1.0, span)
-    crossing = left + (margin_left / safe_span) * (right - left)
-    inside = crosses & (crossing > left) & (crossing < right)
-    return crossing, inside, unresolved
+    bounds = jnp.concatenate([left[None], later_bounds, right[None]])
+    owners = jnp.concatenate([first[None], later_owners])
+    return bounds, owners
 
 
-def _owner_of_each_sub_cell(
+def _fails_boundary_check(
     *,
-    sub_left: FloatND,
-    sub_right: FloatND,
+    bounds: Float1D,
+    owner: Int1D,
     live: BoolND,
     low: IntND,
     high: IntND,
     endog_grid: Float1D,
     value: Float1D,
-) -> tuple[IntND, BoolND, ScalarBool]:
-    """Pick the run owning each sub-cell by reading an interior representative."""
-    midpoint = 0.5 * (sub_left + sub_right)
+) -> ScalarBool:
+    """Report whether the traced envelope fails its certificate at any boundary.
+
+    At each boundary the leading link is established by a certified comparison
+    against its closest competitor, and it must own one of the two sub-cells
+    meeting there. A link leading at a boundary it owns neither side of is one
+    the walk passed over, and because the links are affine, a link leading at
+    neither end of a sub-cell cannot lead inside it — so boundaries alone settle
+    the whole cell.
+    """
     readings = jax.vmap(
         lambda x: jnp.where(
             live, _line_value(low, high, x, endog_grid, value), -jnp.inf
         )
-    )(midpoint)
-
-    best = jnp.argmax(readings, axis=1)
-    found = jnp.any(jnp.isfinite(readings), axis=1)
-    without_best = readings.at[jnp.arange(readings.shape[0]), best].set(-jnp.inf)
-    runner_up = jnp.argmax(without_best, axis=1)
+    )(bounds)
+    best = jnp.argmax(readings, axis=1).astype(jnp.int32)
+    contested = jnp.arange(readings.shape[0])
+    without_best = readings.at[contested, best].set(-jnp.inf)
+    runner_up = jnp.argmax(without_best, axis=1).astype(jnp.int32)
     has_runner_up = jnp.any(jnp.isfinite(without_best), axis=1)
 
-    # The plain maximum is only published once the winner is certified against
-    # its closest competitor; an exact tie is resolved by the lower run index.
     order = certified_margin_sign(
         a_x0=endog_grid[low[best]],
         a_x1=endog_grid[high[best]],
@@ -372,13 +385,23 @@ def _owner_of_each_sub_cell(
         b_x1=endog_grid[high[runner_up]],
         b_v0=value[low[runner_up]],
         b_v1=value[high[runner_up]],
-        x_query=midpoint,
+        x_query=bounds,
     )
-    contested = found & has_runner_up
-    tied = contested & (order == 0)
-    owner = jnp.where(tied, jnp.minimum(best, runner_up), best).astype(jnp.int32)
-    unresolved = jnp.any(contested & (order == UNRESOLVED_SIGN))
-    return owner, found, unresolved
+    # The certified leader at a boundary is the plain leader only once it is
+    # certified above its closest competitor; an exact tie leaves both leading.
+    leader = jnp.where(order == 0, jnp.minimum(best, runner_up), best)
+    certified_leader = jnp.where(order == 0, jnp.maximum(best, runner_up), best)
+
+    # Boundary `j` is shared by the sub-cells owned by `owner[j - 1]` and
+    # `owner[j]`; the outer boundaries repeat their single neighbour.
+    before = owner[jnp.clip(jnp.arange(bounds.shape[0]) - 1, 0, owner.shape[0] - 1)]
+    after = owner[jnp.clip(jnp.arange(bounds.shape[0]), 0, owner.shape[0] - 1)]
+    owns_a_side = ((leader == before) | (leader == after)) | (
+        (certified_leader == before) | (certified_leader == after)
+    )
+
+    uncertified = has_runner_up & (order == UNRESOLVED_SIGN)
+    return jnp.any(jnp.any(live) & (uncertified | ~owns_a_side))
 
 
 def _emit_envelope(

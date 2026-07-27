@@ -88,7 +88,7 @@ def test_dcegm_config_constructs():
     cfg = _valid_dcegm()
     assert cfg.continuous_state == "wealth"
     assert cfg.upper_envelope == "exact"
-    assert cfg.envelope_max_runs == 4
+    assert cfg.envelope_max_runs == 24
 
 
 def test_model_with_dcegm_solver_builds():
