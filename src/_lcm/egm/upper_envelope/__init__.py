@@ -51,6 +51,7 @@ from _lcm.egm.upper_envelope.mss import (
     refine_envelope_with_support as refine_envelope_with_support_mss,
 )
 from _lcm.egm.upper_envelope.rfc import refine_envelope as refine_envelope_rfc
+from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
 from lcm.solvers import DCEGM
 from lcm.typing import Float1D, ScalarBool, ScalarFloat, ScalarInt
 
@@ -134,6 +135,9 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             )
 
         return fues_backend
+
+    if solver.upper_envelope == "exact":
+        return _build_exact_backend(solver=solver, n_refined=n_refined)
 
     if solver.upper_envelope == "rfc":
 
@@ -412,8 +416,78 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
         return mss_bracket_finder
 
+    if solver.upper_envelope == "exact":
+        return _build_exact_bracket_finder(solver=solver, n_refined=n_refined)
+
     msg = f"Unknown upper-envelope backend: {solver.upper_envelope!r}."
     raise ValueError(msg)
+
+
+def _build_exact_backend(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend:
+    """Build the exact segment-envelope backend."""
+
+    def exact_backend(
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal_utility: Float1D,
+        savings: Float1D,
+    ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+        """Build the exact segment envelope of the candidate cloud.
+
+        The construction reads its topology off the candidate order and its
+        geometry off the value links, so neither the candidate supgradient nor
+        the exogenous source savings are consumed.
+        """
+        del marginal_utility, savings
+        return refine_envelope_exact(
+            endog_grid=endog_grid,
+            policy=policy,
+            value=value,
+            n_refined=n_refined,
+            max_runs=solver.envelope_max_runs,
+        )
+
+    return exact_backend
+
+
+def _build_exact_bracket_finder(
+    *, solver: DCEGM, n_refined: int
+) -> Callable[..., QueryBracket]:
+    """Build the single-query bracket finder backed by the exact envelope."""
+
+    def exact_bracket_finder(
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal_utility: Float1D,
+        savings: Float1D,
+        x_query: ScalarFloat,
+    ) -> QueryBracket:
+        """Locate the query bracket from the exact segment envelope.
+
+        Builds the same full NaN-padded row the full-envelope path publishes and
+        slices the bracketing pair, so the two paths cannot diverge.
+        """
+        del marginal_utility, savings
+        refined_grid, refined_policy, refined_value, n_kept = refine_envelope_exact(
+            endog_grid=endog_grid,
+            policy=policy,
+            value=value,
+            n_refined=n_refined,
+            max_runs=solver.envelope_max_runs,
+        )
+        return _bracket_from_refined_row(
+            refined_grid=refined_grid,
+            refined_policy=refined_policy,
+            refined_value=refined_value,
+            n_kept=n_kept,
+            x_query=x_query,
+        )
+
+    return exact_bracket_finder
 
 
 def _bracket_from_refined_row(

@@ -339,6 +339,10 @@ def test_outer_batch_size_leaves_value_function_unchanged(outer_batch_size: int)
     processing the outer-grid nodes in chunks of `outer_batch_size` instead of all
     at once reduces them in the same order, so the solved value function is
     bit-identical — the knob trades parallelism for bounded memory only.
+
+    Both solves must also be finite throughout. Equality alone would be satisfied
+    by two solves that agree only in being NaN, which is how a solver that gave
+    up on every cell would look.
     """
     base = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")
     chunked = negm_kinked_toy.build_model(outer_batch_size=outer_batch_size).solve(
@@ -347,7 +351,11 @@ def test_outer_batch_size_leaves_value_function_unchanged(outer_batch_size: int)
     assert base.keys() == chunked.keys()
     for period in base:
         for regime in base[period]:
+            solved = np.asarray(base[period][regime])
+            assert np.all(np.isfinite(solved)), (
+                f"period {period}, regime {regime!r} is not solved throughout"
+            )
             np.testing.assert_array_equal(
                 np.asarray(chunked[period][regime]),
-                np.asarray(base[period][regime]),
+                solved,
             )

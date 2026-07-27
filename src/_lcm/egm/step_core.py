@@ -44,6 +44,10 @@ from lcm.typing import (
     UserFunction,
 )
 
+# Refined-row fields every envelope backend returns, ahead of the optional
+# read-support verdict.
+_REFINED_ROW_FIELDS: int = 4
+
 # Smallest constrained-segment action as a fraction of the segment's span.
 # The constrained candidates are geometrically spaced from this offset toward
 # the borrowing limit (additive, so a non-positive limit stays well-defined).
@@ -108,7 +112,11 @@ class _EgmKernelPieces:
     build_H_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
     """Closure assembling the Bellman aggregator's keyword arguments."""
 
-    refine: Callable[..., tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]]
+    refine: Callable[
+        ...,
+        tuple[Float1D, Float1D, Float1D, ScalarInt]
+        | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool],
+    ]
     """The configured upper-envelope backend (single-post-state carry)."""
 
     refine_to_bracket: Callable[..., QueryBracket]
@@ -245,14 +253,23 @@ def _get_solve_one_combo(
         # not an explicit label — that resolves it. Explicit topology is the
         # oracle/test path (LTM/MSS/query accept `segment_id`); production has none
         # to emit.
-        refined_grid, refined_policy, refined_value, n_kept, read_supported = (
-            pieces.refine(
-                endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
-                policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
-                value=jnp.where(candidate_dead, jnp.nan, candidate_value),
-                marginal_utility=candidate_marginal,
-                savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
-            )
+        # A backend that cannot certify off-grid read support returns the
+        # four-element row and the read is treated as supported; only a backend
+        # that computes the flag can withhold it.
+        refined = pieces.refine(
+            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
+            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
+            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+            marginal_utility=candidate_marginal,
+            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
+        )
+        refined_grid, refined_policy, refined_value, n_kept = refined[
+            :_REFINED_ROW_FIELDS
+        ]
+        read_supported = (
+            refined[_REFINED_ROW_FIELDS]
+            if len(refined) > _REFINED_ROW_FIELDS
+            else jnp.asarray(True)  # noqa: FBT003
         )
 
         V_row, value_row, marginal_utility_row = _publish_V_and_carry_rows(
