@@ -485,6 +485,12 @@ def _partial_fixed_params_into_regimes(
                     for period, func in simulation.argmax_and_max_Q_over_a.items()
                 }
             ),
+            Q_and_F=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in simulation.Q_and_F.items()
+                }
+            ),
             next_state=MappingProxyType(
                 {
                     period: functools.partial(func, **regime_fixed)

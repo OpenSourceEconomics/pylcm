@@ -1138,6 +1138,12 @@ def _build_simulation_phase(
         has_taste_shocks=has_taste_shocks,
     )
 
+    pointwise_Q_and_F = _build_pointwise_Q_and_F_per_period(
+        state_action_space=state_action_space,
+        Q_and_F_functions=Q_and_F_functions,
+        enable_jit=enable_jit,
+    )
+
     next_state = _build_next_state_vmapped(
         functions=simulate_functions,
         transitions=core.transitions,
@@ -1262,6 +1268,7 @@ def _build_simulation_phase(
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
+        Q_and_F=pointwise_Q_and_F,
         next_state=next_state,
         egm_policy_read=egm_policy_read,
     )
@@ -2757,6 +2764,47 @@ def _build_argmax_and_max_Q_over_a_per_period(
                 func=func,
                 action_names=(),
                 state_names=spacemapped_names,
+            )
+        result[period] = built[q_id]
+    return MappingProxyType(result)
+
+
+def _build_pointwise_Q_and_F_per_period(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    enable_jit: bool,
+) -> MappingProxyType[int, QAndFFunction]:
+    """Build per-subject pointwise Q-and-feasibility closures for each period.
+
+    Unlike `argmax_and_max_Q_over_a`, which maximizes over the Cartesian product
+    of the action grids, this maps every action alongside the states over the
+    subject axis: each subject supplies its own action value and receives that
+    one state-action pair's value and feasibility. Off-grid candidate actions are
+    scored through here, so their values share the grid maximization's objective.
+
+    Periods sharing the same Q_and_F object reuse a single compiled function.
+    """
+    subject_mapped_names = (
+        *state_action_space.state_names,
+        *state_action_space.action_names,
+    )
+
+    built: dict[int, QAndFFunction] = {}
+    result: dict[int, QAndFFunction] = {}
+    for period, Q_and_F in Q_and_F_functions.items():
+        q_id = id(Q_and_F)
+        if q_id not in built:
+            # A terminal period's Q_and_F takes no actions, so only the names it
+            # actually declares can be mapped over the subject axis.
+            declared = frozenset(inspect.signature(Q_and_F).parameters)
+            func = jax.jit(Q_and_F) if enable_jit else Q_and_F
+            built[q_id] = simulation_spacemap(
+                func=func,
+                action_names=(),
+                state_names=tuple(
+                    name for name in subject_mapped_names if name in declared
+                ),
             )
         result[period] = built[q_id]
     return MappingProxyType(result)

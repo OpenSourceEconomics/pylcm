@@ -1,7 +1,8 @@
+import functools
 import itertools
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Literal
 
@@ -11,7 +12,6 @@ import numpy as np
 import pandas as pd
 from jax import vmap
 
-from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import (
@@ -43,6 +43,7 @@ from _lcm.typing import (
     RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
+    StateName,
     StateOrActionName,
     StatesPerRegime,
 )
@@ -545,6 +546,10 @@ def _simulate_regime_in_period(
         flat_params=flat_params[regime_name],
         period=period,
         age=age,
+        canonical_states=state_action_space.states,
+        action_names=state_action_space.action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        grid_values=V_arr,
     )
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
@@ -612,6 +617,10 @@ def _replace_continuous_action_with_policy_read(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    grid_values: FloatND,
 ) -> MappingProxyType[ActionName, FloatND | IntND]:
     """Interpolate the published EGM policy at each subject's resources.
 
@@ -654,8 +663,21 @@ def _replace_continuous_action_with_policy_read(
         for name in sim_policy.row_discrete_state_names
     )
 
+    score_actions = functools.partial(
+        _canonical_q_at_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+
     if sim_policy.row_discrete_action_names:
         return _redecide_branch_and_read_policy(
+            score_actions=score_actions,
+            grid_values=grid_values,
             optimal_actions=optimal_actions,
             regime=regime,
             sim_policy=sim_policy,
@@ -689,14 +711,25 @@ def _replace_continuous_action_with_policy_read(
 
     # Post-read acceptance: the replacement must be an in-support
     # interpolation (outside the live rows the read is an edge extension,
-    # not the policy), finite, positive, and within the intrinsic budget;
-    # any other read keeps that subject's grid-argmax value.
+    # not the policy), finite, positive, within the intrinsic budget, and
+    # score no worse than the grid-argmax action under the canonical Q — the
+    # same objective the grid maximization uses, so the replacement cannot
+    # degrade the decision it replaces. Any other read keeps that subject's
+    # grid-argmax value.
     grid_action = jnp.asarray(optimal_actions[read.action_name])
+    off_grid_value, off_grid_feasible = score_actions(
+        candidate_actions=MappingProxyType(
+            {**optimal_actions, read.action_name: off_grid_action}
+        )
+    )
     accepted = (
         in_support
         & jnp.isfinite(off_grid_action)
         & (off_grid_action > 0.0)
         & (off_grid_action <= resources - read.savings_lower_bound)
+        & off_grid_feasible
+        & jnp.isfinite(off_grid_value)
+        & (off_grid_value >= grid_values)
     )
     off_grid_action = jnp.where(accepted, off_grid_action, grid_action)
 
@@ -705,6 +738,8 @@ def _replace_continuous_action_with_policy_read(
 
 def _redecide_branch_and_read_policy(
     *,
+    score_actions: Callable[..., tuple[FloatND, BoolND]],
+    grid_values: FloatND,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     regime: Regime,
     sim_policy: EGMSimPolicy,
@@ -719,23 +754,25 @@ def _redecide_branch_and_read_policy(
     """Re-decide the discrete branch off-grid and read the winner's policy.
 
     Each discrete-action combo's published rows are the solve-phase optimum
-    conditional on that branch, and the branch's resources follow from the
-    regime DAG at the candidate action values. The comparison mirrors the
-    decision problem the solve encodes:
-    - a branch failing a discrete-only user constraint at the subject's state
-      is excluded (its objective reads as `-inf`), exactly as the constraint
-      masks the grid argmax;
-    - each feasible branch's candidate action is its piecewise-linear policy
-      read at that branch's resources, and branches are ranked by the objective
-      that action actually attains, `u(c) + W(R - c)` — so the winning
-      (branch, action) pair is an associated optimizer pair;
-    - the recorded discrete actions switch to the winning branch, whose
-      continuous action is that branch's candidate.
-    A subject keeps the grid-argmax pair (discrete and continuous alike) when
-    any feasible branch's resources fall outside that branch's live row
-    support (the objective comparison would be incomplete), no branch is
-    feasible, or the winning read is non-finite, non-positive, or outside the
-    intrinsic budget.
+    conditional on that branch, so that branch's candidate continuous action is
+    its piecewise-linear policy read at the branch's own resources. Every
+    candidate is then scored by the **canonical state-action value** `Q` —
+    evaluated pointwise at that exact (branch, action) pair through the same
+    model DAG, transitions, constraints, aggregators, params, and next-period
+    value arrays the grid maximization uses. Consequences:
+    - the scalar a branch is ranked by is the objective its returned action
+      actually attains, so the emitted pair is an associated optimizer pair by
+      construction — no reconstructed continuation and no shape assumption
+      about it enter the comparison;
+    - infeasibility is the canonical feasibility flag, so user constraints and
+      the intrinsic budget mask branches exactly as they mask the grid argmax;
+    - the grid-argmax pair is itself a candidate: a replacement is accepted only
+      when it scores no worse under the same `Q`, so the off-grid read can never
+      degrade the finite-grid decision.
+    A subject keeps the grid-argmax pair (discrete and continuous alike) when no
+    branch is feasible, the winner's resources fall outside its live row support
+    (there the policy read is an edge extension rather than the policy), or the
+    winning read is non-finite, non-positive, or scores below the grid pair.
     """
     if "inverse_marginal_utility" not in regime.simulation.functions:
         # Scope: the off-grid branch re-decision applies only where the solve
@@ -750,16 +787,6 @@ def _redecide_branch_and_read_policy(
         jnp.asarray(regime.simulation.grids[name].to_jax()) for name in action_names
     )
     combo_shape = tuple(int(grid.shape[0]) for grid in action_grids)
-    # The synthesized intrinsic budget constraint reads the continuous action,
-    # which is not decided yet at branch-comparison time; the post-read
-    # acceptance enforces the budget instead. DC-EGM validation restricts all
-    # user constraints to discrete variables, so they evaluate per branch.
-    discrete_constraint_names = [
-        name
-        for name in regime.simulation.constraints
-        if name != DCEGM_BUDGET_CONSTRAINT_NAME
-    ]
-
     objectives_per_combo = []
     policies_per_combo = []
     resources_per_combo = []
@@ -780,18 +807,13 @@ def _redecide_branch_and_read_policy(
         }
         targets = _compute_targets(
             data=data,
-            targets=[read.resources_target, *discrete_constraint_names],
+            targets=[read.resources_target],
             regime=regime,
             regime_params=flat_params,
         )
         resources = jnp.reshape(
             jnp.asarray(targets[read.resources_target]), (n_subjects,)
         )
-        feasible = jnp.ones(n_subjects, dtype=bool)
-        for constraint_name in discrete_constraint_names:
-            feasible &= jnp.reshape(
-                jnp.asarray(targets[constraint_name]), (n_subjects,)
-            ).astype(bool)
         index = (*state_positions, *combo)
         candidate_action, in_support = _interp_rows_with_support(
             sim_policy=sim_policy,
@@ -800,24 +822,18 @@ def _redecide_branch_and_read_policy(
             resources=resources,
             n_subjects=n_subjects,
         )
-        # Rank each branch by the objective its returned action actually attains,
-        # `u(c) + W(R - c)`, so the (branch, action) pair the re-decision emits is
-        # an associated optimizer pair. The candidate action is the branch's own
-        # piecewise-linear policy read at the subject's resources; the branch
-        # continuation `W` is reconstructed from the published rows. Ranking by
-        # the interpolated value and inverting its (shape-limited) derivative for
-        # the action does not yield an associated pair — the returned action can
-        # attain less than the value the branch is ranked by.
-        objective = _branch_conditional_objective(
-            sim_policy=sim_policy,
-            index=index,
-            resources=resources,
-            candidate_action=candidate_action,
-            combo_data=data,
-            regime=regime,
-            flat_params=flat_params,
-            action_name=read.action_name,
-            n_subjects=n_subjects,
+        # Score the branch by the canonical `Q` at exactly the (branch, action)
+        # pair it would emit, so the ranking scalar is the objective the returned
+        # action attains and the canonical feasibility flag masks infeasible
+        # branches — the same objective and masking the grid argmax uses.
+        objective, feasible = score_actions(
+            candidate_actions=MappingProxyType(
+                {
+                    **optimal_actions,
+                    **combo_actions,
+                    read.action_name: candidate_action,
+                }
+            )
         )
         objectives_per_combo.append(jnp.where(feasible, objective, -jnp.inf))
         policies_per_combo.append(candidate_action)
@@ -833,19 +849,24 @@ def _redecide_branch_and_read_policy(
 
     winner = jnp.argmax(objectives, axis=0)
 
-    def at_winner(stacked: FloatND) -> FloatND:
+    def at_winner(stacked: FloatND | BoolND) -> FloatND | BoolND:
         return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
 
     off_grid_action = at_winner(policies)
     winner_resources = at_winner(resources)
     winner_objective = at_winner(objectives)
+    # The winner is accepted only if it scores no worse than the grid-argmax pair
+    # under the same canonical `Q`, so the replacement cannot degrade the
+    # finite-grid decision. Support is required of the winner alone: elsewhere a
+    # row read is an edge extension rather than the published policy.
     accepted = (
         jnp.any(feasible, axis=0)
-        & jnp.all(~feasible | in_support, axis=0)
+        & at_winner(in_support)
         & jnp.isfinite(winner_objective)
         & jnp.isfinite(off_grid_action)
         & (off_grid_action > 0.0)
         & (off_grid_action <= winner_resources - read.savings_lower_bound)
+        & (winner_objective >= grid_values)
     )
 
     new_actions = dict(optimal_actions)
@@ -910,108 +931,39 @@ def _interp_rows_with_support(
     return values, in_support
 
 
-def _branch_conditional_objective(
+def _canonical_q_at_actions(
     *,
-    sim_policy: EGMSimPolicy,
-    index: tuple[IntND | int, ...],
-    resources: FloatND,
-    candidate_action: FloatND,
-    combo_data: Mapping[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]],
+    candidate_actions: Mapping[ActionName, FloatND | IntND],
     regime: Regime,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     flat_params: FlatRegimeParams,
-    action_name: ActionName,
-    n_subjects: int,
-) -> FloatND:
-    """Objective the branch attains at `candidate_action`: `u(c) + W(R - c)`.
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[FloatND, BoolND]:
+    """Score one action value per subject with the canonical state-action value.
 
-    Ranking branches by the value their returned action actually achieves makes
-    the (branch, action) pair the re-decision emits an associated optimizer pair
-    — unlike ranking by the interpolated value and reading the action from a
-    separate interpolant, which need not attain that value.
+    Evaluates `Q` and its feasibility at exactly the supplied (state, action)
+    pairs through `regime.simulation.Q_and_F` — the same objective, transitions,
+    constraints, aggregators, params, and next-period value arrays the grid
+    maximization uses. A value it returns is therefore directly comparable with
+    the grid winner's value, and the flag it returns is the canonical
+    feasibility (user constraints and the intrinsic budget alike).
 
-    The branch continuation `W(s)` is reconstructed from the published rows:
-    `W(s_i) = value_i - u(c_i)` at the post-decision nodes `s_i = endog_i - c_i`,
-    with `W'(s_i) = marginal_utility_i` (the node Euler equation `u'(c_i) =
-    W'(s_i)`) as the cubic-Hermite slope, read at the candidate savings
-    `s = R - c`. Evaluating `u` at the candidate and at the node consumptions
-    goes through the regime's `utility` DAG, so it honours whatever else utility
-    depends on at the subject's state and this branch's discrete actions.
+    Returns:
+        Tuple of the per-subject canonical value and feasibility.
+
     """
-    rows_x = sim_policy.endog_grid
-    rows_policy = sim_policy.policy
-    rows_value = sim_policy.value
-    rows_slope = sim_policy.marginal_utility
-    if index:
-        rows_x = rows_x[index]
-        rows_policy = rows_policy[index]
-        rows_value = rows_value[index]
-        rows_slope = rows_slope[index]
-    if rows_x.ndim == 1:
-        rows_x = jnp.broadcast_to(rows_x, (n_subjects, *rows_x.shape))
-        rows_policy = jnp.broadcast_to(rows_policy, (n_subjects, *rows_policy.shape))
-        rows_value = jnp.broadcast_to(rows_value, (n_subjects, *rows_value.shape))
-        rows_slope = jnp.broadcast_to(rows_slope, (n_subjects, *rows_slope.shape))
-    n_nodes = rows_x.shape[-1]
-
-    utility_at_candidate = jnp.reshape(
-        jnp.asarray(
-            _compute_targets(
-                data={**combo_data, action_name: candidate_action},
-                targets=["utility"],
-                regime=regime,
-                regime_params=flat_params,
-            )["utility"]
-        ),
-        (n_subjects,),
+    values, feasible = regime.simulation.Q_and_F[period](
+        **canonical_states,
+        **{name: jnp.asarray(candidate_actions[name]) for name in action_names},
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        **flat_params,
+        period=jnp.int32(period),
+        age=age,
     )
-
-    # Utility at each node's optimal consumption, per subject. The utility DAG is
-    # vmapped over subject rows, so the (subject, node) grid is flattened to a
-    # single row axis and reshaped back.
-    node_data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
-        key: jnp.reshape(
-            jnp.broadcast_to(jnp.asarray(value)[:, None], (n_subjects, n_nodes)),
-            (n_subjects * n_nodes,),
-        )
-        for key, value in combo_data.items()
-    }
-    node_data[action_name] = jnp.reshape(rows_policy, (n_subjects * n_nodes,))
-    utility_at_nodes = jnp.reshape(
-        jnp.asarray(
-            _compute_targets(
-                data=node_data,
-                targets=["utility"],
-                regime=regime,
-                regime_params=flat_params,
-            )["utility"]
-        ),
-        (n_subjects, n_nodes),
-    )
-
-    # The post-decision continuation `W(s)` is single-valued and increasing in
-    # savings, but the reconstruction nodes are not in a form the padded read
-    # accepts: `s_i = endog_i - c_i` need not be ascending in node order (coarse
-    # policy noise, a near-duplicate final bracket), and dead nodes (an unsupported
-    # value, or the row's NaN tail) carry a NaN continuation at a finite savings.
-    # Re-order by savings with every dead node keyed last and its savings NaN'd,
-    # so the read sees a weakly ascending live grid followed by a NaN tail.
-    continuation_nodes = rows_value - utility_at_nodes
-    savings_nodes = rows_x - rows_policy
-    dead = jnp.isnan(continuation_nodes) | jnp.isnan(savings_nodes)
-    order = jnp.argsort(jnp.where(dead, jnp.inf, savings_nodes))
-    savings_sorted = jnp.take_along_axis(
-        jnp.where(dead, jnp.nan, savings_nodes), order, axis=-1
-    )
-    continuation_sorted = jnp.take_along_axis(continuation_nodes, order, axis=-1)
-    slope_sorted = jnp.take_along_axis(rows_slope, order, axis=-1)
-
-    savings_at_candidate = resources - candidate_action
-    continuation = vmap(
-        lambda s, xp, fp, fp_slopes: interp_on_padded_grid(
-            x_query=s, xp=xp, fp=fp, fp_slopes=fp_slopes
-        )
-    )(savings_at_candidate, savings_sorted, continuation_sorted, slope_sorted)
-    return utility_at_candidate + continuation
+    return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
 
 
 def _resources_at_subjects(
