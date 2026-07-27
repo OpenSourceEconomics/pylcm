@@ -34,11 +34,11 @@ policy discontinuity in a weakly ascending row. A crossing that coincides with a
 node needs no special case — it is simply a boundary whose two sides have
 different owners.
 
-The walk locates boundaries in ordinary arithmetic, so what it proposes is
+The trace locates boundaries in ordinary arithmetic, so what it proposes is
 checked rather than trusted: at every sub-cell boundary the leading link is
 established with `certified_sign.certified_margin_sign` and must be one of the
 two sub-cells meeting there. A link that led at a boundary without owning either
-side would be one the walk had missed, and since the links are affine, a link
+side would be one the trace had missed, and since the links are affine, a link
 that leads at neither end of a sub-cell cannot lead inside it — so the check
 covers the whole cell, not just its boundaries. Certification is exact with
 respect to the represented inputs and invariant to a common value level. Where a
@@ -46,6 +46,17 @@ sign cannot be certified, where the leading link owns neither side, or where the
 realized run count exceeds the static capacity, the row is NaN-poisoned and
 reported as an overflow so the solve loop's diagnostics name the offending cell
 instead of publishing a guess.
+
+Certification stops where the published row does. The row carries one value per
+abscissa, so two links reading the same double at a boundary both count as
+leading there, and an undecidable sign between them decides nothing: either
+choice publishes the same number. This is exact equality of the represented
+readings, not a tolerance — a lead that does change the published double must
+still come from a link owning one of the two sides, at any value level. For the
+same reason the check reads links from the trace's own edge values rather than
+evaluating them afresh: two evaluations of one affine link at one abscissa can
+land an ULP apart when the compiler vectorizes the call sites differently, and
+the check would then be judging the trace against numbers it never saw.
 """
 
 import jax
@@ -242,7 +253,7 @@ def _sub_cells_per_node_cell(
         low: IntND,
         high: IntND,
     ) -> tuple[FloatND, FloatND, IntND, IntND, BoolND, ScalarBool]:
-        bounds, owner = _walk_envelope(
+        bounds, owner, at_left, at_right = _walk_envelope(
             left=left,
             right=right,
             live=live,
@@ -255,6 +266,8 @@ def _sub_cells_per_node_cell(
         unresolved = _fails_boundary_check(
             bounds=bounds,
             owner=owner,
+            at_left=at_left,
+            at_right=at_right,
             live=live,
             low=low,
             high=high,
@@ -297,14 +310,17 @@ def _walk_envelope(
     endog_grid: Float1D,
     value: Float1D,
     max_runs: int,
-) -> tuple[Float1D, Int1D]:
+) -> tuple[Float1D, Int1D, Float1D, Float1D]:
     """Trace one node cell's envelope from its left edge to its right edge.
 
     Returns:
-        Tuple of the `max_runs + 1` sub-cell boundaries in ascending order and
-        the `max_runs` owning link indices. Once no link overtakes the current
-        owner the remaining boundaries sit on the cell's right edge, so the
-        sub-cells they would open have zero width.
+        Tuple of the `max_runs + 1` sub-cell boundaries in ascending order, the
+        `max_runs` owning link indices, and the readings of every link at the
+        cell's two edges. Once no link overtakes the current owner the remaining
+        boundaries sit on the cell's right edge, so the sub-cells they would open
+        have zero width. The edge readings are returned because every decision
+        rests on them: re-deriving them elsewhere can land an ULP away, since the
+        compiler is free to vectorize two call sites differently.
 
     """
     at_left = jnp.where(live, _line_value(low, high, left, endog_grid, value), -jnp.inf)
@@ -343,13 +359,15 @@ def _walk_envelope(
     )
     bounds = jnp.concatenate([left[None], later_bounds, right[None]])
     owners = jnp.concatenate([first[None], later_owners])
-    return bounds, owners
+    return bounds, owners, at_left, at_right
 
 
 def _fails_boundary_check(
     *,
     bounds: Float1D,
     owner: Int1D,
+    at_left: Float1D,
+    at_right: Float1D,
     live: BoolND,
     low: IntND,
     high: IntND,
@@ -361,13 +379,32 @@ def _fails_boundary_check(
     At each boundary the leading link is established by a certified comparison
     against its closest competitor, and it must own one of the two sub-cells
     meeting there. A link leading at a boundary it owns neither side of is one
-    the walk passed over, and because the links are affine, a link leading at
+    the trace passed over, and because the links are affine, a link leading at
     neither end of a sub-cell cannot lead inside it — so boundaries alone settle
     the whole cell.
+
+    Two links that read the same double at a boundary both count as leading
+    there. The published row carries one value per abscissa, so a lead too small
+    to change that value is a lead the row cannot express: demanding it would
+    reject envelopes that are correct to the resolution they are published at.
+    This is exact equality of the represented readings, not a tolerance — a lead
+    that does change the published double is still required to come from a link
+    that owns one of the two sides, at any value level.
+
+    Readings come from the trace's own edge values, interpolated across the cell,
+    rather than from a second evaluation of the links. Two evaluations of one
+    affine link at one abscissa can differ by an ULP when the compiler vectorizes
+    the call sites differently, and the check would then be judging the trace
+    against readings the trace never saw.
     """
     readings = jax.vmap(
-        lambda x: jnp.where(
-            live, _line_value(low, high, x, endog_grid, value), -jnp.inf
+        lambda x: _reading_across_cell(
+            x,
+            left=bounds[0],
+            right=bounds[-1],
+            at_left=at_left,
+            at_right=at_right,
+            live=live,
         )
     )(bounds)
     best = jnp.argmax(readings, axis=1).astype(jnp.int32)
@@ -387,10 +424,13 @@ def _fails_boundary_check(
         b_v1=value[high[runner_up]],
         x_query=bounds,
     )
-    # The certified leader at a boundary is the plain leader only once it is
-    # certified above its closest competitor; an exact tie leaves both leading.
-    leader = jnp.where(order == 0, jnp.minimum(best, runner_up), best)
-    certified_leader = jnp.where(order == 0, jnp.maximum(best, runner_up), best)
+    # The plain leader is the sole leader only once it is certified above its
+    # closest competitor by a margin the published row can carry; an exact tie,
+    # or a lead that leaves both readings the same double, leaves both leading.
+    same_reading = readings[contested, best] == readings[contested, runner_up]
+    indistinguishable = (order == 0) | same_reading
+    leader = jnp.where(indistinguishable, jnp.minimum(best, runner_up), best)
+    certified_leader = jnp.where(indistinguishable, jnp.maximum(best, runner_up), best)
 
     # Boundary `j` is shared by the sub-cells owned by `owner[j - 1]` and
     # `owner[j]`; the outer boundaries repeat their single neighbour.
@@ -400,7 +440,10 @@ def _fails_boundary_check(
         (certified_leader == before) | (certified_leader == after)
     )
 
-    uncertified = has_runner_up & (order == UNRESOLVED_SIGN)
+    # An undecidable sign matters only where the two links read different
+    # doubles: where they read the same one, the row publishes the same value
+    # whichever leads, so there is nothing left for the sign to decide.
+    uncertified = has_runner_up & ~same_reading & (order == UNRESOLVED_SIGN)
     return jnp.any(jnp.any(live) & (uncertified | ~owns_a_side))
 
 
@@ -470,6 +513,31 @@ def _emit_envelope(
         jnp.where(row_valid, row_value, nan), mode="drop"
     )
     return out_grid, out_policy, out_value, jnp.sum(row_valid, dtype=jnp.int32)
+
+
+def _reading_across_cell(
+    x_query: FloatND,
+    *,
+    left: FloatND,
+    right: FloatND,
+    at_left: Float1D,
+    at_right: Float1D,
+    live: BoolND,
+) -> Float1D:
+    """Read every link inside a node cell from its two edge readings.
+
+    Each link is affine across the cell, so its edge readings determine it there.
+    Working from them keeps every judgement on the same numbers the trace used.
+    A link that does not cover the cell reads as absent throughout.
+    """
+    width = right - left
+    safe_width = jnp.where(width == 0.0, 1.0, width)
+    rise = jnp.where(live, at_right - at_left, 0.0)
+    interpolated = at_left + (x_query - left) / safe_width * rise
+    reading = jnp.where(
+        x_query == left, at_left, jnp.where(x_query == right, at_right, interpolated)
+    )
+    return jnp.where(live, reading, -jnp.inf)
 
 
 def _line_value(

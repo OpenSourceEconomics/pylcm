@@ -142,6 +142,47 @@ def test_published_value_matches_the_exact_rational_envelope(query: float):
     assert _read(grid, value, query) == pytest.approx(float(expected), abs=_tolerance())
 
 
+def test_a_crossing_rounding_onto_a_node_still_hands_over():
+    """A branch that overtakes just short of a node takes ownership at that node.
+
+    The overtaking point is a float, so it can round onto the node bounding the
+    cell it falls in. The hand-over still happens there rather than being lost —
+    the branch leading at the node owns the ground beyond it.
+    """
+    # The fold of a two-asset NEGM candidate chain: the two branches straddle a
+    # node cell barely 1e-5 wide, and hand over within it.
+    grid = [
+        5.751143455505371,
+        12.457457542419434,
+        12.457447052001953,
+        13.765974044799805,
+    ]
+    policy = [
+        10.751143455505371,
+        17.45745849609375,
+        17.457447052001953,
+        18.259645462036133,
+    ]
+    value = [
+        -0.13400626182556152,
+        -0.10228845477104187,
+        -0.10228848457336426,
+        -0.09870101511478424,
+    ]
+    out_grid, out_policy, _out_value, n_kept = refine_envelope_exact(
+        endog_grid=jnp.asarray(grid),
+        policy=jnp.asarray(policy),
+        value=jnp.asarray(value),
+        n_refined=64,
+    )
+    keep = int(n_kept)
+    assert keep <= 64, "the row must publish rather than report overflow"
+    assert not np.any(np.isnan(np.asarray(out_grid)[:keep]))
+    # The second branch leads at the far node, so it owns the reading there.
+    published = np.asarray(out_policy)[:keep]
+    assert published[keep - 1] == pytest.approx(18.259645462036133, abs=_tolerance())
+
+
 def test_a_chain_folding_past_the_capacity_poisons_the_row():
     """A chain with more branches than the configured capacity fails loud.
 
