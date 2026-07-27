@@ -1,3 +1,7 @@
+import dataclasses
+import subprocess
+import sys
+from pathlib import Path
 from types import MappingProxyType
 
 import jax
@@ -11,6 +15,7 @@ from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.solution import backward_induction
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -42,6 +47,33 @@ except RuntimeError:
 _skip_pytest_parallel = pytest.mark.skipif(
     _PYTEST_PARALLEL, reason="Can't set num cpus in pytest paralellel"
 )
+
+
+def test_importing_this_module_after_jax_init_leaves_the_platform_unpinned():
+    """The CPU-topology pin is atomic: all of it applies, or none of it.
+
+    Once any JAX backend is initialized, this module's four-CPU-device pin
+    can no longer apply and its tests skip. The platform default must then
+    stay untouched: a partially applied pin (platform flipped to CPU, device
+    count unchanged) would silently retarget every model built later in the
+    process onto the CPU, while arrays produced by earlier accelerator
+    computations stay committed to their device — a sharding mismatch at the
+    first compiled call that mixes them.
+    """
+    code = (
+        "import jax; jax.numpy.zeros(1); "
+        "import tests.test_distributed; "
+        "print(repr(jax.config.read('jax_platform_name')))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=Path(__file__).parent.parent,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "''"
 
 
 def _make_correct_distributed_model(
@@ -268,6 +300,50 @@ def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
 
 
 @_skip_pytest_parallel
+def test_solve_returns_template_sharded_V_even_when_kernel_output_is_replicated(
+    correct_distributed_model, monkeypatch
+):
+    """`solve()` publishes V arrays carrying the distributed template sharding.
+
+    The simulate programs are AOT-lowered against the per-regime V topology, so
+    the V mapping `solve()` returns must carry that sharding regardless of the
+    output sharding the period kernel's compiled program happens to emit — a
+    replicated kernel output must be placed back on the template's mesh before
+    it is published.
+    """
+    original_run_period_kernel = backward_induction._run_period_kernel
+    replicated_outputs: list[str] = []
+
+    def emit_replicated_V(**kwargs):
+        result = original_run_period_kernel(**kwargs)
+        if isinstance(result.V_arr.sharding, NamedSharding):
+            replicated_outputs.append(kwargs["regime"].name)
+            return dataclasses.replace(
+                result,
+                V_arr=jax.device_put(
+                    result.V_arr,
+                    NamedSharding(result.V_arr.sharding.mesh, PartitionSpec()),
+                ),
+            )
+        return result
+
+    monkeypatch.setattr(backward_induction, "_run_period_kernel", emit_replicated_V)
+
+    period_to_regime_to_V_arr = correct_distributed_model.solve(
+        log_level="off",
+        params={"discount_factor": 0.95},
+    )
+
+    assert replicated_outputs, "no kernel output was replicated; test is inert"
+    for regime_to_V_arr in period_to_regime_to_V_arr.values():
+        for regime_name, V_arr in regime_to_V_arr.items():
+            if regime_name in replicated_outputs:
+                assert not V_arr.sharding.is_fully_replicated, (
+                    f"{regime_name}: published V is replicated, not template-sharded"
+                )
+
+
+@_skip_pytest_parallel
 def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
     """Every V_arr shard is materialised before `solve()` returns.
 
@@ -452,32 +528,78 @@ def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_m
 
 @_skip_pytest_parallel
 @pytest.mark.parametrize("subject_batch_size", [3, 4])
-def test_distributed_simulation_rejects_subject_batching(
+def test_distributed_simulation_with_subject_batching_matches_single_pass(
     correct_distributed_model,
     subject_batch_size,
 ):
-    """Subject-batching is rejected under multi-device distribution.
+    """Chunked simulate under distributed grids equals the single-pass result.
 
-    The value-function array is sharded across the devices and cannot be gathered
-    onto one, so chunking the subject axis (a single-device operation) cannot be
-    combined with distributed grids on more than one device — rejected even at a
-    batch size that divides the device count (4), not only a non-multiple (3).
+    The value-function arrays stay sharded across the devices throughout; each
+    subject chunk is placed onto the subject mesh axis before its period loop, so
+    chunking bounds the per-chunk device workspace without gathering anything onto
+    one device. A batch size that does not divide the device count (3 on 4
+    devices) is rounded up to the next device multiple.
     """
-    with pytest.raises(PyLCMError, match="distributed grids"):
-        correct_distributed_model.simulate(
-            log_level="debug",
-            params={"discount_factor": 0.95},
-            initial_conditions={
-                "age": jnp.full(8, 0),
-                "wealth": jnp.full(8, 100.0),
-                "type1": jnp.ones(8, dtype=jnp.int32),
-                "type2": jnp.ones(8, dtype=jnp.int32),
-                "regime_id": jnp.zeros(8, dtype=jnp.int32),
-            },
-            period_to_regime_to_V_arr=None,
-            seed=12345,
-            subject_batch_size=subject_batch_size,
-        )
+    initial_conditions = {
+        "age": jnp.full(8, 0),
+        "wealth": jnp.linspace(50.0, 120.0, 8),
+        "type1": jnp.ones(8, dtype=jnp.int32),
+        "type2": jnp.ones(8, dtype=jnp.int32),
+        "regime_id": jnp.zeros(8, dtype=jnp.int32),
+    }
+    single_pass = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+    chunked = correct_distributed_model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+        subject_batch_size=subject_batch_size,
+    )
+    pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
+
+
+@_skip_pytest_parallel
+def test_distributed_aot_simulation_pads_subjects_to_a_chunk_multiple():
+    """A chunk size that does not divide the subject count simulates cleanly.
+
+    Under distributed grids the chunk size is rounded up to a device multiple
+    and every chunk must match the AOT-compiled shape, so the subject axis is
+    padded up to a chunk multiple (duplicating the last subject) and the pad
+    rows are trimmed back out — the result holds exactly the real subjects and
+    equals the single-pass result.
+    """
+    model = _make_correct_distributed_model(n_subjects=12)
+    initial_conditions = {
+        "age": jnp.full(12, 0),
+        "wealth": jnp.linspace(50.0, 120.0, 12),
+        "type1": jnp.ones(12, dtype=jnp.int32),
+        "type2": jnp.ones(12, dtype=jnp.int32),
+        "regime_id": jnp.zeros(12, dtype=jnp.int32),
+    }
+    single_pass = model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+    )
+    chunked = model.simulate(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+        subject_batch_size=8,
+    )
+    assert chunked.n_subjects == 12
+    pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
 
 
 @pytest.fixture

@@ -322,6 +322,44 @@ class Solver(ABC):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build the regime's per-period solve adapters."""
 
+    @property
+    def carry_retains_discrete_action_rows(self) -> bool:
+        """Whether this regime's continuation carry keeps per-discrete-action rows.
+
+        A reading parent aggregates the child's discrete choices (the DC-EGM
+        logsum) only when the carry retains a row per discrete-action combo. A
+        value-only solver that publishes an already-action-maxed value array
+        (brute `GridSearch`, the case-piece `NBEGM`) sets this `False`, so the
+        parent reads the maxed value directly without spurious action rows.
+        """
+        return True
+
+    @property
+    def carry_rows_share_state_grid(self) -> bool:
+        """Whether every published carry row shares the state grid as abscissae.
+
+        Grid-aligned rows (a value array published on the regime's own state
+        grid) all interpolate with the same bracket structure, so reads that
+        are linear in the rows commute with expectations over the carry's
+        node axes. Endogenous-grid solvers publish per-row abscissae and set
+        this `False`.
+        """
+        return False
+
+    @property
+    def n_stacked_carry_candidates(self) -> int:
+        """Length of the published carry's stacked outer-candidate axis.
+
+        A solver that publishes one carry row per outer durable candidate
+        (keeper plus one per outer-grid node), stacked on an axis before the
+        grid axis, declares that axis length here; a reading parent broadcasts
+        its queries over exactly that many candidates and collapses them by
+        the hard max. A solver whose carry has no candidate axis — no outer
+        margin, or an outer margin already folded inside the solve — declares
+        `0`, and the parent queries each carry row once.
+        """
+        return 0
+
     def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Check the regime is in scope for this solver. Default: no-op."""
 

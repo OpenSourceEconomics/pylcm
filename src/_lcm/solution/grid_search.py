@@ -46,13 +46,22 @@ from lcm.typing import (
 class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
 
+    @property
+    def carry_retains_discrete_action_rows(self) -> bool:
+        """A brute living child publishes an already-action-maxed value array."""
+        return False
+
+    @property
+    def carry_rows_share_state_grid(self) -> bool:
+        """Grid-search carries sit on the regime's own state grid."""
+        return True
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one max-Q-over-a period adapter per period.
 
         Periods sharing the same Q_and_F object reuse a single jitted core,
         and therefore a single compiled program.
         """
-
         from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a  # noqa: PLC0415
 
         built: dict[int, MaxQOverAFunction] = {}

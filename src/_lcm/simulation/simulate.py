@@ -1,18 +1,26 @@
+import functools
+import itertools
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 from jax import vmap
 
+from _lcm.egm.interp import interp_on_padded_grid
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import (
+    EGMPolicyRead,
     PeriodRegimeSimulationData,
     Regime,
     StateActionSpace,
 )
+from _lcm.simulation.additional_targets import _compute_targets
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
@@ -26,12 +34,16 @@ from _lcm.simulation.transitions import (
 )
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import (
+    ActionName,
     FlatParams,
+    FlatRegimeParams,
     InitialConditions,
+    PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
     RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
+    StateName,
     StateOrActionName,
     StatesPerRegime,
 )
@@ -48,7 +60,15 @@ from _lcm.utils.logging import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.result import SimulationResult
-from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+)
 
 
 def simulate(
@@ -63,6 +83,7 @@ def simulate(
     ],
     ages: AgeGrid,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
+    period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
     seed: int | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
@@ -83,6 +104,12 @@ def simulate(
         period_to_regime_to_V_arr: Immutable mapping of periods to regime
             value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
+        period_to_regime_to_sim_policy: Immutable mapping of periods to each
+            EGM regime's published off-grid simulation policy, or `None`
+            (user-supplied V arrays carry no policy). Sparse over regimes.
+            Where a regime qualifies (`SimulationPhase.egm_policy_read`), the
+            continuous action is interpolated from the policy at the
+            subject's resources instead of argmaxed over the action grid.
         simulation_output_dtypes: Mapping of variable name to `pd.CategoricalDtype`,
             used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
@@ -158,6 +185,7 @@ def simulate(
             regime_names_to_ids=regime_names_to_ids,
             regime_ids_to_names=regime_ids_to_names,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
             flat_params=flat_params,
             ages=ages,
             seed=seed,
@@ -232,6 +260,7 @@ def _simulate_subject_chunk(
     ages: AgeGrid,
     seed: int,
     logger: logging.Logger,
+    period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -303,6 +332,9 @@ def _simulate_subject_chunk(
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                    sim_policy=(period_to_regime_to_sim_policy or {})
+                    .get(period, {})
+                    .get(regime_name),
                     flat_params=flat_params,
                     regime_names_to_ids=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
@@ -404,6 +436,7 @@ def _simulate_regime_in_period(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
+    sim_policy: EGMSimPolicy | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -429,6 +462,9 @@ def _simulate_regime_in_period(
         n_subjects: Total number of subjects (the full population), used to keep RNG
             key generation independent of how subjects are chunked.
         subject_slice: Global-index slice of the subjects in this chunk.
+        sim_policy: The regime's published off-grid simulation policy for this
+            period, or `None`. Consumed only where the regime qualifies
+            (`regime.simulation.egm_policy_read`).
 
     Returns:
         Tuple containing:
@@ -502,6 +538,19 @@ def _simulate_regime_in_period(
         flat_indices=indices_optimal_actions,
         grids=state_action_space.actions,
     )
+    optimal_actions = _replace_continuous_action_with_policy_read(
+        optimal_actions=optimal_actions,
+        regime=regime,
+        sim_policy=sim_policy,
+        states=states[regime_name],
+        flat_params=flat_params[regime_name],
+        period=period,
+        age=age,
+        canonical_states=state_action_space.states,
+        action_names=state_action_space.action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        grid_values=V_arr,
+    )
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match this chunk's subject count.
@@ -557,6 +606,405 @@ def _simulate_regime_in_period(
         states = next_states
 
     return simulation_result, states, new_subject_regime_ids, key
+
+
+def _replace_continuous_action_with_policy_read(
+    *,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: EGMSimPolicy | None,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    grid_values: FloatND,
+) -> MappingProxyType[ActionName, FloatND | IntND]:
+    """Interpolate the published EGM policy at each subject's resources.
+
+    Replaces the grid-argmax value of the EGM continuous action with the
+    off-grid solve-phase optimum. Discrete-state axes index the row at the
+    subject's state (positions located on the variable's grid), and the row is
+    interpolated at the subject's resources. For a regime with discrete
+    actions the discrete branch is re-decided first: each branch's conditional
+    value row is interpolated at that branch's own resources, discrete-only
+    user constraints exclude infeasible branches, and the winner's policy row
+    supplies the continuous action while the recorded discrete actions switch
+    to the winning branch.
+    Applies only where the regime qualifies (`regime.simulation.egm_policy_read`
+    is set). Kept on the grid pair:
+    - rows with a passive continuous-state axis (the build-time gate excludes
+      passive regimes; the runtime guard is defensive) — each row is the
+      envelope policy conditional on one passive node, so blending across a
+      passive-dimension branch switch would read neither branch;
+    - subjects with any feasible branch out of its live row support (an
+      incomplete value comparison cannot pick the winner), or whose winning
+      read is non-finite, non-positive, or outside the intrinsic budget
+      (`action <= resources - savings_lower_bound`).
+    """
+    read = regime.simulation.egm_policy_read
+    if sim_policy is None or read is None:
+        return optimal_actions
+    if sim_policy.row_passive_state_names:
+        return optimal_actions
+
+    n_subjects = next(iter(states.values())).shape[0]
+
+    def grid_position(name: StateOrActionName, values: FloatND | IntND) -> IntND:
+        grid_values = jnp.asarray(regime.simulation.grids[name].to_jax())
+        return jnp.clip(
+            jnp.searchsorted(grid_values, values), 0, grid_values.shape[0] - 1
+        )
+
+    state_positions = tuple(
+        grid_position(name, jnp.asarray(states[name]))
+        for name in sim_policy.row_discrete_state_names
+    )
+
+    score_actions = functools.partial(
+        _canonical_q_at_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+
+    if sim_policy.row_discrete_action_names:
+        return _redecide_branch_and_read_policy(
+            score_actions=score_actions,
+            grid_values=grid_values,
+            optimal_actions=optimal_actions,
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+            read=read,
+            n_subjects=n_subjects,
+            state_positions=state_positions,
+        )
+
+    resources = _resources_at_subjects(
+        read=read,
+        regime=regime,
+        sim_policy=sim_policy,
+        states=states,
+        optimal_actions=optimal_actions,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    off_grid_action, in_support = _interp_rows_with_support(
+        sim_policy=sim_policy,
+        field="policy",
+        index=state_positions,
+        resources=resources,
+        n_subjects=n_subjects,
+    )
+
+    # Post-read acceptance: the replacement must be an in-support
+    # interpolation (outside the live rows the read is an edge extension,
+    # not the policy), finite, positive, within the intrinsic budget, and
+    # score no worse than the grid-argmax action under the canonical Q — the
+    # same objective the grid maximization uses, so the replacement cannot
+    # degrade the decision it replaces. Any other read keeps that subject's
+    # grid-argmax value.
+    grid_action = jnp.asarray(optimal_actions[read.action_name])
+    off_grid_value, off_grid_feasible = score_actions(
+        candidate_actions=MappingProxyType(
+            {**optimal_actions, read.action_name: off_grid_action}
+        )
+    )
+    accepted = (
+        in_support
+        & jnp.isfinite(off_grid_action)
+        & (off_grid_action > 0.0)
+        & (off_grid_action <= resources - read.savings_lower_bound)
+        & off_grid_feasible
+        & jnp.isfinite(off_grid_value)
+        & (off_grid_value >= grid_values)
+    )
+    off_grid_action = jnp.where(accepted, off_grid_action, grid_action)
+
+    return MappingProxyType({**optimal_actions, read.action_name: off_grid_action})
+
+
+def _redecide_branch_and_read_policy(
+    *,
+    score_actions: Callable[..., tuple[FloatND, BoolND]],
+    grid_values: FloatND,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: EGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    read: EGMPolicyRead,
+    n_subjects: int,
+    state_positions: tuple[IntND, ...],
+) -> MappingProxyType[ActionName, FloatND | IntND]:
+    """Re-decide the discrete branch off-grid and read the winner's policy.
+
+    Each discrete-action combo's published rows are the solve-phase optimum
+    conditional on that branch, so that branch's candidate continuous action is
+    its piecewise-linear policy read at the branch's own resources. Every
+    candidate is then scored by the **canonical state-action value** `Q` —
+    evaluated pointwise at that exact (branch, action) pair through the same
+    model DAG, transitions, constraints, aggregators, params, and next-period
+    value arrays the grid maximization uses. Consequences:
+    - the scalar a branch is ranked by is the objective its returned action
+      actually attains, so the emitted pair is an associated optimizer pair by
+      construction — no reconstructed continuation and no shape assumption
+      about it enter the comparison;
+    - infeasibility is the canonical feasibility flag, so user constraints and
+      the intrinsic budget mask branches exactly as they mask the grid argmax;
+    - the grid-argmax pair is itself a candidate: a replacement is accepted only
+      when it scores no worse under the same `Q`, so the off-grid read can never
+      degrade the finite-grid decision.
+    A subject keeps the grid-argmax pair (discrete and continuous alike) when no
+    branch is feasible, the winner's resources fall outside its live row support
+    (there the policy read is an edge extension rather than the policy), or the
+    winning read is non-finite, non-positive, or scores below the grid pair.
+    """
+    if "inverse_marginal_utility" not in regime.simulation.functions:
+        # Scope: the off-grid branch re-decision applies only where the solve
+        # publishes a closed-form `inverse_marginal_utility`; every other regime
+        # keeps the constraint-masked grid pair. (The re-decision itself reads
+        # the branch action from the published policy row, not the inverse, but
+        # broadening the scope to numeric-inverse regimes is left to a follow-up.)
+        return MappingProxyType(dict(optimal_actions))
+
+    action_names = sim_policy.row_discrete_action_names
+    action_grids = tuple(
+        jnp.asarray(regime.simulation.grids[name].to_jax()) for name in action_names
+    )
+    combo_shape = tuple(int(grid.shape[0]) for grid in action_grids)
+    objectives_per_combo = []
+    policies_per_combo = []
+    resources_per_combo = []
+    feasible_per_combo = []
+    in_support_per_combo = []
+    for combo in itertools.product(*(range(size) for size in combo_shape)):
+        combo_actions = {
+            name: jnp.full((n_subjects,), grid[position], dtype=grid.dtype)
+            for name, grid, position in zip(
+                action_names, action_grids, combo, strict=True
+            )
+        }
+        data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
+            **dict(states),
+            **combo_actions,
+            "period": jnp.full(n_subjects, period, dtype=jnp.int32),
+            "age": jnp.full(n_subjects, age),
+        }
+        targets = _compute_targets(
+            data=data,
+            targets=[read.resources_target],
+            regime=regime,
+            regime_params=flat_params,
+        )
+        resources = jnp.reshape(
+            jnp.asarray(targets[read.resources_target]), (n_subjects,)
+        )
+        index = (*state_positions, *combo)
+        candidate_action, in_support = _interp_rows_with_support(
+            sim_policy=sim_policy,
+            field="policy",
+            index=index,
+            resources=resources,
+            n_subjects=n_subjects,
+        )
+        # Score the branch by the canonical `Q` at exactly the (branch, action)
+        # pair it would emit, so the ranking scalar is the objective the returned
+        # action attains and the canonical feasibility flag masks infeasible
+        # branches — the same objective and masking the grid argmax uses.
+        objective, feasible = score_actions(
+            candidate_actions=MappingProxyType(
+                {
+                    **optimal_actions,
+                    **combo_actions,
+                    read.action_name: candidate_action,
+                }
+            )
+        )
+        objectives_per_combo.append(jnp.where(feasible, objective, -jnp.inf))
+        policies_per_combo.append(candidate_action)
+        resources_per_combo.append(resources)
+        feasible_per_combo.append(feasible)
+        in_support_per_combo.append(in_support)
+
+    objectives = jnp.stack(objectives_per_combo)
+    policies = jnp.stack(policies_per_combo)
+    resources = jnp.stack(resources_per_combo)
+    feasible = jnp.stack(feasible_per_combo)
+    in_support = jnp.stack(in_support_per_combo)
+
+    winner = jnp.argmax(objectives, axis=0)
+
+    def at_winner(stacked: FloatND | BoolND) -> FloatND | BoolND:
+        return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
+
+    off_grid_action = at_winner(policies)
+    winner_resources = at_winner(resources)
+    winner_objective = at_winner(objectives)
+    # The winner is accepted only if it scores no worse than the grid-argmax pair
+    # under the same canonical `Q`, so the replacement cannot degrade the
+    # finite-grid decision. Support is required of the winner alone: elsewhere a
+    # row read is an edge extension rather than the published policy.
+    accepted = (
+        jnp.any(feasible, axis=0)
+        & at_winner(in_support)
+        & jnp.isfinite(winner_objective)
+        & jnp.isfinite(off_grid_action)
+        & (off_grid_action > 0.0)
+        & (off_grid_action <= winner_resources - read.savings_lower_bound)
+        & (winner_objective >= grid_values)
+    )
+
+    new_actions = dict(optimal_actions)
+    grid_action = jnp.asarray(optimal_actions[read.action_name])
+    new_actions[read.action_name] = jnp.where(accepted, off_grid_action, grid_action)
+    winner_positions = jnp.unravel_index(winner, combo_shape)
+    for name, grid, positions in zip(
+        action_names, action_grids, winner_positions, strict=True
+    ):
+        current = jnp.asarray(optimal_actions[name])
+        new_actions[name] = jnp.where(
+            accepted, grid[positions].astype(current.dtype), current
+        )
+    return MappingProxyType(new_actions)
+
+
+def _interp_rows_with_support(
+    *,
+    sim_policy: EGMSimPolicy,
+    field: Literal["policy", "value"],
+    index: tuple[IntND | int, ...],
+    resources: FloatND,
+    n_subjects: int,
+) -> tuple[FloatND, BoolND]:
+    """Interpolate one published row field per subject with its support flag.
+
+    The live support runs from the row's first abscissa to its last finite one
+    (rows are NaN-padded in the tail). Outside it the interpolant extends an
+    edge secant (below) or clamps (above) — feasible values that need not
+    approximate the published function. Reads by field:
+    - `"value"` ⇒ cubic Hermite with the marginal-utility row as the node-slope
+      input (Fritsch-Carlson-limited inside the interpolant) — the convention
+      the solve publishes values under, so the branch ranking the re-decision
+      sees is the solve convention's ranking;
+    - `"policy"` ⇒ piecewise linear (the policy row carries no slope data).
+    """
+    rows_f = getattr(sim_policy, field)
+    rows_x = sim_policy.endog_grid
+    rows_slope = sim_policy.marginal_utility if field == "value" else None
+    if index:
+        rows_x = rows_x[index]
+        rows_f = rows_f[index]
+        rows_slope = rows_slope[index] if rows_slope is not None else None
+    if rows_x.ndim == 1:
+        rows_x = jnp.broadcast_to(rows_x, (n_subjects, *rows_x.shape))
+        rows_f = jnp.broadcast_to(rows_f, (n_subjects, *rows_f.shape))
+        if rows_slope is not None:
+            rows_slope = jnp.broadcast_to(rows_slope, (n_subjects, *rows_slope.shape))
+    if rows_slope is None:
+        values = vmap(
+            lambda x_query, xp, fp: interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
+        )(resources, rows_x, rows_f)
+    else:
+        values = vmap(
+            lambda x_query, xp, fp, fp_slopes: interp_on_padded_grid(
+                x_query=x_query, xp=xp, fp=fp, fp_slopes=fp_slopes
+            )
+        )(resources, rows_x, rows_f, rows_slope)
+    valid_length = jnp.sum(jnp.isfinite(rows_x), axis=-1)
+    last_live = jnp.take_along_axis(rows_x, (valid_length - 1)[:, None], axis=-1)[:, 0]
+    in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)
+    return values, in_support
+
+
+def _canonical_q_at_actions(
+    *,
+    candidate_actions: Mapping[ActionName, FloatND | IntND],
+    regime: Regime,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[FloatND, BoolND]:
+    """Score one action value per subject with the canonical state-action value.
+
+    Evaluates `Q` and its feasibility at exactly the supplied (state, action)
+    pairs through `regime.simulation.Q_and_F` — the same objective, transitions,
+    constraints, aggregators, params, and next-period value arrays the grid
+    maximization uses. A value it returns is therefore directly comparable with
+    the grid winner's value, and the flag it returns is the canonical
+    feasibility (user constraints and the intrinsic budget alike).
+
+    Returns:
+        Tuple of the per-subject canonical value and feasibility.
+
+    """
+    values, feasible = regime.simulation.Q_and_F[period](
+        **canonical_states,
+        **{name: jnp.asarray(candidate_actions[name]) for name in action_names},
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        **flat_params,
+        period=jnp.int32(period),
+        age=age,
+    )
+    return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
+
+
+def _resources_at_subjects(
+    *,
+    read: EGMPolicyRead,
+    regime: Regime,
+    sim_policy: EGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+) -> FloatND:
+    """Compute each subject's endogenous resources through the simulate DAG.
+
+    The chosen discrete actions enter the data: a budget whose income depends
+    on a discrete action (work choice) reads the simulated choice. The result
+    keeps the subject axis (`_compute_targets` squeezes its outputs, which
+    would collapse a single-subject vector to 0-d before the next-state vmap).
+    """
+    data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
+        **dict(states),
+        **{
+            name: jnp.asarray(optimal_actions[name])
+            for name in sim_policy.row_discrete_action_names
+        },
+        "period": jnp.full(n_subjects, period, dtype=jnp.int32),
+        "age": jnp.full(n_subjects, age),
+    }
+    return jnp.reshape(
+        jnp.asarray(
+            _compute_targets(
+                data=data,
+                targets=[read.resources_target],
+                regime=regime,
+                regime_params=flat_params,
+            )[read.resources_target]
+        ),
+        (n_subjects,),
+    )
 
 
 def _lookup_values_from_indices(

@@ -14,6 +14,7 @@ from typing import Any, cast
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
+from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
@@ -88,13 +89,35 @@ def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
     """Name of a carry target's continuous (Euler) state.
 
     For a DC-EGM or NEGM target this is its configured (inner) Euler state; for a
-    terminal target it is its only state (uniqueness is checked by
-    `_find_unsupported_feature`).
+    terminal target it is the first non-process continuous state, matching the
+    carry's Euler axis (passive continuous states, e.g. a ride-along wage, follow
+    it). A model-level distributed state (e.g. a permanent type sharded across
+    devices) is broadcast into the terminal regime as an extra discrete axis, so
+    the Euler state is the first continuous state, never an int-coded discrete
+    state that happens to iterate first.
     """
     dcegm = _as_dcegm(user_regime)
     if dcegm is not None:
         return dcegm.continuous_state
-    return next(iter(user_regime.states))
+    grids = get_grids(user_regime)
+    # A carried state (imputed in solve, seeded in simulate) has no solve grid, so
+    # it never appears in `grids` and is not the Euler axis; skip it. The Euler axis
+    # is a genuine grid-backed continuous state.
+    continuous = tuple(
+        name
+        for name in user_regime.states
+        if name in grids
+        and isinstance(grids[name], ContinuousGrid)
+        and not isinstance(grids[name], _ContinuousStochasticProcess)
+    )
+    if not continuous:
+        msg = (
+            f"A terminal carry target must have at least one continuous (Euler) "
+            f"state; regime states {tuple(user_regime.states)} resolve to no "
+            f"continuous states."
+        )
+        raise ValueError(msg)
+    return continuous[0]
 
 
 def _get_child_discrete_actions(
@@ -141,7 +164,7 @@ def _get_child_resources_function(
     if _as_dcegm(user_regime) is not None:
         return _concatenate_child_resources(user_regime=user_regime)
 
-    state_name = next(iter(user_regime.states))
+    state_name = _get_child_state_name(user_regime=user_regime)
 
     def identity_resources(**kwargs: ScalarFloat) -> ScalarFloat:
         return kwargs[state_name]
@@ -155,7 +178,7 @@ def _get_child_resources_arg_names(*, user_regime: UserRegime) -> set[str]:
         return set(
             get_union_of_args([_concatenate_child_resources(user_regime=user_regime)])
         )
-    return {next(iter(user_regime.states))}
+    return {_get_child_state_name(user_regime=user_regime)}
 
 
 def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
