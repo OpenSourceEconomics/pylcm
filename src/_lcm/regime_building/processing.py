@@ -1208,25 +1208,47 @@ def _build_simulation_phase(
             savings_lower_bound=float(solver.savings_grid.to_jax()[0]),
         )
 
-    # Publish representative-age-resolved functions (feasibility checks and
-    # additional-target computation consume them unresolved); `next_state` above
-    # keeps resolving the marker-bearing `simulate_functions` per age.
+    # Inventory the specialized nodes the additional-target guard must reject —
+    # built from the marker-bearing (pre-publication) `functions` AND `constraints`.
+    # `_process_regime_core` excludes constraint names from `functions`, but the
+    # additional-target pool re-merges constraints (`_build_functions_pool`) and
+    # advertises them as targets; without the constraint namespace here a
+    # specialized constraint would escape the guard (round-11 F3). Both mappings are
+    # core-processed and still carry `_SpecializedEconFunction` markers.
+    age_specialized_function_names = frozenset(
+        name
+        for name, func in (*simulate_functions.items(), *constraints.items())
+        if isinstance(func, _SpecializedEconFunction)
+    )
+
+    # Publish representative-age-resolved functions AND constraints: the feasibility
+    # check (`_get_feasibility` at initial-conditions validation) and additional-
+    # target computation consume both as plain callables, so an unresolved
+    # `AgeSpecializedFunction` marker leaking into either raises at build/eval time.
+    # `next_state` above keeps resolving the marker-bearing `simulate_functions` per
+    # age; per-period *target* reads of a specialized node are still rejected by the
+    # guard via `age_specialized_function_names` (a rep-age closure would be wrong).
     simulation_active_periods = regimes_to_active_periods[regime_name]
+    representative_age = (
+        float(ages.period_to_age(simulation_active_periods[0]))
+        if simulation_active_periods
+        else None
+    )
     published_simulate_functions = (
         cast(
             "EconFunctionsMapping",
-            resolve_specialized_nodes(
-                simulate_functions,
-                float(ages.period_to_age(simulation_active_periods[0])),
-            ),
+            resolve_specialized_nodes(simulate_functions, representative_age),
         )
-        if simulation_active_periods
+        if representative_age is not None
         else simulate_functions
     )
-    age_specialized_function_names = frozenset(
-        name
-        for name, func in simulate_functions.items()
-        if isinstance(func, _SpecializedEconFunction)
+    published_simulate_constraints = (
+        cast(
+            "ConstraintFunctionsMapping",
+            resolve_specialized_nodes(constraints, representative_age),
+        )
+        if representative_age is not None
+        else constraints
     )
 
     return SimulationPhase(
@@ -1234,7 +1256,7 @@ def _build_simulation_phase(
         grids=simulate_grids,
         carried_only_state_names=frozenset(carried_grids),
         functions=published_simulate_functions,
-        constraints=constraints,
+        constraints=published_simulate_constraints,
         age_specialized_function_names=age_specialized_function_names,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
