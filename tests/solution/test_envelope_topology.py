@@ -1,11 +1,11 @@
 """Normalization of an EGM candidate chain into x-monotone runs.
 
-The upper envelope is exact only once the candidate cloud is split into maximal,
-strictly resource-increasing runs of live candidates: those runs are the branches
-whose pairwise crossings the envelope has to find. The split is read off the
-candidate order the producer emits, which encodes the savings chain, so a fold in
-the Euler-inverted grid starts a new run while an ordinary value decrease along a
-rising grid does not.
+The upper envelope is exact only once the candidate cloud is split into maximal
+runs of live candidates along which resources never fall: those runs are the
+branches whose pairwise crossings the envelope has to find. The split is read off
+the candidate order the producer emits, which encodes the savings chain, so a
+fold in the Euler-inverted grid starts a new run while an ordinary value decrease
+along a rising grid — or a repeated abscissa — does not.
 """
 
 import jax
@@ -49,10 +49,32 @@ def test_a_value_decrease_along_a_rising_grid_does_not_split_a_run():
     assert _run_ids([1.0, 2.0, 3.0]) == [0, 0, 0]
 
 
-def test_a_repeated_abscissa_breaks_the_run():
-    """A zero-width link is not a strictly increasing step, so it starts a run."""
-    assert _run_ids([1.0, 2.0, 2.0, 3.0]) == [0, 0, 1, 1]
-    assert _n_runs([1.0, 2.0, 2.0, 3.0]) == 2
+def test_a_repeated_abscissa_stays_within_one_run():
+    """Two candidates at one abscissa are the same branch touching itself.
+
+    The zero-width link between them carries no value line, but it is not a fold:
+    the chain never turns around, so the candidates on either side keep sharing a
+    branch instead of being torn into two.
+    """
+    assert _run_ids([1.0, 2.0, 2.0, 3.0]) == [0, 0, 0, 0]
+    assert _n_runs([1.0, 2.0, 2.0, 3.0]) == 1
+
+
+def test_a_saturated_plateau_is_a_single_run():
+    """A chain that stops resolving distinct resources does not fold.
+
+    Euler inversion saturates once the implied consumption dwarfs the savings
+    node, so `savings + consumption` rounds to the same double for many nodes.
+    That staircase is one branch, not one branch per repeated abscissa.
+    """
+    plateau = [1.0, 2.0, *([4.5e15] * 8), 4.5e15 + 2.0, *([4.5e15 + 4.0] * 6)]
+    assert _n_runs(plateau) == 1
+    assert set(_run_ids(plateau)) == {0}
+
+
+def test_a_chain_of_only_repeated_abscissae_carries_no_linked_run():
+    """Ties alone span no interval, so they are no branch to cross against."""
+    assert _n_runs([2.0, 2.0, 2.0]) == 0
 
 
 def test_dead_candidates_are_unlabelled_and_split_their_neighbours():

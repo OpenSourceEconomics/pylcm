@@ -142,6 +142,40 @@ def test_published_value_matches_the_exact_rational_envelope(query: float):
     assert _read(grid, value, query) == pytest.approx(float(expected), abs=_tolerance())
 
 
+def test_a_chain_folding_past_the_capacity_poisons_the_row():
+    """A chain with more branches than the configured capacity fails loud.
+
+    The fold count is a property of the data, not of the action space, so the
+    capacity is validated rather than assumed: exceeding it reports overflow and
+    publishes nothing instead of an envelope built from a subset of the branches.
+    """
+    n_refined = 64
+    # Five upward runs separated by four folds.
+    grid = [10.0, 14.0, 11.0, 17.0, 12.0, 20.0, 13.0, 23.0, 15.0, 26.0]
+    out_grid, _out_policy, _out_value, n_kept = refine_envelope_exact(
+        endog_grid=jnp.asarray(grid),
+        policy=jnp.asarray([1.0] * len(grid)),
+        value=jnp.asarray([float(i) for i in range(len(grid))]),
+        n_refined=n_refined,
+        max_runs=4,
+    )
+    assert int(n_kept) > n_refined
+    assert np.all(np.isnan(np.asarray(out_grid)))
+
+
+def test_a_chain_within_the_capacity_publishes_an_envelope():
+    """The same chain refines normally once the capacity covers its branches."""
+    grid = [10.0, 14.0, 11.0, 17.0, 12.0, 20.0, 13.0, 23.0, 15.0, 26.0]
+    _out_grid, _out_policy, _out_value, n_kept = refine_envelope_exact(
+        endog_grid=jnp.asarray(grid),
+        policy=jnp.asarray([1.0] * len(grid)),
+        value=jnp.asarray([float(i) for i in range(len(grid))]),
+        n_refined=64,
+        max_runs=5,
+    )
+    assert 0 < int(n_kept) <= 64
+
+
 def test_refinement_is_vmap_compatible():
     """A batch of candidate rows refines with static shapes."""
     grids = jnp.array([F1_GRID, F1_GRID])

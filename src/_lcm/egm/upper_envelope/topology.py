@@ -4,8 +4,15 @@ An exact upper envelope needs to know which candidates lie on a common branch.
 The EGM step hands the envelope a single connected chain per cell — the
 constrained run followed by the interior Euler run, in savings order — and the
 chain's own order is the topology: consecutive candidates belong to one branch
-exactly while resources strictly increase. Where the Euler-inverted grid turns
-around, the chain folds and a new branch starts.
+for as long as resources do not fall. Where the Euler-inverted grid turns around,
+the chain folds and a new branch starts.
+
+Two candidates at one abscissa form a zero-width link. It carries no value line,
+but neither is it a fold, so it stays inside its run. Euler inversion saturates
+once the implied consumption dwarfs the savings node, and `savings + consumption`
+then rounds to a single double across many nodes; splitting that staircase would
+report one branch per repeated abscissa and exhaust the envelope's fold capacity
+on a chain that never turns around.
 
 Reading the split off the resource order is what makes it exact. A rule that also
 splits on a value decrease over-splits a connected fold, and one that infers
@@ -61,11 +68,12 @@ def monotone_run_ids(
 def count_linked_runs(
     *, endog_grid: Float1D, dead: BoolND, segment_id: Float1D | Int1D | None = None
 ) -> ScalarInt:
-    """Count the runs that carry at least one link.
+    """Count the runs that span a positive interval.
 
-    A run of a single candidate spans no interval and contributes no value
-    segment, so it is not a branch the envelope has to cross against. This count
-    is the realized branch count a static capacity must be validated against.
+    A run whose candidates all sit at one abscissa spans no interval and carries
+    no value line, so it is not a branch the envelope has to cross against. This
+    count is the realized branch count a static capacity must be validated
+    against.
 
     Args:
         endog_grid: Candidate endogenous grid points in producer (savings) order.
@@ -77,12 +85,20 @@ def count_linked_runs(
         Number of runs holding at least one live, strictly increasing link.
 
     """
-    continues = _link_continues_run(
+    n_candidates = endog_grid.shape[0]
+    run_id = monotone_run_ids(endog_grid=endog_grid, dead=dead, segment_id=segment_id)
+    carries_line = _link_continues_run(
         endog_grid=endog_grid, dead=dead, segment_id=segment_id
+    ) & (endog_grid[1:] > endog_grid[:-1])
+    # Mark each run whose links include one of positive width, indexing by the
+    # link's lower endpoint; links that carry no line park in a scratch slot.
+    marked_run = jnp.where(carries_line, run_id[:-1], n_candidates)
+    spans_interval = (
+        jnp.zeros((n_candidates + 1,), dtype=jnp.int32)
+        .at[marked_run]
+        .max(carries_line.astype(jnp.int32))
     )
-    # A linked run is counted at its first link: one that no live link precedes.
-    preceded = jnp.concatenate([jnp.zeros((1,), dtype=jnp.bool_), continues[:-1]])
-    return jnp.sum(continues & ~preceded, dtype=jnp.int32)
+    return jnp.sum(spans_interval[:n_candidates], dtype=jnp.int32)
 
 
 def _link_continues_run(
@@ -90,12 +106,12 @@ def _link_continues_run(
 ) -> BoolND:
     """Return, per consecutive pair, whether it continues the same run.
 
-    A pair continues a run when both endpoints are live, resources strictly
-    increase across it, and — where explicit labels are supplied — both endpoints
-    carry the same label. Equal abscissae give a zero-width link, which carries no
-    affine value line, so they break the run rather than joining it.
+    A pair continues a run when both endpoints are live, resources do not fall
+    across it, and — where explicit labels are supplied — both endpoints carry the
+    same label. Only a fall in resources ends a run: equal abscissae give a
+    zero-width link, which spans no interval and so cannot start a new branch.
     """
-    continues = (~dead[:-1]) & (~dead[1:]) & (endog_grid[1:] > endog_grid[:-1])
+    continues = (~dead[:-1]) & (~dead[1:]) & (endog_grid[1:] >= endog_grid[:-1])
     if segment_id is not None:
         continues = continues & (segment_id[1:] == segment_id[:-1])
     return continues
