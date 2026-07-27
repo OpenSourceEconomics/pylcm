@@ -160,8 +160,9 @@ class DCEGM(Solver):
     fues_scan_unroll: int = 1
     """Loop-unroll factor for the FUES candidate `lax.scan`.
 
-    Passed to `jax.lax.scan(..., unroll=fues_scan_unroll)` in both the
-    full-envelope and streaming-bracket scans. The scan is sequential and
+    Passed to `jax.lax.scan(..., unroll=fues_scan_unroll)` in the full-envelope
+    scan of `refine_envelope`. The bracket path slices that same full row, so
+    there is no separate streaming scan to unroll. The scan is sequential and
     latency-bound on accelerators; unrolling `k` iterations into one loop body
     trades compile time and code size for fewer loop-carry round trips, which can
     cut the per-row exec wall on GPU. `1` (no unroll) is the default; the refined
