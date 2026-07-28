@@ -7,7 +7,8 @@ dominated candidates. The EGM step obtains its backend through
 step itself. Currently implemented:
 
 - the Fast Upper-Envelope Scan (`_lcm.egm.upper_envelope.fues`), a sequential
-  scan that inserts exact segment-crossing points,
+  scan that inserts crossing points between the segments its jump-threshold
+  heuristic identifies,
 - the Rooftop-Cut algorithm (`_lcm.egm.upper_envelope.rfc`), a parallel
   dominance test that only deletes points (no crossing insertion) and
   generalizes to multidimensional endogenous grids, and
